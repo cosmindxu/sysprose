@@ -95,7 +95,7 @@ flowchart TB
     diagram --> core
     validation --> semantics
     validation --> core
-    semantics --> library
+    library --> semantics
     semantics --> core
     text --> core
     collab --> core
@@ -200,3 +200,12 @@ has not been revised to match.
 
 Contracts are stable and only grew additively. The drift is in *module
 topology*, not in the cross-module data shapes.
+
+
+> **2026-09-02 — edge reversed.** `findLibraryType`/`libraryNameIndex` moved from
+> `src/library/resolve.ts` into `src/core/scope.ts` (they are pure `Model` walks with no
+> library-data dependency). The two `semantics → library` edges that carried them are gone;
+> `src/library/resolve.ts` now imports `resolveName` from `@semantics/resolve-names` so the
+> binder can compose KerML full resolution. `library → semantics → core` is acyclic. (The
+> older note that there is "no alias for `@semantics`, `@library`" is stale — both exist in
+> `tsconfig.json`, `vite.config.ts` and `vitest.config.ts`.)

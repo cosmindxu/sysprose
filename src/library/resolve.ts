@@ -29,68 +29,20 @@
 
 import {
   Model,
+  findLibraryType,
+  isRelationship,
   resolveTypeInScopeChain,
   type ElementId,
   type ElementRecord,
 } from '@core/index';
+import { resolveName } from '../semantics/resolve-names';
 
-/**
- * Resolve `name` against the loaded standard-library elements (those carrying
- * `attrs.isLibrary === true`).
- *
- * Resolution order:
- *  1. exact fully-qualified name via strict containment (e.g.
- *     `ScalarValues::Real`, `SI::metre`, `Collections::List`, `Base::Anything`);
- *  2. failing that, the last `::`-segment matched against a library element's
- *     `declaredName` or `declaredShortName` (e.g. a bare `Real`, the unit symbol
- *     `m`, or a name re-exported through a package import such as
- *     `ISQ::MassValue`, whose definition is owned by `ISQBase`).
- *
- * Step 1 uses {@link Model.resolveQualifiedName} (a roots→children walk) rather
- * than scanning + stringifying every library element, so it stays fast even
- * against the full library (tens of thousands of elements).
- *
- * @returns the matching {@link ElementRecord}, or `undefined` when none matches.
- */
-export function findLibraryType(model: Model, name: string): ElementRecord | undefined {
-  const query = name.trim();
-  if (query === '') return undefined;
-
-  // 1. Exact qualified-name match via strict containment (fast).
-  const exact = model.resolveQualifiedName(query);
-  if (exact && exact.attrs.isLibrary === true) return exact;
-
-  // 2. Last-segment match on declaredName / declaredShortName among library
-  //    elements (handles bare names, unit symbols, and import re-exports).
-  //    Backed by a per-revision index so this is O(1) instead of an O(n) scan
-  //    over the full ~38k-element library on every unresolved reference.
-  const last = query.split('::').pop()?.trim();
-  if (!last) return undefined;
-  return libraryNameIndex(model).get(last);
-}
-
-/** rev-keyed cache of {last-segment name → first matching library element}. */
-interface LibNameIndex {
-  rev: number;
-  byName: Map<string, ElementRecord>;
-}
-const libNameIndexCache = new WeakMap<Model, LibNameIndex>();
-
-function libraryNameIndex(model: Model): Map<string, ElementRecord> {
-  const cached = libNameIndexCache.get(model);
-  if (cached && cached.rev === model.rev) return cached.byName;
-  const byName = new Map<string, ElementRecord>();
-  for (const el of model.all()) {
-    if (el.attrs.isLibrary !== true) continue;
-    // First writer wins, matching the previous Array.find (first match) order.
-    if (el.declaredName && !byName.has(el.declaredName)) byName.set(el.declaredName, el);
-    if (el.declaredShortName && !byName.has(el.declaredShortName)) {
-      byName.set(el.declaredShortName, el);
-    }
-  }
-  libNameIndexCache.set(model, { rev: model.rev, byName });
-  return byName;
-}
+// `findLibraryType` lives in core (src/core/scope.ts) so that the semantics
+// layer can use it without depending on this module — that dependency was a
+// cycle waiting to happen once this module needed the full KerML resolver.
+// Re-exported here for the callers and tests that always imported it from
+// the library layer.
+export { findLibraryType } from '@core/index';
 
 /** True when `el` already owns a FeatureTyping whose target exists in-model. */
 function hasResolvedFeatureTyping(model: Model, el: ElementRecord): boolean {
@@ -135,40 +87,157 @@ function isScalarValueType(model: Model, type: ElementRecord): boolean {
  *
  * @returns the number of references newly resolved (FeatureTypings created).
  */
+/**
+ * Is `el` something a feature may legally be typed by? Packages are namespaces,
+ * not types; binding a feature to one yields a `feature-typing-non-type` error
+ * further down the pipeline, so a candidate walk steps over them.
+ */
+function isTypeCandidate(el: ElementRecord): boolean {
+  return !isRelationship(el.eClass) && el.eClass !== 'Package' && el.eClass !== 'LibraryPackage';
+}
+
+/**
+ * The scope-chain resolution for one unqualified type name — KerML v1.0
+ * §8.2.3.5.4 "full resolution": for each namespace from the referencing element
+ * outward, try that namespace's owned, inherited and imported members
+ * (`resolveName`), and only then the global/library namespace.
+ *
+ * Two resolvers compose here on purpose. `resolveName` (semantics) knows
+ * inheritance and imports but resolves within ONE scope; `resolveTypeInScopeChain`
+ * (core) walks outward but knows only owned members. A REJECTED hit — the
+ * element itself (the mapper already self-binds `part Wheel : Wheel`), a
+ * non-type, or a library element surfacing through an implicit base such as
+ * `Parts::Part` — must NOT stop the walk: the answer may be one scope further
+ * out. The `isLibrary` rejection is what keeps user declarations shadowing the
+ * library, which `generalizationsWithImplicit` would otherwise invert.
+ *
+ * Root-level imports are consulted explicitly at the end because
+ * `resolveName(model, null, …)` skips imported members for the root scope.
+ */
+function resolveUserType(
+  model: Model,
+  name: string,
+  scopeId: ElementId | null,
+  excludeId: ElementId,
+): ElementRecord | undefined {
+  const query = name.trim();
+  if (query === '' || query.includes('::')) return undefined;
+  const accept = (hit: ElementRecord | undefined): ElementRecord | undefined =>
+    hit && hit.id !== excludeId && hit.attrs.isLibrary !== true && isTypeCandidate(hit)
+      ? hit
+      : undefined;
+  const seen = new Set<ElementId>();
+  let scope: ElementId | null = scopeId;
+  while (scope !== null && !seen.has(scope)) {
+    seen.add(scope);
+    const hit = accept(resolveName(model, scope, query));
+    if (hit) return hit;
+    scope = model.get(scope)?.ownerId ?? null;
+  }
+  const owned = resolveTypeInScopeChain(model, query, scopeId, excludeId);
+  if (owned) return owned;
+  // Root-level `import Pkg::*;` — reachable by nothing above.
+  for (const root of model.roots()) {
+    if (root.eClass !== 'NamespaceImport' && root.eClass !== 'MembershipImport') continue;
+    const nsId = (root.target ?? [])[0];
+    if (!nsId) continue;
+    const hit = accept(resolveName(model, nsId, query));
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * Give every import its `target` (and `source`) so `resolveName`'s import walk
+ * can see it.
+ *
+ * The textual mapper creates `NamespaceImport`/`MembershipImport` elements with
+ * only `attrs.importedName`, because at parse time the imported namespace may be
+ * declared later in the file or live in the standard library that is not loaded
+ * yet. Without a target every import was a no-op for name resolution on any
+ * parsed model — `import Lib::*;` bound nothing, silently. Idempotent: an import
+ * that already has a target is left alone.
+ *
+ * @returns the number of imports newly bound.
+ */
+export function resolveImportTargets(model: Model): number {
+  let bound = 0;
+  model.transaction(() => {
+    for (const el of model.all()) {
+      if (el.attrs.isLibrary === true) continue;
+      if (el.eClass !== 'NamespaceImport' && el.eClass !== 'MembershipImport') continue;
+      if ((el.target ?? []).length > 0) continue;
+      const raw = el.attrs.importedName;
+      if (typeof raw !== 'string' || raw.trim() === '') continue;
+      const recursive = /::\*\*\s*$/.test(raw);
+      const name = raw.replace(/::\*+\s*$/, '').trim();
+      if (name === '') continue;
+      const target =
+        resolveUserType(model, name, el.ownerId, el.id) ??
+        model.resolveQualifiedName(name) ??
+        findLibraryType(model, name);
+      if (!target || target.id === el.id) continue;
+      model.update(el.id, {
+        target: [target.id],
+        ...(el.ownerId !== null && (el.source ?? []).length === 0 ? { source: [el.ownerId] } : {}),
+      });
+      if (recursive) model.setAttrs(el.id, { isRecursive: true });
+      bound++;
+    }
+  });
+  return bound;
+}
+
+/** One binding the pure phase decided on; applied in the mutating phase. */
+interface PendingBinding {
+  elementId: ElementId;
+  targetId: ElementId;
+  clearTypeRef: boolean;
+}
+
+/**
+ * Resolve every unresolved textual type reference on NON-library elements —
+ * the element's own namespaces first (KerML §8.2.3.5.4), then the bundled
+ * standard library, then a root-anchored qualified name — materialising a
+ * {@link FeatureTyping} for each one bound.
+ *
+ * TWO PHASES, TO A FIXPOINT. `Model.emit` bumps `rev` on every mutation even
+ * inside a transaction, and every resolver memo (name cache, generalization
+ * closures, the ~38k-element library index) is keyed on `rev` — so binding one
+ * reference used to cold-start every cache for the next. Phase 1 is pure reads
+ * with hot caches; phase 2 applies. But a binding can ENABLE a resolution
+ * (`part c : Car { part w : Wheel; }` — `w` resolves through `c`'s type only
+ * once `c` is typed), so the pair loops until phase 1 finds nothing new. Bounded
+ * by the number of unresolved references.
+ *
+ * @returns the number of references newly resolved (FeatureTypings created).
+ */
 export function resolveTypeReferences(model: Model): number {
   let resolved = 0;
+  resolveImportTargets(model);
 
-  model.transaction(() => {
-    // Snapshot up front: `model.all()` is a copy, so FeatureTypings created
-    // during the loop are not themselves revisited.
+  for (;;) {
+    // Phase 1 — decide, without mutating.
+    const pending: PendingBinding[] = [];
+    const redundant: ElementId[] = [];
     for (const el of model.all()) {
       if (el.attrs.isLibrary === true) continue; // never touch library content
 
       // (1) Plain feature typing preserved as attrs.typeRef (PartUsage, PortUsage…).
       const typeRef = el.attrs.typeRef;
       if (typeof typeRef === 'string' && typeRef.trim() !== '') {
-        if (!hasResolvedFeatureTyping(model, el)) {
-          // ORDER IS THE CONTRACT (KerML v1.0 §8.2.3.5.4): resolve outward
-          // through the referencing element's own namespaces FIRST, and fall
-          // back to the bundled library only when nothing local answers to the
-          // name. Searching the library first — as this did — made a forward
-          // reference bind to whatever library element happened to share the
-          // name or short name (`part e : B` bound to `SI::byte`), so the same
-          // name resolved differently depending on where it was written.
-          const target =
-            resolveTypeInScopeChain(model, typeRef, el.ownerId, el.id) ??
-            findLibraryType(model, typeRef) ??
-            model.resolveQualifiedName(typeRef);
-          if (target && target.id !== el.id) {
-            addFeatureTyping(model, el.id, target.id);
-            clearAttr(model, el.id, 'typeRef');
-            resolved++;
-            continue;
-          }
-        } else {
-          // Already typed by a real type — the textual ref is redundant.
-          clearAttr(model, el.id, 'typeRef');
+        if (hasResolvedFeatureTyping(model, el)) {
+          redundant.push(el.id); // already typed by a real type — the textual ref is redundant
+          continue;
         }
+        const target =
+          resolveUserType(model, typeRef, el.ownerId, el.id) ??
+          findLibraryType(model, typeRef) ??
+          model.resolveQualifiedName(typeRef);
+        if (target && target.id !== el.id) {
+          pending.push({ elementId: el.id, targetId: target.id, clearTypeRef: true });
+        }
+        continue;
       }
 
       // (2) Attribute typing preserved as an attrs.type string naming a
@@ -178,13 +247,25 @@ export function resolveTypeReferences(model: Model): number {
         if (typeof type === 'string' && type.trim() !== '' && !hasResolvedFeatureTyping(model, el)) {
           const target = findLibraryType(model, type);
           if (target && isScalarValueType(model, target)) {
-            addFeatureTyping(model, el.id, target.id);
-            resolved++;
+            pending.push({ elementId: el.id, targetId: target.id, clearTypeRef: false });
           }
         }
       }
     }
-  });
+
+    if (pending.length === 0 && redundant.length === 0) break;
+
+    // Phase 2 — apply.
+    model.transaction(() => {
+      for (const id of redundant) clearAttr(model, id, 'typeRef');
+      for (const b of pending) {
+        addFeatureTyping(model, b.elementId, b.targetId);
+        if (b.clearTypeRef) clearAttr(model, b.elementId, 'typeRef');
+        resolved++;
+      }
+    });
+    if (pending.length === 0) break; // only redundancies were cleared; nothing new can resolve
+  }
 
   return resolved;
 }

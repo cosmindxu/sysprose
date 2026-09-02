@@ -48,7 +48,7 @@
  */
 
 import { type ElementId, type ElementRecord, type Model, isRelationship } from '@core/index';
-import { findLibraryType } from '../library/resolve';
+import { findLibraryType } from '@core/index';
 import { generalizationsWithImplicit } from './featuring';
 
 /* ─────────────────────────── memoisation caches ─────────────────────────── */

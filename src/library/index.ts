@@ -34,9 +34,9 @@ import {
   FULL_LIBRARY_MANIFEST_COUNT,
   FULL_LIBRARY_SOURCE_COMMIT,
 } from './full-library';
-import { findLibraryType, resolveTypeReferences } from './resolve';
+import { findLibraryType, resolveTypeReferences, resolveImportTargets } from './resolve';
 
-export { findLibraryType, resolveTypeReferences };
+export { findLibraryType, resolveTypeReferences, resolveImportTargets };
 export {
   buildCuratedLibrary,
   loadCuratedLibrary,

@@ -63,7 +63,7 @@ that the standard exposes through a package's **public namespace import** — e.
 `ISQ::MassValue`, whose definition is actually owned by `ISQBase` and
 re-exported by `ISQ` — do **not** resolve through strict `resolveQualifiedName`
 (it does not follow imports), but they **do** resolve through
-`findLibraryType` (this project's library resolver), which falls back to a
+`findLibraryType (src/core/scope.ts)` (this project's library resolver), which falls back to a
 last-segment match, and they resolve strictly under their owning package
 (`ISQBase::MassValue`).
 

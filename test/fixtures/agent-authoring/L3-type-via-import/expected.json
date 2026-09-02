@@ -1,0 +1,16 @@
+{
+  "level": "L3",
+  "title": "a type reached only through `import Lib::*;` must resolve",
+  "note": "FIXED 2026-09-02. The textual mapper created import elements with no `target`, so the KerML import walk was a no-op on every parsed model: `import Lib::*;` bound nothing, silently. The binder now gives each import its target (in-file or library) before resolving type references.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "Use",
+      "Lib"
+    ],
+    "minElements": 5,
+    "strictWarnings": true
+  }
+}

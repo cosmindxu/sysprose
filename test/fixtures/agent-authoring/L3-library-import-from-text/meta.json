@@ -1,0 +1,5 @@
+{
+  "level": "L3",
+  "title": "`import ISQ::*;` written in text must bring MassValue into scope",
+  "note": "FIXED 2026-09-02. A library import authored in text had no target until the library was loaded, and nothing ever set one afterwards. `resolveImportTargets` runs first in the binder, after the library is present, so the walk sees it."
+}

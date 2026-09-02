@@ -31,7 +31,7 @@
  */
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
-import { findLibraryType } from '@library/resolve';
+import { findLibraryType } from '@core/index';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- JSDoc @link target
 import { generalizationsOf } from './inheritance';
 import { conforms } from './conformance';

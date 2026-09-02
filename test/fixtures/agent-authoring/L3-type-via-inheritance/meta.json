@@ -1,0 +1,5 @@
+{
+  "level": "L3",
+  "title": "a type nested in a supertype must resolve from the subtype",
+  "note": "FIXED 2026-09-02. `part def Derived :> Base { part i : Inner; }` where `Inner` is declared inside `Base`. Resolution now consults inherited members at each scope (KerML §8.2.3.5.4) before walking outward, and — because a binding can enable another (`c : Car { w : Wheel }`) — the binder loops its pure/apply phases to a fixpoint."
+}

@@ -17,13 +17,23 @@
  * to the library element `SI::byte` (short name "B") rather than to `P::B`, so
  * the SAME name resolved to DIFFERENT types depending on where it was written.
  *
- * SCOPE OF THIS IMPLEMENTATION. It walks owned members outward through the owner
- * chain. It deliberately does NOT follow inherited or imported members — those
- * need the generalization and import machinery in `src/semantics/resolve-names.ts`,
- * which cannot be imported here without a dependency cycle (that module already
- * depends on the library layer). A type reference reachable only through an
- * `import` or through inheritance therefore still does not resolve; that gap is
- * recorded in `docs/AGENT-AUTHORING-CAMPAIGN.md`.
+ * SCOPE OF THIS IMPLEMENTATION. It walks OWNED members outward through the owner
+ * chain — the outer loop of KerML "full resolution". Inherited and imported
+ * members are the per-namespace concern of `resolveName` in
+ * `src/semantics/resolve-names.ts`; the library binder (`src/library/resolve.ts`
+ * `resolveUserType`) composes the two: `resolveName` at each scope, walking
+ * outward, then this owned-only walk, then the library. That composition became
+ * possible once `findLibraryType` (below) moved here from the library layer,
+ * removing the semantics→library edge that would otherwise have made
+ * library→semantics a cycle.
+ *
+ * KNOWN SPLIT, recorded on purpose: the textual mapper resolves BACKWARD
+ * references at parse time with its own owned-only walk (`resolveRefIn`), so a
+ * name declared both in a supertype and in an outer scope binds to the OUTER one
+ * when written after its declaration and to the INHERITED one when written
+ * before (the binder's spec-correct order). The last such split between two
+ * resolvers produced the `SI::byte` mis-binding; this one is documented until
+ * the mapper is taught to defer.
  */
 
 import type { ElementId, ElementRecord } from './metamodel';
@@ -96,4 +106,64 @@ export function resolveTypeInScopeChain(
       (r) =>
         r.id !== excludeId && r.attrs.isLibrary !== true && isTypeCandidate(r) && named(r, query),
     );
+}
+
+/* ─────────────────── library lookup (moved here from src/library/resolve.ts) ─────────────────── */
+
+/**
+ * Resolve `name` against the loaded standard-library elements (those carrying
+ * `attrs.isLibrary === true`).
+ *
+ * Resolution order:
+ *  1. exact fully-qualified name via strict containment (e.g.
+ *     `ScalarValues::Real`, `SI::metre`, `Collections::List`, `Base::Anything`);
+ *  2. failing that, the last `::`-segment matched against a library element's
+ *     `declaredName` or `declaredShortName` (e.g. a bare `Real`, the unit symbol
+ *     `m`, or a name re-exported through a package import such as
+ *     `ISQ::MassValue`, whose definition is owned by `ISQBase`).
+ *
+ * Step 1 uses {@link Model.resolveQualifiedName} (a roots→children walk) rather
+ * than scanning + stringifying every library element, so it stays fast even
+ * against the full library (tens of thousands of elements).
+ *
+ * @returns the matching {@link ElementRecord}, or `undefined` when none matches.
+ */
+export function findLibraryType(model: Model, name: string): ElementRecord | undefined {
+  const query = name.trim();
+  if (query === '') return undefined;
+
+  // 1. Exact qualified-name match via strict containment (fast).
+  const exact = model.resolveQualifiedName(query);
+  if (exact && exact.attrs.isLibrary === true) return exact;
+
+  // 2. Last-segment match on declaredName / declaredShortName among library
+  //    elements (handles bare names, unit symbols, and import re-exports).
+  //    Backed by a per-revision index so this is O(1) instead of an O(n) scan
+  //    over the full ~38k-element library on every unresolved reference.
+  const last = query.split('::').pop()?.trim();
+  if (!last) return undefined;
+  return libraryNameIndex(model).get(last);
+}
+
+/** rev-keyed cache of {last-segment name → first matching library element}. */
+interface LibNameIndex {
+  rev: number;
+  byName: Map<string, ElementRecord>;
+}
+const libNameIndexCache = new WeakMap<Model, LibNameIndex>();
+
+function libraryNameIndex(model: Model): Map<string, ElementRecord> {
+  const cached = libNameIndexCache.get(model);
+  if (cached && cached.rev === model.rev) return cached.byName;
+  const byName = new Map<string, ElementRecord>();
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary !== true) continue;
+    // First writer wins, matching the previous Array.find (first match) order.
+    if (el.declaredName && !byName.has(el.declaredName)) byName.set(el.declaredName, el);
+    if (el.declaredShortName && !byName.has(el.declaredShortName)) {
+      byName.set(el.declaredShortName, el);
+    }
+  }
+  libNameIndexCache.set(model, { rev: model.rev, byName });
+  return byName;
 }

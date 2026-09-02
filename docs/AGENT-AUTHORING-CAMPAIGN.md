@@ -243,19 +243,33 @@ deliberately and a `libraryElements` figure so its presence stays visible. The
 raw `model.all()` is deliberately unfiltered: the browser suite polls it to
 prove the async merge landed.
 
+**Imported and inherited type references did not resolve — and imports were dead
+on parsed text.** The scope walk covered owned members only, and the full
+resolver could not be reached from the binder without a dependency cycle. Worse:
+the textual mapper created every `import` with no `target`, so the import walk
+was a no-op on any parsed model — `import Lib::*;` bound nothing, silently.
+`findLibraryType` moved into core to break the cycle; the binder now gives each
+import its target (`resolveImportTargets`), composes the per-scope resolver with
+the outward walk (KerML v1.0 §8.2.3.5.4), and loops its pure/apply phases to a
+fixpoint because one binding can enable another. Fixtures:
+`L3-type-via-import`, `L3-type-via-inheritance`, `L3-library-import-from-text`.
+
 ### Known limitations, recorded rather than hidden
+
+**Forward and backward references can resolve differently when a name is both
+inherited and in an outer scope.** The binder (forward references) consults
+inherited members at each scope before walking outward, as the spec says; the
+mapper (backward references, resolved at parse time) walks owned members only.
+A name declared both in a supertype and in an enclosing package therefore binds
+to the inherited one if written before its declaration and the outer one if
+after. Documented in `src/core/scope.ts` until the mapper is taught to defer.
+
 
 **Numeric literal form is lost at parse time.** `1500.0` becomes `1500` because
 the mapper stores the parsed number, not the source text. Fixing it means
 changing what `attrs.value` holds, which the solver, unit evaluation and
 conformance checks all read, so it is not a serializer change and is not worth
 its blast radius today.
-
-**Imported and inherited type references still do not resolve.** The scope walk
-covers owned members of enclosing namespaces. A type reachable only through an
-`import` or through a supertype needs the generalization and import machinery in
-`src/semantics/resolve-names.ts`, which cannot be reached from the library layer
-without a dependency cycle.
 
 **Error recovery re-homes declarations to the root namespace.** After a bad
 declaration, the ones that follow survive but escape their enclosing package.
