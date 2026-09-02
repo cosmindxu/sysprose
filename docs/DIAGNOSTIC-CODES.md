@@ -241,6 +241,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A declaration parsed to nothing but a keyword — no name, type, value, body or specialization — which happens when a misplaced word splits one declaration into two.
 - **Hint given:** Check the declaration for a stray or repeated keyword. A port is written `in port name : Type;` (direction first, then the keyword).
 
+### `validation/unknown-unit`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A value carries a `[unit]` the engine does not know, so no dimensional check or unit conversion can be applied to it.
+- **Hint given:** Use a registered unit symbol (SI units and their prefixes, Wh, Ah, min, h, …). An unknown unit is treated as a bare number in arithmetic, which is usually wrong.
+
 ### `validation/duplicate-name`
 
 - **Severity:** error
@@ -426,4 +433,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*51 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*52 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

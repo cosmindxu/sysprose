@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "a unit the registry does not know must be reported, not silently exempted",
+  "note": "FOUND 2026-09-02 by a Fable advisory, FIXED the same day. `dimensional-consistency` skipped any feature whose unit dimension was unknown, so an unregistered unit was silently exempt from every check while the unit-aware evaluator treated its value as a bare number. `unknown-unit` now names it."
+}

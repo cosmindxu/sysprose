@@ -256,6 +256,10 @@ const REGISTRY: Unit[] = [
   { name: 'weber', symbol: 'Wb', dimension: dim({ L: 2, M: 1, T: -2, I: -1 }), factorToSI: 1, libraryName: 'SI::weber', prefixable: true },
   { name: 'tesla', symbol: 'T', dimension: dim({ M: 1, T: -2, I: -1 }), factorToSI: 1, libraryName: 'SI::tesla', prefixable: true },
   { name: 'henry', symbol: 'H', dimension: dim({ L: 2, M: 1, T: -2, I: -2 }), factorToSI: 1, libraryName: 'SI::henry', prefixable: true },
+  // Non-coherent but ubiquitous engineering units. Prefixable, so kWh / MWh and
+  // mAh come for free from the generic single-prefix decomposition.
+  { name: 'wattHour', symbol: 'Wh', dimension: dim({ L: 2, M: 1, T: -2 }), factorToSI: 3600, libraryName: 'SI::watt hour', prefixable: true },
+  { name: 'ampereHour', symbol: 'Ah', dimension: dim({ T: 1, I: 1 }), factorToSI: 3600, prefixable: true },
   {
     name: 'degreeCelsius',
     symbol: '°C',
@@ -405,6 +409,9 @@ export function libraryUnitName(unit: Unit | string): string | undefined {
  * against the library maps straight through.
  */
 const QUANTITY_DIMENSIONS: Record<string, Dimension> = {
+  // A pure number (fractions, ratios, counts).
+  DimensionOneValue: DIMENSIONLESS,
+
   // Base quantities.
   LengthValue: D_LENGTH,
   MassValue: D_MASS,

@@ -254,7 +254,48 @@ the outward walk (KerML v1.0 §8.2.3.5.4), and loops its pure/apply phases to a
 fixpoint because one binding can enable another. Fixtures:
 `L3-type-via-import`, `L3-type-via-inheritance`, `L3-library-import-from-text`.
 
+**Numeric literal form was lost at parse time.** `1500.0` came back as `1500`,
+`1e3` as `1000`: `terminal NUMBER returns number` converts before the mapper
+runs. The number stays a number in `attrs.value` — the solver, units,
+conformance and queries read it as one — and the lexeme rides beside it in
+`attrs.valueText`, honoured by the serializer only while it still denotes the
+same number, so a later edit cannot resurrect a stale form.
+
+**A derived attribute referenced from a constraint was not evaluated.** The
+constraint scope stored values eagerly through a scope-less evaluation, so an
+expression-valued attribute evaluated to unknown and was silently omitted from
+the scope — "a referenced value is unknown" while the solver computed it fine.
+The scope is now lazy and cycle-guarded: values resolve on lookup through the
+feature's own owner scope, and a derivation cycle answers unknown rather than
+hanging.
+
+**Unit-carrying constraints produced confident wrong verdicts.** The unit-blind
+scalar evaluator ran first and compared raw magnitudes, so `640 [Wh]` at
+`650 [W]` against `45 [min]` was "violated". The unit-aware evaluator now goes
+first; the scalar path remains the fallback for a dimensioned feature compared
+with a bare literal, which the unit-aware evaluator cannot judge because the
+grammar admits no unit literal inside a constraint body. An unknown unit was
+silently exempt from every dimensional check; `unknown-unit` now names it. `Wh`
+and `Ah` joined the registry (prefixable, so kWh and mAh come free).
+
 ### Known limitations, recorded rather than hidden
+
+**A `[unit]` literal cannot be written inside a constraint body.**
+`require constraint { x <= 25.0 [kg] }` is a parse error: the expression grammar
+has no unit-literal production, so a dimensioned feature can only be compared
+with a bare number (evaluated by the scalar fallback) or with another
+dimensioned feature. A grammar extension would let the unit-aware evaluator
+judge both sides.
+
+**Compound units and an information dimension are not representable.** The
+registry is a fixed table with generic single-prefix decomposition; `W*h`,
+`bit/s` and `m^2` do not resolve, and `Dimension` has no information axis, so
+data rates stay `Real`.
+
+**`-2.50` is stored as a string.** A signed literal is a `UnaryExpr`, which the
+mapper keeps verbatim, while `2.50` becomes the number 2.5. Every consumer
+handles both forms, so this is recorded rather than normalised.
+
 
 **Forward and backward references can resolve differently when a name is both
 inherited and in an outer scope.** The binder (forward references) consults
@@ -264,12 +305,6 @@ A name declared both in a supertype and in an enclosing package therefore binds
 to the inherited one if written before its declaration and the outer one if
 after. Documented in `src/core/scope.ts` until the mapper is taught to defer.
 
-
-**Numeric literal form is lost at parse time.** `1500.0` becomes `1500` because
-the mapper stores the parsed number, not the source text. Fixing it means
-changing what `attrs.value` holds, which the solver, unit evaluation and
-conformance checks all read, so it is not a serializer change and is not worth
-its blast radius today.
 
 **Error recovery re-homes declarations to the root namespace.** After a bad
 declaration, the ones that follow survive but escape their enclosing package.

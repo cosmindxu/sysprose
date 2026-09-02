@@ -269,6 +269,13 @@ const CODES = [
     hint: 'Check the declaration for a stray or repeated keyword. A port is written `in port name : Type;` (direction first, then the keyword).',
   },
   {
+    code: 'validation/unknown-unit',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A value carries a `[unit]` the engine does not know, so no dimensional check or unit conversion can be applied to it.',
+    hint: 'Use a registered unit symbol (SI units and their prefixes, Wh, Ah, min, h, …). An unknown unit is treated as a bare number in arithmetic, which is usually wrong.',
+  },
+  {
     code: 'validation/duplicate-name',
     source: 'validation',
     severity: 'error',
