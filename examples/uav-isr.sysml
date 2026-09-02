@@ -57,7 +57,15 @@ package UAVSurveillanceSystem {
     }
 
     part def AirVehicle {
+        doc /* Fixed-wing, catapult-launched, electric, with a single pusher
+             * propulsion unit. Thrust is sized for cruise and climb, NOT for
+             * hover: at 18.5 kg the airframe weighs 181 N and the propulsion
+             * unit delivers 42 N, a thrust-to-weight of 0.23. That is ample
+             * for a fixed wing and impossible for a multirotor, so the
+             * configuration is stated rather than left to be inferred. */
         attribute mtowKg : Real = 18.5;
+        attribute cruisePowerW : Real = 650.0;
+        attribute usableEnergyFraction : Real = 0.8;
 
         part battery : BatteryPack;
         part flightComputer : FlightController;
@@ -106,10 +114,22 @@ package UAVSurveillanceSystem {
     requirement def EnduranceRequirement {
         attribute id = "R-UAV-001";
         doc /* The air vehicle shall sustain at least 45 minutes of surveillance
-             * flight on a single battery pack. */
+             * flight on a single battery pack. Checked against the usable
+             * energy of the pack at cruise power: 640 Wh x 0.8 / 650 W = 47 min. */
+        subject uav : AirVehicle;
+        require constraint {
+            uav.battery.capacityWh * uav.usableEnergyFraction / uav.cruisePowerW * 60.0 >= 45.0
+        }
+    }
+
+    requirement def MassRequirement {
+        attribute id = "R-UAV-002";
+        doc /* Maximum take-off mass shall stay within the 25 kg class boundary
+             * that separates the light category from heavier certification. */
         subject uav : AirVehicle;
         require constraint { uav.mtowKg <= 25.0 }
     }
 
     satisfy EnduranceRequirement by uav;
+    satisfy MassRequirement by uav;
 }

@@ -8,9 +8,10 @@ OMG SysML v2 *API & Services*–shaped query facade.
 
 [![Sysprose showing a UAV surveillance model: the interconnection diagram of the air vehicle above the SysML v2 textual source that produced it](docs/images/sysprose-uav.png)](https://cosmindxu.github.io/sysprose/)
 
-<p align="center"><em>An ISR unmanned air system modelled in Sysprose — the interconnection view of
-the air vehicle, generated from the textual definitions shown underneath
-(<a href="examples/uav-isr.sysml"><code>examples/uav-isr.sysml</code></a>).
+<p align="center"><em>An ISR unmanned air system modelled in Sysprose — the interconnection view
+of the air vehicle, scoped to it, above the definition that produces it
+(<a href="examples/uav-isr.sysml"><code>examples/uav-isr.sysml</code></a>; the editor shows the
+serializer's normalised form of the source).
 <strong><a href="https://cosmindxu.github.io/sysprose/">Try it in your browser →</a></strong></em></p>
 
 > **AI-agent focus.** Two things make the tool agent-friendly: models are developed as *textual
@@ -21,6 +22,14 @@ the air vehicle, generated from the textual definitions shown underneath
 > An academic modeling tool targeting the core authoring experience of modern MBSE
 > tools, built on the OMG SysML v2 / KerML standard (adopted 2025).
 
+## Highlights
+
+- **Standards-native model** — the in-memory model mirrors the OMG API element-graph (flat `@id`/`@type`, relationships reified as first-class elements), so it round-trips losslessly.
+- **Graphical + textual** — multiple diagram views (General/BDD, Interconnection/IBD, Action, State, Requirement, Tree) kept in sync with the SysML v2 textual notation.
+- **Validation** — a rule engine flags naming, typing, multiplicity, containment and traceability issues.
+- **API-first** — query the model with OMG-shaped constraint trees, compute analytics (metrics, requirement-satisfaction coverage, traceability, where-used), and script automations.
+- **Local-first** — projects persist in the browser (IndexedDB/localStorage); import/export `.sysml`, model JSON, and OMG element-graph JSON.
+
 ## Name and standards status
 
 Sysprose implements a **SysML v2–style textual notation** and an **OMG-API-shaped element
@@ -29,14 +38,6 @@ tested SysML v2 tool, and it does not claim conformance to any OMG specification
 registered trademark of the Object Management Group, Inc.** This project is not affiliated with,
 sponsored by, or endorsed by the OMG. Where the documentation says "SysML v2" it refers to the
 *language and API shape being implemented*, never to a certification of this tool.
-
-## Highlights
-
-- **Standards-native model** — the in-memory model mirrors the OMG API element-graph (flat `@id`/`@type`, relationships reified as first-class elements), so it round-trips losslessly.
-- **Graphical + textual** — multiple diagram views (General/BDD, Interconnection/IBD, Action, State, Requirement, Tree) kept in sync with the SysML v2 textual notation.
-- **Validation** — a rule engine flags naming, typing, multiplicity, containment and traceability issues.
-- **API-first** — query the model with OMG-shaped constraint trees, compute analytics (metrics, requirement-satisfaction coverage, traceability, where-used), and script automations.
-- **Local-first** — projects persist in the browser (IndexedDB/localStorage); import/export `.sysml`, model JSON, and OMG element-graph JSON.
 
 ## For AI agents
 

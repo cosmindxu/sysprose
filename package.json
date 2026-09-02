@@ -22,7 +22,8 @@
     "check": "tsx scripts/sysml-check.ts",
     "campaign": "vitest run test/campaign",
     "codes": "tsx scripts/gen-diagnostic-codes.ts",
-    "bench": "tsx scripts/agent-repair-bench.ts"
+    "bench": "tsx scripts/agent-repair-bench.ts",
+    "shot:hero": "node scripts/shot-hero.mjs"
   },
   "dependencies": {
     "@types/express": "^5.0.6",
