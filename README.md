@@ -6,6 +6,13 @@ analyze, simulate and automate, all client-side with **no backend required**. It
 programmable **API for data analysis and automation**, with an in-browser TypeScript SDK and an
 OMG SysML v2 *API & Services*–shaped query facade.
 
+[![Sysprose showing a UAV surveillance model: the interconnection diagram of the air vehicle above the SysML v2 textual source that produced it](docs/images/sysprose-uav.png)](https://cosmindxu.github.io/sysprose/)
+
+<p align="center"><em>An ISR unmanned air system modelled in Sysprose — the interconnection view of
+the air vehicle, generated from the textual definitions shown underneath
+(<a href="examples/uav-isr.sysml"><code>examples/uav-isr.sysml</code></a>).
+<strong><a href="https://cosmindxu.github.io/sysprose/">Try it in your browser →</a></strong></em></p>
+
 > **AI-agent focus.** Two things make the tool agent-friendly: models are developed as *textual
 > definitions* an agent can write and diff like code, and the whole app is exercised through the
 > browser, so an agent can drive and test it end-to-end with a browser-automation harness (see
