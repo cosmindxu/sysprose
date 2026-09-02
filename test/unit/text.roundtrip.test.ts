@@ -7,6 +7,7 @@ const KEY_ATTRS = [
   'type',
   'typeRef',
   'value',
+  'valueText',
   'direction',
   'multiplicity',
   'reqId',

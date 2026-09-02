@@ -192,6 +192,24 @@ function stripBlockComment(raw: string | undefined): string {
   return s.trim();
 }
 
+/**
+ * The source lexeme of a numeric value, when `String(value)` would not
+ * reproduce it.
+ *
+ * `terminal NUMBER returns number` converts at CST→AST time, so by the time the
+ * mapper sees `1500.0` it is the JS number 1500 and re-serializes as `1500`;
+ * `1e3` becomes `1000`. The number stays in `attrs.value` — the solver, unit
+ * evaluation, conformance and the query engine all read it as a number — and
+ * the lexeme travels beside it in `attrs.valueText`, which the serializer
+ * prefers only while it still denotes the same number. Clean cases (`= 42`)
+ * get no attribute at all, so the model stays byte-identical for them.
+ */
+function valueTextFor(expr: Expression, value: unknown): { valueText?: string } {
+  if (typeof value !== 'number') return { valueText: undefined };
+  const lexeme = expr.$cstNode?.text?.trim();
+  return { valueText: lexeme && lexeme !== String(value) ? lexeme : undefined };
+}
+
 /** 1-based line/column of an AST node (falls back to 1,1). */
 function posOf(node: AstNode | undefined): { line: number; column: number } {
   const start = node?.$cstNode?.range?.start;
@@ -1126,7 +1144,7 @@ class Mapper {
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
       const value = this.mapValue(node.value);
-      if (value !== undefined) this.model.setAttrs(el.id, { value });
+      if (value !== undefined) this.model.setAttrs(el.id, { value, ...valueTextFor(node.value, value) });
       // `:=` provenance (F-follow-up): keep return/behavior statements from
       // drifting to `=` on re-emission.
       if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
@@ -1179,7 +1197,7 @@ class Mapper {
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
       const value = this.mapValue(node.value);
-      if (value !== undefined) this.model.setAttrs(el.id, { value });
+      if (value !== undefined) this.model.setAttrs(el.id, { value, ...valueTextFor(node.value, value) });
       if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
         this.model.setAttrs(el.id, { initialValue: true });
       }
@@ -1513,7 +1531,7 @@ class Mapper {
     // Feature value ( = / := ).
     if (node.valueOp && node.value) {
       const value = this.mapValue(node.value);
-      if (value !== undefined) this.model.setAttrs(el.id, { value });
+      if (value !== undefined) this.model.setAttrs(el.id, { value, ...valueTextFor(node.value, value) });
       if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) this.model.setAttrs(el.id, { initialValue: true });
     }
 

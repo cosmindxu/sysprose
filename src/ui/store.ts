@@ -1480,7 +1480,8 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model } = get();
       if (!model.has(id)) return;
       pushUndo();
-      model.setAttrs(id, { [key]: value });
+      // A hand-edited value invalidates the parser's source lexeme for it.
+      model.setAttrs(id, key === 'value' ? { value, valueText: undefined } : { [key]: value });
       afterMutation();
     },
 

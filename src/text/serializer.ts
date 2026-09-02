@@ -264,7 +264,7 @@ function header(model: Model, el: ElementRecord): string {
   if (el.attrs.value !== undefined) {
     const clause: string[] = [
       el.attrs.initialValue === true ? ':=' : '=',
-      formatValue(el.attrs.value),
+      valueLexeme(el),
     ];
     if (typeof el.attrs.unit === 'string' && el.attrs.unit !== '') clause.push(`[${el.attrs.unit}]`);
     parts.push(...clause);
@@ -423,7 +423,7 @@ function multFragment(el: ElementRecord): string[] {
 /** `:=` / `=` feature-value clause, if present. */
 function valueClause(el: ElementRecord): string[] {
   if (el.attrs.value === undefined) return [];
-  const parts: string[] = [el.attrs.initialValue === true ? ':=' : '=', formatValue(el.attrs.value)];
+  const parts: string[] = [el.attrs.initialValue === true ? ':=' : '=', valueLexeme(el)];
   // Value unit stored in `attrs.unit` (`= 1500 [kg]`); never conflated with
   // the multiplicity bracket (finding D1/H11).
   if (typeof el.attrs.unit === 'string' && el.attrs.unit !== '') parts.push(`[${el.attrs.unit}]`);
@@ -845,6 +845,22 @@ function qualifiedRef(model: Model, targetId: ElementId): string {
 }
 
 /* ──────────────────────────────── values ──────────────────────────────── */
+
+/**
+ * The text to emit for a feature value: the author's own lexeme when the model
+ * still carries it AND it still denotes the current number.
+ *
+ * `attrs.valueText` is written by the parser beside a numeric `attrs.value`
+ * (`1500.0`, `1e3`). Any later change to the value — the Properties panel, the
+ * SDK, a collaborator — makes the lexeme stale; the `Number(t) === v` guard is
+ * what makes that safe, not any discipline at the write sites.
+ */
+function valueLexeme(el: ElementRecord): string {
+  const v = el.attrs.value;
+  const t = el.attrs.valueText;
+  if (typeof v === 'number' && typeof t === 'string' && t !== '' && Number(t) === v) return t;
+  return formatValue(v);
+}
 
 function formatValue(v: unknown): string {
   if (typeof v === 'number') return String(v);
