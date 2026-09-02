@@ -1,0 +1,13 @@
+{
+  "level": "L5",
+  "title": "an error deep in a body keeps the outer declarations",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 5
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "level": "L2",
+  "title": "a malformed expression with two operators",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/constraint-violation",
+      "severity": "info",
+      "line": 3,
+      "column": 5
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 3
+  }
+}

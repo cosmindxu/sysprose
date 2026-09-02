@@ -1,0 +1,22 @@
+{
+  "level": "L3",
+  "title": "an import of a package that is not loaded",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "ref/unresolved-import",
+      "severity": "warning",
+      "line": 2
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 3
+  },
+  "expectFail": {
+    "reason": "Importing a package that does not exist is entirely SILENT: no diagnostic of any severity. The agent has no way to learn that its import did nothing. The ref/unresolved-import code exists in the catalogue but nothing emits it."
+  }
+}

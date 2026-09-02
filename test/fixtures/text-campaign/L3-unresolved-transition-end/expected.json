@@ -1,0 +1,20 @@
+{
+  "level": "L3",
+  "title": "a transition naming a state that does not exist",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "ref/unresolved-transition-end",
+      "severity": "warning",
+      "line": 4,
+      "column": 9
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 4
+  }
+}

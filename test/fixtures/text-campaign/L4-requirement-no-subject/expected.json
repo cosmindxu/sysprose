@@ -1,0 +1,20 @@
+{
+  "level": "L4",
+  "title": "a requirement with no subject",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/requirement-subject",
+      "severity": "warning",
+      "line": 2,
+      "column": 5
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 2
+  }
+}

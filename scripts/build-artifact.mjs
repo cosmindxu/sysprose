@@ -140,7 +140,7 @@ pre b{color:var(--sky);font-weight:400}
   <div class="wrap">
     <section>
       <div class="eyebrow dark">What it is</div>
-      <h2>The authoring experience of MagicDraw / SysON, client-side.</h2>
+      <h2>The authoring experience of a mainstream MBSE tool, client-side.</h2>
       <p class="sub">A model explorer, twelve diagram kinds, a synchronized textual-notation editor, a properties/spec panel, validation, behavioral simulation, a numeric parametric solver, the full standard model library, a programmable API, and real-time multi-user co-editing &mdash; delivered as a static single-page app plus optional OMG-shaped REST/OSLC and collaboration servers.</p>
       <div class="shots">
         <figure><img src="${IBD}" alt="Interconnection view — functional block diagram"><figcaption>Interconnection view &mdash; parts wired through ports (functional block diagram)</figcaption></figure>
@@ -157,10 +157,10 @@ pre b{color:var(--sky);font-weight:400}
 
     <section>
       <div class="eyebrow dark">Feature parity</div>
-      <h2>Measured against Cameo/MagicDraw and Obeo SysON.</h2>
+      <h2>Measured against mainstream MBSE tools.</h2>
       <p class="sub">Candid, capability by capability. Where it is <span class="c pa">partial</span> or <span class="c no">&mdash;</span>, the report says so.</p>
       <div style="overflow-x:auto"><table class="tbl">
-        <tr><th>Capability</th><th>Cameo</th><th>SysON</th><th>This tool</th></tr>
+        <tr><th>Capability</th><th>Commercial desktop</th><th>Open-source web</th><th>This tool</th></tr>
         ${parityRows}
       </table></div>
     </section>

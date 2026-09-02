@@ -1,0 +1,32 @@
+{
+  "level": "L3",
+  "title": "a connection endpoint that does not resolve",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "validation/port-direction",
+      "severity": "warning",
+      "line": 3,
+      "column": 18
+    },
+    {
+      "code": "validation/connector-endpoints",
+      "severity": "error",
+      "line": 5,
+      "column": 5
+    },
+    {
+      "code": "ref/unresolved-connection-end",
+      "severity": "warning",
+      "line": 5,
+      "column": 5
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 10
+  }
+}

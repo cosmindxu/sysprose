@@ -1,0 +1,13 @@
+{
+  "level": "L0",
+  "title": "a file containing only comments",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "«TextualRepresentation»"
+    ],
+    "minElements": 1
+  }
+}

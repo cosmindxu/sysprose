@@ -8,7 +8,7 @@ Status: **active** · Derived from `01-state-of-the-art.md` + `02-omg-standard-r
 
 ## 1. Vision & constraints
 
-Build an **academic SysML v2 modeling tool that runs entirely inside a browser window** (no mandatory server), offering the core authoring experience of modern tools (MagicDraw/Cameo, Eclipse SysON, Rhapsody) — a model explorer, graphical diagrams, a synchronized textual notation editor, properties editing, validation, and project save/load — **plus a programmable API** for data analysis and automation.
+Build an **academic SysML v2 modeling tool that runs entirely inside a browser window** (no mandatory server), offering the core authoring experience of modern MBSE tools — a model explorer, graphical diagrams, a synchronized textual notation editor, properties editing, validation, and project save/load — **plus a programmable API** for data analysis and automation.
 
 **Hard constraints**
 
@@ -115,7 +115,7 @@ interface QueryResult { commitId: string; elements: ElementRecord[]; total: numb
 
 ## 5. Feature scope, mapped to modern-tool capabilities
 
-**Authoring (parity targets: MagicDraw/SysON)**
+**Authoring (parity targets: mainstream MBSE tools)**
 
 - Project: new, open, save, import, export (`.sysml`, model JSON, OMG element-graph JSON).
 - Model explorer tree: hierarchical containment, create/rename/delete, drag-reparent, type icons.

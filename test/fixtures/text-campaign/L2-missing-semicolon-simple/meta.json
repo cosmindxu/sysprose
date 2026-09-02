@@ -1,0 +1,5 @@
+{
+  "level": "L2",
+  "title": "a missing semicolon after a plain typed feature",
+  "note": "ACCEPTED LENIENCY, verified equivalent to the corrected file. See L2-missing-semicolon."
+}

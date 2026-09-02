@@ -1,0 +1,30 @@
+{
+  "level": "L2",
+  "title": "an expression with an unclosed parenthesis",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "validation/constraint-violation",
+      "severity": "info",
+      "line": 2,
+      "column": 5
+    },
+    {
+      "code": "parse/mismatched-token",
+      "severity": "error",
+      "line": 2,
+      "column": 27,
+      "found": "}",
+      "expected": [
+        ")"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 2
+  }
+}

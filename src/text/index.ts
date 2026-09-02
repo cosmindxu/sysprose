@@ -23,6 +23,18 @@ export { resolveConnectorFeatureChains } from './langium/map-to-model';
 // Shared result/diagnostic contract.
 export type { ParseResult, ParseDiagnostic } from './types';
 
+// Headless check pipeline (parse + library binding + validation) — the entry
+// point for agents and the CLI. See docs/AGENT-TEXT-CAMPAIGN.md.
+export { checkText } from './check';
+export type { CheckOptions, CheckReport, Normalization } from './check';
+export {
+  DIAGNOSTIC_CODES,
+  diagnosticCode,
+  isKnownCode,
+  renderHint,
+} from './langium/diagnostic-codes';
+export type { DiagnosticCode } from './langium/diagnostic-codes';
+
 export { serializeModel, serializeElement } from './serializer';
 export { lex } from './lexer';
 export type { Token, TokenKind } from './lexer';

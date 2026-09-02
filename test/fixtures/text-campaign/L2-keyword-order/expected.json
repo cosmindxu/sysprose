@@ -1,0 +1,19 @@
+{
+  "level": "L2",
+  "title": "definition keywords in the wrong order",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/no-viable-alt",
+      "severity": "error",
+      "line": 2,
+      "hintIncludes": "part def"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1
+  },
+  "expectFail": {
+    "reason": "Reversed definition keywords produce \"Expecting '}' but found 'def'\" with a hint to insert a brace. The agent needs to be told the correct order, `part def Name`."
+  }
+}

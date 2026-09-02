@@ -1,0 +1,5 @@
+{
+  "level": "L2",
+  "title": "= used where == is required in a constraint",
+  "note": "SysML v2 uses == for equality; = is assignment and is not an expression operator (adversarial finding F6)."
+}

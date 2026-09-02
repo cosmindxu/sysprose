@@ -1,0 +1,35 @@
+{
+  "level": "L2",
+  "title": "two unrelated syntax errors in one file",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/mismatched-token",
+      "severity": "error",
+      "line": 6,
+      "column": 10,
+      "found": "def",
+      "expected": [
+        "}"
+      ]
+    },
+    {
+      "code": "parse/not-all-input-parsed",
+      "severity": "error",
+      "line": 7,
+      "column": 1,
+      "found": "}",
+      "expected": [
+        "<end of file>"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 2,
+    "rootsSurvive": [
+      "P",
+      "C"
+    ],
+    "minElements": 5
+  }
+}

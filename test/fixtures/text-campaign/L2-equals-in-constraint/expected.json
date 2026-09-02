@@ -1,0 +1,26 @@
+{
+  "level": "L2",
+  "title": "= used where == is required in a constraint",
+  "note": "SysML v2 uses == for equality; = is assignment and is not an expression operator (adversarial finding F6).",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/no-viable-alt",
+      "severity": "error",
+      "line": 3,
+      "column": 26,
+      "found": "}",
+      "expected": [
+        "{",
+        ";"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 4
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "level": "L4",
+  "title": "a connection whose two ends are the same feature",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/port-direction",
+      "severity": "warning",
+      "line": 3,
+      "column": 18
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 10
+  },
+  "note": "COVERAGE GAP: validation/connector-endpoints (fewer than two ends) cannot be reached from textual notation — the grammar requires both ends of a connect statement — so the rule is only reachable from a programmatically built model. Recorded so the gap is known, not hidden."
+}

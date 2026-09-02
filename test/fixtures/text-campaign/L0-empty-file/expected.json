@@ -1,0 +1,10 @@
+{
+  "level": "L0",
+  "title": "an empty file is not an error",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "minElements": 0
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "level": "L0",
+  "title": "a UTF-8 BOM is stripped and reported",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/port-direction",
+      "severity": "warning",
+      "line": 7,
+      "column": 9
+    },
+    {
+      "code": "import/bom-stripped",
+      "severity": "info"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "VehicleModel"
+    ],
+    "minElements": 7
+  }
+}

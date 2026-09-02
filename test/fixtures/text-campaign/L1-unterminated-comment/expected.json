@@ -1,0 +1,18 @@
+{
+  "level": "L1",
+  "title": "a block comment that is never closed",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "lexer/unterminated-comment",
+      "severity": "error",
+      "line": 2
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1
+  },
+  "expectFail": {
+    "reason": "No diagnostic identifies the unterminated block comment. The agent gets a cascade of four unrelated parse errors starting at the \"/\" character, none of which says \"close your comment\"."
+  }
+}

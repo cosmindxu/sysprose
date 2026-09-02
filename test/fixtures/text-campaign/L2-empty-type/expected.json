@@ -1,0 +1,59 @@
+{
+  "level": "L2",
+  "title": "a colon with no type after it",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/no-viable-alt",
+      "severity": "error",
+      "line": 2,
+      "column": 19,
+      "found": ";",
+      "expected": [
+        "ID",
+        "UNRESTRICTED_NAME",
+        "type",
+        "classifier",
+        "behavior",
+        "interaction",
+        "function",
+        "predicate",
+        "metaclass",
+        "feature",
+        "step",
+        "multiplicity",
+        "connector",
+        "association",
+        "member",
+        "part",
+        "item",
+        "port",
+        "flow",
+        "action",
+        "state",
+        "metadata",
+        "occurrence",
+        "event",
+        "snapshot",
+        "individual",
+        "succession",
+        "transition",
+        "accept",
+        "send",
+        "do",
+        "entry",
+        "exit",
+        "end",
+        "frame",
+        "done"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 3
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "level": "L4",
+  "title": "a port with no direction",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/port-direction",
+      "severity": "warning",
+      "line": 3,
+      "column": 18
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 5
+  }
+}

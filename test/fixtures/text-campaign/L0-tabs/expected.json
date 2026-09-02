@@ -1,0 +1,13 @@
+{
+  "level": "L0",
+  "title": "tab indentation is accepted and flagged in normalization",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 3
+  }
+}

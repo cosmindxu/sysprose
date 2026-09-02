@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "a connection whose two ends are the same feature",
+  "note": "COVERAGE GAP: validation/connector-endpoints (fewer than two ends) cannot be reached from textual notation — the grammar requires both ends of a connect statement — so the rule is only reachable from a programmatically built model. Recorded so the gap is known, not hidden."
+}

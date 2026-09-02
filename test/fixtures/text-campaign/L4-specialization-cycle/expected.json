@@ -1,0 +1,32 @@
+{
+  "level": "L4",
+  "title": "two definitions specializing each other",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "validation/specialization-cycle",
+      "severity": "error",
+      "line": 2,
+      "column": 5
+    },
+    {
+      "code": "ref/unresolved-specialization",
+      "severity": "warning",
+      "line": 2,
+      "column": 16
+    },
+    {
+      "code": "validation/specialization-cycle",
+      "severity": "error",
+      "line": 3,
+      "column": 5
+    }
+  ],
+  "invariants": {
+    "maxErrors": 2,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 5
+  }
+}

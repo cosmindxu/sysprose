@@ -18,9 +18,8 @@ the air vehicle, generated from the textual definitions shown underneath
 > browser, so an agent can drive and test it end-to-end with a browser-automation harness (see
 > the Playwright suite in `test/e2e/`).
 
-> An academic modeling tool targeting the core authoring experience of modern tools
-> (MagicDraw/Cameo, Eclipse SysON, Rhapsody), built on the OMG SysML v2 / KerML standard
-> (adopted 2025).
+> An academic modeling tool targeting the core authoring experience of modern MBSE
+> tools, built on the OMG SysML v2 / KerML standard (adopted 2025).
 
 ## Name and standards status
 
@@ -38,6 +37,39 @@ sponsored by, or endorsed by the OMG. Where the documentation says "SysML v2" it
 - **Validation** — a rule engine flags naming, typing, multiplicity, containment and traceability issues.
 - **API-first** — query the model with OMG-shaped constraint trees, compute analytics (metrics, requirement-satisfaction coverage, traceability, where-used), and script automations.
 - **Local-first** — projects persist in the browser (IndexedDB/localStorage); import/export `.sysml`, model JSON, and OMG element-graph JSON.
+
+## For AI agents
+
+Sysprose is built to be driven by an agent that authors models as **textual
+definitions** and repairs them from the tool's own feedback.
+
+```bash
+npm run check -- model.sysml --json     # exit 0 clean · 1 findings · 2 usage/IO
+```
+
+Every finding carries a **stable code**, an exact **source range** (line, column
+and offset, start and end), and a one-line **hint** naming the repair; parser
+errors also carry `expected` and `found`. Branch on `code`, never on `message`.
+
+```jsonc
+{
+  "code": "validation/duplicate-name",
+  "severity": "error",
+  "range": { "start": { "line": 3, "column": 5, "offset": 32 }, "end": { … } },
+  "elementName": "A",
+  "hint": "Rename one of them, or move it to a different owner. Sibling names must be unique."
+}
+```
+
+The loop is: write the file, check it, go to `range.start`, apply `hint`, repeat
+until `ok`. In TypeScript, `checkText(source)` from `@text/index` does the same
+thing in-process and never throws.
+
+- [`docs/DIAGNOSTIC-CODES.md`](docs/DIAGNOSTIC-CODES.md) — every code, what
+  triggers it, and the repair it suggests.
+- [`docs/AGENT-TEXT-CAMPAIGN.md`](docs/AGENT-TEXT-CAMPAIGN.md) — the test
+  campaign that keeps this feedback good enough to act on, and the open defects
+  it has found.
 
 ## Architecture
 
@@ -72,7 +104,10 @@ npm run typecheck      # tsc --noEmit
 npm test               # vitest unit/integration
 npm run build && npm run preview   # serve the app at :4173
 npm run test:e2e       # Playwright E2E (after preview is up)
-npm run report         # regenerate docs/TEST-REPORT.md
+npm run report         # regenerate docs/TEST-SUMMARY.md
+npm run campaign       # the agent text-authoring campaign
+npm run codes          # regenerate docs/DIAGNOSTIC-CODES.md from the catalogue
+npm run check -- <file.sysml> [--json]   # check a file from the command line
 ```
 
 ## Deploy

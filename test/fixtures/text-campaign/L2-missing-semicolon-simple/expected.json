@@ -1,0 +1,14 @@
+{
+  "level": "L2",
+  "title": "a missing semicolon after a plain typed feature",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 7
+  },
+  "note": "ACCEPTED LENIENCY, verified equivalent to the corrected file. See L2-missing-semicolon."
+}

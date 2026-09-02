@@ -5,7 +5,7 @@
  * ────────────────────────────────────────────────────────────────────────── */
 
 /* Connection handles stay hidden until a node is hovered or selected, so the
- * diagram reads cleanly (as in Cameo/SysON). Boundary PORT handles stay visible —
+ * diagram reads cleanly, as in mainstream MBSE tools. Boundary PORT handles stay visible —
  * only the default body handles carry the .body-handle class. */
 .react-flow__handle.body-handle {
   opacity: 0;

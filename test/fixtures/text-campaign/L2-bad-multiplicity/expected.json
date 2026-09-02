@@ -1,0 +1,34 @@
+{
+  "level": "L2",
+  "title": "a three-part multiplicity range",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/mismatched-token",
+      "severity": "error",
+      "line": 3,
+      "column": 26,
+      "found": "..",
+      "expected": [
+        "]"
+      ]
+    },
+    {
+      "code": "parse/mismatched-token",
+      "severity": "error",
+      "line": 3,
+      "column": 29,
+      "found": "]",
+      "expected": [
+        "}"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 2,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 4
+  }
+}

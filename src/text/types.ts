@@ -5,20 +5,56 @@
  * that file's removal. The LIVE parser is `langium/map-to-model.ts`
  * (`astToModel`, exported as `parseModel` from this module's barrel); these
  * types describe its result shape.
+ *
+ * `ParseDiagnostic` is a structural subset of the validation {@link Diagnostic}
+ * (same field names and meanings) so a parse finding can be widened into one
+ * without translation — see `src/text/check.ts` and the Agent Diagnostics
+ * Contract in `docs/AGENT-TEXT-CAMPAIGN.md`.
  */
 
-import type { Model } from '@core/index';
+import type { Model, ElementId } from '@core/index';
+import type { DiagnosticSource, TextRange } from '@validation/types';
 
-/** A parse diagnostic with 1-based source position. */
+/**
+ * A parse diagnostic with 1-based source position.
+ *
+ * `line`/`column` are the START of {@link range} and are kept as top-level
+ * fields for backward compatibility with every existing consumer.
+ */
 export interface ParseDiagnostic {
   message: string;
   line: number;
   column: number;
   severity: 'error' | 'warning';
+
+  /* ── Agent Diagnostics Contract ── */
+
+  /** Stable catalogue id, e.g. `parse/mismatched-token` (docs/DIAGNOSTIC-CODES.md). */
+  code?: string;
+  /** Full span of the offending text. `range.start` matches `line`/`column`. */
+  range?: TextRange;
+  /** Tokens that would have been legal here (parser errors). */
+  expected?: string[];
+  /** The offending token text actually found. */
+  found?: string;
+  /** One-line, actionable repair suggestion. */
+  hint?: string;
+  /** Producing stage: `lexer`, `parser` or `mapper`. */
+  source?: DiagnosticSource;
 }
 
 /** The result of `parseModel` (text → model + diagnostics). */
 export interface ParseResult {
   model: Model;
   diagnostics: ParseDiagnostic[];
+  /**
+   * Source span of each element the parse created, keyed by element id.
+   *
+   * Deliberately a SIDE TABLE rather than a field on `ElementRecord`: ranges
+   * are a property of one particular source text, not of the model, and must
+   * never reach persistence or the element-graph interchange format. Used to
+   * give validation findings a text position (`src/text/check.ts`) and, in the
+   * UI, to jump from a problem row to the offending line.
+   */
+  ranges: Map<ElementId, TextRange>;
 }

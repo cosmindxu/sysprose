@@ -1,0 +1,20 @@
+{
+  "level": "L4",
+  "title": "a string literal on a Real attribute",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/value-type-mismatch",
+      "severity": "warning",
+      "line": 2,
+      "column": 5
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 2
+  }
+}

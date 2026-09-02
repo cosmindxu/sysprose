@@ -31,14 +31,14 @@ anyone else. Therefore:
 - **Describing what the tool implements.** "Reads and writes SysML v2 textual notation"
   is descriptive use of the standard's name, and is correct and necessary.
 - **The `.sysml` file extension**, and `.kerml` if ever added. These are the interchange
-  extensions the specification and every other tool use (Eclipse SysON, the OMG pilot,
-  SysIDE). A private extension would break interchange and help nobody. A file
-  extension is a format identifier, not a brand.
+  extensions the specification and every other SysML v2 tool use. A private extension
+  would break interchange and help nobody. A file extension is a format identifier,
+  not a brand.
 - **The names KerML, OMG, "API & Services", the element-graph shape** in prose and docs.
 - **Internal identifiers**: `window.sysml`, `SysmlApiServer`, `SYSML_API_TOKEN`,
   `SYSMLV2_PILOT_URL`. Not public-facing brand use.
 - **Statements about third parties**: "the OMG pilot server", "a conformant tool must
-  preserve identity", "SysON is led by CEA for OMG compliance". These describe the spec
+  preserve identity". These describe the spec
   or someone else's product.
 - **The two survey documents** (`docs/01-state-of-the-art.md`,
   `docs/02-omg-standard-reference.md`) — they are about the standard and other vendors'
@@ -71,6 +71,27 @@ branding test.
 database name, and changing it orphans every project a user has already saved. A
 migration is a separate, opt-in change.
 
+## Diagnostics for agents
+
+Sysprose's users include AI agents that author models as text and can only act on
+what the tool reports. The **Agent Diagnostics Contract**
+(`docs/AGENT-TEXT-CAMPAIGN.md`) therefore binds every finding derived from source
+text:
+
+1. **Every such finding carries a `code` and a `range`.** The code comes from
+   `src/text/langium/diagnostic-codes.ts` and is stable; the range is where in the
+   file the problem is. Automation branches on `code`, never on `message`.
+2. **A new parser, mapper or validation error site must add a catalogue entry**
+   and regenerate the reference with `npm run codes`.
+   `test/unit/diagnostic-codes.test.ts` fails otherwise, in both directions.
+3. **Never let a check fail silently.** `checkText` reports an internal failure as
+   an `import/internal-error` with `ok: false`; the CLI exits non-zero on an
+   unexpected error. A silent pass is the one outcome that lets a broken model
+   through.
+4. **`npm run campaign` must stay green.** A fixture whose golden carries
+   `expectFail` records a shortfall the tool has not fixed yet; if it starts
+   passing, the runner fails so the fixture gets promoted rather than drifting.
+
 ## Layout and workflow
 
 - Canonical remote: `github.com/cosmindxu/sysprose`. Commit as the GitHub noreply
@@ -90,6 +111,7 @@ npm run lint             # eslint src/ test/ scripts/
 npm test                 # vitest: unit + integration + conformance + server + interop
 npm run build            # production build
 npx playwright test --config="$PWD/playwright.config.ts"
+npm run campaign         # agent text-authoring campaign (part of `npm test`)
 ```
 
 `docs/TEST-SUMMARY.md` is generated (`npm run test:report && npm run report`). It is

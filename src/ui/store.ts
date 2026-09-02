@@ -431,13 +431,28 @@ export interface AppState {
 
 /* ──────────────────────────────── Helpers ───────────────────────────────── */
 
-/** Map a textual-notation parse diagnostic to the validation Diagnostic shape. */
+/**
+ * Map a textual-notation parse diagnostic to the validation Diagnostic shape.
+ *
+ * Carries the Agent Diagnostics Contract fields through unchanged (`code`,
+ * `range`, `expected`, `found`, `hint`) — they used to be discarded here, which
+ * left the Problems panel with an English sentence and nothing to navigate by.
+ * The `(line N:C)` suffix stays on the message: it is what the panel shows
+ * today and what the existing E2E asserts, and the structured `range` is the
+ * field new consumers should read.
+ */
 function parseDiagToDiagnostic(d: ParseDiagnostic, i: number): Diagnostic {
   return {
     id: `parse#${i}`,
     ruleId: 'parse',
     severity: d.severity,
     message: `${d.message} (line ${d.line}:${d.column})`,
+    ...(d.code ? { code: d.code } : {}),
+    ...(d.range ? { range: d.range } : {}),
+    ...(d.expected ? { expected: d.expected } : {}),
+    ...(d.found ? { found: d.found } : {}),
+    ...(d.hint ? { hint: d.hint } : {}),
+    source: d.source ?? 'parser',
   };
 }
 

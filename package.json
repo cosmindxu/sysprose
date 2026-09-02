@@ -18,7 +18,10 @@
     "test:report": "vitest run --reporter=json --outputFile=test-results/unit-results.json",
     "test:e2e": "playwright test",
     "report": "tsx scripts/gen-test-report.ts",
-    "interop": "tsx scripts/pilot-roundtrip.ts"
+    "interop": "tsx scripts/pilot-roundtrip.ts",
+    "check": "tsx scripts/sysml-check.ts",
+    "campaign": "vitest run test/campaign",
+    "codes": "tsx scripts/gen-diagnostic-codes.ts"
   },
   "dependencies": {
     "@types/express": "^5.0.6",

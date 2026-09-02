@@ -1,0 +1,26 @@
+{
+  "level": "L3",
+  "title": "a type reference that names nothing",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "validation/unresolved-type-ref",
+      "severity": "error",
+      "line": 2,
+      "column": 5
+    },
+    {
+      "code": "ref/unresolved-specialization",
+      "severity": "warning",
+      "line": 2,
+      "column": 12
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 2
+  }
+}

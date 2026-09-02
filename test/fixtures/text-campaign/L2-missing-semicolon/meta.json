@@ -1,0 +1,5 @@
+{
+  "level": "L2",
+  "title": "a missing semicolon after an attribute with a value",
+  "note": "ACCEPTED LENIENCY, verified: the parser recovers from the missing semicolon and builds a model IDENTICAL to the one the corrected file produces (asserted in text-campaign.test.ts). The agent is not told its file is malformed, which is friendly here but leaves the file non-portable to stricter tools."
+}

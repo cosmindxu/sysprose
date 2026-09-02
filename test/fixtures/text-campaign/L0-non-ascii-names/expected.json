@@ -1,0 +1,23 @@
+{
+  "level": "L0",
+  "title": "non-ASCII and quoted identifiers authored as text",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "lexer/illegal-char",
+      "severity": "error",
+      "line": 1,
+      "column": 10,
+      "found": "é"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "V",
+      "hicule"
+    ],
+    "minElements": 4
+  },
+  "note": "Unquoted non-ASCII identifiers are rejected by the lexer; QUOTING them works. The illegal-char hint does say to quote a name containing anything else as 'like this', which is the repair, so this is adequate feedback rather than a defect."
+}

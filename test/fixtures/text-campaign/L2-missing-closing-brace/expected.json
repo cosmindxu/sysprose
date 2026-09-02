@@ -1,0 +1,24 @@
+{
+  "level": "L2",
+  "title": "a body that is never closed",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/mismatched-token",
+      "severity": "error",
+      "line": 5,
+      "column": 1,
+      "found": "<end of file>",
+      "expected": [
+        "}"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 3
+  }
+}

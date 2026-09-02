@@ -1,0 +1,15 @@
+{
+  "level": "L0",
+  "title": "JSON content offered as .sysml is refused, not parsed",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "import/not-text",
+      "severity": "error"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "minElements": 0
+  }
+}

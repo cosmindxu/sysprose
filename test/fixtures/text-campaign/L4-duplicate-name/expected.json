@@ -1,0 +1,26 @@
+{
+  "level": "L4",
+  "title": "two siblings with the same name",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "validation/duplicate-name",
+      "severity": "error",
+      "line": 2,
+      "column": 5
+    },
+    {
+      "code": "validation/duplicate-name",
+      "severity": "error",
+      "line": 3,
+      "column": 5
+    }
+  ],
+  "invariants": {
+    "maxErrors": 2,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 3
+  }
+}

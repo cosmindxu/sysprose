@@ -41,7 +41,14 @@ import {
 } from '@core/index';
 import type { AstNode } from 'langium';
 import type { ParseResult, ParseDiagnostic } from '../types';
+import type { TextRange } from '@validation/types';
 import { parseDocument } from './module';
+import {
+  codeForParserError,
+  expectedFromMessage,
+  foundFromMessage,
+  renderHint,
+} from './diagnostic-codes';
 import type {
   Alias,
   Allocate,
@@ -165,8 +172,18 @@ function splitQualified(ref: string): string[] {
   return segs;
 }
 
-/** Inner text of an `ML_COMMENT` token (`/* … *\/`), trimmed like the lexer. */
-function stripBlockComment(raw: string): string {
+/**
+ * Inner text of an `ML_COMMENT` token (`/* … *\/`), trimmed like the lexer.
+ *
+ * `raw` is typed as `string` by the generated AST but is genuinely `undefined`
+ * when error recovery hands back a Comment node whose body never terminated —
+ * an unterminated `/*` at end of file. That threw a TypeError out of
+ * `parseModel`, so an agent whose only mistake was forgetting `*\/` got a crash
+ * instead of a diagnostic. Degrade to an empty body and let the parser's own
+ * errors describe the problem.
+ */
+function stripBlockComment(raw: string | undefined): string {
+  if (raw === undefined || raw === null) return '';
   let s = raw;
   if (s.startsWith('/*')) s = s.slice(2);
   if (s.endsWith('*/')) s = s.slice(0, -2);
@@ -178,6 +195,48 @@ function posOf(node: AstNode | undefined): { line: number; column: number } {
   const start = node?.$cstNode?.range?.start;
   if (!start) return { line: 1, column: 1 };
   return { line: (start.line ?? 0) + 1, column: (start.character ?? 0) + 1 };
+}
+
+/**
+ * Position of the end of `text`, used when an error points at the EOF token.
+ *
+ * Chevrotain's EOF token carries NaN line/column, which reached agents as
+ * `NaN:NaN` — a position that cannot be navigated to and that breaks any
+ * consumer doing arithmetic on it. An error at end of file is precisely the
+ * "you forgot a closing brace" case, so it must report the last real position.
+ */
+function eofPos(text: string): { line: number; column: number; offset: number } {
+  const lines = text.split('\n');
+  return {
+    line: lines.length,
+    column: (lines[lines.length - 1]?.length ?? 0) + 1,
+    offset: text.length,
+  };
+}
+
+/**
+ * Full source span of an AST node: 1-based line/column, 0-based offsets.
+ *
+ * Returns `undefined` when the node carries no CST node — which is exactly the
+ * error-recovery case, where the parser synthesised the node and there is no
+ * honest position to report. Callers must degrade rather than invent one.
+ */
+function rangeOf(node: AstNode | undefined): TextRange | undefined {
+  const cst = node?.$cstNode;
+  const r = cst?.range;
+  if (!cst || !r) return undefined;
+  return {
+    start: {
+      line: (r.start.line ?? 0) + 1,
+      column: (r.start.character ?? 0) + 1,
+      offset: cst.offset ?? 0,
+    },
+    end: {
+      line: (r.end.line ?? 0) + 1,
+      column: (r.end.character ?? 0) + 1,
+      offset: cst.end ?? cst.offset ?? 0,
+    },
+  };
 }
 
 /** Format a multiplicity node back into the legacy compact string form. */
@@ -488,9 +547,46 @@ class Mapper {
   readonly factory = new ModelFactory(this.model);
   readonly diagnostics: ParseDiagnostic[] = [];
 
-  private warn(message: string, node?: AstNode): ParseDiagnostic {
+  /**
+   * Source span of every element this mapper created (Agent Diagnostics
+   * Contract). A SIDE TABLE — never written onto `ElementRecord`, because a
+   * range belongs to one source text, not to the model.
+   */
+  readonly ranges = new Map<ElementId, TextRange>();
+
+  /**
+   * The member declaration currently being mapped. Every element created while
+   * it is on the stack is attributed to its span, which is what an agent needs:
+   * "the problem is in THIS declaration, at these lines".
+   */
+  private readonly nodeStack: AstNode[] = [];
+
+  /**
+   * Create an element and record its source span. Every `create` inside the
+   * mapper goes through here so ranges cannot silently go missing when a new
+   * mapping branch is added.
+   */
+  private create(
+    eClass: string,
+    opts: Parameters<Model['create']>[1] = {},
+  ): ElementRecord {
+    const el = this.model.create(eClass, opts);
+    const range = rangeOf(this.nodeStack[this.nodeStack.length - 1]);
+    if (range) this.ranges.set(el.id, range);
+    return el;
+  }
+
+  private warn(message: string, node?: AstNode, code?: string): ParseDiagnostic {
     const { line, column } = posOf(node);
-    const diag: ParseDiagnostic = { message, line, column, severity: 'warning' };
+    const diag: ParseDiagnostic = {
+      message,
+      line,
+      column,
+      severity: 'warning',
+      source: 'mapper',
+      ...(code ? { code, hint: renderHint(code) } : {}),
+      ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+    };
     this.diagnostics.push(diag);
     return diag;
   }
@@ -640,7 +736,7 @@ class Mapper {
         for (const ref of arr) {
           const r = typeof ref === 'string' ? this.resolveRef(ref, scope) : undefined;
           if (r && r.id !== el.id) {
-            this.model.create(relClassForOp(op, isDefinition(el.eClass)), {
+            this.create(relClassForOp(op, isDefinition(el.eClass)), {
               ownerId: el.id,
               source: [el.id],
               target: [r.id],
@@ -706,11 +802,20 @@ class Mapper {
   /* ────────────────────────────── members ──────────────────────────────── */
 
   private mapMember(node: Member, ownerId: ElementId | null): void {
+    this.nodeStack.push(node);
+    try {
+      this.mapMemberInner(node, ownerId);
+    } finally {
+      this.nodeStack.pop();
+    }
+  }
+
+  private mapMemberInner(node: Member, ownerId: ElementId | null): void {
     switch (node.$type) {
       case 'Doc':
         return this.mapDoc(node as Doc, ownerId);
       case 'Comment':
-        this.model.create('Comment', {
+        this.create('Comment', {
           ownerId: ownerId ?? undefined,
           attrs: { body: stripBlockComment((node as CommentNode).body) },
         });
@@ -723,7 +828,7 @@ class Mapper {
         const tr = node as TextualRepNode;
         const trAttrs: Record<string, AttrValue> = { body: stripBlockComment(tr.body) };
         if (tr.language) trAttrs.language = tr.language;
-        this.model.create('TextualRepresentation', {
+        this.create('TextualRepresentation', {
           ownerId: ownerId ?? undefined,
           declaredName: unquoteName(tr.name),
           attrs: trAttrs,
@@ -806,7 +911,7 @@ class Mapper {
       // F-follow-up: `doc name /* … */` carries an optional name — preserve it
       // so the serializer's `doc ${name} /* … */` round-trips.
       const docName = node.name !== undefined ? unquoteName(node.name) : undefined;
-      this.model.create('Documentation', {
+      this.create('Documentation', {
         ownerId: ownerId ?? undefined,
         declaredName: docName,
         attrs: { body },
@@ -825,7 +930,7 @@ class Mapper {
     if (node.filters && node.filters.length) {
       attrs.filters = node.filters.map((f) => exprText(f));
     }
-    this.model.create(wildcard ? 'NamespaceImport' : 'MembershipImport', {
+    this.create(wildcard ? 'NamespaceImport' : 'MembershipImport', {
       ownerId: ownerId ?? undefined,
       attrs,
     });
@@ -835,7 +940,7 @@ class Mapper {
   private mapAnnotation(node: Annotation, ownerId: ElementId | null): void {
     const attrs: Record<string, AttrValue> = { annotation: true, type: node.type };
     if (node.about && node.about.length) attrs.about = [...node.about];
-    const el = this.model.create('MetadataUsage', {
+    const el = this.create('MetadataUsage', {
       ownerId: ownerId ?? undefined,
       attrs,
     });
@@ -846,11 +951,11 @@ class Mapper {
   private mapAlias(node: Alias, ownerId: ElementId | null): void {
     const targetRef = node.target;
     const target = targetRef ? this.resolveRef(targetRef, ownerId) : undefined;
-    if (targetRef && !target) this.warn(`Unresolved alias target '${targetRef}'`, node);
+    if (targetRef && !target) this.warn(`Unresolved alias target '${targetRef}'`, node, 'ref/unresolved-alias-target');
     const attrs: Record<string, AttrValue> = {};
     if (node.visibility) attrs.visibility = node.visibility;
     if (targetRef && !target) attrs.aliasFor = targetRef;
-    const el = this.model.create('Membership', {
+    const el = this.create('Membership', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       declaredShortName: unquoteName(node.shortName),
@@ -872,7 +977,7 @@ class Mapper {
       if (r) srcIds.push(r.id);
       else {
         unresolvedSrc.push(c);
-        this.warn(`Unresolved dependency client '${c}'`, node);
+        this.warn(`Unresolved dependency client '${c}'`, node, 'ref/unresolved-dependency-end');
       }
     }
     for (const s of node.supplier) {
@@ -880,7 +985,7 @@ class Mapper {
       if (r) tgtIds.push(r.id);
       else {
         unresolvedTgt.push(s);
-        this.warn(`Unresolved dependency supplier '${s}'`, node);
+        this.warn(`Unresolved dependency supplier '${s}'`, node, 'ref/unresolved-dependency-end');
       }
     }
     const attrs: Record<string, AttrValue> = {};
@@ -888,7 +993,7 @@ class Mapper {
     if (unresolvedTgt.length) attrs.targetRef = unresolvedTgt[0];
     if (node.client.length > 1) attrs.clients = [...node.client];
     if (node.supplier.length > 1) attrs.suppliers = [...node.supplier];
-    this.model.create('Dependency', {
+    this.create('Dependency', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       declaredShortName: unquoteName(node.shortName),
@@ -915,14 +1020,14 @@ class Mapper {
   private mapRelationshipStmt(node: RelationshipStmt, ownerId: ElementId | null): void {
     const srcRef = node.source;
     const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
-    if (srcRef && !src) this.warn(`Unresolved relationship source '${srcRef}'`, node);
+    if (srcRef && !src) this.warn(`Unresolved relationship source '${srcRef}'`, node, 'ref/unresolved-reference');
     const owner = src ? src.id : ownerId;
 
     if (node.kind === 'disjoint') {
       const tgtRef = node.target;
       const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-      if (tgtRef && !tgt) this.warn(`Unresolved disjoint target '${tgtRef}'`, node);
-      this.model.create('Disjoining', {
+      if (tgtRef && !tgt) this.warn(`Unresolved disjoint target '${tgtRef}'`, node, 'ref/unresolved-reference');
+      this.create('Disjoining', {
         ownerId: owner ?? undefined,
         source: src ? [src.id] : [],
         target: tgt ? [tgt.id] : [],
@@ -938,7 +1043,7 @@ class Mapper {
       const op = normalizeSpecOp(spec.op);
       for (const tgtRef of spec.types) {
         const tgt = this.resolveRef(tgtRef, ownerId);
-        if (!tgt) this.warn(`Unresolved reference '${tgtRef}'`, spec);
+        if (!tgt) this.warn(`Unresolved reference '${tgtRef}'`, spec, 'ref/unresolved-specialization');
         // Classify by the RESOLVED source's kind — `subtype A specializes B;`
         // on a definition must build a Subclassification, exactly like the
         // inline `part def A :> B;` form does, or the element class flips
@@ -946,7 +1051,7 @@ class Mapper {
         // unresolved source defaults to Subsetting and is upgraded by
         // resolveDeferredRefs once the source name resolves.
         const relClass = relClassForOp(op, src ? isDefinition(src.eClass) : false);
-        this.model.create(relClass, {
+        this.create(relClass, {
           ownerId: owner ?? undefined,
           source: src ? [src.id] : [],
           target: tgt ? [tgt.id] : [],
@@ -961,7 +1066,7 @@ class Mapper {
 
   /** `return (ref)? name (: T)? (= expr)?` → a result ReferenceUsage feature. */
   private mapReturnStmt(node: ReturnStmt, ownerId: ElementId | null): void {
-    const el = this.model.create('ReferenceUsage', {
+    const el = this.create('ReferenceUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       attrs: { featureRole: 'return' },
@@ -990,7 +1095,7 @@ class Mapper {
     if (loopVar) attrs.loopVar = loopVar;
     if (node.varType) attrs.loopVarType = node.varType;
     if (node.succession) attrs.succession = node.succession;
-    const el = this.model.create(eClass, { ownerId: ownerId ?? undefined, attrs });
+    const el = this.create(eClass, { ownerId: ownerId ?? undefined, attrs });
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);
   }
 
@@ -1001,7 +1106,7 @@ class Mapper {
     if (node.elseTarget) attrs.elseTarget = node.elseTarget;
     if (node.elseBody) attrs.hasElse = true;
     if (node.succession) attrs.succession = node.succession;
-    const el = this.model.create('IfActionUsage', { ownerId: ownerId ?? undefined, attrs });
+    const el = this.create('IfActionUsage', { ownerId: ownerId ?? undefined, attrs });
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);
     if (node.elseBody) for (const m of node.elseBody.members) this.mapMember(m, el.id);
   }
@@ -1013,7 +1118,7 @@ class Mapper {
     if (node.via) attrs.via = node.via;
     if (node.target) attrs.actionTarget = node.target;
     if (node.succession) attrs.succession = node.succession;
-    const el = this.model.create(eClass, {
+    const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       declaredShortName: unquoteName(node.shortName),
@@ -1037,9 +1142,9 @@ class Mapper {
     const tgtRef = node.target;
     const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
     const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-    const srcWarn = srcRef && !src ? this.warn(`Unresolved connection end '${srcRef}'`, node) : undefined;
-    const tgtWarn = tgtRef && !tgt ? this.warn(`Unresolved connection end '${tgtRef}'`, node) : undefined;
-    const el = this.model.create('ConnectionUsage', {
+    const srcWarn = srcRef && !src ? this.warn(`Unresolved connection end '${srcRef}'`, node, 'ref/unresolved-connection-end') : undefined;
+    const tgtWarn = tgtRef && !tgt ? this.warn(`Unresolved connection end '${tgtRef}'`, node, 'ref/unresolved-connection-end') : undefined;
+    const el = this.create('ConnectionUsage', {
       ownerId: ownerId ?? undefined,
       source: src ? [src.id] : [],
       target: tgt ? [tgt.id] : [],
@@ -1060,9 +1165,9 @@ class Mapper {
     // Capture the warnings so resolveDeferredRefs can RETRACT them once a
     // forward reference resolves (mirrors mapConnect) — otherwise a
     // `satisfy R by X;` before `R`/`X` leaves a permanent false warning.
-    const reqWarn = reqRef && !req ? this.warn(`Unresolved requirement '${reqRef}'`, node) : undefined;
-    const satWarn = satRef && !sat ? this.warn(`Unresolved satisfier '${satRef}'`, node) : undefined;
-    const el = this.model.create('Satisfy', {
+    const reqWarn = reqRef && !req ? this.warn(`Unresolved requirement '${reqRef}'`, node, 'ref/unresolved-requirement') : undefined;
+    const satWarn = satRef && !sat ? this.warn(`Unresolved satisfier '${satRef}'`, node, 'ref/unresolved-requirement') : undefined;
+    const el = this.create('Satisfy', {
       ownerId: ownerId ?? undefined,
       source: sat ? [sat.id] : [],
       target: req ? [req.id] : [],
@@ -1099,12 +1204,12 @@ class Mapper {
     // Retractable warnings (mirrors mapConnect) so a forward-referenced
     // `verify R by X;` before `R`/`X` does not leave a permanent false warning
     // once resolveDeferredRefs resolves the endpoints.
-    const reqWarn = reqRef && !req ? this.warn(`Unresolved requirement '${reqRef}'`, node) : undefined;
+    const reqWarn = reqRef && !req ? this.warn(`Unresolved requirement '${reqRef}'`, node, 'ref/unresolved-requirement') : undefined;
     const elemWarn =
       elemRef && !elem
-        ? this.warn(`Unresolved ${eClass.toLowerCase()} element '${elemRef}'`, node)
+        ? this.warn(`Unresolved ${eClass.toLowerCase()} element '${elemRef}'`, node, 'ref/unresolved-requirement')
         : undefined;
-    const el = this.model.create(eClass, {
+    const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
       source: elem ? [elem.id] : [],
       target: req ? [req.id] : [],
@@ -1123,10 +1228,10 @@ class Mapper {
     const tgtRef = node.target;
     const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
     const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-    if (srcRef && !src) this.warn(`Unresolved allocation source '${srcRef}'`, node);
-    if (tgtRef && !tgt) this.warn(`Unresolved allocation target '${tgtRef}'`, node);
+    if (srcRef && !src) this.warn(`Unresolved allocation source '${srcRef}'`, node, 'ref/unresolved-allocation-end');
+    if (tgtRef && !tgt) this.warn(`Unresolved allocation target '${tgtRef}'`, node, 'ref/unresolved-allocation-end');
     // NB: the legacy parser stores NO textual ref attrs on Allocation.
-    this.model.create('Allocation', {
+    this.create('Allocation', {
       ownerId: ownerId ?? undefined,
       source: src ? [src.id] : [],
       target: tgt ? [tgt.id] : [],
@@ -1144,9 +1249,9 @@ class Mapper {
   ): ElementRecord {
     const a = aRef ? this.resolveRef(aRef, ownerId) : undefined;
     const b = bRef ? this.resolveRef(bRef, ownerId) : undefined;
-    if (aRef && !a) this.warn(`Unresolved reference '${aRef}'`, node);
-    if (bRef && !b) this.warn(`Unresolved reference '${bRef}'`, node);
-    return this.model.create(eClass, {
+    if (aRef && !a) this.warn(`Unresolved reference '${aRef}'`, node, 'ref/unresolved-reference');
+    if (bRef && !b) this.warn(`Unresolved reference '${bRef}'`, node, 'ref/unresolved-reference');
+    return this.create(eClass, {
       ownerId: ownerId ?? undefined,
       source: a ? [a.id] : [],
       target: b ? [b.id] : [],
@@ -1171,13 +1276,13 @@ class Mapper {
     const tgtRef = node.target;
     const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
     const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-    if (srcRef && !src) this.warn(`Unresolved transition source '${srcRef}'`, node);
-    if (tgtRef && !tgt) this.warn(`Unresolved transition target '${tgtRef}'`, node);
+    if (srcRef && !src) this.warn(`Unresolved transition source '${srcRef}'`, node, 'ref/unresolved-transition-end');
+    if (tgtRef && !tgt) this.warn(`Unresolved transition target '${tgtRef}'`, node, 'ref/unresolved-transition-end');
     const attrs: Record<string, AttrValue> = {};
     if (trigger) attrs.trigger = trigger;
     if (guard) attrs.guard = guard;
     if (effect) attrs.effect = effect;
-    this.model.create('TransitionUsage', {
+    this.create('TransitionUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       source: src ? [src.id] : [],
@@ -1191,7 +1296,7 @@ class Mapper {
   }
 
   private mapStateBehavior(node: StateBehavior, ownerId: ElementId | null): void {
-    this.model.create('ActionUsage', {
+    this.create('ActionUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       attrs: { stateSubaction: node.kind },
@@ -1200,7 +1305,7 @@ class Mapper {
 
   private mapControlNode(node: ControlNode, ownerId: ElementId | null): void {
     const eClass = CONTROL_NODE_ECLASS[node.kind] ?? node.kind;
-    this.model.create(eClass, {
+    this.create(eClass, {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
     });
@@ -1208,7 +1313,7 @@ class Mapper {
 
   private mapRequirementClause(node: RequirementClause, ownerId: ElementId | null): void {
     if (node.kind === 'subject') {
-      const el = this.model.create('ReferenceUsage', {
+      const el = this.create('ReferenceUsage', {
         ownerId: ownerId ?? undefined,
         declaredName: unquoteName(node.name),
         attrs: { requirementRole: 'subject' },
@@ -1217,7 +1322,7 @@ class Mapper {
       return;
     }
     // require / assume constraint
-    const el = this.model.create('ConstraintUsage', {
+    const el = this.create('ConstraintUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       attrs: { requirementRole: node.kind },
@@ -1247,10 +1352,16 @@ class Mapper {
       eClass = direction ? 'PortUsage' : 'ReferenceUsage';
     }
     if (!eClass) {
+      const code = 'parse/unknown-keyword';
       this.diagnostics.push({
         message: `Unknown keyword '${node.keyword}'`,
         ...posOf(node),
         severity: 'error',
+        source: 'mapper',
+        code,
+        found: node.keyword,
+        hint: renderHint(code, { found: node.keyword }),
+        ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
       });
       return;
     }
@@ -1262,11 +1373,11 @@ class Mapper {
       if (node.ofPayload) flowAttrs.payload = node.ofPayload;
       const src = node.flowFrom ? this.resolveRef(node.flowFrom, ownerId) : undefined;
       const tgt = node.flowTo ? this.resolveRef(node.flowTo, ownerId) : undefined;
-      if (node.flowFrom && !src) this.warn(`Unresolved flow source '${node.flowFrom}'`, node);
-      if (node.flowTo && !tgt) this.warn(`Unresolved flow target '${node.flowTo}'`, node);
+      if (node.flowFrom && !src) this.warn(`Unresolved flow source '${node.flowFrom}'`, node, 'ref/unresolved-flow-end');
+      if (node.flowTo && !tgt) this.warn(`Unresolved flow target '${node.flowTo}'`, node, 'ref/unresolved-flow-end');
       if (node.flowFrom && !src) flowAttrs.sourceRef = node.flowFrom;
       if (node.flowTo && !tgt) flowAttrs.targetRef = node.flowTo;
-      this.model.create('Flow', {
+      this.create('Flow', {
         ownerId: ownerId ?? undefined,
         declaredName: unquoteName(node.name),
         source: src ? [src.id] : [],
@@ -1314,7 +1425,7 @@ class Mapper {
     const isRequirement = eClass === 'RequirementUsage' || eClass === 'RequirementDefinition';
     if (isRequirement && declaredShortName) attrs.reqId = declaredShortName;
 
-    const el = this.model.create(eClass, {
+    const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
       declaredName,
       declaredShortName,
@@ -1346,8 +1457,8 @@ class Mapper {
       const tgtRef = node.connectTarget;
       const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
       const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-      const srcWarn = srcRef && !src ? this.warn(`Unresolved connection end '${srcRef}'`, node) : undefined;
-      const tgtWarn = tgtRef && !tgt ? this.warn(`Unresolved connection end '${tgtRef}'`, node) : undefined;
+      const srcWarn = srcRef && !src ? this.warn(`Unresolved connection end '${srcRef}'`, node, 'ref/unresolved-connection-end') : undefined;
+      const tgtWarn = tgtRef && !tgt ? this.warn(`Unresolved connection end '${tgtRef}'`, node, 'ref/unresolved-connection-end') : undefined;
       const patch: Record<string, AttrValue> = {};
       if (srcRef && !src) patch.sourceRef = srcRef;
       if (tgtRef && !tgt) patch.targetRef = tgtRef;
@@ -1411,7 +1522,7 @@ class Mapper {
         continue;
       }
       if (!target) {
-        this.warn(`Unresolved reference '${ref}'`, spec);
+        this.warn(`Unresolved reference '${ref}'`, spec, 'ref/unresolved-specialization');
         if (op === ':') {
           this.model.setAttrs(el.id, { typeRef: ref });
         } else {
@@ -1423,7 +1534,7 @@ class Mapper {
         continue;
       }
       const relClass = relClassForOp(op, isDefinition(el.eClass));
-      this.model.create(relClass, {
+      this.create(relClass, {
         ownerId: el.id,
         source: [el.id],
         target: [target.id],
@@ -1476,25 +1587,75 @@ export function astToModel(text: string): ParseResult {
   const { ast, lexerErrors, parserErrors } = parseDocument(text);
   const mapper = new Mapper();
 
-  // Map Langium/Chevrotain lexer + parser diagnostics to error diagnostics.
+  // Map Chevrotain lexer diagnostics. `offset`/`length` give an exact span.
   for (const e of lexerErrors) {
+    const line = e.line ?? 1;
+    const column = e.column ?? 1;
+    const offset = e.offset ?? 0;
+    const length = e.length ?? 1;
+    const found = text.slice(offset, offset + length) || undefined;
+    const code = /unterminated|unclosed/i.test(e.message)
+      ? 'lexer/unterminated-string'
+      : 'lexer/illegal-char';
     mapper.diagnostics.push({
       message: e.message,
-      line: e.line ?? 1,
-      column: e.column ?? 1,
+      line,
+      column,
       severity: 'error',
+      source: 'lexer',
+      code,
+      ...(found ? { found } : {}),
+      hint: renderHint(code, { found }),
+      range: {
+        start: { line, column, offset },
+        end: { line, column: column + length, offset: offset + length },
+      },
     });
   }
+
+  // Map Chevrotain parser diagnostics. The exception CLASS carries what the
+  // message only says in prose, so it becomes the stable `code`; `expected`
+  // and `found` are recovered so an agent does not have to parse English.
+  const eof = eofPos(text);
   for (const e of parserErrors) {
     const tok = e.token;
+    const code = codeForParserError(e.name);
+    const expected = expectedFromMessage(e.message);
+    // Chevrotain's EOF token has an empty image and NaN positions; report the
+    // end of the file rather than propagating NaN to the agent.
+    const atEof =
+      tok === undefined ||
+      !Number.isFinite(tok.startLine ?? NaN) ||
+      (tok.image ?? '') === '';
+    const rawFound = tok?.image ?? foundFromMessage(e.message);
+    const found = atEof ? '<end of file>' : rawFound;
+    const line = atEof ? eof.line : (tok?.startLine ?? 1);
+    const column = atEof ? eof.column : (tok?.startColumn ?? 1);
+    const offset = atEof ? eof.offset : (tok?.startOffset ?? 0);
     mapper.diagnostics.push({
       message: e.message,
-      line: tok?.startLine ?? 1,
-      column: tok?.startColumn ?? 1,
+      line,
+      column,
       severity: 'error',
+      source: 'parser',
+      code,
+      ...(expected.length > 0 ? { expected } : {}),
+      ...(found ? { found } : {}),
+      hint: renderHint(code, { found, expected }),
+      range: {
+        start: { line, column, offset },
+        end: atEof
+          ? { line, column, offset }
+          : {
+              line: Number.isFinite(tok?.endLine ?? NaN) ? (tok?.endLine as number) : line,
+              // Chevrotain end positions are INCLUSIVE; the contract's are exclusive.
+              column: (Number.isFinite(tok?.endColumn ?? NaN) ? (tok?.endColumn as number) : column) + 1,
+              offset: (Number.isFinite(tok?.endOffset ?? NaN) ? (tok?.endOffset as number) : offset) + 1,
+            },
+      },
     });
   }
 
   mapper.run(ast.members ?? []);
-  return { model: mapper.model, diagnostics: mapper.diagnostics };
+  return { model: mapper.model, diagnostics: mapper.diagnostics, ranges: mapper.ranges };
 }

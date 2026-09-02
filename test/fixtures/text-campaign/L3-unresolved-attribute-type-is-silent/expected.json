@@ -1,0 +1,14 @@
+{
+  "level": "L3",
+  "title": "an unresolved ATTRIBUTE value type is deliberately not reported",
+  "note": "PINNED DECISION: map-to-model.ts stores an unresolved attribute type silently because value types usually live outside the loaded scope. If this ever starts warning, that is a behaviour change to decide on deliberately.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 2
+  }
+}

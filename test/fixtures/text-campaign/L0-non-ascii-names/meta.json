@@ -1,0 +1,5 @@
+{
+  "level": "L0",
+  "title": "non-ASCII and quoted identifiers authored as text",
+  "note": "Unquoted non-ASCII identifiers are rejected by the lexer; QUOTING them works. The illegal-char hint does say to quote a name containing anything else as 'like this', which is the repair, so this is adequate feedback rather than a defect."
+}

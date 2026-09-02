@@ -19,7 +19,7 @@ Properties field plus unit conversion, palette node-create **and** click-to-conn
 **per view**, manual node drag, Problems navigation, textual bidirectional sync,
 the API/analytics console with commit history, and simulate/check. §2 now carries
 a row for **every one of these interactions**. A companion **feature-parity matrix
-vs. Cameo/MagicDraw and Obeo SysON** is in `docs/FEATURE-PARITY.md`.
+vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 
 > **Scope statement.** As of this revision the report covers **all UI features and
 > all user–tool interactions** exposed by the app (`src/ui`), each driven through
@@ -609,7 +609,7 @@ limits — not untested interactions.
 3. **Geometry view** — a real interactive 3D WebGL scene (Three.js: orbit/zoom,
    per-part solids, raycast selection; `E geometry3d`, `U diagram.geometry`/
    `.geometry3d`), but it renders **primitive solids** (box/sphere/cylinder) from
-   model attributes / shape typings — **not full CAD B-rep** geometry (Cameo
+   model attributes / shape typings — **not full CAD B-rep** geometry (a commercial desktop tool
    integrates a richer CAD kernel).
 4. **Numeric MoE solver** — a numeric parametric constraint solver with
    measure-of-effectiveness evaluation + gradient-free optimization is implemented
@@ -621,7 +621,7 @@ limits — not untested interactions.
 5. **Behavioral execution** — a **fuller** token-flow engine (composite/call
    actions, object/item-flow data passing, hierarchical/history/orthogonal/timed
    state machines; `E execution`, `U semantics.execution-full`), but still a
-   **load-bearing subset**, not the full Cameo Simulation Toolkit semantics (e.g.
+   **load-bearing subset**, not the full semantics of a commercial simulation toolkit (e.g.
    no continuous-time / physics co-simulation).
 6. **Real-time collaboration** — Yjs CRDT co-editing + live presence over an open
    room (`E collab`, `U collab.binding`; §2.13). Rooms are **open** (academic use)
@@ -664,7 +664,7 @@ limits — not untested interactions.
 ### 7.2 To SOTA feature parity
 
 See the dedicated side-by-side matrix in **`docs/FEATURE-PARITY.md`** (vs. Dassault
-Cameo/MagicDraw and Obeo SysON). Summary: **at parity** on explorer CRUD, 12
+mainstream MBSE tools). Summary: **at parity** on explorer CRUD, 12
 diagram views + auto-layout, palette create/connect, node drag, full Properties
 editing, undo/redo, textual bidirectional sync, validation with navigable
 diagnostics, constraint checking + fuller behavioral execution, a numeric
@@ -735,4 +735,4 @@ files), plus `scripts/grammar-coverage.ts` (100%, 94/94),
 `scripts/pilot-roundtrip.ts` (self round-trip, EQUIVALENT) and
 `src/library/std/manifest.json` (38,761 elements / 98 packages), captured on
 2026-07-03. See `docs/CONFORMANCE.md` for the full scorecard and
-`docs/FEATURE-PARITY.md` for the parity matrix vs. Cameo/MagicDraw and Obeo SysON.*
+`docs/FEATURE-PARITY.md` for the parity matrix vs. mainstream MBSE tools.*

@@ -1,0 +1,26 @@
+{
+  "level": "L3",
+  "title": "a specialization target that does not resolve",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "validation/unresolved-type-ref",
+      "severity": "error",
+      "line": 2,
+      "column": 5
+    },
+    {
+      "code": "ref/unresolved-specialization",
+      "severity": "warning",
+      "line": 2,
+      "column": 18
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 2
+  }
+}
