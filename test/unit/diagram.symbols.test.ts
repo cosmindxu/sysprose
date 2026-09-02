@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { edgeStyleFor, MARKER, edgeTypes } from '@diagram/edges';
-import { controlShapeFor, nodeVariantFor, nodeTypes } from '@diagram/nodes';
+import { controlShapeFor, nodeVariantFor, nodeTypes, portOffsetPercent } from '@diagram/nodes';
 
 describe('edge symbol set — markers & line styles by kind', () => {
   it('composition/aggregation carry a diamond at the source (whole) end', () => {
@@ -85,5 +85,39 @@ describe('node symbol set — control shapes & box variants', () => {
     // bare function.
     expect(nodeTypes.sysml).toBeTruthy();
     expect(nodeTypes.control).toBeTruthy();
+  });
+});
+
+describe('boundary-port handle distribution', () => {
+  /**
+   * Regression guard: ports on the same side used to render at one point, so
+   * three inputs landed on the same pixel and their connectors fanned into it.
+   * Confirmed by a Fable advisor, 2026-09-02 — the layout engine distributed
+   * them correctly and only the rendering collapsed them.
+   */
+  it('spreads N ports evenly along a side, never stacking them', () => {
+    const three = [0, 1, 2].map((i) => portOffsetPercent(i, 3));
+    expect(three).toEqual(['25%', '50%', '75%']);
+    expect(new Set(three).size, 'no two ports may share a position').toBe(3);
+  });
+
+  it('centres a lone port', () => {
+    expect(portOffsetPercent(0, 1)).toBe('50%');
+  });
+
+  it('stays inside the node edge for any count', () => {
+    for (const n of [1, 2, 5, 12]) {
+      for (let i = 0; i < n; i++) {
+        const pct = Number.parseFloat(portOffsetPercent(i, n));
+        expect(pct).toBeGreaterThan(0);
+        expect(pct).toBeLessThan(100);
+      }
+    }
+  });
+
+  it('degrades safely on nonsense input rather than producing NaN%', () => {
+    expect(portOffsetPercent(0, 0)).toBe('50%');
+    expect(portOffsetPercent(-1, 3)).toBe('25%');
+    expect(portOffsetPercent(99, 3)).toBe('75%');
   });
 });

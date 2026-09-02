@@ -208,6 +208,20 @@ export interface AppState {
   pickerId: ElementId | null;
   /** Explorer subtree scope (null = whole tree). Transient UI state. */
   focusId: ElementId | null;
+  /**
+   * Diagram scope (null = the whole user model, the default).
+   *
+   * The diagram builder has always supported a scope root, but nothing ever
+   * passed one, so an interconnection view was always the entire model: every
+   * definition and every assembly on one canvas, growing with the model. That
+   * is what made the published UAV diagram unreadable — the wiring was correct,
+   * but competing with seven unrelated boxes.
+   *
+   * Scope narrows the picture WITHOUT removing anything from the view's
+   * vocabulary; filtering definitions out was tried instead and reverted,
+   * because an empty definition frame is what a user drops new parts into.
+   */
+  diagramRootId: ElementId | null;
   expandedIds: Set<ElementId>;
   activeView: ViewKind;
   diagram: DiagramGraph | null;
@@ -313,6 +327,8 @@ export interface AppState {
   setPickerId(id: ElementId | null): void;
   /** Set the Explorer subtree scope (null = whole tree). Transient UI state. */
   setFocusId(id: ElementId | null): void;
+  /** Scope the diagram to `id`'s subtree, or pass null to show the whole model. */
+  setDiagramRoot(id: ElementId | null): void;
   toggleExpand(id: ElementId): void;
   expand(id: ElementId, open?: boolean): void;
   setActiveView(v: ViewKind): void;
@@ -516,6 +532,16 @@ function rootSelection(model: Model): { selectionId: ElementId | null; selection
  *  only when everything was dropped. Returns the SAME references when nothing
  *  changed, so callers on hot paths (the model-subscribe handler) don't churn
  *  re-renders. Callers must handle a legitimately-empty selection themselves. */
+/**
+ * Drop a diagram scope whose root no longer exists.
+ *
+ * A scope pointing at a deleted element would silently render an empty canvas
+ * with no way to tell why, so it degrades to the whole model.
+ */
+function validDiagramRoot(rootId: ElementId | null, model: Model): ElementId | null {
+  return rootId !== null && model.has(rootId) ? rootId : null;
+}
+
 function validSelection(
   s: { selectionId: ElementId | null; selectionIds: ElementId[] },
   model: Model,
@@ -935,6 +961,7 @@ export const useAppStore = create<AppState>((set, get) => {
     dragOverId: null,
     pickerId: null,
     focusId: null,
+    diagramRootId: null,
     expandedIds: new Set(userRootIds(initialModel)),
     activeView: 'general',
     diagram: null,
@@ -1124,6 +1151,12 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setPickerId(id) {
       if (get().pickerId !== id) set({ pickerId: id });
+    },
+
+    setDiagramRoot(id) {
+      if (get().diagramRootId === id) return;
+      set({ diagramRootId: id });
+      void get().rebuildDiagram();
     },
 
     setFocusId(id) {
@@ -1400,7 +1433,12 @@ export const useAppStore = create<AppState>((set, get) => {
 
       // Graph views (including 'case') build a React Flow projection.
       try {
-        const graph = buildDiagram(model, activeView);
+        // A scope root of null is the whole user model — the long-standing
+        // default, kept so every existing view and e2e behaves unchanged.
+        const scoped = validDiagramRoot(get().diagramRootId, model);
+        if (scoped !== get().diagramRootId) set({ diagramRootId: scoped });
+        const rootId = scoped ?? undefined;
+        const graph = buildDiagram(model, activeView, rootId);
         const laid = await layoutDiagram(graph);
         set({ diagram: laid });
       } catch (err) {

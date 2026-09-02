@@ -98,6 +98,25 @@ function compartmentLabel(c: Compartment): string {
   return s.trim();
 }
 
+/**
+ * Where along its side a boundary-port handle sits, as a CSS percentage.
+ *
+ * React Flow places every handle on a side at the same point, so N
+ * same-direction ports would stack into one square and their connectors fan
+ * into a single pixel — which wire binds which port becomes unreadable, and a
+ * handle-drag cannot target one. The layout engine already distributes ports
+ * (ELK `elk.portAlignment.default = DISTRIBUTED`); only the rendering collapsed
+ * them. Percentages track the node box, which is pinned to the ELK size.
+ *
+ * Exported for testing: the renderer is deliberately unit-tested without a
+ * React Flow context, so the arithmetic lives here rather than inline.
+ */
+export function portOffsetPercent(index: number, countOnSide: number): string {
+  const n = Math.max(1, countOnSide);
+  const i = Math.min(Math.max(index, 0), n - 1);
+  return `${((i + 1) / (n + 1)) * 100}%`;
+}
+
 function sideToPosition(side: string): Position {
   switch (side) {
     case 'left':
@@ -414,22 +433,32 @@ export function SysmlNode({ data }: NodeProps): JSX.Element {
       )}
       {/* Boundary ports (interconnection): each exposes BOTH a source and a target
           handle sharing the port id, so a ConnectionUsage can bind it as either end. */}
-      {boundaryPorts.flatMap((p) => [
-        <Handle
-          key={`${p.id}:s`}
-          id={p.id}
-          type="source"
-          position={sideToPosition(p.side)}
-          style={portHandleStyle}
-        />,
-        <Handle
-          key={`${p.id}:t`}
-          id={p.id}
-          type="target"
-          position={sideToPosition(p.side)}
-          style={portHandleStyle}
-        />,
-      ])}
+      {boundaryPorts.flatMap((p) => {
+        // Distribute the handles along their side — see portOffsetPercent.
+        const sameSide = boundaryPorts.filter((q) => q.side === p.side);
+        const fraction = portOffsetPercent(sameSide.indexOf(p), sameSide.length);
+        const along =
+          p.side === 'left' || p.side === 'right' ? { top: fraction } : { left: fraction };
+        const style = { ...portHandleStyle, ...along };
+        return [
+          <Handle
+            key={`${p.id}:s`}
+            id={p.id}
+            type="source"
+            position={sideToPosition(p.side)}
+            style={style}
+            title={p.label}
+          />,
+          <Handle
+            key={`${p.id}:t`}
+            id={p.id}
+            type="target"
+            position={sideToPosition(p.side)}
+            style={style}
+            title={p.label}
+          />,
+        ];
+      })}
     </div>
   );
 }

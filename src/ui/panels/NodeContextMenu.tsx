@@ -48,6 +48,8 @@ export function NodeContextMenu(props: {
   const duplicateElement = useAppStore((s) => s.duplicateElement);
   const selectionCount = useAppStore((s) => s.selectionIds.length);
   const deleteSelection = useAppStore((s) => s.deleteSelection);
+  const setDiagramRoot = useAppStore((s) => s.setDiagramRoot);
+  const diagramRootId = useAppStore((s) => s.diagramRootId);
   const duplicateSelection = useAppStore((s) => s.duplicateSelection);
   const copySelection = useAppStore((s) => s.copySelection);
   const pasteClipboard = useAppStore((s) => s.pasteClipboard);
@@ -213,6 +215,37 @@ export function NodeContextMenu(props: {
           }}
         >
           <span className="node-ctx-ico" aria-hidden="true">⊙</span>Zoom to
+        </button>
+      )}
+
+      {/* Scope: draw only this element's subtree. Zooming makes a node bigger;
+          scoping removes everything that is not part of it, which is what an
+          internal block diagram of one assembly actually means. */}
+      {!isEdge && (
+        <button
+          className="node-ctx-item"
+          data-menuitem=""
+          data-testid="node-ctx-scope"
+          onClick={() => {
+            setDiagramRoot(elementId);
+            onClose();
+          }}
+        >
+          <span className="node-ctx-ico" aria-hidden="true">⊞</span>Scope diagram to this
+        </button>
+      )}
+
+      {diagramRootId !== null && (
+        <button
+          className="node-ctx-item"
+          data-menuitem=""
+          data-testid="node-ctx-scope-clear"
+          onClick={() => {
+            setDiagramRoot(null);
+            onClose();
+          }}
+        >
+          <span className="node-ctx-ico" aria-hidden="true">⊟</span>Show whole model
         </button>
       )}
       <button

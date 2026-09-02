@@ -40,6 +40,22 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!libraryReady) return;
     (window as unknown as { sysml: typeof api }).sysml = api;
+    // The diagram is a VIEW, not model data, so it has no place on ModelApi —
+    // but an agent driving the browser still needs to frame one. Without this
+    // there was no way to request a single-assembly interconnection view from
+    // outside the UI, even though the builder has always supported it.
+    (
+      window as unknown as { sysprose: { diagram: Record<string, unknown> } }
+    ).sysprose = {
+      diagram: {
+        /** Scope the diagram to an element's subtree; null shows the whole model. */
+        scopeTo: (id: string | null) => useAppStore.getState().setDiagramRoot(id),
+        /** The current scope root, or null when the whole model is shown. */
+        scopeRoot: () => useAppStore.getState().diagramRootId,
+        /** The laid-out projection currently on screen. */
+        current: () => useAppStore.getState().diagram,
+      },
+    };
     void rebuildDiagram();
     runValidation();
   }, [api, rebuildDiagram, runValidation, libraryReady]);

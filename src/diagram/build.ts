@@ -205,6 +205,15 @@ function buildInterconnection(model: Model, scope: Set<ElementId>, rootId?: Elem
   const nodeIds = new Set<ElementId>();
 
   // Candidate part nodes: the scoped root part itself (the frame) plus nested parts.
+  //
+  // Every in-scope part definition and usage gets a box, including a definition
+  // that owns no parts. That looks like clutter when READING a wiring diagram —
+  // such a definition can carry no connections — but it is the empty frame a
+  // user drops new parts into, which is how the interconnection view is
+  // authored (test/e2e/diagram-create-connect.spec.ts, palette-per-view.spec.ts).
+  // Filtering them out was tried and reverted: it silently removed the authoring
+  // lane. The right lever for an uncluttered picture is SCOPE — see `rootId`
+  // and `store.diagramRootId` — which narrows the view without removing anything.
   const candidates = model.all().filter((el) => scope.has(el.id) && partKinds.has(el.eClass));
 
   for (const el of candidates) {

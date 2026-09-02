@@ -301,3 +301,41 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
     expect(st().undoStack.length).toBe(undoBefore); // no undo entry pushed
   });
 });
+
+describe('useAppStore — diagram scope', () => {
+  /**
+   * The builder has always accepted a scope root; nothing ever passed one, so
+   * an interconnection view was always the entire model. Confirmed by a Fable
+   * advisor, 2026-09-02. Scope is the lever that narrows the picture WITHOUT
+   * removing anything from the view — filtering definitions out was tried
+   * instead and reverted, because an empty definition frame is what a user
+   * drops new parts into.
+   */
+  it('defaults to the whole model', () => {
+    const s = useAppStore.getState();
+    s.newProject();
+    expect(useAppStore.getState().diagramRootId).toBeNull();
+  });
+
+  it('scopes to an element and back again', () => {
+    useAppStore.getState().newProject();
+    const id = useAppStore.getState().createElement('PartDefinition', null, 'Assembly');
+
+    useAppStore.getState().setDiagramRoot(id);
+    expect(useAppStore.getState().diagramRootId).toBe(id);
+
+    useAppStore.getState().setDiagramRoot(null);
+    expect(useAppStore.getState().diagramRootId).toBeNull();
+  });
+
+  it('forgets a scope whose root was deleted, rather than rendering an empty canvas', async () => {
+    useAppStore.getState().newProject();
+    const id = useAppStore.getState().createElement('PartDefinition', null, 'Doomed');
+
+    useAppStore.getState().setDiagramRoot(id);
+    useAppStore.getState().deleteElement(id);
+    await useAppStore.getState().rebuildDiagram();
+
+    expect(useAppStore.getState().diagramRootId).toBeNull();
+  });
+});
