@@ -1,0 +1,17 @@
+{
+  "level": "L1",
+  "title": "a string literal that is never closed",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "lexer/unterminated-string",
+      "severity": "error",
+      "line": 2,
+      "hintIncludes": "Close the string"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1
+  },
+  "note": "FIXED 2026-09-02. An unterminated string used to be reported as lexer/illegal-char on the quote, with a hint telling the agent to REMOVE the quote — the opposite of the repair. The pre-lex scan now names it and tells the agent to close the string."
+}

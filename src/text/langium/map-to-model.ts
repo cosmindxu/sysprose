@@ -43,10 +43,12 @@ import type { AstNode } from 'langium';
 import type { ParseResult, ParseDiagnostic } from '../types';
 import type { TextRange } from '@validation/types';
 import { parseDocument } from './module';
+import { findUnterminatedDelimiter } from './lexical-scan';
 import {
   codeForParserError,
   expectedFromMessage,
   foundFromMessage,
+  refineParserError,
   renderHint,
 } from './diagnostic-codes';
 import type {
@@ -553,6 +555,24 @@ class Mapper {
    * range belongs to one source text, not to the model.
    */
   readonly ranges = new Map<ElementId, TextRange>();
+
+  /**
+   * Warnings about an unresolved SPECIALIZATION reference, paired with the
+   * element and attribute that still hold the unresolved name.
+   *
+   * These warnings are true at parse time but become STALE once the library
+   * binder resolves the reference (a forward reference to a type declared later
+   * in the file is the normal case). The binder runs outside this mapper, so the
+   * pairing is published on the {@link ParseResult} and retracted by whoever
+   * runs the binder — see `retractResolvedSpecializationWarnings`. Without this,
+   * a perfectly valid model reports "Unresolved reference" for every forward
+   * type reference in it.
+   */
+  readonly deferredSpecializationWarnings: Array<{
+    diagnostic: ParseDiagnostic;
+    elementId: ElementId;
+    attr: string;
+  }> = [];
 
   /**
    * The member declaration currently being mapped. Every element created while
@@ -1522,9 +1542,18 @@ class Mapper {
         continue;
       }
       if (!target) {
-        this.warn(`Unresolved reference '${ref}'`, spec, 'ref/unresolved-specialization');
+        const diag = this.warn(
+          `Unresolved reference '${ref}'`,
+          spec,
+          'ref/unresolved-specialization',
+        );
         if (op === ':') {
           this.model.setAttrs(el.id, { typeRef: ref });
+          this.deferredSpecializationWarnings.push({
+            diagnostic: diag,
+            elementId: el.id,
+            attr: 'typeRef',
+          });
         } else {
           const key = op === ':>>' ? 'redefines' : op === '::>' ? 'references' : 'specializes';
           const cur = (el.attrs[key] as string[] | undefined) ?? [];
@@ -1616,8 +1645,55 @@ export function astToModel(text: string): ParseResult {
   // Map Chevrotain parser diagnostics. The exception CLASS carries what the
   // message only says in prose, so it becomes the stable `code`; `expected`
   // and `found` are recovered so an agent does not have to parse English.
+  // An unterminated delimiter makes every later parse error an artefact of the
+  // delimiter, so report the delimiter itself and suppress the cascade. Without
+  // this the agent gets four messages about tokens inside its own prose and none
+  // that mentions the comment it forgot to close.
+  const unterminated = findUnterminatedDelimiter(text);
+  if (unterminated) {
+    const code =
+      unterminated.kind === 'comment' ? 'lexer/unterminated-comment' : 'lexer/unterminated-string';
+    mapper.diagnostics.length = 0;
+    mapper.diagnostics.push({
+      message:
+        unterminated.kind === 'comment'
+          ? 'Unterminated block comment: this /* is never closed.'
+          : 'Unterminated string literal: this quote is never closed before the end of the line.',
+      line: unterminated.line,
+      column: unterminated.column,
+      severity: 'error',
+      source: 'lexer',
+      code,
+      found: unterminated.found,
+      hint: renderHint(code, { found: unterminated.found }),
+      range: {
+        start: { line: unterminated.line, column: unterminated.column, offset: unterminated.offset },
+        end: {
+          line: unterminated.line,
+          column: unterminated.column + unterminated.found.length,
+          offset: unterminated.offset + unterminated.found.length,
+        },
+      },
+    });
+    mapper.run(ast.members ?? []);
+    return {
+      model: mapper.model,
+      diagnostics: mapper.diagnostics,
+      ranges: mapper.ranges,
+      deferredSpecializationWarnings: mapper.deferredSpecializationWarnings,
+    };
+  }
+
   const eof = eofPos(text);
-  for (const e of parserErrors) {
+  // "Expecting end of file but found X" is only meaningful when the parse
+  // OTHERWISE succeeded. After an earlier error the parser has already bailed
+  // mid-declaration, so the leftover text is an artefact of that error, not an
+  // independent one — reporting it sends the agent to fix a brace that is fine.
+  const meaningfulParserErrors =
+    parserErrors.length > 1
+      ? parserErrors.filter((e) => e.name !== 'NotAllInputParsedException')
+      : parserErrors;
+  for (const e of meaningfulParserErrors.length > 0 ? meaningfulParserErrors : parserErrors) {
     const tok = e.token;
     const code = codeForParserError(e.name);
     const expected = expectedFromMessage(e.message);
@@ -1628,7 +1704,20 @@ export function astToModel(text: string): ParseResult {
       !Number.isFinite(tok.startLine ?? NaN) ||
       (tok.image ?? '') === '';
     const rawFound = tok?.image ?? foundFromMessage(e.message);
-    const found = atEof ? '<end of file>' : rawFound;
+    const foundToken = atEof ? '<end of file>' : rawFound;
+    // Chevrotain reports where parsing STOPPED, which for a misspelled or
+    // misordered keyword is one token past the mistake. Refine using the
+    // previous token so the diagnostic names what the agent actually wrote.
+    const srcLines = text.split('\n');
+    const refined = atEof
+      ? undefined
+      : refineParserError(
+          code,
+          rawFound,
+          (e as { previousToken?: { image?: string } }).previousToken?.image,
+          srcLines[(tok?.startLine ?? 1) - 1],
+        );
+    const found = refined?.found ?? foundToken;
     const line = atEof ? eof.line : (tok?.startLine ?? 1);
     const column = atEof ? eof.column : (tok?.startColumn ?? 1);
     const offset = atEof ? eof.offset : (tok?.startOffset ?? 0);
@@ -1638,10 +1727,10 @@ export function astToModel(text: string): ParseResult {
       column,
       severity: 'error',
       source: 'parser',
-      code,
+      code: refined?.code ?? code,
       ...(expected.length > 0 ? { expected } : {}),
       ...(found ? { found } : {}),
-      hint: renderHint(code, { found, expected }),
+      hint: renderHint(refined?.code ?? code, { found, expected }),
       range: {
         start: { line, column, offset },
         end: atEof
@@ -1657,5 +1746,32 @@ export function astToModel(text: string): ParseResult {
   }
 
   mapper.run(ast.members ?? []);
-  return { model: mapper.model, diagnostics: mapper.diagnostics, ranges: mapper.ranges };
+  return {
+    model: mapper.model,
+    diagnostics: mapper.diagnostics,
+    ranges: mapper.ranges,
+    deferredSpecializationWarnings: mapper.deferredSpecializationWarnings,
+  };
+}
+
+
+/**
+ * Drop "Unresolved reference" warnings whose reference the LIBRARY BINDER has
+ * since resolved.
+ *
+ * Call after `resolveTypeReferences`. A warning is retracted only when the
+ * attribute that held the unresolved name is gone — i.e. the binder actually
+ * bound it — so a genuinely unresolvable name keeps its warning. Mutates and
+ * returns `diagnostics`' filtered copy; the parse result itself is untouched.
+ */
+export function retractResolvedSpecializationWarnings(
+  model: Model,
+  result: ParseResult,
+): ParseDiagnostic[] {
+  const stale = new Set<ParseDiagnostic>();
+  for (const w of result.deferredSpecializationWarnings) {
+    const el = model.get(w.elementId);
+    if (el && el.attrs[w.attr] === undefined) stale.add(w.diagnostic);
+  }
+  return stale.size === 0 ? result.diagnostics : result.diagnostics.filter((d) => !stale.has(d));
 }

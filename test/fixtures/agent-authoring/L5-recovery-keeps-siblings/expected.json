@@ -1,0 +1,22 @@
+{
+  "level": "L5",
+  "title": "one bad declaration must not lose the other forty",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/unknown-keyword",
+      "severity": "error",
+      "line": 21,
+      "found": "blok"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "Big"
+    ],
+    "minElements": 41,
+    "strictWarnings": true
+  },
+  "note": "One bad declaration among forty-one must not cost the other forty. It does not: all 41 elements survive and exactly one error is reported, naming the offending keyword. OBSERVATION, pre-existing: recovery re-homes every declaration AFTER the fault to the root namespace instead of leaving them inside `package Big`, which is why the surviving roots are listed here. Nothing is lost, but the containment is wrong — recorded so it is known rather than hidden."
+}

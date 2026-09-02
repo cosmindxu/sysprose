@@ -1,0 +1,5 @@
+{
+  "level": "L2",
+  "title": "definition keywords in the wrong order",
+  "note": "FIXED 2026-09-02. Reversed definition keywords used to be blamed on the next token with a brace-insertion hint. The diagnostic now names the ordering rule: `part def Name`, not `def part Name`."
+}

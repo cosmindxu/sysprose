@@ -1,0 +1,5 @@
+{
+  "level": "L1",
+  "title": "a block comment that is never closed",
+  "note": "FIXED 2026-09-02. An unterminated /* used to produce a cascade of four parse errors about tokens inside the author's own prose, none of which mentioned a comment. A pre-lex scan (src/text/langium/lexical-scan.ts) now finds the unclosed delimiter and reports it INSTEAD of the cascade, because every later error is an artefact of it."
+}

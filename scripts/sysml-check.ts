@@ -14,7 +14,7 @@
  *   1  at least one file has errors (or warnings, with --strict)
  *   2  usage or I/O problem — nothing was checked
  *
- * See docs/AGENT-TEXT-CAMPAIGN.md for the agent loop and
+ * See docs/AGENT-AUTHORING-CAMPAIGN.md for the agent loop and
  * docs/DIAGNOSTIC-CODES.md for what each `code` means.
  */
 

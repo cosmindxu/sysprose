@@ -1,0 +1,17 @@
+{
+  "level": "L2",
+  "title": "the bare A -> B transition shorthand, rejected by design",
+  "note": "FIXED 2026-09-02. The bare `A -> B` shorthand is still rejected by design (it cannot be told apart from a `->` function-operation expression), but the diagnostic now names the `transition` keyword the agent must write. The parser stops several tokens past the arrow, so the refinement inspects the source line.",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/bare-transition-arrow",
+      "severity": "error",
+      "line": 5,
+      "hintIncludes": "transition"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1
+  }
+}

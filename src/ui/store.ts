@@ -804,7 +804,7 @@ const initialModel = buildSampleModel();
 const initialApi = new ModelApi(initialModel);
 const initialServer = new SysmlApiServer(initialModel);
 
-// Coalesce the per-mutation RECOMPUTE — validation (18 rules), textual
+// Coalesce the per-mutation RECOMPUTE — validation (19 rules), textual
 // re-serialization, and the ELK diagram rebuild — into a single pass after a
 // burst of edits settles, instead of running all three synchronously on every
 // edit (findings C4, C5, L6 — the dominant large-model cost). `rev` is bumped

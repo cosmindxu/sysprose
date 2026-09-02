@@ -21,7 +21,8 @@
     "interop": "tsx scripts/pilot-roundtrip.ts",
     "check": "tsx scripts/sysml-check.ts",
     "campaign": "vitest run test/campaign",
-    "codes": "tsx scripts/gen-diagnostic-codes.ts"
+    "codes": "tsx scripts/gen-diagnostic-codes.ts",
+    "bench": "tsx scripts/agent-repair-bench.ts"
   },
   "dependencies": {
     "@types/express": "^5.0.6",

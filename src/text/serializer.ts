@@ -21,6 +21,7 @@ import {
   isMembership,
   isRequirement,
   isSpecialization,
+  resolveTypeInScopeChain,
   type ElementId,
   type ElementRecord,
 } from '@core/index';
@@ -275,14 +276,37 @@ function header(model: Model, el: ElementRecord): string {
   return parts.join(' ');
 }
 
+/** The last segment of a qualified reference (`ScalarValues::Real` → `Real`). */
+function lastSegment(ref: string): string {
+  const i = ref.lastIndexOf('::');
+  return i === -1 ? ref : ref.slice(i + 2);
+}
+
+/**
+ * Is this reference unprintable — an anonymous element (`«PartDefinition»`) or a
+ * target that is no longer in the model (empty name)?
+ *
+ * Emitting either produces text that does not mean what the model means: `«…»`
+ * is not valid notation and re-parses as a wrongly-named element, and an empty
+ * reference serializes as `: ''`. Both are worse than omitting the fragment.
+ */
+function unprintableRef(ref: string): boolean {
+  return ref === '' || ref.includes('«') || ref.includes("''");
+}
+
 /** Inline `: Type`, `:> Super`, `:>> redef`, `::> ref` fragments. */
 function specializationFragments(model: Model, el: ElementRecord): string[] {
   const out: string[] = [];
 
   // Attribute typing stored as a plain string. A conjugated type keeps its `~`.
   const conj = el.attrs.conjugated === true ? '~' : '';
-  if (typeof el.attrs.type === 'string') out.push(`: ${conj}${el.attrs.type}`);
-  else if (typeof el.attrs.typeRef === 'string') out.push(`: ${conj}${el.attrs.typeRef}`);
+  const displayType =
+    typeof el.attrs.type === 'string'
+      ? el.attrs.type
+      : typeof el.attrs.typeRef === 'string'
+        ? el.attrs.typeRef
+        : undefined;
+  if (displayType !== undefined) out.push(`: ${conj}${displayType}`);
 
   // Unresolved specialization references kept on attrs (conjugated → `~`).
   pushRefList(out, ':>', el.attrs.specializes, conj);
@@ -300,7 +324,17 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
     if (!targetId) continue;
     const ref = refTo(model, targetId, el.ownerId);
     const op = operatorFor(rel.eClass);
-    const conj = el.attrs.conjugated === true ? '~' : '';
+    // Do not restate a typing the display string already expresses. After the
+    // library binder runs, an attribute carries BOTH `attrs.type = 'Real'` and a
+    // FeatureTyping to `ScalarValues::Real`; emitting both produced
+    // `attribute mass : Real : ScalarValues::Real`, which is not what anyone
+    // wrote. The authored display string wins: it is what the user typed, and
+    // the binder deterministically rebuilds the relationship from it.
+    if (op === ':' && displayType !== undefined && lastSegment(ref) === lastSegment(displayType)) {
+      continue;
+    }
+    // Never emit an anonymous or dangling target — see `unprintableRef`.
+    if (unprintableRef(ref)) continue;
     out.push(`${op} ${conj}${ref}`);
   }
   return out;
@@ -754,11 +788,30 @@ function controlNodeLine(el: ElementRecord, pad: string): string {
 /* ─────────────────────────── reference paths ──────────────────────────── */
 
 /**
- * Render a reference to `targetId` usable from `scopeOwnerId`. Prefers the
- * dotted relative path when `targetId` is a descendant of the scope; otherwise
- * falls back to the fully-qualified `::` name from the model root.
+ * Render a reference to `targetId` usable from `scopeOwnerId`, preferring the
+ * SHORTEST form that still denotes the same element from that scope:
+ *
+ *  1. the simple name, when resolving it from this scope finds the same element
+ *     (KerML resolves outward through enclosing namespaces, so a sibling of an
+ *     ancestor is reachable by its bare name);
+ *  2. the dotted relative path, when the target is a descendant of the scope;
+ *  3. the fully-qualified `::` name.
+ *
+ * Step 1 exists because the alternative is noise: a feature typed by a
+ * definition declared beside its owner would otherwise serialize as
+ * `port fuelIn : VehicleModel::FuelPort` when the author wrote `: FuelPort`.
+ * Both re-parse to the same model, but only one of them is what anyone wrote.
  */
 function refTo(model: Model, targetId: ElementId, scopeOwnerId: ElementId | null): string {
+  const target = model.get(targetId);
+  const simple = target ? nameOf(target) : undefined;
+  if (
+    simple &&
+    !simple.startsWith('«') &&
+    resolveTypeInScopeChain(model, simple, scopeOwnerId, undefined)?.id === targetId
+  ) {
+    return simple;
+  }
   const rel = relativePath(model, targetId, scopeOwnerId);
   if (rel) return rel;
   return qualifiedRef(model, targetId);

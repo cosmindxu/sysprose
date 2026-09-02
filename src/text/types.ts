@@ -9,7 +9,7 @@
  * `ParseDiagnostic` is a structural subset of the validation {@link Diagnostic}
  * (same field names and meanings) so a parse finding can be widened into one
  * without translation — see `src/text/check.ts` and the Agent Diagnostics
- * Contract in `docs/AGENT-TEXT-CAMPAIGN.md`.
+ * Contract in `docs/AGENT-AUTHORING-CAMPAIGN.md`.
  */
 
 import type { Model, ElementId } from '@core/index';
@@ -57,4 +57,17 @@ export interface ParseResult {
    * UI, to jump from a problem row to the offending line.
    */
   ranges: Map<ElementId, TextRange>;
+  /**
+   * "Unresolved reference" warnings that the LIBRARY BINDER may later resolve,
+   * paired with the element and attribute still holding the unresolved name.
+   *
+   * A forward type reference is unresolved at parse time and resolved after the
+   * binder runs, so its warning must be retractable — see
+   * `retractResolvedSpecializationWarnings`.
+   */
+  deferredSpecializationWarnings: Array<{
+    diagnostic: ParseDiagnostic;
+    elementId: ElementId;
+    attr: string;
+  }>;
 }

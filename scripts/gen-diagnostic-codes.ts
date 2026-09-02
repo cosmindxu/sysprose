@@ -37,7 +37,7 @@ from this catalogue. Codes are stable: messages get reworded, codes do not, so
 automation should branch on \`code\` and never on \`message\`.
 
 This is the reference half of the **Agent Diagnostics Contract**; the workflow
-that uses it is in [\`AGENT-TEXT-CAMPAIGN.md\`](AGENT-TEXT-CAMPAIGN.md).
+that uses it is in [\`AGENT-AUTHORING-CAMPAIGN.md\`](AGENT-AUTHORING-CAMPAIGN.md).
 
 ## The shape of a finding
 

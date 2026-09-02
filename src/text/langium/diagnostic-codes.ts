@@ -99,6 +99,21 @@ const CODES = [
     hint: 'Unknown declaration keyword {found}; this declaration was ignored. Use a supported keyword such as part, attribute, port, action, state, requirement or connection.',
   },
 
+  {
+    code: 'parse/keyword-order',
+    source: 'parser',
+    severity: 'error',
+    when: 'Declaration keywords appear in the wrong order, e.g. `def part X;`.',
+    hint: 'Keywords are in the wrong order. A definition is written `<kind> def Name`, e.g. `part def Vehicle {`, not `def part Vehicle`.',
+  },
+  {
+    code: 'parse/bare-transition-arrow',
+    source: 'parser',
+    severity: 'error',
+    when: 'A bare `A -> B` transition shorthand was used. It is rejected deliberately: it cannot be told apart from a `->` function-operation expression.',
+    hint: 'Write the transition with its keyword: `transition A -> B;` (a bare `A -> B` is ambiguous with an expression and is not accepted).',
+  },
+
   /* ── mapper: unresolved references (non-fatal; the textual name is kept) ── */
   {
     code: 'ref/unresolved-type',
@@ -223,6 +238,13 @@ const CODES = [
   },
 
   /* ── validation rules (docs: src/validation/rules.ts) ── */
+  {
+    code: 'validation/unresolved-import',
+    source: 'validation',
+    severity: 'warning',
+    when: 'An import names a namespace that is not loaded, so it brings nothing into scope.',
+    hint: 'Check the imported namespace name. Only the bundled standard library and packages declared in this file are visible.',
+  },
   {
     code: 'validation/duplicate-name',
     source: 'validation',
@@ -356,7 +378,7 @@ const CODES = [
     source: 'import',
     severity: 'error',
     when: 'Text produced by this tool\'s own serializer does not parse back. A silent-misparse guard.',
-    hint: 'Tool defect: the serializer emitted notation the grammar rejects. See docs/AGENT-TEXT-CAMPAIGN.md "Open defects".',
+    hint: 'Tool defect: the serializer emitted notation the grammar rejects. See docs/AGENT-AUTHORING-CAMPAIGN.md "Open defects".',
   },
 ] as const satisfies readonly DiagnosticCode[];
 
@@ -404,6 +426,47 @@ export function renderHint(
 }
 
 /* ───────────────────── Chevrotain / Langium classification ───────────────── */
+
+/** Keywords that introduce a definition; seeing one out of place is diagnostic. */
+const DEF_KEYWORDS = new Set(['def']);
+
+/**
+ * Refine a parser error using the tokens AROUND it.
+ *
+ * Chevrotain reports where parsing STOPPED, which for the two commonest agent
+ * mistakes is one token past the actual error: `blok def Vehicle;` is reported
+ * as "expecting '}' but found 'def'", and the obvious repair suggested by that
+ * message — insert a brace — makes the file worse. The previous token is what
+ * the agent got wrong, so this looks at it.
+ *
+ * Returns a refined `{code, found, hintFound}` or `undefined` to keep the
+ * default classification.
+ */
+export function refineParserError(
+  defaultCode: string,
+  found: string | undefined,
+  previous: string | undefined,
+  sourceLine?: string,
+): { code: string; found: string } | undefined {
+  // `off -> on;` — the bare transition shorthand. The parser stops at the `;`,
+  // several tokens past the `->`, so the token pair alone cannot see it; the
+  // line can. Checked first because it is the most specific signal.
+  if (sourceLine !== undefined && sourceLine.includes('->') && !/\btransition\b/.test(sourceLine)) {
+    return { code: 'parse/bare-transition-arrow', found: '->' };
+  }
+  if (found === undefined) return undefined;
+  // `blok def Vehicle;` — an unknown word immediately before `def`. The unknown
+  // word is the mistake, not the `def` the parser tripped on.
+  if (DEF_KEYWORDS.has(found) && previous !== undefined && /^[A-Za-z_]\w*$/.test(previous)) {
+    return { code: 'parse/unknown-keyword', found: previous };
+  }
+  // `def part Vehicle;` — `def` where a declaration should start, with no
+  // identifier before it: the keywords are the right ones in the wrong order.
+  if (DEF_KEYWORDS.has(found)) {
+    return { code: 'parse/keyword-order', found };
+  }
+  return defaultCode === 'parse/error' ? undefined : undefined;
+}
 
 /**
  * Map a Chevrotain recognition-exception class to a catalogue code.

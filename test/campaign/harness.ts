@@ -1,6 +1,6 @@
 /**
- * Shared harness for the agent text-authoring campaign
- * (`docs/AGENT-TEXT-CAMPAIGN.md`).
+ * Shared harness for the agent authoring testing campaign
+ * (`docs/AGENT-AUTHORING-CAMPAIGN.md`).
  *
  * The campaign asks one question of every fixture: **if an AI agent wrote this
  * flawed `.sysml` file, does the tool tell it enough to fix the file?** Each
@@ -14,7 +14,7 @@ import { join, resolve } from 'node:path';
 import type { Diagnostic } from '@validation/types';
 import type { CheckReport } from '@text/check';
 
-export const FIXTURE_ROOT = resolve(process.cwd(), 'test/fixtures/text-campaign');
+export const FIXTURE_ROOT = resolve(process.cwd(), 'test/fixtures/agent-authoring');
 
 /** One expected diagnostic. Fields left out are not asserted. */
 export interface ExpectedDiagnostic {

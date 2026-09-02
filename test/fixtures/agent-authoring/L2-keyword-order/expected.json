@@ -1,0 +1,17 @@
+{
+  "level": "L2",
+  "title": "definition keywords in the wrong order",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/keyword-order",
+      "severity": "error",
+      "line": 2,
+      "hintIncludes": "part def"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1
+  },
+  "note": "FIXED 2026-09-02. Reversed definition keywords used to be blamed on the next token with a brace-insertion hint. The diagnostic now names the ordering rule: `part def Name`, not `def part Name`."
+}

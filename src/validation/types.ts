@@ -7,7 +7,7 @@
  * change field names/types without updating the contract.
  *
  * The optional fields below form the **Agent Diagnostics Contract** (ADC,
- * `docs/AGENT-TEXT-CAMPAIGN.md`): the machine-readable half that lets an AI
+ * `docs/AGENT-AUTHORING-CAMPAIGN.md`): the machine-readable half that lets an AI
  * agent authoring `.sysml` text locate and repair its own mistakes. They are
  * OPTIONAL by design — a model-only finding has no source text to point at —
  * but every diagnostic derived from parsing text carries `code` and `range`.

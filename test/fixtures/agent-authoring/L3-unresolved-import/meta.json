@@ -1,0 +1,5 @@
+{
+  "level": "L3",
+  "title": "an import of a package that is not loaded",
+  "note": "FIXED 2026-09-02. An import of a namespace that does not exist used to be entirely silent, so an agent could not learn that its import brought nothing into scope. Now reported by the `unresolved-import` validation rule."
+}

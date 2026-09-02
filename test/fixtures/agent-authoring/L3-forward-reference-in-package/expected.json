@@ -1,0 +1,21 @@
+{
+  "level": "L3",
+  "title": "a nested feature typed by a definition declared LATER in the same package",
+  "note": "FIXED 2026-09-02. Declaration order is not significant in SysML v2, and this model is valid: a nested feature may be typed by a definition declared later in the same package. It used to report unresolved types because the library binder searched the bundled standard library BEFORE the referencing element's own scope — which also silently MIS-BOUND names, e.g. `part e : B` bound to the library element SI::byte rather than the user's B. Resolution now walks outward through enclosing namespaces first (KerML v1.0 §8.2.3.5.4), with the library as the namespace of last resort. This fixture is the regression test for that order.",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/port-direction",
+      "severity": "warning",
+      "line": 3
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 6,
+    "strictWarnings": true
+  }
+}

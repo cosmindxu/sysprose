@@ -27,7 +27,12 @@
  * only *resolves* against whatever library elements are already present.
  */
 
-import { Model, type ElementId, type ElementRecord } from '@core/index';
+import {
+  Model,
+  resolveTypeInScopeChain,
+  type ElementId,
+  type ElementRecord,
+} from '@core/index';
 
 /**
  * Resolve `name` against the loaded standard-library elements (those carrying
@@ -143,7 +148,17 @@ export function resolveTypeReferences(model: Model): number {
       const typeRef = el.attrs.typeRef;
       if (typeof typeRef === 'string' && typeRef.trim() !== '') {
         if (!hasResolvedFeatureTyping(model, el)) {
-          const target = findLibraryType(model, typeRef) ?? model.resolveQualifiedName(typeRef);
+          // ORDER IS THE CONTRACT (KerML v1.0 §8.2.3.5.4): resolve outward
+          // through the referencing element's own namespaces FIRST, and fall
+          // back to the bundled library only when nothing local answers to the
+          // name. Searching the library first — as this did — made a forward
+          // reference bind to whatever library element happened to share the
+          // name or short name (`part e : B` bound to `SI::byte`), so the same
+          // name resolved differently depending on where it was written.
+          const target =
+            resolveTypeInScopeChain(model, typeRef, el.ownerId, el.id) ??
+            findLibraryType(model, typeRef) ??
+            model.resolveQualifiedName(typeRef);
           if (target && target.id !== el.id) {
             addFeatureTyping(model, el.id, target.id);
             clearAttr(model, el.id, 'typeRef');

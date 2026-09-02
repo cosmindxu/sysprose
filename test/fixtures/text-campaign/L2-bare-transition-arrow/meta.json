@@ -1,5 +1,0 @@
-{
-  "level": "L2",
-  "title": "the bare A -> B transition shorthand, rejected by design",
-  "note": "Rejected deliberately: bare A -> B is indistinguishable from a -> function-operation expression (sysml.langium:207-209). The agent must be told to write `transition`."
-}

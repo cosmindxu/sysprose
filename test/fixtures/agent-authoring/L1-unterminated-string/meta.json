@@ -1,0 +1,5 @@
+{
+  "level": "L1",
+  "title": "a string literal that is never closed",
+  "note": "FIXED 2026-09-02. An unterminated string used to be reported as lexer/illegal-char on the quote, with a hint telling the agent to REMOVE the quote — the opposite of the repair. The pre-lex scan now names it and tells the agent to close the string."
+}

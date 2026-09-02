@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 const CLI = resolve(process.cwd(), 'scripts/sysml-check.ts');
-const FIX = resolve(process.cwd(), 'test/fixtures/text-campaign');
+const FIX = resolve(process.cwd(), 'test/fixtures/agent-authoring');
 
 interface Run {
   code: number;

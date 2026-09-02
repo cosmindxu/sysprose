@@ -1,0 +1,5 @@
+{
+  "level": "L2",
+  "title": "a misspelled declaration keyword",
+  "note": "FIXED 2026-09-02. The parser stops one token PAST a misspelled keyword, so this used to read 'Expecting }' but found `def`' with a hint to insert a brace — advice that makes the file worse. refineParserError now inspects the previous token and names the unknown word itself."
+}

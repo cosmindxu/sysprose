@@ -5,5 +5,6 @@ export { Model, FORMAT_VERSION } from './model';
 export type { ChangeEvent, ChangeListener, CreateElementOptions } from './model';
 export { ModelFactory, buildSampleModel } from './factory';
 export { duplicateSubtree } from './duplicate';
+export { resolveTypeInScopeChain } from './scope';
 export { collectSubtrees, pasteSubtrees } from './paste';
 export type { ClipboardPayload } from './paste';

@@ -75,7 +75,7 @@ migration is a separate, opt-in change.
 
 Sysprose's users include AI agents that author models as text and can only act on
 what the tool reports. The **Agent Diagnostics Contract**
-(`docs/AGENT-TEXT-CAMPAIGN.md`) therefore binds every finding derived from source
+(`docs/AGENT-AUTHORING-CAMPAIGN.md`) therefore binds every finding derived from source
 text:
 
 1. **Every such finding carries a `code` and a `range`.** The code comes from
@@ -111,7 +111,7 @@ npm run lint             # eslint src/ test/ scripts/
 npm test                 # vitest: unit + integration + conformance + server + interop
 npm run build            # production build
 npx playwright test --config="$PWD/playwright.config.ts"
-npm run campaign         # agent text-authoring campaign (part of `npm test`)
+npm run campaign         # agent authoring testing campaign (part of `npm test`)
 ```
 
 `docs/TEST-SUMMARY.md` is generated (`npm run test:report && npm run report`). It is

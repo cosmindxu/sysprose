@@ -8,7 +8,7 @@ from this catalogue. Codes are stable: messages get reworded, codes do not, so
 automation should branch on `code` and never on `message`.
 
 This is the reference half of the **Agent Diagnostics Contract**; the workflow
-that uses it is in [`AGENT-TEXT-CAMPAIGN.md`](AGENT-TEXT-CAMPAIGN.md).
+that uses it is in [`AGENT-AUTHORING-CAMPAIGN.md`](AGENT-AUTHORING-CAMPAIGN.md).
 
 ## The shape of a finding
 
@@ -114,6 +114,20 @@ The tokens do not form a legal declaration. `expected` lists what would have bee
 - **Fires when:** The declaration parsed, but its keyword maps to no metaclass, so the declaration is DROPPED from the model.
 - **Hint given:** Unknown declaration keyword {found}; this declaration was ignored. Use a supported keyword such as part, attribute, port, action, state, requirement or connection.
 
+### `parse/keyword-order`
+
+- **Severity:** error
+- **Source:** parser
+- **Fires when:** Declaration keywords appear in the wrong order, e.g. `def part X;`.
+- **Hint given:** Keywords are in the wrong order. A definition is written `<kind> def Name`, e.g. `part def Vehicle {`, not `def part Vehicle`.
+
+### `parse/bare-transition-arrow`
+
+- **Severity:** error
+- **Source:** parser
+- **Fires when:** A bare `A -> B` transition shorthand was used. It is rejected deliberately: it cannot be told apart from a `->` function-operation expression.
+- **Hint given:** Write the transition with its keyword: `transition A -> B;` (a bare `A -> B` is ambiguous with an expression and is not accepted).
+
 ## Reference resolution
 
 A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.
@@ -198,6 +212,13 @@ A name did not resolve. These are WARNINGS: the textual name is preserved in the
 ## Model validation
 
 The file parsed, but the model it describes breaks a rule. Each code matches a rule id in `src/validation/rules.ts`.
+
+### `validation/unresolved-import`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** An import names a namespace that is not loaded, so it brings nothing into scope.
+- **Hint given:** Check the imported namespace name. Only the bundled standard library and packages declared in this file are visible.
 
 ### `validation/duplicate-name`
 
@@ -380,8 +401,8 @@ Guards against the tool producing notation it cannot read back.
 - **Severity:** error
 - **Source:** import
 - **Fires when:** Text produced by this tool's own serializer does not parse back. A silent-misparse guard.
-- **Hint given:** Tool defect: the serializer emitted notation the grammar rejects. See docs/AGENT-TEXT-CAMPAIGN.md "Open defects".
+- **Hint given:** Tool defect: the serializer emitted notation the grammar rejects. See docs/AGENT-AUTHORING-CAMPAIGN.md "Open defects".
 
 ---
 
-*45 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*48 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

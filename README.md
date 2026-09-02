@@ -67,7 +67,7 @@ thing in-process and never throws.
 
 - [`docs/DIAGNOSTIC-CODES.md`](docs/DIAGNOSTIC-CODES.md) — every code, what
   triggers it, and the repair it suggests.
-- [`docs/AGENT-TEXT-CAMPAIGN.md`](docs/AGENT-TEXT-CAMPAIGN.md) — the test
+- [`docs/AGENT-AUTHORING-CAMPAIGN.md`](docs/AGENT-AUTHORING-CAMPAIGN.md) — the test
   campaign that keeps this feedback good enough to act on, and the open defects
   it has found.
 
@@ -105,7 +105,7 @@ npm test               # vitest unit/integration
 npm run build && npm run preview   # serve the app at :4173
 npm run test:e2e       # Playwright E2E (after preview is up)
 npm run report         # regenerate docs/TEST-SUMMARY.md
-npm run campaign       # the agent text-authoring campaign
+npm run campaign       # the agent authoring testing campaign
 npm run codes          # regenerate docs/DIAGNOSTIC-CODES.md from the catalogue
 npm run check -- <file.sysml> [--json]   # check a file from the command line
 ```

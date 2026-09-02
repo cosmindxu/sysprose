@@ -1,0 +1,22 @@
+{
+  "level": "L2",
+  "title": "two unrelated syntax errors in one file",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/unknown-keyword",
+      "severity": "error",
+      "line": 6,
+      "found": "blok"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 5,
+    "strictWarnings": true
+  },
+  "note": "Only ONE error is reported, deliberately: the missing semicolon after `attribute x : Real` is accepted by the parser's leniency (see L2-missing-semicolon, where the resulting model is verified identical to the corrected file's), so the unknown keyword `blok` is the only real fault. OBSERVATION, pre-existing: error recovery re-homes the declarations after the fault to the ROOT namespace — note `C` among the roots — rather than keeping them inside `package P`. The elements survive, but their containment does not."
+}

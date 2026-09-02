@@ -19,12 +19,13 @@ export { astToModel as parseModelLangium } from './langium/map-to-model';
 // Post-type-binding connector endpoint pass: call AFTER resolveTypeReferences
 // so chains through library-bound types resolve too (see the UI store).
 export { resolveConnectorFeatureChains } from './langium/map-to-model';
+export { retractResolvedSpecializationWarnings } from './langium/map-to-model';
 
 // Shared result/diagnostic contract.
 export type { ParseResult, ParseDiagnostic } from './types';
 
 // Headless check pipeline (parse + library binding + validation) — the entry
-// point for agents and the CLI. See docs/AGENT-TEXT-CAMPAIGN.md.
+// point for agents and the CLI. See docs/AGENT-AUTHORING-CAMPAIGN.md.
 export { checkText } from './check';
 export type { CheckOptions, CheckReport, Normalization } from './check';
 export {

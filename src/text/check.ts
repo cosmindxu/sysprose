@@ -1,7 +1,7 @@
 /**
  * `checkText` — the headless "is this `.sysml` file any good, and if not why"
  * entry point. The core of the Agent Diagnostics Contract
- * (`docs/AGENT-TEXT-CAMPAIGN.md`).
+ * (`docs/AGENT-AUTHORING-CAMPAIGN.md`).
  *
  * WHY. Before this existed, the only way to get errors out of the tool was to
  * drive the browser: open the Text tab, paste, click Apply, read the Problems
@@ -25,7 +25,11 @@
 import type { ElementId } from '@core/index';
 import type { Diagnostic, Severity, TextRange } from '@validation/types';
 import { validate } from '@validation/index';
-import { parseModel, resolveConnectorFeatureChains } from './index';
+import {
+  parseModel,
+  resolveConnectorFeatureChains,
+  retractResolvedSpecializationWarnings,
+} from './index';
 import type { ParseDiagnostic } from './types';
 import { renderHint } from './langium/diagnostic-codes';
 
@@ -185,8 +189,6 @@ export async function checkText(text: string, opts: CheckOptions = {}): Promise<
 
   try {
     const parsed = parseModel(src);
-    for (const [i, d] of parsed.diagnostics.entries()) diagnostics.push(widen(d, i));
-
     const model = parsed.model;
     const userIds = new Set(model.all().map((el) => el.id));
 
@@ -198,6 +200,13 @@ export async function checkText(text: string, opts: CheckOptions = {}): Promise<
       resolveTypeReferences(model);
       resolveConnectorFeatureChains(model);
     }
+
+    // Parse warnings are published AFTER binding, so a forward reference the
+    // binder resolved does not leave a stale "Unresolved reference" behind. A
+    // name that is genuinely unresolvable keeps its warning.
+    const parseDiags =
+      library === 'full' ? retractResolvedSpecializationWarnings(model, parsed) : parsed.diagnostics;
+    for (const [i, d] of parseDiags.entries()) diagnostics.push(widen(d, i));
 
     // Validation findings, restricted to the agent's own elements: the bundled
     // library is not theirs to fix, and a wall of library findings would bury
