@@ -248,6 +248,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A value carries a `[unit]` the engine does not know, so no dimensional check or unit conversion can be applied to it.
 - **Hint given:** Use a registered unit symbol (SI units and their prefixes, Wh, Ah, min, h, …). An unknown unit is treated as a bare number in arithmetic, which is usually wrong.
 
+### `validation/connection-compatibility`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A connection joins two `out` (or two `in`) ports, or two ports whose port definitions share no ancestor.
+- **Hint given:** Wire an `out` port to an `in` port (or use `inout`), and give both ends the same port definition — or a conjugated one (`~PortDef`) on the receiving side.
+
 ### `validation/duplicate-name`
 
 - **Severity:** error
@@ -433,4 +440,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*52 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*53 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

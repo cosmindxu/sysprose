@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "a connection joining two `out` ports must be flagged",
+  "note": "FOUND 2026-09-02 by a Fable advisory, FIXED the same day. Only `port-direction` existed, which checks that a direction is DECLARED; out→out and in→in wiring passed silently. `connection-compatibility` (warning — SysML v2 does not forbid it at the language level, it is a modelling smell; `--strict` promotes it) anchors on the CONNECTOR, because validate() drops findings anchored on the implicit per-usage port copies that connector ends actually are."
+}

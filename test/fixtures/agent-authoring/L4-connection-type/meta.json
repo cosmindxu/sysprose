@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "a connection joining ports of unrelated types must be flagged",
+  "note": "FOUND 2026-09-02 by a Fable advisory, FIXED the same day. A PowerPort wired to a DataPort passed silently. The type check compares the PortDefinition closures of both ends (reached through the implicit end → prototype → FeatureTyping walk) and flags only when they are DISJOINT — a specialised port def still matches its ancestor, and `T` ↔ `~T` is the canonical compatible pair. Silence when either side is unresolved; that is another rule's finding."
+}

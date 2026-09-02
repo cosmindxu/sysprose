@@ -276,6 +276,13 @@ const CODES = [
     hint: 'Use a registered unit symbol (SI units and their prefixes, Wh, Ah, min, h, …). An unknown unit is treated as a bare number in arithmetic, which is usually wrong.',
   },
   {
+    code: 'validation/connection-compatibility',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A connection joins two `out` (or two `in`) ports, or two ports whose port definitions share no ancestor.',
+    hint: 'Wire an `out` port to an `in` port (or use `inout`), and give both ends the same port definition — or a conjugated one (`~PortDef`) on the receiving side.',
+  },
+  {
     code: 'validation/duplicate-name',
     source: 'validation',
     severity: 'error',
