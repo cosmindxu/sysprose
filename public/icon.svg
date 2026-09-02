@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Sysprose">
+  <rect width="512" height="512" rx="96" fill="#2563eb" />
+  <g stroke="#ffffff" stroke-width="18" stroke-linejoin="round" fill="#ffffff" fill-opacity="0.14">
+    <rect x="112" y="120" width="128" height="94" rx="12" />
+    <rect x="272" y="298" width="128" height="94" rx="12" />
+  </g>
+  <path d="M176 214 L176 345 L272 345" fill="none" stroke="#ffffff" stroke-width="18"
+        stroke-linecap="round" stroke-linejoin="round" />
+</svg>

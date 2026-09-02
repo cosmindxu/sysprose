@@ -1,0 +1,16 @@
+node_modules/
+dist/
+release/
+test-results/
+playwright-report/
+.playwright/
+coverage/
+*.tsbuildinfo
+*.log
+.DS_Store
+.vite/
+
+# Local environment / secrets — never commit tokens or per-machine config.
+.env
+.env.*
+!.env.example

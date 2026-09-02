@@ -1,0 +1,1538 @@
+/**
+ * Numeric constraint solver, measure-of-effectiveness (MoE) evaluation, and
+ * gradient-free optimization over a {@link Model}.
+ *
+ * This layers a *numeric* analysis on top of the static semantics engine —
+ * reusing the expression parser/evaluator ({@link ./expr}), connector/binding
+ * value propagation ({@link ./connectors}.propagateValues) and the dimensional
+ * engine ({@link ./units}) — so a parametric model's equations can be solved to
+ * concrete numbers, its measures of effectiveness read off, and a design
+ * variable swept to optimize an objective.
+ *
+ *  - {@link gatherConstraints} — collect the model's numeric relations as
+ *    {@link Equation}s over feature ids: ConstraintUsage/CalculationUsage bodies
+ *    of the form `lhs = rhs`, FeatureValue expression assignments
+ *    (`feature = expr`), and BindingConnector equalities (`a = b`).
+ *  - {@link solve} — seed known literal values, then drive every equation to a
+ *    fixpoint by constraint propagation (orienting each equation to solve for its
+ *    single remaining unknown) + binding propagation, finishing coupled/implicit
+ *    residuals with a bounded finite-difference Newton (least-squares) step.
+ *  - {@link evaluateMoEs} — identify measure-of-effectiveness features (owned by
+ *    an AnalysisCase/VerificationCase, flagged `attrs.isMoe`, named
+ *    MoE/measure/objective, or an analysis-case return parameter) and read their
+ *    solved values (with unit/dimension).
+ *  - {@link optimize} — coordinate-descent / golden-section optimization of an
+ *    objective feature over bounded variables, re-solving the constraints at each
+ *    trial.
+ *
+ * Every function is deterministic and bounded. This is an ORIGINAL, clean-room
+ * implementation (no third-party solver was copied).
+ */
+
+import { type ElementId, type ElementRecord, type Model, isUsage } from '@core/index';
+import { parseExpr, evaluate, type ExprNode } from './expr';
+import { effectiveFeatures } from './inheritance';
+import { propagateValues } from './connectors';
+import { evaluateFeatureValue } from './evaluate-model';
+import { evaluateQuantity } from './units-eval';
+import { dimToString } from './units';
+
+/**
+ * Per-equation RELATIVE residual floor (finding M6): the fraction of an
+ * equation's magnitude below which a residual is indistinguishable from
+ * floating-point rounding noise (double eps ≈ 2.2e-16; this ~45× margin covers
+ * accumulated rounding without masking real violations). A residual larger than
+ * `RESIDUAL_FLOOR · scale` is a REAL constraint violation, so this is the
+ * loosest a scale-relative convergence test may be: the `1e-6 · scale` first
+ * attempt rubber-stamped genuinely-unsolved systems, and even `1e-12` was loose
+ * enough that an equation with large CANCELLING subterms (e.g.
+ * `x + 1e9 − 1e9 = 5`, whose `equationScale` is ~1e9) hid a real 1e−4 error
+ * (Fable D1 follow-up). At 1e-14 the gate there is 1e−5, catching that error,
+ * while a genuine `x·x = 1e16` solve (achievable residual ~10) still clears its
+ * ~1e2 gate comfortably.
+ */
+const RESIDUAL_FLOOR = 1e-14;
+
+/* ─────────────────────────────── types ───────────────────────────────── */
+
+/**
+ * A single numeric relation `lhs = rhs` over feature ids. `expr` is the residual
+ * node `lhs − rhs` (zero when the relation holds); `vars` are the ids of the
+ * features the relation constrains; `nameToId` resolves the (possibly dotted)
+ * names used in `lhs`/`rhs` to those feature ids.
+ */
+export interface Equation {
+  /** Feature ids this equation relates. */
+  vars: ElementId[];
+  /** Residual expression `lhs − rhs` (evaluates to 0 when satisfied). */
+  expr: ExprNode;
+  /** Left-hand side expression. */
+  lhs: ExprNode;
+  /** Right-hand side expression. */
+  rhs: ExprNode;
+  /** The source text of the relation. */
+  raw: string;
+  /** Resolver from a name used in the equation to the feature id it denotes. */
+  nameToId: Map<string, ElementId>;
+}
+
+/** Options for {@link solve}. */
+export interface SolveOptions {
+  /** Residual tolerance for convergence (default 1e-9). */
+  tol?: number;
+  /** Maximum solver iterations (default 200). */
+  maxIter?: number;
+  /** Restrict the gathered equations to this element and its descendants. */
+  scopeId?: ElementId;
+  /**
+   * Feature values held CONSTANT for this solve (used by {@link optimize} to fix
+   * the trial design variables). Overrides any literal seed and is never
+   * overwritten by propagation.
+   */
+  fixed?: Map<ElementId, number> | Record<ElementId, number>;
+}
+
+/** Result of {@link solve}. */
+export interface SolveResult {
+  /** featureId → solved numeric value (only determined features). */
+  values: Map<ElementId, number>;
+  /** True when every gathered equation is determined and its residual < tol. */
+  converged: boolean;
+  /** Number of solver iterations performed. */
+  iterations: number;
+  /** The largest absolute residual across the determined equations. */
+  residual: number;
+}
+
+/** One evaluated measure of effectiveness. */
+export interface MeasureResult {
+  /** Element id of the measure feature. */
+  id: ElementId;
+  /** Declared name (empty when anonymous). */
+  name: string;
+  /** Solved numeric value, or `null` when it could not be determined. */
+  value: number | null;
+  /** The unit the value is expressed in, when known. */
+  unit?: string;
+  /** Human-readable physical dimension (e.g. `L·M·T⁻²`), when known. */
+  dimension?: string;
+}
+
+/** The sense of an {@link optimize} objective. */
+export type OptimizeSense = 'min' | 'max';
+
+/** Options for {@link optimize}. */
+export interface OptimizeOptions {
+  /** Minimise (default) or maximise the objective. */
+  sense?: OptimizeSense;
+  /** Inclusive `[lo, hi]` search bounds per variable id. */
+  bounds?: Map<ElementId, [number, number]> | Record<ElementId, [number, number]>;
+  /** Maximum coordinate-descent sweeps (default 40). */
+  maxIter?: number;
+  /** Convergence tolerance on the objective / variable step (default 1e-7). */
+  tol?: number;
+  /**
+   * Respect the model's inequality constraints ({@link gatherInequalities}): a
+   * large penalty is added for any violation so the returned optimum is feasible
+   * (or as close to feasible as the bounds allow).
+   */
+  constraints?: boolean;
+}
+
+/** Result of {@link optimize}. */
+export interface OptimizeResult {
+  /** variableId → optimal value. */
+  best: Map<ElementId, number>;
+  /** The objective value at {@link best}. */
+  value: number;
+  /** The sense that was optimized. */
+  sense: OptimizeSense;
+  /**
+   * Whether the optimum satisfies every model inequality (within tolerance). Only
+   * populated when `opts.constraints` was set; `undefined` otherwise.
+   */
+  feasible?: boolean;
+}
+
+/* ──────────────────────── inequality / feasibility ───────────────────── */
+
+/** A comparison operator that forms an inequality constraint. */
+export type ComparisonOp = '<' | '<=' | '>' | '>=';
+
+/**
+ * A single inequality constraint normalised to the residual form `g(x) <= 0`
+ * (so `a > b` is stored negated as `b − a <= 0`). {@link expr} is the residual
+ * node `g`; the constraint holds when `g <= 0` and its violation amount is
+ * `max(0, g)`.
+ */
+export interface Inequality {
+  /** Feature ids this inequality relates. */
+  vars: ElementId[];
+  /** Residual expression `g` — the inequality holds iff `g <= 0`. */
+  expr: ExprNode;
+  /** The original comparison operator (before normalisation). */
+  op: ComparisonOp;
+  /** Element id of the constraint carrying the body. */
+  id: ElementId;
+  /** Declared name of the constraint (empty when anonymous). */
+  name: string;
+  /** The source text of the relation. */
+  raw: string;
+  /** Resolver from a name used in the inequality to the feature id it denotes. */
+  nameToId: Map<string, ElementId>;
+}
+
+/** One violated constraint reported by {@link solveFeasible}. */
+export interface ConstraintViolation {
+  /** Element id of the violated constraint. */
+  id: ElementId;
+  /** Declared name (empty when anonymous). */
+  name: string;
+  /** The amount by which the constraint is violated (always > 0). */
+  amount: number;
+}
+
+/** Result of {@link solveFeasible}. */
+export interface FeasibilityResult {
+  /** featureId → value at the feasible (or best-effort) point. */
+  values: Map<ElementId, number>;
+  /** True when every inequality holds within tolerance at {@link values}. */
+  feasible: boolean;
+  /** The violated inequalities (empty when {@link feasible}). */
+  violations: ConstraintViolation[];
+  /** Number of penalty-descent sweeps performed. */
+  iterations: number;
+}
+
+/** One numerically-evaluated equality/inequality for the Check surface. */
+export interface NumericConstraintResult {
+  /** Element id of the constraint. */
+  id: ElementId;
+  /** Declared name (empty when anonymous). */
+  name: string;
+  /** The source text of the relation. */
+  raw: string;
+  /** Whether the relation is an equality or an inequality. */
+  kind: 'equality' | 'inequality';
+  /** The comparison operator (inequalities only). */
+  op?: ComparisonOp;
+  /** Verdict at the solved values. */
+  result: 'satisfied' | 'violated' | 'unknown';
+  /**
+   * Signed slack: for an inequality, `−g` (positive is margin to spare); for an
+   * equality, the residual `lhs − rhs`. `null` when it could not be evaluated.
+   */
+  slack: number | null;
+  /** Violation magnitude (0 when satisfied/unknown). */
+  amount: number;
+}
+
+/** Options for {@link solveFeasible}. */
+export interface FeasibilityOptions extends SolveOptions {
+  /** Maximum penalty-descent sweeps (default 60). */
+  sweeps?: number;
+}
+
+/* ──────────────────────── constraint gathering ───────────────────────── */
+
+/** Metaclasses whose `attrs.expression` carries a numeric relation body. */
+const RELATION_KINDS = new Set(['ConstraintUsage', 'CalculationUsage']);
+
+/**
+ * Collect the model's numeric relations as {@link Equation}s over feature ids:
+ *
+ *  1. **ConstraintUsage / CalculationUsage** bodies (`attrs.expression`) of the
+ *     form `lhs = rhs` (a `==`/`=` equality, or a boolean equality constraint) —
+ *     a CalculationUsage body that is a bare expression becomes `self = expr`.
+ *  2. **FeatureValue assignments** — any feature whose `attrs.value` is an
+ *     expression referencing other features becomes `feature = expr`.
+ *  3. **BindingConnector equalities** — each binding/`bind` connector becomes
+ *     `sourceEnd = targetEnd`.
+ *
+ * Variable names are resolved to feature ids via a scope built from each
+ * relation's context (its owner's effective features). When `scopeId` is given,
+ * only relations at or under that element are gathered.
+ */
+export function gatherConstraints(model: Model, scopeId?: ElementId): Equation[] {
+  const inScope = scopeFilter(model, scopeId);
+  const eqs: Equation[] = [];
+
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true) continue;
+    if (!inScope(el)) continue;
+
+    // (1) Constraint / calculation relation bodies.
+    if (RELATION_KINDS.has(el.eClass)) {
+      const eq = relationEquation(model, el);
+      if (eq) eqs.push(eq);
+      continue;
+    }
+
+    // (2) Feature-value expression assignments (only genuine expressions).
+    if (isUsage(el.eClass)) {
+      const eq = assignmentEquation(model, el);
+      if (eq) eqs.push(eq);
+    }
+  }
+
+  // (3) BindingConnector / bind / equality connectors.
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true) continue;
+    if (!isBindingEdge(el)) continue;
+    if (!inScope(el)) continue;
+    const s = el.source?.[0];
+    const t = el.target?.[0];
+    if (s === undefined || t === undefined) continue;
+    eqs.push(bindingEquation(el.id, s, t));
+  }
+
+  return eqs;
+}
+
+/** Is `el` a binding/equality connector that forces its endpoints equal? */
+function isBindingEdge(el: ElementRecord): boolean {
+  if (el.eClass === 'BindingConnectorAsUsage' || el.eClass === 'BindingConnector') return true;
+  if (el.attrs.bind === true) return true;
+  const kind = el.attrs.connectorKind ?? el.attrs.kind;
+  return kind === 'bind' || kind === 'equals' || kind === 'equality';
+}
+
+/** A predicate selecting elements at/under `scopeId` (or everything when none). */
+function scopeFilter(model: Model, scopeId?: ElementId): (el: ElementRecord) => boolean {
+  if (!scopeId) return () => true;
+  const ids = new Set<ElementId>([scopeId]);
+  for (const d of model.descendants(scopeId)) ids.add(d.id);
+  return (el) => ids.has(el.id) || (el.ownerId != null && ids.has(el.ownerId));
+}
+
+/** Build an {@link Equation} from a ConstraintUsage / CalculationUsage body. */
+function relationEquation(model: Model, el: ElementRecord): Equation | undefined {
+  const raw = el.attrs.expression;
+  if (typeof raw !== 'string' || raw.trim() === '') return undefined;
+
+  let node: ExprNode;
+  try {
+    node = parseExpr(raw);
+  } catch {
+    return undefined; // unit-literal or malformed body — not a scalar equation
+  }
+
+  const nameToId = relationScope(model, el);
+
+  // `lhs = rhs` / `lhs == rhs`. A lone `=` is now a distinct operator (finding
+  // L3); accept it here as an equation separator alongside `==`.
+  if (node.kind === 'binary' && (node.op === '==' || node.op === '=')) {
+    return makeEquation(model, node.left, node.right, raw, nameToId);
+  }
+
+  // Any other boolean comparison (<, <=, …) is an inequality, not an equation.
+  if (node.kind === 'binary' && isComparison(node.op)) return undefined;
+
+  // A CalculationUsage whose body is a bare value expression: `self = expr`.
+  if (el.eClass === 'CalculationUsage' && el.declaredName) {
+    const lhs: ExprNode = { kind: 'ref', path: [el.declaredName] };
+    nameToId.set(el.declaredName, el.id);
+    return makeEquation(model, lhs, node, raw, nameToId);
+  }
+
+  return undefined;
+}
+
+/** Build a `feature = expr` {@link Equation} from a feature's value expression. */
+function assignmentEquation(model: Model, el: ElementRecord): Equation | undefined {
+  const raw = el.attrs.value;
+  if (typeof raw !== 'string') return undefined;
+  const s = raw.trim();
+  if (s === '') return undefined;
+  // Quoted string literal — not a numeric expression.
+  if (
+    s.length >= 2 &&
+    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
+  ) {
+    return undefined;
+  }
+
+  let node: ExprNode;
+  try {
+    node = parseExpr(s);
+  } catch {
+    return undefined;
+  }
+  // A self-contained literal (a bare number/boolean) is a seed, not an equation.
+  const asLiteral = evaluate(node, () => undefined);
+  if ('value' in asLiteral) return undefined;
+
+  const name = el.declaredName;
+  if (!name) return undefined;
+
+  const nameToId = mergeMaps(
+    el.ownerId != null ? idScopeFor(model, el.ownerId) : new Map(),
+    idScopeFor(model, el.id),
+  );
+  nameToId.set(name, el.id); // the assignment target resolves to this feature
+  const lhs: ExprNode = { kind: 'ref', path: [name] };
+  return makeEquation(model, lhs, node, s, nameToId);
+}
+
+/** Build a synthetic `a = b` equality {@link Equation} between two feature ids. */
+function bindingEquation(edgeId: ElementId, a: ElementId, b: ElementId): Equation {
+  const nameToId = new Map<string, ElementId>([
+    ['__l', a],
+    ['__r', b],
+  ]);
+  const lhs: ExprNode = { kind: 'ref', path: ['__l'] };
+  const rhs: ExprNode = { kind: 'ref', path: ['__r'] };
+  return {
+    vars: a === b ? [a] : [a, b],
+    lhs,
+    rhs,
+    expr: { kind: 'binary', op: '-', left: lhs, right: rhs },
+    raw: `${a} = ${b} (${edgeId})`,
+    nameToId,
+  };
+}
+
+/** Assemble an {@link Equation} record, extracting its variable ids. */
+function makeEquation(
+  model: Model,
+  lhs: ExprNode,
+  rhs: ExprNode,
+  raw: string,
+  nameToId: Map<string, ElementId>,
+): Equation {
+  const vars = new Set<ElementId>();
+  collectVarIds(lhs, nameToId, vars);
+  collectVarIds(rhs, nameToId, vars);
+  return {
+    vars: [...vars],
+    lhs,
+    rhs,
+    expr: { kind: 'binary', op: '-', left: lhs, right: rhs },
+    raw,
+    nameToId,
+  };
+}
+
+/** Collect the feature ids referenced by an expression, via `nameToId`. */
+function collectVarIds(node: ExprNode, nameToId: Map<string, ElementId>, out: Set<ElementId>): void {
+  switch (node.kind) {
+    case 'ref': {
+      const id = nameToId.get(node.path.join('.'));
+      if (id !== undefined) out.add(id);
+      return;
+    }
+    case 'unary':
+      collectVarIds(node.operand, nameToId, out);
+      return;
+    case 'binary':
+      collectVarIds(node.left, nameToId, out);
+      collectVarIds(node.right, nameToId, out);
+      return;
+    case 'if':
+      collectVarIds(node.cond, nameToId, out);
+      collectVarIds(node.then, nameToId, out);
+      collectVarIds(node.else, nameToId, out);
+      return;
+    default:
+      return;
+  }
+}
+
+/** A comparison operator produces a boolean, not a residual. */
+function isComparison(op: string): boolean {
+  return op === '<' || op === '<=' || op === '>' || op === '>=' || op === '!=';
+}
+
+/** An ordering comparison (the operators that form an inequality constraint). */
+function isInequalityOp(op: string): op is ComparisonOp {
+  return op === '<' || op === '<=' || op === '>' || op === '>=';
+}
+
+/**
+ * Collect the model's inequality constraints as {@link Inequality}s: every
+ * ConstraintUsage / CalculationUsage body whose top operator is an ordering
+ * comparison (`<`, `<=`, `>`, `>=`), each normalised to the residual form
+ * `g(x) <= 0` (a `>`/`>=` body is stored negated as `rhs − lhs`). Equalities are
+ * left to {@link gatherConstraints}. When `scopeId` is given, only relations at
+ * or under that element are gathered.
+ */
+export function gatherInequalities(model: Model, scopeId?: ElementId): Inequality[] {
+  const inScope = scopeFilter(model, scopeId);
+  const out: Inequality[] = [];
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true) continue;
+    if (!inScope(el)) continue;
+    if (!RELATION_KINDS.has(el.eClass)) continue;
+    const ineq = relationInequality(model, el);
+    if (ineq) out.push(ineq);
+  }
+  return out;
+}
+
+/** Build an {@link Inequality} from a ConstraintUsage / CalculationUsage body. */
+function relationInequality(model: Model, el: ElementRecord): Inequality | undefined {
+  const raw = el.attrs.expression;
+  if (typeof raw !== 'string' || raw.trim() === '') return undefined;
+
+  let node: ExprNode;
+  try {
+    node = parseExpr(raw);
+  } catch {
+    return undefined;
+  }
+  if (node.kind !== 'binary' || !isInequalityOp(node.op)) return undefined;
+
+  const nameToId = relationScope(model, el);
+  const op = node.op;
+  // Normalise to g <= 0: `a < b`/`a <= b` ⇒ g = a − b; `a > b`/`a >= b` ⇒ g = b − a.
+  const forward = op === '<' || op === '<=';
+  const g: ExprNode = {
+    kind: 'binary',
+    op: '-',
+    left: forward ? node.left : node.right,
+    right: forward ? node.right : node.left,
+  };
+
+  const vars = new Set<ElementId>();
+  collectVarIds(node.left, nameToId, vars);
+  collectVarIds(node.right, nameToId, vars);
+
+  return {
+    vars: [...vars],
+    expr: g,
+    op,
+    id: el.id,
+    name: el.declaredName ?? '',
+    raw,
+    nameToId,
+  };
+}
+
+/** Evaluate an inequality's residual `g` under `values` (undefined if unknown). */
+function inequalityResidual(ineq: Inequality, values: Map<ElementId, number>): number | undefined {
+  const scope = namesScope(ineq.nameToId, values);
+  const r = evaluate(ineq.expr, scope);
+  if ('unknown' in r || typeof r.value !== 'number' || !Number.isFinite(r.value)) return undefined;
+  return r.value;
+}
+
+/** A name → value resolver reading `values` through a `nameToId` map. */
+function namesScope(
+  nameToId: Map<string, ElementId>,
+  values: Map<ElementId, number>,
+): (name: string) => unknown {
+  return (name: string) => {
+    const id = nameToId.get(name);
+    if (id !== undefined && values.has(id)) return values.get(id);
+    return undefined;
+  };
+}
+
+/** Name→id scope for a relation: its owner (subject) merged with itself. */
+function relationScope(model: Model, el: ElementRecord): Map<string, ElementId> {
+  const owner = el.ownerId != null ? idScopeFor(model, el.ownerId) : new Map<string, ElementId>();
+  const self = idScopeFor(model, el.id);
+  return mergeMaps(owner, self);
+}
+
+/**
+ * Build a name → feature-id resolver rooted at `contextId`, mirroring
+ * {@link scopeFor} but mapping to ids: every effective feature reachable from the
+ * context is exposed under both its dotted chain and its bare name.
+ */
+function idScopeFor(model: Model, contextId: ElementId): Map<string, ElementId> {
+  const map = new Map<string, ElementId>();
+  collectIds(model, contextId, '', map, new Set());
+  return map;
+}
+
+function collectIds(
+  model: Model,
+  ownerId: ElementId,
+  prefix: string,
+  map: Map<string, ElementId>,
+  visited: Set<string>,
+): void {
+  const guardKey = `${prefix} ${ownerId}`;
+  if (visited.has(guardKey)) return;
+  visited.add(guardKey);
+
+  for (const feat of effectiveFeatures(model, ownerId)) {
+    const name = feat.declaredName;
+    if (!name) continue;
+    const full = prefix ? `${prefix}.${name}` : name;
+    if (!map.has(full)) map.set(full, feat.id);
+    if (!map.has(name)) map.set(name, feat.id);
+    for (const type of model.typesOf(feat.id)) {
+      collectIds(model, type.id, full, map, visited);
+    }
+  }
+}
+
+/** Merge id-scope maps; earlier maps win on key collisions. */
+function mergeMaps(...maps: Map<string, ElementId>[]): Map<string, ElementId> {
+  const out = new Map<string, ElementId>();
+  for (const m of maps) for (const [k, v] of m) if (!out.has(k)) out.set(k, v);
+  return out;
+}
+
+/* ─────────────────────────────── solve ───────────────────────────────── */
+
+/**
+ * Solve the model's numeric constraint system.
+ *
+ * Seeds every feature carrying a literal numeric `attrs.value`, then iterates
+ * constraint propagation — orienting each equation to solve for its single
+ * remaining unknown, plus binding-connector value propagation
+ * ({@link propagateValues}) — to a fixpoint. Any coupled/implicit residuals left
+ * over are driven under `opts.tol` with a bounded finite-difference Newton
+ * (least-squares) step. Deterministic.
+ */
+export function solve(model: Model, opts: SolveOptions = {}): SolveResult {
+  const tol = opts.tol ?? 1e-9;
+  const maxIter = Math.max(1, opts.maxIter ?? 200);
+
+  const values = new Map<ElementId, number>();
+  const fixedIds = new Set<ElementId>();
+
+  // Fixed overrides (held constant).
+  if (opts.fixed) {
+    const entries = opts.fixed instanceof Map ? opts.fixed.entries() : Object.entries(opts.fixed);
+    for (const [id, v] of entries) {
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        values.set(id, v);
+        fixedIds.add(id);
+      }
+    }
+  }
+
+  // Seed literal numeric feature values.
+  for (const el of model.all()) {
+    if (values.has(el.id) || el.attrs.isLibrary === true) continue;
+    const v = numericSeedOf(model, el);
+    if (v !== undefined) values.set(el.id, v);
+  }
+
+  const eqs = gatherConstraints(model, opts.scopeId);
+  // Numeric binding-propagated values (seed additional equalities).
+  const propagated = numericPropagation(model);
+
+  let iterations = 0;
+  let progressing = true;
+
+  while (iterations < maxIter && progressing) {
+    progressing = false;
+
+    // Propagation fixpoint: bindings + single-unknown equation orientation.
+    let changed = true;
+    while (changed && iterations < maxIter) {
+      changed = false;
+      iterations++;
+
+      for (const [id, v] of propagated) {
+        if (!values.has(id) && !fixedIds.has(id)) {
+          values.set(id, v);
+          changed = true;
+        }
+      }
+
+      for (const eq of eqs) {
+        const unknowns = eq.vars.filter((v) => !values.has(v));
+        if (unknowns.length !== 1) continue;
+        const u = unknowns[0];
+        if (fixedIds.has(u)) continue;
+        const val = solveForSingle(eq, u, values, tol);
+        if (val !== undefined && Number.isFinite(val)) {
+          values.set(u, val);
+          changed = true;
+        }
+      }
+      if (changed) progressing = true;
+    }
+
+    // Remaining coupled unknowns → one bounded Newton solve.
+    const unknowns = remainingUnknowns(eqs, values, fixedIds);
+    if (unknowns.length === 0) break;
+    iterations++;
+    const moved = newtonSolve(eqs, unknowns, values, fixedIds, tol, maxIter);
+    if (moved) progressing = true;
+    else break;
+  }
+
+  const { residual, determined, withinTol } = residualSummary(eqs, values, tol);
+  const converged = determined && withinTol;
+  return { values, converged, iterations, residual };
+}
+
+/** Distinct still-unknown, non-fixed feature ids appearing in the equations. */
+function remainingUnknowns(
+  eqs: Equation[],
+  values: Map<ElementId, number>,
+  fixedIds: Set<ElementId>,
+): ElementId[] {
+  const out: ElementId[] = [];
+  const seen = new Set<ElementId>();
+  for (const eq of eqs) {
+    for (const v of eq.vars) {
+      if (values.has(v) || fixedIds.has(v) || seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+/**
+ * Largest ABSOLUTE residual across fully-determined equations (for the reported
+ * `residual` field), whether all equations are determined, and whether every
+ * one is within tolerance judged PER-EQUATION-RELATIVELY (finding M6). A
+ * large-magnitude equation like `x·x = 1e16` cannot drive its absolute residual
+ * below `1e-6` (machine epsilon at that scale is ~1), yet is fully solved; we
+ * gate convergence on `|residual| ≤ gate · scale`, where `scale` is that one
+ * equation's own side magnitude — so a large equation is judged leniently
+ * without loosening the gate for a small equation beside it.
+ */
+function residualSummary(
+  eqs: Equation[],
+  values: Map<ElementId, number>,
+  tol: number,
+): { residual: number; determined: boolean; withinTol: boolean } {
+  let residual = 0;
+  let determined = true;
+  let withinTol = true;
+  // Absolute gate (unchanged for normal-scale equations) PLUS a per-equation
+  // relative term at the floating-point noise floor for large-magnitude
+  // equations. The relative term only exceeds the absolute floor once
+  // `scale > 1e6`, so every normal-scale system keeps its exact prior behaviour;
+  // and being pinned to the noise floor (not `1e-6·scale`) it does NOT accept a
+  // genuinely-violated constraint whose residual merely looks small beside a
+  // huge additive offset (finding M6 follow-up).
+  const absGate = Math.max(tol, 1e-6);
+  for (const eq of eqs) {
+    if (eq.vars.some((v) => !values.has(v))) {
+      determined = false;
+      continue;
+    }
+    const r = residualOf(eq, values);
+    if (r === undefined) {
+      determined = false;
+      continue;
+    }
+    residual = Math.max(residual, Math.abs(r));
+    const thr = Math.max(absGate, RESIDUAL_FLOOR * equationScale(eq, values));
+    if (Math.abs(r) > thr) withinTol = false;
+  }
+  return { residual, determined, withinTol };
+}
+
+/**
+ * The characteristic magnitude of an equation under `values`, floored at 1 so
+ * unit-scale equations keep an absolute gate (making the relative test a no-op
+ * there). Used to normalise the convergence residual per-equation (M6).
+ *
+ * It is the largest magnitude over ALL evaluated SUBEXPRESSIONS of both sides —
+ * not just the two top-level sides — so it is FORM-INVARIANT: `x*x = 1e16` and
+ * the algebraically identical `x*x - 1e16 = 0` both yield 1e16 (the latter's
+ * sides collapse to ~0 at the root, but its `1e16`/`x*x` subterms do not). This
+ * keeps the outer gate consistent with `solveScalar`'s `fScale` (probed away
+ * from the root), which the naive max-of-sides did not (Fable D1).
+ */
+function equationScale(eq: Equation, values: Map<ElementId, number>): number {
+  const scope = idScope(eq, values);
+  let max = 1;
+  const visit = (node: ExprNode): void => {
+    const r = evaluate(node, scope);
+    if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) {
+      max = Math.max(max, Math.abs(r.value));
+    }
+    switch (node.kind) {
+      case 'unary':
+        visit(node.operand);
+        break;
+      case 'binary':
+        visit(node.left);
+        visit(node.right);
+        break;
+      case 'if':
+        visit(node.cond);
+        visit(node.then);
+        visit(node.else);
+        break;
+    }
+  };
+  visit(eq.lhs);
+  visit(eq.rhs);
+  return max;
+}
+
+/** Numeric-only view of {@link propagateValues}. */
+function numericPropagation(model: Model): Map<ElementId, number> {
+  const out = new Map<ElementId, number>();
+  for (const [id, v] of propagateValues(model)) {
+    if (typeof v === 'number' && Number.isFinite(v)) out.set(id, v);
+  }
+  return out;
+}
+
+/** The residual `lhs − rhs` of an equation under `values`, or undefined. */
+function residualOf(eq: Equation, values: Map<ElementId, number>): number | undefined {
+  const scope = idScope(eq, values);
+  const l = evaluate(eq.lhs, scope);
+  const r = evaluate(eq.rhs, scope);
+  if ('unknown' in l || 'unknown' in r) return undefined;
+  if (typeof l.value !== 'number' || typeof r.value !== 'number') return undefined;
+  return l.value - r.value;
+}
+
+/** A name → value scope for an equation, reading `values` through `nameToId`. */
+function idScope(eq: Equation, values: Map<ElementId, number>): (name: string) => unknown {
+  return (name: string) => {
+    const id = eq.nameToId.get(name);
+    if (id !== undefined && values.has(id)) return values.get(id);
+    return undefined;
+  };
+}
+
+/**
+ * Solve an equation for its single unknown `u`. Prefers direct orientation
+ * (`u = rhs` / `lhs = u` when the other side is fully known); otherwise falls
+ * back to a 1-D finite-difference Newton with a bisection safety net.
+ */
+function solveForSingle(
+  eq: Equation,
+  u: ElementId,
+  values: Map<ElementId, number>,
+  tol: number,
+): number | undefined {
+  const scopeNoU = idScope(eq, values); // u is absent from values ⇒ unknown
+
+  if (isRefTo(eq.lhs, eq, u)) {
+    const r = evaluate(eq.rhs, scopeNoU);
+    if ('value' in r && typeof r.value === 'number') return r.value;
+  }
+  if (isRefTo(eq.rhs, eq, u)) {
+    const l = evaluate(eq.lhs, scopeNoU);
+    if ('value' in l && typeof l.value === 'number') return l.value;
+  }
+  return solveScalar(eq, u, values, tol);
+}
+
+/** Is `node` a bare reference resolving (via the equation's scope) to `u`? */
+function isRefTo(node: ExprNode, eq: Equation, u: ElementId): boolean {
+  return node.kind === 'ref' && eq.nameToId.get(node.path.join('.')) === u;
+}
+
+/** 1-D root-find of the equation residual in `u`: Newton then bisection. */
+function solveScalar(
+  eq: Equation,
+  u: ElementId,
+  values: Map<ElementId, number>,
+  tol: number,
+): number | undefined {
+  const f = (t: number): number | undefined => {
+    const trial = new Map(values);
+    trial.set(u, t);
+    return residualOf(eq, trial);
+  };
+
+  // Per-equation residual scale (finding M6). The residual acceptance test was
+  // ABSOLUTE (`|f| <= tol`), which a large-magnitude equation such as
+  // `x*x = 1e6` can never reach near its root (there `|f| ≈ 2·x·δ`), so it only
+  // ever terminated on the step test — losing accuracy. We accept on a residual
+  // relative to THIS equation's own characteristic magnitude, probed at 0 and
+  // the seed. Crucially the scale is PER-EQUATION (not the subsystem-wide max
+  // that the reverted c8b9155 used and that stalled small unknowns beside a
+  // large sibling), and it only LOOSENS acceptance for large equations — for a
+  // unit-scale equation `fScale` is 1, so behaviour is byte-identical to before.
+  const seed = values.get(u) ?? 1;
+  const probeMag = (t: number): number => {
+    const v = f(t);
+    return v !== undefined && Number.isFinite(v) ? Math.abs(v) : 0;
+  };
+  const fScale = Math.max(probeMag(0), probeMag(seed), 1);
+  // Accept on residual once it reaches the equation's floating-point NOISE FLOOR
+  // (~RESIDUAL_FLOOR·scale — a few thousand ULPs), never the far-looser tol·scale:
+  // the latter would rubber-stamp an unsolved residual that merely looks small
+  // beside a large side. For unit-scale equations this collapses to `|f| <= tol`,
+  // exactly the original absolute test.
+  const accept = (fv: number): boolean => Math.abs(fv) <= Math.max(tol, RESIDUAL_FLOOR * fScale);
+
+  // Newton with finite-difference derivative.
+  let t = seed;
+  for (let i = 0; i < 60; i++) {
+    const f0 = f(t);
+    if (f0 === undefined) break;
+    if (accept(f0)) return t;
+    const h = 1e-6 * (Math.abs(t) + 1);
+    const f1 = f(t + h);
+    if (f1 === undefined) break;
+    const deriv = (f1 - f0) / h;
+    if (Math.abs(deriv) < 1e-14) break;
+    const next = t - f0 / deriv;
+    if (!Number.isFinite(next)) break;
+    if (Math.abs(next - t) <= tol * (Math.abs(t) + 1)) return next;
+    t = next;
+  }
+
+  // Bisection over an expanding bracket around 0.
+  let a = -1;
+  let b = 1;
+  let fa = f(a);
+  let fb = f(b);
+  for (let k = 0; k < 60 && !(fa !== undefined && fb !== undefined && fa * fb < 0); k++) {
+    a *= 2;
+    b *= 2;
+    fa = f(a);
+    fb = f(b);
+  }
+  if (fa === undefined || fb === undefined || fa * fb >= 0) return undefined;
+  for (let k = 0; k < 200; k++) {
+    const m = (a + b) / 2;
+    const fm = f(m);
+    if (fm === undefined) return undefined;
+    if (accept(fm) || (b - a) / 2 <= tol) return m;
+    if (fa * fm < 0) {
+      b = m;
+      fb = fm;
+    } else {
+      a = m;
+      fa = fm;
+    }
+  }
+  return (a + b) / 2;
+}
+
+/**
+ * Drive a coupled subsystem to a fixpoint with a bounded finite-difference
+ * Newton step, solving the (possibly over-determined) linearised system by
+ * least squares (regularised normal equations). Writes the found values back
+ * and returns whether anything moved.
+ */
+function newtonSolve(
+  eqs: Equation[],
+  unknowns: ElementId[],
+  values: Map<ElementId, number>,
+  fixedIds: Set<ElementId>,
+  tol: number,
+  maxIter: number,
+): boolean {
+  const unknownSet = new Set(unknowns);
+  // Equations whose every variable is either known or one of our unknowns.
+  const active = eqs.filter((eq) => eq.vars.every((v) => values.has(v) || unknownSet.has(v)));
+  if (active.length === 0) return false;
+
+  const n = unknowns.length;
+  const x = unknowns.map((id) => values.get(id) ?? 1);
+
+  // Per-equation residual acceptance scale (finding M6 — coupled-systems arm).
+  // The scalar solver already scales to the equation's own magnitude; the
+  // multi-dimensional Newton must do the same, or a large-magnitude equation
+  // in the subsystem never clears the absolute `tol` gate.
+  const eqScales = active.map((eq) => equationScale(eq, values));
+
+  const residuals = (xv: number[]): number[] | undefined => {
+    const trial = new Map(values);
+    unknowns.forEach((id, i) => trial.set(id, xv[i]));
+    const out: number[] = [];
+    for (const eq of active) {
+      const r = residualOf(eq, trial);
+      if (r === undefined) return undefined;
+      out.push(r);
+    }
+    return out;
+  };
+
+  const budget = Math.min(maxIter, 100);
+  let converged = false;
+  for (let iter = 0; iter < budget; iter++) {
+    const F = residuals(x);
+    if (!F) break;
+    // Convergence: each equation within its own noise floor or the user's tol.
+    const allConv = F.every((fv, i) => Math.abs(fv) <= Math.max(tol, RESIDUAL_FLOOR * eqScales[i]));
+    if (allConv) {
+      converged = true;
+      break;
+    }
+
+    // Finite-difference Jacobian J[m][n].
+    const m = active.length;
+    const J: number[][] = F.map(() => new Array(n).fill(0));
+    for (let j = 0; j < n; j++) {
+      const h = 1e-6 * (Math.abs(x[j]) + 1);
+      const xp = x.slice();
+      xp[j] += h;
+      const Fp = residuals(xp);
+      if (!Fp) return false;
+      for (let i = 0; i < m; i++) J[i][j] = (Fp[i] - F[i]) / h;
+    }
+
+    // Normal equations: (JᵀJ + λI) Δ = −Jᵀ F.
+    const JtJ: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+    const JtF: number[] = new Array(n).fill(0);
+    for (let a = 0; a < n; a++) {
+      for (let b = 0; b < n; b++) {
+        let s = 0;
+        for (let i = 0; i < m; i++) s += J[i][a] * J[i][b];
+        JtJ[a][b] = s;
+      }
+      JtJ[a][a] += 1e-12; // tiny regularisation
+      let s = 0;
+      for (let i = 0; i < m; i++) s += J[i][a] * F[i];
+      JtF[a] = -s;
+    }
+
+    const delta = solveLinear(JtJ, JtF);
+    if (!delta) break;
+    let step = 0;
+    for (let j = 0; j < n; j++) {
+      if (!Number.isFinite(delta[j])) return false;
+      x[j] += delta[j];
+      step = Math.max(step, Math.abs(delta[j]));
+    }
+    if (step <= tol) {
+      const last = residuals(x);
+      converged = last?.every((r, i) => Math.abs(r) <= Math.max(tol, RESIDUAL_FLOOR * eqScales[i])) ?? false;
+      break;
+    }
+  }
+
+  let moved = false;
+  unknowns.forEach((id, i) => {
+    if (fixedIds.has(id) || !Number.isFinite(x[i])) return;
+    const prev = values.get(id);
+    if (prev === undefined || Math.abs(prev - x[i]) > 1e-15) moved = true;
+    values.set(id, x[i]);
+  });
+  return moved || converged;
+}
+
+/** Dense linear solve `A x = b` by Gaussian elimination with partial pivoting. */
+function solveLinear(A: number[][], b: number[]): number[] | undefined {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(M[r][col]) > Math.abs(M[pivot][col])) pivot = r;
+    }
+    if (Math.abs(M[pivot][col]) < 1e-15) return undefined;
+    [M[col], M[pivot]] = [M[pivot], M[col]];
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const factor = M[r][col] / M[col][col];
+      if (factor === 0) continue;
+      for (let c = col; c <= n; c++) M[r][c] -= factor * M[col][c];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) x[i] = M[i][n] / M[i][i];
+  return x;
+}
+
+/** The seed numeric value of a feature (a literal number/quantity), or undefined. */
+function numericSeedOf(model: Model, feat: ElementRecord): number | undefined {
+  const raw = feat.attrs.value;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined;
+  if (typeof raw !== 'string') return undefined;
+  const s = raw.trim();
+  if (s === '') return undefined;
+  try {
+    const r = evaluate(parseExpr(s), () => undefined);
+    // A determined numeric literal (no references) is a seed; an expression is not.
+    if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) return r.value;
+    return undefined;
+  } catch {
+    // Parse failed (e.g. a unit literal `1500 [kg]`) — try the quantity engine.
+    const q = evaluateQuantity(model, feat.id);
+    return q && Number.isFinite(q.magnitude) ? q.magnitude : undefined;
+  }
+}
+
+/* ─────────────────────────────── MoEs ────────────────────────────────── */
+
+/** Case metaclasses whose owned measures are treated as MoEs. */
+const CASE_KINDS = new Set([
+  'AnalysisCaseUsage',
+  'AnalysisCaseDefinition',
+  'VerificationCaseUsage',
+  'VerificationCaseDefinition',
+]);
+
+/** Names that heuristically mark a feature as a measure of effectiveness. */
+const MOE_NAME_RE = /moe|measure|objective/i;
+
+/**
+ * Evaluate the model's measures of effectiveness against a {@link solve} of the
+ * whole model.
+ *
+ * A feature is treated as a MoE when it is flagged `attrs.isMoe`, its name
+ * contains `MoE`/`measure`/`objective`, it carries a `role` of `objective`, or it
+ * is a value/parameter feature owned by an AnalysisCase/VerificationCase (the
+ * documented return-parameter/objective heuristic). Each is read from the solved
+ * values (falling back to its own literal/expression value), with its unit and
+ * physical dimension where the quantity engine can derive them.
+ */
+export function evaluateMoEs(model: Model): MeasureResult[] {
+  const solved = solve(model);
+  const out: MeasureResult[] = [];
+  const seen = new Set<ElementId>();
+
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true || seen.has(el.id)) continue;
+    if (!isMoeFeature(model, el)) continue;
+    seen.add(el.id);
+
+    let value: number | undefined = solved.values.get(el.id);
+    if (value === undefined) value = numericSeedOf(model, el);
+    if (value === undefined) {
+      const r = evaluateFeatureValue(model, el.id);
+      if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) value = r.value;
+    }
+
+    const q = evaluateQuantity(model, el.id);
+    const res: MeasureResult = {
+      id: el.id,
+      name: el.declaredName ?? '',
+      value: value === undefined ? null : value,
+    };
+    if (q?.unit) res.unit = q.unit;
+    if (q) res.dimension = dimToString(q.dimension);
+    out.push(res);
+  }
+  return out;
+}
+
+/** Does `el` qualify as a measure-of-effectiveness feature? */
+function isMoeFeature(model: Model, el: ElementRecord): boolean {
+  if (el.attrs.isMoe === true) return true;
+  const role = typeof el.attrs.role === 'string' ? el.attrs.role : '';
+  if (role === 'objective') return true;
+  if (typeof el.declaredName === 'string' && MOE_NAME_RE.test(el.declaredName)) return true;
+
+  // A value/parameter feature owned (directly or transitively) by an analysis /
+  // verification case — the return-parameter / objective heuristic.
+  if (!isUsage(el.eClass)) return false;
+  const hasValue = el.attrs.value !== undefined;
+  const isParam = el.attrs.direction !== undefined; // in/out/return parameter
+  if (!hasValue && !isParam) return false;
+  return model.ancestors(el.id).some((a) => CASE_KINDS.has(a.eClass));
+}
+
+/* ────────────────────────────── optimize ─────────────────────────────── */
+
+/** The golden ratio conjugate, for golden-section search. */
+const INV_PHI = (Math.sqrt(5) - 1) / 2;
+
+/**
+ * Gradient-free optimization of the objective feature `objectiveId` over the
+ * bounded design variables `variableIds`.
+ *
+ * Coordinate descent: each sweep line-searches every variable within its bounds
+ * with a golden-section minimiser, re-solving the whole constraint system
+ * ({@link solve}, holding the trial variables fixed) at each evaluation and
+ * reading the objective off the solved values. `sense: 'max'` maximises by
+ * minimising the negated objective. Deterministic and bounded.
+ */
+export function optimize(
+  model: Model,
+  objectiveId: ElementId,
+  variableIds: ElementId[],
+  opts: OptimizeOptions = {},
+): OptimizeResult {
+  const sense: OptimizeSense = opts.sense ?? 'min';
+  const maxIter = Math.max(1, opts.maxIter ?? 40);
+  const tol = opts.tol ?? 1e-7;
+  const sign = sense === 'max' ? -1 : 1;
+  const bounds = normalizeBounds(opts.bounds);
+  const ineqs = opts.constraints ? gatherInequalities(model) : [];
+
+  const best = new Map<ElementId, number>();
+  for (const id of variableIds) {
+    const [lo, hi] = bounds.get(id) ?? [0, 1];
+    const seed = numericSeedOf(model, model.get(id) ?? ({ attrs: {} } as ElementRecord));
+    best.set(id, seed !== undefined && seed >= lo && seed <= hi ? seed : (lo + hi) / 2);
+  }
+
+  /** Sign-adjusted objective + inequality penalty for an assignment. */
+  const scoreOf = (assign: Map<ElementId, number>): number => {
+    const res = solve(model, { fixed: assign });
+    let v = res.values.get(objectiveId);
+    if (v === undefined || !Number.isFinite(v)) {
+      const r = evaluateFeatureValue(model, objectiveId);
+      v = 'value' in r && typeof r.value === 'number' && Number.isFinite(r.value) ? r.value : undefined;
+    }
+    if (v === undefined) return Number.POSITIVE_INFINITY;
+    let penalty = 0;
+    for (const iq of ineqs) {
+      const g = inequalityResidual(iq, res.values);
+      if (g !== undefined && g > 0) penalty += g * g;
+    }
+    return sign * v + INEQ_PENALTY_WEIGHT * penalty;
+  };
+
+  /** The score when `id` is set to `t` on top of `best`. */
+  const scoreWith = (id: ElementId, t: number): number => {
+    const assign = new Map(best);
+    assign.set(id, t);
+    return scoreOf(assign);
+  };
+
+  let bestScore = scoreOf(best);
+
+  for (let sweep = 0; sweep < maxIter; sweep++) {
+    let improved = false;
+    for (const id of variableIds) {
+      const [lo, hi] = bounds.get(id) ?? [0, 1];
+      const { x, fx } = goldenMin((t) => scoreWith(id, t), lo, hi, tol);
+      if (fx < bestScore - tol * (Math.abs(bestScore) + 1)) {
+        best.set(id, x);
+        bestScore = fx;
+        improved = true;
+      }
+    }
+    if (!improved) break;
+  }
+
+  const value = objectiveValue(model, objectiveId, best) ?? Number.NaN;
+  const result: OptimizeResult = { best, value, sense };
+  if (opts.constraints) {
+    const res = solve(model, { fixed: best });
+    const feasTol = Math.max(tol, 1e-6);
+    result.feasible = ineqs.every((iq) => {
+      const g = inequalityResidual(iq, res.values);
+      return g === undefined || g <= feasTol;
+    });
+  }
+  return result;
+}
+
+/** Penalty weight for inequality violations in constrained {@link optimize}. */
+const INEQ_PENALTY_WEIGHT = 1e6;
+
+/** Evaluate the objective feature under a fixed variable assignment. */
+function objectiveValue(
+  model: Model,
+  objectiveId: ElementId,
+  fixed: Map<ElementId, number>,
+): number | undefined {
+  const res = solve(model, { fixed });
+  const v = res.values.get(objectiveId);
+  if (v !== undefined && Number.isFinite(v)) return v;
+  // Objective not part of the solved system — evaluate its own value directly.
+  const r = evaluateFeatureValue(model, objectiveId);
+  if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) return r.value;
+  return undefined;
+}
+
+/** Golden-section minimiser of a unimodal `f` on `[lo, hi]`. */
+function goldenMin(
+  f: (t: number) => number,
+  lo: number,
+  hi: number,
+  tol: number,
+): { x: number; fx: number } {
+  let a = lo;
+  let b = hi;
+  if (b < a) [a, b] = [b, a];
+  let c = b - INV_PHI * (b - a);
+  let d = a + INV_PHI * (b - a);
+  let fc = f(c);
+  let fd = f(d);
+  const eps = tol * (Math.abs(hi - lo) + 1);
+  for (let i = 0; i < 100 && b - a > eps; i++) {
+    if (fc <= fd) {
+      b = d;
+      d = c;
+      fd = fc;
+      c = b - INV_PHI * (b - a);
+      fc = f(c);
+    } else {
+      a = c;
+      c = d;
+      fc = fd;
+      d = a + INV_PHI * (b - a);
+      fd = f(d);
+    }
+  }
+  const x = (a + b) / 2;
+  // Compare the interior best against the endpoints (guards monotone objectives).
+  const candidates: Array<[number, number]> = [
+    [x, f(x)],
+    [lo, f(lo)],
+    [hi, f(hi)],
+  ];
+  candidates.sort((p, q) => p[1] - q[1]);
+  return { x: candidates[0][0], fx: candidates[0][1] };
+}
+
+/** Normalise the bounds option to a `Map<id, [lo, hi]>`. */
+function normalizeBounds(
+  bounds: OptimizeOptions['bounds'],
+): Map<ElementId, [number, number]> {
+  if (!bounds) return new Map();
+  if (bounds instanceof Map) return bounds;
+  return new Map(Object.entries(bounds) as Array<[ElementId, [number, number]]>);
+}
+
+/* ─────────────────────────── feasibility ─────────────────────────────── */
+
+/**
+ * Find variable values satisfying the model's EQUALITIES ({@link gatherConstraints})
+ * and INEQUALITIES ({@link gatherInequalities}).
+ *
+ * Seeds from a plain {@link solve}, then minimises the penalty objective
+ * `Σ(equality residual)² + Σ max(0, gᵢ)²` over the *free* variables — the ones the
+ * equalities do not already pin down — by gradient-free coordinate descent (a
+ * convex 1-D line search per coordinate). Variables uniquely determined by the
+ * equalities (seeds and single-unknown targets) are held at their solved values so
+ * a genuinely infeasible system reports the true violation rather than splitting the
+ * difference. Reports each violated inequality's amount and whether all hold.
+ * Deterministic and bounded.
+ */
+export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): FeasibilityResult {
+  const tol = opts.tol ?? 1e-9;
+  const feasTol = Math.max(tol, 1e-6);
+  const eqs = gatherConstraints(model, opts.scopeId);
+  const ineqs = gatherInequalities(model, opts.scopeId);
+
+  const base = solve(model, opts);
+  const values = new Map(base.values);
+
+  // Fixed overrides (held constant).
+  const fixedIds = new Set<ElementId>();
+  if (opts.fixed) {
+    const entries = opts.fixed instanceof Map ? opts.fixed.entries() : Object.entries(opts.fixed);
+    for (const [id, v] of entries) {
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        values.set(id, v);
+        fixedIds.add(id);
+      }
+    }
+  }
+
+  // Literal-seeded variables (design inputs) are pinned.
+  const seededIds = new Set<ElementId>();
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true) continue;
+    if (numericSeedOf(model, el) !== undefined) seededIds.add(el.id);
+  }
+  const pinned = pinnedVariables(eqs, seededIds, fixedIds);
+
+  // Free variables: everything in an equality/inequality the equalities don't pin.
+  const freeSet = new Set<ElementId>();
+  for (const iq of ineqs) for (const v of iq.vars) if (!pinned.has(v)) freeSet.add(v);
+  for (const eq of eqs) for (const v of eq.vars) if (!pinned.has(v)) freeSet.add(v);
+  const freeVars = [...freeSet];
+  for (const id of freeVars) if (!values.has(id)) values.set(id, 0);
+
+  const sweeps = Math.max(1, opts.sweeps ?? opts.maxIter ?? 60);
+  // The penalty is a sum of squared violations, so drive it below feasTol² to
+  // guarantee every individual violation is under the (linear) feasibility
+  // tolerance. Stall detection uses a RELATIVE reduction so a genuinely
+  // infeasible plateau stops while a still-improving descent continues.
+  const target = feasTol * feasTol;
+  let iterations = 0;
+  let prevP = penaltyOf(eqs, ineqs, values);
+  for (let s = 0; s < sweeps && freeVars.length > 0; s++) {
+    iterations++;
+    for (const id of freeVars) {
+      const c = values.get(id) ?? 0;
+      const x = convexLineMin((t) => {
+        values.set(id, t);
+        return penaltyOf(eqs, ineqs, values);
+      }, c, tol);
+      values.set(id, x);
+    }
+    const P = penaltyOf(eqs, ineqs, values);
+    const improved = prevP - P;
+    prevP = P;
+    if (P <= target) break; // feasible to tolerance
+    if (improved <= 1e-4 * P) break; // stalled (plateau / genuine infeasibility)
+  }
+
+  const { violations, maxViolation } = collectViolations(ineqs, values, feasTol);
+  return { values, feasible: maxViolation <= feasTol, violations, iterations };
+}
+
+/**
+ * The variables the equalities uniquely determine: seeds/fixed to start, then any
+ * equality with exactly one still-undetermined variable pins that variable
+ * (mirroring {@link solve}'s single-unknown propagation) to a fixpoint.
+ */
+function pinnedVariables(
+  eqs: Equation[],
+  seededIds: Set<ElementId>,
+  fixedIds: Set<ElementId>,
+): Set<ElementId> {
+  const pinned = new Set<ElementId>([...seededIds, ...fixedIds]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const eq of eqs) {
+      const free = eq.vars.filter((v) => !pinned.has(v));
+      if (free.length === 1) {
+        pinned.add(free[0]);
+        changed = true;
+      }
+    }
+  }
+  return pinned;
+}
+
+/** The penalty `Σ(equality residual)² + Σ max(0, gᵢ)²` at `values`. */
+function penaltyOf(
+  eqs: Equation[],
+  ineqs: Inequality[],
+  values: Map<ElementId, number>,
+): number {
+  let p = 0;
+  for (const eq of eqs) {
+    const r = residualOf(eq, values);
+    if (r !== undefined) p += r * r;
+  }
+  for (const iq of ineqs) {
+    const g = inequalityResidual(iq, values);
+    if (g !== undefined && g > 0) p += g * g;
+  }
+  return p;
+}
+
+/** The violated inequalities at `values`, plus the largest violation amount. */
+function collectViolations(
+  ineqs: Inequality[],
+  values: Map<ElementId, number>,
+  feasTol: number,
+): { violations: ConstraintViolation[]; maxViolation: number } {
+  const violations: ConstraintViolation[] = [];
+  let maxViolation = 0;
+  for (const iq of ineqs) {
+    const g = inequalityResidual(iq, values);
+    if (g === undefined) continue;
+    const amount = Math.max(0, g);
+    if (amount > maxViolation) maxViolation = amount;
+    if (amount > feasTol) violations.push({ id: iq.id, name: iq.name, amount });
+  }
+  return { violations, maxViolation };
+}
+
+/**
+ * Minimise a convex 1-D function `f` around `c`. Expands a symmetric window
+ * until it brackets the minimum (both endpoints ≥ the centre), then refines with
+ * a golden-section search to absolute tolerance `tol`.
+ */
+function convexLineMin(f: (t: number) => number, c: number, tol: number): number {
+  let w = Math.max(1, Math.abs(c) * 0.5);
+  const fc = f(c);
+  let lo = c - w;
+  let hi = c + w;
+  for (let k = 0; k < 60; k++) {
+    lo = c - w;
+    hi = c + w;
+    if (fc <= f(lo) && fc <= f(hi)) break;
+    w *= 2;
+  }
+  return goldenAbs(f, lo, hi, Math.max(tol, 1e-12));
+}
+
+/** Golden-section minimiser of `f` on `[lo, hi]` to absolute width `tol`. */
+function goldenAbs(f: (t: number) => number, lo: number, hi: number, tol: number): number {
+  let a = lo;
+  let b = hi;
+  let c = b - INV_PHI * (b - a);
+  let d = a + INV_PHI * (b - a);
+  let fc = f(c);
+  let fd = f(d);
+  for (let i = 0; i < 200 && b - a > tol; i++) {
+    if (fc <= fd) {
+      b = d;
+      d = c;
+      fd = fc;
+      c = b - INV_PHI * (b - a);
+      fc = f(c);
+    } else {
+      a = c;
+      c = d;
+      fc = fd;
+      d = a + INV_PHI * (b - a);
+      fd = f(d);
+    }
+  }
+  return (a + b) / 2;
+}
+
+/* ─────────────────────── numeric constraint check ────────────────────── */
+
+/**
+ * Evaluate every model equality and inequality (ConstraintUsage / CalculationUsage
+ * bodies) at the solved values and classify each as satisfied / violated / unknown
+ * — the numeric counterpart of {@link checkConstraints} for the Check / Problems
+ * surface. Equalities report the residual `lhs − rhs`; inequalities report the
+ * slack `−g` and the violation amount `max(0, g)`.
+ */
+export function checkConstraintsNumeric(
+  model: Model,
+  opts: SolveOptions = {},
+): NumericConstraintResult[] {
+  const solved = solve(model, opts);
+  const values = solved.values;
+  const tol = Math.max(opts.tol ?? 1e-9, 1e-6);
+  const out: NumericConstraintResult[] = [];
+
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true) continue;
+    if (!RELATION_KINDS.has(el.eClass)) continue;
+    const raw = el.attrs.expression;
+    if (typeof raw !== 'string' || raw.trim() === '') continue;
+
+    let node: ExprNode;
+    try {
+      node = parseExpr(raw);
+    } catch {
+      continue;
+    }
+
+    // Inequality body.
+    if (node.kind === 'binary' && isInequalityOp(node.op)) {
+      const iq = relationInequality(model, el);
+      if (!iq) continue;
+      const g = inequalityResidual(iq, values);
+      if (g === undefined) {
+        out.push({ id: el.id, name: iq.name, raw, kind: 'inequality', op: iq.op, result: 'unknown', slack: null, amount: 0 });
+      } else {
+        const violated = g > tol;
+        out.push({
+          id: el.id,
+          name: iq.name,
+          raw,
+          kind: 'inequality',
+          op: iq.op,
+          result: violated ? 'violated' : 'satisfied',
+          slack: -g,
+          amount: Math.max(0, g),
+        });
+      }
+      continue;
+    }
+
+    // Equality body (skip comparison `!=` and non-relational bodies).
+    if (node.kind === 'binary' && isComparison(node.op) && node.op !== '==') continue;
+    const eq = relationEquation(model, el);
+    if (!eq) continue;
+    const r = residualOf(eq, values);
+    if (r === undefined) {
+      out.push({ id: el.id, name: el.declaredName ?? '', raw, kind: 'equality', result: 'unknown', slack: null, amount: 0 });
+    } else {
+      const violated = Math.abs(r) > tol;
+      out.push({
+        id: el.id,
+        name: el.declaredName ?? '',
+        raw,
+        kind: 'equality',
+        result: violated ? 'violated' : 'satisfied',
+        slack: r,
+        amount: Math.abs(r),
+      });
+    }
+  }
+  return out;
+}

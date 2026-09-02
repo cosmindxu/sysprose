@@ -1,0 +1,1203 @@
+/* ──────────────────────────────────────────────────────────────────────────
+ * Sysprose — IDE layout & base theme (light, professional).
+ * Layout: top toolbar · [left explorer | center (palette+canvas) | right
+ * properties] · bottom panel (problems/text/api tabs).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Connection handles stay hidden until a node is hovered or selected, so the
+ * diagram reads cleanly (as in Cameo/SysON). Boundary PORT handles stay visible —
+ * only the default body handles carry the .body-handle class. */
+.react-flow__handle.body-handle {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.react-flow__node:hover .react-flow__handle.body-handle,
+.react-flow__node.selected .react-flow__handle.body-handle {
+  opacity: 1;
+}
+
+/* Drag-to-reparent: the node the drop would re-own is outlined mid-drag. */
+.react-flow__node.rf-reparent-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* Simulation: the currently-active state(s) pulse with a success-hued glow. */
+.react-flow__node.rf-sim-active {
+  outline: 2px solid var(--dgm-green, #1a7f37);
+  outline-offset: 2px;
+  border-radius: 6px;
+  animation: rf-sim-pulse 1.4s ease-in-out infinite;
+}
+@keyframes rf-sim-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--dgm-green, #1a7f37) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--dgm-green, #1a7f37) 0%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__node.rf-sim-active {
+    animation: none;
+  }
+}
+
+:root {
+  --bg: #ffffff;
+  --bg-muted: #f5f6f8;
+  --bg-panel: #fafbfc;
+  --border: #d8dce3;
+  --border-strong: #b7bec9;
+  --text: #1f2733;
+  --text-muted: #6b7686;
+  --accent: #2563eb;
+  --accent-soft: #e8f0fe;
+  --selection: #dbe7ff;
+  --hover: #eef1f5;
+  --error: #d92d20;
+  --success: #1a7f37;
+  --warning: #b45309;
+  --info: #2563eb;
+  --node-bg: #ffffff;
+  --node-fg: #2d3748;
+  --node-line: #4a5568;
+  --node-header: #edf2f7;
+  --node-sep: #e2e8f0;
+  --node-muted: #718096;
+  --dgm-green: #2f855a;
+  --dgm-orange: #c05621;
+  --dgm-blue: #2b6cb0;
+  --dgm-teal: #2c7a7b;
+  --dgm-purple: #6b46c1;
+  --dgm-violet: #805ad5;
+  --canvas-grid: rgba(0, 0, 0, 0.03);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --toolbar-h: 44px;
+  --bottom-h: 220px;
+  --explorer-w: 260px;
+  --properties-w: 300px;
+  --palette-w: 168px;
+}
+
+:root[data-theme='dark'] {
+  --bg: #14181f;
+  --bg-muted: #1a1f27;
+  --bg-panel: #171c24;
+  --border: #2b323d;
+  --border-strong: #3a424f;
+  --text: #e4e8ee;
+  --text-muted: #97a1b0;
+  --accent: #5a97ff;
+  --accent-soft: #1e2a44;
+  --selection: #24344f;
+  --hover: #222a35;
+  --error: #f87171;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --info: #5a97ff;
+  --node-bg: #1b212c;
+  --node-fg: #dbe1ea;
+  --node-line: #6b7688;
+  --node-header: #232a36;
+  --node-sep: #313a48;
+  --node-muted: #8b95a7;
+  --dgm-green: #48bb78;
+  --dgm-orange: #ed8936;
+  --dgm-blue: #63b3ed;
+  --dgm-teal: #4fd1c5;
+  --dgm-purple: #9f7aea;
+  --dgm-violet: #b794f4;
+  --canvas-grid: rgba(255, 255, 255, 0.045);
+}
+
+:root[data-theme='dark'] .react-flow {
+  --xy-background-color: var(--bg);
+  --xy-node-color: var(--node-fg);
+  --xy-controls-button-background-color: var(--bg-panel);
+  --xy-controls-button-background-color-hover: var(--hover);
+  --xy-controls-button-color: var(--text);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--border);
+  --xy-minimap-background-color: var(--bg-panel);
+  --xy-minimap-mask-background-color: rgba(0, 0, 0, 0.5);
+  --xy-edge-label-background-color: var(--node-bg);
+}
+:root[data-theme='dark'] .react-flow__controls-button svg {
+  fill: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─────────────────────────────── App frame ──────────────────────────────── */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Loading gate shown until the standard library has merged into the model. */
+.app-loading {
+  align-items: center;
+  justify-content: center;
+}
+
+.app-loading-msg {
+  color: var(--fg-muted, #888);
+  font-size: 0.95rem;
+}
+
+.app-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.app-explorer {
+  width: var(--explorer-w);
+  flex: 0 0 var(--explorer-w);
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow: hidden; /* the inner .explorer-tree scrolls, keeping the header pinned */
+  min-height: 0;
+  position: relative;
+}
+
+/* Drag handle between a side panel and the center. A hairline that widens its
+ * hit area invisibly and tints on hover — quiet until reached for. */
+.app-splitter {
+  flex: 0 0 5px;
+  margin: 0 -2px;
+  z-index: 2;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.app-splitter:hover {
+  background: var(--accent-soft);
+}
+
+/* Collapse chevron pinned to a panel's top corner; visible on panel hover. */
+.app-collapse-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 1;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.app-collapse-btn-right {
+  right: auto;
+  left: 6px;
+}
+.app-explorer:hover .app-collapse-btn,
+.app-properties:hover .app-collapse-btn {
+  opacity: 1;
+}
+.app-collapse-btn:hover {
+  background: var(--hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* Collapsed panel → a slim vertical re-open rail with a rotated label. */
+.app-rail {
+  flex: 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.app-rail-right {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+.app-rail:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.app-rail-label {
+  writing-mode: vertical-rl;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.app-rail-chev {
+  font-size: 13px;
+}
+
+.app-center {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.app-palette {
+  width: var(--palette-w);
+  flex: 0 0 var(--palette-w);
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow: auto;
+  min-height: 0;
+}
+
+.app-canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app-canvas-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  background:
+    linear-gradient(90deg, var(--canvas-grid) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(180deg, var(--canvas-grid) 1px, transparent 1px) 0 0 / 22px 22px,
+    var(--bg);
+}
+
+/* Breadcrumb — the selection's containment path above the center view. */
+.breadcrumb {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 1px;
+  height: 26px;
+  padding: 0 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.breadcrumb-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.breadcrumb-seg {
+  display: inline-flex;
+  align-items: center;
+}
+.breadcrumb-sep {
+  color: var(--text-muted);
+  padding: 0 1px;
+}
+.breadcrumb-item {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 2px 5px;
+  border-radius: 4px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.breadcrumb-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.breadcrumb-item.is-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.app-properties {
+  width: var(--properties-w);
+  flex: 0 0 var(--properties-w);
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow: auto;
+  min-height: 0;
+  position: relative;
+}
+
+.app-bottom {
+  height: var(--bottom-h);
+  flex: 0 0 var(--bottom-h);
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ──────────────────────────────── Toolbar ───────────────────────────────── */
+
+.toolbar {
+  height: var(--toolbar-h);
+  flex: 0 0 var(--toolbar-h);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-muted);
+  overflow-x: auto;
+}
+
+.toolbar .toolbar-brand {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  margin-right: 10px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.toolbar .toolbar-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 8px 4px;
+  background: var(--border);
+}
+
+.toolbar .toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+/* ─── View bar (row 2): grouped view switcher; wraps instead of scrolling ─── */
+.viewbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 12px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.viewbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.viewbar-group + .viewbar-group {
+  border-left: 1px solid var(--border);
+  padding-left: 12px;
+}
+.viewbar-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-right: 3px;
+}
+.viewbar-tab {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-color: transparent;
+  background: transparent;
+}
+.viewbar-tab:hover {
+  background: var(--hover);
+}
+.viewbar-tab.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ─────────────────────────────── Controls ───────────────────────────────── */
+
+button {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+button:hover {
+  background: var(--hover);
+}
+
+button:active {
+  background: var(--accent-soft);
+}
+
+button:disabled {
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+button.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 4px 7px;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+/* ── Accessibility: a consistent keyboard focus ring ────────────────────────
+   `:focus-visible` targets keyboard/AT focus only (not mouse clicks), so every
+   interactive control gets a clear, uniform ring for keyboard users without
+   flashing an outline on every mouse press. Token-driven so it tracks the theme.
+   `data-testid` selectors keep specificity high enough to win over defaults. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  /* No border-radius here: browsers round the outline to each element's own
+     radius, so forcing one would reshape buttons/pills/circles and — since
+     React Flow gives nodes a tabindex — distort node corners on keyboard focus. */
+}
+
+/* ─────────────────────────── Panel scaffolding ──────────────────────────── */
+
+.panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  padding: 8px 10px 6px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+  z-index: 1;
+}
+
+.panel-empty {
+  color: var(--text-muted);
+  padding: 12px 10px;
+  font-style: italic;
+}
+
+/* ────────────────────────────── Explorer tree ───────────────────────────── */
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tree-node:hover {
+  background: var(--hover);
+}
+
+.tree-node.is-selected {
+  background: var(--selection);
+}
+
+/* Bundled standard-library roots — rendered as secondary (dimmed, italic). */
+.tree-node.is-library {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.tree-twisty {
+  width: 14px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+/* Per-metaclass type glyph (replaces the verbose «keyword» text; keyword → title). */
+.tree-icon {
+  flex: 0 0 14px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.tree-node.is-selected .tree-icon {
+  color: var(--accent);
+}
+
+/* Cross-view hover link: the same element highlighted in the OTHER navigator. */
+.tree-node.is-hover-linked,
+.req-table tr.is-hover-linked {
+  background: var(--hover);
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+
+/* Indent guide: a faint vertical line under each expanded branch, positioned at
+ * the parent's indent via the inline --guide-x custom property. */
+.tree-children {
+  position: relative;
+}
+.tree-children::before {
+  content: '';
+  position: absolute;
+  left: var(--guide-x, 8px);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+.tree-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.tree-node:hover .tree-actions {
+  opacity: 1;
+}
+
+.tree-actions button {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+/* Explorer header: title + library toggle + search, pinned above the scroll. */
+.explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.explorer-head {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.explorer-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 26px; /* clear the collapse chevron */
+}
+.panel-title-inline {
+  position: static;
+  padding: 8px 10px 4px;
+}
+.explorer-libtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.explorer-libtoggle input {
+  margin: 0;
+}
+.explorer-libtoggle.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.explorer-search {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px 8px;
+}
+.explorer-search-icon {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.explorer-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 7px;
+}
+.explorer-search-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+/* Focus (scope-to-subtree) strip: the tree is scoped to one element's subtree. */
+.explorer-focus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 8px;
+  padding: 3px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent-soft);
+  font-size: 11px;
+}
+.explorer-focus-icon {
+  color: var(--accent);
+}
+.explorer-focus-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.explorer-focus-clear {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+.explorer-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 8px;
+}
+/* Search-match tint on the row label (quiet, uses the accent-soft token). */
+.tree-node.is-match .tree-label {
+  background: var(--accent-soft);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* ───────────────────────────── Properties form ──────────────────────────── */
+
+.properties-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.field > label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.field textarea {
+  min-height: 56px;
+  resize: vertical;
+  font-family: var(--mono);
+}
+
+/* ──────────────────────────────── Palette ───────────────────────────────── */
+
+.palette-group-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 8px 10px 2px;
+}
+
+.palette-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 12px);
+  margin: 2px 6px;
+  text-align: left;
+  background: var(--bg);
+}
+
+.palette-tool.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+/* A tool's leading glyph — fixed width so the labels align in a column. */
+.palette-tool > span[aria-hidden] {
+  flex: 0 0 14px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.palette-tool.is-active > span[aria-hidden] {
+  color: #fff;
+}
+
+/* Armed-tool hint (which tool is pending + how to place it + cancel). */
+.palette-hint {
+  margin: 8px 6px 0;
+  padding: 7px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--accent-soft);
+  font-size: 11px;
+}
+.palette-hint-title {
+  color: var(--text);
+}
+.palette-hint-body {
+  margin: 3px 0 6px;
+  color: var(--text-muted);
+}
+.palette-cancel {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+/* ───────────────────────────── Bottom panel ─────────────────────────────── */
+
+.bottom-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-muted);
+}
+
+.bottom-tab {
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 5px 5px 0 0;
+  background: transparent;
+}
+
+.bottom-tab.is-active {
+  background: var(--bg);
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+.bottom-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.problem-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--bg-muted);
+}
+
+.problem-row:hover {
+  background: var(--hover);
+}
+
+.problem-sev {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.problem-sev.error {
+  color: var(--error);
+}
+.problem-sev.warning {
+  color: var(--warning);
+}
+.problem-sev.info {
+  color: var(--info);
+}
+
+.text-editor {
+  width: 100%;
+  height: 100%;
+  border: none;
+  resize: none;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.api-console {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  height: 100%;
+}
+
+.api-console-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.api-query {
+  flex: 1 1 auto;
+  font-family: var(--mono);
+  min-height: 56px;
+}
+
+.api-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* ───────────────────────────── React Flow tweaks ────────────────────────── */
+
+.react-flow__attribution {
+  display: none;
+}
+
+/* Canvas mini-toolbar (top-right Panel): fit / fit-selection / snap / layout. */
+.diagram-minibar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+.diagram-minibar button {
+  font-size: 12px;
+  padding: 3px 8px;
+}
+.diagram-minibar button.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Right-click node context menu (rename / add child / zoom / delete). */
+.node-ctx-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+}
+.node-ctx-title {
+  padding: 4px 8px 6px;
+  margin-bottom: 3px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 4px 8px;
+  width: 100%;
+  border-radius: 4px;
+}
+/* Leading glyph on context-menu items — fixed-width so the labels align. */
+.node-ctx-ico {
+  flex: 0 0 1.1em;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.node-ctx-item:hover,
+/* The roving-focused item is highlighted even when opened by mouse (programmatic
+   focus doesn't match :focus-visible), so the armed item — notably a destructive
+   Delete on the edge menu — is always visibly indicated. */
+.node-ctx-item:focus,
+.toolbar-dropdown-item:focus {
+  background: var(--hover);
+}
+.node-ctx-danger:hover,
+.node-ctx-danger:focus {
+  background: color-mix(in srgb, var(--bg) 88%, var(--error) 12%);
+  color: var(--error);
+}
+.node-ctx-add {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 8px;
+}
+.node-ctx-add-select {
+  font-size: 11px;
+  padding: 2px 4px;
+  max-width: 104px;
+}
+.node-ctx-rename-input {
+  margin: 2px 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+/* ── Accessibility: honor the OS "reduce motion" preference ─────────────────
+   Neutralize CSS transitions/animations and smooth scrolling for users who ask
+   for reduced motion. JS-driven animations (React Flow fitView) are gated
+   separately (see fitDuration in DiagramCanvas). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Properties: "Used by" (where-used) list ────────────────────────────────
+   Clickable references that select the target element; keyboard-focusable
+   (inherits the global :focus-visible ring). */
+.rel-list-link {
+  background: none;
+  border: none;
+  padding: 1px 0;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rel-list-link:hover {
+  text-decoration: underline;
+}
+.rel-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+/* ── Properties: compact metrics grid (degree / coupling) ───────────────────*/
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+.metrics-grid > span:nth-child(odd) {
+  color: var(--text-muted);
+}
+.metrics-grid > span:nth-child(even) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.metrics-grid .metric-note {
+  color: var(--text-muted);
+}
+
+/* ── Diagram legend (bottom-left overlay explaining the current view's notation) */
+.diagram-legend {
+  font-size: 11px;
+  color: var(--text);
+  /* Bottom-centre placement, expanding UPWARD (list above the toggle) so it
+     never overlaps the bottom-left Controls or the bottom-right MiniMap. */
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+}
+.diagram-legend-toggle {
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.diagram-legend-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.diagram-legend-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+}
+.diagram-legend-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+.legend-swatch {
+  flex: 0 0 22px;
+  border-top-width: 2px;
+  height: 0;
+}
+.legend-glyph {
+  flex: 0 0 1em;
+  text-align: center;
+}
+
+/* ── Impact graph (radial reference neighbourhood in Properties) ────────────*/
+.prop-impact-toggle {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 0;
+  font: inherit;
+}
+.prop-impact-toggle:hover {
+  color: var(--text);
+}
+.impact-graph {
+  width: 100%;
+  height: auto;
+  margin-top: 4px;
+}
+.impact-graph text {
+  font-size: 9px;
+  fill: var(--text-muted);
+}
+.impact-graph .impact-focus-label {
+  fill: var(--text);
+  font-weight: 600;
+}
+.impact-graph .impact-node {
+  cursor: pointer;
+}
+.impact-graph .impact-node:hover text {
+  fill: var(--accent);
+}
+
+/* ── Regroup what-if scenarios (save / load / diff) ─────────────────────────*/
+.regroup-scenarios {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.scenario-save {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.scenario-save input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.scenario-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.scenario-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.scenario-pick {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+.scenario-pick span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scenario-load,
+.scenario-del {
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.scenario-load:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.scenario-diff {
+  margin-top: 8px;
+}

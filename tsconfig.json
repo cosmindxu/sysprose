@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["src/core/*"],
+      "@text/*": ["src/text/*"],
+      "@api/*": ["src/api/*"],
+      "@validation/*": ["src/validation/*"],
+      "@persistence/*": ["src/persistence/*"],
+      "@diagram/*": ["src/diagram/*"],
+      "@ui/*": ["src/ui/*"],
+      "@semantics/*": ["src/semantics/*"],
+      "@library/*": ["src/library/*"],
+      "@collab/*": ["src/collab/*"],
+      "@interop/*": ["src/interop/*"],
+      "@server/*": ["src/server/*"]
+    }
+  },
+  "include": ["src", "test", "scripts"]
+}

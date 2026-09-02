@@ -1,0 +1,13 @@
+{
+  "name": "Sysprose",
+  "short_name": "Sysprose",
+  "description": "A pure-browser system modeler with an AI-agent focus: models are developed as textual definitions and exercised by agents driving the app in the browser.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any maskable" }
+  ]
+}
