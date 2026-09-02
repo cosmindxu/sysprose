@@ -232,6 +232,17 @@ an agent that is worse than silence: it invites a repair that breaks a correct
 model. Fixture: `L4-requirement-subject-declared`, mutation-tested — removing the
 fix makes it fail with exactly that warning.
 
+**The scripting interface answered with the standard library.** `window.sysml`
+is exposed only after the ~38,700-element library is merged, so every count an
+agent read was taken in that state and included it: an 8-element model reported
+38,770 elements, 189 roots and 1,011 attribute definitions. Nothing crashed and
+no data was wrong — the numbers answered a different question than the one
+asked. `modelMetrics`, `roots()`, `elementsOfType()` and `toModelJSON()` now
+report the user's model, with `{ includeLibrary: true }` to search the library
+deliberately and a `libraryElements` figure so its presence stays visible. The
+raw `model.all()` is deliberately unfiltered: the browser suite polls it to
+prove the async merge landed.
+
 ### Known limitations, recorded rather than hidden
 
 **Numeric literal form is lost at parse time.** `1500.0` becomes `1500` because

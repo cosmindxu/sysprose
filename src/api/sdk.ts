@@ -167,9 +167,30 @@ export class ModelApi {
     return this.model.get(id);
   }
 
-  /** All elements whose metaclass is one of `eClasses`. */
-  elementsOfType(...eClasses: string[]): ElementRecord[] {
-    return this.model.ofKind(...eClasses);
+  /**
+   * All elements whose metaclass is one of `eClasses`, from the USER's model.
+   *
+   * The bundled standard library is excluded by default. It contributes ~38,700
+   * elements, so an agent asking "how many part definitions are in my model"
+   * used to be answered mostly about the library — 1,011 AttributeDefinitions
+   * for an 8-element model. Pass `includeLibrary` to search it deliberately,
+   * e.g. to discover the ISQ quantity kinds.
+   */
+  elementsOfType(...eClasses: string[]): ElementRecord[];
+  elementsOfType(opts: { includeLibrary: boolean }, ...eClasses: string[]): ElementRecord[];
+  elementsOfType(
+    first: string | { includeLibrary: boolean },
+    ...rest: string[]
+  ): ElementRecord[] {
+    const includeLibrary = typeof first === 'object' ? first.includeLibrary : false;
+    const eClasses = typeof first === 'object' ? rest : [first, ...rest];
+    const found = this.model.ofKind(...eClasses);
+    return includeLibrary ? found : found.filter((el) => el.attrs.isLibrary !== true);
+  }
+
+  /** How many bundled standard-library elements are loaded alongside the model. */
+  libraryElementCount(): number {
+    return this.model.all().filter((el) => el.attrs.isLibrary === true).length;
   }
 
   /** Resolve an element by qualified name (`Pkg::Sub::part`). */
@@ -195,8 +216,16 @@ export class ModelApi {
     return this.model.descendants(id);
   }
 
-  roots(): ElementRecord[] {
-    return this.model.roots();
+  /**
+   * Root elements of the USER's model.
+   *
+   * The bundled library contributes ~188 roots of its own; returning them made
+   * `roots()` useless for "what did I write". Pass `includeLibrary` for the
+   * unfiltered list.
+   */
+  roots(opts: { includeLibrary?: boolean } = {}): ElementRecord[] {
+    const all = this.model.roots();
+    return opts.includeLibrary === true ? all : all.filter((r) => r.attrs.isLibrary !== true);
   }
 
   /**
@@ -531,8 +560,18 @@ export class ModelApi {
     return json;
   }
 
-  /** Serialize the entire model as an array of OMG element JSON objects. */
-  toModelJSON(): OmgElementJSON[] {
-    return this.model.all().map((el) => this.toElementJSON(el.id)!);
+  /**
+   * Serialize the USER's model as an array of OMG element JSON objects.
+   *
+   * Library content is excluded by default: including it turned a small model
+   * into a ~38,700-element dump, which is neither what an agent asked for nor
+   * something it can afford to read.
+   */
+  toModelJSON(opts: { includeLibrary?: boolean } = {}): OmgElementJSON[] {
+    const all =
+      opts.includeLibrary === true
+        ? this.model.all()
+        : this.model.all().filter((el) => el.attrs.isLibrary !== true);
+    return all.map((el) => this.toElementJSON(el.id)!);
   }
 }

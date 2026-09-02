@@ -64,6 +64,12 @@ function ref(model: Model, el: ElementRecord): ElementRef {
  */
 const isCountable = (model: Model, el: ElementRecord): boolean =>
   el.attrs.implicit !== true &&
+  // The bundled standard library is not the user's model. It is ~38,700
+  // elements, so counting it made an 8-element model report 38,770 — three
+  // orders of magnitude wrong for an agent asking how big its model is. The
+  // library is still reported, as its own `libraryElements` figure, so its
+  // presence is VISIBLE rather than silently folded into every total.
+  el.attrs.isLibrary !== true &&
   !(el.ownerId != null && model.get(el.ownerId)?.attrs.implicit === true);
 
 /** Number of elements per metaclass, e.g. `{ PartUsage: 3, Package: 1 }`. */
@@ -87,6 +93,13 @@ export interface ModelMetrics {
   /** Count of diagram-able (non-relationship) elements. */
   diagramableCount: number;
   byMetaclass: Record<string, number>;
+  /**
+   * Bundled standard-library elements present alongside the user's model.
+   *
+   * Excluded from every other figure here — they are not the user's content —
+   * but reported so the library's presence is visible rather than hidden.
+   */
+  libraryElements: number;
 }
 
 export function modelMetrics(model: Model): ModelMetrics {
@@ -104,10 +117,11 @@ export function modelMetrics(model: Model): ModelMetrics {
     totalElements: all.length,
     nodeCount,
     relationshipCount,
-    rootCount: model.roots().length,
+    rootCount: model.roots().filter((r) => r.attrs.isLibrary !== true).length,
     maxDepth,
     diagramableCount: nodeCount,
     byMetaclass: countByMetaclass(model),
+    libraryElements: model.all().filter((el) => el.attrs.isLibrary === true).length,
   };
 }
 
