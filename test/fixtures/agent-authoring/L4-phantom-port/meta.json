@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "`port in a : Pt;` must be ONE directed port, not a port plus a phantom",
+  "note": "FOUND 2026-09-02 by a Fable advisory on the diagram, FIXED the same day. A direction was only legal BEFORE the keyword, and a usage's name and terminator are both optional, so `port in a : Pt;` parsed as two complete members — a bare `port` (a nameless phantom PortUsage) and `in a : Pt` — with no diagnostic. Three such ports rendered as three stacked left handles plus three stacked phantom right handles. Worse, the tool's own port-direction hint recommended this spelling, and the campaign's documented repair for L4-port-no-direction reproduced the very warning it claimed to fix; that escaped because repairs were checked for errors only. The grammar now admits a direction after the keyword, the hint teaches the canonical `in port`, and the repair invariant checks warnings too."
+}

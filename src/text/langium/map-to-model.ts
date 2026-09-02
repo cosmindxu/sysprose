@@ -1386,6 +1386,22 @@ class Mapper {
   private mapDefinition(node: Definition, ownerId: ElementId | null): void {
     const prefixes = node.prefixes ?? [];
     const direction = prefixes.find((p) => DIRECTIONS.has(p));
+    // `in port out x` — two different directions on one feature. The first
+    // used to win silently; the author needs to be told which one was kept.
+    const directions = [...new Set(prefixes.filter((p) => DIRECTIONS.has(p)))];
+    if (directions.length > 1) {
+      const code = 'parse/conflicting-direction';
+      this.diagnostics.push({
+        message: `Conflicting directions ${directions.map((d) => `'${d}'`).join(' and ')}; '${direction}' was kept.`,
+        ...posOf(node),
+        severity: 'warning',
+        source: 'mapper',
+        code,
+        found: directions[1],
+        hint: renderHint(code, { found: directions[1] }),
+        ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+      });
+    }
     const hasLibrary = prefixes.includes('library');
     const flags = prefixes.filter((p) => !DIRECTIONS.has(p) && p !== 'library');
 

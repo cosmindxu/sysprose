@@ -1,6 +1,6 @@
 package P {
     part def Vehicle {
-        port fuelIn : FuelPort;
+        in port fuelIn : FuelPort;
         part engine : Engine;
     }
     part def Engine;

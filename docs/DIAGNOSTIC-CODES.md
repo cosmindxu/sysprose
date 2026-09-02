@@ -135,6 +135,13 @@ The tokens do not form a legal declaration. `expected` lists what would have bee
 - **Fires when:** A bare `then X;` appears with no preceding succession in the same scope to chain from.
 - **Hint given:** A bare `then X;` continues the previous succession. Start the chain with `first A then B;`, or write this one in full.
 
+### `parse/conflicting-direction`
+
+- **Severity:** warning
+- **Source:** mapper
+- **Fires when:** One feature declares two different directions, e.g. `in port out x`.
+- **Hint given:** A feature has one direction. Remove {found} or the other one; the first direction written was kept.
+
 ## Reference resolution
 
 A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.
@@ -227,6 +234,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** An import names a namespace that is not loaded, so it brings nothing into scope.
 - **Hint given:** Check the imported namespace name. Only the bundled standard library and packages declared in this file are visible.
 
+### `validation/split-declaration`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A declaration parsed to nothing but a keyword — no name, type, value, body or specialization — which happens when a misplaced word splits one declaration into two.
+- **Hint given:** Check the declaration for a stray or repeated keyword. A port is written `in port name : Type;` (direction first, then the keyword).
+
 ### `validation/duplicate-name`
 
 - **Severity:** error
@@ -260,7 +274,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Severity:** error
 - **Source:** validation
 - **Fires when:** A port has no direction, or one that is not in/out/inout.
-- **Hint given:** Declare the port direction, e.g. `port in fuelIn : FuelPort;`.
+- **Hint given:** Declare the port direction, e.g. `in port fuelIn : FuelPort;`.
 
 ### `validation/malformed-multiplicity`
 
@@ -412,4 +426,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*49 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*51 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

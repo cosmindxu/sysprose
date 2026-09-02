@@ -122,6 +122,14 @@ const CODES = [
     hint: 'A bare `then X;` continues the previous succession. Start the chain with `first A then B;`, or write this one in full.',
   },
 
+  {
+    code: 'parse/conflicting-direction',
+    source: 'mapper',
+    severity: 'warning',
+    when: 'One feature declares two different directions, e.g. `in port out x`.',
+    hint: 'A feature has one direction. Remove {found} or the other one; the first direction written was kept.',
+  },
+
   /* ── mapper: unresolved references (non-fatal; the textual name is kept) ── */
   {
     code: 'ref/unresolved-type',
@@ -254,6 +262,13 @@ const CODES = [
     hint: 'Check the imported namespace name. Only the bundled standard library and packages declared in this file are visible.',
   },
   {
+    code: 'validation/split-declaration',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A declaration parsed to nothing but a keyword — no name, type, value, body or specialization — which happens when a misplaced word splits one declaration into two.',
+    hint: 'Check the declaration for a stray or repeated keyword. A port is written `in port name : Type;` (direction first, then the keyword).',
+  },
+  {
     code: 'validation/duplicate-name',
     source: 'validation',
     severity: 'error',
@@ -286,7 +301,7 @@ const CODES = [
     source: 'validation',
     severity: 'error',
     when: 'A port has no direction, or one that is not in/out/inout.',
-    hint: 'Declare the port direction, e.g. `port in fuelIn : FuelPort;`.',
+    hint: 'Declare the port direction, e.g. `in port fuelIn : FuelPort;`.',
   },
   {
     code: 'validation/malformed-multiplicity',

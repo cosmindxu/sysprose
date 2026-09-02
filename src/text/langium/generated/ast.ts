@@ -243,6 +243,12 @@ export function isBaseKeyword(item: unknown): item is BaseKeyword {
     return typeof item === 'string';
 }
 
+export type Direction = 'in' | 'inout' | 'out';
+
+export function isDirection(item: unknown): item is Direction {
+    return item === 'in' || item === 'out' || item === 'inout';
+}
+
 export type Expression = BinaryExpr | BodyExpr | BoolLiteral | CollectExpr | ConditionalExpr | ConstructorExpr | FeatureChainExpr | IndexExpr | InvocationExpr | MetadataAccessExpr | NavExpr | NullLiteral | NumberLiteral | RefExpr | SelectExpr | SequenceExpr | StringLiteral | UnaryExpr;
 
 export const Expression = 'Expression';
@@ -301,10 +307,10 @@ export function isPlainRefName(item: unknown): item is PlainRefName {
     return isNonKeywordName(item) || (typeof item === 'string' && (/[_a-zA-Z][\w]*/.test(item) || /'(\\.|[^'\\])*'/.test(item)));
 }
 
-export type Prefix = 'abstract' | 'composite' | 'const' | 'constant' | 'derived' | 'end' | 'event' | 'in' | 'individual' | 'inout' | 'library' | 'member' | 'nonunique' | 'ordered' | 'out' | 'portion' | 'readonly' | 'ref' | 'snapshot' | 'standard' | 'timeslice' | 'var' | 'variant' | 'variation';
+export type Prefix = 'abstract' | 'composite' | 'const' | 'constant' | 'derived' | 'end' | 'event' | 'individual' | 'library' | 'member' | 'nonunique' | 'ordered' | 'portion' | 'readonly' | 'ref' | 'snapshot' | 'standard' | 'timeslice' | 'var' | 'variant' | 'variation' | Direction;
 
 export function isPrefix(item: unknown): item is Prefix {
-    return item === 'in' || item === 'out' || item === 'inout' || item === 'abstract' || item === 'variation' || item === 'readonly' || item === 'derived' || item === 'composite' || item === 'portion' || item === 'individual' || item === 'end' || item === 'nonunique' || item === 'ordered' || item === 'variant' || item === 'standard' || item === 'library' || item === 'ref' || item === 'const' || item === 'constant' || item === 'var' || item === 'member' || item === 'snapshot' || item === 'timeslice' || item === 'event';
+    return isDirection(item) || item === 'abstract' || item === 'variation' || item === 'readonly' || item === 'derived' || item === 'composite' || item === 'portion' || item === 'individual' || item === 'end' || item === 'nonunique' || item === 'ordered' || item === 'variant' || item === 'standard' || item === 'library' || item === 'ref' || item === 'const' || item === 'constant' || item === 'var' || item === 'member' || item === 'snapshot' || item === 'timeslice' || item === 'event';
 }
 
 export type QualifiedName = string;
@@ -627,7 +633,7 @@ export interface Definition extends langium.AstNode {
     name?: Name | PlainRefName | RefName;
     ofMult: Array<Multiplicity>;
     ofPayload?: QualifiedName;
-    prefixes: Array<Prefix>;
+    prefixes: Array<Direction | Prefix>;
     prefixMeta: Array<PrefixMetadata>;
     preMult: Array<Multiplicity>;
     sendMult: Array<Multiplicity>;

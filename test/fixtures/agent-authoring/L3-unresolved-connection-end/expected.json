@@ -4,12 +4,6 @@
   "ok": false,
   "diagnostics": [
     {
-      "code": "validation/port-direction",
-      "severity": "warning",
-      "line": 3,
-      "column": 18
-    },
-    {
       "code": "validation/connector-endpoints",
       "severity": "error",
       "line": 5,

@@ -63,6 +63,25 @@ describe('agent authoring campaign — repairs', () => {
           .map((d) => `  ${d.code} @${d.range?.start.line}: ${d.message}`)
           .join('\n')}`,
       ).toBe(0);
+
+      // The repair must actually REPAIR: none of the codes this case exists to
+      // teach may survive in fixed.sysml at error or warning severity. Checking
+      // errors alone let a documented repair reproduce the very warning it
+      // claimed to fix (the phantom-port hint, found 2026-09-02). Info-level
+      // outcomes are tolerated: a repair can legitimately leave an unevaluable
+      // constraint behind.
+      const taught = new Set(
+        c.golden.diagnostics
+          .filter((d) => d.severity === undefined || d.severity !== 'info')
+          .map((d) => d.code),
+      );
+      const survivors = report.diagnostics.filter(
+        (d) => d.severity !== 'info' && d.code !== undefined && taught.has(d.code),
+      );
+      expect(
+        survivors.map((d) => `${d.code} @${d.range?.start.line}: ${d.message}`),
+        `fixed.sysml still reports the code(s) this case is about`,
+      ).toEqual([]);
     });
   }
 });

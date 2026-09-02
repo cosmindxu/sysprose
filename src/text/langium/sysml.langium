@@ -300,15 +300,23 @@ Definition infers Definition:
       (visibility=Visibility)?
       (
           prefixes+=Prefix (prefixes+=Prefix)*
-          ( keyword=BaseKeyword (isDef?='def')? DeclarationTail
+          ( keyword=BaseKeyword (isDef?='def' | prefixes+=Direction)? DeclarationTail
             // Keyword-less prefixed feature: its name must NOT be a word that
             // is also a BaseKeyword (see PlainRefName), so `ref occurrence :>> x`
             // deterministically parses as an anonymous occurrence usage — the
             // same alternative the ALL(*) conflict resolution used to pick,
             // but now without an "Ambiguous Alternatives" warning.
           | PlainDeclarationTail )
-        | keyword=BaseKeyword (isDef?='def')? DeclarationTail
+        | keyword=BaseKeyword (isDef?='def' | prefixes+=Direction)? DeclarationTail
       )
+      // A direction may also FOLLOW the keyword (`port in a : Pt;`). Without
+      // this, `port` alone was a complete member (name and terminator are both
+      // optional) and `in a : Pt` a second one — two PortUsages from one
+      // declaration, one of them a nameless phantom, with no diagnostic. Only
+      // a direction is admitted here, never the full Prefix set: `end`, `var`,
+      // `member`… are also legal NAMES after a keyword (`action end;`), and a
+      // direction token can begin nothing else at this point. Usages only —
+      // `port def in X` stays rejected.
       // Keyword-less feature declared only by a specialization / multiplicity
       // (e.g. `:>> quantity = isq.L;` or `[1] :> x`) — a bare redefinition or
       // subsetting that owns a value. The leading spec disambiguates it from an
@@ -398,9 +406,14 @@ Visibility returns string:
 ValueOp returns string:
     ':=' | '=' | 'default' ('=' | ':=')?;
 
+// Feature direction. Also admitted directly after a usage keyword — see the
+// note on `Definition`.
+Direction returns string:
+      'in' | 'out' | 'inout';
+
 // Leading feature modifiers / directions (recorded by the mapper as flags).
 Prefix returns string:
-      'in' | 'out' | 'inout'
+      Direction
     | 'abstract' | 'variation' | 'readonly' | 'derived' | 'composite'
     | 'portion' | 'individual' | 'end' | 'nonunique' | 'ordered' | 'variant'
     | 'standard' | 'library' | 'ref' | 'const' | 'constant' | 'var' | 'member'
