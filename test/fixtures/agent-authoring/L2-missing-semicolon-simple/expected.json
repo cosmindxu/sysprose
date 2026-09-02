@@ -1,6 +1,7 @@
 {
   "level": "L2",
   "title": "a missing semicolon after a plain typed feature",
+  "note": "ACCEPTED LENIENCY, verified equivalent to the corrected file. See L2-missing-semicolon.",
   "ok": true,
   "diagnostics": [],
   "invariants": {
@@ -9,6 +10,5 @@
       "P"
     ],
     "minElements": 7
-  },
-  "note": "ACCEPTED LENIENCY, verified equivalent to the corrected file. See L2-missing-semicolon."
+  }
 }

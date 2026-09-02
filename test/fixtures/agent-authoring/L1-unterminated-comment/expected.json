@@ -1,17 +1,26 @@
 {
   "level": "L1",
   "title": "a block comment that is never closed",
+  "note": "FIXED 2026-09-02. An unterminated /* used to produce a cascade of four parse errors about tokens inside the author's own prose, none of which mentioned a comment. A pre-lex scan (src/text/langium/lexical-scan.ts) now finds the unclosed delimiter and reports it INSTEAD of the cascade, because every later error is an artefact of it.",
   "ok": false,
   "diagnostics": [
     {
       "code": "lexer/unterminated-comment",
       "severity": "error",
       "line": 2,
-      "hintIncludes": "Close the block comment"
+      "column": 5,
+      "found": "/*"
     }
   ],
   "invariants": {
-    "maxErrors": 1
-  },
-  "note": "FIXED 2026-09-02. An unterminated /* used to produce a cascade of four parse errors about tokens inside the author's own prose, none of which mentioned a comment. A pre-lex scan (src/text/langium/lexical-scan.ts) now finds the unclosed delimiter and reports it INSTEAD of the cascade, because every later error is an artefact of it."
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P",
+      "this",
+      "«Comment»",
+      "ends",
+      "A"
+    ],
+    "minElements": 5
+  }
 }

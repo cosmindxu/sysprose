@@ -128,6 +128,13 @@ The tokens do not form a legal declaration. `expected` lists what would have bee
 - **Fires when:** A bare `A -> B` transition shorthand was used. It is rejected deliberately: it cannot be told apart from a `->` function-operation expression.
 - **Hint given:** Write the transition with its keyword: `transition A -> B;` (a bare `A -> B` is ambiguous with an expression and is not accepted).
 
+### `parse/dangling-then`
+
+- **Severity:** error
+- **Source:** mapper
+- **Fires when:** A bare `then X;` appears with no preceding succession in the same scope to chain from.
+- **Hint given:** A bare `then X;` continues the previous succession. Start the chain with `first A then B;`, or write this one in full.
+
 ## Reference resolution
 
 A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.
@@ -405,4 +412,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*48 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*49 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

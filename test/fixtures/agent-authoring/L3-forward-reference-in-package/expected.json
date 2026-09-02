@@ -7,7 +7,8 @@
     {
       "code": "validation/port-direction",
       "severity": "warning",
-      "line": 3
+      "line": 3,
+      "column": 9
     }
   ],
   "invariants": {
@@ -15,7 +16,6 @@
     "rootsSurvive": [
       "P"
     ],
-    "minElements": 6,
-    "strictWarnings": true
+    "minElements": 6
   }
 }

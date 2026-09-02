@@ -557,6 +557,18 @@ class Mapper {
   readonly ranges = new Map<ElementId, TextRange>();
 
   /**
+   * The target of the last succession mapped in each owner scope.
+   *
+   * SysML chains successions: `first a then b; then c; then d;` means a→b→c→d,
+   * where a bare `then X` continues from the PREVIOUS succession's target. The
+   * mapper used to require both endpoints, so every bare `then` was dropped —
+   * silently, with no diagnostic. examples/uav-isr.sysml writes three of them
+   * and got one succession. Keyed by owner so two sibling behaviours cannot
+   * chain into each other.
+   */
+  private readonly lastSuccessionTarget = new Map<ElementId | null, string>();
+
+  /**
    * Warnings about an unresolved SPECIALIZATION reference, paired with the
    * element and attribute that still hold the unresolved name.
    *
@@ -904,7 +916,25 @@ class Mapper {
       }
       case 'FirstThen': {
         const ft = node as FirstThen;
-        if (ft.source && ft.target) this.makeEdge('Succession', ownerId, ft.source, ft.target, node);
+        if (!ft.target) return;
+        // A bare `then X` chains from the previous succession's target.
+        const source = ft.source ?? this.lastSuccessionTarget.get(ownerId);
+        if (!source) {
+          const code = 'parse/dangling-then';
+          this.diagnostics.push({
+            message: `'then ${ft.target}' has nothing to follow — no preceding succession in this scope.`,
+            ...posOf(node),
+            severity: 'error',
+            source: 'mapper',
+            code,
+            found: 'then',
+            hint: renderHint(code, { found: 'then' }),
+            ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+          });
+          return;
+        }
+        this.makeEdge('Succession', ownerId, source, ft.target, node);
+        this.lastSuccessionTarget.set(ownerId, ft.target);
         return;
       }
       case 'Transition':

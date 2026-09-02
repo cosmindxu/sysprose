@@ -8,10 +8,18 @@
       "code": "parse/bare-transition-arrow",
       "severity": "error",
       "line": 5,
-      "hintIncludes": "transition"
+      "column": 18,
+      "found": "->",
+      "expected": [
+        "}"
+      ]
     }
   ],
   "invariants": {
-    "maxErrors": 1
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 4
   }
 }

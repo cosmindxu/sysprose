@@ -114,6 +114,14 @@ const CODES = [
     hint: 'Write the transition with its keyword: `transition A -> B;` (a bare `A -> B` is ambiguous with an expression and is not accepted).',
   },
 
+  {
+    code: 'parse/dangling-then',
+    source: 'mapper',
+    severity: 'error',
+    when: 'A bare `then X;` appears with no preceding succession in the same scope to chain from.',
+    hint: 'A bare `then X;` continues the previous succession. Start the chain with `first A then B;`, or write this one in full.',
+  },
+
   /* ── mapper: unresolved references (non-fatal; the textual name is kept) ── */
   {
     code: 'ref/unresolved-type',

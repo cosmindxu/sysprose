@@ -113,14 +113,32 @@ describe('pipeline: Parse → API analytics', () => {
     // Metrics exclude implicit connector-endpoint features + what they own, so
     // totalElements is below the raw model.size (which still counts internals).
     expect(metrics.totalElements).toBeLessThan(model.size);
-    expect(metrics.totalElements).toBe(42);
+    // 44, not the historical 42: examples/vehicle.sysml writes a three-step
+    // succession chain (`first start then accelerate; then cruise; then stop;`)
+    // and the mapper used to drop the two bare `then` statements SILENTLY, so
+    // the example's own action flow was two links short of what it says. Fixed
+    // 2026-09-02; the two recovered Successions are the whole difference.
+    expect(metrics.totalElements).toBe(44);
     expect(metrics.rootCount).toBe(1);
-    // FeatureTyping x2 + Satisfy x1 + Succession x1 (the implicit Redefinitions
+    // FeatureTyping x2 + Satisfy x1 + Succession x3 (the implicit Redefinitions
     // are owned by implicit features, so they are excluded from the census).
-    expect(metrics.relationshipCount).toBe(4);
+    expect(metrics.relationshipCount).toBe(6);
     expect(metrics.nodeCount).toBe(metrics.totalElements - metrics.relationshipCount);
     // Deepest COUNTABLE element: VehicleModel > vehicle > engine > fuelOut = 4
     // (the implicit endpoints/Redefinitions that reached depth 5 are excluded).
     expect(metrics.maxDepth).toBe(4);
+  });
+
+  it('recovers the whole succession chain the example writes', () => {
+    // A bare `then X;` continues from the previous succession's target, so
+    // `first start then accelerate; then cruise; then stop;` is three links.
+    // They used to be one: the mapper required both endpoints and dropped the
+    // rest without a diagnostic.
+    const successions = model.all().filter((el) => el.eClass === 'Succession');
+    const chain = successions.map(
+      (s) =>
+        `${model.get((s.source ?? [])[0])?.declaredName}->${model.get((s.target ?? [])[0])?.declaredName}`,
+    );
+    expect(chain).toEqual(['start->accelerate', 'accelerate->cruise', 'cruise->stop']);
   });
 });

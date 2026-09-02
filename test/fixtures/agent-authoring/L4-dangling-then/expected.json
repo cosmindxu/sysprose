@@ -1,0 +1,24 @@
+{
+  "level": "L4",
+  "title": "a bare `then X;` with no preceding succession to chain from",
+  "note": "FOUND 2026-09-02 by a Fable advisory on examples/uav-isr.sysml, FIXED the same day. SysML chains successions: `first a then b; then c;` means a→b→c, a bare `then` continuing from the previous target. The mapper required BOTH endpoints, so every bare `then` was dropped SILENTLY — the UAV example wrote three and got one, with zero diagnostics. Bare `then` now chains; a `then` with nothing before it in the same scope is an error rather than a silent no-op, which is what this fixture pins.",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/dangling-then",
+      "severity": "error",
+      "line": 5,
+      "column": 9,
+      "found": "then",
+      "hintIncludes": "first"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 4,
+    "strictWarnings": true
+  }
+}

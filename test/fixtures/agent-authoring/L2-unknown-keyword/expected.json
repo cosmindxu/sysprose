@@ -1,17 +1,26 @@
 {
   "level": "L2",
   "title": "a misspelled declaration keyword",
+  "note": "FIXED 2026-09-02. The parser stops one token PAST a misspelled keyword, so this used to read 'Expecting }' but found `def`' with a hint to insert a brace — advice that makes the file worse. refineParserError now inspects the previous token and names the unknown word itself.",
   "ok": false,
   "diagnostics": [
     {
       "code": "parse/unknown-keyword",
       "severity": "error",
       "line": 2,
-      "found": "blok"
+      "column": 10,
+      "found": "blok",
+      "expected": [
+        "}"
+      ]
     }
   ],
   "invariants": {
-    "maxErrors": 1
-  },
-  "note": "FIXED 2026-09-02. The parser stops one token PAST a misspelled keyword, so this used to read 'Expecting }' but found `def`' with a hint to insert a brace — advice that makes the file worse. refineParserError now inspects the previous token and names the unknown word itself."
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P",
+      "Vehicle"
+    ],
+    "minElements": 2
+  }
 }

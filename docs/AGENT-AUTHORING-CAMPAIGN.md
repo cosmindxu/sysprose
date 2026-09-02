@@ -217,6 +217,21 @@ showed `attribute mass : Real : ScalarValues::Real`. The authored display string
 now wins, references are emitted in their shortest resolving form, and anonymous
 or dangling targets are never printed.
 
+**A bare `then X;` was silently dropped.** SysML chains successions — `first a
+then b; then c;` means a→b→c, a bare `then` continuing from the previous target
+— but the mapper required both endpoints and discarded the rest with no
+diagnostic. `examples/uav-isr.sysml` writes three and got one; the shipped
+`examples/vehicle.sysml` action flow was two links short of what it says. Bare
+`then` now chains, and a `then` with nothing before it in its scope is an error
+rather than a silent no-op. Fixture: `L4-dangling-then`.
+
+**A declared requirement subject was reported missing.** `subject v : Vehicle;`
+maps to a child tagged `attrs.requirementRole = 'subject'`, a form the rule never
+checked, so the idiomatic way to write a subject produced a false positive. For
+an agent that is worse than silence: it invites a repair that breaks a correct
+model. Fixture: `L4-requirement-subject-declared`, mutation-tested — removing the
+fix makes it fail with exactly that warning.
+
 ### Known limitations, recorded rather than hidden
 
 **Numeric literal form is lost at parse time.** `1500.0` becomes `1500` because

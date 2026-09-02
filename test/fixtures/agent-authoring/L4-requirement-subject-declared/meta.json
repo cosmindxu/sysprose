@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "a requirement whose subject IS declared must not be flagged",
+  "note": "FOUND 2026-09-02 by a Fable advisory, FIXED the same day. A requirement written the idiomatic way — `subject v : Vehicle;` — was reported as having NO subject. The clause maps to a child ReferenceUsage tagged attrs.requirementRole='subject' (sysml.langium:279), a form the rule never checked. A false positive on correct input is worse for an agent than silence: it invites a repair that breaks a good model. This fixture pins that the declared subject is recognised; L4-requirement-no-subject pins that a genuinely missing one is still reported."
+}
