@@ -5,25 +5,27 @@ package UAVSurveillanceSystem {
          * with its mission behaviour, flight modes and endurance requirement. */
 
     port def PowerPort {
-        attribute voltage : Real;
+        attribute voltage : ISQ::ElectricPotentialValue;
     }
 
     port def DataPort {
+        // Data rate stays a plain Real: the unit registry has no information
+        // dimension yet (bit, byte, bit/s), so it cannot be a quantity kind.
         attribute rateMbps : Real;
     }
 
     port def RFPort {
-        attribute frequencyGHz : Real;
+        attribute frequency : ISQ::FrequencyValue;
     }
 
     part def BatteryPack {
-        attribute capacityWh : Real = 640.0;
-        attribute mass : Real = 3.4;
+        attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+        attribute mass : ISQ::MassValue = 3.4 [kg];
         out port powerOut : PowerPort;
     }
 
     part def FlightController {
-        attribute loopRateHz : Real = 400.0;
+        attribute loopRate : ISQ::FrequencyValue = 400.0 [Hz];
         in port powerIn : PowerPort;
         in port navIn : DataPort;
         out port motorOut : DataPort;
@@ -31,25 +33,25 @@ package UAVSurveillanceSystem {
     }
 
     part def NavigationSensors {
-        attribute updateRateHz : Real = 200.0;
+        attribute updateRate : ISQ::FrequencyValue = 200.0 [Hz];
         in port powerIn : PowerPort;
         out port navOut : DataPort;
     }
 
     part def PropulsionUnit {
-        attribute maxThrustN : Real = 42.0;
+        attribute maxThrust : ISQ::ForceValue = 42.0 [N];
         in port powerIn : PowerPort;
         in port commandIn : DataPort;
     }
 
     part def PayloadGimbal {
-        attribute mass : Real = 1.2;
+        attribute mass : ISQ::MassValue = 1.2 [kg];
         in port powerIn : PowerPort;
         out port videoOut : DataPort;
     }
 
     part def DataLink {
-        attribute rangeKm : Real = 25.0;
+        attribute range : ISQ::LengthValue = 25.0 [km];
         in port powerIn : PowerPort;
         in port videoIn : DataPort;
         out port commandOut : DataPort;
@@ -63,9 +65,13 @@ package UAVSurveillanceSystem {
              * unit delivers 42 N, a thrust-to-weight of 0.23. That is ample
              * for a fixed wing and impossible for a multirotor, so the
              * configuration is stated rather than left to be inferred. */
-        attribute mtowKg : Real = 18.5;
-        attribute cruisePowerW : Real = 650.0;
+        attribute mtow : ISQ::MassValue = 18.5 [kg];
+        attribute cruisePower : ISQ::PowerValue = 650.0 [W];
+        // A pure ratio; DimensionOneValue would also do, Real reads better here.
         attribute usableEnergyFraction : Real = 0.8;
+        // Derived: minutes of flight the usable pack energy buys at cruise power.
+        // 640 Wh x 0.8 / 650 W x 60 = 47.3 min. Referenced by the requirement.
+        attribute enduranceMin : Real = battery.capacity * usableEnergyFraction / cruisePower * 60.0;
 
         part battery : BatteryPack;
         part flightComputer : FlightController;
@@ -115,11 +121,9 @@ package UAVSurveillanceSystem {
         attribute id = "R-UAV-001";
         doc /* The air vehicle shall sustain at least 45 minutes of surveillance
              * flight on a single battery pack. Checked against the usable
-             * energy of the pack at cruise power: 640 Wh x 0.8 / 650 W = 47 min. */
+             * energy of the pack at cruise power, via the derived enduranceMin. */
         subject uav : AirVehicle;
-        require constraint {
-            uav.battery.capacityWh * uav.usableEnergyFraction / uav.cruisePowerW * 60.0 >= 45.0
-        }
+        require constraint { uav.enduranceMin >= 45.0 }
     }
 
     requirement def MassRequirement {
@@ -127,7 +131,7 @@ package UAVSurveillanceSystem {
         doc /* Maximum take-off mass shall stay within the 25 kg class boundary
              * that separates the light category from heavier certification. */
         subject uav : AirVehicle;
-        require constraint { uav.mtowKg <= 25.0 }
+        require constraint { uav.mtow <= 25.0 }
     }
 
     satisfy EnduranceRequirement by uav;

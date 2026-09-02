@@ -124,7 +124,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 **12 diagram view kinds** with auto-layout; palette element creation and
 click-to-connect across 9 views; manual node drag; properties/specification
 editing of every field; undo/redo; textual notation with live bidirectional sync
-(Langium, 100% corpus parse); 19-rule validation with navigable diagnostics;
+(Langium, 100% corpus parse); 22-rule validation with navigable diagnostics;
 constraint checking, behavioral (action + state) simulation driven from an
 **interactive stepper/playback panel** (step, play-pause, seek, inject events,
 live active-state highlight + value plot), a **numeric

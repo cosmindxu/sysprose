@@ -3,19 +3,19 @@ package VehicleModel {
     part def Vehicle {
         attribute mass : Real = 1500.0;
         attribute maxSpeed : Real = 220.0;
-        port fuelIn : FuelPort;
+        in port fuelIn : FuelPort;
         part engine : Engine;
         part transmission : Transmission;
     }
 
     part def Engine {
         attribute power : Real = 150.0;
-        port fuelOut : FuelPort;
-        port driveOut : TorquePort;
+        out port fuelOut : FuelPort;
+        out port driveOut : TorquePort;
     }
 
     part def Transmission {
-        port driveIn : TorquePort;
+        in port driveIn : TorquePort;
         attribute gears : Integer = 6;
     }
 

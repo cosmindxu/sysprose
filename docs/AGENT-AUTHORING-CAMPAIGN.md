@@ -101,9 +101,9 @@ one in this corpus was read and corrected by hand.
 | L0 | Recognition and encoding: empty file, comments only, BOM, CRLF, tabs, non-ASCII names, JSON offered as SysML, unknown extension | 8 |
 | L1 | Lexical: illegal character, unterminated string, unterminated comment | 3 |
 | L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword, reversed keywords, empty type, bad multiplicity, bad expressions, `=` vs `==`, bare `->`, two independent errors | 13 |
-| L3 | Referential: unresolved type, connection end, import, transition end, specialization, plus two pinned behaviours | 7 |
-| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject, specialization cycle, value-type mismatch | 7 |
-| L5 | Recovery and cascade: one bad declaration must not cost the other forty | 2 |
+| L3 | Referential: unresolved type, connection end, import, transition end, specialization; forward references in a package; types reached through an import, through inheritance, and through a library import written in text; plus a pinned behaviour | 10 |
+| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit, connection direction and type | 13 |
+| L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies | 3 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 12 assertions |
 | L7 | The command-line contract: exit codes, JSON shape, stdin, strict mode | 10 tests |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
@@ -128,6 +128,23 @@ First measured run, `docs/campaign-runs/2026-09-02-repair-bench.md`:
 A 100% repair rate, every case on the first attempt. The one non-minimal repair
 is `L3-unresolved-connection-end`, where fixing a dangling endpoint reasonably
 requires adding the part it should connect to.
+
+Second run, after the open-issues pass grew the corpus to 50 fixtures
+(`docs/campaign-runs/2026-09-02-repair-bench-2.md`):
+
+| Metric | Value |
+|---|---:|
+| Fixtures with errors to repair | 24 |
+| Repaired to a clean check | 24 |
+| Repaired on the first round | 22 |
+| Repaired with a minimal edit | 23 |
+
+Still 100%. The two second-round cases are `L0-json-as-sysml`, where the
+first attempt is a plausible but incomplete translation of the JSON, and
+`L5-nested-fault-rehomes-inner`, where the model first repaired the fault and
+only then noticed the declaration it had displaced. Both converge on the
+second report, which is the point: the report is enough even when the first
+repair is not.
 
 Read it with one caveat: the bench used the CLI's default model, which is the
 same family as the assistant that built the tool, so it measures whether the
@@ -278,7 +295,39 @@ grammar admits no unit literal inside a constraint body. An unknown unit was
 silently exempt from every dimensional check; `unknown-unit` now names it. `Wh`
 and `Ah` joined the registry (prefixable, so kWh and mAh come free).
 
+**Connection compatibility was unchecked.** `connect battery.powerOut to
+flightComputer.motorOut` (out to out) and a PowerPort wired to a DataPort both
+passed silently; the only port rule checked that a direction was declared. The
+new `connection-compatibility` rule (warning: SysML v2 does not forbid it at the
+language level, and `--strict` promotes it) anchors on the connector, because
+connector ends are implicit per-usage port copies and `validate()` drops any
+finding anchored on an implicit element. It compares PortDefinition closures
+and flags only when they share nothing, so a specialised port definition still
+matches its ancestor and `T` against `~T` is never flagged. Fixtures:
+`L4-connection-direction`, `L4-connection-type`.
+
+**The phantom port and the hint that taught it.** `port in a : Pt;` parsed as
+two members, a bare `port` and a keyword-less `in a : Pt`, producing a nameless
+PortUsage per directed port with no diagnostic, and the port-direction hint
+recommended exactly that spelling. The grammar now admits a direction after the
+keyword, the hint teaches the canonical `in port`, and a `split-declaration`
+warning names the residual keyword-only forms. Fixture: `L4-phantom-port`.
+
+**Recovery re-homed declarations after a fault.** Every declaration after a
+syntax fault was parsed one scope out, and a fault two levels deep escaped
+twice; the elements survived but their containment did not. A post-parse pass
+now re-homes each ranged declaration under the element that opened its
+enclosing brace, declining on an unbalanced file rather than guessing, and runs
+before the deferred reference pass so references that failed only through wrong
+ownership resolve normally. Fixture: `L5-nested-fault-rehomes-inner`.
+
 ### Known limitations, recorded rather than hidden
+
+**Re-homing cannot recover the faulty declaration itself, and can mis-home a
+file that is both faulted and brace-balanced by coincidence.** It repairs
+containment from the brace structure, which is all the parser leaves intact;
+the residue of the bad declaration stays a keyword-less element.
+
 
 **A `[unit]` literal cannot be written inside a constraint body.**
 `require constraint { x <= 25.0 [kg] }` is a parse error: the expression grammar
@@ -338,7 +387,11 @@ known rather than hidden.
   `window.sysml`; `POST /api/text/check`; line and column in the Problems panel
   with click-to-line; a strict apply mode that refuses to replace the model when
   the text has errors; surfacing the silently swallowed JSON import failure.
-- **Phase 3 — done.** `scripts/agent-repair-bench.ts` and the first measured
-  run under `docs/campaign-runs/`. See L9 above.
-- **Phase 4 — done.** Every defect in §4 fixed and every fixture promoted; no
-  `expectFail` remains. What is left is recorded under "Known limitations".
+- **Phase 3 — done.** `scripts/agent-repair-bench.ts` and two measured runs
+  under `docs/campaign-runs/` (22/22, then 24/24 on the 50-fixture corpus).
+  See L9 above.
+- **Phase 4 — done, twice.** Every defect in §4 fixed and every fixture promoted;
+  no `expectFail` remains. The second pass (2026-09-02, commits A–G of the
+  open-issues plan) closed the seven items the first pass had recorded as
+  limitations, and found three more on the way. What is left is recorded under
+  "Known limitations".
