@@ -1,7 +1,7 @@
 {
   "level": "L5",
   "title": "one bad declaration must not lose the other forty",
-  "note": "One bad declaration among forty-one must not cost the other forty. It does not: all 41 elements survive and exactly one error is reported, naming the offending keyword. OBSERVATION, pre-existing: recovery re-homes every declaration AFTER the fault to the root namespace instead of leaving them inside `package Big`, which is why the surviving roots are listed here. Nothing is lost, but the containment is wrong — recorded so it is known rather than hidden.",
+  "note": "One bad declaration among forty-one must not cost the other forty. It does not: all 41 elements survive and exactly one error is reported, naming the offending keyword. FIXED 2026-09-02: recovery used to re-home every declaration AFTER the fault to the root namespace; they are now back inside `package Big`, so the only surviving root is `Big`.",
   "ok": false,
   "diagnostics": [
     {
@@ -18,29 +18,9 @@
   "invariants": {
     "maxErrors": 1,
     "rootsSurvive": [
-      "Big",
-      "T20",
-      "T21",
-      "T22",
-      "T23",
-      "T24",
-      "T25",
-      "T26",
-      "T27",
-      "T28",
-      "T29",
-      "T30",
-      "T31",
-      "T32",
-      "T33",
-      "T34",
-      "T35",
-      "T36",
-      "T37",
-      "T38",
-      "T39",
-      "T40"
+      "Big"
     ],
-    "minElements": 41
+    "minElements": 41,
+    "strictWarnings": true
   }
 }

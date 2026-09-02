@@ -62,8 +62,7 @@
   "invariants": {
     "maxErrors": 2,
     "rootsSurvive": [
-      "P",
-      "«MetadataUsage»"
+      "P"
     ],
     "minElements": 3
   }

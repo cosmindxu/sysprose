@@ -1,0 +1,5 @@
+{
+  "level": "L5",
+  "title": "a fault two levels deep keeps the following declarations in THEIR bodies",
+  "note": "FOUND 2026-09-02, FIXED the same day. Error recovery leaves the enclosing BODY rule, not the failed member, so every declaration after a fault was parsed one scope out: here `z` escaped `A` into `P` and `B` escaped `P` to the root. The elements survived; their containment did not — and a save after a failed apply made that loss permanent. A post-parse pass now re-homes each ranged declaration under the element that opened its enclosing brace, and declines on an unbalanced file rather than guess. This is the depth-2 case, which nothing pinned before."
+}

@@ -44,6 +44,7 @@ import type { ParseResult, ParseDiagnostic } from '../types';
 import type { TextRange } from '@validation/types';
 import { parseDocument } from './module';
 import { findUnterminatedDelimiter } from './lexical-scan';
+import { rehomeAfterFault } from './rehome';
 import {
   codeForParserError,
   expectedFromMessage,
@@ -684,9 +685,20 @@ class Mapper {
 
   /* ────────────────────────────── entry ────────────────────────────────── */
 
-  run(members: Member[]): void {
+  /**
+   * Map the members, repair recovery damage, then resolve deferred references.
+   *
+   * `fault` is the source offset of the first parser error, when there was one.
+   * Error recovery parses every declaration after a fault one scope OUT of its
+   * body (see `rehome.ts`), so the re-homing runs BEFORE the deferred pass: a
+   * reference that failed only because of wrong ownership then resolves
+   * normally and its warning is retracted, instead of surviving as a false
+   * "unresolved" finding.
+   */
+  run(members: Member[], fault?: { text: string; offset: number }): void {
     this.model.transaction(() => {
       for (const m of members) this.mapMember(m, null);
+      if (fault) rehomeAfterFault(this.model, fault.text, this.ranges, fault.offset);
       this.resolveDeferredRefs();
       this.retractResolvedEndpointWarnings();
     });
@@ -1809,7 +1821,16 @@ export function astToModel(text: string): ParseResult {
     });
   }
 
-  mapper.run(ast.members ?? []);
+  // Recovery may have parsed declarations after the first fault one scope
+  // out; the mapper re-homes them from the brace structure before resolving.
+  const firstFault = parserErrors
+    .map((e) => e.token?.startOffset)
+    .filter((o): o is number => typeof o === 'number' && Number.isFinite(o))
+    .sort((a, b) => a - b)[0];
+  mapper.run(
+    ast.members ?? [],
+    firstFault === undefined ? undefined : { text, offset: firstFault },
+  );
   return {
     model: mapper.model,
     diagnostics: mapper.diagnostics,

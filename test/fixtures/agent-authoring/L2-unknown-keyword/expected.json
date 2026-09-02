@@ -18,9 +18,9 @@
   "invariants": {
     "maxErrors": 1,
     "rootsSurvive": [
-      "P",
-      "Vehicle"
+      "P"
     ],
-    "minElements": 2
+    "minElements": 2,
+    "strictWarnings": true
   }
 }
