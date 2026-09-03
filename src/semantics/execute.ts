@@ -414,7 +414,9 @@ function executeNode(
     case 'AcceptActionUsage': {
       const what = strAttr(el, 'payload') ?? strAttr(el, 'message') ?? el.declaredName ?? '';
       // Optionally bind the accepted payload into the store when a value given.
-      const val = strAttr(el, 'value');
+      // The parser stores a literal value as a number or boolean, not a string,
+      // so read the attribute raw: `evalStr` passes non-strings through.
+      const val = el.attrs.value ?? undefined;
       if (what && val !== undefined) {
         const v = evalStr(val, store, scope);
         if (v !== undefined) store.set(what, v);
@@ -509,6 +511,8 @@ function runLoopBody(
  * Apply an AssignmentActionUsage to the store: `store[target] = eval(value)`.
  * The target name comes from `attrs.target` / `attrs.referent` / `attrs.feature`
  * / the declared name; the value expression from `attrs.value` / `attrs.expression`.
+ * A parsed `assign x := -1;` stores the literal as a number, so the value is
+ * read raw rather than through `strAttr`, which would skip it silently.
  */
 function applyAssignment(
   el: ElementRecord,
@@ -517,7 +521,7 @@ function applyAssignment(
 ): string | undefined {
   const target =
     strAttr(el, 'target') ?? strAttr(el, 'referent') ?? strAttr(el, 'feature') ?? el.declaredName;
-  const raw = strAttr(el, 'value') ?? strAttr(el, 'expression');
+  const raw = el.attrs.value ?? strAttr(el, 'expression');
   if (!target || raw === undefined) return undefined;
   const v = evalStr(raw, store, scope);
   if (v === undefined) return undefined;

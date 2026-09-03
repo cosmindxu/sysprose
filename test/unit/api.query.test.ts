@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildSampleModel } from '@core/index';
 import { ModelApi, evaluateQuery } from '@api/index';
+import { parseModel } from '@text/index';
 
 function ctx() {
   const model = buildSampleModel();
@@ -134,5 +135,54 @@ describe('evaluateQuery — projection, pagination, scope', () => {
       constraint: { property: '@type', operator: '=', value: 'PortUsage' },
     });
     expect(underEngine.total).toBe(1);
+  });
+});
+
+describe('evaluateQuery — signed numeric values', () => {
+  const src = 'package P { attribute neg : Real = -2.50; attribute pos : Real = 2.50; }\n';
+
+  it('= finds a negative literal by its number', () => {
+    const { model } = parseModel(src);
+    const r = evaluateQuery(model, { constraint: { property: 'attrs.value', operator: '=', value: -2.5 } });
+    expect(r.elements.map((e) => e.declaredName)).toEqual(['neg']);
+  });
+
+  it('= still honours a query persisted against the old string form', () => {
+    // Stored queries written while `-2.50` was kept as a string must keep
+    // matching now that the value is the number -2.5.
+    const { model } = parseModel(src);
+    const r = evaluateQuery(model, { constraint: { property: 'attrs.value', operator: '=', value: '-2.50' } });
+    expect(r.elements.map((e) => e.declaredName)).toEqual(['neg']);
+  });
+
+  it('= does not equate distinct numbers through their strings', () => {
+    const { model } = parseModel(src);
+    const r = evaluateQuery(model, { constraint: { property: 'attrs.value', operator: '=', value: '2.5' } });
+    expect(r.elements.map((e) => e.declaredName)).toEqual(['pos']);
+  });
+
+  it('= keeps two strings exact — names that merely look numeric never collapse', () => {
+    // Loosening equality for the number/string boundary must not widen
+    // string/string: '1.0', '01' and '0x10' are identifiers, not numbers.
+    const { model } = parseModel("package P { part '1'; part '1.0'; part '01'; part '16'; part '0x10'; part '1000'; part '1e3'; }\n");
+    const byName = (v: string) =>
+      evaluateQuery(model, { constraint: { property: 'declaredName', operator: '=', value: v } }).elements.map((e) => e.declaredName);
+    expect(byName('1')).toEqual(['1']);
+    expect(byName('16')).toEqual(['16']);
+    expect(byName('1000')).toEqual(['1000']);
+  });
+
+  it('= does not read a hex-looking string as a number', () => {
+    const { model } = parseModel('package P { attribute h = 16; }\n');
+    const r = evaluateQuery(model, { constraint: { property: 'attrs.value', operator: '=', value: '0x10' } });
+    expect(r.total).toBe(0);
+  });
+
+  it('= does not equate a boolean or a blank string with a number', () => {
+    const { model } = parseModel('package P { attribute one : Real = 1; attribute zero : Real = 0; attribute t : Boolean = true; }\n');
+    const t = evaluateQuery(model, { constraint: { property: 'attrs.value', operator: '=', value: true } });
+    expect(t.elements.map((e) => e.declaredName)).toEqual(['t']);
+    const blank = evaluateQuery(model, { constraint: { property: 'attrs.value', operator: '=', value: '' } });
+    expect(blank.total).toBe(0);
   });
 });

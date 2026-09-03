@@ -35,6 +35,81 @@ describe('numeric literal form', () => {
     expect(a.attrs.valueText).toBeUndefined();
   });
 
+  // The NUMBER terminal is unsigned and the sign is a unary operator, so a
+  // signed literal reaches the mapper as a UnaryExpr over a NumberLiteral. It
+  // still denotes a number: fold it, and keep the lexeme beside it exactly as
+  // for the unsigned rows above.
+  it.each([
+    ['-2.50', -2.5],
+    ['+3', 3],
+    ['-1e3', -1000],
+    ['-0', -0],
+  ])('folds the signed literal %s to the number %s and keeps the lexeme', (lexeme, num) => {
+    const src = `package P { attribute a : Real = ${lexeme}; }\n`;
+    const a = attrOf(src, 'a');
+    expect(a.attrs.value).toBe(num);
+    expect(a.attrs.valueText).toBe(lexeme);
+    expect(serializeModel(parseModel(src).model)).toContain(`= ${lexeme};`);
+  });
+
+  it('writes no valueText for a signed literal String(value) already reproduces', () => {
+    const a = attrOf('package P { attribute a : Integer = -3; }\n', 'a');
+    expect(a.attrs.value).toBe(-3);
+    expect(a.attrs.valueText).toBeUndefined();
+  });
+
+  it('folds `- 2` (interior space) to -2 and re-emits it without the space', () => {
+    // Number('- 2') is NaN, so the lexeme cannot be kept: the serializer would
+    // reject it anyway, and storing it would break parse → serialize → parse.
+    const src = 'package P { attribute a : Real = - 2; }\n';
+    const a = attrOf(src, 'a');
+    expect(a.attrs.value).toBe(-2);
+    expect(a.attrs.valueText).toBeUndefined();
+    expect(serializeModel(parseModel(src).model)).toContain('= -2;');
+  });
+
+  // Only a sign directly on a bare number is a literal. Everything else a
+  // UnaryExpr can wrap stays the author's expression, verbatim — including
+  // `-(2)`, whose operand IS a NumberLiteral in the AST because parentheses
+  // are transparent; the digit-start test on the operand's text keeps it out.
+  it.each([['-x'], ['--2'], ['-(2)'], ['not true'], ['~x'], ['5 - 2'], ['~2'], ['not 2']])(
+    'keeps %s as an expression string',
+    (expr) => {
+      const a = attrOf(`package P { attribute x = 1; attribute a = ${expr}; }\n`, 'a');
+      expect(a.attrs.value).toBe(expr);
+      expect(a.attrs.valueText).toBeUndefined();
+    },
+  );
+
+  it('folds `(-2)` because the parentheses wrap the whole signed literal', () => {
+    // The asymmetry with `-(2)` is deliberate: here the operand's own text is
+    // `2`, so the sign sits directly on a bare number. The stale lexeme
+    // `(-2)` is not a number, so it is dropped and `-2` is re-emitted —
+    // exactly what `(2.50)` does today.
+    const src = 'package P { attribute a : Real = (-2); }\n';
+    const a = attrOf(src, 'a');
+    expect(a.attrs.value).toBe(-2);
+    expect(a.attrs.valueText).toBeUndefined();
+    expect(serializeModel(parseModel(src).model)).toContain('= -2;');
+  });
+
+  it('recovers a dangling sign as a parse error instead of throwing', () => {
+    // Error recovery hands the mapper a UnaryExpr with no operand; the fold
+    // must not dereference it. The value stays the verbatim text, the parse
+    // diagnostic keeps its position, and the siblings survive.
+    const src = 'package P {\n  attribute a = -;\n  attribute b = 1;\n}\n';
+    const { model, diagnostics } = parseModel(src);
+    const parseErrors = diagnostics.filter((d) => d.code?.startsWith('parse/'));
+    expect(parseErrors.length).toBeGreaterThan(0);
+    expect(parseErrors[0].line).toBe(2);
+    expect(parseErrors[0].range).toBeDefined();
+    expect(diagnostics.some((d) => d.code === 'import/internal-error')).toBe(false);
+    const names = model.all().map((e) => e.declaredName);
+    expect(names).toEqual(expect.arrayContaining(['P', 'a', 'b']));
+    expect(attrOf(src, 'a').attrs.value).toBe('-');
+    expect(attrOf(src, 'b').attrs.value).toBe(1);
+  });
+
   it('ignores a lexeme that no longer denotes the value', () => {
     const { model } = parseModel('package P { attribute a : Real = 1500.0; }\n');
     const a = model.all().find((e) => e.declaredName === 'a')!;

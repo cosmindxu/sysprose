@@ -321,6 +321,19 @@ enclosing brace, declining on an unbalanced file rather than guessing, and runs
 before the deferred reference pass so references that failed only through wrong
 ownership resolve normally. Fixture: `L5-nested-fault-rehomes-inner`.
 
+**`-2.50` was stored as a string.** The NUMBER terminal is unsigned and the
+sign is a unary operator, so a signed literal reached the mapper as an
+expression and stayed the verbatim text `"-2.50"` while `2.50` became the
+number 2.5. The earlier record claimed every consumer handled both forms; the
+numeric ones did (they re-parse strings), but the query engine did not —
+`attrs.value = -2.5` found nothing — and the exported JSON carried a string
+where the unsigned case carried a number. The mapper now folds a sign written
+directly on a bare number to the number and keeps the author's lexeme beside
+it in `valueText`, exactly as for `1500.0`; the export type therefore flips
+from string to number for signed literals, which is the intended contract.
+Query equality also accepts two operands that denote the same number, so a
+query persisted as `'-2.50'` keeps matching. Fixture: `L4-signed-literal`.
+
 ### Known limitations, recorded rather than hidden
 
 **Re-homing cannot recover the faulty declaration itself, and can mis-home a
@@ -340,11 +353,6 @@ judge both sides.
 registry is a fixed table with generic single-prefix decomposition; `W*h`,
 `bit/s` and `m^2` do not resolve, and `Dimension` has no information axis, so
 data rates stay `Real`.
-
-**`-2.50` is stored as a string.** A signed literal is a `UnaryExpr`, which the
-mapper keeps verbatim, while `2.50` becomes the number 2.5. Every consumer
-handles both forms, so this is recorded rather than normalised.
-
 
 **Forward and backward references can resolve differently when a name is both
 inherited and in an outer scope.** The binder (forward references) consults
@@ -375,6 +383,20 @@ but the file stays non-portable to stricter tools. Fixtures
 requires both ends of a connect statement, so the rule fires only on
 programmatically built models. Recorded in `L4-connector-one-end` so the gap is
 known rather than hidden.
+
+**Only a sign directly on a bare number is a literal.** `-x`, `--2`, `not true`,
+`~x`, `5 - 2` and `-(2)` stay expression strings: the language treats a sign as
+an operator, and folding anything beyond a signed literal would erase what the
+author wrote. `-(2)` is the deliberate edge — its operand is a number in the
+AST because parentheses are transparent, and the mapper looks at the operand's
+own text to keep it out. `(-2)` does fold, because there the parentheses wrap
+the whole signed literal and the operand's own text is `2`; it re-emits as
+`-2`, as `(2.50)` already re-emits as `2.5`. `- 2` (interior space) folds to
+`-2` and re-emits without the space, because a lexeme `Number()` cannot read is
+never stored. A dangling sign (`= -;`) is a positioned parse error, never a
+mapper crash.
+`-0` folds to the number -0, which JSON cannot carry; it survives a save only
+through `valueText`. Pinned by `text.literal-form.test.ts`.
 
 ## 5. Phase status
 

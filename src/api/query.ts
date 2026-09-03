@@ -211,11 +211,38 @@ export function getProperty(model: Model, el: ElementRecord, path: string): unkn
   return cur;
 }
 
-/** Loose equality tolerant of number/string boundary mismatches (1500 == "1500"). */
+/**
+ * Loose equality tolerant of number/string boundary mismatches (1500 == "1500").
+ *
+ * A number and a string that denote the same finite number are also equal, so
+ * a query persisted as `{ value: '-2.50' }` while signed literals were stored
+ * as strings keeps matching the number -2.5 the parser stores now. Two strings
+ * are only ever equal verbatim: names such as `'1.0'` and `'01'` are distinct
+ * identifiers, not numbers, and must not collapse onto `'1'`.
+ */
 function looseEq(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return false;
-  return String(a) === String(b);
+  if (String(a) === String(b)) return true;
+  if (typeof a !== 'number' && typeof b !== 'number') return false;
+  const na = numericOf(a);
+  const nb = numericOf(b);
+  return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
+}
+
+/** A decimal literal as the language writes it — no hex/binary/octal, no blanks. */
+const DECIMAL_RE = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+
+/**
+ * The number a query operand denotes, or NaN. Only numbers and decimal
+ * literal strings qualify: `true` must not equal 1, `''` must not equal 0,
+ * `'0x10'` is a name rather than 16, and arrays or objects never denote a
+ * number even though `Number([5])` is 5.
+ */
+function numericOf(x: unknown): number {
+  if (typeof x === 'number') return x;
+  if (typeof x === 'string' && DECIMAL_RE.test(x)) return Number(x);
+  return NaN;
 }
 
 /** Cache compiled patterns so a query over N elements compiles once, not N times. */

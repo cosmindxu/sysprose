@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Model, ModelFactory } from '@core/index';
 import { runActionFlow, runStateMachine, executeModel } from '../../src/semantics/index';
+import { parseModel } from '@text/index';
 
 /* ───────────────────────── value-store: assignment ───────────────────── */
 
@@ -24,6 +25,22 @@ describe('runActionFlow — assignment updates the value store', () => {
     expect(trace.complete).toBe(true);
     const assignStep = trace.steps.find((s) => s.id === assign.id)!;
     expect(assignStep.note).toBe('x = 15');
+  });
+});
+
+describe('runActionFlow — a parsed literal assignment is applied', () => {
+  // The parser stores `:= -1` and `:= 1` as numbers, not strings; the
+  // assignment must read the raw attribute or the step is silently skipped.
+  it.each([
+    ['-1', -1],
+    ['1', 1],
+    ['-2.50', -2.5],
+  ])('assign x := %s writes %s to the store', (lit, num) => {
+    const { model } = parseModel(`action def A { attribute x : Real = 5; assign x := ${lit}; }\n`);
+    const act = model.all().find((e) => e.eClass === 'ActionDefinition')!;
+    const trace = runActionFlow(model, act.id);
+    expect(trace.valueStore.get('x')).toBe(num);
+    expect(trace.steps.map((s) => s.note)).toContain(`x = ${num}`);
   });
 });
 

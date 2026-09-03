@@ -195,7 +195,7 @@ function stripBlockComment(raw: string | undefined): string {
 
 /**
  * The source lexeme of a numeric value, when `String(value)` would not
- * reproduce it.
+ * reproduce it and only while `Number(lexeme)` still denotes the value.
  *
  * `terminal NUMBER returns number` converts at CST→AST time, so by the time the
  * mapper sees `1500.0` it is the JS number 1500 and re-serializes as `1500`;
@@ -208,7 +208,13 @@ function stripBlockComment(raw: string | undefined): string {
 function valueTextFor(expr: Expression, value: unknown): { valueText?: string } {
   if (typeof value !== 'number') return { valueText: undefined };
   const lexeme = expr.$cstNode?.text?.trim();
-  return { valueText: lexeme && lexeme !== String(value) ? lexeme : undefined };
+  // Keep the lexeme only while `Number(lexeme)` reproduces the value — the same
+  // guard the serializer applies when it reads it back. A folded signed
+  // literal written as `- 2` has a lexeme `Number()` cannot parse; storing it
+  // would make parse → serialize → parse drift, so it is dropped here.
+  return {
+    valueText: lexeme && lexeme !== String(value) && Number(lexeme) === value ? lexeme : undefined,
+  };
 }
 
 /** 1-based line/column of an AST node (falls back to 1,1). */
@@ -1585,6 +1591,25 @@ class Mapper {
         // The legacy parser kept the quotes so the value round-trips; the raw
         // CST text is exactly that quoted literal.
         return expr.$cstNode?.text ?? JSON.stringify(expr.value);
+      case 'UnaryExpr':
+        // The NUMBER terminal is unsigned and the sign is a unary operator, so
+        // `-2.50` arrives here rather than as a NumberLiteral. It still denotes
+        // a number, and the query engine and the export contract expect one.
+        // Only a sign directly on a bare number folds: parentheses are
+        // transparent in the AST, so `-(2)` also has a NumberLiteral operand,
+        // and the digit-start test on the operand's own text is what keeps it
+        // (and `-x`, `--2`, `not true`, `~x`) an expression string.
+        // The operand is optional in practice: a dangling `= -;` is parsed
+        // with recovery and reaches here with no operand, and must fall
+        // through to the verbatim text like any other malformed value.
+        if (
+          (expr.op === '-' || expr.op === '+') &&
+          expr.operand?.$type === 'NumberLiteral' &&
+          /^[0-9]/.test(expr.operand.$cstNode?.text ?? '')
+        ) {
+          return expr.op === '-' ? -expr.operand.value : expr.operand.value;
+        }
+        return exprText(expr);
       default:
         return exprText(expr);
     }

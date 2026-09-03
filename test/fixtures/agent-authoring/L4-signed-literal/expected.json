@@ -1,0 +1,22 @@
+{
+  "level": "L4",
+  "title": "a signed literal is a number; a negated name stays an expression",
+  "note": "FIXED 2026-09-03. `-2.50` was stored as the string \"-2.50\" because the sign is a unary operator over an unsigned NUMBER terminal, so `attrs.value = -2.5` queries found nothing and the export type differed from `2.50`. The mapper now folds a sign on a bare number to the number and keeps the lexeme in `valueText`; `-x` stays an expression string, and `-3` on a Natural is the ordinary value-type-mismatch. This fixture records the diagnostic shape of the case (it produced the same warning before the fix); the fold itself is pinned by `test/unit/text.literal-form.test.ts`.",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/value-type-mismatch",
+      "severity": "warning",
+      "line": 4,
+      "column": 5
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 4,
+    "strictWarnings": true
+  }
+}
