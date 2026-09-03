@@ -51,6 +51,7 @@ import {
   dimensionalFacets,
   evaluateConstraintQuantityDetailed,
   evaluateQuantity,
+  isRefusalReason,
   type DerivationMemo,
   type Quantity,
 } from './units-eval';
@@ -427,6 +428,78 @@ function scaleOfRelation(
 
 /** Marker name → the `[unit]` literal it stands for (magnitude and dimension). */
 type MarkerDimensions = ReadonlyMap<string, LoweredLiteral>;
+
+/**
+ * Does this relation body contain a dimensional fault the unit-aware evaluator
+ * REFUSES — two different, both-dimensioned operands where they had to match
+ * (`d [m] >= t [s]`), or a dimensioned exponent?
+ *
+ * Such a relation is not a numeric relation at all, so it is dropped from the
+ * equation/inequality sets rather than merely left unscaled. Gate (c) only
+ * declines to SI-SCALE it, which keeps its residual in the relation set — and
+ * `solveFeasible`/`optimize` read that residual directly, with no unit-aware
+ * verdict in front of them the way {@link checkConstraintsNumeric} has. That
+ * published `feasible: false` with a violation of 2995 (5 km − 3000 s, a
+ * subtraction of unrelated magnitudes) for a relation `analysisReport` reports
+ * as an unknown, and drove a free LENGTH to −1 metre to satisfy a bound in
+ * SECONDS.
+ *
+ * A DIMENSIONLESS operand is NOT a clash: `range = 5 [km]` against `<= 10.0`
+ * is the declared-unit contract, and `n : Real; n == km` is how the solver
+ * learns `n` — both stay in the set, exactly as gate (c) leaves them unscaled.
+ */
+function hasDimensionalFault(
+  node: ExprNode,
+  scale: ScaleMap,
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+): boolean {
+  const dim = (n: ExprNode): OperandDimension => nodeDimension(n, scale, nameToId, markers);
+  switch (node.kind) {
+    case 'unary':
+      return hasDimensionalFault(node.operand, scale, nameToId, markers);
+    case 'if':
+      return (
+        hasDimensionalFault(node.cond, scale, nameToId, markers) ||
+        hasDimensionalFault(node.then, scale, nameToId, markers) ||
+        hasDimensionalFault(node.else, scale, nameToId, markers)
+      );
+    case 'binary': {
+      if (
+        hasDimensionalFault(node.left, scale, nameToId, markers) ||
+        hasDimensionalFault(node.right, scale, nameToId, markers)
+      ) {
+        return true;
+      }
+      const l = dim(node.left);
+      const r = dim(node.right);
+      if (l === INDETERMINATE || r === INDETERMINATE) return false; // not decidable here
+      if (node.op === '^') return !dimEqual(r, DIMENSIONLESS);
+      if (!DIMENSION_SENSITIVE.has(node.op)) return false;
+      if (dimEqual(l, DIMENSIONLESS) || dimEqual(r, DIMENSIONLESS)) return false;
+      return !dimEqual(l, r);
+    }
+    default:
+      return false;
+  }
+}
+
+/** {@link hasDimensionalFault} over one relation body, scaled by its own vars. */
+function relationRefused(
+  model: Model,
+  node: ExprNode,
+  vars: ElementId[],
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+  memo: DerivationMemo,
+): boolean {
+  const scale: ScaleMap = new Map();
+  for (const id of vars) {
+    const s = storageScaleOf(model, id, memo);
+    if (s) scale.set(id, s);
+  }
+  return hasDimensionalFault(node, scale, nameToId, markers);
+}
 
 /**
  * A dimension no dimensional arithmetic can pin down — either because two
@@ -840,6 +913,8 @@ function makeEquation(
   // the gate-(c) set, and an equality is precisely where a plain `Real` meets a
   // dimensioned value (`constraint { n == km }` must leave `n` at 5, not 5000).
   const joined: ExprNode = { kind: 'binary', op: '==', left: lhs, right: rhs };
+  // Not a numeric equation at all — see {@link relationRefused}.
+  if (relationRefused(model, joined, varIds, nameToId, markers, memo)) return undefined;
   const scale = scaleOfRelation(model, varIds, [joined], nameToId, body?.hadUnit ?? false, markers, memo);
   // A body whose literals are already in SI cannot be judged in raw magnitudes.
   if (body?.hadUnit && !scale) return undefined;
@@ -945,6 +1020,8 @@ function relationInequality(
   collectVarIds(node.right, nameToId, vars);
   const varIds = [...vars];
   const markers: MarkerDimensions = body.literals;
+  // Not a numeric inequality at all — see {@link relationRefused}.
+  if (relationRefused(model, node, varIds, nameToId, markers, memo)) return undefined;
   const scale = scaleOfRelation(model, varIds, [node], nameToId, body.hadUnit, markers, memo);
   if (body.hadUnit && !scale) return undefined;
 
@@ -2208,10 +2285,17 @@ export function checkConstraintsNumeric(
     if (detailed.verdict !== 'unknown') {
       row.result = detailed.verdict;
       if (row.result === 'satisfied') row.amount = 0;
-    } else if (residual === undefined || isRefusal(detailed.reason)) {
-      // A refusal (an offset scale, a dimension-mismatched derivation) is a
-      // REASONED unknown: falling back to the raw magnitudes here would answer
-      // the very question the unit-aware engine declined, and confidently.
+    } else if (residual === undefined || isRefusalReason(detailed.reason)) {
+      // A refusal (an offset scale, a dimension-mismatched derivation, a
+      // clash of two different dimensions) is a REASONED unknown: falling back
+      // to the raw magnitudes here would answer the very question the
+      // unit-aware engine declined, and confidently. For a clash there is not
+      // even a residual worth reading — gate (c) declines to SCALE such a
+      // relation, so `5 [km] >= 3000 [s]` residuals as 5 − 3000, a subtraction
+      // of unrelated magnitudes. Everything not in the refusal set (a name out
+      // of scope, an unparseable body, a bare literal beside a dimensioned
+      // value — the `dimension` reason) is ignorance the scalar path may still
+      // answer, which is what keeps the declared-unit contract intact.
       row.result = 'unknown';
       row.slack = null;
       row.amount = 0;
@@ -2225,16 +2309,6 @@ export function checkConstraintsNumeric(
     out.push(row);
   }
   return out;
-}
-
-/**
- * Unknown reasons the numeric residual must NOT overrule. Everything else
- * (a name out of scope, an unparseable body, a bare literal beside a
- * dimensioned value) is ignorance the scalar path may still answer — which is
- * what keeps the declared-unit contract and every unitless model intact.
- */
-function isRefusal(reason: string | undefined): boolean {
-  return reason === 'offset' || reason === 'mismatch';
 }
 
 /**

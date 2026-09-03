@@ -27,6 +27,15 @@ import { type ElementId, type Model } from '@core/index';
 import { runStateMachine, type StateStep } from './execute';
 import { evaluate, parseExpr } from './expr';
 import { scopeFor } from './evaluate-model';
+import {
+  derivedDimensionOf,
+  dimensionalFacets,
+  evaluateConstraintQuantityDetailed,
+  isRefusalReason,
+  type DerivationMemo,
+  type Quantity,
+} from './units-eval';
+import { DIMENSIONLESS, resolveUnit } from './units';
 import { solve } from './solver';
 
 /** A primitive simulation value (what a value snapshot / plot can carry). */
@@ -273,6 +282,7 @@ export class SimulationSession {
     sample.constraints = checkConstraintsWithStore(
       this.model,
       this.behaviorId,
+      this.contextId,
       res.valueStore,
       sample.solved,
     );
@@ -429,6 +439,7 @@ function snapshotValues(store: Map<string, unknown>): Record<string, SimValue> {
 function checkConstraintsWithStore(
   model: Model,
   behaviorId: ElementId,
+  contextId: ElementId,
   store: Map<string, unknown>,
   solved: Record<string, number> = {},
 ): SimConstraintStatus[] {
@@ -438,15 +449,72 @@ function checkConstraintsWithStore(
   const inScope = new Set<ElementId>(model.descendants(behaviorId).map((e) => e.id));
   inScope.add(behaviorId);
   const out: SimConstraintStatus[] = [];
+  const memo: DerivationMemo = new Map();
+  const fallback = liveQuantityScope(model, contextId, store, solved, memo);
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     if (el.attrs.isLibrary === true) continue;
     if (!inScope.has(el.id)) continue;
     const expr = el.attrs.expression;
     if (typeof expr !== 'string' || expr.trim() === '') continue;
-    const status = evalConstraint(model, el.id, el.ownerId, expr, store, solved);
+    // The unit-aware evaluator gets the first word here for the faults it
+    // REFUSES, exactly as `checkConstraints` and `checkConstraintsNumeric` give
+    // it. This evaluator is unit-blind — it compares the raw magnitudes — so
+    // without the guard a mass against a limit mistyped as a length read
+    // `satisfied` in the simulate panel while both other surfaces refused it,
+    // a disagreement no author could explain. Only a REFUSAL is honoured: an
+    // unresolved name is ordinary ignorance the live store is here to fill,
+    // and a refusal turns on DECLARED dimensions, which no store value moves.
+    const ua = evaluateConstraintQuantityDetailed(model, el, { memo, fallback });
+    const status =
+      ua.verdict === 'unknown' && isRefusalReason(ua.reason)
+        ? 'unknown'
+        : evalConstraint(model, el.id, el.ownerId, expr, store, solved);
     out.push({ id: el.id, name: el.declaredName ?? '', expression: expr, status });
   }
   return out;
+}
+
+/**
+ * The live values a simulation step holds, as QUANTITIES the unit-aware
+ * evaluator can read: the machine's own value store first, then the
+ * parametric-solved values, each carrying its feature's declared unit and
+ * dimension.
+ *
+ * WHY it is needed at all: a constraint inside a `state def` reaches its
+ * context's attributes only through the store or the solve — neither of which
+ * the unit-aware evaluator's static scope sees — so without this it answers
+ * `unresolved` and the refusal guard above never fires on exactly the models
+ * the simulator is for.
+ */
+function liveQuantityScope(
+  model: Model,
+  contextId: ElementId,
+  store: Map<string, unknown>,
+  solved: Record<string, number>,
+  memo: DerivationMemo,
+): (name: string) => Quantity | undefined {
+  const nameToId = buildNameToId(model, contextId);
+  return (name: string) => {
+    const id = nameToId.get(name);
+    if (id === undefined) return undefined;
+    const live = store.get(name);
+    const v =
+      typeof live === 'number' && Number.isFinite(live)
+        ? live
+        : Object.prototype.hasOwnProperty.call(solved, name)
+          ? solved[name]
+          : undefined;
+    if (v === undefined || !Number.isFinite(v)) return undefined;
+    const facets = dimensionalFacets(model, id);
+    const dimension =
+      facets.unitDimension ?? facets.kindDimension ?? derivedDimensionOf(model, id, memo) ?? DIMENSIONLESS;
+    const q: Quantity = { magnitude: v, dimension };
+    if (facets.unit) {
+      q.unit = facets.unit;
+      if (resolveUnit(facets.unit)?.offsetSI) q.absolute = true;
+    }
+    return q;
+  };
 }
 
 function evalConstraint(

@@ -379,7 +379,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Severity:** warning
 - **Source:** validation
 - **Fires when:** A constraint or requirement expression is violated, or cannot be evaluated.
-- **Hint given:** Check the constraint expression and the values it reads; an unevaluable constraint usually references a feature with no value.
+- **Hint given:** Check the constraint expression and the values it reads; an unevaluable constraint usually references a feature with no value, or compares two different physical dimensions — read the message, which names the actual fault.
 
 ### `validation/dimensional-consistency`
 

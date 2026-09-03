@@ -1,0 +1,24 @@
+{
+  "level": "L4",
+  "title": "a comparison of two different physical dimensions is refused, not judged by raw magnitudes",
+  "note": "FOUND 2026-09-03 by probe, FIXED the same day. `crate.mass <= crate.massLimit` with a mass in kg and a limit mistyped as a length in m was reported SATISFIED by both surfaces: the unit-aware evaluator refused it (`M and L are different physical dimensions`) but that refusal shared its reason tag with the bare-literal contract (`mtow [kg] <= 25.0`, `M and 1`), which the scalar fallback is entitled to fill — so the fallback filled this one too and compared the raw 18.5 with the raw 25. A clash of two NON-dimensionless dimensions is now its own reason (`dimension-clash`) and a refusal on every surface: the validation and numeric checks, the simulator, and the solver's relation set. The bare-literal contract is unchanged. The repair is checked by message, not only by code — this case's only diagnostic is an INFO, and an info code alone left the repair invariant vacuous.",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/constraint-violation",
+      "severity": "info",
+      "line": 9,
+      "column": 9,
+      "message": "/M and L are different physical dimensions — no conversion relates them, so the comparison cannot be judged/",
+      "hintIncludes": "compares two different physical dimensions"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 10,
+    "strictWarnings": true
+  }
+}

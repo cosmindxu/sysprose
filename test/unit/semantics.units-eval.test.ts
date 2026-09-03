@@ -196,12 +196,22 @@ describe('derived features are quantities behind a dimension guard', () => {
     const m = await bound(uav('attribute twice : ISQ::MassValue = (mtow * 2.0) [kg];', 'uav.twice <= 40.0 [kg]'));
     const d = dimensionClaimDetail(m, byName(m, 'twice').id);
     expect(d.claim).toBe('unknown');
-    expect(d.reason).toBe('dimension');
+    // A REFUSAL, not the fillable `dimension`: the operand already carries a
+    // dimension, so there is no dimensionless side and no reading of the raw
+    // magnitudes the author could have meant. Tagged `dimension` it left the
+    // bare-literal form `uav.twice <= 40.0` answered `satisfied` from 37 on
+    // both surfaces, and `<= 40.0 [kg]` answered `satisfied` by the numeric
+    // surface while this one said unknown.
+    expect(d.reason).toBe('dimension-fault');
     const [check] = checkConstraints(m);
     expect(check.result).toBe('unknown');
     // The message names the feature AND the fault inside its derivation.
     expect(check.message).toContain('"uav.twice" cannot be derived');
     expect(check.message).toContain('a unit literal [kg] was applied to an operand that already has dimension M');
+    // The bare-literal spelling is refused too, and both surfaces agree.
+    const bare = await bound(uav('attribute twice : ISQ::MassValue = (mtow * 2.0) [kg];', 'uav.twice <= 40.0'));
+    expect(verdicts(bare)).toEqual(['unknown']);
+    expect(checkConstraintsNumeric(bare).map((r) => r.result)).toEqual(['unknown']);
   });
 
   it('walks a user attribute def that specializes an ISQ kind before declaring a mismatch', async () => {

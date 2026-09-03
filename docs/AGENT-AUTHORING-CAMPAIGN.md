@@ -437,6 +437,56 @@ unknown**: temperature-interval (delta) semantics — a difference of two
 absolutes being an interval that converts as 1 °C = 1 K — are recorded as
 future work rather than approximated.
 
+**A comparison of two different physical dimensions was judged by its raw
+magnitudes.** `require constraint { d >= t }` with `d : ISQ::LengthValue =
+5.0 [m]` and `t : ISQ::DurationValue = 2.0 [s]` answered SATISFIED — and
+`m >= d` (a mass against a length) answered violated — on BOTH surfaces, so the
+cross-surface agreement built above agreed on a wrong answer. The unit-aware
+evaluator refused each of them correctly, but its refusal carried the same
+reason tag as the bare-literal contract (`mtow [kg] <= 25.0` refuses with
+`M and 1 are different physical dimensions`), which the scalar path is entitled
+to fill — so it filled this one too and compared 5 with 2. The two differ in
+exactly one way: in the contract, one operand is DIMENSIONLESS. A dimensional
+fault with NO dimensionless side is now its own reason — `dimension-clash` for
+two different dimensions where they had to match, `dimension-fault` for a
+dimensioned exponent (`d ^ t`) or a `[unit]` applied to an operand that already
+carries one (`(mtow * 2.0) [kg]`) — and `isRefusalReason` in
+`src/semantics/units-eval.ts` is the single place that says which reasons a
+unit-blind evaluator may NOT fill. The message names both dimensions: `M and L
+are different physical dimensions — no conversion relates them, so the
+comparison cannot be judged`.
+
+Every surface honours it, because a refusal on three surfaces out of four is
+just a different disagreement:
+
+- `checkConstraints` and `checkConstraintsNumeric` answer `unknown`;
+- the SIMULATOR (`SimSample.constraints`) answers `unknown` too — it evaluated
+  scalar-only and reported `satisfied` for exactly what the other two refused,
+  so it now asks the unit-aware evaluator first, handing it the live value
+  store and the parametric solve as quantities (a state machine's constraint
+  reaches its context's attributes no other way);
+- the SOLVER drops such a relation from the equation/inequality sets entirely,
+  rather than merely leaving it unscaled. Gate (c) already declined to SI-scale
+  it, but `solveFeasible` and `optimize` read the residual with no unit-aware
+  verdict in front of them, so they published `feasible: false` with a
+  violation of 2995 (5 km − 3000 s) for a model `analysisReport` calls
+  feasible, and drove a free LENGTH to satisfy a bound in SECONDS.
+
+The refusal also wins from either side of an `and`/`or`: returning the leftmost
+unknown made the verdict turn on operand ORDER, so `mass <= 25.0 and mass <=
+massLimit` was answered SATISFIED from raw magnitudes with no diagnostic while
+the same two conjuncts swapped were refused. `==` and `!=` are refused as well;
+they were the last comparison operators still answering the question (`d == t`
+confidently violated, `d != t` confidently satisfied, and a zero-amount
+"violation" on the analysis report).
+
+The bare-literal contract is unchanged — it is the ONLY dimensional reason a
+scalar fallback may still fill — and a comparison of the same dimension in
+different units (`d >= 4000.0 [mm]`) still converts and answers, as does
+`n : Real = 5.0` against `5.0 [km]` (violated, definitively, on both surfaces).
+Fixture: `L4-dimension-clash`; pinned by `semantics.derived-scope.test.ts`,
+`semantics.units-eval.test.ts` and `semantics.solver-units.test.ts`.
+
 **Only a bare or prefixed registry symbol resolved as a unit.** `[m/s]`,
 `['W⋅h']`, `[m^2]`, `[SI::metre]` and `[SI::'watt hour']` each warned
 `unknown-unit` and left the value read as a bare number, and no information
@@ -541,7 +591,10 @@ which refuses two distinct wrongs with one predicate, the declared-unit contract
 both surfaces — SI-scaling it would turn a satisfied constraint into
 `5000 <= 10`) and the mismatch (`v.d >= v.t`, a length against a duration, is a
 question no scaling can answer: SI-scaling it reported `5000 >= 3000` satisfied
-where the validation surface said violated); and no variable may carry a `mismatch`
+where the declared magnitudes read `5 >= 3000` — since the `dimension-clash`
+finding above, such a relation is not merely left unscaled but dropped from the
+relation set, and every surface refuses it); and no variable
+may carry a `mismatch`
 dimension claim, which is what keeps the factor-60 hand conversion out of the
 solver (`Real = capacity * fraction / power * 60.0` would otherwise solve to
 170 141 s). `[unit]` literals in a body — and in an assignment value, `= 2 * 3

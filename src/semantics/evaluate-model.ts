@@ -19,6 +19,7 @@ import { DIMENSIONLESS, UNIT_REGISTRY, dimEqual, dimToString, type Dimension } f
 import {
   dimensionClaimDetail,
   evaluateConstraintQuantityDetailed,
+  isRefusalReason,
   type ConstraintQuantityResult,
   type DerivationMemo,
 } from './units-eval';
@@ -225,10 +226,16 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       continue;
     }
     // A reasoned refusal is not a gap the scalar path may fill: arithmetic on
-    // an offset scale (`dT == t2 - t1` in °C) and a derived feature whose
-    // dimension disagrees with its type both read as plausible raw magnitudes
-    // there, and that is precisely the wrong answer being refused.
-    if (ua.reason === 'offset' || ua.reason === 'mismatch') {
+    // an offset scale (`dT == t2 - t1` in °C), a derived feature whose
+    // dimension disagrees with its type, and a comparison of two genuinely
+    // different dimensions (`d [m] >= t [s]` — `dimension-clash`) all read as
+    // plausible raw magnitudes there, and that is precisely the wrong answer
+    // being refused. `dimension` is deliberately NOT a refusal: it is the same
+    // predicate with a DIMENSIONLESS side (`mtow [kg] <= 25.0`), the
+    // bare-literal contract, where reading the literal in the feature's
+    // declared unit is what the author meant — that is the fallback below.
+    // The membership test lives in units-eval, beside the reasons themselves.
+    if (isRefusalReason(ua.reason)) {
       check.result = 'unknown';
       check.message = `Could not evaluate: ${ua.detail}`;
       out.push(check);

@@ -359,6 +359,11 @@ describe('bindings convert into the target feature storage unit', () => {
  * question the unit-aware evaluator refuses, so SI-scaling it publishes a
  * confident verdict against a refusal — and, worse, the OPPOSITE verdict from
  * the validation surface (5000 >= 3000 where 5 >= 3000 is false).
+ *
+ * Not scaling it is only half the answer, though: the relation was still JUDGED
+ * from the declared magnitudes (5 against 3000), which is the same wrong
+ * verdict one conversion earlier. Since the `dimension-clash` refusal, neither
+ * surface answers it at all.
  */
 describe('two different dimensions are not a comparison the solver may answer', () => {
   const lengthVsDuration = (op: string) =>
@@ -368,21 +373,124 @@ describe('two different dimensions are not a comparison the solver may answer', 
       `v.d ${op} v.t`,
     );
 
-  it('`v.d >= v.t` (a length against a duration) agrees with the validation surface', () => {
+  it('`v.d >= v.t` (a length against a duration) is refused, not judged, on both surfaces', () => {
     const m = parse(lengthVsDuration('>='));
-    expect(unitAware(m)).toEqual(['violated']);
-    expect(numeric(m)).toEqual(['violated']);
-    // Judged in the declared magnitudes (5 >= 3000), not in SI (5000 >= 3000).
-    expect(only(m).amount).toBeCloseTo(2995, 6);
-    expect(only(m).slackUnit).toBeUndefined();
-    expect(analysisReport(m).feasible).toBe(false);
+    expect(unitAware(m)).toEqual(['unknown']);
+    expect(numeric(m)).toEqual(['unknown']);
+    const row = only(m);
+    expect(row.reason).toMatch(/L and T are different physical dimensions/);
+    // No slack columns: 5 − 3000 is a subtraction of unrelated magnitudes.
+    expect(row.slack).toBeNull();
+    expect(row.amount).toBe(0);
+    expect(row.slackUnit).toBeUndefined();
+    // An unknown is reported as one, never folded into feasibility.
+    const report = analysisReport(m);
+    expect(report.unknowns).toHaveLength(1);
+    expect(report.violations).toEqual([]);
+    expect(report.feasible).toBe(true);
   });
 
-  it('and so does the `<=` mirror', () => {
+  it('and so does the `<=` mirror — the refusal does not turn on which magnitude is larger', () => {
     const m = parse(lengthVsDuration('<='));
-    expect(unitAware(m)).toEqual(['satisfied']);
-    expect(numeric(m)).toEqual(['satisfied']);
+    expect(unitAware(m)).toEqual(['unknown']);
+    expect(numeric(m)).toEqual(['unknown']);
+    expect(only(m).slack).toBeNull();
+    expect(analysisReport(m).unknowns).toHaveLength(1);
+  });
+
+  it('and `solveFeasible` does not answer it either — it is not in the relation set', () => {
+    // `checkConstraintsNumeric` has the unit-aware verdict in front of its
+    // residual; `solveFeasible` (a published SDK surface) has nothing but the
+    // residual, so refusing in one place left the two DISAGREEING: feasibility
+    // reported `false` with a violation of 2995 — 5 km − 3000 s, the very
+    // subtraction the other surfaces refuse — for a model `analysisReport`
+    // calls feasible. The relation is dropped at gathering instead.
+    const m = parse(lengthVsDuration('>='));
+    const f = solveFeasible(m);
+    expect(f.violations).toEqual([]);
+    expect(f.feasible).toBe(true);
     expect(analysisReport(m).feasible).toBe(true);
+  });
+
+  it('and it does not DRIVE a free variable either', () => {
+    // The sharper form of the same fault: with the length free, the penalty
+    // descent moved `d` to satisfy a bound expressed in SECONDS, publishing a
+    // solved length nothing in the model justifies.
+    const m = parse(
+      req(
+        `        attribute d : ISQ::LengthValue;
+        attribute t : ISQ::DurationValue = 2.0 [s];`,
+        'v.d <= v.t',
+      ),
+    );
+    const d = m.all().find((e) => e.declaredName === 'd' && e.attrs.isLibrary !== true)!;
+    expect(solveFeasible(m).values.get(d.id)).toBeUndefined();
+    expect(solveFeasible(m).feasible).toBe(true);
+    expect(solvedOf(m, 'd')).toBeUndefined();
+    expect(numeric(m)).toEqual(['unknown']);
+  });
+
+  it('nor does a cross-dimension EQUALITY pin one', () => {
+    // `t == d` used to determine `t` from a length. It is not an equation.
+    const m = parse(`package P {
+    attribute d : ISQ::LengthValue = 5.0 [km];
+    attribute t : ISQ::DurationValue;
+    constraint c { t == d }
+}
+`);
+    expect(solvedOf(m, 't')).toBeUndefined();
+    expect(unitAware(m)).toEqual(['unknown']);
+    expect(numeric(m)).toEqual(['unknown']);
+    // …and no zero-amount "violation" reaches the published report.
+    const report = analysisReport(m);
+    expect(report.violations).toEqual([]);
+    expect(report.unknowns).toHaveLength(1);
+  });
+
+  it('and the SIMULATION surface agrees — it is the third one, and it was unit-blind', () => {
+    // `SimSample.constraints` is evaluated by the scalar `evalConstraint`,
+    // which never consulted the unit-aware engine: after the refusal landed on
+    // the other two surfaces this one still reported `satisfied` for a mass
+    // against a limit mistyped as a length. It now honours a refusal, reading
+    // the live store and the parametric solve as quantities to do so — the
+    // names a state machine's constraint uses reach it no other way.
+    const m = parse(`package P {
+    part def Crate {
+        attribute mass : ISQ::MassValue = 18.5 [kg];
+        attribute massLimit : ISQ::LengthValue = 25.0 [m];
+        state def Modes {
+            constraint within { mass <= massLimit }
+            state idle; state busy; transition idle -> busy;
+        }
+    }
+    part crate : Crate;
+}
+`);
+    expect(unitAware(m)).toEqual(['unknown']);
+    expect(numeric(m)).toEqual(['unknown']);
+    const sm = m.ofKind('StateDefinition')[0];
+    const trace = simulateStateMachine(m, sm.id, [], { solve: true });
+    expect(trace.samples[0].constraints.map((c) => c.status)).toEqual(['unknown']);
+  });
+
+  it('but the simulation surface still answers a constraint it CAN judge', () => {
+    // The guard on the rule above: only a refusal is honoured, so a live store
+    // value the static scopes cannot see still decides the verdict.
+    const m = parse(`package P {
+    part def Crate {
+        attribute mass : ISQ::MassValue = 18.5 [kg];
+        attribute massLimit : ISQ::MassValue = 25.0 [kg];
+        state def Modes {
+            constraint within { mass <= massLimit }
+            state idle; state busy; transition idle -> busy;
+        }
+    }
+    part crate : Crate;
+}
+`);
+    const sm = m.ofKind('StateDefinition')[0];
+    const trace = simulateStateMachine(m, sm.id, [], { solve: true });
+    expect(trace.samples[0].constraints.map((c) => c.status)).toEqual(['satisfied']);
   });
 
   it('a `[unit]` literal of the wrong dimension is unknown, not a confident violation', () => {
@@ -400,6 +508,13 @@ describe('two different dimensions are not a comparison the solver may answer', 
   it('an equality joining a plain Real to a dimensioned value is not SI-scaled', () => {
     // The `==` is itself in the gate set, so the gate has to see the JOIN, not
     // the two sides apart: unscaled, `n` reads the 5 the model wrote.
+    //
+    // This is also where gate (c) is still OBSERVED at the scale level. A
+    // DIMENSIONLESS side is not a clash, so the relation stays in the set and
+    // stays unscaled, and the solved value is the difference: 5, not 5000.
+    // (The two-different-dimensions half of gate (c) can no longer be watched
+    // through a solved value — such a relation is dropped before scaling —
+    // which is why the clash tests above assert the DROP instead.)
     const m = parse(`package P {
     attribute km : ISQ::LengthValue = 5.0 [km];
     attribute n : Real;

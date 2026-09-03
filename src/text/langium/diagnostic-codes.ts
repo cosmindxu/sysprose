@@ -406,7 +406,7 @@ const CODES = [
     source: 'validation',
     severity: 'warning',
     when: 'A constraint or requirement expression is violated, or cannot be evaluated.',
-    hint: 'Check the constraint expression and the values it reads; an unevaluable constraint usually references a feature with no value.',
+    hint: 'Check the constraint expression and the values it reads; an unevaluable constraint usually references a feature with no value, or compares two different physical dimensions — read the message, which names the actual fault.',
   },
   {
     code: 'validation/dimensional-consistency',

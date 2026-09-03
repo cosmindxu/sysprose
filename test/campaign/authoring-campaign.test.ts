@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { checkText } from '@text/check';
-import { loadCases, goldenFailures, asGolden, writeGolden, UPDATING } from './harness';
+import { loadCases, goldenFailures, asGolden, matches, writeGolden, UPDATING } from './harness';
 
 const cases = loadCases();
 
@@ -81,6 +81,24 @@ describe('agent authoring campaign — repairs', () => {
       expect(
         survivors.map((d) => `${d.code} @${d.range?.start.line}: ${d.message}`),
         `fixed.sysml still reports the code(s) this case is about`,
+      ).toEqual([]);
+
+      // An INFO golden that pins a MESSAGE is pinning a specific fault, not
+      // merely "something here is unevaluable": that message must be gone from
+      // the repair. Without this a case whose only golden diagnostic is an info
+      // (L4-dimension-clash) had a vacuous repair test — an unchanged copy of
+      // `input.sysml` passed it. The two L2 syntax cases stay exempt: their
+      // info goldens pin no message precisely because a repaired-but-still-
+      // unevaluable constraint is the honest outcome there.
+      const pinnedMessages = c.golden.diagnostics.filter(
+        (d) => d.severity === 'info' && d.message !== undefined,
+      );
+      const reappeared = report.diagnostics.filter((d) =>
+        pinnedMessages.some((exp) => matches({ ...exp, line: '*', column: '*' }, d)),
+      );
+      expect(
+        reappeared.map((d) => `${d.code} @${d.range?.start.line}: ${d.message}`),
+        `fixed.sysml still reports the very message this case teaches`,
       ).toEqual([]);
     });
   }

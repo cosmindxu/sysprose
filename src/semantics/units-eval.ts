@@ -589,8 +589,22 @@ class QParser {
  * the author, which is why they are tags and not one string:
  *  - `unresolved` — a referenced name has no value in scope;
  *  - `unit` — a `[unit]` the registry does not know;
- *  - `dimension` — operands of different dimensions added/compared, or a
- *    `[unit]` applied to an already-dimensioned operand;
+ *  - `dimension` — operands of different dimensions met where they had to
+ *    match and ONE OF THEM IS DIMENSIONLESS (`mtow [kg] <= 25.0`). That is the
+ *    bare-literal contract: the scalar evaluator may still read the literal in
+ *    the other side's declared unit, so this is ignorance the caller is
+ *    allowed to fill, not a refusal — and it is the ONLY dimensional reason
+ *    that is;
+ *  - `dimension-clash` — two operands of DIFFERENT, both non-dimensionless
+ *    dimensions met where they had to match (`d [m] >= t [s]`). Nothing can
+ *    make that comparison true or false, so it is a REFUSAL: a caller that
+ *    answered it from the raw magnitudes would publish a confident wrong
+ *    verdict (5 ≥ 2 — "a metre is longer than a second");
+ *  - `dimension-fault` — the other dimensional faults with no dimensionless
+ *    side to fall back on: a dimensioned exponent (`d ^ t`), or a `[unit]`
+ *    applied to an operand that already carries one (`(mtow * 2.0) [kg]`).
+ *    Also a REFUSAL — the expression is malformed, and raw magnitudes answer
+ *    it as confidently as they answer a clash;
  *  - `offset` — arithmetic on an offset scale (°C, °F);
  *  - `mismatch` — a referenced derived feature's dimension disagrees with its
  *    declared type (see {@link dimensionClaim});
@@ -604,6 +618,8 @@ export type QReason =
   | 'unresolved'
   | 'unit'
   | 'dimension'
+  | 'dimension-clash'
+  | 'dimension-fault'
   | 'offset'
   | 'mismatch'
   | 'cycle'
@@ -622,6 +638,12 @@ export function describeReason(reason: QReason, detail?: string): string {
       return `unit "${detail ?? '?'}" is not in the unit registry`;
     case 'dimension':
       return detail ?? 'the operands have different physical dimensions';
+    case 'dimension-clash':
+      return `${detail ?? 'the operands have different physical dimensions'} — no conversion relates them, so the comparison cannot be judged; compare quantities of the same dimension`;
+    case 'dimension-fault':
+      // Its `detail` is already a whole sentence about ONE operand, so there
+      // is no second dimension to name and nothing to append.
+      return detail ?? 'the expression combines dimensions in a way no conversion can repair';
     case 'offset':
       return `"${detail ?? '?'}" is on an offset temperature scale (°C/°F); differences and sums on it are not supported — use K (or °C values may only be ordered)`;
     case 'mismatch':
@@ -639,6 +661,29 @@ export function describeReason(reason: QReason, detail?: string): string {
     case 'empty':
       return 'the expression is empty';
   }
+}
+
+/**
+ * Is this unknown a REFUSAL — a reasoned "that question has no answer" — as
+ * opposed to ignorance a unit-blind evaluator may still fill in?
+ *
+ * The distinction is load-bearing on every surface that keeps a scalar
+ * fallback (`checkConstraints`, `checkConstraintsNumeric`, the simulator, the
+ * solver's relation set), so it lives HERE, beside the reasons themselves,
+ * rather than being restated as a literal set per caller — three copies of a
+ * set is three chances to forget one when a reason is added.
+ *
+ * `dimension` is deliberately absent: it is the bare-literal contract
+ * (`mtow [kg] <= 25.0`), where reading the literal in the feature's declared
+ * unit is exactly what the author meant.
+ */
+export function isRefusalReason(reason: QReason | undefined): boolean {
+  return (
+    reason === 'offset' ||
+    reason === 'mismatch' ||
+    reason === 'dimension-clash' ||
+    reason === 'dimension-fault'
+  );
 }
 
 type QScope = (name: string) => QEval | undefined;
@@ -712,8 +757,13 @@ function applyUnit(inner: QEval, unit: string): QEval {
   const u = resolveUnit(unit);
   if (!u) return unknownQ('unit', unit);
   if (!dimEqual(inner.q.dimension, DIMENSIONLESS)) {
+    // A REFUSAL, not ignorance: there is no dimensionless side here (the
+    // branch is only reached when the operand already has a dimension), so no
+    // reading of the raw magnitudes is the one the author meant. Left fillable
+    // it made `twice = (mtow * 2.0) [kg]` answer `twice <= 40.0` from 37 — a
+    // confident verdict on an expression the author has to repair.
     return unknownQ(
-      'dimension',
+      'dimension-fault',
       `a unit literal [${unit}] was applied to an operand that already has dimension ${dimToString(inner.q.dimension)}`,
     );
   }
@@ -732,8 +782,7 @@ function evalQBinary(node: Extract<QNode, { kind: 'binary' }>, scope: QScope, ab
       if (op === 'or' && l.b === true) return { b: true };
     }
     const r = evalQ(node.right, scope, absTol);
-    if (isQUnknown(l)) return l;
-    if (isQUnknown(r)) return r;
+    if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
     if (!('b' in l) || !('b' in r)) return unknownQ('not-boolean');
     return { b: op === 'and' ? l.b && r.b : l.b || r.b };
   }
@@ -743,10 +792,33 @@ function evalQBinary(node: Extract<QNode, { kind: 'binary' }>, scope: QScope, ab
   return combineQ(op, l, r, absTol);
 }
 
+/**
+ * Of two operands at least one of which is unknown, the one the caller must
+ * hear about: a REFUSAL outranks a fillable unknown.
+ *
+ * Returning the leftmost unknown unconditionally made the whole verdict turn
+ * on operand ORDER. `mass <= 25.0 and mass <= massLimit` (a mass against a
+ * limit mistyped as a length) reported the fillable `dimension` of the FIRST
+ * conjunct, so `checkConstraints` fell through to the scalar path and answered
+ * the whole body SATISFIED with no diagnostic — while the same two conjuncts
+ * swapped were correctly refused, and the numeric surface answered `unknown`
+ * either way. A conjunction is no more answerable than its least answerable
+ * operand, so the refusal has to win from either side.
+ */
+function worseUnknown(l: QEval, r: QEval): QEval {
+  const lu = isQUnknown(l) ? l : undefined;
+  const ru = isQUnknown(r) ? r : undefined;
+  if (!lu) return ru ?? l;
+  if (!ru) return lu;
+  return isRefusalReason(ru.reason) && !isRefusalReason(lu.reason) ? ru : lu;
+}
+
 /** Apply an arithmetic/comparison operator to two evaluated operands. */
 function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
-  if (isQUnknown(l)) return l;
-  if (isQUnknown(r)) return r;
+  // A refusal on either side wins, for the same reason it does in `and`/`or`:
+  // which operand happened to be written first must not decide whether the
+  // caller may fall back to raw magnitudes.
+  if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
   if (!('q' in l) || !('q' in r)) return unknownQ('not-quantity');
   const a = l.q;
   const b = r.q;
@@ -765,7 +837,7 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
       const sb = siValue(b);
       if (sa === undefined) return unknownQ('unit', a.unit);
       if (sb === undefined) return unknownQ('unit', b.unit);
-      if (!dimEqual(a.dimension, b.dimension)) return unknownQ('dimension', dimensionClash(a, b));
+      if (!dimEqual(a.dimension, b.dimension)) return dimensionRefusal(a, b);
       return { q: { magnitude: sa % sb, dimension: a.dimension } };
     }
     case '^': {
@@ -775,7 +847,10 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
       if (sa === undefined) return unknownQ('unit', a.unit);
       if (exp === undefined) return unknownQ('unit', b.unit);
       if (!dimEqual(b.dimension, DIMENSIONLESS)) {
-        return unknownQ('dimension', `an exponent must be dimensionless, not ${dimToString(b.dimension)}`);
+        // Also a refusal: the exponent is dimensioned, so there is no
+        // dimensionless side, and `d ^ t` (5 m ^ 2 s) read as 5² answered
+        // `d ^ t <= 10.0` VIOLATED on both surfaces.
+        return unknownQ('dimension-fault', `an exponent must be dimensionless, not ${dimToString(b.dimension)}`);
       }
       return { q: { magnitude: sa ** exp, dimension: powDim(a.dimension, exp) } };
     }
@@ -791,7 +866,17 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
       // Equality on an offset scale is an arithmetic question (a difference of
       // zero), and the scale's zero is not the dimension's zero: answer unknown.
       if (a.absolute || b.absolute) return unknownQ('offset', a.absolute ? a.unit : b.unit);
-      if (!dimEqual(a.dimension, b.dimension)) return { b: !eq };
+      // Two DIFFERENT dimensions are refused here exactly as an ordered
+      // comparison is: `d == t` answering a confident `violated` (and `d != t`
+      // a confident `satisfied`) judges a question the author has to repair,
+      // and published a zero-amount "violation" on the analysis report while
+      // the validation surface said unknown. A DIMENSIONLESS side keeps the
+      // definite answer: `n : Real = 5.0` is not `5.0 [km]`, and that verdict
+      // is pinned on both surfaces.
+      if (!dimEqual(a.dimension, b.dimension)) {
+        const refusal = dimensionRefusal(a, b);
+        return isQUnknown(refusal) && refusal.reason === 'dimension-clash' ? refusal : { b: !eq };
+      }
       const sa = siValue(a);
       const sb = siValue(b);
       if (sa === undefined) return unknownQ('unit', a.unit);
@@ -806,6 +891,23 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
 
 function dimensionClash(a: Quantity, b: Quantity): string {
   return `${dimToString(a.dimension)} and ${dimToString(b.dimension)} are different physical dimensions`;
+}
+
+/**
+ * The unknown for two operands whose dimensions had to match and do not — and
+ * the ONE place that decides which of the two dimensional reasons it is.
+ *
+ * A DIMENSIONLESS side is `dimension`: `mtow [kg] <= 25.0` is the bare-literal
+ * contract, where the author means the literal in the declared unit and the
+ * scalar evaluator is entitled to read it that way, so callers may fall back.
+ * Two genuinely different dimensions are `dimension-clash`: comparing a length
+ * with a duration is not a question raw magnitudes may answer, and a caller
+ * that fell back answered it wrongly (`5.0 [m] >= 2.0 [s]` read as 5 ≥ 2 and
+ * reported SATISFIED on both surfaces).
+ */
+function dimensionRefusal(a: Quantity, b: Quantity): QEval {
+  const bare = dimEqual(a.dimension, DIMENSIONLESS) || dimEqual(b.dimension, DIMENSIONLESS);
+  return unknownQ(bare ? 'dimension' : 'dimension-clash', dimensionClash(a, b));
 }
 
 /** Multiply (or divide) two quantities, propagating dimensions; result in SI. */
@@ -827,7 +929,7 @@ function combineProduct(a: Quantity, b: Quantity, divide: boolean): QEval {
 /** Add/subtract two quantities; requires equal dimensions, combined in SI. */
 function combineAddition(op: '+' | '-', a: Quantity, b: Quantity): QEval {
   if (a.absolute || b.absolute) return unknownQ('offset', a.absolute ? a.unit : b.unit);
-  if (!dimEqual(a.dimension, b.dimension)) return unknownQ('dimension', dimensionClash(a, b));
+  if (!dimEqual(a.dimension, b.dimension)) return dimensionRefusal(a, b);
   const sa = siValue(a);
   const sb = siValue(b);
   if (sa === undefined) return unknownQ('unit', a.unit);
@@ -848,7 +950,7 @@ function combineAddition(op: '+' | '-', a: Quantity, b: Quantity): QEval {
  * on float noise.
  */
 function compareQ(op: '<' | '<=' | '>' | '>=', a: Quantity, b: Quantity, absTol: number): QEval {
-  if (!dimEqual(a.dimension, b.dimension)) return unknownQ('dimension', dimensionClash(a, b));
+  if (!dimEqual(a.dimension, b.dimension)) return dimensionRefusal(a, b);
   const x = siValue(a);
   const y = siValue(b);
   if (x === undefined) return unknownQ('unit', a.unit);
