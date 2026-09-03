@@ -22,7 +22,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 | Capability | Commercial desktop tool | Open-source web tool | **This tool** | Covered by test(s) |
 |---|---|---|---|---|
 | Model explorer / containment tree | Yes | Yes | **Yes** | `E explorer-crud`, `E explorer-interactions` (expand/collapse, create, rename, delete-cascade, reparent); `U core.model` (containment index) |
-| Multi-view workspace / view tabs | Yes | Yes | **Yes** | `E view-switching` (all 12 `tb-view-*`); `E diagram-create-connect` |
+| Multi-view workspace / view tabs | Yes | Yes | **Yes** | `E view-switching` (all 16 `tb-view-*`); `E diagram-create-connect` |
 | Per-metaclass tree type icons | Yes | Yes | **Yes** | `iconFor()` renders a category glyph per row (Explorer.tsx); `E gui-navigation` asserts `.tree-icon` |
 | Explorer search / filter + hide-library + focus + breadcrumb | Yes | Yes | **Yes** | `E gui-explorer` (search + count, library toggle, ◎ focus/scope-to-subtree), `E gui-navigation` (breadcrumb path); selection-reveal keeps the two parallel trees in sync |
 | Element search / query navigation | Yes | Yes | **Yes** (via API console) | `E api-console2` (query → tabulated rows), `U api.query`/`api.query2` |
@@ -75,7 +75,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 
 | Capability | Commercial desktop tool | Open-source web tool | **This tool** | Covered by test(s) |
 |---|---|---|---|---|
-| Model validation + navigable diagnostics | Yes | Yes | **Yes** | `E validation`, `E panels-problems-text` (Validate → `problem-row` → selects element); `U validation.rules` (15 rules, 33 cases) |
+| Model validation + navigable diagnostics | Yes | Yes | **Yes** | `E validation`, `E panels-problems-text` (Validate → `problem-row` → selects element); `U validation.rules` (23 rules, 50 cases) |
 | Constraint / requirement checking | Yes | Partial | **Yes** | `E simulate-check` / `E toolbar-lifecycle` (`tb-check` → constraint-check rows); `U semantics.constraints` |
 | Behavioral simulation / execution | Yes (simulation toolkit) | Partial | **Yes (fuller)** | Deepened token-flow engine: composite/call sub-behaviors (recursive, depth-bounded, enter/exit + result params), object/item-flow data passing between pins, hierarchical state machines (composite entry/exit cascade, history resume), orthogonal regions with completion join, and timed `after(n)` transitions on a discrete clock; unified `executeBehavior`. Now driven from an **interactive simulation panel** (step / play-pause / seek a trace, inject events, live active-state highlight on the state diagram, plus a per-sample value plot). `E simulate`, `E execution`, `E gui-simulation` (`tb-simulate` composite trace + produced data + stepper UI), `E simulate-check`; `U simulate`, `U semantics.execute`/`execute-full`/`execution-full`; `I execution.integration`, `I semantics-exec.integration` |
 | Parametric / equation solving | Yes | Partial | **Yes** | Numeric constraint solver + MoE evaluation + optimization, now with **inequality + feasibility** constraints (`U semantics.solver`, `U semantics.solver-ineq`, `I analysis.integration`, `E solve` — `tb-solve` solves the chain, propagates bindings, converges coupled systems, evaluates MoEs, optimizes over bounded variables **subject to inequality constraints**, and reports **feasibility + violated constraints**); `gatherInequalities` normalises comparison bodies (`<`,`<=`,`>`,`>=`) to `g(x)<=0`, `solveFeasible` finds a penalty-minimising feasible point, `checkConstraintsNumeric` flags violations for the Check/Problems surface; the solver is **unit-aware** — relations are scaled to SI behind four gates that compare DIMENSIONS (so a length against a duration is refused, not answered), values stay in their declared unit, slack carries its SI unit, a scaled relation is solved and judged relative to its own SI magnitude, and a body's `[unit]` literals are lowered instead of dropped, so a relation either agrees with the validation surface or is reported `unknown` on both (`U semantics.solver-units` — a **unit-aware, number-level agreement suite**: solved values, slack + unit, convergence, feasibility; `I uav-example` runs the shipped example through both surfaces); constraint evaluation + report (`U semantics.expr`, `U semantics.constraints`) |
@@ -121,10 +121,10 @@ representative subset is present / a facet is missing; **—**: not implemented.
 ## Summary — where we stand vs. the modern tools
 
 **At parity (Yes, test-covered):** model explorer with full CRUD + drag-reparent;
-**12 diagram view kinds** with auto-layout; palette element creation and
+**16 diagram view kinds** with auto-layout; palette element creation and
 click-to-connect across 9 views; manual node drag; properties/specification
 editing of every field; undo/redo; textual notation with live bidirectional sync
-(Langium, 100% corpus parse); 22-rule validation with navigable diagnostics;
+(Langium, 100% corpus parse); 23-rule validation with navigable diagnostics;
 constraint checking, behavioral (action + state) simulation driven from an
 **interactive stepper/playback panel** (step, play-pause, seek, inject events,
 live active-state highlight + value plot), a **numeric

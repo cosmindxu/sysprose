@@ -2,8 +2,9 @@
 
 > **Self-assessment, not certification.** This scorecard measures Sysprose against the OMG SysML v2 / KerML / API & Services specifications *as read by this project*. Sysprose is a candidate implementation; it has not been certified or conformance-tested by the OMG or anyone else, and nothing here is a conformance claim.
 
-*Generated: 2026-07-01. Numbers below are captured from a live test run, not
-asserted from memory. Reproduce with the commands in the last section.*
+*Generated: 2026-07-01; suite, corpus and parse-rate figures re-measured
+2026-09-03. Numbers below are captured from a live test run, not asserted from
+memory. Reproduce with the commands in the last section.*
 
 This is an honest conformance scorecard for the clean-room SysML v2 / KerML
 modeler. It maps the project's automated evidence onto the OMG SysML v2 standard
@@ -24,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **1242 passed / 0 failed / 0 skipped** across **97 files** + **127 E2E** = **1369 green** (measured 2026-08-21) |
+| Full automated suite | **1835 passed / 0 failed / 0 skipped** across **118 files** + **127 E2E** across **78 spec files** = **1962 green** (measured 2026-09-03) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -124,7 +125,7 @@ malformed documents (missing `elements`, missing `@id`, missing `@type`) and
   reached the Problems panel; see `TEST-REPORT.md` §5 row 87. The parse-rate
   figure stands as measured.)
 
-## 3. API & Services PSM — `api-contract.test.ts` (11 tests)
+## 3. API & Services PSM — `api-contract.test.ts` (22 tests)
 
 The REST surface is now a **networked HTTP/Express** server (`src/server`,
 started on an ephemeral port under `// @vitest-environment node`). For each
@@ -240,7 +241,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (729 pass / 0 skip, 65 files)
+# Full unit + integration + conformance suite (1835 pass / 0 skip, 118 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)
@@ -261,6 +262,6 @@ SYSMLV2_PILOT_URL=https://pilot.example/api SYSMLV2_PILOT_TOKEN=… npm run inte
 # Networked API / OSLC server (manual smoke)
 npm run serve               # then GET /api/... and /oslc/...
 
-# End-to-end (13 Playwright scenarios)
+# End-to-end (127 tests across 78 spec files)
 npm run test:e2e
 ```

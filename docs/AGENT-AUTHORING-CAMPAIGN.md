@@ -101,12 +101,39 @@ one in this corpus was read and corrected by hand.
 | L0 | Recognition and encoding: empty file, comments only, BOM, CRLF, tabs, non-ASCII names, JSON offered as SysML, unknown extension | 8 |
 | L1 | Lexical: illegal character, unterminated string, unterminated comment | 3 |
 | L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword (with and without a `def` after it), a grammar-legal keyword this tool models no metaclass for, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, a non-ASCII unit symbol written bare, bad expressions, `=` vs `==`, bare `->`, two independent errors | 17 |
-| L3 | Referential: unresolved type, connection end, import, transition end, specialization; forward references in a package; types reached through an import, through inheritance, and through a library import written in text; plus a pinned behaviour | 10 |
-| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, temperature difference, compound / qualified / information units | 21 |
+| L3 | Referential: unresolved type, connection end, import, transition end, specialization and redefinition; forward references in a package; a type, a specialization or a connector end reached through an import, through inheritance, through a transitive supertype, through an implicit library base or through a library import written in text; an alias used as a type; a name declared in both a supertype and an enclosing namespace, written both ways round; a multi-endpoint dependency naming the endpoint that is missing; plus a pinned behaviour | 23 |
+| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 23 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 13 assertions |
-| L7 | The command-line contract: exit codes, JSON shape, stdin, strict mode | 10 tests |
+| L7 | The command-line contract: exit codes, JSON shape, stdin, strict and `--no-library` modes | 12 tests |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
+
+Every count in this table is read off the tree, not remembered — the figures
+elsewhere that are NOT (the L9 bench results, and §1's account of what was true
+before the campaign) are quoted from a dated run file or from history, and say
+so where they appear. Measured 2026-09-03: **80 fixture directories** under
+`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **55
+catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **23 validation
+rules** in `src/validation/rules.ts`. Reproduce them with
+`ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
+`RULES.length`.
+
+Those three figures are themselves a test. `test/unit/docs-counts.test.ts`
+reads the three figures back out of this paragraph and compares each with the
+tree, so a new fixture directory, a new code or a new rule fails the gate until
+the number here is updated — and it does the same for every other place a count
+is written in words: the rule count in `docs/FEATURE-PARITY.md`,
+`docs/TEST-REPORT.md`, the two architecture diagrams and the RECOMPUTE comment in
+`src/ui/store.ts`, and the view-kind count in `docs/FEATURE-PARITY.md` against
+the `ViewKind` union. It exists because prose is exactly where a measured
+number goes stale unnoticed: the older guards pin the CODE, not the sentence.
+`test/unit/validation.rules.test.ts` asserts `RULES.length` against a literal in
+the test, so a rule cannot be added quietly — but that literal is a second thing
+to hand-edit, not a reading of this document. `test/unit/diagnostic-codes.test.ts`
+asserts set equality between the catalogue and `DIAGNOSTIC-CODES.md` in both
+directions, which pins their AGREEMENT and not their count: a 56th code plus the
+`npm run codes` that test tells you to run leaves it green. Only the drift test
+above notices that.
 
 ### L9 — the measurement: can an agent actually repair the file?
 
@@ -920,10 +947,12 @@ move that precisely, where before the same model was reported feasible without
 either engine having looked. The verdict surfaces are unaffected: they read the
 unit-aware evaluator.
 
-**A requirement `subject` clause drops its value.** `subject s : Real = 5;`
-parses (the grammar has the value part) and re-emits as `subject s : Real;` —
-`mapRequirementClause` never reads `node.value`. The type and the multiplicity
-survive; only the value is lost, silently.
+**A requirement `subject` clause drops its value AND its multiplicity.**
+`subject s : Real [1] = 5;` parses — the grammar carries both parts — and
+re-emits as `subject s : Real;`. `mapRequirementClause` reads the name and the
+specializations and nothing else, so only the type survives. An earlier
+revision of this entry said the multiplicity survived; it does not, and the
+round trip above is what says so.
 
 **A `->` after a transition guard is absorbed into the guard.** In
 `transition first a if g -> b then b;` the guard expression is `g -> b`: the
@@ -931,6 +960,60 @@ arrow is a legal function-operation operator, so the guard swallows it and no
 diagnostic follows. SysML v2 has only the `if` guard form, so there is nothing
 to disambiguate against — but an author who meant the arrow as the transition
 target gets a guard that reads as one and a target taken from the `then`.
+
+**The Properties panel writes a value as raw text.** The Value field calls
+`setAttr(id, 'value', <the typed string>)` (`src/ui/panels/Properties.tsx`), so
+hand-typing `-2.5` there re-creates exactly the string form the textual path
+stopped producing (`L4-signed-literal`): the panel is the one INTERACTIVE
+surface on which `attrs.value` can still arrive as a string rather than a
+number. It is not the only one — `applyChange` in `src/api/rest.ts` writes a
+commit's `attrs` into the model verbatim on both the create and the update path,
+so an API client can post the same string — but that surface is a caller's own
+payload, where the textual and panel paths are ours. Coercing it is
+a separate UI decision rather than an oversight — a value is legitimately
+textual sometimes (an expression, an FMI `INF`) and `setAttr` has one signature
+for every attribute, so the coercion rule has to be written per field, with the
+same care the mapper's bare-number guard needed.
+
+**Offset-unit differences answer unknown rather than converting as intervals.**
+The difference of two absolute temperatures IS a well-defined quantity — a
+temperature interval, in which 1 °C = 1 K — but the engine has no interval type
+to carry one, so `t2 - t1 <= 5.0 [°C]` is refused instead of judged
+(`L4-temperature-difference`). Refusal is the fail-safe half; what is missing is
+the delta semantics, not the refusal, and the same gap makes the solver drop
+such a relation rather than scale it.
+
+**A library long name beyond per/squared/cubed does not resolve.**
+`resolveUnit` reads the worded forms the bundled library actually uses — `per`,
+`squared`, `cubed`, and adjacent words as a product — so `metre per second`
+resolves while `kilogram metre squared second to the power minus 3 ampere to
+the power minus 1` does not. The general "to the power minus N" form is a small
+grammar of its own that nothing in the corpus writes; the `unknown-unit` hint
+teaches the symbol spelling (`kg⋅m²⋅s⁻³⋅A⁻¹`), which the funnel does resolve.
+
+**A standard library that fails to load degrades to a curated subset, and only
+the console says so.** `loadStandardLibraryAsync` (`src/ui/store.ts`) falls back
+to `loadCuratedLibrary` when the 38.8k-element bundle cannot be fetched or
+parsed. That keeps the app usable, but it changes what resolves: a name the
+full bundle carries then reports as an unresolved type, with nothing in the
+Problems panel to say the library behind the finding is a smaller one. The
+fallback is a `console.error` and no more. Unit resolution is deliberately
+exempt — the registry answers identically under the full bundle, the curated
+fallback and `library: 'none'` — so a degraded library changes names, never
+dimensions.
+
+**Two evaluators, and two parsers, over one expression language.** The scalar
+path (`parseExpr` / `evaluate`, `src/semantics/expr.ts`) and the quantity path
+(`QParser` / `evalQ`, `src/semantics/units-eval.ts`) each lex and parse the same
+constraint text into their own AST. Strings, `null`, `if`-`then`-`else`, `xor`
+and `implies` exist only in the scalar one; `[unit]` literals, dimensions and
+the refusal reasons only in the quantity one. What keeps them from disagreeing
+is the ordering rule described above — unit-aware first, scalar only where the
+unit-aware answer is ignorance rather than refusal (`isRefusalReason`) — plus
+the cross-surface tests, not construction. Merging them is the one duplicate
+mechanism this pass left standing, and it is recorded rather than hidden
+because every unit defect in §4 above began as the two paths answering
+differently.
 
 ### Pinned behaviours (decisions, not defects)
 
@@ -1043,8 +1126,17 @@ that widening is a decision, not a drift.
 - **Phase 3 — done.** `scripts/agent-repair-bench.ts` and two measured runs
   under `docs/campaign-runs/` (22/22, then 24/24 on the 50-fixture corpus).
   See L9 above.
-- **Phase 4 — done, twice.** Every defect in §4 fixed and every fixture promoted;
-  no `expectFail` remains. The second pass (2026-09-02, commits A–G of the
-  open-issues plan) closed the seven items the first pass had recorded as
-  limitations, and found three more on the way. What is left is recorded under
-  "Known limitations".
+- **Phase 4 — done, three times.** Every defect in §4 fixed and every fixture
+  promoted; no `expectFail` remains. The second pass (2026-09-02, commits A–G of
+  the open-issues plan) closed the seven items the first pass had recorded as
+  limitations, and found three more on the way. The third pass (2026-09-02/03,
+  the spec-fidelity plan) took the issues that survived it: the spec
+  `BracketExpression` in place of a local pseudo-multiplicity, signed literals
+  stored as numbers, derived features as quantities behind a dimension guard,
+  compound / quoted / qualified unit spellings and the ISQ information kinds, a
+  unit-aware numeric surface, a refused dimension clash, one name resolver where
+  there had been two, and a faulted save that reproduces its fault instead of
+  laundering it. Measured across it: the corpus grew from 50 fixtures to 80, the
+  catalogue from 53 codes to 55, and the rule set from 22 to 23. What is left is
+  recorded under "Known limitations", and every count in this document is now
+  read off the tree (see §3).

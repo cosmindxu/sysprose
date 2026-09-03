@@ -101,7 +101,7 @@ flowchart TB
     op["Model mutation:\ncreate / update / setAttr /\nreparent / connect / delete"]
     pushUndo["pushUndo()\nmodel.toJSON() deep clone"]
     afterMut["afterMutation()"]
-    validate["safeValidate(model)\n17 rules, full scan"]
+    validate["safeValidate(model)\n23 rules, full scan"]
     serialize["safeSerialize(model)\nfull text regeneration"]
     bump["rev++"]
     rebuild["rebuildDiagram() [async, awaited microtask]"]

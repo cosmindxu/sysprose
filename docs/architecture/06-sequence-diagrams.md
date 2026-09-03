@@ -45,7 +45,7 @@ sequenceDiagram
     S->>M: setAttr → emits ChangeEvent
     S->>S: afterMutation()
     par synchronous fan-out
-        S->>V: validate(model) [17 rules, full scan]
+        S->>V: validate(model) [23 rules, full scan]
         S->>T: serialize(model) [full regeneration]
         S->>S: rev++
     and
