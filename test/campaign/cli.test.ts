@@ -126,6 +126,33 @@ describe('L7 — CLI contract', () => {
     }
   }, 90_000);
 
+  it('--no-library resolves a forward `:>` and an in-file import', () => {
+    // `--no-library` used to be a second-class mode: only the LIBRARY binder
+    // re-resolved anything, so a forward reference and an `import Lib::*;`
+    // both failed on a file that needs no library at all. The parse binds
+    // them itself now, so this checks clean AND stays clean under --strict.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    const file = join(dir, 'nolib.sysml');
+    writeFileSync(
+      file,
+      `package Lib { part def Widget; }
+package Use {
+    import Lib::*;
+    part def W2 :> Widget;
+    part def Car :> Vehicle;
+    part def Vehicle;
+}
+`,
+    );
+    try {
+      const r = run([file, '--no-library', '--strict']);
+      expect(r.stdout).not.toContain('unresolved');
+      expect(r.code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it('rejects an unknown option rather than ignoring it', () => {
     const r = run([`${FIX}/L0-empty-file/fixed.sysml`, '--wat']);
     expect(r.code).toBe(2);

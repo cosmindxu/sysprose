@@ -33,12 +33,22 @@ import {
   Model,
   ModelFactory,
   isDefinition,
+  isRelationship,
   isSpecialization,
+  refSegments,
   TEXTUAL_KEYWORD,
+  unquoteName,
   type ElementId,
   type ElementRecord,
   type AttrValue,
 } from '@core/index';
+import {
+  resolveFullName,
+  resolveImportTargets,
+  resolveRedefinedFeature,
+} from '@semantics/bind';
+import { generalizationsWithImplicit } from '@semantics/featuring';
+import { resolveName } from '@semantics/resolve-names';
 import type { AstNode } from 'langium';
 import type { ParseResult, ParseDiagnostic } from '../types';
 import type { TextRange } from '@validation/types';
@@ -133,48 +143,6 @@ const LOOP_ECLASS: Record<string, string> = {
 };
 
 /* ─────────────────────────── small utilities ────────────────────────────── */
-
-/** Strip a single-quoted unrestricted name's surrounding quotes + unescape. */
-function unquoteName(s: string | undefined): string | undefined {
-  if (s == null) return s;
-  if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) {
-    return s.slice(1, -1).replace(/\\(.)/g, '$1');
-  }
-  return s;
-}
-
-/**
- * Split a qualified name on `::` / `.` separators that lie OUTSIDE single quotes,
- * so a quoted segment containing a dot or `::` (`'a.b'::c`) is not shattered
- * (finding F7). Each returned segment is still quoted; the caller unquotes it.
- */
-function splitQualified(ref: string): string[] {
-  const segs: string[] = [];
-  let cur = '';
-  let inQuote = false;
-  for (let i = 0; i < ref.length; i++) {
-    const c = ref[i];
-    if (inQuote) {
-      cur += c;
-      if (c === '\\' && i + 1 < ref.length) cur += ref[++i]; // keep escaped char verbatim
-      else if (c === "'") inQuote = false;
-    } else if (c === "'") {
-      inQuote = true;
-      cur += c;
-    } else if (c === ':' && ref[i + 1] === ':') {
-      segs.push(cur);
-      cur = '';
-      i++; // consume the second ':'
-    } else if (c === '.') {
-      segs.push(cur);
-      cur = '';
-    } else {
-      cur += c;
-    }
-  }
-  segs.push(cur);
-  return segs;
-}
 
 /**
  * Inner text of an `ML_COMMENT` token (`/* … *\/`), trimmed like the lexer.
@@ -293,13 +261,6 @@ function unitTextOf(text: string): string {
 
 /* ───────────────────────── shared name resolution ───────────────────────── */
 
-/** Split a (possibly quoted) qualified/dotted ref into clean name segments. */
-function refSegments(ref: string): string[] {
-  return splitQualified(ref)
-    .map((s) => unquoteName(s.trim()) ?? '')
-    .filter(Boolean);
-}
-
 /** Enclosing-scope chain (innermost → outermost → null root scope). */
 function scopeChain(model: Model, scopeOwnerId: ElementId | null): Array<ElementId | null> {
   const scopes: Array<ElementId | null> = [];
@@ -318,34 +279,20 @@ function nameMatches(e: ElementRecord, seg: string): boolean {
   return e.declaredName === seg || e.declaredShortName === seg;
 }
 
-/** Scope-walk + containment-descent resolution (the legacy resolver). */
-function resolveRefIn(
-  model: Model,
-  ref: string,
-  scopeOwnerId: ElementId | null,
-): ElementRecord | undefined {
-  const segs = refSegments(ref);
-  if (segs.length === 0) return undefined;
-  for (const s of scopeChain(model, scopeOwnerId)) {
-    const m = descendMatchIn(model, segs, s);
-    if (m) return m;
-  }
-  return model.resolveQualifiedName(segs.join('::'));
-}
-
-function descendMatchIn(
-  model: Model,
-  segs: string[],
-  scope: ElementId | null,
-): ElementRecord | undefined {
-  let candidates = scope === null ? model.roots() : model.children(scope);
-  let found: ElementRecord | undefined;
-  for (const seg of segs) {
-    found = candidates.find((e) => nameMatches(e, seg));
-    if (!found) return undefined;
-    candidates = model.children(found.id);
-  }
-  return found;
+/**
+ * Can a usage-scoped mirror of `el` be materialised for a connector end?
+ *
+ * Only FEATURES are mirrored. A definition, package or relationship reached
+ * through inheritance is named, not owned: copying one would invent a nested
+ * definition nobody wrote, so those bind directly instead.
+ */
+function isMaterialisableFeature(el: ElementRecord): boolean {
+  return (
+    !isDefinition(el.eClass) &&
+    !isRelationship(el.eClass) &&
+    el.eClass !== 'Package' &&
+    el.eClass !== 'LibraryPackage'
+  );
 }
 
 /* ─────────────── connector feature-chain endpoint resolution ─────────────── */
@@ -382,7 +329,7 @@ function typeClosure(model: Model, el: ElementRecord): ElementRecord[] {
     const next: ElementRecord[] = [...model.typesOf(cur.id)];
     const typeRef = cur.attrs.typeRef;
     if (typeof typeRef === 'string') {
-      const t = resolveRefIn(model, typeRef, cur.ownerId);
+      const t = resolveFullName(model, typeRef, cur.ownerId, { exclude: cur.id });
       if (t) next.push(t);
     }
     for (const n of next) {
@@ -505,15 +452,53 @@ function resolveChainEnd(
   if (segs.length === 0) return undefined;
   const scopes = scopeChain(model, scopeOwnerId);
 
-  // Candidate anchors for the first segment: containment hits (innermost scope
-  // first — the pre-existing resolution priority), then features inherited
-  // through an enclosing usage's type (innermost first).
   const [head, ...rest] = segs;
   const tryAnchor = (anchor: ElementRecord): ElementRecord | undefined => {
     if (!walkChain(model, anchor, rest, false)) return undefined; // dry run
     return walkChain(model, anchor, rest, true);
   };
 
+  // ANCHOR DISCOVERY uses the spec walk (owned + alias → inherited → imported,
+  // outward), so `connect a to x` finds the `x` a supertype contributes instead
+  // of an unrelated `x` in an enclosing package. But an anchor reached through
+  // INHERITANCE OR A TYPE is only a prototype: binding the endpoint to it
+  // directly would make every usage of the same definition share one endpoint
+  // element, collapsing `connect a.p to b.p` into a self-edge on the
+  // definition. Such an anchor is MATERIALISED as a usage-scoped implicit
+  // feature instead — which is what keeps `battery.powerOut` distinct per
+  // connection in examples/uav-isr.sysml.
+  //
+  // INHERITANCE, and nothing else. The test is that the anchor's owner is in
+  // the scope's own generals closure — NOT merely "the scope does not own it",
+  // which was also true of a member reached through `import Lib::*;`. A package
+  // inherits nothing, so there is no prototype to mirror there: mirroring one
+  // fabricated an implicit `P::x` plus a Redefinition and bound the connector
+  // to the invention instead of the imported feature. An imported anchor is a
+  // real element the author named; it binds directly.
+  //
+  // Every LATER segment stays with walkChain for the same reason: it prefers
+  // containment and materialises per inherited hop.
+  for (const s of scopes) {
+    const hit = resolveName(model, s, head);
+    if (!hit) continue;
+    const scopeEl = s === null ? undefined : model.get(s);
+    const inherited =
+      s !== null &&
+      hit.ownerId != null &&
+      hit.ownerId !== s &&
+      generalizationsWithImplicit(model, s).some((g) => g.id === hit.ownerId);
+    if (!inherited || scopeEl === undefined || !isMaterialisableFeature(hit)) {
+      const end = tryAnchor(hit);
+      if (end) return end;
+      continue;
+    }
+    if (!walkChain(model, hit, rest, false)) continue; // dry run before materializing
+    const anchor = ensureImplicitFeature(model, scopeEl, hit);
+    const end = walkChain(model, anchor, rest, true);
+    if (end) return end;
+  }
+  // Containment fallback: a name `resolveName` does not enumerate (a named
+  // relationship element) can still be a connector end.
   for (const s of scopes) {
     const kids = s === null ? model.roots() : model.children(s);
     const hit = kids.find((e) => nameMatches(e, head));
@@ -522,6 +507,7 @@ function resolveChainEnd(
       if (end) return end;
     }
   }
+  // Finally a bare `p` naming a feature of an enclosing usage's TYPE.
   for (const s of scopes) {
     if (s === null) continue;
     const scopeEl = model.get(s);
@@ -633,7 +619,35 @@ class Mapper {
     diagnostic: ParseDiagnostic;
     elementId: ElementId;
     attr: string;
+    ref?: string;
   }> = [];
+
+  /**
+   * Every `:`/`:>`/`:>>`/`::>` written in the source, in DECLARATION ORDER,
+   * recorded as a NAME rather than resolved on the spot.
+   *
+   * Resolution happens once, in {@link resolveDeferredRefs}, because the answer
+   * depends on the finished namespace: what `W` denotes inside
+   * `part def Car :> Base` cannot be known until `Car :> Base` itself is bound,
+   * which cannot be known until every declaration has been seen. Resolving as
+   * the mapper walked the AST is what made declaration order decide the answer.
+   */
+  private readonly deferredSpecs: DeferredSpec[] = [];
+
+  /**
+   * Warnings that are only TRUE if the reference is still unresolved once
+   * {@link resolveDeferredRefs} has finished. They are held here rather than
+   * emitted at the declaration, so a reference to something declared later in
+   * the file never produces a warning that a later pass has to take back.
+   */
+  private readonly pendingWarnings: PendingWarning[] = [];
+
+  /**
+   * Owner namespace → the namespaces its imports bring into scope, built once
+   * for {@link scopeGainedGeneral}. Imports are all bound before the
+   * specialization fixpoint runs and never change after, so the map is stable.
+   */
+  private importTargetsByScope: Map<ElementId, ElementId[]> | null = null;
 
   /**
    * The member declaration currently being mapped. Every element created while
@@ -650,9 +664,13 @@ class Mapper {
   private create(
     eClass: string,
     opts: Parameters<Model['create']>[1] = {},
+    node?: AstNode,
   ): ElementRecord {
     const el = this.model.create(eClass, opts);
-    const range = rangeOf(this.nodeStack[this.nodeStack.length - 1]);
+    // `node` is for elements built AFTER the AST walk (the deferred resolution
+    // sweep), where the declaration stack is empty but the declaration that
+    // asked for the element is still known.
+    const range = rangeOf(node ?? this.nodeStack[this.nodeStack.length - 1]);
     if (range) this.ranges.set(el.id, range);
     return el;
   }
@@ -673,44 +691,89 @@ class Mapper {
   }
 
   /**
-   * Connector-endpoint "Unresolved connection end" warnings are emitted at map
-   * time, BEFORE {@link resolveDeferredRefs} runs the feature-chain pass. Each is
-   * registered here so that, once the deferred pass has (possibly) resolved the
-   * endpoint, a now-stale warning can be retracted — otherwise the flagship
-   * `connect a.p to b.p` syntax would emit a permanent FALSE warning for every
-   * `parseModel` consumer.
+   * Record a reference that MIGHT be unresolved. Nothing is emitted here: the
+   * warning is written only if, after the whole file has been mapped and every
+   * reference resolved, `attr` still holds `ref`.
    */
-  private readonly endpointWarnings: Array<{
-    diag: ParseDiagnostic;
-    elId: ElementId;
-    which: 'sourceRef' | 'targetRef';
-  }> = [];
-
-  private registerEndpointWarning(
-    diag: ParseDiagnostic,
-    elId: ElementId,
-    which: 'sourceRef' | 'targetRef',
+  private defer(
+    elementId: ElementId,
+    attr: string,
+    ref: string,
+    message: string,
+    code: string,
+    node: AstNode,
+    retractOnRef = true,
+    survives?: () => boolean,
   ): void {
-    this.endpointWarnings.push({ diag, elId, which });
+    this.pendingWarnings.push({
+      elementId,
+      attr,
+      ref,
+      message,
+      code,
+      node,
+      retractOnRef,
+      ...(survives ? { survives } : {}),
+    });
   }
 
-  /** Drop endpoint warnings whose ref was resolved (cleared) by the deferred pass. */
-  private retractResolvedEndpointWarnings(): void {
-    const stale = new Set<ParseDiagnostic>();
-    for (const w of this.endpointWarnings) {
-      const el = this.model.get(w.elId);
-      if (el && el.attrs[w.which] === undefined) stale.add(w.diag);
-    }
-    if (stale.size === 0) return;
-    for (let i = this.diagnostics.length - 1; i >= 0; i--) {
-      if (stale.has(this.diagnostics[i])) this.diagnostics.splice(i, 1);
+  /** Does `el.attrs[attr]` still hold `ref`? (An array attr holds several.) */
+  private stillUnresolved(w: PendingWarning): boolean {
+    const el = this.model.get(w.elementId);
+    if (!el) return false;
+    // A shared slot cannot answer for one name among several — the site gave a
+    // predicate that asks about THIS name instead.
+    if (w.survives) return w.survives();
+    const v = el.attrs[w.attr];
+    if (v === undefined) return false;
+    if (Array.isArray(v)) return v.includes(w.ref);
+    return typeof v === 'string' ? v === w.ref : true;
+  }
+
+  /**
+   * Emit the warnings whose reference is STILL unresolved, in source order.
+   *
+   * Source order, not the order the passes happened to decide things in: an
+   * agent reads diagnostics as a list of places to go, and grouping them by
+   * which internal pass gave up sends it up and down the file.
+   *
+   * One warning per (code, message, span). A statement with several targets —
+   * `subtype Missing specializes B, C;` — creates one relationship PER target
+   * and defers the SOURCE warning on each, which would tell the author twice
+   * that `Missing` is missing. The duplicates still all register for
+   * retraction, so the library binder resolving any one of them takes the
+   * single warning back.
+   */
+  private emitPendingWarnings(): void {
+    const live = this.pendingWarnings.filter((w) => this.stillUnresolved(w));
+    live.sort((a, b) => (a.node.$cstNode?.offset ?? 0) - (b.node.$cstNode?.offset ?? 0));
+    const emitted = new Map<string, ParseDiagnostic>();
+    for (const w of live) {
+      const key = `${w.code} ${w.message} ${w.node.$cstNode?.offset ?? -1}`;
+      const diag = emitted.get(key) ?? this.warn(w.message, w.node, w.code);
+      emitted.set(key, diag);
+      // Register for RETRACTION by the library binder: a reference that only
+      // the standard library can resolve is still unresolved here, and the
+      // warning must disappear once the binder succeeds.
+      this.deferredSpecializationWarnings.push({
+        diagnostic: diag,
+        elementId: w.elementId,
+        attr: w.attr,
+        ...(w.retractOnRef ? { ref: w.ref } : {}),
+      });
     }
   }
 
-  /* ─────────────────── name resolution (mirrors legacy) ─────────────────── */
+  /* ────────────────────────── name resolution ───────────────────────────── */
 
-  private resolveRef(ref: string, scopeOwnerId: ElementId | null): ElementRecord | undefined {
-    return resolveRefIn(this.model, ref, scopeOwnerId);
+  private resolveRef(
+    ref: string,
+    scopeOwnerId: ElementId | null,
+    excludeId?: ElementId,
+  ): ElementRecord | undefined {
+    return resolveFullName(this.model, ref, scopeOwnerId, {
+      ...(excludeId === undefined ? {} : { exclude: excludeId }),
+    });
   }
 
   /* ────────────────────────────── entry ────────────────────────────────── */
@@ -720,54 +783,375 @@ class Mapper {
    *
    * `fault` is the source offset of the first parser error, when there was one.
    * Error recovery parses every declaration after a fault one scope OUT of its
-   * body (see `rehome.ts`), so the re-homing runs BEFORE the deferred pass: a
+   * body (see `rehome.ts`), so the re-homing runs BEFORE resolution: a
    * reference that failed only because of wrong ownership then resolves
-   * normally and its warning is retracted, instead of surviving as a false
-   * "unresolved" finding.
+   * normally, instead of producing a false "unresolved" finding.
+   *
+   * Warnings come LAST, after resolution, so the only ones written are about
+   * references nothing in the file resolves.
    */
   run(members: Member[], fault?: { text: string; offset: number }): void {
     this.model.transaction(() => {
       for (const m of members) this.mapMember(m, null);
       if (fault) rehomeAfterFault(this.model, fault.text, this.ranges, fault.offset);
       this.resolveDeferredRefs();
-      this.retractResolvedEndpointWarnings();
+      this.emitPendingWarnings();
     });
   }
 
   /**
-   * Second resolution pass (finding F4): re-resolve references that missed
-   * during the single forward-order build because their target was declared
-   * LATER, or in a sibling scope. Runs once at the end of {@link run}, inside the
-   * same transaction, over a snapshot of the fully-built model.
+   * THE resolution point — every textual reference in the file is bound here,
+   * once, against the finished model.
    *
-   * `resolveRef` is a pure read of model state, so "resolvable now" is exactly
-   * "was a forward / cross-scope reference": a name that still exists is
-   * upgraded; a typo / genuinely-absent name is left as its textual fallback (and
-   * its build-time warning). It deliberately handles ONLY the endpoint
-   * (`sourceRef`/`targetRef`), `aliasFor` and node-level specialization-array
-   * refs — NEVER `typeRef` / `attrs.type`, which are the separate, library-aware
-   * responsibility of `resolveTypeReferences` (so `part x : Q::Later` stays a
-   * `typeRef` at parse time, per that pass's contract). One sweep reaches a
-   * fixpoint: upgrading a ref only sets endpoints or creates anonymous
-   * relationship elements — never a new NAMED, resolvable target — so nothing
-   * becomes newly resolvable as a side effect.
+   * WHY ONE POINT. Binding used to be split: the mapper resolved whatever
+   * happened to exist when it reached a declaration, and the library binder
+   * picked up the rest afterwards with DIFFERENT scoping rules. Which resolver
+   * answered a given reference therefore depended on where in the file it was
+   * written, and the two disagreed about inherited members, so `part w : W`
+   * inside `part def Car :> Base` denoted the outer `W` when written after its
+   * declaration and the inherited one when written before.
+   *
+   * THE ORDER MATTERS, and it is the whole design:
+   *
+   *  1. INDIRECTIONS — in-file imports and aliases. Nothing can resolve
+   *     *through* `import Lib::*;` or `alias A for W;` until they have a
+   *     target, and their own targets may be declared later.
+   *  2. THE SPECIALIZATION FAMILY (`:>` / `:>>` / `::>`), to a FIXPOINT and
+   *     BEFORE any typing is decided. These build the inheritance graph every
+   *     later answer depends on, and binding one can enable another (`A :> B`
+   *     where `B :> C` is itself forward), so one sweep is not enough. It is
+   *     this ORDERING that answers `part def W; part def Base :> Grand;
+   *     part def Car :> Base { part w1 : W; } part def Grand { part def W; }`
+   *     with `Grand::W`: `Car`'s inheritance is complete before `w1` is asked.
+   *  3. TYPINGS (`:`) — which also add generals — then the endpoints, aliases
+   *     and dependencies that read the finished graph.
+   *  4. RE-DECISION, for the generals step 2 cannot see: a TYPING adds one too.
+   *     In `part def W; part c : T { part w1 : W; } part def T :> G;
+   *     part def G { part def W; }`, `c : T` and `w1 : W` are decided in the
+   *     same round, and only once `c` is typed can `w1` see `G::W`. So a
+   *     reference bound in an earlier round is re-decided when anything it
+   *     resolves THROUGH gained a general — its scope chain, those scopes'
+   *     generals, and the namespaces they import (see
+   *     {@link scopeGainedGeneral}, which was too narrow when it walked the
+   *     scope chain alone). Monotone — generals are only ever ADDED, so a
+   *     re-decision moves inward and the loop terminates.
+   *
+   * WHICH mechanism answers WHICH witness, because they are easy to confuse:
+   * the ORDERING in (2) answers the transitive-supertype witness (`Base :>
+   * Grand` forward), and the RE-DECISION in (4) answers the typing-chain
+   * witness (`c : T` gaining a general). Either alone survives the loss of the
+   * other on those two; losing BOTH loses the I4 witnesses themselves.
+   *
+   * Each round DECIDES without mutating and then APPLIES, because `Model.emit`
+   * bumps `rev` on every mutation and every resolver memo is keyed on `rev`:
+   * interleaving would cold-start the name cache and the generalization
+   * closures once per binding.
    */
   private resolveDeferredRefs(): void {
-    const worklist = this.model.all(); // snapshot: relationships made below aren't revisited
+    // (1) The names other names resolve THROUGH: in-file imports and aliases.
+    //     Both must be bound BEFORE anything else, because `part p : A;` where
+    //     `alias A for Real2;` reads the alias's TARGET — an unbound alias made
+    //     `p` bind to the alias Membership itself and validation then reported a
+    //     feature typed by a non-type. They can also feed each other
+    //     (`import Lib::*;` then `alias A for AWidget;`), so they loop until
+    //     nothing new binds. Library-free: `import Lib::*;` where `Lib` is in
+    //     this file resolves without the standard library being loaded at all.
+    const indirections = this.model
+      .all()
+      .filter(
+        (e) =>
+          e.eClass === 'NamespaceImport' ||
+          e.eClass === 'MembershipImport' ||
+          (e.eClass === 'Membership' && typeof e.attrs.aliasFor === 'string'),
+      ).length;
+    for (let round = 0; round <= indirections; round++) {
+      if (resolveImportTargets(this.model) + this.bindAliases() === 0) break;
+    }
+
+    // (2) The specialization family to a fixpoint, BEFORE any typing is
+    //     decided, so the inheritance graph is complete when typings resolve.
+    this.specializationFixpoint((r) => r.op !== ':');
+    // (3)+(4) Then everything, re-deciding earlier answers each round.
+    this.specializationFixpoint(() => true);
+
+    // Endpoints, aliases and dependencies. They READ the graph above and never
+    // extend it — a bound connector end adds no general — so one sweep is a
+    // fixpoint.
+    this.bindEndpointRefs();
+
+    // Whatever is still unbound falls back to its textual form.
+    this.recordUnresolvedSpecs();
+    this.restoreSpecializationOrder();
+  }
+
+  /**
+   * Decide-then-apply rounds over the deferred specializations matching
+   * `filter`, until no answer changes.
+   *
+   * A request already bound is RE-decided every round: that is what closes the
+   * transitive-supertype witness in the class comment. Retargeting an existing
+   * relationship (rather than creating a second one) is what keeps the element
+   * set stable and the pass idempotent.
+   */
+  private specializationFixpoint(filter: (r: DeferredSpec) => boolean): void {
+    // Each round either changes an answer or stops; an answer can change at
+    // most once per general added, and generals only grow.
+    const limit = this.deferredSpecs.length + 2;
+    /** Elements that gained a general in the previous round; null = first round. */
+    let gained: Set<ElementId> | null = null;
+    for (let round = 0; round < limit; round++) {
+      // Phase 1 — decide, without mutating (every resolver memo stays hot).
+      const decided: Array<{ req: DeferredSpec; targetId: ElementId }> = [];
+      for (const req of this.deferredSpecs) {
+        if (!filter(req)) continue;
+        // An ALREADY-BOUND reference is only worth re-deciding when its scope
+        // chain gained a general since — that is the only way full resolution
+        // can produce a different (nearer) answer. Without this gate every
+        // round re-resolves every reference in the file, which is quadratic on
+        // a big flat package and finds nothing.
+        if (req.targetId !== undefined && gained !== null && !this.scopeGainedGeneral(req, gained)) {
+          continue;
+        }
+        const target = this.resolveSpecTarget(req);
+        if (!target || target.id === req.targetId) continue;
+        decided.push({ req, targetId: target.id });
+      }
+      if (decided.length === 0) return;
+
+      // Phase 2 — apply.
+      const nowGained = new Set<ElementId>();
+      for (const { req, targetId } of decided) {
+        const el = this.model.get(req.elementId);
+        if (!el) continue;
+        if (req.relId !== undefined) {
+          this.model.update(req.relId, { target: [targetId] });
+        } else {
+          const rel = this.create(
+            relClassForOp(req.op, isDefinition(el.eClass)),
+            { ownerId: el.id, source: [el.id], target: [targetId] },
+            req.node,
+          );
+          req.relId = rel.id;
+        }
+        req.targetId = targetId;
+        nowGained.add(el.id);
+      }
+      gained = nowGained;
+    }
+  }
+
+  /**
+   * Did anything this reference resolves THROUGH gain a general last round?
+   *
+   * "Through" is the scope chain, the general types of each scope, AND the
+   * namespaces each scope imports (plus THEIR generals) — because that is
+   * exactly what `resolveName` consults: owned + alias, then inherited, then
+   * imported. Walking only the scope chain made the gate too narrow rather
+   * than merely conservative: in
+   *
+   *     package P { part def Grand { part def W; } part def T :> Grand;
+   *                 part H : T; }
+   *     package Outer { part def W;
+   *                     package Use { import P::H::*; part def C :> W; } }
+   *
+   * `H : T` and `C :> W` are decided in the SAME round, so `C` first answers
+   * with `Outer::W`; the general `H` then gains is on a namespace reached
+   * through `Use`'s import, which the scope walk never visits, so nothing was
+   * ever re-decided and the mapper's answer disagreed with its own resolver.
+   *
+   * Import targets are read from a map built ONCE (imports are all bound in
+   * step (1) and never change afterwards): scanning each scope's children per
+   * request per round would be quadratic on a big flat package, which is the
+   * cost this gate exists to avoid.
+   */
+  private scopeGainedGeneral(req: DeferredSpec, gained: Set<ElementId>): boolean {
+    const imports = this.importTargetsByScope ?? this.buildImportTargets();
+    let scope = this.model.get(req.elementId)?.ownerId ?? null;
+    const seen = new Set<ElementId>();
+    while (scope !== null && !seen.has(scope)) {
+      seen.add(scope);
+      if (this.namespaceGained(scope, gained)) return true;
+      for (const nsId of imports.get(scope) ?? []) {
+        if (this.namespaceGained(nsId, gained)) return true;
+      }
+      scope = this.model.get(scope)?.ownerId ?? null;
+    }
+    return false;
+  }
+
+  /** Did `id` — or anything it inherits from — gain a general last round? */
+  private namespaceGained(id: ElementId, gained: Set<ElementId>): boolean {
+    if (gained.has(id)) return true;
+    for (const g of generalizationsWithImplicit(this.model, id)) {
+      if (gained.has(g.id)) return true;
+    }
+    return false;
+  }
+
+  /** Owner namespace → the namespaces its imports bring into scope. */
+  private buildImportTargets(): Map<ElementId, ElementId[]> {
+    const map = new Map<ElementId, ElementId[]>();
+    for (const el of this.model.all()) {
+      if (el.eClass !== 'NamespaceImport' && el.eClass !== 'MembershipImport') continue;
+      const owner = el.ownerId;
+      const nsId = (el.target ?? [])[0];
+      if (owner == null || !nsId) continue;
+      const cur = map.get(owner);
+      if (cur) cur.push(nsId);
+      else map.set(owner, [nsId]);
+    }
+    this.importTargetsByScope = map;
+    return map;
+  }
+
+  /**
+   * Bind `alias N for Target;` Memberships whose target now resolves.
+   *
+   * @returns the number newly bound.
+   */
+  private bindAliases(): number {
+    let bound = 0;
+    for (const el of this.model.all()) {
+      if (el.eClass !== 'Membership') continue;
+      if ((el.target ?? []).length > 0) continue;
+      const ref = el.attrs.aliasFor;
+      if (typeof ref !== 'string') continue;
+      const r = this.resolveRef(ref, el.ownerId, el.id);
+      if (!r || r.id === el.id) continue;
+      this.model.update(el.id, { target: [r.id] });
+      this.model.setAttrs(el.id, { aliasFor: undefined });
+      bound++;
+    }
+    return bound;
+  }
+
+  /** The element one deferred specialization denotes, or `undefined`. */
+  private resolveSpecTarget(req: DeferredSpec): ElementRecord | undefined {
+    const el = this.model.get(req.elementId);
+    if (!el) return undefined;
+    // The scope is read NOW, not at map time: `rehomeAfterFault` may have moved
+    // the declaration back into the body it was written in.
+    const scope = el.ownerId;
+    // KerML §8.2.3.5.1 gives a redefinition its own rule — the generals of the
+    // owning type are the local namespaces, tried before ordinary resolution.
+    return req.op === ':>>'
+      ? resolveRedefinedFeature(this.model, req.ref, el.id, scope)
+      : resolveFullName(this.model, req.ref, scope, { exclude: el.id });
+  }
+
+  /**
+   * Specializations that never resolved fall back to the textual form the
+   * serializer and the library binder read — and get their warning queued.
+   *
+   * An unresolved `:` on an ATTRIBUTE stays SILENT (`attrs.type`): a value type
+   * (`Real`, `String`, …) usually lives outside the loaded scope, and warning
+   * about every one of them would bury the references that are genuinely
+   * broken. Pinned by the `L3-unresolved-attribute-type-is-silent` fixture.
+   */
+  private recordUnresolvedSpecs(): void {
+    for (const req of this.deferredSpecs) {
+      if (req.relId !== undefined) continue;
+      const el = this.model.get(req.elementId);
+      if (!el) continue;
+      if (req.op === ':') {
+        if (el.eClass === 'AttributeUsage' || el.eClass === 'AttributeDefinition') {
+          this.model.setAttrs(el.id, { type: req.ref });
+          continue;
+        }
+        this.model.setAttrs(el.id, { typeRef: req.ref });
+        // `typeRef` is a single slot; two unresolved `:` types on one feature
+        // (`part x : Gone1, Gone2;`) overwrite each other. Two consequences,
+        // and they need different answers. RETRACTION still tests only that
+        // the slot was emptied (`retractOnRef` false) — the library binder
+        // clears the slot, it does not rewrite a name. EMISSION cannot use the
+        // slot at all: testing `typeRef === 'Gone1'` dropped the first name's
+        // warning and reported only the last. Every request that reaches here
+        // is one the fixpoint already failed to bind, so the answer is simply
+        // yes, as long as the element survived.
+        this.defer(
+          el.id,
+          'typeRef',
+          req.ref,
+          `Unresolved reference '${req.ref}'`,
+          'ref/unresolved-specialization',
+          req.node,
+          /* retractOnRef */ false,
+          () => this.model.get(el.id) !== undefined,
+        );
+        continue;
+      }
+      const key = req.op === ':>>' ? 'redefines' : req.op === '::>' ? 'references' : 'specializes';
+      const cur = (el.attrs[key] as string[] | undefined) ?? [];
+      this.model.setAttrs(el.id, { [key]: [...cur, req.ref] });
+      this.defer(
+        el.id,
+        key,
+        req.ref,
+        `Unresolved reference '${req.ref}'`,
+        'ref/unresolved-specialization',
+        req.node,
+      );
+    }
+  }
+
+  /**
+   * Put each element's specialization relationships back into DECLARATION
+   * order.
+   *
+   * The fixpoint decides `:>` before `:`, so `part def A : T :> B;` would
+   * otherwise own its Subclassification before its FeatureTyping and re-emit as
+   * `part def A :> B : T;`. `specializationFragments` in the serializer reads
+   * them in child order, and `reparent` to the same owner moves a child to the
+   * end — so replaying the declarations in order restores it.
+   */
+  private restoreSpecializationOrder(): void {
+    const byOwner = new Map<ElementId, ElementId[]>();
+    for (const req of this.deferredSpecs) {
+      if (req.relId === undefined) continue;
+      const list = byOwner.get(req.elementId);
+      if (list) list.push(req.relId);
+      else byOwner.set(req.elementId, [req.relId]);
+    }
+    for (const [ownerId, relIds] of byOwner) {
+      if (relIds.length < 2) continue;
+      const current = this.model.children(ownerId).filter((c) => relIds.includes(c.id));
+      if (current.every((c, i) => c.id === relIds[i])) continue; // already in order
+      for (const relId of relIds) this.model.reparent(relId, ownerId);
+    }
+  }
+
+  /**
+   * Bind the endpoint, alias and dependency references — every reference that
+   * names an element rather than a type.
+   *
+   * Runs over a snapshot: relationships created above are not revisited.
+   */
+  private bindEndpointRefs(): void {
+    const worklist = this.model.all();
     for (const el of worklist) {
-      // Capture the ORIGINAL lexical scope once — the reparent below mutates
-      // el.ownerId, and every ref in this statement must resolve against the
-      // scope it was written in, not a re-homed owner.
+      // Capture the scope once — the reparent below mutates el.ownerId, and
+      // every ref in this statement resolves against the scope it was written
+      // in, not a re-homed owner.
       const scope = el.ownerId;
       const spec = isSpecialization(el.eClass);
 
       // Multi-endpoint Dependency: rebuild source/target from the clients/
-      // suppliers name lists (the single sourceRef/targetRef holds only the first
-      // unresolved endpoint, so it is lossy for these).
+      // suppliers name lists (the single sourceRef/targetRef holds only the
+      // first endpoint, so it is lossy for these).
       if (el.eClass === 'Dependency') {
         this.upgradeDependency(el, scope);
         continue;
       }
+
+      // Connector endpoint that is a FEATURE CHAIN through a type (`a.p` where
+      // `p` is declared on the type of `a`, or a bare `p` on the type of an
+      // enclosing usage): materialize an implicit usage-scoped feature and bind
+      // the endpoint to THAT — never to the shared type-owned feature (which
+      // would collapse same-type connectors into self-edges and re-home edges
+      // onto the definition). The chain resolver owns EVERY segment of a
+      // connector end, so it runs FIRST for these classes; the plain resolver
+      // below only sees what it could not bind (a qualified cross-package name).
+      if (CHAIN_CONNECTOR_CLASSES.has(el.eClass)) resolveChainEndpointsOf(this.model, el);
 
       // Endpoint source. For a specialization relationship owned by its source
       // (mapRelationshipStmt), re-home it onto the resolved source so the
@@ -775,20 +1159,24 @@ class Mapper {
       const sref = el.attrs.sourceRef;
       let sourceResolved = (el.source?.length ?? 0) > 0;
       if (typeof sref === 'string' && !sourceResolved) {
-        const r = this.resolveRef(sref, scope);
+        const r = this.resolveRef(sref, scope, el.id);
         if (r && r.id !== el.id) {
           this.model.update(el.id, { source: [r.id] });
           this.model.setAttrs(el.id, { sourceRef: undefined });
           sourceResolved = true;
           // A `:>`-family relationship built while its source name was still
-          // forward defaulted to Subsetting (mapRelationshipStmt). Now that the
+          // unbound defaulted to Subsetting (mapRelationshipStmt). Now that the
           // source is known, upgrade to Subclassification when it is a
           // definition — matching what the inline `part def A :> B;` form and
           // a re-parse of the serialized text produce.
           if (el.eClass === 'Subsetting' && isDefinition(r.eClass)) {
             this.model.update(el.id, { eClass: 'Subclassification' });
           }
-          if (spec && el.ownerId !== r.id) this.model.reparent(el.id, r.id);
+          // A relationship STATEMENT belongs to its source, so the serializer
+          // can inline it back onto that declaration.
+          if ((spec || el.eClass === 'Disjoining') && el.ownerId !== r.id) {
+            this.model.reparent(el.id, r.id);
+          }
         }
       }
       // Endpoint target. A specialization relationship whose source is still
@@ -796,48 +1184,34 @@ class Mapper {
       // mis-inlined onto its (wrong) owner.
       const tref = el.attrs.targetRef;
       if (typeof tref === 'string' && (el.target?.length ?? 0) === 0 && (!spec || sourceResolved)) {
-        const r = this.resolveRef(tref, scope);
+        // A Redefinition STATEMENT is the same construct as the inline `:>>`,
+        // so it must use the same rule (KerML §8.2.3.5.1) — otherwise
+        // `redefinition w redefines w;` self-bound and reported
+        // `specialization-cycle` while `part w :>> w;` was clean, and one
+        // save/re-parse silently made the error disappear. The source feature
+        // is already bound above, which is what the rule needs.
+        const srcId = (el.source ?? [])[0];
+        const r =
+          el.eClass === 'Redefinition' && srcId
+            ? resolveRedefinedFeature(this.model, tref, srcId, this.model.get(srcId)?.ownerId ?? scope)
+            : this.resolveRef(tref, scope, el.id);
         if (r && r.id !== el.id) {
           this.model.update(el.id, { target: [r.id] });
           this.model.setAttrs(el.id, { targetRef: undefined });
         }
       }
-      // Connector endpoint that is a FEATURE CHAIN through a type (`a.p` where
-      // `p` is declared on the type of `a`, or a bare `p` on the type of an
-      // enclosing usage): materialize an implicit usage-scoped feature and bind
-      // the endpoint to THAT — never to the shared type-owned feature (which
-      // would collapse same-type connectors into self-edges and re-home edges
-      // onto the definition). Runs only when the plain resolver above failed.
-      if (CHAIN_CONNECTOR_CLASSES.has(el.eClass)) resolveChainEndpointsOf(this.model, el);
 
-      // Alias (`alias N for Target`) whose target was forward.
-      if (el.eClass === 'Membership' && typeof el.attrs.aliasFor === 'string' && (el.target?.length ?? 0) === 0) {
-        const r = this.resolveRef(el.attrs.aliasFor, scope);
+      // Alias (`alias N for Target`).
+      if (
+        el.eClass === 'Membership' &&
+        typeof el.attrs.aliasFor === 'string' &&
+        (el.target ?? []).length === 0
+      ) {
+        const r = this.resolveRef(el.attrs.aliasFor, scope, el.id);
         if (r && r.id !== el.id) {
           this.model.update(el.id, { target: [r.id] });
           this.model.setAttrs(el.id, { aliasFor: undefined });
         }
-      }
-      // Node-level specialization arrays (`:> b` / `:>> b` / `::> b` on a feature
-      // whose target was forward) — materialize a relationship per now-resolvable
-      // ref, mirroring applySpecialization. Never typeRef/type.
-      for (const [key, op] of SPEC_ARRAY_KEYS) {
-        const arr = el.attrs[key];
-        if (!Array.isArray(arr)) continue;
-        const leftover: string[] = [];
-        for (const ref of arr) {
-          const r = typeof ref === 'string' ? this.resolveRef(ref, scope) : undefined;
-          if (r && r.id !== el.id) {
-            this.create(relClassForOp(op, isDefinition(el.eClass)), {
-              ownerId: el.id,
-              source: [el.id],
-              target: [r.id],
-            });
-          } else if (typeof ref === 'string') {
-            leftover.push(ref);
-          }
-        }
-        this.model.setAttrs(el.id, { [key]: leftover.length ? leftover : undefined });
       }
     }
   }
@@ -1057,60 +1431,57 @@ class Mapper {
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);
   }
 
-  /** `alias N for Target` → a named Membership pointing at the resolved target. */
+  /** `alias N for Target` → a named Membership pointing at the target. */
   private mapAlias(node: Alias, ownerId: ElementId | null): void {
     const targetRef = node.target;
-    const target = targetRef ? this.resolveRef(targetRef, ownerId) : undefined;
-    if (targetRef && !target) this.warn(`Unresolved alias target '${targetRef}'`, node, 'ref/unresolved-alias-target');
     const attrs: Record<string, AttrValue> = {};
     if (node.visibility) attrs.visibility = node.visibility;
-    if (targetRef && !target) attrs.aliasFor = targetRef;
+    if (targetRef) attrs.aliasFor = targetRef;
     const el = this.create('Membership', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       declaredShortName: unquoteName(node.shortName),
-      target: target ? [target.id] : [],
+      target: [],
       attrs,
     });
+    if (targetRef) {
+      this.defer(el.id, 'aliasFor', targetRef, `Unresolved alias target '${targetRef}'`, 'ref/unresolved-alias-target', node);
+    }
     // F-follow-up: `alias b for a { … }` body members were silently dropped.
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);
   }
 
   /** `dependency (id from)? clients… to suppliers…` → a Dependency relationship. */
   private mapDependency(node: Dependency, ownerId: ElementId | null): void {
-    const srcIds: ElementId[] = [];
-    const tgtIds: ElementId[] = [];
-    const unresolvedSrc: string[] = [];
-    const unresolvedTgt: string[] = [];
-    for (const c of node.client) {
-      const r = this.resolveRef(c, ownerId);
-      if (r) srcIds.push(r.id);
-      else {
-        unresolvedSrc.push(c);
-        this.warn(`Unresolved dependency client '${c}'`, node, 'ref/unresolved-dependency-end');
-      }
-    }
-    for (const s of node.supplier) {
-      const r = this.resolveRef(s, ownerId);
-      if (r) tgtIds.push(r.id);
-      else {
-        unresolvedTgt.push(s);
-        this.warn(`Unresolved dependency supplier '${s}'`, node, 'ref/unresolved-dependency-end');
-      }
-    }
     const attrs: Record<string, AttrValue> = {};
-    if (unresolvedSrc.length) attrs.sourceRef = unresolvedSrc[0];
-    if (unresolvedTgt.length) attrs.targetRef = unresolvedTgt[0];
+    if (node.client.length) attrs.sourceRef = node.client[0];
+    if (node.supplier.length) attrs.targetRef = node.supplier[0];
+    // The full lists are kept only when there is more than one endpoint (a
+    // single one lives on sourceRef/targetRef) — the shape the serializer and
+    // `upgradeDependency` both read.
     if (node.client.length > 1) attrs.clients = [...node.client];
     if (node.supplier.length > 1) attrs.suppliers = [...node.supplier];
-    this.create('Dependency', {
+    const el = this.create('Dependency', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       declaredShortName: unquoteName(node.shortName),
-      source: srcIds,
-      target: tgtIds,
+      source: [],
+      target: [],
       attrs,
     });
+    // A multi-endpoint dependency keeps only its FIRST name in sourceRef /
+    // targetRef, so the slot cannot say which of `a, missing` failed — tested
+    // against the slot it named `a`, the one that resolved. Each name therefore
+    // carries a predicate that re-asks the real question about ITSELF once the
+    // fixpoint has run. The retraction entry stays slot-shaped (`retractOnRef`
+    // false): the library binder empties the slot, it does not rewrite a name.
+    const stillMissing = (ref: string) => () => this.resolveRef(ref, ownerId) === undefined;
+    for (const c of node.client) {
+      this.defer(el.id, 'sourceRef', c, `Unresolved dependency client '${c}'`, 'ref/unresolved-dependency-end', node, false, stillMissing(c));
+    }
+    for (const sup of node.supplier) {
+      this.defer(el.id, 'targetRef', sup, `Unresolved dependency supplier '${sup}'`, 'ref/unresolved-dependency-end', node, false, stillMissing(sup));
+    }
   }
 
   /** `bind a = b` / `binding a = b` → a BindingConnectorAsUsage endpoint pair. */
@@ -1129,47 +1500,48 @@ class Mapper {
    */
   private mapRelationshipStmt(node: RelationshipStmt, ownerId: ElementId | null): void {
     const srcRef = node.source;
-    const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
-    if (srcRef && !src) this.warn(`Unresolved relationship source '${srcRef}'`, node, 'ref/unresolved-reference');
-    const owner = src ? src.id : ownerId;
 
     if (node.kind === 'disjoint') {
       const tgtRef = node.target;
-      const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-      if (tgtRef && !tgt) this.warn(`Unresolved disjoint target '${tgtRef}'`, node, 'ref/unresolved-reference');
-      this.create('Disjoining', {
-        ownerId: owner ?? undefined,
-        source: src ? [src.id] : [],
-        target: tgt ? [tgt.id] : [],
+      const dj = this.create('Disjoining', {
+        ownerId: ownerId ?? undefined,
+        source: [],
+        target: [],
         attrs: {
-          ...(srcRef && !src ? { sourceRef: srcRef } : {}),
-          ...(tgtRef && !tgt ? { targetRef: tgtRef } : {}),
+          ...(srcRef ? { sourceRef: srcRef } : {}),
+          ...(tgtRef ? { targetRef: tgtRef } : {}),
         },
       });
+      if (srcRef) {
+        this.defer(dj.id, 'sourceRef', srcRef, `Unresolved relationship source '${srcRef}'`, 'ref/unresolved-reference', node);
+      }
+      if (tgtRef) {
+        this.defer(dj.id, 'targetRef', tgtRef, `Unresolved disjoint target '${tgtRef}'`, 'ref/unresolved-reference', node);
+      }
       return;
     }
 
     for (const spec of node.specializations) {
       const op = normalizeSpecOp(spec.op);
       for (const tgtRef of spec.types) {
-        const tgt = this.resolveRef(tgtRef, ownerId);
-        if (!tgt) this.warn(`Unresolved reference '${tgtRef}'`, spec, 'ref/unresolved-specialization');
-        // Classify by the RESOLVED source's kind — `subtype A specializes B;`
-        // on a definition must build a Subclassification, exactly like the
-        // inline `part def A :> B;` form does, or the element class flips
-        // across a serialize→parse round-trip (C9-residual sweep). An
-        // unresolved source defaults to Subsetting and is upgraded by
-        // resolveDeferredRefs once the source name resolves.
-        const relClass = relClassForOp(op, src ? isDefinition(src.eClass) : false);
-        this.create(relClass, {
-          ownerId: owner ?? undefined,
-          source: src ? [src.id] : [],
-          target: tgt ? [tgt.id] : [],
+        // The relationship METACLASS depends on whether the source is a
+        // definition (`subtype A specializes B;` on a definition must build a
+        // Subclassification, exactly like the inline `part def A :> B;` form),
+        // and the source name is not resolved yet — so this defaults to
+        // Subsetting and `bindEndpointRefs` upgrades it once the source binds.
+        const rel = this.create(relClassForOp(op, false), {
+          ownerId: ownerId ?? undefined,
+          source: [],
+          target: [],
           attrs: {
-            ...(srcRef && !src ? { sourceRef: srcRef } : {}),
-            ...(tgt ? {} : { targetRef: tgtRef }),
+            ...(srcRef ? { sourceRef: srcRef } : {}),
+            targetRef: tgtRef,
           },
         });
+        if (srcRef) {
+          this.defer(rel.id, 'sourceRef', srcRef, `Unresolved relationship source '${srcRef}'`, 'ref/unresolved-reference', node);
+        }
+        this.defer(rel.id, 'targetRef', tgtRef, `Unresolved reference '${tgtRef}'`, 'ref/unresolved-specialization', spec);
       }
     }
   }
@@ -1181,7 +1553,7 @@ class Mapper {
       declaredName: unquoteName(node.name),
       attrs: { featureRole: 'return' },
     });
-    for (const spec of node.specializations) this.applySpecialization(el, spec, ownerId);
+    for (const spec of node.specializations) this.applySpecialization(el, spec);
     const mults = (node.multiplicity ?? []).map(formatMultiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
@@ -1233,7 +1605,7 @@ class Mapper {
       declaredShortName: unquoteName(node.shortName),
       attrs,
     });
-    for (const spec of node.specializations) this.applySpecialization(el, spec, ownerId);
+    for (const spec of node.specializations) this.applySpecialization(el, spec);
     const mults = (node.multiplicity ?? []).map(formatMultiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
@@ -1248,45 +1620,57 @@ class Mapper {
   private mapConnect(node: Connect, ownerId: ElementId | null): void {
     const srcRef = node.source;
     const tgtRef = node.target;
-    const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
-    const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-    const srcWarn = srcRef && !src ? this.warn(`Unresolved connection end '${srcRef}'`, node, 'ref/unresolved-connection-end') : undefined;
-    const tgtWarn = tgtRef && !tgt ? this.warn(`Unresolved connection end '${tgtRef}'`, node, 'ref/unresolved-connection-end') : undefined;
     const el = this.create('ConnectionUsage', {
       ownerId: ownerId ?? undefined,
-      source: src ? [src.id] : [],
-      target: tgt ? [tgt.id] : [],
+      source: [],
+      target: [],
       attrs: {
-        ...(srcRef && !src ? { sourceRef: srcRef } : {}),
-        ...(tgtRef && !tgt ? { targetRef: tgtRef } : {}),
+        ...(srcRef ? { sourceRef: srcRef } : {}),
+        ...(tgtRef ? { targetRef: tgtRef } : {}),
       },
     });
-    if (srcWarn) this.registerEndpointWarning(srcWarn, el.id, 'sourceRef');
-    if (tgtWarn) this.registerEndpointWarning(tgtWarn, el.id, 'targetRef');
+    this.deferEnds(el.id, srcRef, tgtRef, node, 'ref/unresolved-connection-end', (r) => `Unresolved connection end '${r}'`);
+  }
+
+  /**
+   * Queue the "unresolved endpoint" warnings for a two-ended statement. They
+   * fire only if the deferred pass leaves the ref in place.
+   */
+  private deferEnds(
+    elementId: ElementId,
+    srcRef: string | undefined,
+    tgtRef: string | undefined,
+    node: AstNode,
+    code: string,
+    message: (ref: string) => string,
+    srcMessage?: (ref: string) => string,
+  ): void {
+    if (srcRef) this.defer(elementId, 'sourceRef', srcRef, (srcMessage ?? message)(srcRef), code, node);
+    if (tgtRef) this.defer(elementId, 'targetRef', tgtRef, message(tgtRef), code, node);
   }
 
   private mapSatisfy(node: Satisfy, ownerId: ElementId | null): void {
     const reqRef = node.requirement;
     const satRef = node.satisfier;
-    const req = reqRef ? this.resolveRef(reqRef, ownerId) : undefined;
-    const sat = satRef ? this.resolveRef(satRef, ownerId) : undefined;
-    // Capture the warnings so resolveDeferredRefs can RETRACT them once a
-    // forward reference resolves (mirrors mapConnect) — otherwise a
-    // `satisfy R by X;` before `R`/`X` leaves a permanent false warning.
-    const reqWarn = reqRef && !req ? this.warn(`Unresolved requirement '${reqRef}'`, node, 'ref/unresolved-requirement') : undefined;
-    const satWarn = satRef && !sat ? this.warn(`Unresolved satisfier '${satRef}'`, node, 'ref/unresolved-requirement') : undefined;
     const el = this.create('Satisfy', {
       ownerId: ownerId ?? undefined,
-      source: sat ? [sat.id] : [],
-      target: req ? [req.id] : [],
+      source: [],
+      target: [],
       attrs: {
         ...(node.visibility ? { visibility: node.visibility } : {}),
-        ...(reqRef && !req ? { targetRef: reqRef } : {}),
-        ...(satRef && !sat ? { sourceRef: satRef } : {}),
+        ...(reqRef ? { targetRef: reqRef } : {}),
+        ...(satRef ? { sourceRef: satRef } : {}),
       },
     });
-    if (reqWarn) this.registerEndpointWarning(reqWarn, el.id, 'targetRef');
-    if (satWarn) this.registerEndpointWarning(satWarn, el.id, 'sourceRef');
+    this.deferEnds(
+      el.id,
+      satRef,
+      reqRef,
+      node,
+      'ref/unresolved-requirement',
+      (r) => `Unresolved requirement '${r}'`,
+      (r) => `Unresolved satisfier '${r}'`,
+    );
   }
 
   /**
@@ -1307,43 +1691,51 @@ class Mapper {
     ownerId: ElementId | null,
     visibility?: string,
   ): void {
-    const req = reqRef ? this.resolveRef(reqRef, ownerId) : undefined;
-    const elem = elemRef ? this.resolveRef(elemRef, ownerId) : undefined;
-    // Retractable warnings (mirrors mapConnect) so a forward-referenced
-    // `verify R by X;` before `R`/`X` does not leave a permanent false warning
-    // once resolveDeferredRefs resolves the endpoints.
-    const reqWarn = reqRef && !req ? this.warn(`Unresolved requirement '${reqRef}'`, node, 'ref/unresolved-requirement') : undefined;
-    const elemWarn =
-      elemRef && !elem
-        ? this.warn(`Unresolved ${eClass.toLowerCase()} element '${elemRef}'`, node, 'ref/unresolved-requirement')
-        : undefined;
     const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
-      source: elem ? [elem.id] : [],
-      target: req ? [req.id] : [],
+      source: [],
+      target: [],
       attrs: {
         ...(visibility ? { visibility } : {}),
-        ...(reqRef && !req ? { targetRef: reqRef } : {}),
-        ...(elemRef && !elem ? { sourceRef: elemRef } : {}),
+        ...(reqRef ? { targetRef: reqRef } : {}),
+        ...(elemRef ? { sourceRef: elemRef } : {}),
       },
     });
-    if (reqWarn) this.registerEndpointWarning(reqWarn, el.id, 'targetRef');
-    if (elemWarn) this.registerEndpointWarning(elemWarn, el.id, 'sourceRef');
+    this.deferEnds(
+      el.id,
+      elemRef,
+      reqRef,
+      node,
+      'ref/unresolved-requirement',
+      (r) => `Unresolved requirement '${r}'`,
+      (r) => `Unresolved ${eClass.toLowerCase()} element '${r}'`,
+    );
   }
 
   private mapAllocate(node: Allocate, ownerId: ElementId | null): void {
     const srcRef = node.source;
     const tgtRef = node.target;
-    const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
-    const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-    if (srcRef && !src) this.warn(`Unresolved allocation source '${srcRef}'`, node, 'ref/unresolved-allocation-end');
-    if (tgtRef && !tgt) this.warn(`Unresolved allocation target '${tgtRef}'`, node, 'ref/unresolved-allocation-end');
-    // NB: the legacy parser stores NO textual ref attrs on Allocation.
-    this.create('Allocation', {
+    // An unresolved end is KEPT as its textual ref. The legacy parser stored
+    // nothing, so `allocate a to Missing;` lost the name outright and re-emitted
+    // a half statement; the serializer's endpoint fallback reads it now.
+    const el = this.create('Allocation', {
       ownerId: ownerId ?? undefined,
-      source: src ? [src.id] : [],
-      target: tgt ? [tgt.id] : [],
+      source: [],
+      target: [],
+      attrs: {
+        ...(srcRef ? { sourceRef: srcRef } : {}),
+        ...(tgtRef ? { targetRef: tgtRef } : {}),
+      },
     });
+    this.deferEnds(
+      el.id,
+      srcRef,
+      tgtRef,
+      node,
+      'ref/unresolved-allocation-end',
+      (r) => `Unresolved allocation target '${r}'`,
+      (r) => `Unresolved allocation source '${r}'`,
+    );
   }
 
   /** Resolve a source/target pair and build an endpoint-bearing edge element. */
@@ -1355,20 +1747,18 @@ class Mapper {
     node: AstNode,
     attrs: Record<string, AttrValue> = {},
   ): ElementRecord {
-    const a = aRef ? this.resolveRef(aRef, ownerId) : undefined;
-    const b = bRef ? this.resolveRef(bRef, ownerId) : undefined;
-    if (aRef && !a) this.warn(`Unresolved reference '${aRef}'`, node, 'ref/unresolved-reference');
-    if (bRef && !b) this.warn(`Unresolved reference '${bRef}'`, node, 'ref/unresolved-reference');
-    return this.create(eClass, {
+    const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
-      source: a ? [a.id] : [],
-      target: b ? [b.id] : [],
+      source: [],
+      target: [],
       attrs: {
         ...attrs,
-        ...(aRef && !a ? { sourceRef: aRef } : {}),
-        ...(bRef && !b ? { targetRef: bRef } : {}),
+        ...(aRef ? { sourceRef: aRef } : {}),
+        ...(bRef ? { targetRef: bRef } : {}),
       },
     });
+    this.deferEnds(el.id, aRef, bRef, node, 'ref/unresolved-reference', (r) => `Unresolved reference '${r}'`);
+    return el;
   }
 
   private mapTransition(node: Transition, ownerId: ElementId | null): void {
@@ -1382,25 +1772,30 @@ class Mapper {
     }
     const srcRef = node.source;
     const tgtRef = node.target;
-    const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
-    const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-    if (srcRef && !src) this.warn(`Unresolved transition source '${srcRef}'`, node, 'ref/unresolved-transition-end');
-    if (tgtRef && !tgt) this.warn(`Unresolved transition target '${tgtRef}'`, node, 'ref/unresolved-transition-end');
     const attrs: Record<string, AttrValue> = {};
     if (trigger) attrs.trigger = trigger;
     if (guard) attrs.guard = guard;
     if (effect) attrs.effect = effect;
-    this.create('TransitionUsage', {
+    const el = this.create('TransitionUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
-      source: src ? [src.id] : [],
-      target: tgt ? [tgt.id] : [],
+      source: [],
+      target: [],
       attrs: {
         ...attrs,
-        ...(srcRef && !src ? { sourceRef: srcRef } : {}),
-        ...(tgtRef && !tgt ? { targetRef: tgtRef } : {}),
+        ...(srcRef ? { sourceRef: srcRef } : {}),
+        ...(tgtRef ? { targetRef: tgtRef } : {}),
       },
     });
+    this.deferEnds(
+      el.id,
+      srcRef,
+      tgtRef,
+      node,
+      'ref/unresolved-transition-end',
+      (r) => `Unresolved transition target '${r}'`,
+      (r) => `Unresolved transition source '${r}'`,
+    );
   }
 
   /** `entry` / `do` / `exit` (name)? (= value)? — the value is kept like any behaviour statement's. */
@@ -1433,7 +1828,7 @@ class Mapper {
         declaredName: unquoteName(node.name),
         attrs: { requirementRole: 'subject' },
       });
-      for (const spec of node.specializations) this.applySpecialization(el, spec, ownerId);
+      for (const spec of node.specializations) this.applySpecialization(el, spec);
       return;
     }
     // require / assume constraint
@@ -1442,7 +1837,7 @@ class Mapper {
       declaredName: unquoteName(node.name),
       attrs: { requirementRole: node.kind },
     });
-    for (const spec of node.specializations) this.applySpecialization(el, spec, ownerId);
+    for (const spec of node.specializations) this.applySpecialization(el, spec);
     if (node.expr) this.model.setAttrs(el.id, { expression: exprText(node.expr) });
   }
 
@@ -1502,19 +1897,24 @@ class Mapper {
     if (node.flowFrom !== undefined || node.flowTo !== undefined) {
       const flowAttrs: Record<string, AttrValue> = {};
       if (node.ofPayload) flowAttrs.payload = node.ofPayload;
-      const src = node.flowFrom ? this.resolveRef(node.flowFrom, ownerId) : undefined;
-      const tgt = node.flowTo ? this.resolveRef(node.flowTo, ownerId) : undefined;
-      if (node.flowFrom && !src) this.warn(`Unresolved flow source '${node.flowFrom}'`, node, 'ref/unresolved-flow-end');
-      if (node.flowTo && !tgt) this.warn(`Unresolved flow target '${node.flowTo}'`, node, 'ref/unresolved-flow-end');
-      if (node.flowFrom && !src) flowAttrs.sourceRef = node.flowFrom;
-      if (node.flowTo && !tgt) flowAttrs.targetRef = node.flowTo;
-      this.create('Flow', {
+      if (node.flowFrom) flowAttrs.sourceRef = node.flowFrom;
+      if (node.flowTo) flowAttrs.targetRef = node.flowTo;
+      const flow = this.create('Flow', {
         ownerId: ownerId ?? undefined,
         declaredName: unquoteName(node.name),
-        source: src ? [src.id] : [],
-        target: tgt ? [tgt.id] : [],
+        source: [],
+        target: [],
         attrs: flowAttrs,
       });
+      this.deferEnds(
+        flow.id,
+        node.flowFrom,
+        node.flowTo,
+        node,
+        'ref/unresolved-flow-end',
+        (r) => `Unresolved flow target '${r}'`,
+        (r) => `Unresolved flow source '${r}'`,
+      );
       return;
     }
 
@@ -1564,7 +1964,7 @@ class Mapper {
     });
 
     // Specializations (resolved against the model built so far).
-    for (const spec of node.specializations) this.applySpecialization(el, spec, ownerId);
+    for (const spec of node.specializations) this.applySpecialization(el, spec);
 
     // Multiplicity — a real `[m..n]` count range, declared BEFORE the value.
     // A unit on the value (`= 1500 [kg]`) is a bracket expression and lands in
@@ -1585,20 +1985,11 @@ class Mapper {
     if (node.connectSource !== undefined || node.connectTarget !== undefined) {
       const srcRef = node.connectSource;
       const tgtRef = node.connectTarget;
-      const src = srcRef ? this.resolveRef(srcRef, ownerId) : undefined;
-      const tgt = tgtRef ? this.resolveRef(tgtRef, ownerId) : undefined;
-      const srcWarn = srcRef && !src ? this.warn(`Unresolved connection end '${srcRef}'`, node, 'ref/unresolved-connection-end') : undefined;
-      const tgtWarn = tgtRef && !tgt ? this.warn(`Unresolved connection end '${tgtRef}'`, node, 'ref/unresolved-connection-end') : undefined;
       const patch: Record<string, AttrValue> = {};
-      if (srcRef && !src) patch.sourceRef = srcRef;
-      if (tgtRef && !tgt) patch.targetRef = tgtRef;
-      this.model.update(el.id, {
-        source: src ? [src.id] : [],
-        target: tgt ? [tgt.id] : [],
-        attrs: patch,
-      });
-      if (srcWarn) this.registerEndpointWarning(srcWarn, el.id, 'sourceRef');
-      if (tgtWarn) this.registerEndpointWarning(tgtWarn, el.id, 'targetRef');
+      if (srcRef) patch.sourceRef = srcRef;
+      if (tgtRef) patch.targetRef = tgtRef;
+      this.model.update(el.id, { source: [], target: [], attrs: patch });
+      this.deferEnds(el.id, srcRef, tgtRef, node, 'ref/unresolved-connection-end', (r) => `Unresolved connection end '${r}'`);
     }
 
     // Body members (walked in document order → single-pass resolution).
@@ -1723,71 +2114,59 @@ class Mapper {
 
   /* ───────────────────────── specialization ────────────────────────────── */
 
-  private applySpecialization(
-    el: ElementRecord,
-    spec: Specialization,
-    scope: ElementId | null,
-  ): void {
+  private applySpecialization(el: ElementRecord, spec: Specialization): void {
     const op = normalizeSpecOp(spec.op);
-    const conjugated = spec.conjugated === true;
-    for (const rawRef of spec.types) {
-      const ref = rawRef;
-      const target = this.resolveRef(ref, scope);
-      // Attribute typing whose target is NOT in the model stays a plain
-      // `attrs.type` string (the value type — Real, String, … — is usually
-      // outside the loaded scope). When the type DOES resolve (e.g. a library
-      // usage typed by a loaded unit `LengthUnit`), a real FeatureTyping
-      // relationship is created — mirroring the library builder — so the
-      // serialize→parse round-trip reproduces that relationship element.
-      if (
-        op === ':' &&
-        !target &&
-        (el.eClass === 'AttributeUsage' || el.eClass === 'AttributeDefinition')
-      ) {
-        this.model.setAttrs(el.id, { type: ref });
-        if (conjugated) this.model.setAttrs(el.id, { conjugated: true });
-        continue;
-      }
-      if (!target) {
-        const diag = this.warn(
-          `Unresolved reference '${ref}'`,
-          spec,
-          'ref/unresolved-specialization',
-        );
-        if (op === ':') {
-          this.model.setAttrs(el.id, { typeRef: ref });
-          this.deferredSpecializationWarnings.push({
-            diagnostic: diag,
-            elementId: el.id,
-            attr: 'typeRef',
-          });
-        } else {
-          const key = op === ':>>' ? 'redefines' : op === '::>' ? 'references' : 'specializes';
-          const cur = (el.attrs[key] as string[] | undefined) ?? [];
-          this.model.setAttrs(el.id, { [key]: [...cur, ref] });
-        }
-        if (conjugated) this.model.setAttrs(el.id, { conjugated: true });
-        continue;
-      }
-      const relClass = relClassForOp(op, isDefinition(el.eClass));
-      this.create(relClass, {
-        ownerId: el.id,
-        source: [el.id],
-        target: [target.id],
-      });
-      if (conjugated) this.model.setAttrs(el.id, { conjugated: true });
+    if (spec.conjugated === true) this.model.setAttrs(el.id, { conjugated: true });
+    // RECORD, do not resolve. What a name denotes depends on the finished
+    // namespace — inherited members included — which does not exist until the
+    // whole file has been mapped. `resolveDeferredRefs` decides, in declaration
+    // order, once. (The scope is read there too, because error recovery may
+    // still move this declaration.)
+    for (const ref of spec.types) {
+      this.deferredSpecs.push({ elementId: el.id, op, ref, node: spec });
     }
   }
 }
 
-/** Specialization-family relationship metaclass for a canonical operator. */
-/** Node-level unresolved-specialization attr keys and their canonical operator. */
-const SPEC_ARRAY_KEYS: ReadonlyArray<readonly [string, string]> = [
-  ['specializes', ':>'],
-  ['redefines', ':>>'],
-  ['references', '::>'],
-];
+/** One `:`/`:>`/`:>>`/`::>` written in the source, awaiting resolution. */
+interface DeferredSpec {
+  elementId: ElementId;
+  /** Canonical operator: `:` | `:>` | `:>>` | `::>`. */
+  op: string;
+  /** The name as written. */
+  ref: string;
+  /** The declaration it was written in — for the diagnostic position. */
+  node: AstNode;
+  /** The relationship created for it, once bound (retargeted on re-decision). */
+  relId?: ElementId;
+  /** The element it currently denotes, once bound. */
+  targetId?: ElementId;
+}
 
+/** A warning that is only emitted if its reference is still unresolved at the end. */
+interface PendingWarning {
+  elementId: ElementId;
+  attr: string;
+  ref: string;
+  message: string;
+  code: string;
+  node: AstNode;
+  /** Retract when the attr no longer holds THIS ref (vs. merely being empty). */
+  retractOnRef: boolean;
+  /**
+   * Decide emission from what actually FAILED, rather than from `attrs[attr]`.
+   *
+   * The slot test is only sound when the slot is this warning's own. Several
+   * endpoint names share ONE slot — a multi-endpoint `dependency a, missing to
+   * b` keeps only `a` in `sourceRef`, and `part x : Gone1, Gone2;` overwrites
+   * `typeRef` — so the slot test named the endpoint that RESOLVED and stayed
+   * silent about the one that did not. Sites with a shared slot pass a
+   * predicate that re-asks the real question about THIS name.
+   */
+  survives?: () => boolean;
+}
+
+/** Specialization-family relationship metaclass for a canonical operator. */
 function relClassForOp(op: string, definitionOwner: boolean): string {
   if (op === ':') return 'FeatureTyping';
   if (op === ':>>') return 'Redefinition';
@@ -1991,7 +2370,21 @@ export function retractResolvedSpecializationWarnings(
   const stale = new Set<ParseDiagnostic>();
   for (const w of result.deferredSpecializationWarnings) {
     const el = model.get(w.elementId);
-    if (el && el.attrs[w.attr] === undefined) stale.add(w.diagnostic);
+    if (!el) continue;
+    const v = el.attrs[w.attr];
+    // Still unresolved while the attribute holds the name. An ARRAY attribute
+    // (`specializes`) holds several, so "the attribute is gone" would keep
+    // three warnings alive because one of the three names is still broken.
+    const held =
+      v !== undefined &&
+      (w.ref === undefined
+        ? true
+        : Array.isArray(v)
+          ? v.includes(w.ref)
+          : typeof v === 'string'
+            ? v === w.ref
+            : true);
+    if (!held) stale.add(w.diagnostic);
   }
   return stale.size === 0 ? result.diagnostics : result.diagnostics.filter((d) => !stale.has(d));
 }

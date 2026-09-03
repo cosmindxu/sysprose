@@ -57,6 +57,23 @@ export class Model {
    * comparing against this, and the endpoint index below rebuilds when it moves.
    */
   private _rev = 0;
+  /**
+   * Has any element carrying `attrs.isLibrary === true` ever entered this model?
+   *
+   * A MONOTONE flag, not a count. Every library lookup (`findLibraryType`, the
+   * implicit-base resolution behind `generalizationsWithImplicit`) is a scan or
+   * an index rebuild over the whole model, and during a PARSE the model is
+   * user-only — so the answer is always "no" and the work is always wasted.
+   * A rev-keyed cache cannot help there: the mapper bumps `rev` on every
+   * element it creates, so the scan would run once per element.
+   *
+   * Monotone is deliberate. Removing the library again leaves the flag set,
+   * which only costs a lookup that finds nothing — the conservative direction.
+   * A wrongly-cleared flag would instead make library types silently
+   * unresolvable, so the flag is only ever reset where the element map itself
+   * is rebuilt from scratch (`reset` / `resetPreserving`).
+   */
+  private _sawLibrary = false;
   /** Lazy endpoint indices (source id → edges, target id → edges), keyed by rev. */
   private _edgeIndexRev = -1;
   private _sourceIndex = new Map<ElementId, ElementRecord[]>();
@@ -69,6 +86,15 @@ export class Model {
   /** Current revision — increments on every add/update/remove/reparent/reset. */
   get rev(): number {
     return this._rev;
+  }
+
+  /**
+   * True once any standard-library element has been merged in. False means
+   * "there is nothing library-shaped to find here" — the cheap short-circuit
+   * for every library-wide lookup. See {@link _sawLibrary}.
+   */
+  get hasLibrary(): boolean {
+    return this._sawLibrary;
   }
 
   /* ──────────────────────────── Subscriptions ─────────────────────────── */
@@ -121,6 +147,7 @@ export class Model {
     };
     if (opts.source) el.source = [...opts.source];
     if (opts.target) el.target = [...opts.target];
+    if (el.attrs.isLibrary === true) this._sawLibrary = true;
     this.elements.set(id, el);
     this.indexChild(ownerId, id);
     this.emit({ type: 'add', id, element: el });
@@ -129,6 +156,7 @@ export class Model {
 
   /** Insert a pre-built record (used by deserialisation). */
   private insertRaw(el: ElementRecord): void {
+    if (el.attrs.isLibrary === true) this._sawLibrary = true;
     this.elements.set(el.id, el);
   }
 
@@ -351,6 +379,7 @@ export class Model {
     if (patch.declaredName !== undefined) el.declaredName = patch.declaredName;
     if (patch.declaredShortName !== undefined) el.declaredShortName = patch.declaredShortName;
     if (patch.attrs !== undefined) el.attrs = mergeAttrs(el.attrs, patch.attrs);
+    if (el.attrs.isLibrary === true) this._sawLibrary = true;
     if (patch.source !== undefined) el.source = [...patch.source];
     if (patch.target !== undefined) el.target = [...patch.target];
     this.emit({ type: 'update', id, element: el });
@@ -361,6 +390,7 @@ export class Model {
   setAttrs(id: ElementId, attrs: Record<string, AttrValue | undefined>): ElementRecord {
     const el = this.require(id);
     el.attrs = mergeAttrs(el.attrs, attrs);
+    if (el.attrs.isLibrary === true) this._sawLibrary = true;
     this.emit({ type: 'update', id, element: el });
     return el;
   }
@@ -497,6 +527,7 @@ export class Model {
     this.elements = new Map();
     this.childrenIndex = new Map();
     this.childrenIndex.set(null, []);
+    this._sawLibrary = false; // rebuilt from scratch below by `insertRaw`
     if (data) {
       for (const el of data.elements) this.insertRaw(structuredCloneSafe(el));
       this.rebuildIndex(data.rootIds);
@@ -546,6 +577,7 @@ export class Model {
     this.elements = new Map();
     this.childrenIndex = new Map();
     this.childrenIndex.set(null, []);
+    this._sawLibrary = false; // rebuilt from scratch below by `insertRaw`
     // Insert the restored user model FIRST, then the preserved library, and put
     // user roots ahead of library roots — matching the live boot order (user
     // sample first, library merged after) so the Explorer's root order does not

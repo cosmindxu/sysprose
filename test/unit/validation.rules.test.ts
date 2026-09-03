@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import type { SerializedModel } from '@core/index';
 import { validate, isValid, RULES, RULE_IDS, RULES_BY_ID } from '@validation/index';
+import { loadStandardLibrary } from '../../src/library/index';
 
 /** Run a single rule in isolation and return its diagnostics. */
 function runRule(model: Model, ruleId: string) {
@@ -302,6 +303,99 @@ describe('rule 4b — unresolved node-level specialization refs (finding H9)', (
       attrs: { specializes: [a.id], references: ['P::A'] },
     });
     expect(runRule(m, 'unresolved-type-ref')).toHaveLength(0);
+  });
+
+  it('positive: a reference resolving from the ELEMENT\'s own scope is fine', () => {
+    // The rule used to resolve only from the ROOT, so a name that is perfectly
+    // resolvable where it was written (an inherited member) was reported unless
+    // some library short name happened to match it.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const base = f.partDef('Base', p.id);
+    m.create('PartUsage', { declaredName: 'w', ownerId: base.id });
+    const car = f.partDef('Car', p.id);
+    m.create('Subclassification', { ownerId: car.id, source: [car.id], target: [base.id] });
+    m.create('PartUsage', { declaredName: 'w2', ownerId: car.id, attrs: { redefines: ['w'] } });
+    expect(runRule(m, 'unresolved-type-ref')).toHaveLength(0);
+  });
+
+  it('negative: a library FEATURE no longer masks a dangling redefinition', () => {
+    // `findLibraryType` matches the LAST SEGMENT against every library element,
+    // and the bundled library has a function parameter named `w`
+    // (`VectorFunctions::+::w`), so `:>> w` on a model with no `w` anywhere
+    // passed validation silently. A library feature is not the answer to a user
+    // reference; a bare library DEFINITION still is.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    loadStandardLibrary(m);
+    const p = f.pkg('P');
+    const car = f.partDef('Car', p.id);
+    m.create('PartUsage', { declaredName: 'w2', ownerId: car.id, attrs: { redefines: ['nope'] } });
+    m.create('PartUsage', { declaredName: 'w3', ownerId: car.id, attrs: { redefines: ['w'] } });
+    const diags = runRule(m, 'unresolved-type-ref');
+    expect(diags.map((d) => d.message).join('\n')).toContain('"w"');
+    expect(diags).toHaveLength(2);
+
+    // …while a bare library DEFINITION stays acceptable (recorded leniency).
+    m.create('PartUsage', { declaredName: 'w4', ownerId: car.id, attrs: { specializes: ['Part'] } });
+    expect(runRule(m, 'unresolved-type-ref')).toHaveLength(2);
+  });
+
+  it('positive: silent while the owning type\'s OWN general is unresolved', () => {
+    // The counterweight to the case above. Refusing a library feature unmasks a
+    // dangling `:>> w`, but only where the tool could have enumerated the
+    // members `w` might have named. With the supertype itself unbound it could
+    // not: `attribute def MyValue :> ScalarQuantityValue { attribute :>> num; }`
+    // reported `num` as an ERROR purely because it had already lost
+    // `ScalarQuantityValue` — 348 such errors in one library file, and the
+    // unresolved GENERAL is the finding worth reading.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const mine = f.partDef('MyValue', p.id);
+    m.setAttrs(mine.id, { specializes: ['ScalarQuantityValue'] });
+    m.create('PartUsage', { declaredName: 'n', ownerId: mine.id, attrs: { redefines: ['num'] } });
+    // Only the unresolved general itself.
+    const diags = runRule(m, 'unresolved-type-ref');
+    expect(diags.map((d) => d.message)).toEqual([
+      expect.stringContaining('"ScalarQuantityValue"'),
+    ]);
+
+    // Bind the general, and the dangling redefinition is reported again.
+    const real = f.partDef('ScalarQuantityValue', p.id);
+    m.setAttrs(mine.id, { specializes: undefined });
+    m.create('Subclassification', { ownerId: mine.id, source: [mine.id], target: [real.id] });
+    expect(runRule(m, 'unresolved-type-ref').map((d) => d.message)).toEqual([
+      expect.stringContaining('"num"'),
+    ]);
+  });
+
+  it('positive: an unresolved `attrs.type` on the owner is a hole too', () => {
+    // The library's own shape: `attribute yocto : UnitPrefix { :>> longName; }`
+    // where `UnitPrefix` is not in the bundled subset. An unresolved `:` on an
+    // Attribute* falls back to `attrs.type` and stays SILENT, so the scope test
+    // has to look there as well — checking `typeRef` alone reported 84 errors
+    // in `SIPrefixes.sysml` for redefinitions of members it could not see.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const yocto = f.attribute('yocto', p.id);
+    m.setAttrs(yocto.id, { type: 'UnitPrefix' });
+    m.create('ReferenceUsage', {
+      declaredName: 'longName',
+      ownerId: yocto.id,
+      attrs: { redefines: ['longName'] },
+    });
+    expect(runRule(m, 'unresolved-type-ref')).toEqual([]);
+
+    // A RESOLVED typing leaves `attrs.type` in place for the serializer, and
+    // must NOT be read as a hole — otherwise the rule silences itself.
+    const prefix = f.partDef('UnitPrefix', p.id);
+    m.create('FeatureTyping', { ownerId: yocto.id, source: [yocto.id], target: [prefix.id] });
+    expect(runRule(m, 'unresolved-type-ref').map((d) => d.message)).toEqual([
+      expect.stringContaining('"longName"'),
+    ]);
   });
 });
 

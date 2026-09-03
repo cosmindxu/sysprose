@@ -88,15 +88,18 @@ describe('library-resolve: plain feature typeRef (library + user forward referen
     const len = must(model, (e) => e.declaredName === 'len', 'the len feature');
     const sub = must(model, (e) => e.declaredName === 'sub', 'the sub feature');
 
-    // Both are unresolved at parse time (library not loaded; Q::Later is forward).
+    // `LengthValue` is unresolved at parse time — only the library has it. But
+    // `Q::Later` is an ordinary forward reference to something IN THIS FILE, and
+    // `parseModel` resolves those itself now: the binder is for library content,
+    // not for declaration order.
     expect(len.attrs.typeRef).toBe('LengthValue');
-    expect(sub.attrs.typeRef).toBe('Q::Later');
+    expect(sub.attrs.typeRef).toBeUndefined();
     expect(model.typesOf(len.id)).toHaveLength(0);
-    expect(model.typesOf(sub.id)).toHaveLength(0);
+    expect(model.qualifiedName(model.typesOf(sub.id)[0].id)).toBe('Q::Later');
 
     loadStandardLibrary(model);
     const count = resolveTypeReferences(model);
-    expect(count).toBe(2);
+    expect(count).toBe(1);
 
     // Library type bound + textual ref removed. In the FULL library `LengthValue`
     // is owned by the `ISQBase` package (and re-exported through `ISQ`), so the

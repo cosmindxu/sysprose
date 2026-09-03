@@ -20,20 +20,20 @@
  * SCOPE OF THIS IMPLEMENTATION. It walks OWNED members outward through the owner
  * chain — the outer loop of KerML "full resolution". Inherited and imported
  * members are the per-namespace concern of `resolveName` in
- * `src/semantics/resolve-names.ts`; the library binder (`src/library/resolve.ts`
- * `resolveUserType`) composes the two: `resolveName` at each scope, walking
- * outward, then this owned-only walk, then the library. That composition became
- * possible once `findLibraryType` (below) moved here from the library layer,
- * removing the semantics→library edge that would otherwise have made
- * library→semantics a cycle.
+ * `src/semantics/resolve-names.ts`; `resolveFullName` in
+ * `src/semantics/bind.ts` composes the two: `resolveName` at each scope,
+ * walking outward, then this owned-only walk, then the library. That
+ * composition became possible once `findLibraryType` (below) moved here from
+ * the library layer, removing the semantics→library edge that would otherwise
+ * have made library→semantics a cycle.
  *
- * KNOWN SPLIT, recorded on purpose: the textual mapper resolves BACKWARD
- * references at parse time with its own owned-only walk (`resolveRefIn`), so a
- * name declared both in a supertype and in an outer scope binds to the OUTER one
- * when written after its declaration and to the INHERITED one when written
- * before (the binder's spec-correct order). The last such split between two
- * resolvers produced the `SI::byte` mis-binding; this one is documented until
- * the mapper is taught to defer.
+ * THE SPLIT IS CLOSED. The textual mapper used to resolve BACKWARD references
+ * at parse time with its own owned-only walk, so a name declared both in a
+ * supertype and in an outer scope bound to the OUTER one when written after its
+ * declaration and to the INHERITED one when written before. `parseModel` now
+ * defers every reference to a single resolution point that calls
+ * `resolveFullName`, so declaration order no longer decides which element a
+ * name denotes.
  */
 
 import type { ElementId, ElementRecord } from './metamodel';
@@ -131,6 +131,12 @@ export function resolveTypeInScopeChain(
 export function findLibraryType(model: Model, name: string): ElementRecord | undefined {
   const query = name.trim();
   if (query === '') return undefined;
+  // No library merged yet ⇒ nothing to find. Worth its own line because this
+  // runs for every unresolved reference during a PARSE, where the answer is
+  // always "no" and both steps below are whole-model work (`resolveQualifiedName`
+  // walks the root set; the name index rebuilds on every revision, and the
+  // mapper bumps the revision per element it creates).
+  if (!model.hasLibrary) return undefined;
 
   // 1. Exact qualified-name match via strict containment (fast).
   const exact = model.resolveQualifiedName(query);

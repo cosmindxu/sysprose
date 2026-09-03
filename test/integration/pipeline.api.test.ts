@@ -113,16 +113,18 @@ describe('pipeline: Parse → API analytics', () => {
     // Metrics exclude implicit connector-endpoint features + what they own, so
     // totalElements is below the raw model.size (which still counts internals).
     expect(metrics.totalElements).toBeLessThan(model.size);
-    // 44, not the historical 42: examples/vehicle.sysml writes a three-step
-    // succession chain (`first start then accelerate; then cruise; then stop;`)
-    // and the mapper used to drop the two bare `then` statements SILENTLY, so
-    // the example's own action flow was two links short of what it says. Fixed
-    // 2026-09-02; the two recovered Successions are the whole difference.
-    expect(metrics.totalElements).toBe(44);
+    // 50, not the historical 44: the example's six FORWARD typings (`in port
+    // fuelIn : FuelPort;` written before `port def FuelPort;`) used to stay
+    // textual `attrs.typeRef` strings until the library binder ran, so a
+    // library-free parse produced no relationship for them at all. `parseModel`
+    // resolves them itself now — declaration order stopped deciding what a
+    // model contains. (44 was itself 42 plus the two bare `then` successions
+    // the mapper used to drop silently, fixed 2026-09-02.)
+    expect(metrics.totalElements).toBe(50);
     expect(metrics.rootCount).toBe(1);
-    // FeatureTyping x2 + Satisfy x1 + Succession x3 (the implicit Redefinitions
+    // FeatureTyping x8 + Satisfy x1 + Succession x3 (the implicit Redefinitions
     // are owned by implicit features, so they are excluded from the census).
-    expect(metrics.relationshipCount).toBe(6);
+    expect(metrics.relationshipCount).toBe(12);
     expect(metrics.nodeCount).toBe(metrics.totalElements - metrics.relationshipCount);
     // Deepest COUNTABLE element: VehicleModel > vehicle > engine > fuelOut = 4
     // (the implicit endpoints/Redefinitions that reached depth 5 are excluded).

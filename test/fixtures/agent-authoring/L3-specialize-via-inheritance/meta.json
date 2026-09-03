@@ -1,0 +1,5 @@
+{
+  "level": "L3",
+  "title": "a `:>` target reachable only through inheritance",
+  "note": "FIXED 2026-09-03 (I4). `Inner` is a member of the supertype `Base`. Only `:` typings were ever re-resolved after the parse, so a `:>` whose target was inherited stayed unresolved forever and reported an error on a valid model. Every reference kind now goes through the same resolver."
+}

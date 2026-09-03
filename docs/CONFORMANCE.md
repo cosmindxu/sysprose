@@ -99,6 +99,22 @@ malformed documents (missing `elements`, missing `@id`, missing `@type`) and
   payload to copy. Known gap: a library long name beyond per/squared/cubed
   (`… second to the power minus 3 …`) does not resolve — the diagnostic hint
   teaches the symbol form.
+- **Name resolution follows KerML §8.2.3.5, once.** One resolver
+  (`src/semantics/bind.ts` `resolveFullName`) answers every textual reference,
+  and `parseModel` calls it at a single point after the whole file is mapped:
+  per namespace from the referencing scope outward, the local resolution of
+  §8.2.3.5.3 (owned + alias, then INHERITED, then imported members), then root
+  imports, then a root-anchored qualified name. Resolution is over the finished
+  namespace, so **declaration order is not significant**: a name declared both
+  in a supertype and in an enclosing namespace denotes the inherited one
+  wherever it is written. `:>>` uses the §8.2.3.5.1 rule instead — the general
+  types of the owning type are the local namespaces, tried before ordinary
+  resolution, with the redefining feature excluded throughout. Two deliberate
+  departures, both recorded in `docs/AGENT-AUTHORING-CAMPAIGN.md`: a named
+  RELATIONSHIP element is reachable by name through a containment fallback
+  (`flow f;` then `satisfy R by f;`), which the spec's Namespace membership does
+  not cover; and a bare library definition (`:> Part`) is accepted without an
+  import.
 - The parser also **rejects** non-SysML rather than accepting anything: `!!! this
   is not sysml at all !!!` produces 6 parse errors, `package Broken { part def ;;;
   <<<not sysml>>> }` produces 2, and an unterminated body produces 1. (An earlier

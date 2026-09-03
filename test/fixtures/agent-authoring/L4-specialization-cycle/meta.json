@@ -1,4 +1,5 @@
 {
   "level": "L4",
-  "title": "two definitions specializing each other"
+  "title": "two definitions specializing each other",
+  "note": "The `ref/unresolved-specialization` row at 2:16 was removed on 2026-09-03 (I4): `part def A :> B;` is a FORWARD reference that `parseModel` resolves, and the warning was only ever there because it was written before resolution happened. The two cycle errors \u2014 the actual defect \u2014 are unchanged."
 }

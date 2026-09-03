@@ -1,0 +1,15 @@
+{
+  "level": "L3",
+  "title": "a forward `:>` leaves no stale unresolved-reference warning",
+  "note": "FIXED 2026-09-03 (I4). The specialization DID bind, but the warning was written at the declaration before resolution had happened and only the `:` typing path ever retracted one \u2014 so `--strict` failed a perfectly valid file. Warnings are emitted AFTER resolution now, so only a genuinely unresolvable name gets one (see L3-unresolved-specialization, the negative control).",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 4,
+    "strictWarnings": true
+  }
+}

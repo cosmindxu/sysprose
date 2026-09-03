@@ -31,6 +31,12 @@ export {
 } from './featuring';
 export { resolveName, resolveQualifiedNameFull } from './resolve-names';
 export {
+  resolveFullName,
+  resolveRedefinedFeature,
+  resolveImportTargets,
+  type ResolveFullNameOptions,
+} from './bind';
+export {
   parseExpr,
   evaluate,
   type ExprNode,

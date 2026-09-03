@@ -1,0 +1,15 @@
+{
+  "level": "L3",
+  "title": "a feature redefining the inherited feature of the same name",
+  "note": "FIXED 2026-09-03 (I4). KerML \u00a78.2.3.5.1 resolves a redefinition against the GENERALS of the owning type, not by ordinary name resolution \u2014 which would answer with the redefining feature itself. `part w :>> w;` used to build a Redefinition from `P::Car::w` to itself; it now targets `P::Base::w`.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 7,
+    "strictWarnings": true
+  }
+}

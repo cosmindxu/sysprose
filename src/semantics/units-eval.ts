@@ -981,7 +981,7 @@ function quantityScopeFor(
   memo: DerivationMemo,
 ): QScope {
   const ids = new Map<string, ElementId>();
-  collectQuantityIds(model, contextId, '', ids, new Set());
+  collectQuantityIds(model, contextId, '', ids, new Set(), new Set());
   return (name: string) => {
     const id = ids.get(name);
     if (id === undefined) return undefined;
@@ -1023,10 +1023,22 @@ function collectQuantityIds(
   prefix: string,
   ids: Map<string, ElementId>,
   visited: Set<string>,
+  onPath: Set<ElementId>,
 ): void {
+  // TWO guards, because they answer different questions. `onPath` is the CYCLE
+  // guard and must be keyed on the owner ALONE: a feature whose type is one of
+  // its own owners (`item def Person { timeslice asPresident : Person; }`)
+  // generates an unbounded name tower `asPresident.asPresident…`, and a key that
+  // carries the prefix never repeats, so it can never see the cycle — it
+  // recursed until the stack died. `visited` is only a work bound for a diamond
+  // reached twice at the SAME prefix, so it keeps the prefix in its key: two
+  // sibling features of one type (`part a : T; part b : T;`) are different
+  // scopes and both must be walked.
+  if (onPath.has(ownerId)) return;
   const guardKey = `${prefix} ${ownerId}`;
   if (visited.has(guardKey)) return;
   visited.add(guardKey);
+  onPath.add(ownerId);
 
   for (const feat of effectiveFeatures(model, ownerId)) {
     const name = feat.declaredName;
@@ -1037,9 +1049,11 @@ function collectQuantityIds(
       if (!ids.has(name)) ids.set(name, feat.id); // bare-name convenience
     }
     for (const type of model.typesOf(feat.id)) {
-      collectQuantityIds(model, type.id, full, ids, visited);
+      collectQuantityIds(model, type.id, full, ids, visited, onPath);
     }
   }
+
+  onPath.delete(ownerId);
 }
 
 /**

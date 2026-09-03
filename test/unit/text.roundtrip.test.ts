@@ -577,6 +577,85 @@ describe('round-trip — specialization relationships built from the model', () 
   });
 });
 
+describe('serializer — the reference form the resolver agrees with', () => {
+  it('re-emits the SIMPLE name for a binding reached by import or inheritance', () => {
+    // `refTo` used to test simple-name sufficiency with an owned-only walk that
+    // knew nothing of imports or inheritance, so it fell back to a qualified
+    // path for names that resolve perfectly well on their own — text nobody
+    // wrote. It asks the resolver now, so "the simple name is enough" means
+    // exactly "re-parsing it binds the same element".
+    const imported = parseModel(
+      `package Lib { part def Widget; }\npackage Use { import Lib::*; part w : Widget; }`,
+    ).model;
+    expect(serializeModel(imported)).toContain('part w : Widget;');
+
+    const inherited = parseModel(
+      `package P { part def D { part a; } part def E :> D { part b :>> a; } }`,
+    ).model;
+    expect(serializeModel(inherited)).toContain('part b :>> a;');
+  });
+
+  it('tests a `:>>` with the rule the RE-PARSE uses, not full resolution', () => {
+    // `E` has two direct generals. Full resolution answers `a` with `D3::a`
+    // (nearest general first), the §8.2.3.5.1 redefinition rule with `D::a`
+    // (the FIRST direct general, through its own supertype). Testing simple-name
+    // sufficiency with the wrong one emitted a bare `a` that re-parsed to the
+    // OTHER element: a save/reload silently retargeted the Redefinition.
+    const src = `package P {
+  part def D { part a; }
+  part def D2 :> D;
+  part def D3 { part a; }
+  part def E :> D2, D3 { part b :>> D3::a; }
+}`;
+    const m1 = parseModel(src).model;
+    const bound = (m: Model): string => {
+      const b = m.all().find((e) => e.declaredName === 'b')!;
+      const red = m.children(b.id).find((c) => c.eClass === 'Redefinition')!;
+      return m.qualifiedName((red.target ?? [])[0]);
+    };
+    expect(bound(m1)).toBe('P::D3::a');
+    const t1 = serializeModel(m1);
+    const m2 = parseModel(t1).model;
+    expect(bound(m2)).toBe('P::D3::a');
+    expect(serializeModel(m2)).toBe(t1);
+  });
+
+  it('re-emits `part w :>> w;` as the author wrote it', () => {
+    // The canonical redefinition: the simple name IS enough, because the
+    // redefinition rule excludes the redefining feature that shadows it.
+    const model = parseModel(
+      `package P { part def Base { part w; } part def Car :> Base { part w :>> w; } }`,
+    ).model;
+    expect(serializeModel(model)).toContain('part w :>> w;');
+  });
+
+  it('the `redefinition …` STATEMENT binds like the inline form', () => {
+    // Same construct, two spellings. The statement used to resolve its target
+    // with plain full resolution, so it bound to the redefining feature itself
+    // and reported `specialization-cycle` — an error that vanished after one
+    // save, because the serialized text is the inline form.
+    const { model, diagnostics } = parseModel(
+      `package P { part def Base { part w; } part def Car :> Base { part w; redefinition w redefines w; } }`,
+    );
+    expect(diagnostics.map((d) => d.code ?? d.message)).toEqual([]);
+    const red = model.all().find((e) => e.eClass === 'Redefinition')!;
+    expect(model.qualifiedName((red.target ?? [])[0])).toBe('P::Base::w');
+    expect(model.qualifiedName((red.source ?? [])[0])).toBe('P::Car::w');
+  });
+
+  it('still qualifies a reference the simple name would not reach', () => {
+    const model = parseModel(
+      `package P { part def A { part def Inner; } part def B { part i : P::A::Inner; } }`,
+    ).model;
+    const text = serializeModel(model);
+    expect(text).toContain('A::Inner');
+    // …and the qualified form re-parses to the same element.
+    const again = parseModel(text).model;
+    const i = again.all().find((e) => e.declaredName === 'i')!;
+    expect(again.qualifiedName(again.typesOf(i.id)[0].id)).toBe('P::A::Inner');
+  });
+});
+
 describe('round-trip — relationship statements (C9-residual sweep)', () => {
   function count(model: Model, eClass: string): number {
     return model.all().filter((e) => e.eClass === eClass).length;
@@ -631,10 +710,11 @@ describe('round-trip — relationship statements (C9-residual sweep)', () => {
     roundTrip(model);
   });
 
-  it('a redefinition statement with an inherited (unresolved) target survives round-trip', () => {
-    // `a` lives on the supertype D, so the plain resolver leaves the target
-    // textual. Before the fix the serializer silently DROPPED the Redefinition
-    // (not inlineable, filtered from body members).
+  it('a redefinition statement whose target is INHERITED binds and inlines', () => {
+    // `a` lives on the supertype D. The parse-time resolver used to know
+    // nothing of inherited members, so the target stayed textual and the
+    // relationship could not be inlined; it now binds to `D::a` and re-emits as
+    // the `:>>` the author could have written.
     const { model } = parseModel(`
       package P {
         part def D { part a; }
@@ -645,13 +725,53 @@ describe('round-trip — relationship statements (C9-residual sweep)', () => {
       }
     `);
     expect(count(model, 'Redefinition')).toBe(1);
+    const red = model.all().find((e) => e.eClass === 'Redefinition')!;
+    expect(model.qualifiedName((red.target ?? [])[0])).toBe('P::D::a');
     const text = serializeModel(model);
-    expect(text).toContain('redefinition');
+    expect(text).toContain('part b :>> a;');
     const { model: m2, diagnostics } = parseModel(text);
     expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
     expect(count(m2, 'Redefinition')).toBe(1);
     // Fixpoint: a second round-trip reproduces the same text.
     expect(serializeModel(m2)).toBe(text);
+  });
+
+  it('a redefinition statement with an ABSENT target survives round-trip', () => {
+    // The statement form has to survive when the target genuinely does not
+    // exist: the serializer used to DROP the Redefinition (not inlineable,
+    // filtered from body members), losing the author's text outright.
+    const { model } = parseModel(`
+      package P {
+        part def D { part a; }
+        part def E :> D {
+          part b;
+          redefinition b redefines Nope;
+        }
+      }
+    `);
+    expect(count(model, 'Redefinition')).toBe(1);
+    const text = serializeModel(model);
+    expect(text).toContain('redefinition');
+    expect(text).toContain('Nope');
+    const { model: m2, diagnostics } = parseModel(text);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(count(m2, 'Redefinition')).toBe(1);
+    expect(serializeModel(m2)).toBe(text);
+  });
+
+  it('an allocation with an ABSENT endpoint keeps the name', () => {
+    // `mapAllocate` now records an unresolved end as a NAME instead of dropping
+    // it, so the statement survives instead of re-emitting as a half line.
+    const { model, diagnostics } = parseModel(`package P {
+      part a;
+      allocate a to Missing;
+    }`);
+    expect(diagnostics.map((d) => d.code)).toEqual(['ref/unresolved-allocation-end']);
+    const alloc = model.all().find((e) => e.eClass === 'Allocation')!;
+    expect(alloc.attrs.targetRef).toBe('Missing');
+    const text = serializeModel(model);
+    expect(text).toContain('allocate a to Missing;');
+    expect(serializeModel(parseModel(text).model)).toBe(text);
   });
 
   it('a typing statement with an unresolved target survives round-trip', () => {
@@ -883,11 +1003,18 @@ describe('round-trip — H17 attributes survive serialization (wave 1)', () => {
     expect(missSub2.attrs.targetRef).toBe('Nope');
     expect(missSub2.target).toEqual([]);
 
-    // typeRef stays deferred to the library-aware resolveTypeReferences pass.
+    // A forward typing to something IN THIS FILE is resolved by parseModel:
+    // `resolveTypeReferences` is for LIBRARY content, not for declaration
+    // order. (It used to be left textual, which is what made the same name mean
+    // different things depending on where it was written.)
     const typed = reparse(`package T { part p : Later; part def Later; }`);
     const p = typed.all().find((e) => e.declaredName === 'p')!;
-    // A forward typing is NOT resolved by this pass (owned by resolveTypeReferences).
-    expect(p.attrs.type ?? p.attrs.typeRef).toBeDefined();
+    expect(p.attrs.type ?? p.attrs.typeRef).toBeUndefined();
+    expect(typed.qualifiedName(typed.typesOf(p.id)[0].id)).toBe('T::Later');
+    // A typing whose target is genuinely absent still keeps its textual ref.
+    const missTyped = parseModel(`package T { part p : Nope; }`).model;
+    const mp = missTyped.all().find((e) => e.declaredName === 'p')!;
+    expect(mp.attrs.typeRef).toBe('Nope');
   });
 
   it('preserves multi-client/supplier dependencies and flow payload', () => {

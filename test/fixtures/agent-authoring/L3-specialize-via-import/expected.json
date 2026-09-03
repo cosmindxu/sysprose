@@ -1,0 +1,16 @@
+{
+  "level": "L3",
+  "title": "a `:>` target reachable only through `import Lib::*;`",
+  "note": "FIXED 2026-09-03 (I4). The import companion of L3-specialize-via-inheritance: imports are bound inside `parseModel` now (library-free), so a specialization target reached through one resolves without the standard library being loaded at all.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "Lib",
+      "Use"
+    ],
+    "minElements": 6,
+    "strictWarnings": true
+  }
+}

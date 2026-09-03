@@ -66,7 +66,7 @@ function scopeWith(model: Model, contextId: ElementId, inFlight: Set<ElementId>)
  */
 export function featureIdsFor(model: Model, contextId: ElementId): Map<string, ElementId> {
   const ids = new Map<string, ElementId>();
-  collectIds(model, contextId, '', ids, new Set());
+  collectIds(model, contextId, '', ids, new Set(), new Set());
   return ids;
 }
 
@@ -76,10 +76,22 @@ function collectIds(
   prefix: string,
   ids: Map<string, ElementId>,
   visited: Set<string>,
+  onPath: Set<ElementId>,
 ): void {
+  // TWO guards, because they answer different questions. `onPath` is the CYCLE
+  // guard and must be keyed on the owner ALONE: a feature whose type is one of
+  // its own owners (`item def Person { timeslice asPresident : Person; }`)
+  // generates an unbounded name tower `asPresident.asPresident…`, and a key
+  // that carries the prefix never repeats, so it cannot see the cycle — it
+  // recursed until the stack died. `visited` is only a work bound for a
+  // diamond reached twice at the SAME prefix, so it keeps the prefix in its
+  // key: two sibling features of one type (`part a : T; part b : T;`) are
+  // different scopes and both must be walked.
+  if (onPath.has(ownerId)) return;
   const guardKey = `${prefix} ${ownerId}`;
   if (visited.has(guardKey)) return;
   visited.add(guardKey);
+  onPath.add(ownerId);
 
   for (const feat of effectiveFeatures(model, ownerId)) {
     const name = feat.declaredName;
@@ -91,9 +103,11 @@ function collectIds(
     }
     // Expose nested features via the feature's declared type(s).
     for (const type of model.typesOf(feat.id)) {
-      collectIds(model, type.id, full, ids, visited);
+      collectIds(model, type.id, full, ids, visited, onPath);
     }
   }
+
+  onPath.delete(ownerId);
 }
 
 /**

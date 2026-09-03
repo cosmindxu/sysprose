@@ -1,0 +1,5 @@
+{
+  "level": "L3",
+  "title": "a connector end may name a feature of an IMPLICIT library base",
+  "note": "PINNED 2026-09-03 (I4 review), not a fix. A bare `part def` implicitly specialises Parts::Part / Items::Item / Objects::Object / Occurrences::Occurrence / Base::Anything, so their features (`self`, `start`, `done`, `shape`, `subparts`, …) are inherited members and the one resolver finds them like any other. A connector end spelled `done` therefore resolves and materialises a per-usage mirror, where the pre-C6 chain resolver — which consulted explicit typings only — reported it unresolved. Recorded because it changes what `--strict` accepts: a typo that collides with one of those names is no longer caught. Making the connector resolver alone ignore implicit bases would put it back out of step with every other resolver in the tool, which is the split this commit exists to end."
+}

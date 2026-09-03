@@ -69,5 +69,12 @@ export interface ParseResult {
     diagnostic: ParseDiagnostic;
     elementId: ElementId;
     attr: string;
+    /**
+     * The name that must still be in `attr` for the warning to stand. Set for
+     * attributes that can hold SEVERAL unresolved names (`specializes`), where
+     * "the attribute is gone" is too coarse a test; omitted for single slots
+     * that a second unresolved reference could overwrite.
+     */
+    ref?: string;
   }>;
 }

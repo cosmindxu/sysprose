@@ -1,0 +1,5 @@
+{
+  "level": "L3",
+  "title": "a feature typed by an alias resolves to the aliased element",
+  "note": "FIXED 2026-09-03 (I4). The parse-time resolver matched the alias `Membership` RELATIONSHIP itself rather than dereferencing it, so `p` was typed by a non-type and validation reported `feature-typing-non-type`. Aliases are bound before anything resolves through them now, and name resolution reads a textual alias's declared name."
+}

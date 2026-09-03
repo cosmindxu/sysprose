@@ -1,0 +1,28 @@
+{
+  "level": "L3",
+  "title": "a redefinition of a feature that does not exist is reported",
+  "note": "FIXED 2026-09-03 (I4). `w` is not a member of `Base` (that is `wheel`). The rule used to accept any reference the bundled library could match by LAST SEGMENT, and the library has a function parameter named `w` (`VectorFunctions::+::w`), so this dangling redefinition passed validation silently. A library FEATURE no longer counts as the answer to a user reference; a bare library DEFINITION (`:> Part`) still does.",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "validation/unresolved-type-ref",
+      "severity": "error",
+      "line": 6,
+      "column": 9
+    },
+    {
+      "code": "ref/unresolved-specialization",
+      "severity": "warning",
+      "line": 6,
+      "column": 17
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 6,
+    "strictWarnings": true
+  }
+}

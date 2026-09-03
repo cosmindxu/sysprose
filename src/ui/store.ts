@@ -81,9 +81,11 @@ import {
 } from '../collab';
 import {
   parseModel,
+  retractResolvedSpecializationWarnings,
   serializeElement,
   resolveConnectorFeatureChains,
   type ParseDiagnostic,
+  type ParseResult,
 } from '@text/index';
 // Import the JSON-free resolver directly; the multi-MB full library is loaded
 // asynchronously via a dynamic import (see loadStandardLibraryAsync) so it is
@@ -1873,6 +1875,7 @@ export const useAppStore = create<AppState>((set, get) => {
       cancelRecompute();
       const { model, textBuffer } = get();
       const result = parseModel(textBuffer);
+      lastParse = result;
       pushUndo();
       // Replace the live model's contents in place (keeps api/server bound).
       withCommandMutation(() => model.reset(result.model.toJSON()));
@@ -1929,6 +1932,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!data) throw new Error(`No such project: ${name}`);
       const { model } = get();
       pushUndo();
+      forgetParseResult(); // the loaded model did not come from the open text
       model.reset(data);
       set((s) => ({
         projectName: name,
@@ -1955,6 +1959,7 @@ export const useAppStore = create<AppState>((set, get) => {
       cancelRecompute();
       const { model } = get();
       const result = ioImportModel(text, fmt);
+      forgetParseResult(); // an import carries no retractable parse result
       pushUndo();
       withCommandMutation(() => model.reset(result.model.toJSON()));
       const parseDiags = (result.diagnostics ?? []).map(parseDiagToDiagnostic);
@@ -2205,6 +2210,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (get().simSession) get().simStop(); // switching branches replaces the model
       cancelRecompute();
       pushUndo();
+      forgetParseResult(); // the branch head did not come from the open text
       withCommandMutation(() =>
         model.reset(api.repository.getModelAtCommit(branch.headCommitId).toJSON()),
       );
@@ -2328,6 +2334,53 @@ useAppStore.subscribe((state) => {
 /* ─────────────────────── Asynchronous standard-library load ──────────────── */
 
 /**
+ * The most recent `parseModel` result, kept so its warnings can be RETRACTED
+ * once the library binder settles. Null whenever the live model did not come
+ * from parsing text (an import, a loaded project).
+ */
+let lastParse: ParseResult | null = null;
+
+/**
+ * Forget the retained parse result — call it from EVERY path that replaces the
+ * live model without parsing the open text.
+ *
+ * `lastParse` outlives one `applyText`, and `refreshAfterLibraryLoad` runs a
+ * few hundred milliseconds later, so a load/branch switch in between made the
+ * refresh rebuild the Problems panel from the PREVIOUS document: rows with the
+ * old file's line numbers, about text that is no longer open. Retraction could
+ * not drop them either — its elements are gone from the model, and a warning
+ * whose element it cannot find is kept, not retracted. Hence a named call
+ * rather than an assignment: a future `model.reset` + `loadStandardLibraryAsync`
+ * pair has something to copy.
+ */
+function forgetParseResult(): void {
+  lastParse = null;
+}
+
+/**
+ * The parse rows to keep after the library binder has run.
+ *
+ * Carrying them over verbatim left a permanent, FALSE "Unresolved reference"
+ * in the Problems panel for every reference only the standard library can
+ * resolve: the warning was true when the parse published it and untrue a few
+ * hundred milliseconds later, and nothing took it back. `checkText` already
+ * retracted those; the panel did not, so the app disagreed with its own CLI.
+ * Retraction needs the parse RESULT (which reference each warning belongs to),
+ * not the widened diagnostics, so the last one is kept — and when there is none
+ * (an import, a loaded project) the rows are carried over as before.
+ */
+function retainedParseRows(current: Diagnostic[], model: Model): Diagnostic[] {
+  if (!lastParse) return current.filter((d) => d.ruleId === 'parse');
+  const kept = new Set(retractResolvedSpecializationWarnings(model, lastParse));
+  // Widen with the ORIGINAL index so a retracted row does not renumber the ids
+  // the Problems panel is keyed on.
+  return lastParse.diagnostics
+    .map((d, i) => ({ diag: d, row: parseDiagToDiagnostic(d, i) }))
+    .filter(({ diag }) => kept.has(diag))
+    .map(({ row }) => row);
+}
+
+/**
  * Refresh derived UI state after the library has been merged/bound.
  *
  * PARSE diagnostics are carried over. `applyText` publishes the parser's errors
@@ -2342,7 +2395,7 @@ useAppStore.subscribe((state) => {
 function refreshAfterLibraryLoad(): void {
   const { model } = useAppStore.getState();
   useAppStore.setState((s) => ({
-    diagnostics: [...s.diagnostics.filter((d) => d.ruleId === 'parse'), ...safeValidate(model)],
+    diagnostics: [...retainedParseRows(s.diagnostics, model), ...safeValidate(model)],
     textBuffer: safeSerialize(model),
     textDirty: false,
     rev: s.rev + 1,

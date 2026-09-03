@@ -1,0 +1,15 @@
+{
+  "level": "L3",
+  "title": "the same shadowing answer when the outer name is declared LAST",
+  "note": "FIXED 2026-09-03 (I4). The twin of L3-inherited-shadows-outer-backward with the outer `part def W;` moved to the end. The two used to disagree \u2014 the parser bound the outer `W` when it had already been seen and the library binder bound the inherited one otherwise \u2014 so the SAME text meant two different things. Declaration order is not significant in SysML v2; both files must answer `P::Base::W`.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 8,
+    "strictWarnings": true
+  }
+}

@@ -116,11 +116,23 @@ function resolveOwned(
     if (matchesOwnName(child, name)) return child;
   }
   // Second pass: alias memberships (a Membership relationship re-exposing an
-  // element under `attrs.memberName`).
+  // element under `attrs.memberName` — or, for an alias the TEXTUAL mapper
+  // built, under its own `declaredName`/`declaredShortName`).
+  //
+  // Two producers write aliases and they name them differently. The library
+  // converter writes `attrs.memberName` (all 268 Memberships in stdlib.json
+  // carry it, none carries a declaredName), while `alias A for T;` in source
+  // becomes a Membership whose declaredName is `A`. Keying only on
+  // `memberName` made every textual alias invisible to name resolution, so
+  // `part p : A` bound to the Membership RELATIONSHIP itself through the
+  // containment fallback and validation then reported a feature typed by a
+  // non-type. The declared name is consulted only when there is no
+  // `memberName`, so library aliases keep their single exposed name.
   for (const child of children) {
     if (child.eClass !== 'Membership') continue;
     if (publicOnly && !isPublic(child)) continue;
-    if (aliasNameOf(child) !== name) continue;
+    const alias = aliasNameOf(child);
+    if (alias !== undefined ? alias !== name : !matchesOwnName(child, name)) continue;
     const targetId = (child.target ?? [])[0];
     const target = targetId ? model.get(targetId) : undefined;
     if (target) return target;

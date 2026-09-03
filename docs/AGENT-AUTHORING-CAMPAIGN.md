@@ -647,6 +647,99 @@ overshoot it had always tolerated. Pinned by `semantics.solver-units.test.ts`
 and `uav-example.test.ts`, which runs the shipped example through both
 surfaces.
 
+**One resolver, and declaration order stopped deciding what a name means.**
+Two resolvers used to own different halves of reference binding. The textual
+mapper resolved BACKWARD references while it walked the AST, with an owned-only
+scope walk; the library binder resolved the FORWARD ones afterwards with the
+spec's rule (per namespace: owned, inherited, imported members, then outward).
+Whichever ran first won, and they disagreed — so in `part def Car :> Base { part
+w1 : W; }` with a `W` in both `Base` and the enclosing package, `w1` was typed
+by the OUTER `W` when that was declared first and by the inherited one when it
+was declared last. The same text, two models. KerML v1.0 §8.2.3.5.3 settles it:
+an inherited Membership IS the local resolution, so the inherited answer is
+right in both orders.
+
+`parseModel` now records every reference as a NAME and resolves them all at one
+point, after the whole file is mapped, with the shared `resolveFullName`
+(`src/semantics/bind.ts`). Eight things follow, each with a fixture:
+
+1. `L3-inherited-shadows-outer-backward` / `-forward` — the witness itself,
+   written both ways round, answering `P::Base::W` in both.
+2. `L3-transitive-supertype-shadow` — the specialization family is bound to a
+   FIXPOINT before any typing is decided, and a reference whose scope chain
+   gains a general in a later round is re-decided, so `Car :> Base :> Grand`
+   reaches `Grand`'s member even though `Base :> Grand` was itself forward.
+3. `L3-specialize-via-inheritance` and `L3-specialize-via-import` — only `:`
+   typings were ever re-resolved after the parse, so a `:>` whose target was
+   inherited or imported reported an error on a valid model, forever.
+4. `L3-redefine-inherited` — KerML §8.2.3.5.1 gives a redefinition its own rule
+   (the generals of the owning type first). `part w :>> w;` used to build a
+   Redefinition from a feature to ITSELF.
+5. `L3-unresolved-redefinition` — the mirror of (4): `unresolved-type-ref`
+   resolves from the element's own scope now, and no longer accepts a library
+   FEATURE matched by last segment, so a dangling `:>> w` stops being masked by
+   the library's `VectorFunctions::+::w`.
+6. `L3-alias-as-type` — aliases are bound before anything resolves through them,
+   so `part p : A;` reaches what `alias A for Real2;` names instead of the alias
+   relationship itself.
+7. `L3-forward-specialization-strict` — warnings are emitted AFTER resolution,
+   so a forward `:>` or `alias` no longer leaves a stale "Unresolved reference"
+   that made `--strict` fail a valid file. `L3-unresolved-specialization` is the
+   negative control: an absent target still warns.
+8. `L3-connect-inherited-end` — a connector end takes the inherited feature over
+   an outer one of the same name. `L3-connect-imported-end` is its counterpart:
+   an end reached through `import Lib::*;` binds to the imported feature
+   DIRECTLY. Mirroring exists to stop every usage of one definition sharing a
+   type-owned endpoint; a package inherits nothing, so there is no prototype to
+   mirror there, and mirroring one fabricated an implicit feature and bound the
+   connector to the tool's own invention.
+9. `L3-dependency-end-missing` — a multi-endpoint `dependency a, MissingX to b;`
+   names the endpoint that is actually missing. The warning is deferred until
+   the fixpoint has run, and several endpoint names share one `sourceRef` slot,
+   so deciding survival from the slot reported the endpoint that RESOLVED.
+10. `L4-self-typed-feature` — `timeslice asPresident : Person;` inside `Person`
+   is ordinary input once a `:>> p` binds, and the value-scope name collectors
+   walked its unbounded `asPresident.asPresident…` tower until the stack died,
+   losing every validation finding behind an `import/internal-error`.
+
+Fixture goldens compare diagnostics, `ok` and the element/root invariants; they
+do not assert WHICH element a name bound to, so the shadowing cases above are
+pinned at that level by `text.resolution.test.ts` rather than by the campaign.
+
+In-file `import Lib::*;` is bound inside the parse, library-free, so
+`--no-library` stopped being a second-class mode (pinned in `cli.test.ts`), and
+the serializer's `refTo` asks the same resolver — under the SAME rule the
+re-parse will use, which for a `:>>` is §8.2.3.5.1 and not full resolution, or
+the shorter spelling would silently retarget the Redefinition on the next load.
+So a binding reached by import or inheritance re-emits as the simple name the
+author wrote (`part w : Widget;`, not `part w : Lib::Widget;`; `part w :>> w;`,
+not `part w :>> P::Base::w;`). The UI keeps the last parse result and retracts
+the warnings the library binder resolved, so the Problems panel and `checkText`
+finally agree — and forgets it on every path that replaces the model without
+parsing text, or a load or branch switch resurrected the previous document's
+rows. Pinned by `semantics.bind.test.ts`, `text.resolution.test.ts` and
+`store.library-refresh.test.ts`. The performance cases in
+`text.resolution.test.ts` are gross-blowup canaries only: they do not isolate
+the re-decision gate, and say so.
+
+Two consequences at corpus scale, both recorded rather than discovered later.
+Refusing a library FEATURE as the answer to `unresolved-type-ref` (item 5) is
+what unmasks a dangling `:>> w`, and on its own it also turned every
+redefinition of an inherited feature into an error whenever the owning type's
+own supertype was unresolvable — 2 155 → 4 882 errors over a 309-file corpus,
+348 of them in one library file. The rule is silent now when a scope the
+reference resolves through still carries a general nobody could bind: with an
+incomplete supertype the tool has no basis for calling the redefinition
+dangling, and the unresolved GENERAL is the finding worth reading. And a
+connector end may now name a feature of an IMPLICIT library base
+(`L3-connect-implicit-library-base`): a bare `part def` specialises
+`Parts::Part` and friends, so `self`, `start`, `done`, `shape`, `subparts` are
+inherited members that the one resolver finds like any other. That is pinned,
+not fixed — it does mean a typo colliding with one of those names is no longer
+caught by `--strict`, but making the connector resolver alone ignore implicit
+bases would put it back out of step with every other resolver, which is the
+split this commit exists to end.
+
 ### Known limitations, recorded rather than hidden
 
 **Re-homing cannot recover the faulty declaration itself, and can mis-home a
@@ -693,20 +786,28 @@ move that precisely, where before the same model was reported feasible without
 either engine having looked. The verdict surfaces are unaffected: they read the
 unit-aware evaluator.
 
-**Forward and backward references can resolve differently when a name is both
-inherited and in an outer scope.** The binder (forward references) consults
-inherited members at each scope before walking outward, as the spec says; the
-mapper (backward references, resolved at parse time) walks owned members only.
-A name declared both in a supertype and in an enclosing package therefore binds
-to the inherited one if written before its declaration and the outer one if
-after. Documented in `src/core/scope.ts` until the mapper is taught to defer.
-
-
 **Error recovery re-homes declarations to the root namespace.** After a bad
 declaration, the ones that follow survive but escape their enclosing package.
 Recorded on `L2-two-independent-errors` and `L5-recovery-keeps-siblings`.
 
 ### Pinned behaviours (decisions, not defects)
+
+**An inherited connector end materialises a per-usage implicit feature.** When
+`connect a to x;` names an `x` the enclosing type INHERITS, the endpoint binds
+to a usage-scoped implicit mirror (`P::Car::x`, `attrs.implicit`), not to the
+supertype's `x`. A type-owned feature is shared by every usage of that type, so
+binding it directly would collapse two connectors on the same definition into
+one edge and move the diagram edge onto the definition. The chain resolver owns
+every segment of a connector end for the same reason — `connect a.p to b.p`
+keeps `a::p` and `b::p` distinct.
+
+**A bare library definition is accepted in `:>` without an import.**
+`unresolved-type-ref` accepts a name that only the bundled library matches, as
+long as the match is not a library FEATURE — so `part def X :> Part;` passes
+with no `import Parts::*;`. It is leniency, not the spec: the standard would
+have the name imported. Restricting it to non-features is what removes the
+harmful half (short names hitting function parameters and unit symbols) while
+keeping the convenient one.
 
 **An unresolved attribute value type is not reported.** `attribute a : NotAType;`
 is silent by design, because value types usually live outside the loaded scope.

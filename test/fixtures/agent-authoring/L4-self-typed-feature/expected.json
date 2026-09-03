@@ -1,0 +1,22 @@
+{
+  "level": "L4",
+  "title": "a feature typed by its own owner does not kill the checker",
+  "note": "FIXED 2026-09-03 (I4 review). `asPresident : Person` inside `Person` names an unbounded tower of dotted scopes (`asPresident.asPresident…`). Both value-scope name collectors guarded the walk with a key that carried the dotted prefix, which never repeats while the prefix grows, so the recursion ran until the stack died and the whole checker answered `import/internal-error` with NO validation output. C6 made this ordinary input: a `:>> p` that binds hands the reference the self-typed type it previously lacked. The cycle guard is keyed on the owner alone now.",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/constraint-violation",
+      "severity": "info",
+      "line": 13,
+      "column": 13
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 13,
+    "strictWarnings": true
+  }
+}

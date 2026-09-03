@@ -97,6 +97,7 @@ flowchart TB
     validation --> core
     library --> semantics
     semantics --> core
+    text --> semantics
     text --> core
     collab --> core
     interop --> api
@@ -209,3 +210,18 @@ topology*, not in the cross-module data shapes.
 > binder can compose KerML full resolution. `library → semantics → core` is acyclic. (The
 > older note that there is "no alias for `@semantics`, `@library`" is stale — both exist in
 > `tsconfig.json`, `vite.config.ts` and `vitest.config.ts`.)
+
+> **2026-09-03 — one resolver, and a new `text → semantics` edge.**
+> `src/semantics/bind.ts` is THE reference resolver (`resolveFullName`,
+> `resolveRedefinedFeature`, `resolveImportTargets`). It composes `resolveName`
+> (per-namespace: owned + alias, inherited, imported) with the outward walk and
+> the containment/qualified fallbacks, and it is deliberately LIBRARY-FREE — it
+> imports `@core/index` and its two semantics siblings and nothing else — so the
+> textual mapper can call it INSIDE `parseModel` without pulling the multi-MB
+> library bundle onto the parse path. `src/text/langium/map-to-model.ts` and
+> `src/text/serializer.ts` now import it, which adds the `text → semantics` edge
+> shown above; `src/library/resolve.ts` and `src/validation/rules.ts` call the
+> same functions instead of their own private walks. The layering stays acyclic
+> (`text → semantics → core`, `library → semantics → core`), and the splitter
+> the mapper used to own (`unquoteName`/`splitQualified`/`refSegments`) moved
+> down to `src/core/names.ts` so every layer cuts a qualified name the same way.

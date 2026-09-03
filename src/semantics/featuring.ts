@@ -164,6 +164,11 @@ export function implicitBaseTypesOf(model: Model, elementId: ElementId): Element
   const hit = cache.get(elementId);
   if (hit) return hit;
 
+  // No library merged ⇒ no implicit base exists to resolve. Short-circuited
+  // BEFORE the cache write so a parse (which never has a library) does not pay
+  // a `findLibraryType` call per element per revision.
+  if (!model.hasLibrary) return [];
+
   const el = model.get(elementId);
   let result: ElementRecord[] = [];
   if (el && el.attrs.isLibrary !== true) {

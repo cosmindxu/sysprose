@@ -21,10 +21,10 @@ import {
   isMembership,
   isRequirement,
   isSpecialization,
-  resolveTypeInScopeChain,
   type ElementId,
   type ElementRecord,
 } from '@core/index';
+import { resolveFullName, resolveRedefinedFeature } from '@semantics/bind';
 
 const INDENT = '    ';
 
@@ -322,7 +322,10 @@ function specializationFragments(model: Model, el: ElementRecord): string[] {
     if ((rel.source ?? [])[0] !== el.id) continue;
     const targetId = (rel.target ?? [])[0];
     if (!targetId) continue;
-    const ref = refTo(model, targetId, el.ownerId);
+    // The re-parse of an inlined `:>>` uses the redefinition rule and excludes
+    // the redefining feature; every other operator uses full resolution with
+    // the same exclusion the mapper applies.
+    const ref = refTo(model, targetId, el.ownerId, specResolver(model, rel.eClass, el.id));
     const op = operatorFor(rel.eClass);
     // Do not restate a typing the display string already expresses. After the
     // library binder runs, an attribute carries BOTH `attrs.type = 'Real'` and a
@@ -819,6 +822,24 @@ function controlNodeLine(el: ElementRecord, pad: string): string {
 /* ─────────────────────────── reference paths ──────────────────────────── */
 
 /**
+ * How a caller says "this is the rule my reference will be re-parsed under".
+ * Given the candidate spelling and the scope it will be read from, it answers
+ * the element that spelling denotes — or undefined.
+ */
+type RefResolver = (simple: string, scopeOwnerId: ElementId | null) => ElementRecord | undefined;
+
+/**
+ * The resolver for one specialization-family relationship, mirroring
+ * `Mapper.resolveSpecTarget` exactly — that symmetry IS the round-trip
+ * guarantee, so the two must be changed together.
+ */
+function specResolver(model: Model, relClass: string, sourceId: ElementId): RefResolver {
+  return relClass === 'Redefinition'
+    ? (simple, scope) => resolveRedefinedFeature(model, simple, sourceId, scope)
+    : (simple, scope) => resolveFullName(model, simple, scope, { exclude: sourceId });
+}
+
+/**
  * Render a reference to `targetId` usable from `scopeOwnerId`, preferring the
  * SHORTEST form that still denotes the same element from that scope:
  *
@@ -832,15 +853,34 @@ function controlNodeLine(el: ElementRecord, pad: string): string {
  * definition declared beside its owner would otherwise serialize as
  * `port fuelIn : VehicleModel::FuelPort` when the author wrote `: FuelPort`.
  * Both re-parse to the same model, but only one of them is what anyone wrote.
+ *
+ * Step 1 asks THE RESOLVER, not a private owned-only walk. The two used to
+ * disagree: the walk knew nothing of inherited or imported members, so a
+ * feature typed through `import Lib::*;` re-emitted as `part w : Lib::Widget;`
+ * and one redefining an inherited feature as `part b :>> P::D::a;` — qualified
+ * paths nobody wrote, for names that resolve perfectly well on their own.
+ *
+ * WHICH resolver is the caller's business, because "the simple name is enough"
+ * only means "re-parsing it binds the same element" if the test uses the rule
+ * the RE-PARSE will use. A `:>>` re-parses under KerML §8.2.3.5.1 (the generals
+ * of the owning type first, the redefining feature excluded), and that answers
+ * differently from full resolution: with `E :> D2, D3` where `D2 :> D` and both
+ * `D` and `D3` own an `a`, full resolution says `D3::a` and the redefinition
+ * rule says `D::a` — so emitting the simple name silently RETARGETED the
+ * Redefinition on the next load. The caller passes `resolve`; the default is
+ * plain full resolution, which is the rule for every other reference.
  */
-function refTo(model: Model, targetId: ElementId, scopeOwnerId: ElementId | null): string {
+function refTo(
+  model: Model,
+  targetId: ElementId,
+  scopeOwnerId: ElementId | null,
+  resolve?: RefResolver,
+): string {
+  const answer = resolve ?? ((simple: string, scope: ElementId | null) =>
+    resolveFullName(model, simple, scope));
   const target = model.get(targetId);
   const simple = target ? nameOf(target) : undefined;
-  if (
-    simple &&
-    !simple.startsWith('«') &&
-    resolveTypeInScopeChain(model, simple, scopeOwnerId, undefined)?.id === targetId
-  ) {
+  if (simple && !simple.startsWith('«') && answer(simple, scopeOwnerId)?.id === targetId) {
     return simple;
   }
   const rel = relativePath(model, targetId, scopeOwnerId);

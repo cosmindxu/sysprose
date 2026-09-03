@@ -1,0 +1,15 @@
+{
+  "level": "L3",
+  "title": "a connector end names the inherited feature, not the outer one",
+  "note": "FIXED 2026-09-03 (I4). `x` exists both in the enclosing package and in the supertype `Base`. The endpoint used to bind to the outer `P::x`. The inherited one wins now \u2014 and because a type-owned feature is shared by every usage of that type, the endpoint binds to a usage-scoped IMPLICIT mirror (`P::Car::x`) rather than to `Base::x` itself, which is what keeps two connectors on the same definition from collapsing into one edge.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 10,
+    "strictWarnings": true
+  }
+}

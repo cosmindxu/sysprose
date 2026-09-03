@@ -31,11 +31,13 @@ import {
   Model,
   findLibraryType,
   isRelationship,
-  resolveTypeInScopeChain,
   type ElementId,
   type ElementRecord,
 } from '@core/index';
-import { resolveName } from '../semantics/resolve-names';
+import {
+  resolveFullName,
+  resolveImportTargets as bindImportTargets,
+} from '../semantics/bind';
 
 // `findLibraryType` lives in core (src/core/scope.ts) so that the semantics
 // layer can use it without depending on this module — that dependency was a
@@ -97,22 +99,16 @@ function isTypeCandidate(el: ElementRecord): boolean {
 }
 
 /**
- * The scope-chain resolution for one unqualified type name — KerML v1.0
- * §8.2.3.5.4 "full resolution": for each namespace from the referencing element
- * outward, try that namespace's owned, inherited and imported members
- * (`resolveName`), and only then the global/library namespace.
+ * The scope-chain resolution for one type name — KerML v1.0 §8.2.3.5.4 "full
+ * resolution", implemented once in `src/semantics/bind.ts` and shared with the
+ * textual mapper so a name cannot denote different elements in the two passes.
  *
- * Two resolvers compose here on purpose. `resolveName` (semantics) knows
- * inheritance and imports but resolves within ONE scope; `resolveTypeInScopeChain`
- * (core) walks outward but knows only owned members. A REJECTED hit — the
- * element itself (the mapper already self-binds `part Wheel : Wheel`), a
- * non-type, or a library element surfacing through an implicit base such as
- * `Parts::Part` — must NOT stop the walk: the answer may be one scope further
- * out. The `isLibrary` rejection is what keeps user declarations shadowing the
- * library, which `generalizationsWithImplicit` would otherwise invert.
- *
- * Root-level imports are consulted explicitly at the end because
- * `resolveName(model, null, …)` skips imported members for the root scope.
+ * All this layer adds is WHAT COUNTS AS AN ANSWER: the element itself is never
+ * its own type (the mapper already self-binds `part Wheel : Wheel`), a Package
+ * is a namespace rather than a type, and a library element surfacing through an
+ * implicit base such as `Parts::Part` must not win over a user declaration one
+ * scope further out — the library is the namespace of LAST resort, consulted by
+ * {@link resolveTypeReferences} after this returns nothing.
  */
 function resolveUserType(
   model: Model,
@@ -120,72 +116,22 @@ function resolveUserType(
   scopeId: ElementId | null,
   excludeId: ElementId,
 ): ElementRecord | undefined {
-  const query = name.trim();
-  if (query === '' || query.includes('::')) return undefined;
-  const accept = (hit: ElementRecord | undefined): ElementRecord | undefined =>
-    hit && hit.id !== excludeId && hit.attrs.isLibrary !== true && isTypeCandidate(hit)
-      ? hit
-      : undefined;
-  const seen = new Set<ElementId>();
-  let scope: ElementId | null = scopeId;
-  while (scope !== null && !seen.has(scope)) {
-    seen.add(scope);
-    const hit = accept(resolveName(model, scope, query));
-    if (hit) return hit;
-    scope = model.get(scope)?.ownerId ?? null;
-  }
-  const owned = resolveTypeInScopeChain(model, query, scopeId, excludeId);
-  if (owned) return owned;
-  // Root-level `import Pkg::*;` — reachable by nothing above.
-  for (const root of model.roots()) {
-    if (root.eClass !== 'NamespaceImport' && root.eClass !== 'MembershipImport') continue;
-    const nsId = (root.target ?? [])[0];
-    if (!nsId) continue;
-    const hit = accept(resolveName(model, nsId, query));
-    if (hit) return hit;
-  }
-  return undefined;
+  return resolveFullName(model, name, scopeId, {
+    exclude: excludeId,
+    accept: (hit) => hit.attrs.isLibrary !== true && isTypeCandidate(hit),
+  });
 }
 
 /**
- * Give every import its `target` (and `source`) so `resolveName`'s import walk
- * can see it.
- *
- * The textual mapper creates `NamespaceImport`/`MembershipImport` elements with
- * only `attrs.importedName`, because at parse time the imported namespace may be
- * declared later in the file or live in the standard library that is not loaded
- * yet. Without a target every import was a no-op for name resolution on any
- * parsed model — `import Lib::*;` bound nothing, silently. Idempotent: an import
- * that already has a target is left alone.
+ * Give every import its `target` so `resolveName`'s import walk can see it —
+ * the shared, library-free pass from `src/semantics/bind.ts` plus this layer's
+ * namespace of last resort, so `import ISQ::*;` binds to bundled library
+ * content the parse could not see.
  *
  * @returns the number of imports newly bound.
  */
 export function resolveImportTargets(model: Model): number {
-  let bound = 0;
-  model.transaction(() => {
-    for (const el of model.all()) {
-      if (el.attrs.isLibrary === true) continue;
-      if (el.eClass !== 'NamespaceImport' && el.eClass !== 'MembershipImport') continue;
-      if ((el.target ?? []).length > 0) continue;
-      const raw = el.attrs.importedName;
-      if (typeof raw !== 'string' || raw.trim() === '') continue;
-      const recursive = /::\*\*\s*$/.test(raw);
-      const name = raw.replace(/::\*+\s*$/, '').trim();
-      if (name === '') continue;
-      const target =
-        resolveUserType(model, name, el.ownerId, el.id) ??
-        model.resolveQualifiedName(name) ??
-        findLibraryType(model, name);
-      if (!target || target.id === el.id) continue;
-      model.update(el.id, {
-        target: [target.id],
-        ...(el.ownerId !== null && (el.source ?? []).length === 0 ? { source: [el.ownerId] } : {}),
-      });
-      if (recursive) model.setAttrs(el.id, { isRecursive: true });
-      bound++;
-    }
-  });
-  return bound;
+  return bindImportTargets(model, (name) => findLibraryType(model, name));
 }
 
 /** One binding the pure phase decided on; applied in the mutating phase. */

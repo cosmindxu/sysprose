@@ -1,0 +1,5 @@
+{
+  "level": "L3",
+  "title": "a multi-endpoint dependency names the endpoint that is actually missing",
+  "note": "FIXED 2026-09-03 (I4 review). A dependency keeps only its FIRST client in `sourceRef`, and the deferred warning decided whether to survive by comparing that one slot with its own name — so for `from a, MissingX` it reported `a`, the endpoint that RESOLVED, and said nothing about `MissingX`. Each deferred endpoint name now re-asks the question about itself."
+}

@@ -59,8 +59,11 @@ describe('pipeline: Model → Diagram view-specific projections', () => {
     // 20 declared + 2 implicit part usages (vehicle.engine / vehicle.transmission)
     // materialized for the connector feature-chain endpoints.
     expect(g.nodes).toHaveLength(22);
-    // 14 declared + 2 containment + 2 redefinition edges for the implicit parts.
-    expect(g.edges).toHaveLength(18);
+    // 14 declared + 2 containment + 2 redefinition edges for the implicit parts
+    // + the 2 FeatureTypings `parseModel` now binds itself (`part engine :
+    // Engine`, `part transmission : Transmission` are forward typings, which
+    // used to reach the diagram only after the library binder ran).
+    expect(g.edges).toHaveLength(20);
     // Packages, attributes, ports and connections are NOT general-view nodes.
     expect(g.nodes.find((n) => n.kind === 'Package')).toBeUndefined();
     expect(g.nodes.find((n) => n.kind === 'PortUsage')).toBeUndefined();

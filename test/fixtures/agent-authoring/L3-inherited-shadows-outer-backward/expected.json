@@ -1,0 +1,15 @@
+{
+  "level": "L3",
+  "title": "an inherited name wins over an outer one, whichever is declared first",
+  "note": "FIXED 2026-09-03 (I4). `W` is declared both in the supertype `Base` and in the enclosing package. KerML \u00a78.2.3.5.3 makes the INHERITED membership the local resolution, so `w1` is typed by `P::Base::W` \u2014 and this file writes the outer `W` FIRST, which used to be the order that bound the wrong one.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 8,
+    "strictWarnings": true
+  }
+}

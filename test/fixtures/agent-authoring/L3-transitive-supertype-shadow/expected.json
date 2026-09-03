@@ -1,0 +1,15 @@
+{
+  "level": "L3",
+  "title": "a name inherited through a supertype's own forward supertype",
+  "note": "FIXED 2026-09-03 (I4). `Car :> Base :> Grand` and `Grand` owns `W`, but `Base :> Grand` is itself a forward reference \u2014 so the inheritance graph is only complete after that binds. `parseModel` binds the specialization family to a fixpoint BEFORE deciding typings, and re-decides any reference whose scope chain gained a general, which is what makes `w1` reach `P::Grand::W`.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 10,
+    "strictWarnings": true
+  }
+}

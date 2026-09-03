@@ -1,0 +1,16 @@
+{
+  "level": "L3",
+  "title": "a connector end reached through an import binds to the imported feature",
+  "note": "FIXED 2026-09-03 (I4 review). The anchor walk materialises a usage-scoped mirror for an end reached through INHERITANCE, because a type-owned feature is shared by every usage of that type. It used to do so for any end the scope did not own itself — including one reached through `import Lib::*;`. A package inherits nothing, so there is no prototype to mirror: the mapper fabricated an implicit `P::x` plus a Redefinition and bound the connector to its own invention. An imported end is a real element the author named, and binds directly.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "Lib",
+      "P"
+    ],
+    "minElements": 6,
+    "strictWarnings": true
+  }
+}

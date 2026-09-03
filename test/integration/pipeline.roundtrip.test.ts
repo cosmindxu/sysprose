@@ -28,10 +28,17 @@ describe('pipeline: Text → Model round-trip (examples/vehicle.sysml)', () => {
     expect(src.length).toBeGreaterThan(100);
   });
 
-  it('parses into a populated core model', () => {
+  it('parses into a populated core model with every reference bound', () => {
     expect(model.size).toBeGreaterThan(0);
-    // Forward references are reported (as warnings), never silently dropped.
-    expect(diagnostics.some((d) => d.severity === 'warning')).toBe(true);
+    // The example writes six FORWARD typings (`in port fuelIn : FuelPort;`
+    // before `port def FuelPort;`). They used to leave an "unresolved
+    // reference" warning apiece for the library binder to retract; `parseModel`
+    // resolves them itself now, so a valid file parses SILENT — and every one
+    // of the six is a real FeatureTyping, not a textual `attrs.typeRef`.
+    expect(diagnostics).toEqual([]);
+    const fuelIn = model.all().find((e) => e.declaredName === 'fuelIn')!;
+    expect(fuelIn.attrs.typeRef).toBeUndefined();
+    expect(model.typesOf(fuelIn.id).map((t) => t.declaredName)).toEqual(['FuelPort']);
   });
 
   it('captures the Vehicle part definition and its sibling definitions', () => {
