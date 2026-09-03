@@ -173,11 +173,34 @@ only then noticed the declaration it had displaced. Both converge on the
 second report, which is the point: the report is enough even when the first
 repair is not.
 
-Read it with one caveat: the bench used the CLI's default model, which is the
-same family as the assistant that built the tool, so it measures whether the
-report is sufficient — not whether it is sufficient for an arbitrary third-party
-model. Running it against other models is the obvious next step, and the
-`--model` flag exists for exactly that.
+Third run, on the final 80-fixture corpus, against TWO models
+(`docs/campaign-runs/2026-09-03-repair-bench-sonnet.md` and
+`-haiku.md`):
+
+| Metric | Sonnet | Haiku |
+|---|---:|---:|
+| Fixtures with errors to repair | 32 | 32 |
+| Repaired to a clean check | 31 | 31 |
+| Repaired on the first round | 31 | 30 |
+| Repaired with a minimal edit | 31 | 31 |
+
+Each model missed ONE case, and a different one: Sonnet did not repair
+`L3-unresolved-type`, Haiku did not repair `L2-unknown-keyword`. Both misses
+are sampling variance rather than a gap in the report, which was checked rather
+than assumed — re-running each missed case three times from the same report
+repairs it in most samples (Haiku answers `part def Vehicle;` twice and drops
+the keyword entirely once; Sonnet answers `part def Missing; part v : Missing;`
+once and `part v;` twice, and BOTH of those check clean, because declaring the
+type and dropping it are equally valid repairs of an unresolved reference).
+That a case has two right answers is worth stating: the bench counts a repair
+only when the file checks clean, never against the fixture's own `fixed.sysml`,
+precisely so a model is free to choose either.
+
+The caveat this closes: the two earlier runs used the CLI's default model,
+which is the family that built the tool, so they measured whether the report is
+sufficient for a near relative. Two independent models at different capability
+levels now repair 31 of 32 from the report alone. What is still not measured is
+a model from another vendor.
 
 ### L6 is the level that matters
 
@@ -1123,9 +1146,10 @@ that widening is a decision, not a drift.
   `window.sysml`; `POST /api/text/check`; line and column in the Problems panel
   with click-to-line; a strict apply mode that refuses to replace the model when
   the text has errors; surfacing the silently swallowed JSON import failure.
-- **Phase 3 — done.** `scripts/agent-repair-bench.ts` and two measured runs
-  under `docs/campaign-runs/` (22/22, then 24/24 on the 50-fixture corpus).
-  See L9 above.
+- **Phase 3 — done, and no longer single-model.** `scripts/agent-repair-bench.ts`
+  and four measured runs under `docs/campaign-runs/`: 22/22, then 24/24 on the
+  50-fixture corpus, then 31/32 by each of two independent models on the
+  80-fixture corpus. See L9 above.
 - **Phase 4 — done, three times.** Every defect in §4 fixed and every fixture
   promoted; no `expectFail` remains. The second pass (2026-09-02, commits A–G of
   the open-issues plan) closed the seven items the first pass had recorded as
