@@ -1,0 +1,5 @@
+{
+  "level": "L2",
+  "title": "a unit symbol with a non-ASCII character must be quoted",
+  "note": "PINNED 2026-09-03. A SysML BASIC_NAME is ASCII, so `²`, `⋅` and `°` cannot appear bare — `[m²]` is a lexer error and the character is skipped. The unit is not lost: the mapper slices `m²` out of the SOURCE between the bracket offsets, so the value keeps its real dimension (persisting the truncated `m` would silently turn 1.5 m² into 1.5 m) and no misleading `dimensional-consistency` warning follows. The repair is the library's own spelling, quoted: `['m²']`, or the ASCII expression `[m^2]`."
+}

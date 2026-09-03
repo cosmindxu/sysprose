@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "ISQ information kinds carry the dimensions the bundled library gives them",
+  "note": "FIXED 2026-09-03. `bit`, `B`, `o`, `Sh`, `Hart`, `nat` and `Bd` joined the registry with the binary prefixes Ki..Yi, and the ISQInformation quantity kinds joined the kind table AS THE BUNDLE TYPES THEM: the nine rate kinds are `DerivedUnit` with a duration power factor (T⁻¹), the nineteen content/entropy/traffic kinds subclass `DimensionOneUnit` (dimension one), and the seven kinds with no unit definition are dimensionless by a documented choice. The visible cost of being faithful is that a bit rate and a frequency share a dimension — the kind, not the dimension, carries the meaning. What the check still catches is a unit of the WRONG dimension: `5.0 [kg]` on a bit rate is one `dimensional-consistency` warning."
+}

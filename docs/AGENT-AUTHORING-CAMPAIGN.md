@@ -100,9 +100,9 @@ one in this corpus was read and corrected by hand.
 |---|---|---|
 | L0 | Recognition and encoding: empty file, comments only, BOM, CRLF, tabs, non-ASCII names, JSON offered as SysML, unknown extension | 8 |
 | L1 | Lexical: illegal character, unterminated string, unterminated comment | 3 |
-| L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, bad expressions, `=` vs `==`, bare `->`, two independent errors | 14 |
+| L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, a non-ASCII unit symbol written bare, bad expressions, `=` vs `==`, bare `->`, two independent errors | 15 |
 | L3 | Referential: unresolved type, connection end, import, transition end, specialization; forward references in a package; types reached through an import, through inheritance, and through a library import written in text; plus a pinned behaviour | 10 |
-| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, temperature difference | 18 |
+| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, temperature difference, compound / qualified / information units | 21 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies | 3 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 12 assertions |
 | L7 | The command-line contract: exit codes, JSON shape, stdin, strict mode | 10 tests |
@@ -437,6 +437,85 @@ unknown**: temperature-interval (delta) semantics — a difference of two
 absolutes being an interval that converts as 1 °C = 1 K — are recorded as
 future work rather than approximated.
 
+**Only a bare or prefixed registry symbol resolved as a unit.** `[m/s]`,
+`['W⋅h']`, `[m^2]`, `[SI::metre]` and `[SI::'watt hour']` each warned
+`unknown-unit` and left the value read as a bare number, and no information
+unit existed at all. `resolveUnit` in `src/semantics/units.ts` is now the
+single **model-free** funnel every unit string in the tool goes through — value
+units, `[unit]` literals in bodies, FMI `unit=` attributes, the SDK. In order:
+unquote each `::` segment and look the whole name up in the INVERTED
+library-name map (`SI::'watt hour'` → Wh), else carry the last segment; a
+registry name or symbol with one prefix (exact symbols still win, so `min` is
+the minute and `Wh` the watt hour); the worded forms the library uses
+(`per` → `/`, `squared` → `^2`, `cubed` → `^3`, adjacent words a
+product, so `metre per second` resolves); then a unit EXPRESSION over `*`,
+`⋅` (U+22C5, the library's own separator), `·`, `/`, `^`, integer and
+superscript exponents and parentheses — `kg*m/s^2`, `J/(kg⋅K)`,
+`kg⋅m²⋅s⁻³⋅A⁻¹`. A qualifier belongs to the ATOM it
+prefixes, not to the whole string, so `[m/SI::s]` and `[km/SI::h]` are speeds
+(cutting the whole reference at its last `::` would read them as `s` and `h`);
+the identity is the one number an expression may name, so `[1/s]` is the ASCII
+`s⁻¹` while `[2/s]` is not a unit. An affine atom is
+refused (`°C⋅m` has no meaning without an origin), and a bare number resolves
+to nothing — `= 5.0 [2]` and `= 5.0 [1..2]` are reported as unknown units
+rather than read as a quantity or silently taken for a count.
+`units-eval.ts` lost its private
+copy of the resolver and imports the funnel, so validation, analytics, the
+solver, FMI and the UI all answer the same way.
+
+A **library-backed** fallback was considered and rejected: the bundled
+library's short-name index is first-writer-wins across every element, so `h`
+there is a `height` feature and `J`/`N`/`T`/`L` are ISQ quantity letters — a
+post-hoc filter can only turn a wrong hit into nothing, never recover the
+masked unit. Resolving from the registry alone gives the same answer under the
+full bundle, the curated fallback and `library: 'none'`. The honest cost is
+recorded: a long library name beyond per/squared/cubed (`kilogram metre squared
+second to the power minus 3 ampere to the power minus 1`) does not resolve, and
+the `unknown-unit` hint teaches the symbol form.
+
+**Information had no units and no quantity kinds.** `bit`, `byte` `<B>`,
+`octet` `<o>`, `shannon` `<Sh>`, `hartley` `<Hart>`, `nat`, `baud` `<Bd>` and
+`erlang` `<E>` joined the registry with factors authored from the ISO 80000-13
+definitions (1 B ≡ 8 bit, 1 Hart ≡ log₂10 Sh, 1 nat ≡ 1/ln2
+Sh), and the binary prefixes Ki..Yi joined as a SEPARATE family that attaches
+only to bit, byte and octet — `MiB` is 2²⁰ bytes, `Mim` and `KiSh` are
+nothing, and the twenty decimal prefixes are untouched. Of those twenty, an
+information unit takes the MAGNIFYING ones only: `kB` and `Gbit` resolve,
+`mbit` does not, and — the reason the policy exists — `dB` does not either.
+The decibel is a logarithmic ratio, not a linear unit; deci + byte would have
+exported 20 dB as `<BaseUnit factor="0.8"/>` and told an importer it was 16,
+so `[dB]` stays an honest `unknown-unit`. The ISQInformation
+quantity kinds joined the kind table **as the bundled library types them**,
+read off its own unit definitions rather than invented: nine rate kinds whose
+unit is a `DerivedUnit` with a duration power factor (T⁻¹), nineteen
+content/entropy/traffic kinds whose unit subclasses `DimensionOneUnit`
+(dimension one), and seven kinds the bundle gives no unit definition at all,
+dimensionless by a choice that is documented as a choice. The nine
+`ISQInformation` alias `…Value` names (`BitRateValue`, `StorageSizeValue`,
+`LineDigitRateValue`, …) are keys in their own right, because under
+`library: 'none'` there is no alias membership to dereference.
+
+The **visible cost of being faithful**: information content is dimension one,
+so `bit/s` and `Hz` are the same dimension (T⁻¹) and a bit rate
+compared with a frequency is dimensionally consistent. An eighth axis would
+separate them, at the price of diverging from the standard we bundle and from
+FMI's `<BaseUnit>`, which has no information exponent. The kind, not the
+dimension, carries the meaning; `dimensional-consistency` still catches
+`5.0 [kg]` on a bit rate. `examples/uav-isr.sysml` now writes
+`dataRate : ISQ::BinaryDigitRateValue = 100.0 [Mbit/s]` where it carried a
+plain `rateMbps : Real`. Fixtures: `L4-compound-unit`, `L4-information-rate`,
+`L4-qualified-unit`, `L2-unicode-unit-symbol`; the table, the inverted-map
+round-trip and the refusals are pinned by `semantics.units.test.ts`.
+
+**FMI exported a non-coherent unit as if it were coherent.** `<BaseUnit>`
+carried only the SI base exponents, so `640 [Wh]` was written as a
+kg·m²·s⁻² unit with no factor — an importer read
+640 joules — and `km`, `min` and `°C` were wrong the same way. The
+export now emits the `factor` and `offset` of the unit's affine map to SI, and
+a dimension-one information unit exports with no base exponents but with its
+factor (`<BaseUnit factor="8"/>` for the byte). Pinned by
+`fmi-export.test.ts`.
+
 ### Known limitations, recorded rather than hidden
 
 **Re-homing cannot recover the faulty declaration itself, and can mis-home a
@@ -445,22 +524,13 @@ containment from the brace structure, which is all the parser leaves intact;
 the residue of the bad declaration stays a keyword-less element.
 
 
-**Unit spellings beyond a bare or qualified registry symbol do not resolve,
-and the numeric solver still drops a unit-bearing body.** A quoted library
-name (`[SI::'watt hour']`, `['°C']` written inside a body rather than as a
-value) and a compound unit (`[mi / gal]`) evaluate to unknown, and
-`unknown-unit` warns on them; the model-free normalisation funnel is the next
-item. `checkConstraintsNumeric` parses bodies with the scalar grammar, so a
-relation carrying `[unit]` is absent from the numeric Check surface rather
-than judged — the validation surface is the one that answers today — and the
+**The numeric solver still drops a unit-bearing body.**
+`checkConstraintsNumeric` parses bodies with the scalar grammar, so a relation
+carrying `[unit]` is absent from the numeric Check surface rather than judged
+— the validation surface is the one that answers today — and the
 Solve/MoE surfaces still read a derived dimensioned value as a raw magnitude
 (`endurance` solves to 0.79 on the example, 640 × 0.8 / 650 read unitless)
 until the solver commit scales relations.
-
-**Compound units and an information dimension are not representable.** The
-registry is a fixed table with generic single-prefix decomposition; `W*h`,
-`bit/s` and `m^2` do not resolve, and `Dimension` has no information axis, so
-data rates stay `Real`.
 
 **Forward and backward references can resolve differently when a name is both
 inherited and in an outer scope.** The binder (forward references) consults
@@ -518,6 +588,31 @@ expression ends in a bracket, not an `if` guard followed by a bracket guard —
 the standard has only the `if` form — and `a/b [u]` groups as `a/(b [u])`. No
 corpus or in-tree file spelled any of the four. Pinned by
 `langium.grammar.test.ts` and `text.bracket-expr.test.ts`.
+
+**A non-ASCII unit symbol must be quoted.** A SysML `BASIC_NAME` is ASCII, so
+`²`, `⋅` and `°` cannot appear bare inside a bracket: `[m²]` is a lexer error,
+`['m²']` and `[m^2]` are not. The character is not lost when it is written bare
+— the mapper slices the unit out of the SOURCE between the bracket offsets, so
+`1.5 [m²]` keeps the dimension L² (persisting the parser's truncated `m` would
+silently turn 1.5 m² into 1.5 m) and no `dimensional-consistency` warning
+follows the lexer error. The serializer re-emits any unit the grammar cannot
+read bare in quotes (`['W⋅h']`, `[SI::'watt hour']`), so the file reads back.
+Fixture `L2-unicode-unit-symbol`; the round-trip is pinned by
+`text.bracket-expr.test.ts` and `text.roundtrip.test.ts`.
+
+**The unit picker offers registry symbols only.** `api.compatibleUnits(u)`
+enumerates `UNIT_REGISTRY` filtered by dimension, so the Properties dropdown
+offers `t` and `g` beside `kg` but has never offered `km`, and does not offer a
+compound or prefixed unit now that the funnel RESOLVES one. Enumerating every
+spelling the funnel accepts is unbounded; enumerating the library's 400-odd
+short names would make the dropdown unusable. Typing a unit is the way to reach
+one, and the resolver accepts it. The enumeration is filtered by DIMENSION, so
+the information units now meet their dimensional twins there: a bit rate (T⁻¹,
+as the bundle types it) is offered `Hz` and `Bd`, and a storage size (dimension
+one) is offered `bit`, `B`, `o`, `Sh`, `Hart`, `nat` and `E`. Converting
+100 Mbit/s to 1e8 Hz is arithmetically right and semantically odd; it is the
+same cost as `bit/s ≡ Hz` above, recorded rather than papered over with an
+eighth dimension axis.
 
 **A soft keyword is a short name, not a declaration name.** `derive` joined
 `var`/`filter`/`about`/`locale`/`multiplicity`/`done` as a soft keyword so the

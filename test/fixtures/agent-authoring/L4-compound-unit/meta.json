@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "compound, quoted and qualified unit spellings all resolve",
+  "note": "FIXED 2026-09-03. The registry was a flat table with a single-prefix decomposition, so `m/s`, `m/s^2`, `W⋅h` and `m²` did not resolve and a qualified or quoted library name (`SI::'watt hour'`, `'m/s'`) did not either — each one warned `unknown-unit` and left the value read as a bare number. `resolveUnit` is now the single model-free funnel: unquote each `::` segment, look the whole name up in the inverted library-name map, else take the last segment, then a registry name/symbol with one prefix, then the worded forms (per / squared / cubed), then a unit expression over `*`, `⋅`, `·`, `/`, `^` and the Unicode superscripts. `⋅` and `²` are not ASCII, so the grammar needs them quoted — which is exactly the spelling the bundled library uses."
+}

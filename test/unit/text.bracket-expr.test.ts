@@ -235,4 +235,27 @@ describe('bracket expression — serializer unit lexeme', () => {
     expect(back.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
     expect(back.model.all().find((e) => e.declaredName === 'v')!.attrs.unit).toBe('m/s');
   });
+
+  it('round-trips an FMI unit the grammar cannot read bare', () => {
+    // `m/s` is bare-legal ASCII, so it round-trips whether or not the
+    // serializer quotes. A `⋅`/`²` unit is the case that needs the quoting:
+    // an FMI file may carry one, and the notation must read it back.
+    const xml = `<?xml version="1.0"?>
+<fmiModelDescription fmiVersion="3.0" modelName="Plant">
+  <ModelVariables>
+    <Float64 name="e" valueReference="0" causality="parameter" variability="fixed" start="640" unit="W⋅h"/>
+    <Float64 name="area" valueReference="1" causality="parameter" variability="fixed" start="2" unit="m²"/>
+  </ModelVariables>
+</fmiModelDescription>`;
+    const m = new Model();
+    importFmiXml(m, xml);
+    const text = serializeModel(m);
+    expect(text).toContain("['W⋅h']");
+    expect(text).toContain("['m²']");
+    const back = parseModel(text);
+    expect(back.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+    const byName = (n: string) => back.model.all().find((e) => e.declaredName === n)!;
+    expect(byName('e').attrs.unit).toBe('W⋅h');
+    expect(byName('area').attrs.unit).toBe('m²');
+  });
 });

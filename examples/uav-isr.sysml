@@ -9,9 +9,11 @@ package UAVSurveillanceSystem {
     }
 
     port def DataPort {
-        // Data rate stays a plain Real: the unit registry has no information
-        // dimension yet (bit, byte, bit/s), so it cannot be a quantity kind.
-        attribute rateMbps : Real;
+        // ISO 80000-13 makes information content dimension one, so a bit rate
+        // is T⁻¹ — the same dimension as a frequency. That is the standard's
+        // position, and the library's: the kind carries the meaning the
+        // dimension cannot.
+        attribute dataRate : ISQ::BinaryDigitRateValue = 100.0 [Mbit/s];
     }
 
     port def RFPort {

@@ -75,6 +75,30 @@ malformed documents (missing `elements`, missing `@id`, missing `@type`) and
   corpus — `sysml/src` training and validation models, `kerml/src`, plus this
   repo's `examples/` — is not a conformance claim; `--all` reports 279 of 405
   files parse clean, the rest use constructs the grammar does not yet cover.
+- **Units and quantity kinds follow the bundled library, including where that
+  costs us.** Unit references resolve through one model-free funnel
+  (`src/semantics/units.ts`): the library's own qualified spelling
+  (`SI::'watt hour'`), a symbol or long name with an SI prefix, the worded
+  compounds (`metre per second`), and unit expressions in the library's own
+  notation (`kg⋅m²⋅s⁻³⋅A⁻¹`, `J/(kg⋅K)`) or ASCII (`kg*m/s^2`). Information
+  quantities are typed **as `ISQInformation` types them** — the nine rate kinds
+  are T⁻¹ (their unit is a `DerivedUnit` with a duration power factor) and the
+  content/entropy kinds are dimension one (their unit subclasses
+  `DimensionOneUnit`), per ISO 80000-13, and the prefixes follow the same
+  pairing: only the magnifying decimal prefixes attach to an information unit
+  (`kB`, `Gbit`, never `mbit`) and the binary prefixes Ki..Yi only to bit, byte
+  and octet — which is also what keeps `dB`, a logarithmic ratio that is not a
+  unit of this kind at all, from decomposing as deci + byte. The visible
+  consequence is that
+  `bit/s` and `Hz` share a dimension: an eighth "information" axis would tell
+  them apart but would diverge from the standard library we bundle and from
+  FMI's `<BaseUnit>`, so it was not added. Conversion factors are authored from
+  the SI Brochure and ISO 80000-13 *definitions*, never transcribed from the
+  EPL-licensed bundle (`docs/LICENSES.md`); the bundle is consulted for which
+  spellings and typings exist, not for values, and it carries no expression
+  payload to copy. Known gap: a library long name beyond per/squared/cubed
+  (`… second to the power minus 3 …`) does not resolve — the diagnostic hint
+  teaches the symbol form.
 - The parser also **rejects** non-SysML rather than accepting anything: `!!! this
   is not sysml at all !!!` produces 6 parse errors, `package Broken { part def ;;;
   <<<not sysml>>> }` produces 2, and an unterminated body produces 1. (An earlier

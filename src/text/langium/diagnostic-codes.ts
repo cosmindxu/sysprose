@@ -38,7 +38,7 @@ const CODES = [
     source: 'lexer',
     severity: 'error',
     when: 'A character that cannot start any token appears in the source.',
-    hint: 'Remove the stray character {found}. SysML identifiers are letters, digits and underscore; quote a name containing anything else as \'like this\'.',
+    hint: 'Remove the stray character {found}. SysML identifiers are letters, digits and underscore; quote a name containing anything else as \'like this\'. A unit with a non-ASCII symbol must be quoted the same way: `[\'m²\']`, `[\'W⋅h\']`, `[\'°C\']`.',
   },
   {
     code: 'lexer/unterminated-string',
@@ -273,7 +273,7 @@ const CODES = [
     source: 'validation',
     severity: 'warning',
     when: 'A value, a constraint body, a transition guard or an expression value carries a `[unit]` the engine does not know, so no dimensional check or unit conversion can be applied to it; a constraint using it answers unknown.',
-    hint: 'Use a registered unit symbol (SI units and their prefixes, Wh, Ah, min, h, °C, ft, lb, …), qualified or not (`[kg]`, `[SI::kg]`); a symbol that is also a keyword is quoted (`[\'in\']` for the inch, in a value position). A value with an unknown unit is treated as a bare number in arithmetic, which is usually wrong; a constraint that reads one cannot be judged.',
+    hint: 'Use a registered unit symbol (SI units and their prefixes, the information units bit, B and o — these three also take the binary prefixes Ki..Yi — plus Sh, Hart, nat, Bd, Wh, Ah, min, h, °C, ft, lb, …), qualified or not (`[kg]`, `[SI::kg]`). The information units take the MAGNIFYING prefixes only (`[kB]`, `[Mbit]`), so `[dB]` is not one of them: the decibel is a logarithmic ratio, not a unit this engine can convert. Compound units are written as an expression — `[m/s]`, `[kg*m/s^2]`, `[Mbit/s]`, `[J/(kg*K)]`, `[1/s]` for a reciprocal — each atom taking its own qualifier (`[m/SI::s]`), or with the library spellings `⋅` and superscripts, which must be quoted because the grammar reads only ASCII names: `[\'W⋅h\']`, `[\'m²\']`. A library name resolves quoted and qualified (`[SI::\'watt hour\']`, `[SI::\'metre per second\']`); the worded forms per/squared/cubed are understood, longer ones are not — write the symbol. A symbol that is also a keyword is quoted (`[\'in\']` for the inch, in a value position). A value with an unknown unit is treated as a bare number in arithmetic, which is usually wrong; a constraint that reads one cannot be judged.',
   },
   {
     code: 'validation/derived-dimension-mismatch',

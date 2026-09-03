@@ -1,0 +1,15 @@
+{
+  "level": "L4",
+  "title": "a unit written as a qualified library reference resolves",
+  "note": "FIXED 2026-09-03. `[SI::metre]` and `[USCustomaryUnits::pound]` warned `unknown-unit` while the bare `[m]` and `[lb]` were fine — the registry had no qualified-name path, although it already carried the library name of every unit as a one-way back-pointer. That map is inverted now, so the library's own qualified spelling resolves first (`SI::'watt hour'` → Wh) and anything else is carried by its last segment. Resolution stays model-free on purpose: the library's short-name index is first-writer-wins across every element, so `h` there is a `height` feature, not the hour. A qualifier binds to the ATOM it prefixes and not to the whole reference, so `[m/SI::s]` is a speed; cutting the whole string at its last `::` would have read it as a duration and warned `dimensional-consistency` on a SpeedValue.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 7,
+    "strictWarnings": true
+  }
+}

@@ -174,3 +174,79 @@ describe('exportFmu — .fmu archive', () => {
     expect(xml).toContain('<fmiModelDescription fmiVersion="3.0"');
   });
 });
+
+describe('fmiModelDescription — <BaseUnit> carries the conversion, not just the dimension', () => {
+  /** A block whose attributes exercise every shape of unit. */
+  function unitBlock() {
+    const m = new Model();
+    const blk = m.create('PartDefinition', { declaredName: 'Pack' });
+    const attr = (name: string, value: number, unit: string) =>
+      m.create('AttributeUsage', {
+        declaredName: name,
+        ownerId: blk.id,
+        attrs: { type: 'Real', value, unit },
+      });
+    attr('capacity', 640, 'Wh'); // non-coherent: 3600 J
+    attr('range', 25, 'km'); // prefixed: 1000 m
+    attr('cycle', 45, 'min'); // 60 s
+    attr('ambient', 20, '°C'); // affine: offset 273.15
+    attr('mass', 3.4, 'kg'); // coherent: no factor, no offset
+    attr('storage', 512, 'B'); // dimension one, factor 8
+    attr('bits', 8, 'bit'); // dimension one, factor 1
+    attr('link', 100, 'Mbit/s'); // compound: T⁻¹, factor 1e6
+    attr('gain', 20, 'dB'); // LOGARITHMIC: not a registry unit at all
+    attr('speed', 3, 'm/SI::s'); // qualified atom inside an expression
+    return { m, blockId: blk.id };
+  }
+
+  it('emits factor and offset from the resolved unit', () => {
+    const { m, blockId } = unitBlock();
+    const md = fmiModelDescription(m, blockId);
+    const byName = Object.fromEntries(md.units.map((u) => [u.name, u]));
+
+    // Before this, `640 [Wh]` was exported as a <BaseUnit kg m s> with no
+    // factor — an importer read it as 640 joules.
+    expect(byName.Wh.factor).toBe(3600);
+    expect(byName.km.factor).toBe(1000);
+    expect(byName.min.factor).toBe(60);
+    expect(byName['°C'].offset).toBe(273.15);
+    expect(byName['°C'].factor).toBeUndefined(); // factor 1 is the default
+    expect(byName.kg.factor).toBeUndefined();
+    expect(byName.kg.offset).toBeUndefined();
+    expect(byName['Mbit/s'].factor).toBe(1e6);
+
+    expect(md.xml).toContain('<Unit name="Wh"><BaseUnit kg="1" m="2" s="-2" factor="3600"/></Unit>');
+    expect(md.xml).toContain('<Unit name="°C"><BaseUnit K="1" offset="273.15"/></Unit>');
+    expect(md.xml).toContain('<Unit name="kg"><BaseUnit kg="1"/></Unit>');
+  });
+
+  it('a dimension-one information unit exports with no base exponents', () => {
+    const { m, blockId } = unitBlock();
+    const md = fmiModelDescription(m, blockId);
+    // ISO 80000-13 makes information content dimension one, so there is no
+    // exponent to emit — a byte is still eight bits, which the factor carries.
+    expect(md.xml).toContain('<Unit name="B"><BaseUnit factor="8"/></Unit>');
+    // A bit is the reference itself: dimension one, factor one, nothing to say.
+    expect(md.xml).toContain('<Unit name="bit"/>');
+    // A bit RATE is T⁻¹ — the same dimension as a frequency.
+    expect(md.xml).toContain('<Unit name="Mbit/s"><BaseUnit s="-1" factor="1000000"/></Unit>');
+  });
+
+  it('an unresolved unit exports bare, with no invented conversion', () => {
+    const { m, blockId } = unitBlock();
+    const md = fmiModelDescription(m, blockId);
+    // The decibel is a logarithmic ratio, not a linear registry unit. It must
+    // not decompose as deci + byte: `<BaseUnit factor="0.8"/>` would tell an
+    // importer that 20 dB is 16 of something.
+    expect(md.xml).toContain('<Unit name="dB"/>');
+    expect(md.xml).not.toContain('name="dB"><BaseUnit');
+  });
+
+  it('a qualified atom inside an expression keeps the whole dimension', () => {
+    const { m, blockId } = unitBlock();
+    const md = fmiModelDescription(m, blockId);
+    // `m/SI::s` is a speed. Cutting the whole string at its last `::` used to
+    // export it as `<BaseUnit s="1"/>` — a duration.
+    expect(md.xml).toContain('<Unit name="m/SI::s"><BaseUnit m="1" s="-1"/></Unit>');
+  });
+});

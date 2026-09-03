@@ -12,8 +12,9 @@
  *    Boolean→Boolean, String→String; default Float64);
  *  - `attrs.value`                  → the variable `start`;
  *  - the feature's unit (via {@link dimensionalFacets}) → a Unit definition +
- *    the variable's `unit` reference, with an SI {@link BaseUnit} when the
- *    dimension is known.
+ *    the variable's `unit` reference, with a `<BaseUnit>` carrying the SI base
+ *    exponents when the dimension is known and the `factor` / `offset` of the
+ *    unit's affine map to SI (`Wh` → factor 3600, `°C` → offset 273.15).
  *
  * Pure and DOM-free (string generation only), so it is exhaustively unit-testable
  * and runs in the browser. This is the description half of an FMU; {@link
@@ -23,7 +24,7 @@
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { evaluateFeatureValue } from '@semantics/index';
 import { dimensionalFacets } from '@semantics/units-eval';
-import type { Dimension } from '@semantics/units';
+import { resolveUnit, type Dimension } from '@semantics/units';
 import { PRODUCT_NAME } from '../../branding';
 
 /** An FMI scalar type this exporter emits. */
@@ -51,6 +52,15 @@ export interface FmiVariable {
 export interface FmiUnit {
   name: string;
   dimension?: Dimension;
+  /**
+   * The multiplier taking a value in this unit to the coherent SI unit
+   * (`Wh` → 3600). Omitted when it is 1 or the unit does not resolve. FMI's
+   * `<BaseUnit>` defines `value_SI = factor · value + offset`, so leaving it
+   * out of a non-coherent unit exported `640 [Wh]` as if it were 640 J.
+   */
+  factor?: number;
+  /** The additive offset to the coherent SI unit (`°C` → 273.15). */
+  offset?: number;
 }
 
 /** The generated FMI model description plus the structured data behind it. */
@@ -203,7 +213,7 @@ function toIdentifier(name: string): string {
 }
 
 /** SI base-unit exponents → FMI `<BaseUnit>` attributes (omit zero exponents). */
-function baseUnitAttrs(dim: Dimension): string {
+function baseUnitExponents(dim: Dimension): string {
   const map: Array<[keyof Dimension, string]> = [
     ['M', 'kg'],
     ['L', 'm'],
@@ -239,7 +249,13 @@ export function fmiModelDescription(
   for (const v of variables) {
     if (!v.unit || unitMap.has(v.unit)) continue;
     const dim = dimensionalFacets(model, v.featureId).unitDimension;
-    unitMap.set(v.unit, { name: v.unit, dimension: dim ?? undefined });
+    const resolved = resolveUnit(v.unit);
+    unitMap.set(v.unit, {
+      name: v.unit,
+      dimension: dim ?? undefined,
+      ...(resolved && resolved.factorToSI !== 1 ? { factor: resolved.factorToSI } : {}),
+      ...(resolved?.offsetSI ? { offset: resolved.offsetSI } : {}),
+    });
   }
   const units = [...unitMap.values()];
 
@@ -260,9 +276,16 @@ export function fmiModelDescription(
   if (units.length > 0) {
     lines.push('  <UnitDefinitions>');
     for (const u of units) {
-      const attrs = u.dimension ? baseUnitAttrs(u.dimension) : '';
-      if (attrs) {
-        lines.push(`    <Unit name="${xmlEscape(u.name)}"><BaseUnit ${attrs}/></Unit>`);
+      // A dimension-one unit (bit, byte, erlang) has no base exponents at all;
+      // it still needs its <BaseUnit> when it carries a factor (1 B = 8 bit),
+      // so the conversion — not just the dimension — decides.
+      const parts = [
+        u.dimension ? baseUnitExponents(u.dimension) : '',
+        u.factor !== undefined ? `factor="${u.factor}"` : '',
+        u.offset !== undefined ? `offset="${u.offset}"` : '',
+      ].filter((p) => p !== '');
+      if (parts.length > 0) {
+        lines.push(`    <Unit name="${xmlEscape(u.name)}"><BaseUnit ${parts.join(' ')}/></Unit>`);
       } else {
         lines.push(`    <Unit name="${xmlEscape(u.name)}"/>`);
       }

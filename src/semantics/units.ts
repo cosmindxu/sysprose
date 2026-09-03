@@ -10,11 +10,17 @@
  *     or converted between when their dimensions are equal.
  *
  *  2. A **unit registry** — SI base + derived units, the decimal SI prefixes,
- *     and a handful of US-customary units — each carrying its dimension and the
+ *     the ISO 80000-13 information units with the binary prefixes, and a
+ *     handful of US-customary units — each carrying its dimension and the
  *     affine map to the coherent SI unit of the same dimension
  *     (`value_SI = magnitude · factorToSI + offsetSI`). Conversion between two
  *     units of equal dimension is the composition of one map with the inverse
  *     of the other.
+ *
+ *  3. A **reference funnel** — {@link resolveUnit}, the single model-free entry
+ *     point every unit string in the tool goes through, which accepts a symbol,
+ *     a long name, a qualified or quoted library reference, a worded compound
+ *     and a unit expression alike.
  *
  * CLEAN-ROOM NOTE: every conversion factor, prefix power and offset below is
  * authored directly from the SI Brochure's *definitions* (exact rational
@@ -173,6 +179,21 @@ export interface Unit {
   libraryName?: string;
   /** Whether an SI prefix may be attached (false for US units, °C, °F, …). */
   prefixable?: boolean;
+  /**
+   * Whether a BINARY prefix (Ki, Mi, …) may be attached. Only the information
+   * units bit, byte and octet take one — `KiB` is 1024 B, but there is no
+   * `Kim` — so the two prefix families are kept apart rather than merged.
+   */
+  binaryPrefixable?: boolean;
+  /**
+   * Whether only the MAGNIFYING decimal prefixes (factor > 1) may attach.
+   * ISO 80000-13 pairs the information units with the magnifying prefixes
+   * only, and the sub-multiples are worse than useless here: a "millibit" is
+   * meaningless, and `d` + `B` would swallow `dB` — the decibel, a
+   * LOGARITHMIC ratio that is not a registry unit at all — reporting 20 dB as
+   * 16 byte-equivalents instead of the honest `unknown-unit`.
+   */
+  magnifyingPrefixesOnly?: boolean;
 }
 
 /** An SI decimal prefix: a name, symbol and power-of-ten multiplier. */
@@ -218,9 +239,29 @@ export const SI_PREFIXES: Prefix[] = [
   { name: 'yocto', symbol: 'y', factor: 1e-24 },
 ];
 
+/**
+ * The binary (IEC 80000-13) prefixes, kibi (2¹⁰) up to yobi (2⁸⁰). They are a
+ * SEPARATE family from {@link SI_PREFIXES} — decimal `k` on a byte means 1000,
+ * binary `Ki` means 1024 — and attach only to a {@link Unit.binaryPrefixable}
+ * row, so `MiB` is a mebibyte while `Mim` is nothing.
+ */
+export const BINARY_PREFIXES: Prefix[] = [
+  { name: 'kibi', symbol: 'Ki', factor: 2 ** 10 },
+  { name: 'mebi', symbol: 'Mi', factor: 2 ** 20 },
+  { name: 'gibi', symbol: 'Gi', factor: 2 ** 30 },
+  { name: 'tebi', symbol: 'Ti', factor: 2 ** 40 },
+  { name: 'pebi', symbol: 'Pi', factor: 2 ** 50 },
+  { name: 'exbi', symbol: 'Ei', factor: 2 ** 60 },
+  { name: 'zebi', symbol: 'Zi', factor: 2 ** 70 },
+  { name: 'yobi', symbol: 'Yi', factor: 2 ** 80 },
+];
+
 /** Prefix factor by name (e.g. `prefixFactor('kilo') === 1e3`), or undefined. */
 export function prefixFactor(name: string): number | undefined {
-  return SI_PREFIXES.find((p) => p.name === name)?.factor;
+  return (
+    SI_PREFIXES.find((p) => p.name === name)?.factor ??
+    BINARY_PREFIXES.find((p) => p.name === name)?.factor
+  );
 }
 
 /*
@@ -269,6 +310,30 @@ const REGISTRY: Unit[] = [
     libraryName: 'SI::degree celsius (absolute temperature scale)',
   },
 
+  // ── Information units (ISO 80000-13) ───────────────────────────────────
+  // The bundled OMG library types StorageCapacityUnit and InformationContentUnit
+  // as subclasses of MeasurementReferences::DimensionOneUnit, and the rate units
+  // (BinaryDigitRateUnit, TransferRateUnit, …) as DerivedUnit with a duration
+  // power factor. Information is therefore DIMENSION ONE here, exactly as the
+  // standard has it — `bit/s` and `Hz` are the same dimension (T⁻¹), which is
+  // the visible cost of being faithful rather than inventing an eighth axis.
+  // Factors are authored from the ISO 80000-13 definitions with the shannon
+  // (= one binary digit) as the reference: 1 B ≡ 8 bit, 1 Hart ≡ log₂10 Sh,
+  // 1 nat ≡ 1/ln2 Sh.
+  // Only the MAGNIFYING prefixes attach (magnifyingPrefixesOnly): kbit/MB/Gbit
+  // are the spellings that exist, while `d` + `B` would capture the DECIBEL —
+  // a logarithmic ratio, not a linear registry unit — and silently rescale it.
+  { name: 'bit', symbol: 'bit', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::bit', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true },
+  { name: 'byte', symbol: 'B', dimension: DIMENSIONLESS, factorToSI: 8, libraryName: 'SI::byte', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true },
+  { name: 'octet', symbol: 'o', dimension: DIMENSIONLESS, factorToSI: 8, libraryName: 'SI::octet', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true },
+  { name: 'shannon', symbol: 'Sh', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::shannon', prefixable: true, magnifyingPrefixesOnly: true },
+  { name: 'hartley', symbol: 'Hart', dimension: DIMENSIONLESS, factorToSI: Math.log2(10), libraryName: 'SI::hartley', prefixable: true, magnifyingPrefixesOnly: true },
+  { name: 'nat', symbol: 'nat', dimension: DIMENSIONLESS, factorToSI: 1 / Math.LN2, libraryName: 'SI::natural unit of information', prefixable: true, magnifyingPrefixesOnly: true },
+  // A signalling rate: one symbol (line digit) per second.
+  { name: 'baud', symbol: 'Bd', dimension: dim({ T: -1 }), factorToSI: 1, libraryName: 'SI::baud', prefixable: true, magnifyingPrefixesOnly: true },
+  // Traffic intensity — a dimensionless occupancy, one call-hour per hour.
+  { name: 'erlang', symbol: 'E', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::erlang' },
+
   // ── Other accepted metric units ────────────────────────────────────────
   { name: 'gram', symbol: 'g', dimension: D_MASS, factorToSI: 1e-3, libraryName: 'SI::gram', prefixable: true },
   { name: 'tonne', symbol: 't', dimension: D_MASS, factorToSI: 1e3, libraryName: 'SI::tonne' },
@@ -306,6 +371,16 @@ const BY_SYMBOL = new Map<string, Unit>(REGISTRY.map((u) => [u.symbol, u]));
 // Longest prefix symbols first so 'da' beats 'd' when both could apply.
 const PREFIXES_BY_SYMBOL_LEN = [...SI_PREFIXES].sort((a, b) => b.symbol.length - a.symbol.length);
 
+/**
+ * Whether one DECIMAL prefix may attach to one base unit. Everything takes the
+ * magnifying prefixes; a {@link Unit.magnifyingPrefixesOnly} row refuses the
+ * sub-multiples, which is what keeps `dB` (the decibel — logarithmic, and not a
+ * registry unit) from resolving as a deci-byte of factor 0.8.
+ */
+function prefixAllowed(prefix: Prefix, base: Unit): boolean {
+  return !base.magnifyingPrefixesOnly || prefix.factor > 1;
+}
+
 /** Synthesise a prefixed unit (e.g. kilo + metre → kilometre / km). */
 function applyPrefix(prefix: Prefix, base: Unit): Unit {
   return {
@@ -326,10 +401,15 @@ export function unitByName(name: string): Unit | undefined {
   const key = name.trim();
   const exact = BY_NAME.get(key);
   if (exact) return exact;
+  for (const p of BINARY_PREFIXES) {
+    if (!key.startsWith(p.name)) continue;
+    const base = BY_NAME.get(key.slice(p.name.length));
+    if (base?.binaryPrefixable) return applyPrefix(p, base);
+  }
   for (const p of SI_PREFIXES) {
     if (!key.startsWith(p.name)) continue;
     const base = BY_NAME.get(key.slice(p.name.length));
-    if (base?.prefixable) return applyPrefix(p, base);
+    if (base?.prefixable && prefixAllowed(p, base)) return applyPrefix(p, base);
   }
   return undefined;
 }
@@ -343,18 +423,387 @@ export function unitBySymbol(sym: string): Unit | undefined {
   const key = sym.trim();
   const exact = BY_SYMBOL.get(key);
   if (exact) return exact;
+  // Binary prefixes first: `Mi` would otherwise be eaten as `M` + `i…`.
+  for (const p of BINARY_PREFIXES) {
+    if (!key.startsWith(p.symbol)) continue;
+    const base = BY_SYMBOL.get(key.slice(p.symbol.length));
+    if (base?.binaryPrefixable) return applyPrefix(p, base);
+  }
   for (const p of PREFIXES_BY_SYMBOL_LEN) {
     if (!key.startsWith(p.symbol)) continue;
     const base = BY_SYMBOL.get(key.slice(p.symbol.length));
-    if (base?.prefixable) return applyPrefix(p, base);
+    if (base?.prefixable && prefixAllowed(p, base)) return applyPrefix(p, base);
   }
   return undefined;
 }
 
-/** Resolve a unit reference — a {@link Unit}, a long name, or a symbol. */
-function resolveUnit(u: Unit | string): Unit | undefined {
+/* ──────────────────── The unit-reference funnel ─────────────────────────── */
+
+/*
+ * Every unit string in the tool — a value's `attrs.unit`, a `[unit]` literal in
+ * a constraint body, an FMI `unit=` attribute, an SDK call — arrives here, and
+ * it arrives in whatever spelling its author used: a symbol (`kg`), a long name
+ * (`kilogram`), a qualified library reference (`SI::kg`), a quoted one
+ * (`SI::'watt hour'`, the only spelling the SysML grammar accepts for a name
+ * with a space), a worded compound (`metre per second`) or a unit expression
+ * (`kg*m/s^2`, `kg⋅m²⋅s⁻³⋅A⁻¹`).
+ *
+ * The funnel is deliberately MODEL-FREE. A library-backed fallback was
+ * considered and rejected: the library's short-name index is first-writer-wins
+ * across every element, so `h` resolves to a `height` feature and `J`/`N`/`T`/`L`
+ * to ISQ quantity letters — a post-hoc filter can only turn a wrong hit into
+ * `undefined`, never recover the masked unit. Resolving from the registry alone
+ * gives the SAME answer under the full bundle, the curated fallback and
+ * `library: 'none'`. The cost is honest and recorded: a long library name beyond
+ * per/squared/cubed (`kilogram metre squared second to the power minus 3 ampere
+ * to the power minus 1`) does not resolve, and the hint teaches the symbol form.
+ */
+
+/** Registry units keyed by their bundled-library qualified name. */
+const BY_LIBRARY_NAME = new Map<string, Unit>(
+  REGISTRY.filter((u) => u.libraryName !== undefined).map((u) => [u.libraryName as string, u]),
+);
+
+/** Strip one layer of single quotes from one qualified-name segment. */
+function unquoteSegment(seg: string): string {
+  const s = seg.trim();
+  return s.length >= 2 && s.startsWith("'") && s.endsWith("'") ? s.slice(1, -1).trim() : s;
+}
+
+/**
+ * Canonical spelling of a unit reference: trimmed, with each `::` segment
+ * unquoted. `SI::'watt hour'` → `SI::watt hour`, `'m/s'` → `m/s`.
+ */
+export function normalizeUnitRef(ref: string): string {
+  return ref.trim().split('::').map(unquoteSegment).join('::');
+}
+
+/**
+ * Resolve ONE unit NAME: the whole of it through the inverted library-name map
+ * (`SI::watt hour` → Wh), else its last `::` segment through the registry with
+ * one prefix (`SI::kg` → kg), which is how the training corpus writes units.
+ *
+ * This is deliberately per-NAME rather than per-string, because it is also the
+ * atom lookup inside a unit expression. A qualifier belongs to the atom it
+ * prefixes: cutting the whole string at its LAST `::` would read `m/SI::s` and
+ * `km/SI::h` as plain `s` and `h` — a silent wrong dimension for a spelling the
+ * tool's own hints invite by showing `[SI::kg]` beside `[m/s]`.
+ */
+function atomUnit(atom: string): Unit | undefined {
+  const key = atom.trim();
+  if (key === '') return undefined;
+  const byLibrary = BY_LIBRARY_NAME.get(key);
+  if (byLibrary) return byLibrary;
+  const cut = key.lastIndexOf('::');
+  const local = cut < 0 ? key : key.slice(cut + 2).trim();
+  if (local === '') return undefined;
+  return unitByName(local) ?? unitBySymbol(local);
+}
+
+/** Words the library uses where a unit expression would use an operator. */
+const WORD_OPERATORS: Record<string, string> = {
+  per: '/',
+  squared: '^2',
+  cubed: '^3',
+};
+
+/**
+ * Rewrite a spelled-out unit name as a unit expression: `metre per second` →
+ * `metre/second`, `watt hour` → `watt*hour`, `metre squared` → `metre^2`.
+ * Adjacent words are a product, as they are in the library's own long names.
+ */
+function wordFormExpr(src: string): string {
+  const words = src.split(/\s+/).filter((w) => w !== '');
+  if (words.length < 2) return src;
+  const out: string[] = [];
+  let afterAtom = false;
+  for (const w of words) {
+    const op = WORD_OPERATORS[w];
+    if (op !== undefined) {
+      out.push(op);
+      // `squared`/`cubed` bind to the atom before them, so a following word is
+      // still a product (`metre squared second` → `metre^2*second`).
+      afterAtom = op.startsWith('^');
+      continue;
+    }
+    if (afterAtom) out.push('*');
+    out.push(w);
+    afterAtom = true;
+  }
+  return out.join('');
+}
+
+/* ── The unit-expression parser (`kg*m/s^2`, `J/(kg⋅K)`, `m²`) ── */
+
+type UTok =
+  | { t: 'atom'; v: string }
+  | { t: 'op'; v: '*' | '/' }
+  | { t: 'caret' }
+  | { t: 'int'; v: number }
+  | { t: 'sup'; v: number }
+  | { t: 'lparen' }
+  | { t: 'rparen' }
+  | { t: 'eof' };
+
+/** Unicode superscript digits (and the superscript minus) → their ASCII value. */
+const SUPERSCRIPT_DIGITS: Record<string, string> = {
+  '⁰': '0',
+  '¹': '1',
+  '²': '2',
+  '³': '3',
+  '⁴': '4',
+  '⁵': '5',
+  '⁶': '6',
+  '⁷': '7',
+  '⁸': '8',
+  '⁹': '9',
+  '⁻': '-',
+};
+
+/** Characters that end an atom: the operators, grouping, digits and space. */
+function isUnitAtomChar(c: string): boolean {
+  if (c === undefined) return false;
+  if (c === '*' || c === '⋅' || c === '·' || c === '/' || c === '^') return false;
+  if (c === '(' || c === ')' || c === '-' || c === '+') return false;
+  if (c >= '0' && c <= '9') return false;
+  if (SUPERSCRIPT_DIGITS[c] !== undefined) return false;
+  return c.trim() !== '';
+}
+
+function lexUnit(src: string): UTok[] {
+  const toks: UTok[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c.trim() === '') {
+      i++;
+      continue;
+    }
+    // U+22C5 DOT OPERATOR is the library's product separator; U+00B7 MIDDLE DOT
+    // and ASCII `*` are the spellings agents reach for.
+    if (c === '*' || c === '⋅' || c === '·') {
+      toks.push({ t: 'op', v: '*' });
+      i++;
+      continue;
+    }
+    if (c === '/') {
+      toks.push({ t: 'op', v: '/' });
+      i++;
+      continue;
+    }
+    if (c === '^') {
+      toks.push({ t: 'caret' });
+      i++;
+      continue;
+    }
+    if (c === '(') {
+      toks.push({ t: 'lparen' });
+      i++;
+      continue;
+    }
+    if (c === ')') {
+      toks.push({ t: 'rparen' });
+      i++;
+      continue;
+    }
+    if (SUPERSCRIPT_DIGITS[c] !== undefined) {
+      let j = i;
+      let digits = '';
+      while (j < src.length && SUPERSCRIPT_DIGITS[src[j]] !== undefined) {
+        digits += SUPERSCRIPT_DIGITS[src[j]];
+        j++;
+      }
+      const n = Number(digits);
+      if (!Number.isInteger(n)) throw new SyntaxError(`Bad superscript exponent '${digits}'`);
+      toks.push({ t: 'sup', v: n });
+      i = j;
+      continue;
+    }
+    if ((c >= '0' && c <= '9') || ((c === '-' || c === '+') && src[i + 1] >= '0' && src[i + 1] <= '9')) {
+      let j = c === '-' || c === '+' ? i + 1 : i;
+      while (j < src.length && src[j] >= '0' && src[j] <= '9') j++;
+      toks.push({ t: 'int', v: Number(src.slice(i, j)) });
+      i = j;
+      continue;
+    }
+    if (isUnitAtomChar(c)) {
+      let j = i;
+      while (j < src.length && isUnitAtomChar(src[j])) j++;
+      toks.push({ t: 'atom', v: src.slice(i, j) });
+      i = j;
+      continue;
+    }
+    throw new SyntaxError(`Unexpected character '${c}' in a unit`);
+  }
+  toks.push({ t: 'eof' });
+  return toks;
+}
+
+/** A parsed unit expression: its dimension and its multiplier to coherent SI. */
+interface UnitValue {
+  dimension: Dimension;
+  factorToSI: number;
+}
+
+/** Precedence-climbing parser, in the shape of the constraint parser next door. */
+class UnitParser {
+  private pos = 0;
+  /** Whether any atom resolved — an expression of pure numbers is not a unit. */
+  private sawUnit = false;
+  constructor(private readonly toks: UTok[]) {}
+
+  private peek(): UTok {
+    return this.toks[this.pos];
+  }
+
+  parse(): UnitValue {
+    const v = this.parseProduct();
+    if (this.peek().t !== 'eof') throw new SyntaxError('Trailing tokens in a unit');
+    if (!this.sawUnit) throw new SyntaxError('A bare number is not a unit');
+    return v;
+  }
+
+  private parseProduct(): UnitValue {
+    let left = this.parsePower();
+    for (;;) {
+      const tk = this.peek();
+      if (tk.t !== 'op') break;
+      this.pos++;
+      const right = this.parsePower();
+      left =
+        tk.v === '*'
+          ? {
+              dimension: multiplyDim(left.dimension, right.dimension),
+              factorToSI: left.factorToSI * right.factorToSI,
+            }
+          : {
+              dimension: divideDim(left.dimension, right.dimension),
+              factorToSI: left.factorToSI / right.factorToSI,
+            };
+    }
+    return left;
+  }
+
+  private parsePower(): UnitValue {
+    let base = this.parsePrimary();
+    for (;;) {
+      const tk = this.peek();
+      if (tk.t === 'sup') {
+        this.pos++;
+        base = { dimension: powDim(base.dimension, tk.v), factorToSI: base.factorToSI ** tk.v };
+        continue;
+      }
+      if (tk.t === 'caret') {
+        this.pos++;
+        const e = this.peek();
+        if (e.t !== 'int') throw new SyntaxError('A unit exponent must be an integer');
+        this.pos++;
+        base = { dimension: powDim(base.dimension, e.v), factorToSI: base.factorToSI ** e.v };
+        continue;
+      }
+      break;
+    }
+    return base;
+  }
+
+  private parsePrimary(): UnitValue {
+    const tk = this.peek();
+    if (tk.t === 'lparen') {
+      this.pos++;
+      const inner = this.parseProduct();
+      if (this.peek().t !== 'rparen') throw new SyntaxError('Expected ) in a unit');
+      this.pos++;
+      return inner;
+    }
+    if (tk.t === 'int') {
+      // `1/s` is the ASCII spelling of `s⁻¹` and the commonest one agents
+      // write, so the IDENTITY is the one number a unit expression may hold.
+      // Any other number is refused, and `parse` refuses an expression that
+      // named no unit at all, so `[2]` and `[1]` stay unknown units.
+      if (tk.v !== 1) throw new SyntaxError('A bare number is not a unit');
+      this.pos++;
+      return { dimension: DIMENSIONLESS, factorToSI: 1 };
+    }
+    if (tk.t !== 'atom') {
+      throw new SyntaxError('Expected a unit symbol');
+    }
+    this.pos++;
+    const u = atomUnit(tk.v);
+    if (!u) throw new SyntaxError(`Unknown unit '${tk.v}'`);
+    this.sawUnit = true;
+    // An affine scale has no meaning as a factor of a product: `°C⋅m` would
+    // need an origin, so the whole expression is refused rather than silently
+    // read as if °C were kelvin.
+    if (u.offsetSI) throw new SyntaxError(`Unit '${tk.v}' is an offset scale`);
+    return { dimension: u.dimension, factorToSI: u.factorToSI };
+  }
+}
+
+/** Parse a unit EXPRESSION (`kg*m/s^2`, `J/(kg⋅K)`, `m²`), or undefined. */
+function parseUnitExpr(src: string): UnitValue | undefined {
+  try {
+    return new UnitParser(lexUnit(src)).parse();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Characters that make a reference a unit EXPRESSION rather than one name —
+ * the product and quotient operators, grouping, and the superscript digits.
+ */
+const UNIT_EXPR_SYNTAX = /[*\u22c5\u00b7/^()\u2070\u00b9\u00b2\u00b3\u2074-\u2079\u207b]/;
+
+/** Memo for the string funnel — a compound unit is re-parsed on every lookup. */
+const RESOLVED = new Map<string, Unit | undefined>();
+
+/** The funnel proper: every spelling, in order, for one already-trimmed string. */
+function resolveUnitString(ref: string): Unit | undefined {
+  const normalized = normalizeUnitRef(ref);
+  if (normalized === '') return undefined;
+
+  // (1) The bundled library's own qualified spelling, via the inverted
+  //     libraryName map: `SI::'watt hour'` → Wh. Whole-string, because a
+  //     library name may itself contain the parentheses and spaces the
+  //     expression lexer would otherwise take apart.
+  const byLibrary = BY_LIBRARY_NAME.get(normalized);
+  if (byLibrary) return byLibrary;
+
+  // (2) The whole reference as ONE name — a registry name or symbol with one
+  //     prefix, its qualifier stripped (exact symbols win). Skipped when the
+  //     reference carries expression syntax: there the qualifier belongs to
+  //     its own atom, and a whole-string cut would turn `m/SI::s` into `s`.
+  if (!UNIT_EXPR_SYNTAX.test(normalized)) {
+    const direct = atomUnit(normalized);
+    if (direct) return direct;
+  }
+
+  // (3) + (4) The long-name word forms, then the unit expression they become.
+  //     The whole string is handed over UNCUT: each atom resolves its own
+  //     qualifier inside {@link atomUnit}.
+  const parsed = parseUnitExpr(wordFormExpr(normalized));
+  if (!parsed) return undefined;
+  return {
+    name: normalized,
+    symbol: normalized,
+    dimension: parsed.dimension,
+    factorToSI: parsed.factorToSI,
+    prefixable: false,
+  };
+}
+
+/**
+ * Resolve a unit reference — a {@link Unit}, a long name, a symbol, a qualified
+ * or quoted library name, a worded compound, or a unit expression. Returns
+ * `undefined` when no spelling resolves.
+ */
+export function resolveUnit(u: Unit | string): Unit | undefined {
   if (typeof u !== 'string') return u;
-  return unitByName(u) ?? unitBySymbol(u);
+  const key = u.trim();
+  if (RESOLVED.has(key)) return RESOLVED.get(key);
+  const resolved = resolveUnitString(key);
+  RESOLVED.set(key, resolved);
+  return resolved;
 }
 
 /** The dimension of a unit named `name` (long name or symbol), or undefined. */
@@ -450,6 +899,88 @@ const QUANTITY_DIMENSIONS: Record<string, Dimension> = {
   VoltageValue: dim({ L: 2, M: 1, T: -3, I: -1 }),
   ElectricResistanceValue: dim({ L: 2, M: 1, T: -3, I: -2 }),
   CapacitanceValue: dim({ L: -2, M: -1, T: 4, I: 2 }),
+
+  /*
+   * Information (ISQInformation), typed AS THE BUNDLE TYPES IT — read off the
+   * library's own unit definitions rather than invented here:
+   *
+   *  - nine RATE kinds whose unit definition is a `DerivedUnit` with a duration
+   *    power factor ⇒ T⁻¹ (so `bit/s` and `Hz` share a dimension: the standard
+   *    says information content is dimension one, and that is the price);
+   *  - nineteen CONTENT / ENTROPY / TRAFFIC kinds whose unit definition
+   *    subclasses `MeasurementReferences::DimensionOneUnit` ⇒ dimensionless;
+   *  - seven kinds the bundle gives NO unit definition at all (probabilities,
+   *    a mean queue length, relative entropy/redundancy, decision content).
+   *    Dimensionless is an authoring CHOICE for those, not a reading of the
+   *    library — each is a pure number or a ratio in ISO 80000-13.
+   *
+   * Kind resolution reaches this table by NAME, not through a relationship:
+   * `resolveTypeReferences` binds no FeatureTyping for a parsed
+   * `attribute r : ISQ::BinaryDigitRateValue` (a qualified attribute typing
+   * stays in `attrs.type`), so `quantityKindOf` hands the qualified name
+   * straight to {@link quantityKindDimension}. That is also why the alias
+   * names below are keys of their own.
+   */
+
+  // Rates — DerivedUnit with a duration power factor.
+  BinaryDigitRateValue: dim({ T: -1 }),
+  TransferRateValue: dim({ T: -1 }),
+  EquivalentBinaryDigitRateValue: dim({ T: -1 }),
+  ModulationRateValue: dim({ T: -1 }),
+  AverageInformationRateValue: dim({ T: -1 }),
+  AverageTransinformationRateValue: dim({ T: -1 }),
+  ChannelTimeCapacityValue: dim({ T: -1 }),
+  CallIntensityValue: dim({ T: -1 }),
+  CompletedCallIntensityValue: dim({ T: -1 }),
+
+  // Content, entropy and traffic — DimensionOneUnit.
+  StorageCapacityValue: DIMENSIONLESS,
+  EquivalentBinaryStorageCapacityValue: DIMENSIONLESS,
+  InformationContentValue: DIMENSIONLESS,
+  ConditionalInformationContentValue: DIMENSIONLESS,
+  JointInformationContentValue: DIMENSIONLESS,
+  TransinformationContentValue: DIMENSIONLESS,
+  MeanTransinformationContentValue: DIMENSIONLESS,
+  CharacterMeanTransinformationContentValue: DIMENSIONLESS,
+  EntropyForInformationScienceValue: DIMENSIONLESS,
+  ConditionalEntropyValue: DIMENSIONLESS,
+  CharacterMeanEntropyValue: DIMENSIONLESS,
+  MaximumEntropyValue: DIMENSIONLESS,
+  EquivocationValue: DIMENSIONLESS,
+  IrrelevanceValue: DIMENSIONLESS,
+  RedundancyValue: DIMENSIONLESS,
+  ChannelCapacityPerCharacterValue: DIMENSIONLESS,
+  TrafficIntensityValue: DIMENSIONLESS,
+  TrafficCarriedIntensityValue: DIMENSIONLESS,
+  TrafficOfferedIntensityValue: DIMENSIONLESS,
+
+  // No unit definition in the bundle — dimensionless by choice, documented.
+  DecisionContentValue: DIMENSIONLESS,
+  ErrorProbabilityValue: DIMENSIONLESS,
+  LossProbabilityValue: DIMENSIONLESS,
+  MeanQueueLengthValue: DIMENSIONLESS,
+  RelativeEntropyValue: DIMENSIONLESS,
+  RelativeRedundancyValue: DIMENSIONLESS,
+  WaitingProbabilityValue: DIMENSIONLESS,
+
+  /*
+   * The ISQInformation ALIAS memberships. Under the full bundle
+   * `resolveQualifiedNameFull` dereferences `ISQ::BitRateValue` to
+   * `BinaryDigitRateValue` before the table is consulted, but under
+   * `library: 'none'` or the curated fallback there is nothing to dereference —
+   * so the alias names are keys in their own right. (The bundle declares 29
+   * aliases; the other 20 name a *Unit definition or a feature, neither of
+   * which this *Value-keyed table has a slot for.)
+   */
+  BitRateValue: dim({ T: -1 }),
+  EquivalentBitRateValue: dim({ T: -1 }),
+  LineDigitRateValue: dim({ T: -1 }),
+  CallingRateValue: dim({ T: -1 }),
+  StorageSizeValue: DIMENSIONLESS,
+  ChannelCapacityValue: DIMENSIONLESS,
+  TrafficLoadValue: DIMENSIONLESS,
+  MeanConditionalInformationContentValue: DIMENSIONLESS,
+  AverageConditionalInformationContentValue: DIMENSIONLESS,
 };
 
 /**

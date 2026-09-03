@@ -51,6 +51,10 @@ const KEY_ATTRS = [
   // Round-trip-fidelity milestone (wave 4): pre-existing gaps.
   'conjugated',
   'aliasFor',
+  // The value unit (`= 640.0 [W⋅h]`). It is a separate attribute from
+  // `multiplicity` (finding D1/H11) and the serializer re-quotes whatever the
+  // grammar cannot read bare, so it belongs in the round-trip signature.
+  'unit',
 ] as const;
 
 /** A stable, order-independent signature of an element. */
@@ -470,6 +474,15 @@ describe('round-trip — hand-written snippets', () => {
         part def X {
           attribute a := 3;
         }
+      }`,
+    ],
+    [
+      'value units: compound, quoted, qualified and prefixed spellings',
+      `package Un {
+        attribute energy : ISQ::EnergyValue = 640.0 ['W\u22c5h'];
+        attribute cruise : ISQ::SpeedValue = 25.0 [SI::'metre per second'];
+        attribute link : ISQ::BinaryDigitRateValue = 100.0 [Mbit/s];
+        attribute panel : ISQ::AreaValue = 1.5 ['m\u00b2'];
       }`,
     ],
     [

@@ -44,15 +44,14 @@ import { resolveQualifiedNameFull } from './resolve-names';
 import {
   DIMENSIONLESS,
   dimEqual,
+  dimensionOf,
   dimToString,
   divideDim,
   multiplyDim,
   powDim,
   quantityKindDimension,
-  unitByName,
-  unitBySymbol,
+  resolveUnit,
   type Dimension,
-  type Unit,
 } from './units';
 
 /* ───────────────────────────── Quantity model ───────────────────────────── */
@@ -80,30 +79,17 @@ function asString(v: AttrValue | undefined): string | undefined {
 }
 
 /**
- * Resolve a unit reference (long name or symbol) to a registry {@link Unit}.
- * A qualified reference — `SI::kg`, the spelling the training corpus uses —
- * resolves by its last segment; the full normalisation funnel (quoted names,
- * compound units) is a separate item.
+ * Resolve a unit reference to a registry {@link Unit}.
+ *
+ * The funnel itself lives in {@link ./units} (model-free, memoised, and the one
+ * place that knows about quoted, qualified, worded and compound spellings);
+ * this alias is the name the evaluation layer and its tests have always used.
  */
-export function resolveUnitRef(name: string): Unit | undefined {
-  const key = name.trim();
-  const direct = unitByName(key) ?? unitBySymbol(key);
-  if (direct) return direct;
-  const idx = key.lastIndexOf('::');
-  if (idx < 0) return undefined;
-  const last = key.slice(idx + 2).trim();
-  if (last === '') return undefined;
-  return unitByName(last) ?? unitBySymbol(last);
-}
-
-/** The dimension of a unit reference, or undefined when the registry does not know it. */
-function dimensionOfRef(name: string): Dimension | undefined {
-  return resolveUnitRef(name)?.dimension;
-}
+export const resolveUnitRef = resolveUnit;
 
 /** True when `name` is a unit known to the registry (so a unit, not e.g. `1..*`). */
 function isKnownUnit(name: string): boolean {
-  return resolveUnitRef(name) !== undefined;
+  return resolveUnit(name) !== undefined;
 }
 
 /**
@@ -113,7 +99,7 @@ function isKnownUnit(name: string): boolean {
  */
 export function siValue(q: Quantity): number | undefined {
   if (q.unit === undefined) return q.magnitude;
-  const u = resolveUnitRef(q.unit);
+  const u = resolveUnit(q.unit);
   if (!u) return undefined;
   return q.magnitude * u.factorToSI + (u.offsetSI ?? 0);
 }
@@ -292,7 +278,7 @@ export function evaluateQuantity(model: Model, featureId: ElementId): Quantity |
   const qk = quantityKindOf(model, featureId);
   let dimension: Dimension;
   if (mu.unit) {
-    dimension = dimensionOfRef(mu.unit) ?? qk.dimension ?? DIMENSIONLESS;
+    dimension = dimensionOf(mu.unit) ?? qk.dimension ?? DIMENSIONLESS;
   } else {
     dimension = qk.dimension ?? DIMENSIONLESS;
   }
@@ -300,7 +286,7 @@ export function evaluateQuantity(model: Model, featureId: ElementId): Quantity |
   const q: Quantity = { magnitude: mu.magnitude, dimension };
   if (mu.unit) {
     q.unit = mu.unit;
-    if (resolveUnitRef(mu.unit)?.offsetSI) q.absolute = true;
+    if (resolveUnit(mu.unit)?.offsetSI) q.absolute = true;
   }
   return q;
 }
@@ -328,7 +314,7 @@ export function dimensionalFacets(
   } = {};
   if (unit) {
     out.unit = unit;
-    out.unitDimension = dimensionOfRef(unit);
+    out.unitDimension = dimensionOf(unit);
   }
   if (qk.dimension) out.kindDimension = qk.dimension;
   if (qk.name) out.kindName = qk.name;
@@ -723,7 +709,7 @@ function evalQ(node: QNode, scope: QScope, absTol: number): QEval {
 function applyUnit(inner: QEval, unit: string): QEval {
   if (isQUnknown(inner)) return inner;
   if ('b' in inner) return unknownQ('not-quantity');
-  const u = resolveUnitRef(unit);
+  const u = resolveUnit(unit);
   if (!u) return unknownQ('unit', unit);
   if (!dimEqual(inner.q.dimension, DIMENSIONLESS)) {
     return unknownQ(
