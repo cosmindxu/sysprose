@@ -1,0 +1,15 @@
+{
+  "level": "L4",
+  "title": "a unit literal inside a constraint body is the spec's bracket expression and parses",
+  "note": "FIXED 2026-09-03. `require constraint { uav.mtow <= 25.0 [kg] }` was a parse error: the grammar had no bracket production inside expressions and only read a unit as a pseudo-multiplicity trailing a feature value, so a dimensioned feature could only be compared with a bare number. `[` is now the KerML BracketExpression postfix (`BaseFunctions::'['`, quantity overload `QuantityCalculations::'['`), the value-position unit still folds to `attrs.unit`, and the unit-aware evaluator judges both sides: 18.5 kg <= 25.0 kg is satisfied, with nothing to report.",
+  "ok": true,
+  "diagnostics": [],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 9,
+    "strictWarnings": true
+  }
+}

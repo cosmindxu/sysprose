@@ -182,8 +182,9 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
     // and `45 [min]` produced a confident, WRONG verdict, and the unit-aware
     // evaluator was only consulted once the scalar one had already failed.
     // Unit-aware goes first now; but it answers `unknown` for a dimensioned
-    // feature compared with a bare literal (`mtow [kg] <= 25.0` — the grammar
-    // admits no unit literal inside a constraint body), so the scalar path
+    // feature compared with a bare literal (`mtow [kg] <= 25.0` — a unit
+    // literal in the body, `<= 25.0 [kg]`, now parses and reaches it verbatim,
+    // yet a bare literal is still what most bodies spell), so the scalar path
     // remains the fallback for exactly those, not a hard switch.
     if (applyUnitAware(check, model, el, expr)) {
       out.push(check);

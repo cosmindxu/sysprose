@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { Model } from '@core/index';
 import { ModelApi, SysmlApiServer, unitReport, type UnitReport } from '@api/index';
 import { validate } from '@validation/index';
+import { parseModel, serializeModel } from '@text/index';
 import { checkConstraints } from '../../src/semantics/index';
 import { dimToString } from '../../src/semantics/units';
 
@@ -96,6 +97,21 @@ describe('units — unit-aware constraint evaluation', () => {
     const { model, constraintId } = buildModel({ massValue: 2500 });
     const check = checkConstraints(model).find((c) => c.id === constraintId);
     expect(check?.result).toBe('violated');
+  });
+
+  it('the programmatic model round-trips through the notation and keeps its verdict', () => {
+    // The serializer always emitted `mass <= 2000 [kg]` verbatim; the parser
+    // used to reject it (the grammar had no unit literal inside a constraint
+    // body), so a saved model could not be read back. Closure is asserted
+    // rather than just a clean parse: the reparsed model judges the same way.
+    const { model } = buildModel({ massValue: 2500 });
+    const text = serializeModel(model);
+    expect(text).toContain('mass <= 2000 [kg]');
+    const back = parseModel(text);
+    expect(back.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(serializeModel(back.model)).toBe(text);
+    const reparsed = back.model.all().find((e) => e.eClass === 'ConstraintUsage')!;
+    expect(checkConstraints(back.model).find((c) => c.id === reparsed.id)?.result).toBe('violated');
   });
 
   it('auto-converts units in the comparison (1.8 t < 2000 kg → satisfied)', () => {

@@ -165,7 +165,7 @@ const RESERVED_WORDS = new Set<string>([
   'differences', 'disjoint', 'do', 'doc', 'else', 'end', 'entry', 'enum', 'event',
   'exhibit', 'exit', 'expr', 'false', 'feature', 'featured', 'filter', 'first', 'flow',
   'for', 'fork', 'frame', 'from', 'function', 'hastype', 'if', 'implies', 'import',
-  'in', 'include', 'individual', 'inout', 'interaction', 'interface', 'intersects',
+  'in', 'include', 'individual', 'initial', 'inout', 'interaction', 'interface', 'intersects',
   'inv', 'inverse', 'istype', 'item', 'join', 'language', 'library', 'locale', 'loop',
   'member', 'merge', 'message', 'meta', 'metaclass', 'metadata', 'multiplicity',
   'namespace', 'new', 'nonunique', 'not', 'null', 'objective', 'occurrence', 'of', 'or',
@@ -266,7 +266,7 @@ function header(model: Model, el: ElementRecord): string {
       el.attrs.initialValue === true ? ':=' : '=',
       valueLexeme(el),
     ];
-    if (typeof el.attrs.unit === 'string' && el.attrs.unit !== '') clause.push(`[${el.attrs.unit}]`);
+    if (typeof el.attrs.unit === 'string' && el.attrs.unit !== '') clause.push(`[${unitLexeme(el.attrs.unit)}]`);
     parts.push(...clause);
   }
 
@@ -426,8 +426,39 @@ function valueClause(el: ElementRecord): string[] {
   const parts: string[] = [el.attrs.initialValue === true ? ':=' : '=', valueLexeme(el)];
   // Value unit stored in `attrs.unit` (`= 1500 [kg]`); never conflated with
   // the multiplicity bracket (finding D1/H11).
-  if (typeof el.attrs.unit === 'string' && el.attrs.unit !== '') parts.push(`[${el.attrs.unit}]`);
+  if (typeof el.attrs.unit === 'string' && el.attrs.unit !== '') parts.push(`[${unitLexeme(el.attrs.unit)}]`);
   return parts;
+}
+
+/**
+ * A bare name, number, or a `#( i )` index — one operand of a unit expression
+ * the grammar reads without quotes. Reserved words are excluded because the
+ * expression grammar lexes them as keywords (`in`).
+ */
+const UNIT_OPERAND = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+)(?:(?:::|\.)(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+))*(?:#\([0-9]+\))?$/;
+
+/**
+ * The notation for a unit stored in `attrs.unit`, i.e. the operand of the
+ * bracket expression `value [unit]`. `attrs.unit` holds the unit UNQUOTED
+ * (`m/s`, `SI::watt hour`, `m²`), because quotes are the notation's escape
+ * rather than part of the unit. A unit the expression grammar reads as it is
+ * — a name, a qualified name, or an ASCII unit expression over `*`, `/`, `^`
+ * (`m/s`, `W*h`, `m^2`, `Mbit/s`) — is emitted bare; anything else (a reserved
+ * word, a space, a non-ASCII symbol) is quoted per `::`-segment as an
+ * unrestricted name, which the grammar reads back to the same unit
+ * (`['in']`, `['W⋅h']`, `['m²']`, `[SI::'watt hour']`). Emitting the raw
+ * string would produce notation the parser rejects — `[SI::watt hour]` — and
+ * a saved model that cannot be read back.
+ */
+function unitLexeme(unit: string): string {
+  const operands = unit.split(/[*/^]/);
+  const bare = operands.every(
+    (op) =>
+      UNIT_OPERAND.test(op) &&
+      op.split(/::|\.|#/).every((seg) => !RESERVED_WORDS.has(seg)),
+  );
+  if (bare) return unit;
+  return unit.split('::').map((seg) => quoteName(seg)).join('::');
 }
 
 /** accept / send / assign / perform / exhibit / include / terminate action. */

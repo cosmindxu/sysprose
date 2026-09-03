@@ -1,0 +1,5 @@
+{
+  "level": "L2",
+  "title": "an unfinished unit bracket after a feature value",
+  "note": "FIXED 2026-09-03. `= 5 []` (and `= 5 [;`, `= 5 [initial]`) made the mapper dereference the bracket's missing operand and throw, which the checker reported as `import/internal-error` with zero elements — the whole file lost for one unfinished unit. It is one positioned parse error now; the value is kept without a unit and the neighbouring declarations survive."
+}

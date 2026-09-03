@@ -387,7 +387,7 @@ fragment DeclMiddle:
         'to' (toMult+=Multiplicity)? flowTo=QualifiedName (toSpecs+=Specialization)*)?
     ('connect' (connSrcMult+=Multiplicity)? connectSource=QualifiedName 'to' (connTgtMult+=Multiplicity)? connectTarget=QualifiedName)?
     ('to' (sendMult+=Multiplicity)? sendTarget=QualifiedName)?
-    (valueOp=ValueOp value=Expression (valueMult=Multiplicity)?)?
+    (valueOp=ValueOp value=Expression)?
     ( ctrl='while' ctrlCond=Expression
     | ctrl='until' ctrlCond=Expression
     | ctrl='for' ctrlVar=Name (':' ctrlType=QualifiedName)? 'in' ctrlColl=Expression
@@ -454,15 +454,18 @@ SpecOp returns string:
     | 'inverse' 'of' | 'disjoint' 'from';
 
 // ─────────────────────────── multiplicity ────────────────────────────
-// `[ n ]`, `[ n..m ]`, `[ n..* ]`, `[ * ]`, or a trailing unit like `[ kg ]`.
+// `[ n ]`, `[ n..m ]`, `[ n..* ]`, `[ * ]`. A multiplicity belongs to the
+// declaration part, BEFORE any feature value (KerML BNF: MultiplicityPart is
+// in FeatureSpecializationPart; ValuePart carries none) — a bracket AFTER a
+// value is the BracketExpression of the expression grammar, never this rule.
 
 Multiplicity infers Multiplicity:
     '[' lower=MultTerm ('..' upper=MultTerm)? ']';
 
 // A bound is a number, `*`, or a feature reference. A reference bound may carry
-// a trailing `#( i )` sequence-index (`[ mRef.mRefs#(1) ]`); the index token
-// disambiguates the value-multiplicity bracket from a bare `x[i]` postfix index
-// (which the notation deliberately omits) — a `[` here is always a multiplicity.
+// a trailing `#( i )` sequence-index (`[ mRef.mRefs#(1) ]`, the KerML
+// MultiplicityRange admits any expression as a bound and the index form is the
+// one the library writes).
 MultTerm returns string:
     NUMBER | '*' | QualifiedName ('#' '(' (NUMBER | QualifiedName) ')')?;
 
@@ -518,15 +521,21 @@ UnaryExpr infers Expression:
       {infer UnaryExpr} op=('-' | '+' | 'not' | '~') operand=UnaryExpr
     | PostfixExpr;
 
-// Postfix chain: invocation `f(a,b)`, index `x[i]` / `x#(i)`, navigation
+// Postfix chain: invocation `f(a,b)`, bracket `x[u]`, index `x#(i)`, navigation
 // `x->op{…}`, collect `x.{…}`, select `x.?{…}`.
 PostfixExpr infers Expression:
     PrimaryExpr (
         {infer InvocationExpr.callee=current} '(' (args+=Argument (',' args+=Argument)*)? ')'
-      // NB: only the `#( … )` index form is supported. A bare `x[i]` bracket
-      // index would be indistinguishable from a feature-value multiplicity
-      // (`= 1500 [kg]`), so it is deliberately omitted (matching the standard's
-      // note that the `[` operator has no default library definition).
+      // The spec BracketExpression (KerML textual BNF 1099-1102): a PRIMARY
+      // followed by `[ expr ]`, an invocation of the library function
+      // `BaseFunctions::'['`. Its quantity overload `QuantityCalculations::'['`
+      // (num, mRef) is how SysML v2 spells a quantity literal — `25.0 [kg]`,
+      // `48 [h]`, `5 [SI::kg]`, `18 ['in']` — anywhere an expression may appear,
+      // constraint bodies included. It binds tighter than every binary operator:
+      // the pilot's own XMI groups `229835/900 [K]` as `229835/(900 [K])`, and
+      // `(a + b) [mm]` needs the parentheses for the same reason. Indexing is
+      // the SEPARATE `#( … )` function below, not `x[i]`.
+      | {infer BracketExpr.base=current} '[' arg=Expression ']'
       | {infer IndexExpr.base=current} '#' '(' (index=Expression)? ')'
       | {infer NavExpr.base=current} '->' op=QualifiedName
             ( '(' (args+=Argument (',' args+=Argument)*)? ')' | body=Body | funcRef=QualifiedName )?
@@ -590,8 +599,9 @@ NonKeywordName returns string:
 // QualifiedName is referenced from ~30 grammar decision points, so each extra
 // keyword-token widens the parser's lookahead sets and superlinearly inflates
 // Chevrotain's one-time parser-construction cost (a full ~70-word set pushes it
-// past 20 s). This curated set keeps construction near ~3 s while preserving
-// corpus coverage.
+// past 20 s). This curated set keeps construction near ~1 s while preserving
+// corpus coverage (measured on the generated parser: ~0.8 s before the
+// BracketExpression alternative, ~1.2 s with it).
 KeywordName returns string:
       'type' | 'classifier' | 'behavior' | 'interaction' | 'function' | 'predicate'
     | 'metaclass' | 'feature' | 'step' | 'multiplicity' | 'connector' | 'association' | 'member'
@@ -604,8 +614,15 @@ KeywordName returns string:
 Name returns string:
     ID | UNRESTRICTED_NAME | SoftKeyword;
 
+// `derive` is a relationship keyword (`derive requirement r from s`) that the
+// library also uses as a SHORT name (`metadata def <derive> …` in
+// RequirementDerivation.sysml); as a soft keyword it costs no construction
+// time and adds no ambiguity. Like every soft keyword it is a `Name` but not a
+// `RefName`, so `part def derive;` splits into a nameless definition plus a
+// keyword-less `'derive'` (the same shape `filter`/`var` already have) —
+// pinned in langium.grammar.test.ts rather than widened here.
 SoftKeyword returns string:
-      'var' | 'multiplicity' | 'about' | 'locale' | 'filter' | 'done';
+      'var' | 'multiplicity' | 'about' | 'locale' | 'filter' | 'done' | 'derive';
 
 terminal ID: /[_a-zA-Z][\w]*/;
 // Single-quoted unrestricted name (value keeps its quotes; the mapper strips).

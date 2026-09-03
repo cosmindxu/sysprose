@@ -5174,19 +5174,6 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                   },
                   "arguments": []
                 }
-              },
-              {
-                "$type": "Assignment",
-                "feature": "valueMult",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@50"
-                  },
-                  "arguments": []
-                },
-                "cardinality": "?"
               }
             ],
             "cardinality": "?"
@@ -7308,6 +7295,40 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                     "$type": "Action",
                     "inferredType": {
                       "$type": "InferredType",
+                      "name": "BracketExpr"
+                    },
+                    "feature": "base",
+                    "operator": "="
+                  },
+                  {
+                    "$type": "Keyword",
+                    "value": "["
+                  },
+                  {
+                    "$type": "Assignment",
+                    "feature": "arg",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "RuleCall",
+                      "rule": {
+                        "$ref": "#/rules@52"
+                      },
+                      "arguments": []
+                    }
+                  },
+                  {
+                    "$type": "Keyword",
+                    "value": "]"
+                  }
+                ]
+              },
+              {
+                "$type": "Group",
+                "elements": [
+                  {
+                    "$type": "Action",
+                    "inferredType": {
+                      "$type": "InferredType",
                       "name": "IndexExpr"
                     },
                     "feature": "base",
@@ -8454,6 +8475,10 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
           {
             "$type": "Keyword",
             "value": "done"
+          },
+          {
+            "$type": "Keyword",
+            "value": "derive"
           }
         ]
       },

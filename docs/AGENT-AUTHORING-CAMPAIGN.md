@@ -100,9 +100,9 @@ one in this corpus was read and corrected by hand.
 |---|---|---|
 | L0 | Recognition and encoding: empty file, comments only, BOM, CRLF, tabs, non-ASCII names, JSON offered as SysML, unknown extension | 8 |
 | L1 | Lexical: illegal character, unterminated string, unterminated comment | 3 |
-| L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword, reversed keywords, empty type, bad multiplicity, bad expressions, `=` vs `==`, bare `->`, two independent errors | 13 |
+| L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, bad expressions, `=` vs `==`, bare `->`, two independent errors | 14 |
 | L3 | Referential: unresolved type, connection end, import, transition end, specialization; forward references in a package; types reached through an import, through inheritance, and through a library import written in text; plus a pinned behaviour | 10 |
-| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit, connection direction and type | 13 |
+| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit, connection direction and type, signed literal, unit literal in a constraint body | 15 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies | 3 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 12 assertions |
 | L7 | The command-line contract: exit codes, JSON shape, stdin, strict mode | 10 tests |
@@ -290,10 +290,9 @@ hanging.
 scalar evaluator ran first and compared raw magnitudes, so `640 [Wh]` at
 `650 [W]` against `45 [min]` was "violated". The unit-aware evaluator now goes
 first; the scalar path remains the fallback for a dimensioned feature compared
-with a bare literal, which the unit-aware evaluator cannot judge because the
-grammar admits no unit literal inside a constraint body. An unknown unit was
-silently exempt from every dimensional check; `unknown-unit` now names it. `Wh`
-and `Ah` joined the registry (prefixable, so kWh and mAh come free).
+with a bare literal, which the unit-aware evaluator cannot judge. An unknown
+unit was silently exempt from every dimensional check; `unknown-unit` now names
+it. `Wh` and `Ah` joined the registry (prefixable, so kWh and mAh come free).
 
 **Connection compatibility was unchecked.** `connect battery.powerOut to
 flightComputer.motorOut` (out to out) and a PowerPort wired to a DataPort both
@@ -334,6 +333,41 @@ from string to number for signed literals, which is the intended contract.
 Query equality also accepts two operands that denote the same number, so a
 query persisted as `'-2.50'` keeps matching. Fixture: `L4-signed-literal`.
 
+**A `[unit]` literal could not be written inside a constraint body.**
+`require constraint { uav.mtow <= 25.0 [kg] }` was a parse error. The grammar
+had no bracket production inside expressions: the only unit it read was a
+pseudo-multiplicity trailing a feature value, a local device that does not
+exist in the standard (KerML's ValuePart carries no multiplicity). `[` is now
+what the KerML textual BNF says it is — the BracketExpression postfix, an
+invocation of `BaseFunctions::'['` whose quantity overload
+`QuantityCalculations::'['` is how SysML v2 spells a quantity literal — so
+`25.0 [kg]`, `48 [h]`, `5 [SI::kg]`, `18 ['in']`, `max(1 [m], 2 [m])` parse
+wherever an expression may appear, and units on `assign`, `return` and `entry`
+values become readable (the serializer already wrote them; `entry e = 5` had
+also been losing its value in the mapper). The model contract is unchanged: a
+bracket at the top of a feature value still folds to a numeric `attrs.value`
+plus `attrs.unit`, a signed magnitude (`-5 [m]`) folds under the same bare-number
+guard as a signed literal, and a bracket deeper in the expression
+(`229835/900 [K]`) stays verbatim text — it binds tighter than `/`, the
+grouping the pilot's own XMI records. Two consequences that were hidden before:
+the serializer now quotes a unit the grammar cannot read bare (`[SI::'watt hour']`,
+`['m²']`, `['in']` — the raw `[SI::watt hour]` it used to emit did not parse
+back), and a bracket holding a character the lexer skips (`[m²]`, previously
+read as `[m]`) keeps its source spelling in `attrs.unit` beside the lexer
+error, rather than persisting a silently different dimension. `derive` became a
+soft keyword in the same grammar pass, which closes the one library file
+(`RequirementDerivation.sysml`) the corpus harness had been failing on: 94 of
+94 library files parse, and the wider release corpus went from 265 to 279 of
+405 files. Parser construction measured 0.8 s before and 1.2 s after. The
+recovery edge came with it: an unfinished bracket (`= 5 []`, `= 5 [;`,
+`= 5 [initial]`) leaves the parser's operand unset, and a first cut of the
+mapper dereferenced it — the checker turned that into `import/internal-error`
+with zero elements, the whole file lost for one mid-edit unit. It is one
+positioned parse error now, the value is kept without a unit, and the
+neighbouring declarations survive. Fixtures: `L4-unit-literal-in-constraint`,
+`L2-empty-unit-bracket`; the grammar shapes and the round-trips are pinned by
+`langium.grammar.test.ts` and `text.bracket-expr.test.ts`.
+
 ### Known limitations, recorded rather than hidden
 
 **Re-homing cannot recover the faulty declaration itself, and can mis-home a
@@ -342,12 +376,16 @@ containment from the brace structure, which is all the parser leaves intact;
 the residue of the bad declaration stays a keyword-less element.
 
 
-**A `[unit]` literal cannot be written inside a constraint body.**
-`require constraint { x <= 25.0 [kg] }` is a parse error: the expression grammar
-has no unit-literal production, so a dimensioned feature can only be compared
-with a bare number (evaluated by the scalar fallback) or with another
-dimensioned feature. A grammar extension would let the unit-aware evaluator
-judge both sides.
+**A unit inside a constraint body is parsed but not yet validated or
+resolved beyond the registry's bare symbols.** `unknown-unit` reads only
+`attrs.unit`, so `{ m <= 25 [furlong] }` parses and evaluates to unknown without
+a warning; a qualified reference (`5 [SI::kg]`, the spelling the training
+corpus uses) is stored faithfully but the registry does not strip the
+qualifier, so it evaluates to unknown as well; and a derived feature with no
+literal magnitude is invisible to the quantity scope, so comparing it with a
+unit literal answers unknown (the scalar fallback cannot read the bracket)
+where the same comparison against a bare number answered. The grammar half is
+done; the semantics half is the next item.
 
 **Compound units and an information dimension are not representable.** The
 registry is a fixed table with generic single-prefix decomposition; `W*h`,
@@ -397,6 +435,30 @@ never stored. A dangling sign (`= -;`) is a positioned parse error, never a
 mapper crash.
 `-0` folds to the number -0, which JSON cannot carry; it survives a save only
 through `valueText`. Pinned by `text.literal-form.test.ts`.
+
+**No multiplicity follows a feature value.** `= 1500 [0..*]` used to be accepted
+(the range landed in `attrs.unit`); a bracket after the value is an expression
+now, because the standard puts the multiplicity before the value. So `[0..*]`
+and `[*]` are parse errors (`*` is not an expression) — their hint still
+speaks of a declaration starting with `*`, a follow-up — while a numeric range
+`[1..2]` parses as a bracket operand, is stored verbatim in `attrs.unit` and
+re-emits quoted (`['1..2']`) so it reads back. Two neighbours of the same
+rule: `transition t first a if x > 0 [y > 0] then b` is ONE guard whose
+expression ends in a bracket, not an `if` guard followed by a bracket guard —
+the standard has only the `if` form — and `a/b [u]` groups as `a/(b [u])`. No
+corpus or in-tree file spelled any of the four. Pinned by
+`langium.grammar.test.ts` and `text.bracket-expr.test.ts`.
+
+**A soft keyword is a short name, not a declaration name.** `derive` joined
+`var`/`filter`/`about`/`locale`/`multiplicity`/`done` as a soft keyword so the
+library's `metadata def <derive> …` parses; the same rule makes `part def
+derive;` (and `part def filter;`, `attribute var = 1;`) parse with no
+diagnostic into a nameless definition plus a keyword-less `'derive'`, because
+the name after a consumed keyword is `RefName`, which excludes soft keywords.
+Before this pass `derive` there was a loud parse error; the silent split is the
+pre-existing shape of every soft keyword, and widening `RefName` means
+re-checking the parser's ambiguity set. Pinned by `langium.grammar.test.ts` so
+that widening is a decision, not a drift.
 
 ## 5. Phase status
 

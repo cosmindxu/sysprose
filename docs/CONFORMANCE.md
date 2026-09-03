@@ -68,7 +68,13 @@ malformed documents (missing `elements`, missing `@id`, missing `@type`) and
   Systems-Modeling XMI release (commit `ee25530`).
 - We **parse 100 %** of the real `.kerml` / `.sysml` corpus at
   `~/.stdlib-src` (94 of 94 files parse with **0 errors**; read as test input
-  only, never committed). Reproduce with `scripts/grammar-coverage.ts`.
+  only, never committed). Reproduce with `npx tsx scripts/grammar-coverage.ts`
+  (measured 2026-09-03; an earlier revision claimed 94/94 while the harness
+  measured 93/94 — `RequirementDerivation.sysml` uses `derive` as a declared
+  name, accepted since the bracket-expression grammar pass). The wider release
+  corpus — `sysml/src` training and validation models, `kerml/src`, plus this
+  repo's `examples/` — is not a conformance claim; `--all` reports 279 of 405
+  files parse clean, the rest use constructs the grammar does not yet cover.
 - The parser also **rejects** non-SysML rather than accepting anything: `!!! this
   is not sysml at all !!!` produces 6 parse errors, `package Broken { part def ;;;
   <<<not sysml>>> }` produces 2, and an unterminated body produces 1. (An earlier

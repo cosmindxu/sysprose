@@ -10,7 +10,14 @@
  * grammar coverage — it is never copied into the repo or committed. If the
  * corpus is absent it is (shallow) cloned from the public release repo.
  *
- * Usage:  npx tsx scripts/grammar-coverage.ts [--verbose] [--errors]
+ * `--all` widens the corpus from the normative `sysml.library` to every
+ * `.kerml` / `.sysml` under the release checkout (`sysml/src` training and
+ * validation models, `kerml/src`) plus this repo's `examples/`. That wider set
+ * exercises constructs the library itself never spells (a unit literal inside a
+ * constraint body, for one), so it is the honest measure of a grammar change
+ * whose target is authored text rather than the library.
+ *
+ * Usage:  npx tsx scripts/grammar-coverage.ts [--verbose] [--errors] [--all]
  */
 
 import { readdirSync, statSync, readFileSync, existsSync } from 'node:fs';
@@ -26,6 +33,15 @@ const RELEASE_REPO = 'https://github.com/Systems-Modeling/SysML-v2-Release';
 
 const VERBOSE = process.argv.includes('--verbose');
 const SHOW_ERRORS = process.argv.includes('--errors');
+const ALL = process.argv.includes('--all');
+
+/** Corpus roots for `--all`: the release tree's model sources plus this repo's examples. */
+const ALL_ROOTS = [
+  CORPUS_DIR,
+  join(STDLIB_ROOT, 'sysml', 'src'),
+  join(STDLIB_ROOT, 'kerml', 'src'),
+  join(process.cwd(), 'examples'),
+];
 
 function ensureCorpus(): void {
   if (existsSync(CORPUS_DIR)) return;
@@ -66,7 +82,8 @@ function parseFile(path: string): FileResult {
 
 function main(): void {
   ensureCorpus();
-  const files = walk(CORPUS_DIR).sort();
+  const roots = ALL ? ALL_ROOTS.filter((r) => existsSync(r)) : [CORPUS_DIR];
+  const files = roots.flatMap((r) => walk(r)).sort();
   if (files.length === 0) {
      
     console.error('No .kerml/.sysml files found in corpus.');
@@ -77,7 +94,10 @@ function main(): void {
   const passed = results.filter((r) => r.ok);
   const failed = results.filter((r) => !r.ok);
 
-  const rel = (p: string) => p.slice(CORPUS_DIR.length + 1);
+  const rel = (p: string) => {
+    const root = roots.find((r) => p.startsWith(r + '/')) ?? CORPUS_DIR;
+    return p.slice(root.length + 1);
+  };
 
   if (VERBOSE) {
     for (const r of results) {

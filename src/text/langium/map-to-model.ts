@@ -58,6 +58,7 @@ import type {
   Annotation,
   BehaviorStmt,
   Bind,
+  BracketExpr,
   Comment as CommentNode,
   Connect,
   TextualRep as TextualRepNode,
@@ -275,6 +276,19 @@ function formatMultiplicity(m: Multiplicity): string {
 /** Verbatim source text of an expression node (trimmed), for free-form fragments. */
 function exprText(expr: Expression | undefined): string {
   return (expr?.$cstNode?.text ?? '').trim();
+}
+
+/**
+ * The unit spelled by a bracket operand, as `attrs.unit` stores it: quoted
+ * name segments unquoted (`'m/s'` → `m/s`, `SI::'watt hour'` → `SI::watt hour`)
+ * and whitespace outside quotes removed (`m / s` → `m/s`), separators kept as
+ * written. Quotes are the notation's escape, not part of the unit; the
+ * serializer puts them back (`unitLexeme`) only where the grammar needs them.
+ */
+function unitTextOf(text: string): string {
+  return text.replace(/'((?:\\.|[^'\\])*)'|\s+/g, (_m, inner: string | undefined) =>
+    inner === undefined ? '' : inner.replace(/\\(.)/g, '$1'),
+  );
 }
 
 /* ───────────────────────── shared name resolution ───────────────────────── */
@@ -573,6 +587,16 @@ class Mapper {
   readonly model = new Model();
   readonly factory = new ModelFactory(this.model);
   readonly diagnostics: ParseDiagnostic[] = [];
+
+  /**
+   * The source text and the offsets the lexer could not tokenise, for the one
+   * place the AST is known to be lossy: a bracket unit whose spelling holds a
+   * character the lexer skipped (`[m²]` reaches the parser as `[m]`). The unit
+   * is then sliced from the source, so the model never carries a silently
+   * different dimension — the lexer error itself is still reported.
+   */
+  source = '';
+  lexerErrorOffsets: number[] = [];
 
   /**
    * Source span of every element this mapper created (Agent Diagnostics
@@ -1161,8 +1185,7 @@ class Mapper {
     const mults = (node.multiplicity ?? []).map(formatMultiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
-      const value = this.mapValue(node.value);
-      if (value !== undefined) this.model.setAttrs(el.id, { value, ...valueTextFor(node.value, value) });
+      this.model.setAttrs(el.id, this.splitValueUnit(node.value));
       // `:=` provenance (F-follow-up): keep return/behavior statements from
       // drifting to `=` on re-emission.
       if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
@@ -1214,8 +1237,7 @@ class Mapper {
     const mults = (node.multiplicity ?? []).map(formatMultiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
-      const value = this.mapValue(node.value);
-      if (value !== undefined) this.model.setAttrs(el.id, { value, ...valueTextFor(node.value, value) });
+      this.model.setAttrs(el.id, this.splitValueUnit(node.value));
       if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
         this.model.setAttrs(el.id, { initialValue: true });
       }
@@ -1381,12 +1403,19 @@ class Mapper {
     });
   }
 
+  /** `entry` / `do` / `exit` (name)? (= value)? — the value is kept like any behaviour statement's. */
   private mapStateBehavior(node: StateBehavior, ownerId: ElementId | null): void {
-    this.create('ActionUsage', {
+    const el = this.create('ActionUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
       attrs: { stateSubaction: node.kind },
     });
+    if (node.valueOp && node.value) {
+      this.model.setAttrs(el.id, this.splitValueUnit(node.value));
+      if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
+        this.model.setAttrs(el.id, { initialValue: true });
+      }
+    }
   }
 
   private mapControlNode(node: ControlNode, ownerId: ElementId | null): void {
@@ -1537,19 +1566,18 @@ class Mapper {
     // Specializations (resolved against the model built so far).
     for (const spec of node.specializations) this.applySpecialization(el, spec, ownerId);
 
-    // Multiplicity — a real `[m..n]` count range. A trailing VALUE unit
-    // (`= 1500 [kg]`) is stored in `attrs.unit`, never in attrs.multiplicity
-    // (the legacy parser conflated the two — finding D1/H11). The semantics
-    // layer reads `attrs.unit` first, falling back to a unit-named
-    // attrs.multiplicity for models saved by the old parser.
+    // Multiplicity — a real `[m..n]` count range, declared BEFORE the value.
+    // A unit on the value (`= 1500 [kg]`) is a bracket expression and lands in
+    // `attrs.unit` through `splitValueUnit`, never in attrs.multiplicity (the
+    // legacy parser conflated the two — finding D1/H11). The semantics layer
+    // reads `attrs.unit` first, falling back to a unit-named attrs.multiplicity
+    // for models saved by the old parser.
     const mults = (node.multiplicity ?? []).map(formatMultiplicity);
-    if (node.valueMult) this.model.setAttrs(el.id, { unit: formatMultiplicity(node.valueMult) });
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
 
-    // Feature value ( = / := ).
+    // Feature value ( = / := ), with its unit split off.
     if (node.valueOp && node.value) {
-      const value = this.mapValue(node.value);
-      if (value !== undefined) this.model.setAttrs(el.id, { value, ...valueTextFor(node.value, value) });
+      this.model.setAttrs(el.id, this.splitValueUnit(node.value));
       if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) this.model.setAttrs(el.id, { initialValue: true });
     }
 
@@ -1580,11 +1608,89 @@ class Mapper {
     }
   }
 
+  /**
+   * A feature value with its unit split off, in the shape `attrs` stores:
+   * `value` (number / boolean / verbatim expression text), `unit` when the
+   * value's TOP node is a bracket expression, and `valueText` beside a number
+   * whose written form `String(value)` would not reproduce.
+   *
+   * Only the outermost bracket is a unit annotation on the value: `18.5 [kg]`,
+   * `(1 + 2) [m]`, `num#(1) [mRef.mRefs#(1)]`. A bracket deeper in the tree
+   * (`229835/900 [K]`, `2 * 3 [kg]`) is part of the expression and stays in
+   * its verbatim text, exactly as the notation reads it. A sign in front of the
+   * bracket (`-5 [m]`, a UnaryExpr over the BracketExpr because the bracket
+   * binds tighter) folds under the same bare-number guard as `mapValue`.
+   */
+  private splitValueUnit(
+    expr: Expression,
+  ): { value: string | number | boolean; unit?: string; valueText?: string } {
+    if (expr.$type === 'BracketExpr') {
+      const value = this.mapValue(expr.base);
+      const unit = this.unitOf(expr);
+      return { value, ...(unit ? { unit } : {}), ...valueTextFor(expr.base, value) };
+    }
+    if (
+      expr.$type === 'UnaryExpr' &&
+      (expr.op === '-' || expr.op === '+') &&
+      expr.operand?.$type === 'BracketExpr' &&
+      expr.operand.base.$type === 'NumberLiteral' &&
+      /^[0-9]/.test(expr.operand.base.$cstNode?.text ?? '')
+    ) {
+      const magnitude = expr.operand.base.value;
+      const value = expr.op === '-' ? -magnitude : magnitude;
+      // The lexeme is the sign plus the base's own text (`-2.50`): the
+      // UnaryExpr's text would carry the bracket. Kept under the same guard as
+      // `valueTextFor` — only while it still denotes the number.
+      const lexeme = expr.op + (expr.operand.base.$cstNode?.text ?? '').trim();
+      const unit = this.unitOf(expr.operand);
+      return {
+        value,
+        ...(unit ? { unit } : {}),
+        valueText: lexeme !== String(value) && Number(lexeme) === value ? lexeme : undefined,
+      };
+    }
+    const value = this.mapValue(expr);
+    return { value, ...valueTextFor(expr, value) };
+  }
+
+  /**
+   * The unit a bracket expression annotates its base with, as `attrs.unit`
+   * spells it. A reference (`kg`, `SI::kg`, `'in'`, `SI::'watt hour'`) is
+   * unquoted; any other operand (`m/s`, `W*h`, `mRef.mRefs#(1)`) is its source
+   * text with whitespace removed, so `[m / s]` and `[m/s]` are one unit. When
+   * the lexer skipped a character inside the bracket (`[m²]`), the AST has lost
+   * it and the unit is the SOURCE slice between the brackets instead.
+   *
+   * Returns '' (no unit) when the bracket has no operand: `= 5 []`, `= 5 [;`,
+   * `= 5 [initial]` are routine mid-edit states that the parser recovers from
+   * with `arg` unset, and the parse error is the whole report — a mapper that
+   * dereferenced the missing operand cost the agent the entire file as an
+   * internal error instead of one positioned diagnostic.
+   */
+  private unitOf(bracket: BracketExpr): string {
+    const cst = bracket.$cstNode;
+    if (cst && this.lexerErrorOffsets.some((o) => o >= cst.offset && o < cst.end)) {
+      const open = this.source.indexOf('[', bracket.base.$cstNode?.end ?? cst.offset);
+      const close = cst.end - 1;
+      if (open !== -1 && open < close && this.source[close] === ']') {
+        const sliced = this.source.slice(open + 1, close).trim();
+        if (sliced) return sliced;
+      }
+    }
+    const arg = bracket.arg as Expression | undefined;
+    if (!arg) return '';
+    return unitTextOf(arg.$type === 'RefExpr' ? arg.ref : exprText(arg));
+  }
+
   /** Map a single value expression to the legacy primitive-or-verbatim form. */
   private mapValue(expr: Expression): string | number | boolean {
     switch (expr.$type) {
       case 'NumberLiteral':
         return expr.value;
+      case 'BracketExpr':
+        // A bracket that is not the top of a feature value is part of the
+        // expression (`2 * 3 [kg]`); it is kept as the notation reads it.
+        return exprText(expr);
       case 'BoolLiteral':
         return expr.value === 'true';
       case 'StringLiteral':
@@ -1716,6 +1822,10 @@ function normalizeSpecOp(op: string): string {
 export function astToModel(text: string): ParseResult {
   const { ast, lexerErrors, parserErrors } = parseDocument(text);
   const mapper = new Mapper();
+  mapper.source = text;
+  mapper.lexerErrorOffsets = lexerErrors
+    .map((e) => e.offset)
+    .filter((o): o is number => typeof o === 'number');
 
   // Map Chevrotain lexer diagnostics. `offset`/`length` give an exact span.
   for (const e of lexerErrors) {

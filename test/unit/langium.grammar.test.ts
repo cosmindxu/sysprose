@@ -20,7 +20,19 @@ import {
   isBinaryExpr,
   type Definition,
   type BinaryExpr,
+  type BracketExpr,
+  type Expression,
+  type GuardClause,
+  type Transition,
 } from '@text/langium/generated/ast';
+
+/** The value expression of the first attribute of the first definition of the first package. */
+function firstAttributeValue(ast: ReturnType<typeof parseDocument>['ast']): Expression {
+  const pkg = ast.members[0] as Definition;
+  const def = pkg.body!.members[0] as Definition;
+  const attr = def.body!.members[0] as Definition;
+  return attr.value!;
+}
 
 /** Parse and assert a completely error-free parse; return the root. */
 function parseClean(src: string) {
@@ -361,10 +373,12 @@ describe('Langium SysML grammar — extended construct families', () => {
   // ── regression snippets for the standard-library corpus constructs that
   //    previously failed to parse (grammar coverage 96.8% → 100%). ──────────
 
-  it('parses a value multiplicity whose bound is a #(i) sequence-index expression', () => {
-    // ISQSpaceTime.sysml — `[ mRef.mRefs#(1) ]` is a multiplicity, not a bare
-    // `x[i]` postfix index; the `#(…)` index appears inside the bracket bound.
-    parseClean(`
+  it('parses a bracket expression whose operands are #(i) sequence-index expressions', () => {
+    // ISQSpaceTime.sysml — `num#(1) [mRef.mRefs#(1)]` is the spec's
+    // BracketExpression (KerML BNF 1099-1102): a quantity built from a magnitude
+    // and a measurement reference, with a `#(…)` index on each side. It used to
+    // be parsed as a value multiplicity; it is an expression node now.
+    const ast = parseClean(`
       package Q {
         attribute def CartesianPosition3dVector {
           attribute x : LengthValue = num#(1) [mRef.mRefs#(1)];
@@ -372,6 +386,11 @@ describe('Langium SysML grammar — extended construct families', () => {
         }
       }
     `);
+    const x = firstAttributeValue(ast);
+    expect(x.$type).toBe('BracketExpr');
+    const bracket = x as BracketExpr;
+    expect(bracket.base.$type).toBe('IndexExpr');
+    expect(bracket.arg.$type).toBe('IndexExpr');
   });
 
   it('parses a binding connector with `bind` and end multiplicities', () => {
@@ -394,5 +413,99 @@ describe('Langium SysML grammar — extended construct families', () => {
         private succession triggerAfter [taNum] first [0..1] transitionLinkSource then [*] trigger.endShot;
       }
     `);
+  });
+});
+
+// ── the spec BracketExpression: `<expr> [ <expr> ]` at primary/postfix level
+//    (KerML BNF 1099-1102; `BaseFunctions::'['`, `QuantityCalculations::'['`). ──
+describe('Langium SysML grammar — bracket expression', () => {
+  it.each([
+    ['a constraint body', 'constraint c { m <= 25.0 [kg] }'],
+    ['an assume clause', 'requirement r { assume constraint { c > 0 [kg] } }'],
+    ['an invocation operand', 'constraint c { DurationOf(m) <= 48 [h] }'],
+    ['invocation arguments', 'attribute d = max(1 [m], 2 [m]);'],
+    ['a signed literal', 'attribute d = -5 [m];'],
+    ['a parenthesised operand', 'attribute d = (1 + 2) [m];'],
+    ['a quoted unit name', "attribute d = 18 ['in'];"],
+    ['a qualified unit name', 'attribute d = 5 [SI::kg];'],
+    ['a compound unit expression', 'attribute d = 3 [m/s];'],
+    ['an assign value', 'action a { assign x := 5 [kg]; }'],
+    ['a return value', 'calc def c { return r = 5 [kg]; }'],
+    ['an entry value', 'state def s { entry e = 5 [kg]; }'],
+    ['a declaration multiplicity BEFORE the value', 'attribute d : Real [3] = 1500 [kg];'],
+  ])('accepts a unit literal in %s', (_where, member) => {
+    parseClean(`package P { part def V { ${member} } }`);
+  });
+
+  it('keeps import filters unchanged (a leading `[` is not a postfix)', () => {
+    parseClean(`package P { private import Lib::*[a > 0]; }`);
+  });
+
+  // PINNED behaviour changes. In SysML v2 no multiplicity may follow a feature
+  // value (KerML BNF ValuePart 1359-1362): a bracket there is an expression,
+  // so a `*`-bounded range is a parse error (`*` is not an expression) while a
+  // numeric range `[1..2]` parses as a bracket whose operand is a RangeExpr.
+  it.each(['[0..*]', '[*]'])('rejects a `*` multiplicity %s after a value', (range) => {
+    const { parserErrors } = parseDocument(`package P { attribute a : Real = 1500 ${range}; }`);
+    expect(parserErrors.length).toBeGreaterThan(0);
+  });
+
+  it('reads a numeric range after a value as a bracket operand', () => {
+    const ast = parseClean(`package P { attribute a : Real = 1500 [1..2]; }`);
+    const attr = (ast.members[0] as Definition).body!.members[0] as Definition;
+    expect(attr.value?.$type).toBe('BracketExpr');
+    const arg = (attr.value as BracketExpr).arg as BinaryExpr;
+    expect(arg.$type).toBe('BinaryExpr');
+    expect(arg.op).toBe('..');
+  });
+
+  // A soft keyword is a `Name` (declaration name after a consumed keyword is
+  // `RefName`, which excludes it) — so the library's `<derive>` short name
+  // parses, while `part def derive;` splits into a nameless definition and a
+  // keyword-less `derive`, the same shape `filter` / `var` already had. Pinned
+  // so that widening RefName is a deliberate decision, not a drift.
+  it('accepts a soft keyword as a short name', () => {
+    const ast = parseClean(`package P { metadata def <derive> DerivedRequirementMetadata; }`);
+    const def = (ast.members[0] as Definition).body!.members[0] as Definition;
+    expect(def.shortName).toBe('derive');
+    expect(def.name).toBe('DerivedRequirementMetadata');
+  });
+
+  it.each(['derive', 'filter'])('splits `part def %s;` into a nameless definition and a keyword-less name', (word) => {
+    const ast = parseClean(`package P { part def ${word}; }`);
+    const members = (ast.members[0] as Definition).body!.members as Definition[];
+    expect(members).toHaveLength(2);
+    expect(members[0].keyword).toBe('part');
+    expect(members[0].name).toBeUndefined();
+    expect(members[1].keyword).toBeUndefined();
+    expect(members[1].name).toBe(word);
+  });
+
+  // The only transition guard the spec spells is `if <expr>`
+  // (SysML BNF GuardExpressionMember); a bracket after it is part of the
+  // expression, not a second guard.
+  it('a bracket after an `if` guard is absorbed into the guard expression', () => {
+    const ast = parseClean(
+      `package P { state def S { state a; state b; transition t first a if x > 0 [y > 0] then b; } }`,
+    );
+    const pkg = ast.members[0] as Definition;
+    const stateDef = pkg.body!.members[0] as Definition;
+    const t = stateDef.body!.members[2] as Transition;
+    const guards = t.clauses.filter((c): c is GuardClause => c.$type === 'GuardClause');
+    expect(guards).toHaveLength(1);
+    expect(isBinaryExpr(guards[0].expr)).toBe(true);
+    expect((guards[0].expr as BinaryExpr).right.$type).toBe('BracketExpr');
+  });
+
+  // The bracket binds at primary level, tighter than `/` — the grouping the
+  // pilot records for `229835/900 [K]` (USCustomaryUnits).
+  it('groups `a/b [u]` as `a/(b [u])`', () => {
+    const ast = parseClean(`package P { part def V { attribute d = a/b [u]; } }`);
+    const v = firstAttributeValue(ast);
+    expect(isBinaryExpr(v)).toBe(true);
+    const bin = v as BinaryExpr;
+    expect(bin.op).toBe('/');
+    expect(bin.left.$type).toBe('RefExpr');
+    expect(bin.right.$type).toBe('BracketExpr');
   });
 });
