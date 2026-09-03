@@ -110,9 +110,9 @@ The tokens do not form a legal declaration. `expected` lists what would have bee
 ### `parse/unknown-keyword`
 
 - **Severity:** error
-- **Source:** mapper
-- **Fires when:** The declaration parsed, but its keyword maps to no metaclass, so the declaration is DROPPED from the model.
-- **Hint given:** Unknown declaration keyword {found}; this declaration was ignored. Use a supported keyword such as part, attribute, port, action, state, requirement or connection.
+- **Source:** parser
+- **Fires when:** A word that no declaration starts with leads a member, so the parser stops on the token after it.
+- **Hint given:** Unknown declaration keyword {found}; the declaration is kept as an unparsed element and re-emitted verbatim, so saving the file preserves this error instead of hiding it. Use a supported keyword such as part, attribute, port, action, state, requirement or connection.
 
 ### `parse/keyword-order`
 
@@ -141,6 +141,17 @@ The tokens do not form a legal declaration. `expected` lists what would have bee
 - **Source:** mapper
 - **Fires when:** One feature declares two different directions, e.g. `in port out x`.
 - **Hint given:** A feature has one direction. Remove {found} or the other one; the first direction written was kept.
+
+## Mapping
+
+The tokens form a legal declaration, but the model this tool builds has nowhere to put it. The source text is preserved verbatim and re-emitted on save, so nothing is silently lost.
+
+### `mapper/unsupported-keyword`
+
+- **Severity:** error
+- **Source:** mapper
+- **Fires when:** A declaration keyword the grammar accepts has no metaclass in this tool — the KerML type/feature family (namespace, class, feature, step, connector, …).
+- **Hint given:** This KerML keyword {found} is not modelled; the declaration and its body are preserved verbatim and re-emitted unchanged on save. Rewrite it with a supported keyword such as part, attribute, item, port, action or state.
 
 ## Reference resolution
 
@@ -447,4 +458,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*54 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*55 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

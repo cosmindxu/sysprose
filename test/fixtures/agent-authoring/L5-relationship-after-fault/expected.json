@@ -1,0 +1,31 @@
+{
+  "level": "L5",
+  "title": "a relationship written after a fault stays inside its package",
+  "note": "FOUND 2026-09-03, FIXED the same day. Re-homing skipped every relationship, so an `import`, `alias`, `dependency` or forward-source `subset` that error recovery pushed out of its package was never brought back: it became a ROOT, and the file serialized with `import Q::*;` AFTER the closing brace of the package it scopes — which silently changes name resolution for everything inside. `rootsSurvive` cannot see this (P survives either way); only `rootsExact` can.",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/unknown-keyword",
+      "severity": "error",
+      "line": 6,
+      "column": 10,
+      "found": "blok",
+      "expected": [
+        "}"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "Q",
+      "P"
+    ],
+    "minElements": 9,
+    "rootsExact": [
+      "Q",
+      "P"
+    ],
+    "strictWarnings": true
+  }
+}

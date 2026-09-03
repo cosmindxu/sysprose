@@ -63,6 +63,22 @@ export function serializeElement(model: Model, id: ElementId, indent = 0): strin
   // never leaks a spurious declaration.
   if (el.attrs.implicit === true) return '';
 
+  // A FAULTED SAVE STAYS HONEST. When a declaration could not be parsed, the
+  // mapper keeps its original source on the element (`unparsedText`): either
+  // the residue of a syntax fault or a grammar-legal keyword this tool models
+  // no metaclass for. Emitting that text verbatim — and NOTHING else, its
+  // subtree included, so a body is not written twice — means the saved file
+  // reproduces its own fault on re-parse. The alternative was silent laundering:
+  // `blok def Vehicle;` came back as a clean `Vehicle;` and the corruption
+  // became undetectable.
+  const unparsed = el.attrs.unparsedText;
+  if (typeof unparsed === 'string' && unparsed.trim() !== '') {
+    return unparsed
+      .split('\n')
+      .map((line, i) => (i === 0 ? `${pad}${line}` : line))
+      .join('\n');
+  }
+
   // Annotations.
   if (el.eClass === 'Documentation') {
     const name = el.declaredName ? ` ${quoteName(el.declaredName)}` : '';

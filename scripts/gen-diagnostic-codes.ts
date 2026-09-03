@@ -16,6 +16,7 @@ import { DIAGNOSTIC_CODES } from '../src/text/langium/diagnostic-codes';
 const FAMILIES: Array<{ prefix: string; title: string; blurb: string }> = [
   { prefix: 'lexer/', title: 'Lexical', blurb: 'The text could not be turned into tokens. Always an error; the file cannot be read as SysML until it is fixed.' },
   { prefix: 'parse/', title: 'Syntactic', blurb: 'The tokens do not form a legal declaration. `expected` lists what would have been legal at that position and `found` is what was actually written.' },
+  { prefix: 'mapper/', title: 'Mapping', blurb: 'The tokens form a legal declaration, but the model this tool builds has nowhere to put it. The source text is preserved verbatim and re-emitted on save, so nothing is silently lost.' },
   { prefix: 'ref/', title: 'Reference resolution', blurb: 'A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.' },
   { prefix: 'validation/', title: 'Model validation', blurb: 'The file parsed, but the model it describes breaks a rule. Each code matches a rule id in `src/validation/rules.ts`.' },
   { prefix: 'import/', title: 'Input handling', blurb: 'Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.' },

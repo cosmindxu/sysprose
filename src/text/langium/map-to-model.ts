@@ -33,6 +33,7 @@ import {
   Model,
   ModelFactory,
   isDefinition,
+  isMembership,
   isRelationship,
   isSpecialization,
   refSegments,
@@ -54,7 +55,7 @@ import type { ParseResult, ParseDiagnostic } from '../types';
 import type { TextRange } from '@validation/types';
 import { parseDocument } from './module';
 import { findUnterminatedDelimiter } from './lexical-scan';
-import { rehomeAfterFault } from './rehome';
+import { bracePairs, rehomeAfterFault } from './rehome';
 import {
   codeForParserError,
   expectedFromMessage,
@@ -208,6 +209,16 @@ function eofPos(text: string): { line: number; column: number; offset: number } 
     column: (lines[lines.length - 1]?.length ?? 0) + 1,
     offset: text.length,
   };
+}
+
+/**
+ * The LEXER's name for a token: `'ID'` for an identifier, the keyword itself
+ * for a keyword. It is the only non-guessing answer to "did the author write a
+ * word the grammar knows?", which `refineParserError` needs to tell a
+ * misspelled keyword from a stray identifier.
+ */
+function tokenTypeName(token: unknown): string | undefined {
+  return (token as { tokenType?: { name?: string } } | undefined)?.tokenType?.name;
 }
 
 /**
@@ -657,6 +668,32 @@ class Mapper {
   private readonly nodeStack: AstNode[] = [];
 
   /**
+   * The parser errors of THIS parse, as the two offsets the residue hunt needs.
+   *
+   * When a member's keyword is unknown, the `Body` rule does not fault on it:
+   * it takes the trailing-expression branch, so the bad word is consumed as an
+   * expression and the mismatch is reported on the token AFTER it. Those two
+   * offsets — where the residue text begins (`previousToken`) and where the
+   * parser stopped (`token`) — are the only things error recovery leaves
+   * behind (`resyncedTokens` is always empty), and they are what
+   * {@link residueOfFault} and {@link markUnparsedResidue} run on.
+   */
+  private faultErrors: ReadonlyArray<{ tokenOffset: number; previousToken?: TokenSpan }> = [];
+
+  /**
+   * Residues found while walking: the source offset each faulty declaration
+   * starts at, the offset the parser stopped at, and the element the swallowed
+   * text was welded onto as `attrs.expression`. Filled by
+   * {@link noteResidueOfFault} at the two trailing-expression sites, consumed
+   * by {@link markUnparsedResidue} once every element (and its range) exists.
+   */
+  private readonly faultResidues: Array<{
+    start: number;
+    tokenOffset: number;
+    weldedTo: ElementId;
+  }> = [];
+
+  /**
    * Create an element and record its source span. Every `create` inside the
    * mapper goes through here so ranges cannot silently go missing when a new
    * mapping branch is added.
@@ -790,13 +827,141 @@ class Mapper {
    * Warnings come LAST, after resolution, so the only ones written are about
    * references nothing in the file resolves.
    */
-  run(members: Member[], fault?: { text: string; offset: number }): void {
+  run(members: Member[], fault?: Fault): void {
+    this.faultErrors = fault?.errors ?? [];
     this.model.transaction(() => {
       for (const m of members) this.mapMember(m, null);
-      if (fault) rehomeAfterFault(this.model, fault.text, this.ranges, fault.offset);
+      if (fault) {
+        this.markUnparsedResidue(fault.text);
+        rehomeAfterFault(this.model, fault.text, this.ranges, fault.offset);
+      }
       this.resolveDeferredRefs();
       this.emitPendingWarnings();
     });
+  }
+
+  /**
+   * Note a trailing expression that may be the RESIDUE of a faulted member
+   * rather than a real body expression.
+   *
+   * `Body` is `'{' members* expr? '}'`, so an unknown leading word is not a
+   * member fault: the rule takes the trailing-expression branch, swallows the
+   * word, and only then mismatches on the token after it. The swallowed word
+   * is welded onto the PARENT as `attrs.expression` — which is how
+   * `package P { blok def Vehicle; }` used to save as `Vehicle;` plus a
+   * dangling `blok` at the end of the body, a file that re-parses CLEAN.
+   *
+   * NOTHING IS STRIPPED HERE. The offsets alone cannot tell the residue of
+   * `blok def Vehicle;` from a REAL one-reference constraint body whose fault
+   * is the token after it (`constraint c { a x }` parses identically: a bare
+   * `RefExpr` ending at the token before the mismatch). Stripping on that
+   * evidence deleted the constraint's expression, so the strip is deferred to
+   * {@link markUnparsedResidue} and happens only if the residue text is
+   * actually attached to an element — the strip and the mark are two halves of
+   * one signal, and losing the text both ways is the one outcome forbidden.
+   *
+   * The candidate test stays narrow: only a bare reference (`RefExpr`) that
+   * either BEGINS at the token before the fault (`blok def Vehicle;`) or ENDS
+   * there (`A::B c;`, one reference spelled with several tokens). The parser's
+   * own CST cannot answer this — it is truncated at the fault, so the error
+   * token lies outside every AST span.
+   */
+  private noteResidueOfFault(expr: Expression | undefined, weldedTo: ElementId): void {
+    const cst = expr?.$cstNode;
+    if (expr === undefined || cst === undefined || expr.$type !== 'RefExpr') return;
+    for (const e of this.faultErrors) {
+      const prev = e.previousToken;
+      if (prev === undefined) continue;
+      // Chevrotain end offsets are INCLUSIVE; CST `end` is exclusive.
+      const endsAtPrevToken = prev.endOffset !== undefined && cst.end === prev.endOffset + 1;
+      if (cst.offset === prev.startOffset || endsAtPrevToken) {
+        this.faultResidues.push({ start: cst.offset, tokenOffset: e.tokenOffset, weldedTo });
+        return;
+      }
+    }
+  }
+
+  /**
+   * Can this element carry `unparsedText` — i.e. will the serializer emit it
+   * as a statement of its own?
+   *
+   * Kept in sync with `bodyMembers` in `src/text/serializer.ts`: a
+   * specialization may be rendered INLINE on its source's declaration line, an
+   * implicit-containment membership and a `FeatureValue` are never text at all.
+   * Marking one of those hid the residue instead of preserving it — the save
+   * dropped the text and the file re-parsed CLEAN, which is the exact
+   * laundering this pass exists to stop.
+   */
+  private canCarryResidue(id: ElementId): boolean {
+    const el = this.model.get(id);
+    if (el === undefined) return false;
+    if (isSpecialization(el.eClass)) return false;
+    if (isMembership(el.eClass) && el.eClass !== 'Membership') return false;
+    if (el.eClass === 'FeatureValue') return false;
+    return true;
+  }
+
+  /**
+   * Give the residue of each faulted declaration its own source text back, so
+   * a save reproduces the fault instead of hiding it.
+   *
+   * The declaration's TAIL still parses (`blok def Vehicle;` leaves a
+   * keyword-less `Vehicle`), so the element exists and carries a range; what
+   * is missing is everything before it. `unparsedText` is the source from
+   * where the residue began to the end of that element, and the serializer
+   * emits it verbatim and nothing else. When that lands, the swallowed text is
+   * removed from the parent it was welded onto — the strip happens HERE, and
+   * only here, so text is never lost twice.
+   *
+   * Four guards keep a wrong span out of the file:
+   *  - the file must be brace-balanced (an unbalanced one is ambiguous about
+   *    every scope, and `rehomeAfterFault` declines on the same signal);
+   *  - the element must sit in the same brace body as the fault;
+   *  - no `;` or `}` may separate the fault from it, because a residue is ONE
+   *    statement — without that test the mark swallowed the healthy
+   *    declaration that merely came next (`blok 5;` + `part def B { … }`) and
+   *    froze its whole subtree behind a verbatim string;
+   *  - the sliced text must itself be brace-balanced, so a bodied residue
+   *    (`blok def V { part x; }`) is emitted whole rather than cut at its
+   *    first `;`, which would re-parse to a DIFFERENT fault.
+   */
+  private markUnparsedResidue(text: string): void {
+    if (this.faultResidues.length === 0) return;
+    const pairs = bracePairs(text);
+    if (pairs === undefined) return;
+    /** The `{` of the innermost body containing `offset`; -1 at file level. */
+    const scopeOf = (offset: number): number => {
+      let best = -1;
+      for (const p of pairs) {
+        if (p.open < offset && offset < p.close && p.open > best) best = p.open;
+      }
+      return best;
+    };
+    const ranged = [...this.ranges]
+      .map(([id, r]) => ({ id, start: r.start.offset, end: r.end.offset }))
+      .filter((x) => this.model.get(x.id)?.attrs.implicit !== true)
+      .sort((a, b) => a.start - b.start);
+
+    for (const residue of this.faultResidues) {
+      const scope = scopeOf(residue.tokenOffset);
+      const target = ranged.find(
+        (x) =>
+          x.start >= residue.tokenOffset &&
+          x.end > residue.start &&
+          scopeOf(x.start) === scope &&
+          !/[;}]/.test(text.slice(residue.tokenOffset, x.start)) &&
+          this.canCarryResidue(x.id),
+      );
+      if (target === undefined) continue;
+      const el = this.model.get(target.id);
+      if (el === undefined || typeof el.attrs.unparsedText === 'string') continue;
+      const verbatim = text.slice(residue.start, target.end);
+      if (bracePairs(verbatim) === undefined) continue; // would re-parse differently
+      this.model.setAttrs(target.id, { unparsedText: verbatim });
+      // The other half of the mark: the text now lives on the residue element,
+      // so it must not ALSO stay welded onto the body that swallowed it.
+      this.model.setAttrs(residue.weldedTo, { expression: undefined });
+    }
   }
 
   /**
@@ -1838,7 +2003,12 @@ class Mapper {
       attrs: { requirementRole: node.kind },
     });
     for (const spec of node.specializations) this.applySpecialization(el, spec);
-    if (node.expr) this.model.setAttrs(el.id, { expression: exprText(node.expr) });
+    if (node.expr) {
+      // The expression is always written; `markUnparsedResidue` takes it back
+      // if this turns out to be a swallowed unknown keyword it can re-home.
+      this.model.setAttrs(el.id, { expression: exprText(node.expr) });
+      this.noteResidueOfFault(node.expr, el.id);
+    }
   }
 
   /* ─────────────────────── definitions / usages ────────────────────────── */
@@ -1878,9 +2048,16 @@ class Mapper {
       eClass = direction ? 'PortUsage' : 'ReferenceUsage';
     }
     if (!eClass) {
-      const code = 'parse/unknown-keyword';
+      // A keyword the GRAMMAR accepts but this tool models no metaclass for —
+      // the KerML type/feature family (`namespace`, `class`, `feature`,
+      // `step`, … 21 of them). This used to `return` here, which dropped the
+      // declaration AND its whole body without a trace of the text. The
+      // declaration is kept instead, carrying its own source: the serializer
+      // re-emits that verbatim and nothing else, so a save can neither delete
+      // the author's model nor pretend it was understood.
+      const code = 'mapper/unsupported-keyword';
       this.diagnostics.push({
-        message: `Unknown keyword '${node.keyword}'`,
+        message: `Unsupported keyword '${node.keyword}'`,
         ...posOf(node),
         severity: 'error',
         source: 'mapper',
@@ -1888,6 +2065,15 @@ class Mapper {
         found: node.keyword,
         hint: renderHint(code, { found: node.keyword }),
         ...(rangeOf(node) ? { range: rangeOf(node) } : {}),
+      });
+      const verbatim = node.$cstNode?.text;
+      this.create('ReferenceUsage', {
+        ownerId: ownerId ?? undefined,
+        declaredName: unquoteName(node.name),
+        attrs: {
+          keywordless: true,
+          ...(verbatim ? { unparsedText: verbatim } : {}),
+        },
       });
       return;
     }
@@ -1995,7 +2181,14 @@ class Mapper {
     // Body members (walked in document order → single-pass resolution).
     if (node.body) {
       for (const m of node.body.members) this.mapMember(m, el.id);
-      if (node.body.expr) this.model.setAttrs(el.id, { expression: exprText(node.body.expr) });
+      // The trailing expression of a constraint/calculation body. It is always
+      // written; if it turns out to be the residue of a faulted member the
+      // `Body` rule swallowed, `markUnparsedResidue` moves it to that
+      // declaration — but only once it has somewhere honest to put it.
+      if (node.body.expr) {
+        this.model.setAttrs(el.id, { expression: exprText(node.body.expr) });
+        this.noteResidueOfFault(node.body.expr, el.id);
+      }
     }
   }
 
@@ -2126,6 +2319,24 @@ class Mapper {
       this.deferredSpecs.push({ elementId: el.id, op, ref, node: spec });
     }
   }
+}
+
+/** One token's span as Chevrotain reports it (`endOffset` is INCLUSIVE). */
+interface TokenSpan {
+  startOffset: number;
+  endOffset?: number;
+  image?: string;
+}
+
+/**
+ * What a faulted parse hands the recovery passes: the source, the offset of
+ * the first fault (re-homing's gate), and the two token offsets of EVERY parser
+ * error — where the residue text starts and where the parser stopped.
+ */
+interface Fault {
+  text: string;
+  offset: number;
+  errors: ReadonlyArray<{ tokenOffset: number; previousToken?: TokenSpan }>;
 }
 
 /** One `:`/`:>`/`:>>`/`::>` written in the source, awaiting resolution. */
@@ -2306,6 +2517,12 @@ export function astToModel(text: string): ParseResult {
           rawFound,
           (e as { previousToken?: { image?: string } }).previousToken?.image,
           srcLines[(tok?.startLine ?? 1) - 1],
+          {
+            ...(tokenTypeName(tok) ? { found: tokenTypeName(tok) } : {}),
+            ...(tokenTypeName((e as { previousToken?: unknown }).previousToken)
+              ? { previous: tokenTypeName((e as { previousToken?: unknown }).previousToken) }
+              : {}),
+          },
         );
     const found = refined?.found ?? foundToken;
     const line = atEof ? eof.line : (tok?.startLine ?? 1);
@@ -2341,9 +2558,22 @@ export function astToModel(text: string): ParseResult {
     .map((e) => e.token?.startOffset)
     .filter((o): o is number => typeof o === 'number' && Number.isFinite(o))
     .sort((a, b) => a - b)[0];
+  // Each error's own token pair travels with it: `previousToken` is where the
+  // faulty declaration's text begins (the parser stops one token PAST the
+  // mistake), which is the only handle on the text recovery skipped —
+  // `resyncedTokens` is always empty.
+  const faultErrors = parserErrors
+    .map((e) => ({
+      tokenOffset: e.token?.startOffset,
+      previousToken: (e as { previousToken?: TokenSpan }).previousToken,
+    }))
+    .filter(
+      (e): e is { tokenOffset: number; previousToken: TokenSpan | undefined } =>
+        typeof e.tokenOffset === 'number' && Number.isFinite(e.tokenOffset),
+    );
   mapper.run(
     ast.members ?? [],
-    firstFault === undefined ? undefined : { text, offset: firstFault },
+    firstFault === undefined ? undefined : { text, offset: firstFault, errors: faultErrors },
   );
   return {
     model: mapper.model,

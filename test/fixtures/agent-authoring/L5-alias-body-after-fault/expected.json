@@ -1,0 +1,29 @@
+{
+  "level": "L5",
+  "title": "an alias body keeps its members after a fault",
+  "note": "FOUND 2026-09-03, FIXED the same day. An `alias b for a { … }` body is mapped under a Membership, and re-homing excluded relationships from the OPENER set as well as from the candidates — so the body had no opener and its members were re-homed onto the previous sibling instead (`w` landed inside `part a`). Compare with the same file written without the fault: containment must be identical.",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/unknown-keyword",
+      "severity": "error",
+      "line": 2,
+      "column": 10,
+      "found": "blok",
+      "expected": [
+        "}"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 6,
+    "rootsExact": [
+      "P"
+    ],
+    "strictWarnings": true
+  }
+}

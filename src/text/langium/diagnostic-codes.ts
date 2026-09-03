@@ -93,10 +93,10 @@ const CODES = [
   },
   {
     code: 'parse/unknown-keyword',
-    source: 'mapper',
+    source: 'parser',
     severity: 'error',
-    when: 'The declaration parsed, but its keyword maps to no metaclass, so the declaration is DROPPED from the model.',
-    hint: 'Unknown declaration keyword {found}; this declaration was ignored. Use a supported keyword such as part, attribute, port, action, state, requirement or connection.',
+    when: 'A word that no declaration starts with leads a member, so the parser stops on the token after it.',
+    hint: 'Unknown declaration keyword {found}; the declaration is kept as an unparsed element and re-emitted verbatim, so saving the file preserves this error instead of hiding it. Use a supported keyword such as part, attribute, port, action, state, requirement or connection.',
   },
 
   {
@@ -112,6 +112,15 @@ const CODES = [
     severity: 'error',
     when: 'A bare `A -> B` transition shorthand was used. It is rejected deliberately: it cannot be told apart from a `->` function-operation expression.',
     hint: 'Write the transition with its keyword: `transition A -> B;` (a bare `A -> B` is ambiguous with an expression and is not accepted).',
+  },
+
+  /* ── mapper: declarations the grammar accepts but the metamodel does not ── */
+  {
+    code: 'mapper/unsupported-keyword',
+    source: 'mapper',
+    severity: 'error',
+    when: 'A declaration keyword the grammar accepts has no metaclass in this tool — the KerML type/feature family (namespace, class, feature, step, connector, …).',
+    hint: 'This KerML keyword {found} is not modelled; the declaration and its body are preserved verbatim and re-emitted unchanged on save. Rewrite it with a supported keyword such as part, attribute, item, port, action or state.',
   },
 
   {
@@ -491,6 +500,13 @@ export function refineParserError(
   found: string | undefined,
   previous: string | undefined,
   sourceLine?: string,
+  /**
+   * Chevrotain token-type names for the two tokens (`'ID'` for an identifier,
+   * the keyword itself for a keyword). Taken from the lexer rather than guessed
+   * from the spelling, so the grammar stays the single source of truth about
+   * what is a keyword.
+   */
+  kinds?: { found?: string; previous?: string },
 ): { code: string; found: string } | undefined {
   // `off -> on;` — the bare transition shorthand. The parser stops at the `;`,
   // several tokens past the `->`, so the token pair alone cannot see it; the
@@ -508,6 +524,26 @@ export function refineParserError(
   // identifier before it: the keywords are the right ones in the wrong order.
   if (DEF_KEYWORDS.has(found)) {
     return { code: 'parse/keyword-order', found };
+  }
+  // `blok q : T;` — an unknown word leading a declaration with no `def` after
+  // it to give the game away. Both tokens must be IDENTIFIERS (a grammar
+  // keyword is never the mistake here), and the unknown word must be the first
+  // WHOLE word written on the line the parser stopped on. That line test is
+  // what separates this from a missing semicolon (`part a` / `part b;`: the
+  // line starts with `part`, not with `a`) and from the tail of a qualified
+  // name (`A::B c;`: the line starts with `A::B`, not with `B`).
+  //
+  // "Whole word" is load-bearing, not pedantry: a raw prefix test also matched
+  // `Mass::M m;` — where the tail segment `M` happens to spell the start of
+  // `Mass` — and reported the author's own type name as a misspelled keyword.
+  // The qualified-name case only ever looked safe because the examples were
+  // alphabetically lucky.
+  if (kinds?.found === 'ID' && kinds?.previous === 'ID' && previous !== undefined) {
+    const line = sourceLine?.trimStart();
+    const rest = line?.startsWith(previous) === true ? line.slice(previous.length) : undefined;
+    if (rest !== undefined && !/^[\w:]/.test(rest)) {
+      return { code: 'parse/unknown-keyword', found: previous };
+    }
   }
   return defaultCode === 'parse/error' ? undefined : undefined;
 }

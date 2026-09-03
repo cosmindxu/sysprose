@@ -5,11 +5,11 @@
   "ok": false,
   "diagnostics": [
     {
-      "code": "parse/mismatched-token",
+      "code": "parse/unknown-keyword",
       "severity": "error",
       "line": 4,
       "column": 14,
-      "found": "y",
+      "found": "blok",
       "expected": [
         "}"
       ]

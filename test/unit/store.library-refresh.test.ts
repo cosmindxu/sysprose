@@ -124,3 +124,41 @@ describe('store — the retained parse result does not outlive its document', ()
     expect(parseRows()).toEqual([]);
   });
 });
+
+/**
+ * The same refresh also decides what happens to the TEXT the user typed.
+ *
+ * It used to re-serialize the model over the buffer unconditionally, a few
+ * hundred milliseconds after the apply and with no undo of its own. For a file
+ * with a syntax error that meant the author's text was replaced by the partial
+ * model error recovery had made of it — the one moment the buffer is the only
+ * complete copy of what they wrote.
+ */
+describe('store — a faulted apply keeps the text the user typed', () => {
+  it('leaves the buffer alone and marks it dirty when a parse ERROR is standing', async () => {
+    const typed = 'package P {\n    blok bad;\n}\n';
+    useAppStore.setState({ textBuffer: typed });
+    st().applyText();
+    expect(parseRows().some((d) => d.severity === 'error')).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(st().model.all().some((e) => e.attrs.isLibrary === true)).toBe(true);
+    });
+    expect(st().textBuffer, 'the refresh must not rewrite a faulted buffer').toBe(typed);
+    expect(st().textDirty, 'the model was NOT regenerated from this text').toBe(true);
+  });
+
+  it('still re-serializes when the only findings are warnings', async () => {
+    // A forward or library reference is normal authoring, not a fault: freezing
+    // the buffer on those would leave it dirty forever.
+    useAppStore.setState({ textBuffer: 'package P {\n    part w : NoSuchType;\n}\n' });
+    st().applyText();
+    expect(parseRows().every((d) => d.severity !== 'error')).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(st().model.all().some((e) => e.attrs.isLibrary === true)).toBe(true);
+    });
+    expect(st().textDirty).toBe(false);
+    expect(st().textBuffer).toContain('part w : NoSuchType;');
+  });
+});

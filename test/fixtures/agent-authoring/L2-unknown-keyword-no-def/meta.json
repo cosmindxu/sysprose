@@ -1,0 +1,5 @@
+{
+  "level": "L2",
+  "title": "a misspelled keyword with no `def` after it",
+  "note": "FOUND 2026-09-03, FIXED the same day. `blok def Vehicle;` named the unknown word because the parser stopped on the `def`; `blok q : Real;` has no `def`, so the same mistake degraded to 'Expecting }' but found `q`' — a message whose repair (insert a brace) makes the file worse. The refinement now uses the LEXER's token kinds: two identifiers in a row, the first of them starting the line, is an unknown declaration keyword. The declaration is kept as an unparsed element and re-emitted verbatim, so a save reproduces the error instead of hiding it."
+}

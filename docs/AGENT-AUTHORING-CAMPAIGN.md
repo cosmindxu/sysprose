@@ -100,11 +100,11 @@ one in this corpus was read and corrected by hand.
 |---|---|---|
 | L0 | Recognition and encoding: empty file, comments only, BOM, CRLF, tabs, non-ASCII names, JSON offered as SysML, unknown extension | 8 |
 | L1 | Lexical: illegal character, unterminated string, unterminated comment | 3 |
-| L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, a non-ASCII unit symbol written bare, bad expressions, `=` vs `==`, bare `->`, two independent errors | 15 |
+| L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword (with and without a `def` after it), a grammar-legal keyword this tool models no metaclass for, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, a non-ASCII unit symbol written bare, bad expressions, `=` vs `==`, bare `->`, two independent errors | 17 |
 | L3 | Referential: unresolved type, connection end, import, transition end, specialization; forward references in a package; types reached through an import, through inheritance, and through a library import written in text; plus a pinned behaviour | 10 |
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, temperature difference, compound / qualified / information units | 21 |
-| L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies | 3 |
-| L6 | **Sufficiency invariants over the whole corpus** (see below) | 12 assertions |
+| L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
+| L6 | **Sufficiency invariants over the whole corpus** (see below) | 13 assertions |
 | L7 | The command-line contract: exit codes, JSON shape, stdin, strict mode | 10 tests |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -161,12 +161,14 @@ moment it is added, and a regression in diagnostic quality fails even when every
 golden still matches.
 
 Asserted across every fixture: each finding carries a catalogue code, a source
-stage and a non-empty hint; every lexer, parser and mapper finding carries a
-range; every reported position exists in the file and no range ends before it
-starts; every error names a token or an element; every parser error carries
-either an expected-token list or a hint; the checker never crashes; `ok` agrees
-with the error count; results are deterministic; and every documented repair
-checks clean.
+stage and a non-empty hint; the stage a finding is EMITTED from matches the one
+its catalogue entry declares (so a code cannot quietly change hands between the
+lexer, the parser and the mapper); every lexer, parser and mapper finding
+carries a range; every reported position exists in the file and no range ends
+before it starts; every error names a token or an element; every parser error
+carries either an expected-token list or a hint; the checker never crashes; `ok`
+agrees with the error count; results are deterministic; and every documented
+repair checks clean.
 
 ### Known-failing cases are the point
 
@@ -321,6 +323,79 @@ now re-homes each ranged declaration under the element that opened its
 enclosing brace, declining on an unbalanced file rather than guessing, and runs
 before the deferred reference pass so references that failed only through wrong
 ownership resolve normally. Fixture: `L5-nested-fault-rehomes-inner`.
+
+**Re-homing moved the wrong things, and a faulted save laundered itself clean.**
+Three defects, all in the same pass, all invisible from the diagnostics. (a)
+The candidate filter dropped every RELATIONSHIP, so an `import`, `alias`,
+`dependency` or forward-source `subset` that recovery pushed out of its package
+was never brought back: it became a root and the file serialized with
+`import Q::*;` AFTER the closing brace of the package it scopes, silently
+changing name resolution for everything inside. The same filter left an
+`alias b for a { … }` body — mapped under a Membership — with no eligible
+opener, so its members were re-homed onto the previous SIBLING. Relationships
+are candidates and openers now, except one owned by its own source (an inline
+`part def X :> Y { … }`), which shares its owner's start offset and would
+otherwise steal the body it is written on. (b) The brace scan read the hidden
+note terminal (slash-slash-star … star-slash, which spans LINES) as a plain
+line comment, so it swallowed only the note's first line and counted braces on
+the rest as real: two notes contributing one brace each made a faulted file
+balanced BY COINCIDENCE and produced a phantom body. Both scanners now follow
+the lexer on notes and comments, including its rule that an UNTERMINATED opener
+is just a line comment on valid text — which matters twice over for the
+pre-lex scan, because its finding REPLACES the whole parse, so a false
+"unterminated string" on an apostrophe in the author's prose suppressed every
+real diagnostic in the file. (c) `blok def Vehicle;` round-tripped to
+`Vehicle;` plus a dangling `blok` — a file that re-parses CLEAN, so the
+corruption was undetectable afterwards. The `Body` rule swallows an unknown
+keyword as its trailing expression; the faulty declaration now keeps its own
+source text (`attrs.unparsedText`), which the serializer re-emits verbatim and
+alone, and the swallowed word is taken off the parent at the same moment. A
+faulted save now reproduces its fault. Four guards keep that from costing more
+than it saves: the file must be brace-balanced, the carrier must sit in the
+same brace body as the fault with no `;` or `}` between them (otherwise the
+mark swallowed the healthy declaration that merely came next, and froze its
+whole subtree behind a verbatim string), the carrier must be something the
+serializer writes as a statement of its own (a specialization is rendered
+INLINE on its source's line, so marking one dropped the text silently), and the
+slice must itself be brace-balanced. The same treatment keeps the twenty-one grammar-legal KerML keywords
+this tool models no metaclass for (`namespace`, `class`, `feature`, `step`, …),
+which used to be DROPPED with their whole body under a code the parser also
+emitted — they have their own code now, `mapper/unsupported-keyword`, and an
+L6 property asserts every emitted `source` matches its catalogue entry. An
+element carrying its own unparsed source is exempt from
+`validation/split-declaration`: an anonymous one (`namespace { … }`) has no
+name, type, value or body of its own, which is exactly that rule's shape, and
+the second finding pointed at a completely different repair.
+Fixtures: `L5-relationship-after-fault`, `L5-alias-body-after-fault`,
+`L5-note-braces-after-fault`, `L2-unknown-keyword-no-def`,
+`L2-unsupported-kerml-keyword`.
+
+**A misspelled keyword with no `def` after it was reported as a missing brace.**
+`blok def Vehicle;` named the unknown word (the parser stops on the `def`), but
+`blok q : Real;` fell back to "Expecting `}` but found `q`", whose repair makes
+the file worse. The refinement now asks the LEXER what it read: two identifier
+tokens in a row, the first of them being the whole first WORD of the line, is
+an unknown declaration keyword. Taking the token KINDS from the lexer rather
+than guessing from the spelling is what keeps a keyword out of the rule; the
+line test is what keeps a missing semicolon (`part a` / `part b;`) and the tail
+of a qualified name (`A::B c;`) out. "Whole word" is load-bearing: a raw prefix
+test also matched `Mass::M m;`, where the tail segment `M` happens to spell the
+start of `Mass`, and reported the author's own type name as a misspelled
+keyword — the qualified-name case only looked safe because the first examples
+were alphabetically lucky. Two bare words with nothing else to go on (`x y;`)
+ARE reported as an unknown keyword naming the first: the tool cannot tell a
+misspelled keyword from a stray identifier, and the alternative reading
+("expecting `}`, insert a brace") is the advice this refinement exists to stop
+giving. Fixture: `L2-unknown-keyword-no-def`.
+
+**A failed apply overwrote the user's text a few hundred milliseconds later.**
+`refreshAfterLibraryLoad` re-serialized the model into the Text tab after the
+standard-library merge settled. For a file with a syntax error that replaced
+what the user typed with the partial model recovery made of it, in a refresh
+with no undo of its own. It now leaves the buffer alone (and marks it dirty,
+because the model genuinely was not regenerated from it) whenever a parse
+finding of severity `error` is standing; warnings do not count, or a forward
+reference would freeze the buffer forever.
 
 **`-2.50` was stored as a string.** The NUMBER terminal is unsigned and the
 sign is a unary operator, so a signed literal reached the mapper as an
@@ -742,10 +817,69 @@ split this commit exists to end.
 
 ### Known limitations, recorded rather than hidden
 
-**Re-homing cannot recover the faulty declaration itself, and can mis-home a
-file that is both faulted and brace-balanced by coincidence.** It repairs
-containment from the brace structure, which is all the parser leaves intact;
-the residue of the bad declaration stays a keyword-less element.
+**Re-homing cannot recover the faulty declaration itself.** It repairs
+containment from the brace structure, which is all the parser leaves intact —
+the skipped tokens are unreachable (`resyncedTokens` on a Chevrotain recovery
+is always empty), so the residue of the bad declaration stays a keyword-less
+element. What it now keeps is the TEXT: the residue carries its own source and
+is re-emitted verbatim, so the loss is visible in the saved file instead of
+being laundered away. Two consequences of the same limit: `def part X;` still
+maps to a part USAGE (the deleted `def` cannot be recovered, only the reported
+`parse/keyword-order` says so — `L2-keyword-order`), and a residue whose text
+would not be brace-balanced is left unmarked rather than emitted as a
+different fault.
+
+**What "a faulted save stays honest" does NOT cover.** The guarantee is
+deliberately narrow, and everything outside it saves to a file that checks
+clean. Precisely: only a bare REFERENCE swallowed as a body's trailing
+expression is recognised as residue, and only when the tail of the same
+statement parsed into an element of its own that the serializer writes as a
+statement. Everything else keeps the pre-existing behaviour — the swallowed
+word stays welded onto the enclosing body as a trailing expression — because
+losing the text BOTH ways is the one outcome worse than laundering. The known
+shapes:
+
+* **A residue with no element of its own.** `blok 5;` leaves nothing named (a
+  number cannot be a name), so there is nowhere to put the text; a stray `5`
+  or `blok` stays on the enclosing package and the file re-parses clean. The
+  next declaration is deliberately NOT used as the carrier: it is a healthy
+  statement of its own, and swallowing it into a verbatim string also froze it
+  against every later model edit.
+* **Only the FIRST fault in a body.** After it, recovery escapes to the
+  namespace level, where there is no trailing-expression site to catch the
+  next one. Two `blok …;` lines in one package are both REPORTED, and the save
+  reproduces one of them.
+* **A fault at FILE level.** There is no body to be swallowed by at all
+  (`blok def Vehicle;` written outside any package leaves an element named
+  `blok`), so it is reported but not marked.
+* **Recovery that happens IN PLACE.** `part broken : ;` (`L2-empty-type`), a
+  dangling `then` (`L4-dangling-then`), a bad multiplicity, a bare transition
+  arrow and `=` in a constraint are all repaired by the parser or the mapper
+  without leaving a residue, so their round trip goes from one error to zero.
+  The report names them; the saved file does not.
+
+A constraint or calculation body is a trailing expression too, and parses
+IDENTICALLY to a residue (`constraint c { a x }` is the same shape as
+`blok def Vehicle;`), so the strip happens only when the mark lands: the two
+are halves of one signal, and a real expression is never deleted on offsets
+alone.
+
+**Re-homing is a proximity heuristic, and declines rather than guess.** The
+owner of a declaration is "the latest-starting element before its enclosing
+`{`", which is a fact about the TEXT, not about the parse. An unbalanced file
+is genuinely ambiguous about where anything belongs, so the pass returns
+without moving anything — `L2-missing-closing-brace` and
+`L2-extra-closing-brace` pin that, and the residue mark declines on the same
+signal. Measured over the 140 `.sysml` files under `examples/` and
+`test/fixtures/` on 2026-09-03: 19 report a parser error, so the pass runs on
+them; 2 of those are brace-unbalanced and are declined.
+
+**The brace scan follows the lexer for comments and notes, not for names.**
+`UNRESTRICTED_NAME` and `STRING` are newline-tolerant in the grammar, while the
+scan's quote skip stops at the end of the line. A brace hidden inside a
+MULTI-LINE quoted name (`part 'a` … `{ name';`) is therefore still counted as
+real, which is the remaining way a faulted file can look balanced by
+coincidence. Notes no longer do this.
 
 
 **A relation the solver cannot scale is judged in raw magnitudes, not refused.**
@@ -786,9 +920,17 @@ move that precisely, where before the same model was reported feasible without
 either engine having looked. The verdict surfaces are unaffected: they read the
 unit-aware evaluator.
 
-**Error recovery re-homes declarations to the root namespace.** After a bad
-declaration, the ones that follow survive but escape their enclosing package.
-Recorded on `L2-two-independent-errors` and `L5-recovery-keeps-siblings`.
+**A requirement `subject` clause drops its value.** `subject s : Real = 5;`
+parses (the grammar has the value part) and re-emits as `subject s : Real;` —
+`mapRequirementClause` never reads `node.value`. The type and the multiplicity
+survive; only the value is lost, silently.
+
+**A `->` after a transition guard is absorbed into the guard.** In
+`transition first a if g -> b then b;` the guard expression is `g -> b`: the
+arrow is a legal function-operation operator, so the guard swallows it and no
+diagnostic follows. SysML v2 has only the `if` guard form, so there is nothing
+to disambiguate against — but an author who meant the arrow as the transition
+target gets a guard that reads as one and a target taken from the `then`.
 
 ### Pinned behaviours (decisions, not defects)
 

@@ -55,6 +55,13 @@ export interface Golden {
     maxErrors?: number;
     /** Root declarations that must survive error recovery. */
     rootsSurvive?: string[];
+    /**
+     * The COMPLETE list of roots, in order. `rootsSurvive` cannot see an
+     * element that escaped its owner and became a root of its own — the only
+     * way to witness an escaped relationship (`import Q::*;` leaving the
+     * package it scopes) is to assert that nothing else is up there.
+     */
+    rootsExact?: string[];
     /** Minimum number of the agent's own elements that must survive. */
     minElements?: number;
     /** Fail if any warning is not listed in `diagnostics`. */
@@ -148,6 +155,14 @@ export function goldenFailures(golden: Golden, report: CheckReport): string[] {
       problems.push(`root '${r}' did not survive (roots: ${report.elements.roots.join(', ')})`);
     }
   }
+  if (inv.rootsExact !== undefined) {
+    const actual = report.elements.roots;
+    if (actual.length !== inv.rootsExact.length || actual.some((r, i) => r !== inv.rootsExact?.[i])) {
+      problems.push(
+        `roots are not exactly [${inv.rootsExact.join(', ')}] (got: ${actual.join(', ')})`,
+      );
+    }
+  }
   if (inv.strictWarnings) {
     for (const d of unmatched.filter((x) => x.severity === 'warning')) {
       problems.push(`unexpected warning: ${d.code} ${d.message}`);
@@ -165,17 +180,33 @@ export function asGolden(golden: Golden, report: CheckReport): string {
       ...(golden.note ? { note: golden.note } : {}),
       ...(golden.expectFail ? { expectFail: golden.expectFail } : {}),
       ok: report.ok,
-      diagnostics: report.diagnostics.map((d) => ({
-        code: d.code,
-        severity: d.severity,
-        ...(d.range ? { line: d.range.start.line, column: d.range.start.column } : {}),
-        ...(d.found !== undefined ? { found: d.found } : {}),
-        ...(d.expected ? { expected: d.expected } : {}),
-      })),
+      diagnostics: report.diagnostics.map((d) => {
+        // Hand-authored assertions a report cannot re-derive (`message`,
+        // `hintIncludes`) are carried across from the golden row for the same
+        // code on the same line, so a regeneration cannot quietly weaken a
+        // fixture that pinned the WORDING of a diagnostic.
+        const prev = golden.diagnostics.find(
+          (e) => e.code === d.code && (e.line === '*' || e.line === d.range?.start.line),
+        );
+        return {
+          code: d.code,
+          severity: d.severity,
+          ...(d.range ? { line: d.range.start.line, column: d.range.start.column } : {}),
+          ...(d.found !== undefined ? { found: d.found } : {}),
+          ...(d.expected ? { expected: d.expected } : {}),
+          ...(prev?.message !== undefined ? { message: prev.message } : {}),
+          ...(prev?.hintIncludes !== undefined ? { hintIncludes: prev.hintIncludes } : {}),
+        };
+      }),
       invariants: {
         maxErrors: report.summary.errors,
         ...(report.elements.roots.length > 0 ? { rootsSurvive: report.elements.roots } : {}),
         minElements: report.elements.count,
+        // The PRESENCE of a hand-authored invariant is preserved; its VALUE is
+        // rebaselined from the report like every other golden field, so a
+        // regenerated `rootsExact` must be hand-read exactly as the rest is.
+        ...(golden.invariants?.rootsExact ? { rootsExact: report.elements.roots } : {}),
+        ...(golden.invariants?.strictWarnings ? { strictWarnings: true } : {}),
       },
     },
     null,

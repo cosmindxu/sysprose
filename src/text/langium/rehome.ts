@@ -15,8 +15,13 @@
  * WHEN. Only when the parse reported errors, and only when the braces balance.
  * An unbalanced file (`L2-missing-closing-brace`, `L2-extra-closing-brace`) is
  * genuinely ambiguous about where anything belongs, so the pass declines rather
- * than guess. A file that is faulted AND brace-balanced by coincidence can still
- * be mis-homed; that is the documented residual.
+ * than guess. The brace scan follows the lexer for comments and NOTES — a `//*`
+ * note is hidden and multi-line — because a scan that disagreed with it made a
+ * faulted file look balanced BY COINCIDENCE and grew a phantom body out of the
+ * difference. It does NOT follow the lexer everywhere: the quote scan stops at
+ * a newline, while `UNRESTRICTED_NAME` and `STRING` are newline-tolerant, so a
+ * brace inside a MULTI-LINE quoted name is still counted as real. That is the
+ * remaining coincidence shape, recorded in the campaign ledger.
  *
  * WHERE. Called from `Mapper.run` between the member walk and the deferred
  * reference pass, so references that failed only because of wrong ownership
@@ -45,6 +50,21 @@ export function bracePairs(text: string): BracePair[] | undefined {
     const c = text[i];
     const next = text[i + 1];
     if (c === '/' && next === '/') {
+      // A NOTE is hidden and MULTI-LINE (`//*` … `*/`, sysml.langium ML_NOTE);
+      // a `//` comment is hidden to end of line. The order mirrors the lexer:
+      // the note terminal is tried first, and when it has no closer its regex
+      // fails and SL_COMMENT wins — so an unterminated `//*` is a plain line
+      // comment on a VALID file, never a reason to decline. Reading a note as
+      // a line comment swallowed only its FIRST line and counted the braces on
+      // the rest as real, which is how a faulted file could become
+      // brace-balanced by coincidence and grow a phantom body.
+      if (text[i + 2] === '*') {
+        const noteClose = text.indexOf('*/', i + 3);
+        if (noteClose !== -1) {
+          i = noteClose + 1;
+          continue;
+        }
+      }
       while (i < text.length && text[i] !== '\n') i++;
       continue;
     }
@@ -77,13 +97,14 @@ export function bracePairs(text: string): BracePair[] | undefined {
  * Move every element declared after `faultOffset` under the element that opened
  * the innermost `{` still open at its position. Returns the number moved.
  *
- * Candidates are non-relationship, non-implicit elements that carry a source
- * range (relationships and implicit features are created by the mapper's own
- * passes and are owned correctly by construction). The owner of a candidate is
- * the latest-starting ranged, non-relationship element declared before the
- * enclosing brace — "the thing whose body this is". Ranges are start-anchored
- * on purpose: the faulted parent's range is truncated at the fault, so
- * containment cannot be used.
+ * Candidates are non-implicit elements that carry a source range — implicit
+ * features are created by the mapper's own passes and are owned correctly by
+ * construction, and a relationship written as a STATEMENT escapes recovery
+ * like anything else (only one owned by its own source is excluded; see the
+ * filter below). The owner of a candidate is the latest-starting ranged
+ * element declared before the enclosing brace — "the thing whose body this
+ * is". Ranges are start-anchored on purpose: the faulted parent's range is
+ * truncated at the fault, so containment cannot be used.
  */
 export function rehomeAfterFault(
   model: Model,
@@ -94,12 +115,38 @@ export function rehomeAfterFault(
   const pairs = bracePairs(text);
   if (pairs === undefined || pairs.length === 0) return 0;
 
-  // Ranged, non-relationship, non-implicit elements in source order.
+  // Ranged, non-implicit elements in source order.
+  //
+  // Relationships are INCLUDED. A statement-form relationship (`import`,
+  // `alias`, `dependency`, `succession`, a forward-source `subset x subsets
+  // y;`) escapes recovery exactly like a declaration does — an escaped
+  // `import` silently leaves the package it scopes — and a body owned by one
+  // (`alias b for a { … }`, mapped under a Membership) needs it as an OPENER
+  // or its members are re-homed onto the previous sibling.
+  //
+  // The one exclusion is a relationship owned by its own SOURCE: an inline
+  // specialization (`part def X :> Y { … }`) shares its owner's start offset
+  // and, being inserted after it in this insertion-ordered map, would win the
+  // opener tie-break and steal the body it is written on.
+  //
+  // As the mapper stands TODAY no such element exists when this runs: every
+  // relationship the member walk creates is built with an empty `source`, and
+  // the deliberate reparent onto the source happens later, in
+  // `resolveDeferredRefs`. The clause is therefore a guard on that ORDER, not
+  // on anything the current pipeline produces — move this pass after the
+  // deferred pass and the tie-break becomes reachable at once. It is pinned by
+  // a hand-built model in `test/unit/text.rehome.test.ts` for that reason.
   const ranged = [...ranges]
     .map(([id, r]) => ({ id, start: r.start.offset, el: model.get(id) }))
     .filter(
       (x) =>
-        x.el !== undefined && !isRelationship(x.el.eClass) && x.el.attrs.implicit !== true,
+        x.el !== undefined &&
+        x.el.attrs.implicit !== true &&
+        !(
+          isRelationship(x.el.eClass) &&
+          x.el.ownerId !== null &&
+          (x.el.source ?? []).includes(x.el.ownerId)
+        ),
     )
     .sort((a, b) => a.start - b.start);
 

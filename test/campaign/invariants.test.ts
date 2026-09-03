@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { checkText } from '@text/check';
-import { isKnownCode } from '@text/index';
+import { diagnosticCode, isKnownCode } from '@text/index';
 import { loadCases } from './harness';
 import type { CheckReport } from '@text/check';
 import type { Diagnostic } from '@validation/types';
@@ -56,6 +56,26 @@ describe('L6 — every diagnostic is machine-actionable', () => {
   it('carries a source stage', async () => {
     const bad = (await everyDiagnostic()).filter((x) => x.d.source === undefined);
     expect(bad, `diagnostics with no source:\n${show(bad)}`).toEqual([]);
+  });
+
+  /**
+   * The catalogue tells an agent which STAGE produced a code, and the agent
+   * branches on that ("a parser error means the text is malformed; a mapper
+   * error means it parsed but means nothing here"). Nothing used to check the
+   * two agreed: `parse/unknown-keyword` was declared `mapper` and emitted
+   * `parser` for months, because it was emitted from BOTH stages.
+   */
+  it('emits every code from the stage its catalogue entry declares', async () => {
+    const bad = (await everyDiagnostic()).filter(({ d }) => {
+      const entry = d.code === undefined ? undefined : diagnosticCode(d.code);
+      return entry !== undefined && d.source !== undefined && d.source !== entry.source;
+    });
+    expect(
+      bad,
+      `codes emitted from a stage their catalogue entry does not declare:\n${bad
+        .map((b) => `  ${b.case}: ${b.d.code} emitted as '${b.d.source}', catalogue says '${diagnosticCode(b.d.code as string)?.source}'`)
+        .join('\n')}`,
+    ).toEqual([]);
   });
 
   it('carries a non-empty hint', async () => {

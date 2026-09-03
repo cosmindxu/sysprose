@@ -1,0 +1,29 @@
+{
+  "level": "L5",
+  "title": "braces inside a hidden note are not body braces",
+  "note": "FOUND 2026-09-03, FIXED the same day. The grammar's note terminal opens with a slash-slash-star, closes with a star-slash and spans LINES. The brace scan behind re-homing read the opener as a plain line comment, so it swallowed only the first line and counted the braces on the rest as real: two notes contributing one brace each made this faulted file balanced BY COINCIDENCE, and every declaration between them was re-homed under the residue of the bad line. Both scanners now follow the lexer.",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "parse/unknown-keyword",
+      "severity": "error",
+      "line": 2,
+      "column": 10,
+      "found": "blok",
+      "expected": [
+        "}"
+      ]
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 4,
+    "rootsExact": [
+      "P"
+    ],
+    "strictWarnings": true
+  }
+}

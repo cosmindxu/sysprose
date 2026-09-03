@@ -49,8 +49,25 @@ export function findUnterminatedDelimiter(text: string): UnterminatedDelimiter |
       continue;
     }
 
-    // Line comment: skip to end of line.
+    // Line comment — or the hidden NOTE terminal (`//*` … `*/`), which is
+    // MULTI-LINE. The order mirrors the lexer: ML_NOTE is tried first, and
+    // when it has no closer its regex fails and SL_COMMENT wins, so an
+    // unterminated `//*` is a line comment on VALID text and must NOT be
+    // reported as an unterminated delimiter.
     if (c === '/' && next === '/') {
+      if (text[i + 2] === '*') {
+        const noteClose = text.indexOf('*/', i + 3);
+        if (noteClose !== -1) {
+          for (let j = i; j < noteClose + 2; j++) {
+            if (text[j] === '\n') {
+              line++;
+              col = 1;
+            } else col++;
+          }
+          i = noteClose + 1;
+          continue;
+        }
+      }
       while (i < text.length && text[i] !== '\n') i++;
       i--; // let the loop see the newline and advance the line counter
       continue;

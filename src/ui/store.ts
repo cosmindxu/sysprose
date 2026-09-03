@@ -2394,12 +2394,23 @@ function retainedParseRows(current: Diagnostic[], model: Model): Diagnostic[] {
  */
 function refreshAfterLibraryLoad(): void {
   const { model } = useAppStore.getState();
-  useAppStore.setState((s) => ({
-    diagnostics: [...retainedParseRows(s.diagnostics, model), ...safeValidate(model)],
-    textBuffer: safeSerialize(model),
-    textDirty: false,
-    rev: s.rev + 1,
-  }));
+  useAppStore.setState((s) => {
+    const parseRows = retainedParseRows(s.diagnostics, model);
+    // A FAULTED APPLY KEEPS THE USER'S TEXT. Re-serializing the model here
+    // replaced the buffer the user typed with the model recovery made of it —
+    // for a file with a syntax error that means their text is REPLACED by a
+    // partial reading of it, in a refresh that lands a few hundred ms after
+    // the apply, with no undo of its own. So when a parse ERROR is standing
+    // (warnings do not count: a forward reference is normal and would freeze
+    // the buffer forever), the text is left alone and marked dirty, because
+    // the model genuinely was not regenerated from it.
+    const faulted = parseRows.some((d) => d.ruleId === 'parse' && d.severity === 'error');
+    return {
+      diagnostics: [...parseRows, ...safeValidate(model)],
+      ...(faulted ? { textDirty: true } : { textBuffer: safeSerialize(model), textDirty: false }),
+      rev: s.rev + 1,
+    };
+  });
   void useAppStore.getState().rebuildDiagram();
 }
 

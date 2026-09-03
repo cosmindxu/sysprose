@@ -1,0 +1,27 @@
+{
+  "level": "L2",
+  "title": "a KerML keyword the grammar accepts but this tool does not model",
+  "note": "FOUND 2026-09-03, FIXED the same day. Twenty-one grammar-legal KerML keywords (`namespace`, `class`, `feature`, `step`, `connector`, …) map to no metaclass here. The mapper used to report `parse/unknown-keyword` and RETURN, dropping the declaration and its whole body with no trace of the text — the same code the parser emits for a misspelling, from a different stage. It is now its own code, `mapper/unsupported-keyword`, and the declaration is kept as an unparsed element whose source is re-emitted verbatim.",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "mapper/unsupported-keyword",
+      "severity": "error",
+      "line": 2,
+      "column": 5,
+      "found": "namespace",
+      "hintIncludes": "preserved verbatim"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 2,
+    "rootsExact": [
+      "P"
+    ],
+    "strictWarnings": true
+  }
+}
