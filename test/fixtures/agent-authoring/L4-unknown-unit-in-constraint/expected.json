@@ -1,0 +1,29 @@
+{
+  "level": "L4",
+  "title": "a unit the registry does not know inside a constraint body",
+  "note": "FIXED 2026-09-03. `unknown-unit` read only `attrs.unit`, so `{ uav.mtow <= 25.0 [furlong] }` parsed, evaluated to unknown and reported nothing but a misleading \"Unexpected character '['\" — the bracket is the intended syntax. KerML's textual grammar (note 2 on BracketExpression) asks a tool to warn when `[` is used with no concrete definition; the rule now scans constraint bodies, transition guards and expression values, and the constraint's info names the unit instead of the bracket. The scan reads the token stream, so a bracket inside a STRING value or a string literal in a body (`\"R-UAV-001 [rev A]\"`) is text, not a unit — the fixture carries one to pin it.",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/unknown-unit",
+      "severity": "warning",
+      "line": 9,
+      "column": 9
+    },
+    {
+      "code": "validation/constraint-violation",
+      "severity": "info",
+      "line": 9,
+      "column": 9,
+      "message": "/unit \"furlong\" is not in the unit registry/"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 10,
+    "strictWarnings": true
+  }
+}

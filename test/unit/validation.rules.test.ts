@@ -11,8 +11,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 12 documented rules with unique ids', () => {
-    expect(RULES.length).toBeGreaterThanOrEqual(12);
+  it('exposes all 23 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(23);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -413,6 +413,94 @@ describe('rule 12b — connector-end-not-feature', () => {
     expect(diags).toHaveLength(1);
     expect(diags[0].severity).toBe('error');
     expect(diags[0].message).toContain('is not a Feature');
+  });
+});
+
+describe('rule 16 — unknown-unit', () => {
+  function withConstraint(expression: string) {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const v = f.part('v', p.id);
+    m.create('AttributeUsage', { declaredName: 'mtow', ownerId: v.id, attrs: { type: 'ISQ::MassValue', value: 18.5, unit: 'kg' } });
+    m.create('ConstraintUsage', { declaredName: 'c', ownerId: v.id, attrs: { expression } });
+    return m;
+  }
+
+  it('positive: a registered unit inside a constraint body is fine, qualified or not', () => {
+    expect(runRule(withConstraint('mtow <= 25.0 [kg]'), 'unknown-unit')).toHaveLength(0);
+    expect(runRule(withConstraint('mtow <= 25.0 [SI::kg]'), 'unknown-unit')).toHaveLength(0);
+  });
+
+  it('negative: `[furlong]` inside a constraint body is reported on the constraint', () => {
+    const diags = runRule(withConstraint('mtow <= 25.0 [furlong]'), 'unknown-unit');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe('warning');
+    expect(diags[0].message).toContain('[furlong]');
+  });
+
+  it('negative: a unit beside an expression value is judged, not misreported', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const v = f.part('v', p.id);
+    m.create('AttributeUsage', { declaredName: 'span', ownerId: v.id, attrs: { type: 'ISQ::LengthValue', value: '(1 + 2)', unit: 'm' } });
+    m.create('AttributeUsage', { declaredName: 'odd', ownerId: v.id, attrs: { type: 'ISQ::LengthValue', value: '(1 + 2)', unit: 'furlong' } });
+    const diags = runRule(m, 'unknown-unit');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('odd');
+  });
+
+  it('positive: brackets inside a STRING value or a string literal in a body are text, not units', () => {
+    // Review finding: `"see table [3]"` warned `unknown-unit: [3]` and failed
+    // --strict on a model that was clean before the body scan existed.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const v = f.part('v', p.id);
+    m.create('AttributeUsage', { declaredName: 'note', ownerId: v.id, attrs: { type: 'String', value: '"see table [3]"' } });
+    m.create('AttributeUsage', { declaredName: 'label', ownerId: v.id, attrs: { value: "'row [x]'" } });
+    m.create('AttributeUsage', { declaredName: 'id', ownerId: v.id, attrs: { value: '"R-UAV-001 [rev A]"' } });
+    // An escaped quote inside the string ends the lexer's string token early
+    // and leaves the regex fallback an unpaired quote before `[b]`; the rule
+    // skips a quoted VALUE outright, so this is still text.
+    m.create('AttributeUsage', { declaredName: 'quoted', ownerId: v.id, attrs: { value: '"a \\" [b]"' } });
+    m.create('AttributeUsage', { declaredName: 'n', ownerId: v.id, attrs: { type: 'Real', value: 1.0 } });
+    m.create('ConstraintUsage', { declaredName: 'c', ownerId: v.id, attrs: { expression: 'n > 0.0 and "x [zz]" == "x [zz]"' } });
+    expect(runRule(m, 'unknown-unit')).toHaveLength(0);
+    // A unit OUTSIDE the string in the same body is still read.
+    m.create('ConstraintUsage', { declaredName: 'c2', ownerId: v.id, attrs: { expression: 'n > 0.0 [furlong] and "x [zz]" == "x [zz]"' } });
+    const diags = runRule(m, 'unknown-unit');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('[furlong]');
+  });
+});
+
+describe('rule 17 — derived-dimension-mismatch', () => {
+  function withDerived(type: string, value: string) {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const v = f.part('v', p.id);
+    m.create('AttributeUsage', { declaredName: 'mtow', ownerId: v.id, attrs: { type: 'ISQ::MassValue', value: 18.5, unit: 'kg' } });
+    m.create('AttributeUsage', { declaredName: 'derived', ownerId: v.id, attrs: { type, value } });
+    return m;
+  }
+
+  it('positive: a derivation whose dimension matches the declared kind, or is a true ratio', () => {
+    expect(runRule(withDerived('ISQ::MassValue', 'mtow * 2.0'), 'derived-dimension-mismatch')).toHaveLength(0);
+    expect(runRule(withDerived('Real', 'mtow / 25.0 [kg]'), 'derived-dimension-mismatch')).toHaveLength(0);
+    expect(runRule(withDerived('Real', '2.0 * 3.0'), 'derived-dimension-mismatch')).toHaveLength(0);
+  });
+
+  it('negative: a Real derived from a mass, and a DurationValue derived from a mass', () => {
+    const real = runRule(withDerived('Real', 'mtow / 25.0'), 'derived-dimension-mismatch');
+    expect(real).toHaveLength(1);
+    expect(real[0].severity).toBe('warning');
+    expect(real[0].message).toMatch(/typed "Real".*dimension M/);
+    const kind = runRule(withDerived('ISQ::DurationValue', 'mtow * 2.0'), 'derived-dimension-mismatch');
+    expect(kind).toHaveLength(1);
+    expect(kind[0].message).toMatch(/declared kind "ISQ::DurationValue" is T/);
   });
 });
 

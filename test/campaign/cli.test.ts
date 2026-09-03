@@ -9,7 +9,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 const CLI = resolve(process.cwd(), 'scripts/sysml-check.ts');
 const FIX = resolve(process.cwd(), 'test/fixtures/agent-authoring');
@@ -107,6 +109,21 @@ describe('L7 — CLI contract', () => {
     const strict = run([`${FIX}/L4-port-no-direction/input.sysml`, '--strict']);
     expect(clean.code, 'warnings alone do not fail by default').toBe(0);
     expect(strict.code, 'but they do with --strict').toBe(1);
+  }, 90_000);
+
+  it('--strict stays clean for a string value that happens to contain brackets', () => {
+    // Review finding: `"R-UAV-001 [rev A]"` was read as a `[rev A]` unit and
+    // failed --strict on a model that was clean before the body scan.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    const file = join(dir, 'strings.sysml');
+    writeFileSync(file, 'package P { part v { attribute id = "R-UAV-001 [rev A]"; } }\n');
+    try {
+      const r = run([file, '--strict']);
+      expect(r.stdout).not.toContain('unknown-unit');
+      expect(r.code).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 90_000);
 
   it('rejects an unknown option rather than ignoring it', () => {

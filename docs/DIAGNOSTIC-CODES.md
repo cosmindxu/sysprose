@@ -245,8 +245,15 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A value carries a `[unit]` the engine does not know, so no dimensional check or unit conversion can be applied to it.
-- **Hint given:** Use a registered unit symbol (SI units and their prefixes, Wh, Ah, min, h, …). An unknown unit is treated as a bare number in arithmetic, which is usually wrong.
+- **Fires when:** A value, a constraint body, a transition guard or an expression value carries a `[unit]` the engine does not know, so no dimensional check or unit conversion can be applied to it; a constraint using it answers unknown.
+- **Hint given:** Use a registered unit symbol (SI units and their prefixes, Wh, Ah, min, h, °C, ft, lb, …), qualified or not (`[kg]`, `[SI::kg]`); a symbol that is also a keyword is quoted (`['in']` for the inch, in a value position). A value with an unknown unit is treated as a bare number in arithmetic, which is usually wrong; a constraint that reads one cannot be judged.
+
+### `validation/derived-dimension-mismatch`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** An expression-valued feature derives to a physical dimension that disagrees with its declared type — a `Real` computed from dimensioned quantities (usually a hand-rolled conversion such as `… / power * 60.0`), or an ISQ kind whose derivation has another dimension. The feature is excluded from unit-aware constraint evaluation, so a constraint reading it answers unknown.
+- **Hint given:** Two repairs. (1) Type the feature by the ISQ kind its derivation has and drop the hand conversion — `enduranceMin : Real = capacity / power * 60.0` becomes `endurance : ISQ::DurationValue = capacity / power`, and the comparison converts: `endurance >= 45.0 [min]`. (2) When the value really is a pure ratio, give the inlined constant its unit so the dimensions cancel: `mtow / 25.0` becomes `mtow / 25.0 [kg]`.
 
 ### `validation/connection-compatibility`
 
@@ -440,4 +447,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*53 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*54 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

@@ -102,7 +102,7 @@ one in this corpus was read and corrected by hand.
 | L1 | Lexical: illegal character, unterminated string, unterminated comment | 3 |
 | L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, bad expressions, `=` vs `==`, bare `->`, two independent errors | 14 |
 | L3 | Referential: unresolved type, connection end, import, transition end, specialization; forward references in a package; types reached through an import, through inheritance, and through a library import written in text; plus a pinned behaviour | 10 |
-| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit, connection direction and type, signed literal, unit literal in a constraint body | 15 |
+| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, value-type mismatch, dangling `then`, phantom port, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, temperature difference | 18 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies | 3 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 12 assertions |
 | L7 | The command-line contract: exit codes, JSON shape, stdin, strict mode | 10 tests |
@@ -289,10 +289,12 @@ hanging.
 **Unit-carrying constraints produced confident wrong verdicts.** The unit-blind
 scalar evaluator ran first and compared raw magnitudes, so `640 [Wh]` at
 `650 [W]` against `45 [min]` was "violated". The unit-aware evaluator now goes
-first; the scalar path remains the fallback for a dimensioned feature compared
-with a bare literal, which the unit-aware evaluator cannot judge. An unknown
-unit was silently exempt from every dimensional check; `unknown-unit` now names
-it. `Wh` and `Ah` joined the registry (prefixable, so kWh and mAh come free).
+first; the scalar path remains the fallback for a LITERAL-valued dimensioned
+feature compared with a bare literal, which the unit-aware evaluator cannot
+judge (a derived feature is never compared that way — see the I1 semantics
+entry below). An unknown unit was silently exempt from every dimensional
+check; `unknown-unit` now names it. `Wh` and `Ah` joined the registry
+(prefixable, so kWh and mAh come free).
 
 **Connection compatibility was unchecked.** `connect battery.powerOut to
 flightComputer.motorOut` (out to out) and a PowerPort wired to a DataPort both
@@ -368,6 +370,73 @@ neighbouring declarations survive. Fixtures: `L4-unit-literal-in-constraint`,
 `L2-empty-unit-bracket`; the grammar shapes and the round-trips are pinned by
 `langium.grammar.test.ts` and `text.bracket-expr.test.ts`.
 
+**A derived feature was invisible to the unit-aware evaluator, and making it
+visible would have produced a confident wrong answer.** The quantity scope only
+read literal magnitudes, so `uav.endurance >= 45.0 [min]` on an
+expression-valued `endurance` answered unknown with the scalar parser's
+"Unexpected character '['" — the intended syntax reported as illegal. The
+quantity scope is now lazy, like the scalar one: a feature whose value is an
+expression is evaluated on demand in its owner's quantity scope, carrying its
+dimension (640 Wh × 0.8 / 650 W = 2835.7 s, T), with a cycle answering unknown.
+The trap this opens was measured before it was closed: the old example's
+`enduranceMin : Real = … / cruisePower * 60.0` derives to 170 141 s — the
+hand-rolled minutes read as seconds — and against `100.0 [min]` (6000 s) the
+engine answers SATISFIED while the author's 47.3 min is violated; the false
+band runs from 47.3 to ~2836 min. So a derived feature carries a *dimension
+claim*: when its derived dimension disagrees with its declared type — a
+`Real`/`Integer` derived from dimensioned quantities, or an ISQ kind whose
+derivation has another dimension (a user `attribute def :> ISQ::MassValue`
+walks to its kind first) — it is EXCLUDED from every quantity scope, the
+constraint answers unknown naming the feature, and the new
+`derived-dimension-mismatch` warning says why and how to repair it (retype to
+the kind and drop the conversion, or give the inlined constant its unit:
+`mtow / 25.0 [kg]`). Three smaller honesty fixes came with it. The unit-aware
+engine compared SI values exactly, so `1 [ft] == 12 [in]` was violated by float
+noise in the registry factors and a Newton-solved `x * x == 2` would have
+flipped; comparisons now use `|a − b| ≤ max(absTol, 1e-9·max(|a|, |b|))` with
+the absolute part supplied by the caller — and two values within that
+tolerance are EQUAL for every relational operator, the strict ones included:
+`0.9999999999 < 1.0` holds, `a != b` at 1e-10 apart is violated, exactly as
+the numeric surface judges its residual (`violated = g > tol`), so the two
+surfaces cannot disagree on float noise. °C and °F are affine scales, and the
+affine map turned a 15 °C *interval* into 288.15 K, so `t2 - t1 <= 5.0 [°C]`
+answered SATISFIED (10 K ≤ 278.15 K); any `+ − == !=` touching an offset unit,
+or a derived feature computed from one, now answers unknown with the reason,
+while ordering two absolutes (`t2 >= 300 [K]`) still converts — a plain
+reference (`t3 : TemperatureValue = t1`) is the same point on the scale and
+keeps ordering — and the scalar path is refused for those relations too, since
+raw °C magnitudes are right only while every value shares the scale. And
+`unknown-unit` read only `attrs.unit`, so `{ m <= 25 [furlong] }` warned
+nothing; it now scans constraint bodies, transition guards and expression
+values (KerML's note 2 on BracketExpression asks a tool to warn when `[` has
+no concrete definition) — outside string literals, whose brackets are text
+(`"R-UAV-001 [rev A]"` is not a unit) — a qualified unit (`[SI::kg]`)
+resolves by its last segment, and a unit beside an expression value
+(`(1 + 2) [m]`) attaches to a dimensionless result instead of being
+misreported as unknown. A fault INSIDE a derivation names both the feature
+and the fault (`"uav.total" cannot be derived: M and 1 are different physical
+dimensions`), a boolean feature is a boolean in a body (`armed and mtow <=
+25.0 [kg]`), and a body that mixes a unit literal with a call or a string says
+so instead of blaming the bracket. `examples/uav-isr.sysml` states its units:
+`endurance : ISQ::DurationValue = capacity * fraction / power` against
+`>= 45.0 [min]`, and `mtow <= 25.0 [kg]`; the old shape trips the new warning,
+which is why the example moved. Fixtures: `L4-unknown-unit-in-constraint`,
+`L4-derived-dimension-mismatch`, `L4-temperature-difference`; the trap, the
+tolerance and the offset cases are pinned by `semantics.units-eval.test.ts`
+and `semantics.derived-scope.test.ts`.
+
+Two behaviours pinned with it. A **derived dimensioned feature is never
+compared as a raw magnitude**: the bare-literal contract (`mtow <= 25.0` reads
+the literal in the feature's declared unit) holds for literal-valued features
+only; `endurance >= 45.0` on the derived duration answers unknown with the
+repair (a unit literal of dimension T — `45.0 [s]` or `45.0 [min]`; an
+untyped ratio such as `r2 = mtow / 25.0` is pointed at `mtow / 25.0 [kg]`
+instead), because 640 × 0.8 / 650 = 0.7877 read raw is a confident wrong
+"violated" on both surfaces. And **offset-unit arithmetic answers
+unknown**: temperature-interval (delta) semantics — a difference of two
+absolutes being an interval that converts as 1 °C = 1 K — are recorded as
+future work rather than approximated.
+
 ### Known limitations, recorded rather than hidden
 
 **Re-homing cannot recover the faulty declaration itself, and can mis-home a
@@ -376,16 +445,17 @@ containment from the brace structure, which is all the parser leaves intact;
 the residue of the bad declaration stays a keyword-less element.
 
 
-**A unit inside a constraint body is parsed but not yet validated or
-resolved beyond the registry's bare symbols.** `unknown-unit` reads only
-`attrs.unit`, so `{ m <= 25 [furlong] }` parses and evaluates to unknown without
-a warning; a qualified reference (`5 [SI::kg]`, the spelling the training
-corpus uses) is stored faithfully but the registry does not strip the
-qualifier, so it evaluates to unknown as well; and a derived feature with no
-literal magnitude is invisible to the quantity scope, so comparing it with a
-unit literal answers unknown (the scalar fallback cannot read the bracket)
-where the same comparison against a bare number answered. The grammar half is
-done; the semantics half is the next item.
+**Unit spellings beyond a bare or qualified registry symbol do not resolve,
+and the numeric solver still drops a unit-bearing body.** A quoted library
+name (`[SI::'watt hour']`, `['°C']` written inside a body rather than as a
+value) and a compound unit (`[mi / gal]`) evaluate to unknown, and
+`unknown-unit` warns on them; the model-free normalisation funnel is the next
+item. `checkConstraintsNumeric` parses bodies with the scalar grammar, so a
+relation carrying `[unit]` is absent from the numeric Check surface rather
+than judged — the validation surface is the one that answers today — and the
+Solve/MoE surfaces still read a derived dimensioned value as a raw magnitude
+(`endurance` solves to 0.79 on the example, 640 × 0.8 / 650 read unitless)
+until the solver commit scales relations.
 
 **Compound units and an information dimension are not representable.** The
 registry is a fixed table with generic single-prefix decomposition; `W*h`,

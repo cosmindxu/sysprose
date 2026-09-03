@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "arithmetic on an offset temperature scale answers unknown, not a converted number",
+  "note": "PINNED 2026-09-03. °C and °F are affine scales: 30 °C − 20 °C is a 10 K interval, but the affine map reads `s.maxRise = 15.0 [°C]` as 288.15 K, so a converting evaluator answers SATISFIED for `t2 - t1 <= 5.0 [°C]` (10 K ≤ 278.15 K) — a confident wrong verdict — and the raw-magnitude path is right only while every value shares the scale. Any `+ − == !=` touching an offset unit, or a derived feature built from one, now answers unknown with the reason; plain ordering of two absolutes (`t2 >= 300 [K]`) still converts. Temperature-interval (delta) semantics are recorded as future work; the repair writes the values in K."
+}

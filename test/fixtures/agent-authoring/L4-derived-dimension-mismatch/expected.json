@@ -1,0 +1,30 @@
+{
+  "level": "L4",
+  "title": "a Real derived from dimensioned quantities with a hand-rolled conversion",
+  "note": "FOUND 2026-09-02 by the I1 exploration, FIXED 2026-09-03. `enduranceMin : Real = capacity / cruisePower * 60.0` derives to 212 677 s — the author's minutes read as seconds — and an engine that evaluated it would answer SATISFIED against `100.0 [min]` (6000 s) where the model's own intent (59 min) is violated; the false-satisfied band runs to ~3544 min. A derived feature whose dimension disagrees with its declared type is now excluded from unit-aware evaluation (the constraint answers unknown) and `derived-dimension-mismatch` names it. The repair retypes the feature to the kind its derivation has and lets the unit literal on the comparison convert. Two false-positive patterns are NOT warned: a user `attribute def :> ISQ::MassValue` is walked to its ISQ kind before the claim is judged, and a pure ratio keeps its type when the inlined constant carries its unit — `mtow / 25.0` becomes `mtow / 25.0 [kg]`, the second repair the hint names.",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/derived-dimension-mismatch",
+      "severity": "warning",
+      "line": 8,
+      "column": 9,
+      "message": "/typed \"Real\" but its value derives to dimension T/"
+    },
+    {
+      "code": "validation/constraint-violation",
+      "severity": "info",
+      "line": 14,
+      "column": 9,
+      "message": "/disagrees with its declared type/"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "P"
+    ],
+    "minElements": 14,
+    "strictWarnings": true
+  }
+}

@@ -69,9 +69,10 @@ package UAVSurveillanceSystem {
         attribute cruisePower : ISQ::PowerValue = 650.0 [W];
         // A pure ratio; DimensionOneValue would also do, Real reads better here.
         attribute usableEnergyFraction : Real = 0.8;
-        // Derived: minutes of flight the usable pack energy buys at cruise power.
-        // 640 Wh x 0.8 / 650 W x 60 = 47.3 min. Referenced by the requirement.
-        attribute enduranceMin : Real = battery.capacity * usableEnergyFraction / cruisePower * 60.0;
+        // Derived: the flight time the usable pack energy buys at cruise power,
+        // a duration in its own right — 640 Wh x 0.8 / 650 W = 2836 s = 47.3 min.
+        // No hand conversion: the requirement's `[min]` literal converts.
+        attribute endurance : ISQ::DurationValue = battery.capacity * usableEnergyFraction / cruisePower;
 
         part battery : BatteryPack;
         part flightComputer : FlightController;
@@ -121,9 +122,9 @@ package UAVSurveillanceSystem {
         attribute id = "R-UAV-001";
         doc /* The air vehicle shall sustain at least 45 minutes of surveillance
              * flight on a single battery pack. Checked against the usable
-             * energy of the pack at cruise power, via the derived enduranceMin. */
+             * energy of the pack at cruise power, via the derived endurance. */
         subject uav : AirVehicle;
-        require constraint { uav.enduranceMin >= 45.0 }
+        require constraint { uav.endurance >= 45.0 [min] }
     }
 
     requirement def MassRequirement {
@@ -131,7 +132,7 @@ package UAVSurveillanceSystem {
         doc /* Maximum take-off mass shall stay within the 25 kg class boundary
              * that separates the light category from heavier certification. */
         subject uav : AirVehicle;
-        require constraint { uav.mtow <= 25.0 }
+        require constraint { uav.mtow <= 25.0 [kg] }
     }
 
     satisfy EnduranceRequirement by uav;
