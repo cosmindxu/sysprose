@@ -516,6 +516,84 @@ a dimension-one information unit exports with no base exponents but with its
 factor (`<BaseUnit factor="8"/>` for the byte). Pinned by
 `fmi-export.test.ts`.
 
+**The numeric surface judged without units — three ways at once.** `solve()`
+was a scalar fixpoint over raw magnitudes, so one model had two contradictory
+verdicts and one wrong set of numbers. Three probes, each reproduced from
+parsed text against the full library: (1) `640 [Wh]` at `650 [W]` against
+`45 [min]` — the Problems panel said satisfied, the Solve button said violated
+by 44.0; likewise `640 [Wh]` vs `3 [MJ]` (by 637) and `5 [km]` vs `4000 [m]`
+(by 3995), each with `analysisReport.feasible` false on the bogus amount.
+(2) `total == leg1 + leg2` with 5 km and 400 m solved to **405**, `converged:
+true`, and `evaluateMoEs` reported 405 with no unit — the solved VALUE was
+wrong, not merely its verdict, and the Simulation tab plotted it. (3) a body
+carrying a `[unit]` literal — `mass <= 2000 [kg]` — threw in the scalar parser
+and was **silently absent** from `checkConstraintsNumeric` and from
+feasibility: a constraint that disappears reads as one that holds.
+
+A relation is now judged in SI, per relation, behind four gates — each of which
+exists because scaling past it produces a confident WRONG number: every
+variable must resolve to a storage scale (a known unit, a declared ISQ kind, or
+a derived dimension); none may sit on an offset scale (°C differences are not
+offset-invariant, and the unit-aware evaluator already refuses them); the two
+operands of every comparison, `==`, `+` and `-` must carry the SAME DIMENSION —
+which refuses two distinct wrongs with one predicate, the declared-unit contract
+(`range = 5.0 [km]` against `<= 10.0` still reads the literal in kilometres, on
+both surfaces — SI-scaling it would turn a satisfied constraint into
+`5000 <= 10`) and the mismatch (`v.d >= v.t`, a length against a duration, is a
+question no scaling can answer: SI-scaling it reported `5000 >= 3000` satisfied
+where the validation surface said violated); and no variable may carry a `mismatch`
+dimension claim, which is what keeps the factor-60 hand conversion out of the
+solver (`Real = capacity * fraction / power * 60.0` would otherwise solve to
+170 141 s). `[unit]` literals in a body — and in an assignment value, `= 2 * 3
+[kg]` — are lowered to SI magnitudes before parsing, so the body is judged
+instead of dropped; a unit the registry cannot resolve makes the relation
+`unknown`, never absent.
+
+**Values stay in storage units.** `SolveResult.values`, `SolveOptions.fixed`
+and `OptimizeOptions.bounds` keep their published meaning — plain numbers in
+each feature's declared unit — and the SI conversion happens at the point of
+use, with the result of solving FOR an unknown converted back (5 km + 400 m is
+5400 in a unit-less `LengthValue`, 5.4 in one declaring `[km]`). SI by
+convention is the rule for a feature that declares a quantity kind but no unit,
+which is the same reading the unit-aware evaluator gives it; `evaluateMoEs`
+now labels such a value with the coherent SI symbol (`siSymbolOf`), so the
+number and the unit cannot contradict each other, and `bind a = b` converts
+into the target's storage unit instead of copying the magnitude. Both labels
+are claimed only where they are true: a measure computed by a relation the
+gates REFUSED to scale stays unlabelled (its 405 is neither metres nor
+furlongs), and a dimension the registry gives several coherent units — T⁻¹ is
+`Hz`, `Bd`, and every bit rate — is labelled in composed base units (`s⁻¹`)
+rather than by whichever row comes first. A binding across an OFFSET scale
+copies verbatim, mirroring the solver's own refusal to scale one, so 20 °C does
+not arrive as 293.15 K in an equation still read in degrees.
+
+**Tolerance is the part that had to be decided twice.** The numeric verdict now
+comes FIRST from the unit-aware evaluator (with the solved values as a
+last-resort scope, so an unknown an equality pins down still resolves); the
+residual supplies slack and amount, in SI with a `slackUnit`, and is the verdict
+only where the unit-aware answer is ignorance rather than refusal — an offset
+scale or a dimension mismatch stays `unknown` on both surfaces. Every relation
+yields a row, including one whose body carries no residual at all (`a > 1.0 and
+b > 2.0`, reported with `kind: 'boolean'`): a constraint that disappears from
+the list reads as one that holds.
+
+The caller's absolute tolerance is passed only for a relation judged in raw
+magnitudes: in SI, `1e-6` is a metre-or-second-sized constant with no relation
+to the model, and it made `5 [ns] == 3 [ns]` satisfied. A SCALED relation is
+judged, and SOLVED, relative to its own SI magnitude throughout — the
+convergence gate, the Newton/bisection acceptance and step tests, the
+finite-difference probe, the row/column equilibration of the coupled Newton
+system, and the feasibility gate (the historical `1e-6` made relative). Each
+absolute constant left in place broke the seam from one side or the other: a
+nanosecond system converged vacuously on a 2e-9 residual, a millisecond system
+stopped four decimal places short of its root and was then flagged violated by
+the (relative) unit-aware verdict, a nanometre system stalled 25× away from its
+root, and an ordinary second-scale model was called INFEASIBLE over a 4e-7
+overshoot it had always tolerated. Pinned by `semantics.solver-units.test.ts`
+(numbers, not verdicts: solved values, slack + unit, convergence, feasibility)
+and `uav-example.test.ts`, which runs the shipped example through both
+surfaces.
+
 ### Known limitations, recorded rather than hidden
 
 **Re-homing cannot recover the faulty declaration itself, and can mis-home a
@@ -524,13 +602,43 @@ containment from the brace structure, which is all the parser leaves intact;
 the residue of the bad declaration stays a keyword-less element.
 
 
-**The numeric solver still drops a unit-bearing body.**
-`checkConstraintsNumeric` parses bodies with the scalar grammar, so a relation
-carrying `[unit]` is absent from the numeric Check surface rather than judged
-— the validation surface is the one that answers today — and the
-Solve/MoE surfaces still read a derived dimensioned value as a raw magnitude
-(`endurance` solves to 0.79 on the example, 640 × 0.8 / 650 read unitless)
-until the solver commit scales relations.
+**A relation the solver cannot scale is judged in raw magnitudes, not refused.**
+The gates are conservative on purpose: an unresolvable unit, an offset scale, or
+operands whose dimensions do not match under a comparison, `+` or `-` leaves the
+relation unscaled, where the residual — and so `slack`, `amount` and the penalty
+an optimizer descends — is still a difference of magnitudes in different units.
+The VERDICT is then taken from the unit-aware evaluator where it has one, and
+from the residual where the unit-aware answer is IGNORANCE (`unresolved`,
+`dimension`, `parse`) rather than a refusal; only a refusal (`offset`,
+`mismatch`) is preserved as `unknown`. That distinction is exactly what keeps
+the declared-unit contract: `range = 5 [km]` against a bare `<= 10.0` is
+unscaled, the unit-aware evaluator declines the comparison, and the residual
+answers `satisfied` in kilometres — the reading the author wrote. A relation
+whose body mixes a `[unit]` literal with an unscalable variable is reported
+`unknown` rather than guessed.
+
+**An EQUALITY between a bare number and a dimensioned value is `violated`, not
+`satisfied`.** The declared-unit contract holds for ORDERING comparisons, where
+the unit-aware evaluator answers `unknown` on a dimension clash and the residual
+reads the literal in the feature's own unit. For `==` it has always answered
+`false` instead — a dimensionless number is not a duration — so `target == 90.0`
+on a `DurationValue` reads `violated` on the validation surface, and now reads
+the same on the numeric one (it used to answer `satisfied` from the residual).
+The two surfaces agree; the model should say `== 90.0 [s]`.
+
+**`AnalysisReport.feasible` means "no KNOWN violated inequality".** A relation
+neither engine could judge is reported in `unknowns`, not folded into the flag —
+an unjudged constraint is not a violated one. The Solve header prints both, so
+"no violated inequality constraint" is never read as "all of them hold".
+
+**Feasibility REPAIR at extreme scales is still absolute.** The gate that judges
+an inequality is relative to its SI magnitude, but the penalty descent that
+produces the values it judges (`solveFeasible`'s line search, its `feasTol²`
+target) works to an absolute `tol`. A nanosecond-scale model whose constraints
+are satisfiable can therefore be reported infeasible because the search cannot
+move that precisely, where before the same model was reported feasible without
+either engine having looked. The verdict surfaces are unaffected: they read the
+unit-aware evaluator.
 
 **Forward and backward references can resolve differently when a name is both
 inherited and in an outer scope.** The binder (forward references) consults

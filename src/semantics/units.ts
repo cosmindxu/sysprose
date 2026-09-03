@@ -848,6 +848,55 @@ export function libraryUnitName(unit: Unit | string): string | undefined {
   return resolveUnit(unit)?.libraryName;
 }
 
+/** Base-unit symbol per dimension axis, for composing a coherent SI label. */
+const SI_BASE_SYMBOLS: ReadonlyArray<readonly [keyof Dimension, string]> = [
+  ['L', 'm'],
+  ['M', 'kg'],
+  ['T', 's'],
+  ['I', 'A'],
+  ['Th', 'K'],
+  ['N', 'mol'],
+  ['J', 'cd'],
+];
+
+/**
+ * The symbol of the COHERENT SI unit of a dimension — `m`, `kg`, `J`, `W` —
+ * or a composed base-unit product (`m·s⁻¹`) when the registry names no single
+ * coherent unit for it. `undefined` for a dimensionless quantity, which has no
+ * unit to name (and whose registry rows — `bit`, `Sh`, `E` — are counts of
+ * different things, so picking one would be a lie).
+ *
+ * WHY it exists: the solver stores a value in its feature's DECLARED unit, and
+ * falls back to coherent SI for a feature that declares a quantity kind but no
+ * unit. Reporting such a value (a measure of effectiveness, an inequality's
+ * slack) without a label leaves the reader to guess the scale; this is the
+ * label that cannot contradict the number.
+ *
+ * The SAME reasoning applies one level up, where a dimension has SEVERAL
+ * coherent units: T⁻¹ is `Hz` and `Bd`, and (because ISO 80000-13 makes
+ * information content dimension one) it is also what every bit-rate kind
+ * reduces to. Picking the first would label a `BinaryDigitRateValue` of 1e8 as
+ * "100 MHz". Where the registry does not single one out, the composed
+ * base-unit form (`s⁻¹`) is used instead: less idiomatic, but true of every
+ * quantity that shares the dimension.
+ */
+export function siSymbolOf(d: Dimension): string | undefined {
+  if (dimEqual(d, DIMENSIONLESS)) return undefined;
+  // A registry unit whose SI map is the identity IS the coherent unit — but
+  // only when it is the ONLY one, so the label cannot belong to a sibling kind.
+  const coherent = REGISTRY.filter(
+    (u) => u.factorToSI === 1 && !u.offsetSI && dimEqual(u.dimension, d),
+  );
+  if (coherent.length === 1) return coherent[0].symbol;
+  const parts: string[] = [];
+  for (const [axis, sym] of SI_BASE_SYMBOLS) {
+    const e = d[axis];
+    if (e === 0) continue;
+    parts.push(e === 1 ? sym : `${sym}${superscript(e)}`);
+  }
+  return parts.length === 0 ? undefined : parts.join('·');
+}
+
 /* ───────────────────────── Quantity-kind dimensions ─────────────────────── */
 
 /**

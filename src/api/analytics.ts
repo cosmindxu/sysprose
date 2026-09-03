@@ -477,12 +477,32 @@ export interface SolvedValue {
 /** A numerically-violated equality/inequality constraint, with a navigable ref. */
 export interface AnalysisViolation {
   element: ElementRef;
-  /** Whether the violated relation is an equality or an inequality. */
-  kind: 'equality' | 'inequality';
+  /** The shape of the violated relation (see `NumericConstraintResult.kind`). */
+  kind: 'equality' | 'inequality' | 'boolean';
   /** The source text of the relation. */
   expression: string;
   /** The amount by which the constraint is violated. */
   amount: number;
+  /**
+   * The coherent SI unit {@link amount} is expressed in, when the relation was
+   * judged dimensionally. Absent for a unitless relation, whose amount is in
+   * the raw magnitudes the model declares.
+   */
+  unit?: string;
+}
+
+/**
+ * A relation NEITHER engine could judge — a `[unit]` the registry does not
+ * know, an offset temperature scale in arithmetic, a hand-converted `Real`.
+ * Reported rather than dropped: a constraint that silently disappears from the
+ * analysis reads as one that holds.
+ */
+export interface AnalysisUnknown {
+  element: ElementRef;
+  kind: 'equality' | 'inequality' | 'boolean';
+  expression: string;
+  /** Why it could not be judged, in the author's terms. */
+  reason?: string;
 }
 
 export interface AnalysisReport {
@@ -493,10 +513,18 @@ export interface AnalysisReport {
   values: SolvedValue[];
   /** Evaluated measures of effectiveness. */
   measures: MeasureResult[];
-  /** True when every inequality constraint holds at the solved values. */
+  /**
+   * True when NO inequality constraint is KNOWN to be violated at the solved
+   * values. It is not a proof that all of them hold: a relation neither engine
+   * could judge appears in {@link unknowns} and leaves this flag true, because
+   * an unjudged constraint is not a violated one. Read the two together — the
+   * Solve header does.
+   */
   feasible: boolean;
   /** The numerically-violated equality/inequality constraints. */
   violations: AnalysisViolation[];
+  /** The relations neither engine could judge (never silently dropped). */
+  unknowns: AnalysisUnknown[];
 }
 
 /**
@@ -516,16 +544,29 @@ export function analysisReport(model: Model): AnalysisReport {
   // Numeric feasibility: violated equalities/inequalities at the solved values.
   const numeric = checkConstraintsNumeric(model);
   const violations: AnalysisViolation[] = [];
+  const unknowns: AnalysisUnknown[] = [];
   for (const c of numeric) {
-    if (c.result !== 'violated') continue;
     const el = model.get(c.id);
-    violations.push({
-      element: el ? ref(model, el) : { id: c.id, eClass: '«unknown»', qualifiedName: '' },
-      kind: c.kind,
-      expression: c.raw,
-      amount: c.amount,
-    });
+    const element = el ? ref(model, el) : { id: c.id, eClass: '«unknown»', qualifiedName: '' };
+    if (c.result === 'violated') {
+      violations.push({
+        element,
+        kind: c.kind,
+        expression: c.raw,
+        amount: c.amount,
+        ...(c.slackUnit ? { unit: c.slackUnit } : {}),
+      });
+    } else if (c.result === 'unknown') {
+      unknowns.push({
+        element,
+        kind: c.kind,
+        expression: c.raw,
+        ...(c.reason ? { reason: c.reason } : {}),
+      });
+    }
   }
+  // "No KNOWN violation" — see the field's doc comment. An `unknown` row is
+  // reported through `unknowns`, never folded into this flag.
   const feasible = !numeric.some((c) => c.kind === 'inequality' && c.result === 'violated');
 
   return {
@@ -536,6 +577,7 @@ export function analysisReport(model: Model): AnalysisReport {
     measures: evaluateMoEs(model),
     feasible,
     violations,
+    unknowns,
   };
 }
 

@@ -25,6 +25,8 @@
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { parseExpr, evaluate } from './expr';
+import { dimensionalFacets } from './units-eval';
+import { DIMENSIONLESS, dimEqual, resolveUnit, type Dimension } from './units';
 
 /* ─────────────────────────── connector ends ──────────────────────────── */
 
@@ -250,16 +252,18 @@ export function propagateValues(model: Model): Map<ElementId, unknown> {
     // (a) Binding classes: propagate the single known value to every member.
     for (const members of classes) {
       let seed: unknown;
+      let seedId: ElementId | undefined;
       for (const id of members) {
         if (known.has(id)) {
           seed = known.get(id);
+          seedId = id;
           break;
         }
       }
-      if (seed === undefined) continue;
+      if (seed === undefined || seedId === undefined) continue;
       for (const id of members) {
         if (!known.has(id)) {
-          known.set(id, seed);
+          known.set(id, convertInto(model, seedId, id, seed));
           changed = true;
         }
       }
@@ -278,6 +282,57 @@ export function propagateValues(model: Model): Map<ElementId, unknown> {
 }
 
 /* ─────────────────────────────── helpers ─────────────────────────────── */
+
+/**
+ * The affine map from a feature's STORED magnitude to SI, and the dimension it
+ * carries — the storage unit being its declared unit, else the coherent SI unit
+ * of its declared quantity kind. `undefined` when the feature carries no
+ * dimension at all (a plain `Real`) or names a unit the registry cannot
+ * resolve; in both cases a binding copies the magnitude verbatim, exactly as it
+ * always has.
+ */
+function storageOf(
+  model: Model,
+  id: ElementId,
+): { factor: number; offset: number; dimension: Dimension } | undefined {
+  const facets = dimensionalFacets(model, id);
+  if (facets.unit !== undefined) {
+    const u = resolveUnit(facets.unit);
+    if (!u || dimEqual(u.dimension, DIMENSIONLESS)) return undefined;
+    return { factor: u.factorToSI, offset: u.offsetSI ?? 0, dimension: u.dimension };
+  }
+  const kind = facets.kindDimension;
+  if (!kind || dimEqual(kind, DIMENSIONLESS)) return undefined;
+  return { factor: 1, offset: 0, dimension: kind };
+}
+
+/**
+ * Carry a bound value from one feature to another, converting when BOTH sides
+ * are dimensioned and their dimensions agree.
+ *
+ * A binding equivalence class is a statement that two features denote the same
+ * quantity, not that they hold the same number: `bind a = b` with `a` in
+ * kilometres and `b` a unit-less `LengthValue` (which the quantity engine reads
+ * as metres) must fill `b` with 5000, not 5. When either side has no dimension
+ * — a plain `Real` sink, a boolean, a string — the value is copied verbatim,
+ * which is what every model without units has always relied on.
+ *
+ * An OFFSET (affine) scale is copied verbatim too, mirroring the solver's gate
+ * (b). The two must agree: the solver reads `bind a = b` as the equation
+ * `a − b = 0` in RAW magnitudes when either side sits on an offset scale, so
+ * converting 20 °C to 293.15 K here would leave that equation with a residual
+ * of 273.15 and report a converged model as unconverged.
+ */
+function convertInto(model: Model, fromId: ElementId, toId: ElementId, value: unknown): unknown {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return value;
+  const from = storageOf(model, fromId);
+  const to = storageOf(model, toId);
+  if (!from || !to) return value;
+  if (from.offset !== 0 || to.offset !== 0) return value;
+  if (!dimEqual(from.dimension, to.dimension)) return value;
+  if (from.factor === to.factor && from.offset === to.offset) return value;
+  return (value * from.factor + from.offset - to.offset) / to.factor;
+}
 
 /** The literal value of a feature (`attrs.value`), or `undefined` if none/expr. */
 function literalValueOf(feat: ElementRecord | undefined): unknown {

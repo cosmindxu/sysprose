@@ -131,6 +131,7 @@ export {
   areCompatible,
   convert,
   libraryUnitName,
+  siSymbolOf,
   quantityKindDimension,
   type Dimension,
   type Unit,

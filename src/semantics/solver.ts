@@ -25,6 +25,17 @@
  *    objective feature over bounded variables, re-solving the constraints at each
  *    trial.
  *
+ * UNITS. A relation whose variables carry units is evaluated in SI: each
+ * relation gets a per-variable affine map ({@link Equation.scale}) built behind
+ * the gates in {@link scaleOfRelation}, `[unit]` literals in its body are
+ * lowered to SI magnitudes, and a value solved FOR is converted back. Solved
+ * VALUES stay in each feature's own storage unit, so the published shape of
+ * {@link SolveResult}, {@link SolveOptions.fixed} and
+ * {@link OptimizeOptions.bounds} is unchanged. The unit-aware evaluator of
+ * {@link ./units-eval} supplies the VERDICT in {@link checkConstraintsNumeric},
+ * which is what keeps this surface and `checkConstraints` from answering the
+ * same model differently.
+ *
  * Every function is deterministic and bounded. This is an ORIGINAL, clean-room
  * implementation (no third-party solver was copied).
  */
@@ -34,8 +45,26 @@ import { parseExpr, evaluate, type ExprNode } from './expr';
 import { effectiveFeatures } from './inheritance';
 import { propagateValues } from './connectors';
 import { evaluateFeatureValue } from './evaluate-model';
-import { evaluateQuantity } from './units-eval';
-import { dimToString } from './units';
+import {
+  derivedDimensionOf,
+  dimensionClaim,
+  dimensionalFacets,
+  evaluateConstraintQuantityDetailed,
+  evaluateQuantity,
+  type DerivationMemo,
+  type Quantity,
+} from './units-eval';
+import {
+  DIMENSIONLESS,
+  dimEqual,
+  dimToString,
+  divideDim,
+  multiplyDim,
+  powDim,
+  resolveUnit,
+  siSymbolOf,
+  type Dimension,
+} from './units';
 
 /**
  * Per-equation RELATIVE residual floor (finding M6): the fraction of an
@@ -74,6 +103,13 @@ export interface Equation {
   raw: string;
   /** Resolver from a name used in the equation to the feature id it denotes. */
   nameToId: Map<string, ElementId>;
+  /**
+   * Per-variable affine map into SI ({@link UnitScale}), present only when the
+   * relation passed every scaling gate (see {@link scaleOfRelation}). When set,
+   * the equation is READ in SI: every value is `v · factor + offset` on the way
+   * in, and a value solved FOR is converted back to its storage unit.
+   */
+  scale?: ScaleMap;
 }
 
 /** Options for {@link solve}. */
@@ -88,13 +124,23 @@ export interface SolveOptions {
    * Feature values held CONSTANT for this solve (used by {@link optimize} to fix
    * the trial design variables). Overrides any literal seed and is never
    * overwritten by propagation.
+   *
+   * Plain numbers in each feature's own STORAGE unit — its declared unit, else
+   * the coherent SI unit of its quantity kind — exactly as before units
+   * entered the solver. Unit conversion happens inside a relation, not on this
+   * boundary, so no caller of this API had to change.
    */
   fixed?: Map<ElementId, number> | Record<ElementId, number>;
 }
 
 /** Result of {@link solve}. */
 export interface SolveResult {
-  /** featureId → solved numeric value (only determined features). */
+  /**
+   * featureId → solved numeric value (only determined features), in the
+   * feature's STORAGE unit: its declared unit when it has one, else the
+   * coherent SI unit of its declared quantity kind. `5 [km] + 400 [m]` solves
+   * to 5400 in a unit-less `LengthValue` and to 5.4 in one declaring `[km]`.
+   */
   values: Map<ElementId, number>;
   /** True when every gathered equation is determined and its residual < tol. */
   converged: boolean;
@@ -125,7 +171,11 @@ export type OptimizeSense = 'min' | 'max';
 export interface OptimizeOptions {
   /** Minimise (default) or maximise the objective. */
   sense?: OptimizeSense;
-  /** Inclusive `[lo, hi]` search bounds per variable id. */
+  /**
+   * Inclusive `[lo, hi]` search bounds per variable id, in the variable's
+   * STORAGE unit (see {@link SolveOptions.fixed}) — a `[km]` feature is bounded
+   * in kilometres.
+   */
   bounds?: Map<ElementId, [number, number]> | Record<ElementId, [number, number]>;
   /** Maximum coordinate-descent sweeps (default 40). */
   maxIter?: number;
@@ -180,6 +230,8 @@ export interface Inequality {
   raw: string;
   /** Resolver from a name used in the inequality to the feature id it denotes. */
   nameToId: Map<string, ElementId>;
+  /** SI scaling of the variables — see {@link Equation.scale}. */
+  scale?: ScaleMap;
 }
 
 /** One violated constraint reported by {@link solveFeasible}. */
@@ -212,8 +264,13 @@ export interface NumericConstraintResult {
   name: string;
   /** The source text of the relation. */
   raw: string;
-  /** Whether the relation is an equality or an inequality. */
-  kind: 'equality' | 'inequality';
+  /**
+   * The shape of the relation: an equality (`==`, a calculation body), an
+   * ordering `inequality`, or `boolean` for a body that is neither — a logical
+   * connective such as `a > 1.0 and b > 2.0`, which the unit-aware evaluator
+   * judges but the scalar residual path has no slack for.
+   */
+  kind: 'equality' | 'inequality' | 'boolean';
   /** The comparison operator (inequalities only). */
   op?: ComparisonOp;
   /** Verdict at the solved values. */
@@ -221,16 +278,362 @@ export interface NumericConstraintResult {
   /**
    * Signed slack: for an inequality, `−g` (positive is margin to spare); for an
    * equality, the residual `lhs − rhs`. `null` when it could not be evaluated.
+   * Expressed in {@link slackUnit} when the relation was judged dimensionally,
+   * else in the raw magnitudes the model declares.
    */
   slack: number | null;
   /** Violation magnitude (0 when satisfied/unknown). */
   amount: number;
+  /**
+   * The coherent SI unit {@link slack} and {@link amount} are expressed in —
+   * set only for a relation judged dimensionally. Absent means the numbers are
+   * raw declared-unit magnitudes (the unitless and bare-literal cases).
+   */
+  slackUnit?: string;
+  /** Why the relation is `unknown` — the unit-aware evaluator's sentence. */
+  reason?: string;
 }
 
 /** Options for {@link solveFeasible}. */
 export interface FeasibilityOptions extends SolveOptions {
   /** Maximum penalty-descent sweeps (default 60). */
   sweeps?: number;
+}
+
+/* ─────────────────────────── unit scaling ────────────────────────────── */
+
+/**
+ * The affine map taking a feature's STORED magnitude into SI:
+ * `si = value · factor + offset`. `factor` is 1 for a feature that declares a
+ * quantity kind but no unit (SI by convention) and for a plain dimensionless
+ * number (which is its own SI value).
+ */
+interface UnitScale {
+  factor: number;
+  offset: number;
+  /**
+   * The physical dimension the feature's magnitude carries — `DIMENSIONLESS`
+   * for a plain number. It is the DIMENSION, not a boolean "is dimensioned",
+   * because gate (c) has to tell a length from a duration: comparing two
+   * operands that are merely both dimensioned is exactly the mismatch the
+   * unit-aware evaluator refuses.
+   */
+  dimension: Dimension;
+}
+
+/** featureId → its {@link UnitScale}, for the variables of one relation. */
+type ScaleMap = Map<ElementId, UnitScale>;
+
+/** A dimensionless multiplier: its own SI value. */
+const PLAIN_SCALE: UnitScale = { factor: 1, offset: 0, dimension: DIMENSIONLESS };
+
+/** Does this scale carry a physical dimension at all? */
+function isDimensioned(s: UnitScale): boolean {
+  return !dimEqual(s.dimension, DIMENSIONLESS);
+}
+
+/**
+ * The storage-unit scale of one feature, or `undefined` when the solver must
+ * refuse to scale the relation it appears in.
+ *
+ * The storage unit is the feature's DECLARED unit; failing that, the coherent
+ * SI unit of its declared ISQ kind (or of the dimension its value expression
+ * derives to) — "SI by convention", the same reading the unit-aware evaluator
+ * gives a unit-less kinded feature; failing that, the value is a plain number.
+ * An unresolvable unit is a refusal, never a silent factor of 1 (the
+ * `unknown-unit` rule warns about exactly that spelling).
+ */
+function storageScaleOf(model: Model, id: ElementId, memo: DerivationMemo): UnitScale | undefined {
+  const facets = dimensionalFacets(model, id);
+  if (facets.unit !== undefined) {
+    const u = resolveUnit(facets.unit);
+    if (!u) return undefined; // gate (a): a unit nothing can convert
+    return { factor: u.factorToSI, offset: u.offsetSI ?? 0, dimension: u.dimension };
+  }
+  const kind = facets.kindDimension ?? derivedDimensionOf(model, id, memo);
+  if (kind) return { factor: 1, offset: 0, dimension: kind };
+  return PLAIN_SCALE;
+}
+
+/** The dimension a feature's magnitude is expressed in, when it has one. */
+function featureDimension(model: Model, id: ElementId, memo: DerivationMemo): Dimension | undefined {
+  const facets = dimensionalFacets(model, id);
+  return facets.unitDimension ?? facets.kindDimension ?? derivedDimensionOf(model, id, memo);
+}
+
+/** Operators whose two operands must share a dimension (the gate-(c) set). */
+const DIMENSION_SENSITIVE = new Set(['==', '=', '!=', '<', '<=', '>', '>=', '+', '-']);
+
+/**
+ * Decide whether a relation may be judged in SI, and with what per-variable
+ * scaling. Returns `undefined` to leave the relation in raw magnitudes — the
+ * behaviour every unitless model has always had.
+ *
+ * The gates, each of which exists because scaling past it produces a CONFIDENT
+ * WRONG number rather than a merely unhelpful one:
+ *
+ *  (a) every variable resolves to a storage scale — a known unit, a declared
+ *      ISQ kind, a derived dimension, or a plain number;
+ *  (b) no variable sits on an offset (affine) scale: °C differences and
+ *      equalities are not offset-invariant, so the unit-aware evaluator refuses
+ *      them and so does this;
+ *  (c) the two operands of every comparison, `==`, `+` and `-` carry the SAME
+ *      dimension. That covers two distinct wrongs with one predicate. A
+ *      DIMENSIONLESS operand meeting a dimensioned one is the declared-unit
+ *      contract: `range = 5.0 [km]` against `<= 10.0` reads the literal in
+ *      kilometres on both surfaces, and SI-scaling it would turn a satisfied
+ *      constraint into `5000 <= 10`. Two DIFFERENT dimensions meeting
+ *      (`v.d >= v.t`, a length against a duration) is a question no scaling can
+ *      answer — the unit-aware evaluator refuses it, so scaling it here would
+ *      publish a confident SI verdict against a refusal. Operands under `*` and
+ *      `/` combine dimensions instead of having to match, so a bare literal
+ *      there is a multiplier and never blocks scaling;
+ *  (d) no variable's value expression `dimensionClaim`s a `mismatch` — a `Real`
+ *      hand-converted with `* 60.0` derives to a duration while claiming to be
+ *      a number, and scaling it would report 170 141 s (the factor-60 hazard
+ *      the validation surface already refuses).
+ *
+ * A relation whose body carries `[unit]` LITERALS is dimensional by force
+ * (`forced`): its literals are already lowered to SI, so leaving its variables
+ * unscaled would compare kilograms with grams. Such a relation is dropped from
+ * the equation set when a gate refuses it, and reported `unknown` — never
+ * judged — on the check surface.
+ */
+function scaleOfRelation(
+  model: Model,
+  vars: ElementId[],
+  nodes: ExprNode[],
+  nameToId: Map<string, ElementId>,
+  forced: boolean,
+  markers: MarkerDimensions,
+  memo: DerivationMemo,
+): ScaleMap | undefined {
+  const scale: ScaleMap = new Map();
+  let anyDimensioned = forced;
+  for (const id of vars) {
+    const s = storageScaleOf(model, id, memo);
+    if (!s) return undefined; // (a)
+    if (s.offset !== 0) return undefined; // (b)
+    if (dimensionClaim(model, id, memo) === 'mismatch') return undefined; // (d)
+    scale.set(id, s);
+    if (isDimensioned(s)) anyDimensioned = true;
+  }
+  if (!anyDimensioned) return undefined; // nothing to convert — stay verbatim
+  for (const node of nodes) {
+    if (nodeDimension(node, scale, nameToId, markers) === INDETERMINATE) return undefined; // (c)
+  }
+  return scale;
+}
+
+/** Marker name → the `[unit]` literal it stands for (magnitude and dimension). */
+type MarkerDimensions = ReadonlyMap<string, LoweredLiteral>;
+
+/**
+ * A dimension no dimensional arithmetic can pin down — either because two
+ * operands that must match do not (the gate-(c) refusal), or because the
+ * expression shape says nothing about dimensions (a variable exponent). Both
+ * are refusals: scaling past either publishes a confident SI number for a
+ * question the unit-aware evaluator declines to answer.
+ */
+const INDETERMINATE = 'indeterminate';
+type OperandDimension = Dimension | typeof INDETERMINATE;
+
+/**
+ * The dimension an expression carries under a relation's scale map, or
+ * {@link INDETERMINATE}. This IS gate (c): the mismatch cases return
+ * `INDETERMINATE` and propagate it to the root, so `scaleOfRelation` refuses
+ * the whole relation.
+ *
+ * An unresolved name reads as dimensionless — it makes the relation's residual
+ * `undefined` anyway, so it can only ever cost a scaling, never buy a wrong one.
+ */
+function nodeDimension(
+  node: ExprNode,
+  scale: ScaleMap,
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+): OperandDimension {
+  switch (node.kind) {
+    case 'ref': {
+      const path = node.path.join('.');
+      const lowered = markers.get(path);
+      if (lowered) return lowered.dimension; // a lowered `[unit]` literal
+      const id = nameToId.get(path);
+      if (id === undefined) return DIMENSIONLESS;
+      return scale.get(id)?.dimension ?? DIMENSIONLESS;
+    }
+    case 'unary':
+      return node.op === 'not'
+        ? DIMENSIONLESS
+        : nodeDimension(node.operand, scale, nameToId, markers);
+    case 'binary':
+      return binaryDimension(node, scale, nameToId, markers);
+    case 'if': {
+      const c = nodeDimension(node.cond, scale, nameToId, markers);
+      const t = nodeDimension(node.then, scale, nameToId, markers);
+      const e = nodeDimension(node.else, scale, nameToId, markers);
+      if (c === INDETERMINATE || t === INDETERMINATE || e === INDETERMINATE) return INDETERMINATE;
+      return dimEqual(t, e) ? t : INDETERMINATE;
+    }
+    default:
+      return DIMENSIONLESS; // a numeric/boolean/string/null literal
+  }
+}
+
+/** {@link nodeDimension} for a binary node — where the gate-(c) set is applied. */
+function binaryDimension(
+  node: Extract<ExprNode, { kind: 'binary' }>,
+  scale: ScaleMap,
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+): OperandDimension {
+  const l = nodeDimension(node.left, scale, nameToId, markers);
+  const r = nodeDimension(node.right, scale, nameToId, markers);
+  if (l === INDETERMINATE || r === INDETERMINATE) return INDETERMINATE;
+  switch (node.op) {
+    case '*':
+      return multiplyDim(l, r);
+    case '/':
+      return divideDim(l, r);
+    case '%':
+      return l; // a remainder keeps the dividend's dimension
+    case '^': {
+      // Only a literal exponent has a dimensional meaning; a variable one is
+      // knowable only at a value, which is not what a gate may depend on.
+      if (node.right.kind === 'num') return powDim(l, node.right.value);
+      return dimEqual(l, DIMENSIONLESS) ? DIMENSIONLESS : INDETERMINATE;
+    }
+    case 'and':
+    case 'or':
+    case 'xor':
+    case 'implies':
+      return DIMENSIONLESS;
+    default:
+      // The gate-(c) set: the two operands must carry the SAME dimension.
+      // A comparison yields a truth value (dimensionless); `+`/`-` yield the
+      // shared dimension of their operands.
+      if (!DIMENSION_SENSITIVE.has(node.op)) return DIMENSIONLESS;
+      if (!dimEqual(l, r)) return INDETERMINATE;
+      return node.op === '+' || node.op === '-' ? l : DIMENSIONLESS;
+  }
+}
+
+/* ───────────────────── `[unit]` literals in a body ───────────────────── */
+
+/**
+ * A relation body with every `N [unit]` literal replaced by a marker name, plus
+ * the SI magnitude each marker stands for.
+ *
+ * WHY a rewrite: {@link parseExpr} rejects `[` (deliberately — the GUI stores a
+ * raw `1500 [kg]` string in a feature value and the solver seeds it through the
+ * quantity engine), so a body like `mass <= 2000 [kg]` used to throw and
+ * VANISH from the numeric surface. Folding the literal to its SI magnitude
+ * before parsing keeps the body judged; the marker (rather than the number
+ * itself) is what lets gate (c) still tell a dimensioned literal from a bare
+ * one.
+ */
+/** The SI magnitude and dimension a lowering marker stands for. */
+interface LoweredLiteral {
+  si: number;
+  dimension: Dimension;
+}
+
+interface LoweredBody {
+  /** The body text, parseable by {@link parseExpr}. */
+  text: string;
+  /**
+   * Marker name → the SI magnitude of the literal it replaced AND the dimension
+   * that literal carried. The dimension is what lets gate (c) refuse
+   * `v.mass <= 2000.0 [s]`: without it a lowered literal is just "dimensioned",
+   * and a mass compared with a duration folds to a bare SI number and is judged
+   * confidently — where the unit-aware evaluator answers `unknown`.
+   */
+  literals: Map<string, LoweredLiteral>;
+  /** The body carried at least one `[unit]` literal. */
+  hadUnit: boolean;
+  /** Every `[unit]` literal was folded (false ⇒ the body cannot be judged). */
+  resolved: boolean;
+}
+
+/**
+ * A numeric literal followed by a `[unit]`, with the character before it
+ * captured so a digit inside a NAME is not mistaken for a literal. (A
+ * lookbehind would read better and is not used: the browser bundle targets
+ * engines that predate it.)
+ */
+const UNIT_LITERAL_RE =
+  /(^|[^A-Za-z0-9_.])((?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*\[([^\]]*)\]/g;
+/** Any bracket group (used to spot a unit on a non-literal operand). */
+const ANY_BRACKET_RE = /\[[^\]]*\]/;
+
+function lowerUnitLiterals(raw: string): LoweredBody {
+  const literals = new Map<string, LoweredLiteral>();
+  let hadUnit = false;
+  let resolved = true;
+  let n = 0;
+  // A prefix the source cannot contain, so a marker can never shadow a real
+  // feature name (`__uq0` is a legal SysML name, however unlikely).
+  let prefix = '__uq';
+  while (raw.includes(prefix)) prefix += 'q';
+  let text = raw.replace(UNIT_LITERAL_RE, (_m, before: string, magnitude: string, unit: string) => {
+    hadUnit = true;
+    const u = resolveUnit(unit.trim());
+    // An offset scale cannot be folded to a magnitude (10 °C is not 10 K), and
+    // an unknown unit must not silently become a bare number.
+    if (!u || u.offsetSI) {
+      resolved = false;
+      return `${before}${magnitude}`;
+    }
+    const name = `${prefix}${n++}`;
+    literals.set(name, { si: Number(magnitude) * u.factorToSI, dimension: u.dimension });
+    return `${before}${name}`;
+  });
+  if (ANY_BRACKET_RE.test(text)) {
+    // A `[unit]` on something other than a literal — `(a + b) [m]`. The shape
+    // is kept parseable so the relation can still be REPORTED, but nothing
+    // about it may be judged.
+    hadUnit = true;
+    resolved = false;
+    text = text.replace(new RegExp(ANY_BRACKET_RE.source, 'g'), ' ');
+  }
+  return { text, literals, hadUnit, resolved };
+}
+
+/** Replace the lowering markers with the SI magnitudes they stand for. */
+function substituteLiterals(node: ExprNode, literals: Map<string, LoweredLiteral>): ExprNode {
+  switch (node.kind) {
+    case 'ref': {
+      const v = literals.get(node.path.join('.'));
+      return v === undefined ? node : { kind: 'num', value: v.si };
+    }
+    case 'unary':
+      return { ...node, operand: substituteLiterals(node.operand, literals) };
+    case 'binary':
+      return {
+        ...node,
+        left: substituteLiterals(node.left, literals),
+        right: substituteLiterals(node.right, literals),
+      };
+    case 'if':
+      return {
+        ...node,
+        cond: substituteLiterals(node.cond, literals),
+        then: substituteLiterals(node.then, literals),
+        else: substituteLiterals(node.else, literals),
+      };
+    default:
+      return node;
+  }
+}
+
+/** Parse a relation body, folding any `[unit]` literal into SI. */
+function parseRelationBody(raw: string): (LoweredBody & { node: ExprNode }) | undefined {
+  const lowered = lowerUnitLiterals(raw);
+  try {
+    return { ...lowered, node: parseExpr(lowered.text) };
+  } catch {
+    return undefined;
+  }
 }
 
 /* ──────────────────────── constraint gathering ───────────────────────── */
@@ -256,6 +659,7 @@ const RELATION_KINDS = new Set(['ConstraintUsage', 'CalculationUsage']);
 export function gatherConstraints(model: Model, scopeId?: ElementId): Equation[] {
   const inScope = scopeFilter(model, scopeId);
   const eqs: Equation[] = [];
+  const memo: DerivationMemo = new Map();
 
   for (const el of model.all()) {
     if (el.attrs.isLibrary === true) continue;
@@ -263,14 +667,14 @@ export function gatherConstraints(model: Model, scopeId?: ElementId): Equation[]
 
     // (1) Constraint / calculation relation bodies.
     if (RELATION_KINDS.has(el.eClass)) {
-      const eq = relationEquation(model, el);
+      const eq = relationEquation(model, el, memo);
       if (eq) eqs.push(eq);
       continue;
     }
 
     // (2) Feature-value expression assignments (only genuine expressions).
     if (isUsage(el.eClass)) {
-      const eq = assignmentEquation(model, el);
+      const eq = assignmentEquation(model, el, memo);
       if (eq) eqs.push(eq);
     }
   }
@@ -283,7 +687,7 @@ export function gatherConstraints(model: Model, scopeId?: ElementId): Equation[]
     const s = el.source?.[0];
     const t = el.target?.[0];
     if (s === undefined || t === undefined) continue;
-    eqs.push(bindingEquation(el.id, s, t));
+    eqs.push(bindingEquation(model, el.id, s, t, memo));
   }
 
   return eqs;
@@ -306,23 +710,28 @@ function scopeFilter(model: Model, scopeId?: ElementId): (el: ElementRecord) => 
 }
 
 /** Build an {@link Equation} from a ConstraintUsage / CalculationUsage body. */
-function relationEquation(model: Model, el: ElementRecord): Equation | undefined {
+function relationEquation(
+  model: Model,
+  el: ElementRecord,
+  memo: DerivationMemo = new Map(),
+): Equation | undefined {
   const raw = el.attrs.expression;
   if (typeof raw !== 'string' || raw.trim() === '') return undefined;
 
-  let node: ExprNode;
-  try {
-    node = parseExpr(raw);
-  } catch {
-    return undefined; // unit-literal or malformed body — not a scalar equation
-  }
+  const body = parseRelationBody(raw);
+  if (!body) return undefined; // malformed body — not a scalar equation
+  // A `[unit]` literal nothing can convert leaves the relation unjudgeable: it
+  // is dropped here (so no wrong number enters the solve) and reported
+  // `unknown` by checkConstraintsNumeric rather than silently disappearing.
+  if (body.hadUnit && !body.resolved) return undefined;
+  const node = body.node;
 
   const nameToId = relationScope(model, el);
 
   // `lhs = rhs` / `lhs == rhs`. A lone `=` is now a distinct operator (finding
   // L3); accept it here as an equation separator alongside `==`.
   if (node.kind === 'binary' && (node.op === '==' || node.op === '=')) {
-    return makeEquation(model, node.left, node.right, raw, nameToId);
+    return makeEquation(model, node.left, node.right, raw, nameToId, body, memo);
   }
 
   // Any other boolean comparison (<, <=, …) is an inequality, not an equation.
@@ -332,14 +741,18 @@ function relationEquation(model: Model, el: ElementRecord): Equation | undefined
   if (el.eClass === 'CalculationUsage' && el.declaredName) {
     const lhs: ExprNode = { kind: 'ref', path: [el.declaredName] };
     nameToId.set(el.declaredName, el.id);
-    return makeEquation(model, lhs, node, raw, nameToId);
+    return makeEquation(model, lhs, node, raw, nameToId, body, memo);
   }
 
   return undefined;
 }
 
 /** Build a `feature = expr` {@link Equation} from a feature's value expression. */
-function assignmentEquation(model: Model, el: ElementRecord): Equation | undefined {
+function assignmentEquation(
+  model: Model,
+  el: ElementRecord,
+  memo: DerivationMemo = new Map(),
+): Equation | undefined {
   const raw = el.attrs.value;
   if (typeof raw !== 'string') return undefined;
   const s = raw.trim();
@@ -352,14 +765,14 @@ function assignmentEquation(model: Model, el: ElementRecord): Equation | undefin
     return undefined;
   }
 
-  let node: ExprNode;
-  try {
-    node = parseExpr(s);
-  } catch {
-    return undefined;
-  }
+  // `= 2 * 3 [kg]` is an assignment whose VALUE carries a unit literal; without
+  // lowering it the target would be an unknown for ever (parseExpr rejects `[`).
+  const body = parseRelationBody(s);
+  if (!body) return undefined;
+  if (body.hadUnit && !body.resolved) return undefined;
+  const node = body.node;
   // A self-contained literal (a bare number/boolean) is a seed, not an equation.
-  const asLiteral = evaluate(node, () => undefined);
+  const asLiteral = evaluate(substituteLiterals(node, body.literals), () => undefined);
   if ('value' in asLiteral) return undefined;
 
   const name = el.declaredName;
@@ -371,26 +784,39 @@ function assignmentEquation(model: Model, el: ElementRecord): Equation | undefin
   );
   nameToId.set(name, el.id); // the assignment target resolves to this feature
   const lhs: ExprNode = { kind: 'ref', path: [name] };
-  return makeEquation(model, lhs, node, s, nameToId);
+  return makeEquation(model, lhs, node, s, nameToId, body, memo);
 }
 
 /** Build a synthetic `a = b` equality {@link Equation} between two feature ids. */
-function bindingEquation(edgeId: ElementId, a: ElementId, b: ElementId): Equation {
+function bindingEquation(
+  model: Model,
+  edgeId: ElementId,
+  a: ElementId,
+  b: ElementId,
+  memo: DerivationMemo,
+): Equation {
   const nameToId = new Map<string, ElementId>([
     ['__l', a],
     ['__r', b],
   ]);
   const lhs: ExprNode = { kind: 'ref', path: ['__l'] };
   const rhs: ExprNode = { kind: 'ref', path: ['__r'] };
-  return {
-    vars: a === b ? [a] : [a, b],
+  const vars = a === b ? [a] : [a, b];
+  const eq: Equation = {
+    vars,
     lhs,
     rhs,
     expr: { kind: 'binary', op: '-', left: lhs, right: rhs },
     raw: `${a} = ${b} (${edgeId})`,
     nameToId,
   };
+  const scale = scaleOfRelation(model, vars, [eq.expr], nameToId, false, NO_MARKERS, memo);
+  if (scale) eq.scale = scale;
+  return eq;
 }
+
+/** No `[unit]` literals were lowered in this relation. */
+const NO_MARKERS: MarkerDimensions = new Map<string, LoweredLiteral>();
 
 /** Assemble an {@link Equation} record, extracting its variable ids. */
 function makeEquation(
@@ -399,18 +825,36 @@ function makeEquation(
   rhs: ExprNode,
   raw: string,
   nameToId: Map<string, ElementId>,
-): Equation {
+  body: LoweredBody | undefined,
+  memo: DerivationMemo,
+): Equation | undefined {
   const vars = new Set<ElementId>();
   collectVarIds(lhs, nameToId, vars);
   collectVarIds(rhs, nameToId, vars);
-  return {
-    vars: [...vars],
-    lhs,
-    rhs,
-    expr: { kind: 'binary', op: '-', left: lhs, right: rhs },
+  const varIds = [...vars];
+  const markers: MarkerDimensions = body ? body.literals : NO_MARKERS;
+  // The gates are judged on the node WITH its markers, so a lowered `[unit]`
+  // literal still counts as dimensioned; the markers are only then folded into
+  // the SI numbers the equation is evaluated with. The node handed to the gate
+  // is the JOINING equality, not the two sides separately: `==` is itself in
+  // the gate-(c) set, and an equality is precisely where a plain `Real` meets a
+  // dimensioned value (`constraint { n == km }` must leave `n` at 5, not 5000).
+  const joined: ExprNode = { kind: 'binary', op: '==', left: lhs, right: rhs };
+  const scale = scaleOfRelation(model, varIds, [joined], nameToId, body?.hadUnit ?? false, markers, memo);
+  // A body whose literals are already in SI cannot be judged in raw magnitudes.
+  if (body?.hadUnit && !scale) return undefined;
+  const left = body ? substituteLiterals(lhs, body.literals) : lhs;
+  const right = body ? substituteLiterals(rhs, body.literals) : rhs;
+  const eq: Equation = {
+    vars: varIds,
+    lhs: left,
+    rhs: right,
+    expr: { kind: 'binary', op: '-', left, right },
     raw,
     nameToId,
   };
+  if (scale) eq.scale = scale;
+  return eq;
 }
 
 /** Collect the feature ids referenced by an expression, via `nameToId`. */
@@ -459,27 +903,30 @@ function isInequalityOp(op: string): op is ComparisonOp {
 export function gatherInequalities(model: Model, scopeId?: ElementId): Inequality[] {
   const inScope = scopeFilter(model, scopeId);
   const out: Inequality[] = [];
+  const memo: DerivationMemo = new Map();
   for (const el of model.all()) {
     if (el.attrs.isLibrary === true) continue;
     if (!inScope(el)) continue;
     if (!RELATION_KINDS.has(el.eClass)) continue;
-    const ineq = relationInequality(model, el);
+    const ineq = relationInequality(model, el, memo);
     if (ineq) out.push(ineq);
   }
   return out;
 }
 
 /** Build an {@link Inequality} from a ConstraintUsage / CalculationUsage body. */
-function relationInequality(model: Model, el: ElementRecord): Inequality | undefined {
+function relationInequality(
+  model: Model,
+  el: ElementRecord,
+  memo: DerivationMemo = new Map(),
+): Inequality | undefined {
   const raw = el.attrs.expression;
   if (typeof raw !== 'string' || raw.trim() === '') return undefined;
 
-  let node: ExprNode;
-  try {
-    node = parseExpr(raw);
-  } catch {
-    return undefined;
-  }
+  const body = parseRelationBody(raw);
+  if (!body) return undefined;
+  if (body.hadUnit && !body.resolved) return undefined;
+  const node = body.node;
   if (node.kind !== 'binary' || !isInequalityOp(node.op)) return undefined;
 
   const nameToId = relationScope(model, el);
@@ -496,35 +943,50 @@ function relationInequality(model: Model, el: ElementRecord): Inequality | undef
   const vars = new Set<ElementId>();
   collectVarIds(node.left, nameToId, vars);
   collectVarIds(node.right, nameToId, vars);
+  const varIds = [...vars];
+  const markers: MarkerDimensions = body.literals;
+  const scale = scaleOfRelation(model, varIds, [node], nameToId, body.hadUnit, markers, memo);
+  if (body.hadUnit && !scale) return undefined;
 
-  return {
-    vars: [...vars],
-    expr: g,
+  const ineq: Inequality = {
+    vars: varIds,
+    expr: substituteLiterals(g, body.literals),
     op,
     id: el.id,
     name: el.declaredName ?? '',
     raw,
     nameToId,
   };
+  if (scale) ineq.scale = scale;
+  return ineq;
 }
 
 /** Evaluate an inequality's residual `g` under `values` (undefined if unknown). */
 function inequalityResidual(ineq: Inequality, values: Map<ElementId, number>): number | undefined {
-  const scope = namesScope(ineq.nameToId, values);
+  const scope = namesScope(ineq.nameToId, values, ineq.scale);
   const r = evaluate(ineq.expr, scope);
   if ('unknown' in r || typeof r.value !== 'number' || !Number.isFinite(r.value)) return undefined;
   return r.value;
 }
 
-/** A name → value resolver reading `values` through a `nameToId` map. */
+/**
+ * A name → value resolver reading `values` through a `nameToId` map, applying
+ * the relation's SI scaling on the way out when it has one. Values are STORED
+ * in their feature's own unit and only converted here, at the point of use, so
+ * `SolveResult.values`, `SolveOptions.fixed` and `OptimizeOptions.bounds` keep
+ * their published meaning (plain numbers in declared units).
+ */
 function namesScope(
   nameToId: Map<string, ElementId>,
   values: Map<ElementId, number>,
+  scale?: ScaleMap,
 ): (name: string) => unknown {
   return (name: string) => {
     const id = nameToId.get(name);
-    if (id !== undefined && values.has(id)) return values.get(id);
-    return undefined;
+    if (id === undefined || !values.has(id)) return undefined;
+    const v = values.get(id) as number;
+    const s = scale?.get(id);
+    return s ? v * s.factor + s.offset : v;
   };
 }
 
@@ -707,7 +1169,6 @@ function residualSummary(
   // and being pinned to the noise floor (not `1e-6·scale`) it does NOT accept a
   // genuinely-violated constraint whose residual merely looks small beside a
   // huge additive offset (finding M6 follow-up).
-  const absGate = Math.max(tol, 1e-6);
   for (const eq of eqs) {
     if (eq.vars.some((v) => !values.has(v))) {
       determined = false;
@@ -719,16 +1180,42 @@ function residualSummary(
       continue;
     }
     residual = Math.max(residual, Math.abs(r));
-    const thr = Math.max(absGate, RESIDUAL_FLOOR * equationScale(eq, values));
-    if (Math.abs(r) > thr) withinTol = false;
+    if (Math.abs(r) > convergenceGate(eq, values, tol)) withinTol = false;
   }
   return { residual, determined, withinTol };
 }
 
 /**
- * The characteristic magnitude of an equation under `values`, floored at 1 so
- * unit-scale equations keep an absolute gate (making the relative test a no-op
- * there). Used to normalise the convergence residual per-equation (M6).
+ * The residual a relation must get under to count as solved.
+ *
+ * For a relation in raw magnitudes this is the historical `max(tol, 1e-6)` plus
+ * the per-equation noise floor. For a SCALED relation both ABSOLUTE terms are
+ * dropped and the gate is purely relative to the equation's own SI magnitude:
+ * once the residual is an SI quantity, "1e-6" — or the caller's 1e-9 — is a
+ * metre-or-second-sized absolute number that means nothing in particular. It
+ * made `5 [ns] == 3 [ns]` (residual 2e-9 s) VACUOUSLY converge while the
+ * unit-aware verdict called it violated; and at the other end it declared a
+ * millisecond-scale system converged at a residual four orders of magnitude
+ * ABOVE what the unit-aware evaluator's own relative tolerance accepts, so the
+ * header said "converged" and the row said "violated" on the same model. A
+ * relative gate answers both, and is what the inner Newton/bisection loops are
+ * now driven to (see {@link acceptanceOf}).
+ */
+function convergenceGate(eq: Equation, values: Map<ElementId, number>, tol: number): number {
+  const floor = RESIDUAL_FLOOR * equationScale(eq, values);
+  return eq.scale ? floor : Math.max(Math.max(tol, 1e-6), floor);
+}
+
+/**
+ * The characteristic magnitude of an equation under `values`, floored at 1 for
+ * a relation in RAW magnitudes so those keep an absolute gate (making the
+ * relative test a no-op there). Used to normalise the convergence residual
+ * per-equation (M6).
+ *
+ * A SCALED equation is NOT floored at 1: its magnitudes are SI, so a
+ * millisecond or nanometre system genuinely has a characteristic magnitude far
+ * below 1, and flooring there is what turned a relative gate back into an
+ * absolute one — accepting a root with a 1e-4 relative error as solved.
  *
  * It is the largest magnitude over ALL evaluated SUBEXPRESSIONS of both sides —
  * not just the two top-level sides — so it is FORM-INVARIANT: `x*x = 1e16` and
@@ -738,8 +1225,19 @@ function residualSummary(
  * from the root), which the naive max-of-sides did not (Fable D1).
  */
 function equationScale(eq: Equation, values: Map<ElementId, number>): number {
-  const scope = idScope(eq, values);
-  let max = 1;
+  const s = magnitudeScale([eq.lhs, eq.rhs], idScope(eq, values), eq.scale ? 0 : 1);
+  // Nothing determined (or an all-zero equation): fall back to the absolute
+  // reading rather than a gate of exactly 0, which nothing could ever clear.
+  return s > 0 ? s : 1;
+}
+
+/** {@link equationScale} over an arbitrary set of expression roots. */
+function magnitudeScale(
+  roots: ExprNode[],
+  scope: (name: string) => unknown,
+  floor = 1,
+): number {
+  let max = floor;
   const visit = (node: ExprNode): void => {
     const r = evaluate(node, scope);
     if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) {
@@ -760,9 +1258,32 @@ function equationScale(eq: Equation, values: Map<ElementId, number>): number {
         break;
     }
   };
-  visit(eq.lhs);
-  visit(eq.rhs);
+  for (const root of roots) visit(root);
   return max;
+}
+
+/**
+ * The tolerance an inequality's residual `g` is judged against.
+ *
+ * For a relation in raw magnitudes this is the historical absolute `feasTol`
+ * (`max(tol, 1e-6)`). A SCALED relation gets the SAME tolerance made RELATIVE
+ * to its own SI magnitude — `feasTol · scale`, not a noise floor. The
+ * distinction matters in both directions: at nanosecond scale the absolute
+ * 1e-6 accepts a violation a thousand times the model's own numbers, while at
+ * second scale a noise-floor gate (1e-14, or even the caller's 1e-9) is far
+ * tighter than the line searches that produce the values being judged — merely
+ * giving an ordinary model units then flipped `solveFeasible`/`optimize` from
+ * feasible to infeasible on a 4e-7 overshoot they had always tolerated.
+ */
+function inequalityGate(
+  iq: Inequality,
+  values: Map<ElementId, number>,
+  feasTol: number,
+): number {
+  if (!iq.scale) return feasTol;
+  const scope = namesScope(iq.nameToId, values, iq.scale);
+  const scale = magnitudeScale([iq.expr], scope, 0);
+  return scale > 0 ? feasTol * scale : feasTol;
 }
 
 /** Numeric-only view of {@link propagateValues}. */
@@ -786,11 +1307,7 @@ function residualOf(eq: Equation, values: Map<ElementId, number>): number | unde
 
 /** A name → value scope for an equation, reading `values` through `nameToId`. */
 function idScope(eq: Equation, values: Map<ElementId, number>): (name: string) => unknown {
-  return (name: string) => {
-    const id = eq.nameToId.get(name);
-    if (id !== undefined && values.has(id)) return values.get(id);
-    return undefined;
-  };
+  return namesScope(eq.nameToId, values, eq.scale);
 }
 
 /**
@@ -805,14 +1322,21 @@ function solveForSingle(
   tol: number,
 ): number | undefined {
   const scopeNoU = idScope(eq, values); // u is absent from values ⇒ unknown
+  // A scaled equation is READ in SI, so a value read straight off the other
+  // side arrives in SI and must be converted back into `u`'s storage unit
+  // before it is stored (5 km + 400 m = 5400 m, stored as 5.4 in a [km]
+  // feature). The root-finding path needs no conversion: it probes `u` THROUGH
+  // the scaled scope, so its answer is already in storage units.
+  const s = eq.scale?.get(u);
+  const toStorage = (si: number): number => (s ? (si - s.offset) / s.factor : si);
 
   if (isRefTo(eq.lhs, eq, u)) {
     const r = evaluate(eq.rhs, scopeNoU);
-    if ('value' in r && typeof r.value === 'number') return r.value;
+    if ('value' in r && typeof r.value === 'number') return toStorage(r.value);
   }
   if (isRefTo(eq.rhs, eq, u)) {
     const l = evaluate(eq.lhs, scopeNoU);
-    if ('value' in l && typeof l.value === 'number') return l.value;
+    if ('value' in l && typeof l.value === 'number') return toStorage(l.value);
   }
   return solveScalar(eq, u, values, tol);
 }
@@ -849,13 +1373,30 @@ function solveScalar(
     const v = f(t);
     return v !== undefined && Number.isFinite(v) ? Math.abs(v) : 0;
   };
-  const fScale = Math.max(probeMag(0), probeMag(seed), 1);
+  // A SCALED equation is measured against its own SI magnitude, with no floor
+  // of 1: a millisecond system's residuals live at 1e-6 and an absolute `tol`
+  // of 1e-9 stops the iteration four decimal places short of the root — which
+  // the unit-aware verdict (relative 1e-9) then calls violated. `equationScale`
+  // is used rather than the probes at 0 and the seed because the seed of an
+  // undetermined unknown is 1, which says nothing about a 1e-3-scale model.
+  const scaled = eq.scale !== undefined;
+  const fScale = scaled
+    ? equationScale(eq, values)
+    : Math.max(probeMag(0), probeMag(seed), 1);
   // Accept on residual once it reaches the equation's floating-point NOISE FLOOR
   // (~RESIDUAL_FLOOR·scale — a few thousand ULPs), never the far-looser tol·scale:
   // the latter would rubber-stamp an unsolved residual that merely looks small
   // beside a large side. For unit-scale equations this collapses to `|f| <= tol`,
   // exactly the original absolute test.
-  const accept = (fv: number): boolean => Math.abs(fv) <= Math.max(tol, RESIDUAL_FLOOR * fScale);
+  const accept = (fv: number): boolean =>
+    Math.abs(fv) <= (scaled ? RESIDUAL_FLOOR * fScale : Math.max(tol, RESIDUAL_FLOOR * fScale));
+  // The step test, and the finite-difference probe, are likewise relative for a
+  // scaled equation: `|t| + 1` and `1e-6·(|t| + 1)` are absolute constants that
+  // swamp a nanometre-scale unknown entirely (probing 1e-6 m around a 1e-9 m
+  // root measures the wrong derivative by a factor of 300).
+  const stepGate = (t: number): number => (scaled ? tol * Math.abs(t) : tol * (Math.abs(t) + 1));
+  const probeStep = (t: number): number =>
+    1e-6 * (scaled ? Math.abs(t) || Math.abs(seed) || 1 : Math.abs(t) + 1);
 
   // Newton with finite-difference derivative.
   let t = seed;
@@ -863,14 +1404,14 @@ function solveScalar(
     const f0 = f(t);
     if (f0 === undefined) break;
     if (accept(f0)) return t;
-    const h = 1e-6 * (Math.abs(t) + 1);
+    const h = probeStep(t);
     const f1 = f(t + h);
     if (f1 === undefined) break;
     const deriv = (f1 - f0) / h;
     if (Math.abs(deriv) < 1e-14) break;
     const next = t - f0 / deriv;
     if (!Number.isFinite(next)) break;
-    if (Math.abs(next - t) <= tol * (Math.abs(t) + 1)) return next;
+    if (Math.abs(next - t) <= stepGate(t)) return next;
     t = next;
   }
 
@@ -890,7 +1431,7 @@ function solveScalar(
     const m = (a + b) / 2;
     const fm = f(m);
     if (fm === undefined) return undefined;
-    if (accept(fm) || (b - a) / 2 <= tol) return m;
+    if (accept(fm) || (b - a) / 2 <= (scaled ? stepGate(m) : tol)) return m;
     if (fa * fm < 0) {
       b = m;
       fb = fm;
@@ -929,6 +1470,23 @@ function newtonSolve(
   // multi-dimensional Newton must do the same, or a large-magnitude equation
   // in the subsystem never clears the absolute `tol` gate.
   const eqScales = active.map((eq) => equationScale(eq, values));
+  // A subsystem holding a SCALED equation is judged and stepped RELATIVE to its
+  // own SI magnitudes, exactly as `solveScalar` is: an absolute `tol` of 1e-9
+  // against a nanometre-scale system is a step larger than the answer, so the
+  // first Newton step "converges" it four orders of magnitude away from the
+  // root, and the finite-difference probe measures the wrong derivative.
+  const anyScaled = active.some((eq) => eq.scale !== undefined);
+  const accepts = (F: number[]): boolean =>
+    F.every((fv, i) =>
+      Math.abs(fv) <= (anyScaled ? RESIDUAL_FLOOR * eqScales[i] : Math.max(tol, RESIDUAL_FLOOR * eqScales[i])),
+    );
+  /** The magnitude the step test and the probe are relative to (1 when unscaled). */
+  const xScale = (): number => {
+    if (!anyScaled) return 1;
+    let mx = 0;
+    for (const v of x) mx = Math.max(mx, Math.abs(v));
+    return mx || 1;
+  };
 
   const residuals = (xv: number[]): number[] | undefined => {
     const trial = new Map(values);
@@ -948,8 +1506,7 @@ function newtonSolve(
     const F = residuals(x);
     if (!F) break;
     // Convergence: each equation within its own noise floor or the user's tol.
-    const allConv = F.every((fv, i) => Math.abs(fv) <= Math.max(tol, RESIDUAL_FLOOR * eqScales[i]));
-    if (allConv) {
+    if (accepts(F)) {
       converged = true;
       break;
     }
@@ -957,8 +1514,14 @@ function newtonSolve(
     // Finite-difference Jacobian J[m][n].
     const m = active.length;
     const J: number[][] = F.map(() => new Array(n).fill(0));
+    const probeBase = xScale();
+    // Column scale: the magnitude each unknown is measured in. It is 1 for a
+    // system in raw magnitudes (so the arithmetic below is unchanged there) and
+    // the unknown's own size for a SCALED one, which is what makes the
+    // linearised system dimensionless.
+    const colScale = x.map((v) => (anyScaled ? Math.abs(v) || probeBase : 1));
     for (let j = 0; j < n; j++) {
-      const h = 1e-6 * (Math.abs(x[j]) + 1);
+      const h = 1e-6 * (anyScaled ? colScale[j] : Math.abs(x[j]) + 1);
       const xp = x.slice();
       xp[j] += h;
       const Fp = residuals(xp);
@@ -966,18 +1529,35 @@ function newtonSolve(
       for (let i = 0; i < m; i++) J[i][j] = (Fp[i] - F[i]) / h;
     }
 
+    // Row scale: each equation's own largest sensitivity. WHY both scalings:
+    // a subsystem in SI mixes `x*x == k*y` (residual ~1e-17 m², gradient ~1e-7)
+    // with `y == x + k` (residual ~1e-9 m, gradient 1), and the least-squares
+    // step is then decided almost entirely by the second equation while the
+    // regularisation λ swamps the first — the solve stalls 25× away from the
+    // root and reports it as an answer. Equilibrating rows and columns makes
+    // JᵀJ an O(1) matrix again, so λ is the tiny regularisation it is meant to
+    // be. For an unscaled system every factor here is exactly 1.
+    const rowScale = J.map((row) => {
+      if (!anyScaled) return 1;
+      let mx = 0;
+      for (let j = 0; j < n; j++) mx = Math.max(mx, Math.abs(row[j] * colScale[j]));
+      return mx > 0 ? mx : 1;
+    });
+    const Js = J.map((row, i) => row.map((v, j) => (v * colScale[j]) / rowScale[i]));
+    const Fs = F.map((v, i) => v / rowScale[i]);
+
     // Normal equations: (JᵀJ + λI) Δ = −Jᵀ F.
     const JtJ: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
     const JtF: number[] = new Array(n).fill(0);
     for (let a = 0; a < n; a++) {
       for (let b = 0; b < n; b++) {
         let s = 0;
-        for (let i = 0; i < m; i++) s += J[i][a] * J[i][b];
+        for (let i = 0; i < m; i++) s += Js[i][a] * Js[i][b];
         JtJ[a][b] = s;
       }
       JtJ[a][a] += 1e-12; // tiny regularisation
       let s = 0;
-      for (let i = 0; i < m; i++) s += J[i][a] * F[i];
+      for (let i = 0; i < m; i++) s += Js[i][a] * Fs[i];
       JtF[a] = -s;
     }
 
@@ -985,13 +1565,14 @@ function newtonSolve(
     if (!delta) break;
     let step = 0;
     for (let j = 0; j < n; j++) {
-      if (!Number.isFinite(delta[j])) return false;
-      x[j] += delta[j];
-      step = Math.max(step, Math.abs(delta[j]));
+      const d = delta[j] * colScale[j];
+      if (!Number.isFinite(d)) return false;
+      x[j] += d;
+      step = Math.max(step, Math.abs(d));
     }
-    if (step <= tol) {
+    if (step <= tol * xScale()) {
       const last = residuals(x);
-      converged = last?.every((r, i) => Math.abs(r) <= Math.max(tol, RESIDUAL_FLOOR * eqScales[i])) ?? false;
+      converged = last !== undefined && accepts(last);
       break;
     }
   }
@@ -1042,10 +1623,35 @@ function numericSeedOf(model: Model, feat: ElementRecord): number | undefined {
     if ('value' in r && typeof r.value === 'number' && Number.isFinite(r.value)) return r.value;
     return undefined;
   } catch {
-    // Parse failed (e.g. a unit literal `1500 [kg]`) — try the quantity engine.
+    // Parse failed because of a `[unit]` literal. A SELF-CONTAINED one such as
+    // `= 2 * 3 [kg]` is a seed, not an equation — `assignmentEquation` hands it
+    // back for exactly that reason — so it has to be read here or the feature
+    // is unknown for ever (and every feature computed from it with it).
+    const seed = loweredSeedOf(model, feat, s);
+    if (seed !== undefined) return seed;
+    // Anything else (`1500 [kg]` in the GUI's own storage unit, a bracket on a
+    // non-literal) still goes through the quantity engine.
     const q = evaluateQuantity(model, feat.id);
     return q && Number.isFinite(q.magnitude) ? q.magnitude : undefined;
   }
+}
+
+/**
+ * The seed of a value expression whose `[unit]` literals fold to a number —
+ * read in the feature's STORAGE unit, because that is the unit every solved
+ * value is published in. `= 2 * 3 [t]` on a unit-less `MassValue` seeds 6000
+ * (kilograms), and the same text on a feature declaring `[t]` seeds 6.
+ */
+function loweredSeedOf(model: Model, feat: ElementRecord, raw: string): number | undefined {
+  const body = parseRelationBody(raw);
+  if (!body || !body.hadUnit || !body.resolved) return undefined;
+  const r = evaluate(substituteLiterals(body.node, body.literals), () => undefined);
+  if (!('value' in r) || typeof r.value !== 'number' || !Number.isFinite(r.value)) return undefined;
+  const facets = dimensionalFacets(model, feat.id);
+  if (facets.unit === undefined) return r.value; // SI by convention
+  const u = resolveUnit(facets.unit);
+  if (!u) return undefined; // a unit nothing can convert — no confident seed
+  return (r.value - (u.offsetSI ?? 0)) / u.factorToSI;
 }
 
 /* ─────────────────────────────── MoEs ────────────────────────────────── */
@@ -1074,6 +1680,7 @@ const MOE_NAME_RE = /moe|measure|objective/i;
  */
 export function evaluateMoEs(model: Model): MeasureResult[] {
   const solved = solve(model);
+  const unitBlind = unitBlindIds(model);
   const out: MeasureResult[] = [];
   const seen = new Set<ElementId>();
 
@@ -1095,9 +1702,45 @@ export function evaluateMoEs(model: Model): MeasureResult[] {
       name: el.declaredName ?? '',
       value: value === undefined ? null : value,
     };
-    if (q?.unit) res.unit = q.unit;
-    if (q) res.dimension = dimToString(q.dimension);
+    // The value is in the feature's STORAGE unit — its declared unit, else the
+    // coherent SI unit of its kind. The label must say which, or a solved
+    // `5400` beside a silent label reads as 5400 kilometres.
+    //
+    // The coherent-SI FALLBACK is claimed only for a value the solver reached
+    // unit-awarely. A relation the gates refused to scale is arithmetic over
+    // raw magnitudes — `totalMeasure == leg1 + leg2` with `leg1` in an unknown
+    // unit yields 405, which is neither 405 metres nor anything else — and
+    // stamping `m` on that number is the very contradiction this label exists
+    // to remove. Such a measure stays unlabelled, exactly as before.
+    const facets = dimensionalFacets(model, el.id);
+    const dimension = q?.dimension ?? facets.unitDimension ?? facets.kindDimension;
+    const inSI = !unitBlind.has(el.id);
+    const unit =
+      q?.unit ?? facets.unit ?? (dimension && inSI ? siSymbolOf(dimension) : undefined);
+    if (unit) res.unit = unit;
+    if (dimension) res.dimension = dimToString(dimension);
     out.push(res);
+  }
+  return out;
+}
+
+/**
+ * Features whose solved magnitude is NOT in their storage unit: those a
+ * relation the gates refused to scale can write to, where at least one variable
+ * carries a dimension. Everything else — a seed, a converted binding, a scaled
+ * relation, a purely dimensionless system — leaves values in storage units.
+ */
+function unitBlindIds(model: Model): Set<ElementId> {
+  const memo: DerivationMemo = new Map();
+  const out = new Set<ElementId>();
+  for (const eq of gatherConstraints(model)) {
+    if (eq.scale) continue;
+    const dimensioned = (id: ElementId): boolean => {
+      const d = featureDimension(model, id, memo);
+      return d !== undefined && !dimEqual(d, DIMENSIONLESS);
+    };
+    if (!eq.vars.some(dimensioned)) continue;
+    for (const id of eq.vars) out.add(id);
   }
   return out;
 }
@@ -1200,7 +1843,7 @@ export function optimize(
     const feasTol = Math.max(tol, 1e-6);
     result.feasible = ineqs.every((iq) => {
       const g = inequalityResidual(iq, res.values);
-      return g === undefined || g <= feasTol;
+      return g === undefined || g <= inequalityGate(iq, res.values, feasTol);
     });
   }
   return result;
@@ -1350,8 +1993,8 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
     if (improved <= 1e-4 * P) break; // stalled (plateau / genuine infeasibility)
   }
 
-  const { violations, maxViolation } = collectViolations(ineqs, values, feasTol);
-  return { values, feasible: maxViolation <= feasTol, violations, iterations };
+  const { violations, feasible } = collectViolations(ineqs, values, feasTol);
+  return { values, feasible, violations, iterations };
 }
 
 /**
@@ -1402,17 +2045,24 @@ function collectViolations(
   ineqs: Inequality[],
   values: Map<ElementId, number>,
   feasTol: number,
-): { violations: ConstraintViolation[]; maxViolation: number } {
+): { violations: ConstraintViolation[]; maxViolation: number; feasible: boolean } {
   const violations: ConstraintViolation[] = [];
   let maxViolation = 0;
+  let feasible = true;
   for (const iq of ineqs) {
     const g = inequalityResidual(iq, values);
     if (g === undefined) continue;
     const amount = Math.max(0, g);
     if (amount > maxViolation) maxViolation = amount;
-    if (amount > feasTol) violations.push({ id: iq.id, name: iq.name, amount });
+    // A scaled inequality is judged against its own SI scale — the same 1e-6
+    // made relative — not an absolute 1e-6 a nanosecond-scale system would
+    // clear vacuously.
+    if (amount > inequalityGate(iq, values, feasTol)) {
+      violations.push({ id: iq.id, name: iq.name, amount });
+      feasible = false;
+    }
   }
-  return { violations, maxViolation };
+  return { violations, maxViolation, feasible };
 }
 
 /**
@@ -1468,6 +2118,14 @@ function goldenAbs(f: (t: number) => number, lo: number, hi: number, tol: number
  * — the numeric counterpart of {@link checkConstraints} for the Check / Problems
  * surface. Equalities report the residual `lhs − rhs`; inequalities report the
  * slack `−g` and the violation amount `max(0, g)`.
+ *
+ * The VERDICT comes from the unit-aware evaluator first (as it does in
+ * {@link checkConstraints}), so the two surfaces cannot answer the same model
+ * differently; the numeric residual supplies the slack and the amount, and is
+ * the verdict only where the unit-aware answer is ignorance rather than a
+ * refusal. A relation neither engine can judge is reported `unknown` with the
+ * reason — never omitted, because a constraint that silently disappears from
+ * this list reads as one that holds.
  */
 export function checkConstraintsNumeric(
   model: Model,
@@ -1476,6 +2134,7 @@ export function checkConstraintsNumeric(
   const solved = solve(model, opts);
   const values = solved.values;
   const tol = Math.max(opts.tol ?? 1e-9, 1e-6);
+  const memo: DerivationMemo = new Map();
   const out: NumericConstraintResult[] = [];
 
   for (const el of model.all()) {
@@ -1484,55 +2143,148 @@ export function checkConstraintsNumeric(
     const raw = el.attrs.expression;
     if (typeof raw !== 'string' || raw.trim() === '') continue;
 
-    let node: ExprNode;
-    try {
-      node = parseExpr(raw);
-    } catch {
-      continue;
+    // Parse for SHAPE only — a `[unit]` literal is lowered so a body like
+    // `mass <= 2000 [kg]` is recognised as the inequality it is instead of
+    // throwing and vanishing from this list.
+    //
+    // A body the scalar parser cannot read, or whose shape carries no residual
+    // (`a > 1.0 and b > 2.0`), still gets a ROW: the unit-aware evaluator reads
+    // both, and a constraint that silently disappears from this list reads as
+    // one that holds. Only the slack columns stay empty.
+    const body = parseRelationBody(raw);
+    const node = body?.node;
+    const isIneq = node?.kind === 'binary' && isInequalityOp(node.op);
+    const isEq = node?.kind === 'binary' && (node.op === '==' || node.op === '=');
+    const isCalcBody =
+      body !== undefined &&
+      el.eClass === 'CalculationUsage' &&
+      !!el.declaredName &&
+      !(node?.kind === 'binary' && node.op === '!=');
+    const scalar = isIneq || isEq || isCalcBody;
+
+    const iq = isIneq ? relationInequality(model, el, memo) : undefined;
+    const eq = scalar && !isIneq ? relationEquation(model, el, memo) : undefined;
+    const scale = iq?.scale ?? eq?.scale;
+
+    // The unit-aware evaluator judges FIRST, exactly as `checkConstraints`
+    // does, with the solved values as a last-resort scope so a name only the
+    // solver determined (an unknown driven by an equality) still resolves.
+    // Its absolute tolerance is the caller's only where that number is
+    // meaningful — raw magnitudes. In SI, "1e-6" is a metre-or-second-sized
+    // constant with no relation to the model's scale, so a dimensional
+    // comparison is left to the evaluator's own relative tolerance.
+    const detailed = evaluateConstraintQuantityDetailed(model, el, {
+      fallback: solvedQuantityScope(model, el, values, memo),
+      absTol: scale ? 0 : tol,
+      memo,
+    });
+
+    const residual = isIneq
+      ? iq
+        ? inequalityResidual(iq, values)
+        : undefined
+      : eq
+        ? residualOf(eq, values)
+        : undefined;
+
+    const row: NumericConstraintResult = {
+      id: el.id,
+      name: el.declaredName ?? '',
+      raw,
+      kind: isIneq ? 'inequality' : scalar ? 'equality' : 'boolean',
+      result: 'unknown',
+      slack: null,
+      amount: 0,
+    };
+    if (iq) row.op = iq.op;
+
+    if (residual !== undefined) {
+      row.slack = isIneq ? -residual : residual;
+      row.amount = isIneq ? Math.max(0, residual) : Math.abs(residual);
+      const unit = scale ? slackUnitOf(model, detailed.dimension, iq ?? eq, memo) : undefined;
+      if (unit) row.slackUnit = unit;
     }
 
-    // Inequality body.
-    if (node.kind === 'binary' && isInequalityOp(node.op)) {
-      const iq = relationInequality(model, el);
-      if (!iq) continue;
-      const g = inequalityResidual(iq, values);
-      if (g === undefined) {
-        out.push({ id: el.id, name: iq.name, raw, kind: 'inequality', op: iq.op, result: 'unknown', slack: null, amount: 0 });
-      } else {
-        const violated = g > tol;
-        out.push({
-          id: el.id,
-          name: iq.name,
-          raw,
-          kind: 'inequality',
-          op: iq.op,
-          result: violated ? 'violated' : 'satisfied',
-          slack: -g,
-          amount: Math.max(0, g),
-        });
-      }
-      continue;
-    }
-
-    // Equality body (skip comparison `!=` and non-relational bodies).
-    if (node.kind === 'binary' && isComparison(node.op) && node.op !== '==') continue;
-    const eq = relationEquation(model, el);
-    if (!eq) continue;
-    const r = residualOf(eq, values);
-    if (r === undefined) {
-      out.push({ id: el.id, name: el.declaredName ?? '', raw, kind: 'equality', result: 'unknown', slack: null, amount: 0 });
+    if (detailed.verdict !== 'unknown') {
+      row.result = detailed.verdict;
+      if (row.result === 'satisfied') row.amount = 0;
+    } else if (residual === undefined || isRefusal(detailed.reason)) {
+      // A refusal (an offset scale, a dimension-mismatched derivation) is a
+      // REASONED unknown: falling back to the raw magnitudes here would answer
+      // the very question the unit-aware engine declined, and confidently.
+      row.result = 'unknown';
+      row.slack = null;
+      row.amount = 0;
+      delete row.slackUnit;
+      if (detailed.detail) row.reason = detailed.detail;
     } else {
-      const violated = Math.abs(r) > tol;
-      out.push({
-        id: el.id,
-        name: el.declaredName ?? '',
-        raw,
-        kind: 'equality',
-        result: violated ? 'violated' : 'satisfied',
-        slack: r,
-        amount: Math.abs(r),
-      });
+      const violated = isIneq ? residual > tol : Math.abs(residual) > tol;
+      row.result = violated ? 'violated' : 'satisfied';
+      if (!violated) row.amount = 0;
     }
+    out.push(row);
   }
   return out;
+}
+
+/**
+ * Unknown reasons the numeric residual must NOT overrule. Everything else
+ * (a name out of scope, an unparseable body, a bare literal beside a
+ * dimensioned value) is ignorance the scalar path may still answer — which is
+ * what keeps the declared-unit contract and every unitless model intact.
+ */
+function isRefusal(reason: string | undefined): boolean {
+  return reason === 'offset' || reason === 'mismatch';
+}
+
+/**
+ * The coherent SI unit a scaled relation's slack/amount are expressed in — the
+ * dimension the COMPARISON was made in (`640 [Wh] / 650 [W] >= 45 [min]`
+ * compares durations, not energies), which the unit-aware evaluator reports;
+ * failing that, the first dimensioned variable of the relation.
+ */
+function slackUnitOf(
+  model: Model,
+  compared: Dimension | undefined,
+  rel: Equation | Inequality | undefined,
+  memo: DerivationMemo,
+): string | undefined {
+  if (compared) return siSymbolOf(compared);
+  if (!rel) return undefined;
+  for (const id of rel.vars) {
+    const d = featureDimension(model, id, memo);
+    if (d && !dimEqual(d, DIMENSIONLESS)) return siSymbolOf(d);
+  }
+  return undefined;
+}
+
+/**
+ * A last-resort quantity scope over the SOLVED values: the magnitude the solver
+ * determined, read in the feature's storage unit (its declared unit, else the
+ * coherent SI unit of its kind). It answers only the names the model's own
+ * quantity scopes cannot — a feature with no value of its own that an equality
+ * pins down — so a reasoned refusal is never overridden by it.
+ */
+function solvedQuantityScope(
+  model: Model,
+  el: ElementRecord,
+  values: Map<ElementId, number>,
+  memo: DerivationMemo,
+): (name: string) => Quantity | undefined {
+  const nameToId = relationScope(model, el);
+  return (name: string) => {
+    const id = nameToId.get(name);
+    if (id === undefined) return undefined;
+    const v = values.get(id);
+    if (v === undefined || !Number.isFinite(v)) return undefined;
+    const facets = dimensionalFacets(model, id);
+    const dimension =
+      facets.unitDimension ?? facets.kindDimension ?? derivedDimensionOf(model, id, memo) ?? DIMENSIONLESS;
+    const q: Quantity = { magnitude: v, dimension };
+    if (facets.unit) {
+      q.unit = facets.unit;
+      if (resolveUnit(facets.unit)?.offsetSI) q.absolute = true;
+    }
+    return q;
+  };
 }

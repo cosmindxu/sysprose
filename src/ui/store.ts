@@ -727,22 +727,37 @@ function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[]
     }${mo.dimension ? ` {${mo.dimension}}` : ''}`,
     elementId: mo.id,
   }));
+  // An unjudged relation is not a satisfied one: saying "all satisfied" beside
+  // an `unjudged` row below would be the same silent-drop failure in words.
+  const unjudged = report.unknowns?.length ?? 0;
+  const unjudgedNote = unjudged > 0 ? ` ${unjudged} constraint(s) unjudged.` : '';
   const feasibility: Diagnostic = {
     id: 'solve#feasible',
     ruleId: 'solve',
     severity: report.feasible ? 'info' : 'warning',
     message: report.feasible
-      ? 'Feasibility: all inequality constraints satisfied.'
-      : `Feasibility: ${report.violations.length} violated constraint(s).`,
+      ? `Feasibility: no violated inequality constraint.${unjudgedNote}`
+      : `Feasibility: ${report.violations.length} violated constraint(s).${unjudgedNote}`,
   };
   const violations: Diagnostic[] = report.violations.map((v, i) => ({
     id: `solve#viol#${i}`,
     ruleId: 'solve',
     severity: 'warning',
-    message: `violated ${v.kind}: ${v.expression} (by ${v.amount.toPrecision(4)})`,
+    message: `violated ${v.kind}: ${v.expression} (by ${v.amount.toPrecision(4)}${
+      v.unit ? ` [${v.unit}]` : ''
+    })`,
     elementId: v.element.id,
   }));
-  const rows = [header, feasibility, ...violations, ...values, ...measures];
+  // A relation neither engine could judge is REPORTED, not dropped: an
+  // information row, because an unjudged constraint is not a violated one.
+  const unknowns: Diagnostic[] = (report.unknowns ?? []).map((u, i) => ({
+    id: `solve#unknown#${i}`,
+    ruleId: 'solve',
+    severity: 'info',
+    message: `unjudged ${u.kind}: ${u.expression}${u.reason ? ` — ${u.reason}` : ''}`,
+    elementId: u.element.id,
+  }));
+  const rows = [header, feasibility, ...violations, ...unknowns, ...values, ...measures];
   if (report.values.length === 0 && report.measures.length === 0 && report.violations.length === 0) {
     header.message = 'Solve: no parametric constraints or measures to evaluate.';
   }

@@ -63,6 +63,7 @@ export type {
   UnitReport,
   AnalysisReport,
   AnalysisViolation,
+  AnalysisUnknown,
   SolvedValue,
 } from './analytics';
 

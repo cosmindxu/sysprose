@@ -12,6 +12,7 @@ vi.mock('../../src/library/standard-library', () => ({
 }));
 
 import { useAppStore } from '../../src/ui/store';
+import { parseModel } from '@text/index';
 
 /** Reset the singleton store to a fresh, empty model before each test. */
 function reset(): void {
@@ -337,5 +338,66 @@ describe('useAppStore — diagram scope', () => {
     await useAppStore.getState().rebuildDiagram();
 
     expect(useAppStore.getState().diagramRootId).toBeNull();
+  });
+});
+
+describe('useAppStore.solveParametric — the Solve rows carry their units (I6)', () => {
+  beforeEach(reset);
+
+  /** Load a parsed source into the singleton store and solve it. */
+  function solveRows(src: string): string[] {
+    const { model } = parseModel(src);
+    useAppStore.setState({ model });
+    st().solveParametric();
+    return st().diagnostics.map((d) => d.message);
+  }
+
+  it('a dimensioned violation names the SI unit its amount is in', () => {
+    const rows = solveRows(`package P {
+    part def V { attribute mass : ISQ::MassValue = 2500.0 [kg]; }
+    part v : V;
+    requirement def R { subject v : V; require constraint { v.mass <= 2000.0 [kg] } }
+}
+`);
+    expect(rows.some((m) => m.includes('violated inequality: v.mass <= 2000.0 [kg] (by 500.0 [kg])'))).toBe(
+      true,
+    );
+  });
+
+  it('a unitless violation keeps its row byte-identical (no empty suffix)', () => {
+    const rows = solveRows(`package P {
+    part def V { attribute x : Real = 20.0; constraint c { x <= 10.0 } }
+    part v : V;
+}
+`);
+    expect(rows).toContain('violated inequality: x <= 10.0 (by 10.00)');
+  });
+
+  it('a relation neither engine can judge is an INFO row, not a silent drop', () => {
+    const rows = solveRows(`package P {
+    part def V { attribute range : ISQ::LengthValue = 5.0 [km]; }
+    part v : V;
+    requirement def R { subject v : V; require constraint { v.range >= 4.0 [furlong] } }
+}
+`);
+    const row = rows.find((m) => m.startsWith('unjudged inequality:'));
+    expect(row).toBeDefined();
+    expect(row).toContain('v.range >= 4.0 [furlong]');
+    expect(row).toMatch(/furlong/);
+    const unjudged = st().diagnostics.find((d) => d.id.startsWith('solve#unknown#'));
+    expect(unjudged?.severity).toBe('info');
+    // …and the feasibility header must not read "all satisfied" beside it:
+    // `feasible` means no KNOWN violation, which is not the same claim.
+    const feasibility = rows.find((m) => m.startsWith('Feasibility:'));
+    expect(feasibility).toBe('Feasibility: no violated inequality constraint. 1 constraint(s) unjudged.');
+  });
+
+  it('the feasibility header says nothing about unjudged rows when there are none', () => {
+    const rows = solveRows(`package P {
+    part def V { attribute x : Real = 5.0; constraint c { x <= 10.0 } }
+    part v : V;
+}
+`);
+    expect(rows).toContain('Feasibility: no violated inequality constraint.');
   });
 });

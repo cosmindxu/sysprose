@@ -12,7 +12,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { parseModel } from '@text/index';
 import { checkConstraints } from '@semantics/index';
 import { validate } from '@validation/index';
-import { checkConstraintsNumeric } from '@semantics/solver';
+import { checkConstraintsNumeric, solve } from '@semantics/solver';
 import { unitBySymbol, quantityKindDimension, DIMENSIONLESS } from '@semantics/units';
 import { preloadFullLibrary, loadFullStandardLibrary } from '../../src/library/full-library';
 import { resolveTypeReferences } from '../../src/library/resolve';
@@ -57,6 +57,32 @@ describe('derived attributes reach constraints', () => {
     const numeric = checkConstraintsNumeric(m).map((c) => c.result);
     expect(numeric).toEqual(['satisfied']);
     expect(verdict(m)).toEqual(numeric);
+  });
+
+  it('agrees with the numeric solver on the DIMENSIONED case, down to the numbers', async () => {
+    // Verdict-level agreement alone is tautological once the numeric surface
+    // takes its verdict from the unit-aware evaluator, so this pins the solved
+    // NUMBER and the slack's unit too (I6).
+    const m = await bound(`package P {
+    part def BatteryPack { attribute capacity : ISQ::EnergyValue = 640.0 [Wh]; }
+    part def AirVehicle {
+        attribute cruisePower : ISQ::PowerValue = 650.0 [W];
+        attribute usableEnergyFraction : Real = 0.8;
+        attribute endurance : ISQ::DurationValue = battery.capacity * usableEnergyFraction / cruisePower;
+        part battery : BatteryPack;
+    }
+    part uav : AirVehicle;
+    requirement def R { subject uav : AirVehicle; require constraint { uav.endurance >= 45.0 [min] } }
+}
+`);
+    const numeric = checkConstraintsNumeric(m);
+    expect(numeric.map((c) => c.result)).toEqual(['satisfied']);
+    expect(verdict(m)).toEqual(numeric.map((c) => c.result));
+    // 640 Wh × 0.8 / 650 W = 2835.7 s — solved in SI, not 640 × 0.8 / 650.
+    const endurance = m.all().find((e) => e.declaredName === 'endurance')!;
+    expect(solve(m).values.get(endurance.id)).toBeCloseTo(2835.6923, 3);
+    expect(numeric[0].slack).toBeCloseTo(2835.6923 - 2700, 3);
+    expect(numeric[0].slackUnit).toBe('s');
   });
 
   it('answers unknown, not a hang, on a derivation cycle', async () => {
