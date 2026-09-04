@@ -58,7 +58,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 | Inline rename (dblclick, Enter/Escape) | Yes | Yes | **Yes** | `E explorer-interactions` (dblclick→Enter commits; Escape cancels); `E text-sync` |
 | Properties / specification editing | Yes | Yes | **Yes** | `E properties-all-fields` (name, shortName, type, value, multiplicity, direction, reqId, text, trigger, guard, effect, doc); `E properties` |
 | Undo / redo | Yes | Yes | **Yes** | `E undo-redo`; `E keyboard-shortcuts` (Ctrl/⌘+Z, +Y, +Shift+Z) |
-| Keyboard shortcuts | Yes | Yes | **Partial** | Undo/redo/save wired (`E keyboard-shortcuts`, `src/ui/commands.ts`); no rich accelerator set (delete/copy/paste chords) |
+| Keyboard shortcuts | Yes | Yes | **Yes** | Undo/redo/save, delete, duplicate, copy/paste, view digits `1`–`6` and `/` to search, all wired in `src/ui/commands.ts:111-213` (`E keyboard-shortcuts`, `E gui-keyboard`); listed for a reader in [`USER-GUIDE.md`](USER-GUIDE.md) Appendix B, and `U user-guide` fails on a shortcut LABELLED but not handled |
 | Real-time multi-user collaboration | Partial (server product) | Yes (live web sessions) | **Yes** | Yjs CRDT co-editing + live presence: `E collab` (two browser contexts, same room, auto-connect → element created in one converges into the other's model + Explorer, and a remote selection lights up a peer-coloured highlight; roster shows ≥2 participants, 0 console errors); `U collab.binding` (deterministic Model↔Y.Doc CRDT convergence: add/update/remove/reparent/attrs, offline-then-merge). Open rooms (academic use, no auth); browser client = `WebsocketProvider` + `y-indexeddb` + awareness, relayed by the Node-only `npm run collab` server |
 
 ## 4. Textual notation
@@ -149,8 +149,8 @@ reference tools (the commercial one is desktop; the open-source one is server-ba
 **Partial (candid):** the geometry view is now a real interactive 3D WebGL scene
 (Three.js: orbit/zoom, per-part solids, raycast selection), though it renders
 primitive solids (box/sphere/cylinder) from model attributes/shape typings rather
-than full CAD B-rep geometry (commercial tools integrate a richer CAD kernel); keyboard
-shortcuts cover undo/redo/save only; behavioral execution now covers composite/call actions,
+than full CAD B-rep geometry (commercial tools integrate a richer CAD kernel);
+behavioral execution now covers composite/call actions,
 object/item-flow data passing, and hierarchical/orthogonal/timed state machines
 (a fuller subset, still not a whole commercial simulation toolkit); FMI co-simulation
 is present as a **fixed-step Jacobi master** over the parametric solver and analytic

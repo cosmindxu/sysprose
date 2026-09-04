@@ -30,9 +30,14 @@ const DEFAULT_PROJECT_NAME = 'NewModel';
 /** All toolbar/keyboard commands, in display order. */
 export const COMMANDS: Command[] = [
   {
+    // No `shortcut` here: this command carried a `Ctrl+N` label that
+    // `handleShortcut` never handled, so the app's own command table advertised
+    // a key that did nothing. A label is a claim about behaviour, and
+    // `test/unit/user-guide.test.ts` now fails on a declared shortcut the
+    // handler does not receive — Ctrl+N is also the browser's own new-window
+    // chord, which is why wiring it instead was not the fix.
     id: 'tb-new',
     label: 'New',
-    shortcut: 'Ctrl+N',
     run: () => useAppStore.getState().newProject(DEFAULT_PROJECT_NAME),
   },
   {

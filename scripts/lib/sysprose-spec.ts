@@ -19,6 +19,20 @@ import { renderFlag, type FlagSpec } from './args';
 /** The exit-code contract, stated once and quoted into every help text. */
 export const EXIT_CODES = `Exit codes: 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error`;
 
+/**
+ * `npm run check`'s exit-code contract, which is a DIFFERENT contract.
+ *
+ * `sysprose` reports and does not judge, so its 1 is about whether the model
+ * under the report is the whole model. `check` judges, so its 1 is about the
+ * findings: a file that parsed perfectly and broke one validation rule loaded
+ * cleanly and still exits 1. The two were once documented as one contract, and
+ * a reader who branched on it would have treated a duplicate-name error as a
+ * parse failure. Stated here, next to the other, so the difference is visible
+ * to whoever edits either — `scripts/sysml-check.ts`'s `--help` and
+ * `docs/CLI-REFERENCE.md` are both renderings of this string.
+ */
+export const CHECK_EXIT_CODES = `Exit codes: 0 clean · 1 at least one file has findings (errors, or warnings with --strict) · 2 usage/IO error`;
+
 /** Flags every subcommand accepts. */
 export const COMMON_FLAGS: readonly FlagSpec[] = [
   {

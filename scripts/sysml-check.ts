@@ -14,6 +14,11 @@
  *   1  at least one file has errors (or warnings, with --strict)
  *   2  usage or I/O problem — nothing was checked
  *
+ * That is NOT `sysprose`'s contract, which is about whether the MODEL loaded.
+ * The one sentence both commands' help texts quote lives in
+ * `./lib/sysprose-spec` as `CHECK_EXIT_CODES`, so the reference document and
+ * this `--help` cannot state it differently.
+ *
  * See docs/AGENT-AUTHORING-CAMPAIGN.md for the agent loop and
  * docs/DIAGNOSTIC-CODES.md for what each `code` means.
  */
@@ -21,6 +26,7 @@
 import { readFileSync } from 'node:fs';
 import { checkText, type CheckReport } from '../src/text/check';
 import { runMain } from './lib/exit';
+import { CHECK_EXIT_CODES } from './lib/sysprose-spec';
 
 const USAGE = `sysml-check — check SysML v2 textual notation
 
@@ -36,7 +42,7 @@ Options:
   --ranges        Include the element→source-range table (implies richer --json)
   -h, --help      This text
 
-Exit codes: 0 clean · 1 findings · 2 usage/IO error`;
+${CHECK_EXIT_CODES}`;
 
 interface Options {
   files: string[];

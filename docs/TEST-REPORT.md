@@ -627,8 +627,14 @@ limits — not untested interactions.
    room (`E collab`, `U collab.binding`; §2.13). Rooms are **open** (academic use)
    with **no user-rights / permissions layer**, and the relay is a pure in-memory
    fan-out (no server-side persistence) — deliberate scope choices, not gaps.
-7. **Keyboard shortcuts** — undo/redo/save only; no delete/copy/paste accelerator
-   set (New via `Ctrl+N` is a label hint only; the handler wires Z/Y/S).
+7. **Keyboard shortcuts** — *this entry was wrong; it is retracted rather than
+   deleted, so the correction is on the record.* The shipped set is wider than
+   it said: undo/redo/save, `Delete`/`Backspace`, `Ctrl+D` duplicate, `Ctrl+C` /
+   `Ctrl+V`, the digits `1`–`6` for the primary views and `/` for the Explorer
+   search are all wired in `src/ui/commands.ts:111-213`. The one false label —
+   New advertising a `Ctrl+N` the handler never received — has been removed, and
+   `U user-guide` now fails on a shortcut that is labelled but not handled.
+   [`USER-GUIDE.md`](USER-GUIDE.md) Appendix B is the reader's list.
 
 **Deliberate scope omissions (documented as out-of-scope/future):**
 

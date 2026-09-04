@@ -23,6 +23,7 @@
     "sysprose": "tsx scripts/sysprose.ts",
     "campaign": "vitest run test/campaign",
     "codes": "tsx scripts/gen-diagnostic-codes.ts",
+    "commands": "tsx scripts/gen-cli-reference.ts",
     "bench": "tsx scripts/agent-repair-bench.ts",
     "shot:hero": "node scripts/shot-hero.mjs"
   },

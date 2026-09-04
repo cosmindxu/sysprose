@@ -1157,6 +1157,96 @@ fixture that declares all six relationships, since five of them appear nowhere
 else in the repo and a preset string that stopped matching would otherwise ship
 as a silent empty matrix.
 
+**Nothing in six thousand lines of documentation told a person what the tool
+does.** Every document here was written for an implementer, an auditor or an
+agent: a competitor survey, a standard reference, an architecture plan, a
+conformance scorecard, a parity matrix, a test report, a code catalogue, this
+ledger. A search of the whole repository for "getting started", "tutorial" or
+"user guide" returned nothing, and the sixteen views — the thing a person
+actually meets — were enumerated in one table as parity rows with test
+citations. `docs/USER-GUIDE.md` is the missing half: what each view answers,
+what the toolbar does, what the notation looks like, and what the tool will and
+will not keep for you. It is written from the source rather than from
+`FEATURE-PARITY.md`, because that matrix was already wrong in the one place a
+guide would have copied it from.
+
+The guide leads with the hazards, since every one of them is something a person
+finds out by losing work. *Apply text → model* replaces the WHOLE model with the
+parse result — a syntax error included, since error recovery produces a partial
+reading and that reading becomes the model — and one undo is the entire safety
+net. The Problems panel is one list that Validate, Check, Simulate, Solve and
+the parser all overwrite, so clicking Solve after Validate discards the
+validation findings. A reload discards unsaved work by design. Versions-tab
+commits and branches never leave memory. The diagram scope has no on-screen
+indicator and can only be cleared from the same right-click menu that set it.
+The standard library is an 8.2 MB load before the first paint, and it is
+re-merged after every apply, import, open and branch switch — which is why the
+Problems panel refreshes a second time. The *Simulate* button and the
+*Simulation* tab are different things. And `feasible` means "no KNOWN
+violation": an unjudged relation leaves the flag true and is reported
+separately.
+
+Two doc-drift defects were closed while writing it, both found by reading the
+source the guide had to cite. `FEATURE-PARITY.md` §3 called keyboard shortcuts
+"Partial — undo/redo/save wired, no rich accelerator set" and `TEST-REPORT.md`
+§6.7 said the same; `src/ui/commands.ts:111-213` has wired Delete, Ctrl+D,
+Ctrl+C, Ctrl+V, the digits and `/` for some time, and `UI-ROADMAP.md` said so.
+Three documents, two answers. The other went the opposite way: the New command
+declared a `Ctrl+N` shortcut that `handleShortcut` never handled, so the app's
+own command table advertised a key that did nothing. The label is gone, and a
+test now fails on any shortcut that is declared and not handled — a label is a
+claim about behaviour, and this repository tests those.
+
+Both new documents are guarded, because a user guide is the document with the
+strongest incentive to drift and the least chance of anyone noticing.
+`docs/CLI-REFERENCE.md` is GENERATED from the command table
+(`scripts/lib/sysprose-spec.ts`) by `npm run commands`, exactly as
+`DIAGNOSTIC-CODES.md` is generated from the code catalogue, and
+`test/unit/cli-reference.test.ts` compares the committed file against a fresh
+render — the generator's write is guarded by an entry-point check so that
+importing it to run the comparison cannot rewrite the evidence. The hand-written
+guide cannot be generated, so what is checkable in it is checked:
+`test/unit/user-guide.test.ts` reads the `data-testid` of every control the
+guide names out of its own appendix and fails if the app no longer renders it,
+fails if a toolbar control or a view kind is missing from the guide, and fails
+if the guide stops showing a subcommand the command has. Every figure the guide
+quotes is registered in `test/unit/docs-counts.test.ts` — the tree-derived ones
+against the tree, and the transcripts of the shipped example against the same
+reports run over the same file, so a pasted number that stops being true fails
+with the command to re-run.
+
+An adversarial review of that first draft found four ways a guarded document was
+still wrong, and each fix came with the assertion that would have caught it.
+**The flagship walkthrough was followable to the wrong picture:** it told the
+reader to scope the interconnection diagram to `uav`, which is `part uav :
+AirVehicle;` — a usage that owns nothing. Scoping is containment-only, so the
+promised assembly came out as one box and no edges; the guide now names
+`AirVehicle`, says scope follows containment, and the diagram is BUILT in the
+test from the element name read back out of the guide. **It credited the wrong
+button with a number:** `Check` reports satisfied/violated per constraint and no
+margin — the shortfall in seconds is `Solve`'s. **It promised an id column the
+example leaves empty:** `reqId` comes from a declared short name, and the
+example writes `attribute id = "R-UAV-001";`, which is an ordinary attribute;
+the guide explains that now, and a case asserts the rows really have no id.
+**And the `npm run check` section of the GENERATED reference was hand-written
+prose inside the generator**, so the whole-document comparison compared it
+against itself — while it claimed `check` shared `sysprose`'s exit-code
+contract. It does not: `sysprose` reports, so its 1 means the model did not
+load; `check` judges, so a file that parsed perfectly and broke one validation
+rule exits 1. That sentence now lives once, as `CHECK_EXIT_CODES`, rendered into
+both the command's `--help` and the reference, and the drift test reads
+`scripts/sysml-check.ts`'s `USAGE` and fails on a flag or a synopsis line the
+reference does not show.
+
+Two of the guards were themselves weaker than they read. The test-id scan
+accepted `commands.ts`'s `id: 'tb-validate'` as proof that the app renders
+`data-testid="tb-validate"`, so renaming the attribute left the suite green; the
+scan now takes ids only from what reaches the DOM, plus the two view-command
+tables whose ids the view bar renders verbatim — and asserts that it does. And
+the appendix's completeness case covered only the `tb-*` half, so the Panels
+table could have been deleted whole; a named list now pins the panel and
+bottom-panel controls that table must keep documenting.
+
 ### Known limitations, recorded rather than hidden
 
 **The impact closure loses a wire to a shorter detour whenever a connection's
