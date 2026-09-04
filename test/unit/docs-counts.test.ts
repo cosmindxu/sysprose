@@ -170,6 +170,30 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
   },
 ];
 
+/**
+ * The scorecard's own arithmetic, which nothing else can check.
+ *
+ * Test COUNTS need a run to derive, so the suite total and the E2E total are
+ * transcribed by hand and this file cannot tell a stale one from a fresh one.
+ * What it CAN tell is whether the three numbers in that sentence still add up:
+ * a commit that updates the suite figure and forgets the "= N green" sum
+ * leaves a total that was never true of any run. Two of the three moving
+ * together is the ordinary edit; one moving alone is the mistake.
+ */
+describe('the conformance scorecard adds up', () => {
+  it('suite total + E2E total = the green total it claims', () => {
+    const m =
+      /\*\*(\d[\d,]*)\s+passed\s+\/\s+0\s+failed\s+\/\s+0\s+skipped\*\*\s+across\s+\*\*\d+\s+files\*\*\s+\+\s+\*\*(\d[\d,]*)\s+E2E\*\*[\s\S]*?=\s+\*\*(\d[\d,]*)\s+green\*\*/.exec(
+        read('docs/CONFORMANCE.md'),
+      );
+    expect(m, 'docs/CONFORMANCE.md no longer states "N passed … + M E2E … = T green"').not.toBeNull();
+    const [suite, e2e, total] = m!.slice(1, 4).map((n) => Number(n.replace(/,/g, '')));
+    expect(suite + e2e, `${suite} + ${e2e} is ${suite + e2e}, but the scorecard claims ${total}`).toBe(
+      total,
+    );
+  });
+});
+
 describe('counts quoted in prose', () => {
   for (const claim of CLAIMS) {
     it(`${claim.file} — ${claim.what}`, () => {

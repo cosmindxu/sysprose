@@ -945,7 +945,132 @@ the de-duplication, or rewriting the recorded endpoints to the lifted ones each
 move an assertion too, which is what makes them tripwires rather than
 comments.
 
+**Two questions the reporting surface could not answer: what is unused, and what
+a change reaches.** Every report so far counts or tabulates the model. Neither
+"what did I declare and never use" nor "what breaks if I change this" had an
+implementation: `whereUsed` walks the edges of one element exactly once, so it
+answers the second question one hop deep and then stops, and nothing at all
+answered the first.
+
+The orphan reading is a threshold, and the threshold is the work. "An element
+with no edges" is the obvious rule and it is useless: it is true of 67 of the
+113 elements of the shipped UAV example, because attributes, documentation
+comments and untyped parts legitimately have none, and a finding that fires on
+59% of a clean model is noise with a name. "A DEFINITION with no incoming and no
+outgoing edge" returns `FlyMission` and `FlightModes` on that model and `Drive`
+and `VehicleStates` on the vehicle example — in both files, the behaviour the
+author wrote out in full and then never performed. Packages are skipped rather
+than examined, and not because they have no edges — `import` makes a package an
+endpoint like anything else, and in a model loaded with the bundled library
+almost every package carries one. They are skipped because "declared and never
+used" is not a judgement that means anything about a container: a package is
+where the model lives, not a thing the model uses, and the only package the
+rule would ever catch is the reader's own root, which is a finding that is never
+a finding. "Used" also means used HERE: an edge whose far end is a library
+element or one of the tool's own implicit copies is not the reader using
+anything, so a definition kept alive only by content the reader cannot see is
+still reported — otherwise this report and the impact closure would disagree
+about whose model it is. It is an inventory and not a diagnostic, which
+is the difference between it and the two validation rules that sound like it:
+`dangling-endpoint` and `orphan-relationship` fail a check over relationships
+that are BROKEN, while an unused definition parses, binds and validates clean
+and may be a deliberate spare.
+
+`impactClosure` is `whereUsed` walked to a depth, and the second hop is where
+the answer lives. Ask what uses `AirVehicle` and today's report names the part
+usage `uav` and the two `ReferenceUsage` subjects the requirements declare; the
+requirements THEMSELVES — `EnduranceRequirement` and `MassRequirement`, the
+things a change to that part has to be re-checked against — are one further hop
+away through the `Satisfy` edges, and no depth-1 report can reach them. The
+closure closes at the second hop with five elements, so the report also says the
+impact of that change is five elements and not the rest of the model. It says it
+in two numbers that had to be earned: the depth reported is the deepest element
+in the answer rather than the number of passes made, and `truncated` is a
+lookahead for something still to report rather than "the frontier is non-empty"
+— which is a different question, and answered it wrong on 45 of the 84 truncated
+results over the shipped model, labelling complete answers as prefixes of
+themselves.
+
+The frontier is filtered to the author's own elements at every hop, with no flag
+to turn it off, because a closure is not a lookup. Being told that a library
+type uses your element is an answer; WALKING into the bundled library does not
+come back, since it is ~38,700 elements that reference each other, and one
+unfiltered hop through `Real` would turn "what does my change reach" into the
+standard library. The tool's own implicit copies are treated differently from
+the library, because dropping them is the trap the connectivity report fell into
+one commit earlier: `connect a.p to b.q` wires the connection to usage-scoped
+COPIES of the two ports, so a walk that stops at a copy cannot cross a wire at
+all, and "what breaks if I change this port" answers with the port's own type
+and nothing on the far end. They are conduits, not destinations: the walk
+crosses them at the cost of one hop, counts them, and never reports an id the
+reader cannot find in their own file. The hop it reports is named by the CABLE
+and not by the tie at its far end — a copy is bound to the port it stands for by
+a `Redefinition` the tool materialised, so the literal last edge of
+`port → copy → copy → far port` is bookkeeping, and labelling a wire crossing
+with it was the one edge on the path the reader never wrote. The one cable a
+crossing went across is carried to the landing instead — one, and only a cable:
+a crossing that meets no wire keeps its literal last edge, which is then the
+truth, and so does a crossing that runs through a hub copy on TWO wires, because
+naming the first cable there says two ports on different wires are wired to each
+other. Depth defaults to 1 — exactly today's behaviour, so raising it is opt-in
+— and a depth that is not a usable number is read as 1, because
+`Number.parseInt` on a mistyped flag yields `NaN`, `Math.max(1, NaN)` is `NaN`,
+and the answer that clamp produced was a confident "nothing uses this". A
+visited set guards the walk: `a → b → c → a` is a legal dependency ring and
+every typing edge is walkable from both ends, so without one it does not
+terminate at all.
+
+Both readings are pinned on real files rather than only on fixtures, because a
+threshold is only honest against a model somebody wrote for its own sake: the
+two orphans of `examples/uav-isr.sysml` in `test/integration/uav-example.test.ts`
+and the two of `examples/vehicle.sysml` in
+`test/integration/pipeline.api.test.ts`, alongside the hop-by-hop closure and
+the hand-built chain, cycle and library-shadowed models in
+`test/unit/api.analytics.test.ts`. Widening the orphan rule to any element, to
+any definition including packages, or to "no incoming OR no outgoing" moves one
+of those calibrated lists, and so does counting an edge whose far end is the
+library or an implicit copy; dropping the library filter, the depth limit, the
+crossing of implicit copies, the carry that labels a crossing by the cable
+rather than by the copy's tie, the deepest-element depth or the truncation
+lookahead each move the closure. Removing the visited set fails the UAV closure
+assertion outright and then fails to TERMINATE on the cycle case — the walk is a
+synchronous loop, so a per-test timer cannot reclaim it — which is why that case
+is asserted at a bounded depth first, where a ring of three either reports two
+elements or hangs the run.
+
 ### Known limitations, recorded rather than hidden
+
+**The impact closure loses a wire to a shorter detour whenever a connection's
+ends were copied.** It crosses a connection — that is what the conduit is for,
+and the crossing is pinned on parsed text in
+`test/integration/pipeline.api.test.ts` — but only where the crossing is the
+SHORTEST way to the far end, and on the shape most models are written in it is
+not. The discriminator is the shape of the connection's ENDS, not the ports'
+types. A connection written on the declarations it joins — `connect a to b`
+inside the `part def` that owns both — binds to those declarations, so the wire
+is one hop and always labels the far end, shared port definition or not. A
+connection written under a part usage, or through a feature chain, binds to
+usage-scoped COPIES instead, and then the wire costs three hops: out to the near
+copy, across, back down to the far declaration. Two ports of the same `port def`
+are two hops apart up and down that definition, and the walk is undirected, so
+on that shape the typing detour arrives first and the visited set closes the far
+port before the cable reaches it. That combination is not a corner case. It is
+every connection in both shipped examples — each is written under a part usage
+and joins two ports of one definition — so on the models the docs point at, NO
+reported element is reached across a wire at any depth:
+`test/integration/uav-example.test.ts` pins that over `examples/uav-isr.sysml`
+and `test/integration/pipeline.api.test.ts` over `examples/vehicle.sysml`, both
+swept to the complete closure rather than to a depth deep enough to look
+convincing. What a reader gets from `impactClosure(BatteryPack::powerOut)` is
+the five `powerIn` ports at depth 2 `via: 'FeatureTyping'` — the right elements,
+labelled by the type they share instead of by the cable between them, and
+indistinguishable from ports of that definition that are wired to nothing.
+Making the wire win would mean either crossing a copy for free, which breaks
+"depth 1 is exactly `whereUsed`", or walking typing edges in one direction only,
+which is the pinned undirected behaviour the sibling results depend on; neither
+is a change this reading is worth. Ask the closure what a change REACHES; ask
+`connectivityReport`, which lifts every endpoint to the port it stands for, what
+is wired to what.
 
 **Re-homing cannot recover the faulty declaration itself.** It repairs
 containment from the brace structure, which is all the parser leaves intact —

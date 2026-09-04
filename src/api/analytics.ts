@@ -5,7 +5,8 @@
  * model references) so results can be rendered in tables, exported as JSON/CSV,
  * or shipped over the REST facade unchanged. These power the analytics surface in
  * plan §6: element counts, model metrics, requirement-satisfaction coverage,
- * traceability matrices, where-used / impact analysis, and connectivity checks.
+ * traceability matrices, where-used / transitive impact analysis, the orphan
+ * inventory, and connectivity checks.
  */
 
 import {
@@ -14,6 +15,7 @@ import {
   type ElementRecord,
   type Model,
   isControlNode,
+  isDefinition,
   isRelationship,
   isTypingSpecialization,
 } from '@core/index';
@@ -369,9 +371,111 @@ export function whereUsed(model: Model, id: string): WhereUsedReport {
   return { element, references, usedBy: [...usedByMap.values()] };
 }
 
-/* ───────────────────────── Connectivity report ──────────────────────────── */
+/* ─────────────────── Impact closure & orphan inventory ──────────────────── */
 
-const CONNECTION_KINDS = new Set([
+/** One element reached by an impact closure, with how it was reached. */
+export interface ImpactedElement {
+  element: ElementRef;
+  /** Reference hops from the queried element: 1 means it references it directly. */
+  depth: number;
+  /**
+   * The element one hop nearer the query that this one is attached to.
+   *
+   * Always the reader's own element (or the query itself): a hop that passed
+   * THROUGH one of the tool's implicit copies names the element on the near
+   * side of the copy, because an id the reader cannot find in their own file is
+   * not provenance.
+   */
+  from: ElementRef;
+  /**
+   * Metaclass of the edge that carried the walk here from `from`.
+   *
+   * Normally the edge of the last hop. When the path crossed one of the tool's
+   * implicit copies and went across exactly ONE cable — a
+   * {@link CONNECTION_KINDS} edge — it is that cable instead, and `from` names
+   * the reader's element on the near side, so the pair reads as "reached from
+   * here, across a wire of this kind" rather than as a single edge between the
+   * two.
+   *
+   * The distinction is the whole point of the crossing. A copy is tied to the
+   * feature it stands for by a `Redefinition` the tool materialised, so the
+   * literal last edge of `port --Redefinition--> copy --ConnectionUsage-->
+   * copy --Redefinition--> far port` is a redefinition: reporting that labelled
+   * a WIRE crossing with the one edge on the path that is not in the reader's
+   * file, and answered "what breaks if I change this port" with the word
+   * `Redefinition` about a part on the other end of a cable.
+   *
+   * Only a cable is lifted, and only one. A crossing that meets no cable — a
+   * copy of a copy of one declaration, or a reader's `Dependency` hung off an
+   * implicit element — keeps its literal last edge, which is then the truth;
+   * lifting "the first edge that is not the copy tie" instead would have put
+   * the tool's own `FeatureTyping` on that second case. And a crossing that
+   * runs straight through a HUB copy wired by two different connections keeps
+   * its literal last edge too, because naming the first cable there says two
+   * ports on different wires are wired to each other.
+   */
+  via: string;
+}
+
+/** Transitive where-used: everything a change to one element can reach. */
+export interface ImpactReport {
+  element: ElementRef;
+  /**
+   * Hops to the DEEPEST element reported, and 0 when nothing was reached.
+   *
+   * Neither the depth asked for nor the number of passes made: a closure that
+   * closes three hops out reports 3, not the barren fourth pass that found
+   * nothing to expand. A report that says "4 hops" about a set whose furthest
+   * element is 3 hops away invites a bug report.
+   */
+  depth: number;
+  /** Everything reached, nearest hop first. */
+  impacted: ImpactedElement[];
+  /**
+   * The depth limit stopped the walk with somewhere left to go.
+   *
+   * It is a lookahead over the final frontier, not `frontier.length > 0`: a
+   * last hop that landed on elements with no unvisited neighbours has answered
+   * the question completely, and calling that incomplete labelled 45 of the 84
+   * truncated results over the shipped UAV example as prefixes of themselves.
+   * False therefore means this IS the whole impact. True means one more hop has
+   * somewhere to go — not that it would report anything, since it may land on
+   * an implicit copy whose only way onward is back where the walk has been.
+   */
+  truncated: boolean;
+  /** Bundled standard-library elements dropped from the frontier. */
+  libraryExcluded: number;
+  /** Implicit (re-derived) elements walked through but never reported. */
+  implicitExcluded: number;
+}
+
+/**
+ * The edge that ties one of the tool's implicit copies to the feature it stands for.
+ *
+ * `connect a.p to b.q` materialises a usage-scoped copy of each port and links
+ * it to the declaration with a `Redefinition`. It is the tool's own
+ * bookkeeping, so it is never something a reader can be told they wrote; both
+ * places that must know the tie — {@link liftImplicitEndpoint}, which follows
+ * it to lift a connection endpoint onto the declared port, and the crossing in
+ * {@link impactClosure}, which walks along it — read it from here, so that
+ * widening it (to `Subsetting`, say) is one edit and not a hunt for a literal.
+ */
+const COPY_TIE = 'Redefinition';
+
+/**
+ * The metaclasses that are a WIRE: an edge a reader drew between two features.
+ *
+ * Declared here rather than beside {@link connectivityReport}, its other
+ * reader, because the impact closure needs the same list to answer a different
+ * question, and two lists would drift: the closure labels a crossing by the
+ * cable it went across, and the pin that says no crossing happens on the
+ * shipped examples asserts the absence of exactly these kinds. Exported so a
+ * test cannot re-guess the set with a substring match — `Connector`,
+ * `BindingConnectorAsUsage` and `Allocation` contain none of the words a
+ * hand-written `/Connection|Flow|Interface/` looks for, so such a pin passes
+ * vacuously on the three kinds it forgot.
+ */
+export const CONNECTION_KINDS: ReadonlySet<string> = new Set([
   'ConnectionUsage',
   'InterfaceUsage',
   'Connector',
@@ -381,6 +485,351 @@ const CONNECTION_KINDS = new Set([
   'SuccessionFlow',
   'Allocation',
 ]);
+
+/**
+ * The far ends of every edge touching `fromId`, with the edge kind that got there.
+ *
+ * Shared by the walk and by its one-hop lookahead so that "what would the next
+ * hop see" is answered by the same code that would take it.
+ */
+function impactNeighbours(model: Model, fromId: ElementId): Array<{ id: ElementId; via: string }> {
+  const out: Array<{ id: ElementId; via: string }> = [];
+  for (const usage of whereUsed(model, fromId).references) {
+    for (const related of usage.relatedElements) out.push({ id: related.id, via: usage.via });
+  }
+  return out;
+}
+
+/**
+ * Everything within `depth` reference hops of `id` — transitive {@link whereUsed}.
+ *
+ * `whereUsed` answers "what points at this", which is one hop, and one hop is
+ * usually the wrong end of the question. On the shipped UAV example the direct
+ * users of `AirVehicle` are the part usage `uav` and the two `ReferenceUsage`
+ * subjects of the requirements; the requirements THEMSELVES — the things a
+ * change has to be re-checked against — are a second hop away, through the
+ * `Satisfy` edges. A depth-1 report cannot show them at all.
+ *
+ * `depth` defaults to 1, which is exactly today's `whereUsed` (as a list of
+ * elements rather than of edges), so raising it is opt-in. A depth below 1, or
+ * one that is not a finite number at all — `Number.parseInt` on a mistyped
+ * `--depth` flag yields `NaN`, and `Math.max(1, NaN)` is `NaN` — is read as 1,
+ * because the failure a caller must never get from a bad flag is a confident
+ * empty answer. The walk stops early when the frontier empties, so a
+ * deliberately large depth is how you ask for the complete closure.
+ *
+ * Library elements are dropped from the frontier at EVERY hop, with no flag to
+ * turn it off, and this is deliberate. `whereUsed` is a lookup: asking what
+ * points at one element and being told about a library type is an answer. A
+ * closure is a walk, and walking INTO the bundled library does not come back —
+ * the library is ~38,700 elements that all reference each other, so one
+ * unfiltered hop through `Real` turns "what does my change reach" into the
+ * whole standard library. What was dropped is still counted, so the reader can
+ * see the walk was pruned rather than wonder. There is deliberately no options
+ * parameter to relax it, which a caller that offers a library-inclusion flag
+ * has to honour by REFUSING the flag here rather than accepting one that does
+ * nothing: unfiltered, the four-hop closure of a single attribute typed by a
+ * library type — `usableEnergyFraction` on the shipped UAV example — reaches
+ * 3,721 elements instead of none.
+ *
+ * The tool's own implicit copies are treated differently from the library: they
+ * are walked THROUGH — never reported, counted in `implicitExcluded`, and
+ * costing the hop they take — rather than dropped. Dropping them was the same
+ * trap the connectivity report fell into: `connect a.p to b.q` wires the
+ * CONNECTION to usage-scoped copies of the two ports, so a walk that stops at a
+ * copy cannot cross a wire at all, and "what breaks if I change this port"
+ * answers with the port's own type and nothing on the other end. They are
+ * conduits, not destinations, so the walk crosses them and the report stays
+ * free of ids the reader cannot find in their file — labelled by the cable, as
+ * {@link ImpactedElement.via} describes, and not by the tie at its far end.
+ *
+ * Three limits worth knowing before reading a result. The walk is UNDIRECTED,
+ * because `whereUsed` is: it follows every edge from both ends, so a hop up a
+ * typing edge and back down reaches the SIBLINGS of the query — the other ports
+ * of the same port definition — which reference it in no direction. And the
+ * relationship elements themselves are never destinations: an edge appears as
+ * the `via` of the hop it made, so a `ConnectionUsage` or a `Satisfy` is how
+ * the walk got somewhere and never a member of `impacted`.
+ *
+ * The third is what those two do TOGETHER, and it is the one that decides
+ * whether this report can answer a wiring question. It depends on the SHAPE of
+ * the connection's ends, not on the ports' types. A connection written on the
+ * declarations it joins — `connection c connect a to b` inside the `part def`
+ * that owns `a` and `b` — binds to those declarations, so the wire is a single
+ * hop and always labels the far end, whatever the two ports are typed by. A
+ * connection written under a part USAGE, or through a feature chain
+ * (`connect engine.fuelOut to fuelIn`), instead binds to usage-scoped COPIES,
+ * and then the wire costs three hops: out to the near copy, across, back down
+ * to the far declaration. Two ports of the same port definition are two hops
+ * apart up and down that definition, so on that shape the undirected typing
+ * detour reaches the far port first, the visited set closes it, and the wire
+ * never gets to label anything: the report names the far port at depth 2
+ * `via: 'FeatureTyping'`, mixed in with every other port of that definition,
+ * wired or not.
+ *
+ * That combination — copied ends, one shared port definition — is not a corner
+ * case. It is every connection of both shipped examples, where NO reported
+ * element is reached across a wire at any depth, a measurement pinned over
+ * `examples/uav-isr.sysml` in `test/integration/uav-example.test.ts` and over
+ * `examples/vehicle.sysml` in `test/integration/pipeline.api.test.ts`. The
+ * crossing does show in the report when the copies' ports have different port
+ * definitions, which `test/unit/api.analytics.test.ts` pins on parsed text in
+ * turn. Ask this report what a change REACHES; ask
+ * {@link connectivityReport}, which lifts each endpoint to the port it stands
+ * for, what is wired to what.
+ */
+export function impactClosure(model: Model, id: ElementId, depth = 1): ImpactReport {
+  const el = model.get(id);
+  const element: ElementRef = el
+    ? ref(model, el)
+    : { id, eClass: '«unknown»', qualifiedName: '' };
+  // `Infinity` is a legitimate way to ask for the complete closure and stays
+  // itself; only `NaN` — what `Number.parseInt` hands back for a mistyped
+  // `--depth` flag, and what `Math.max(1, NaN)` silently propagates — has to be
+  // caught, because the answer it produced was an empty report with no error.
+  const requested = Math.floor(depth);
+  const maxDepth = Number.isNaN(requested) ? 1 : Math.max(1, requested);
+
+  const impacted: ImpactedElement[] = [];
+  const seen = new Set<ElementId>([id]);
+  // Counted as SETS, not as increments: one library element reached from three
+  // different frontier elements is one element the reader cannot see, and a
+  // report whose exclusion count exceeds the model's element count is a number
+  // nobody can check.
+  const libraryDropped = new Set<ElementId>();
+  const implicitCrossed = new Set<ElementId>();
+
+  /** A frontier entry, and the nearest REPORTED element on the path to it. */
+  interface Step {
+    node: ElementRef;
+    /** `node` itself, unless the path crossed implicit copies to get here. */
+    provenance: ElementRef;
+    /**
+     * The ONE cable the crossing in progress went across, if there is exactly one.
+     *
+     * `undefined` on every step that is one of the reader's own elements, on a
+     * crossing that has met no wire yet, and on a crossing that has met more
+     * than one. Only a {@link CONNECTION_KINDS} edge sets it — a whitelist, not
+     * "anything that is not the copy tie", because every other edge incident to
+     * a copy is bookkeeping the tool materialised too, and letting one of those
+     * label the landing is the same defect one edge family over: a reader's
+     * `Dependency` onto an implicit element would be reported as the
+     * `FeatureTyping` the tool wrote.
+     */
+    crossingVia?: string;
+    /**
+     * Cables this crossing has already gone across.
+     *
+     * Counted, not flagged, because ONE is the only count that can be named. A
+     * hub copy wired by two different connections lets a crossing continue
+     * straight through it, and carrying the first cable's label to that landing
+     * says "these two ports are wired together" about two ports on different
+     * cables — a false statement, where the unlabelled crossing was merely an
+     * uninformative one. Past one, the carry is dropped and the landing falls
+     * back to the literal last edge.
+     */
+    cables: number;
+  }
+  let frontier: Step[] = el ? [{ node: element, provenance: element, cables: 0 }] : [];
+  let deepest = 0;
+  let hops = 0;
+  while (hops < maxDepth && frontier.length > 0) {
+    hops++;
+    const next: Step[] = [];
+    for (const from of frontier) {
+      for (const { id: nextId, via } of impactNeighbours(model, from.node.id)) {
+        const target = model.get(nextId);
+        if (!target) continue;
+        if (isLibrary(target)) {
+          libraryDropped.add(nextId);
+          continue;
+        }
+        // A model is a graph, not a tree: `a → b → c → a` is a legal
+        // dependency ring and every typing edge is walkable from both ends,
+        // so the visited set is what makes this terminate at all.
+        if (seen.has(nextId)) continue;
+        seen.add(nextId);
+        const reached = ref(model, target);
+        if (!isUserElement(model, target)) {
+          implicitCrossed.add(nextId);
+          // Exactly one cable is nameable. `??` and not a reassignment because
+          // the FIRST cable of a crossing is the one that describes it — a wire
+          // between two copies is `Redefinition, ConnectionUsage,
+          // Redefinition`, and letting the far tie overwrite it puts the
+          // bookkeeping back on the label. `cables === 1` and not a truthy
+          // check because a second cable makes the label a lie rather than
+          // merely stale, and must silence it rather than pick a winner.
+          const cables = from.cables + (CONNECTION_KINDS.has(via) ? 1 : 0);
+          next.push({
+            node: reached,
+            provenance: from.provenance,
+            crossingVia: cables === 1 ? (from.crossingVia ?? via) : undefined,
+            cables,
+          });
+          continue;
+        }
+        impacted.push({
+          element: reached,
+          depth: hops,
+          from: from.provenance,
+          via: from.crossingVia ?? via,
+        });
+        deepest = hops;
+        next.push({ node: reached, provenance: reached, cables: 0 });
+      }
+    }
+    frontier = next;
+  }
+
+  // Only the depth limit can truncate, and only if a deeper run would REPORT
+  // something: the probe looks past the frontier for an unseen element of the
+  // reader's own, crossing implicit copies exactly as the walk would, because
+  // "the frontier is non-empty" is not the same question and answered it wrong
+  // on 45 of the 84 truncated results over the shipped UAV example.
+  const reachesMore = (): boolean => {
+    const probed = new Set<ElementId>(seen);
+    let probe = frontier.map((step) => step.node.id);
+    while (probe.length > 0) {
+      const onward: ElementId[] = [];
+      for (const fromId of probe) {
+        for (const { id: nextId } of impactNeighbours(model, fromId)) {
+          const target = model.get(nextId);
+          if (!target || isLibrary(target) || probed.has(nextId)) continue;
+          probed.add(nextId);
+          if (isUserElement(model, target)) return true;
+          onward.push(nextId);
+        }
+      }
+      probe = onward;
+    }
+    return false;
+  };
+  const truncated = hops === maxDepth && frontier.length > 0 && reachesMore();
+
+  return {
+    element,
+    depth: deepest,
+    impacted,
+    truncated,
+    libraryExcluded: libraryDropped.size,
+    implicitExcluded: implicitCrossed.size,
+  };
+}
+
+/**
+ * Namespace metaclasses: containers, not modelled things.
+ *
+ * They are `Definition`s to the metamodel, but "declared and never used" is not
+ * a judgement that means anything about a container — a package is where the
+ * model lives, not a thing the model uses. Nor would the rule pick out anything
+ * useful if it were applied: `import` makes a package an endpoint like any
+ * other (a `NamespaceImport` targets the package it imports and is sourced on
+ * the one importing), so of the packages in a model loaded with the bundled
+ * library, the only one with no edge at all is typically the reader's own root
+ * package — which would head every report with a finding that is never a
+ * finding.
+ */
+const NAMESPACE_KINDS = new Set(['Package', 'LibraryPackage']);
+
+/** Definitions that are declared and then never used. */
+export interface OrphanReport {
+  /**
+   * Definitions with no edge, in either direction, to anything in the reader's
+   * own model.
+   */
+  orphans: ElementRef[];
+  /** Definitions examined — the population `orphans` is a subset of. */
+  definitionsExamined: number;
+  /** Namespace packages skipped (see {@link NAMESPACE_KINDS}). */
+  packagesSkipped: number;
+  /** Bundled standard-library definitions skipped. */
+  libraryExcluded: number;
+  /** Implicit (re-derived) definitions skipped. */
+  implicitExcluded: number;
+}
+
+/**
+ * Definitions nothing uses: declared, complete, and connected to nothing.
+ *
+ * This is an INVENTORY, not a gate. Two validation rules already fail a check
+ * over broken references — `dangling-endpoint` (an error: a relationship whose
+ * endpoint id is not in the model) and `orphan-relationship` (a warning: a
+ * relationship element with no owner) — and both are about relationships that
+ * are wrong. Nothing here is wrong: a `part def` that no `part` instantiates
+ * parses, binds and validates clean, and may be a library-in-progress, a
+ * deliberate spare, or the leftover of a rename. So it is reported where a
+ * reader asks for it and never as a diagnostic.
+ *
+ * The reading is "a DEFINITION with no edge, either way, to anything else in
+ * the reader's model", and the narrowing is the whole value of the report. The naive reading — any element
+ * with no edges — is true of 67 of the 113 elements of the shipped UAV example,
+ * because attributes, documentation and untyped parts legitimately have none;
+ * a finding that fires on 59% of a clean model is not a finding. The narrow one
+ * returns exactly `FlyMission` and `FlightModes` there, and `Drive` and
+ * `VehicleStates` on the vehicle example: in both files, the behaviour the
+ * author wrote out and never performed.
+ *
+ * "Used" means used HERE. An edge whose far end is a bundled library element,
+ * or one of the tool's own implicit copies, is not the reader using anything —
+ * counting it would let a definition be kept off this list by content the
+ * reader cannot see, and would make this report disagree with every other one
+ * in the module about whose model it is.
+ *
+ * What it therefore CANNOT see, all for the same reason — the rule is
+ * deliberately conservative in BOTH directions, and an edge of any kind is
+ * enough to keep a definition off the list:
+ *
+ * - a definition that specialises something and that nothing instantiates:
+ *   `part def DeadSubclass :> Base` carries a `Subclassification`, so it counts
+ *   as used, by whatever reads the specialisation;
+ * - a definition used only through a feature chain the resolver did not
+ *   materialise;
+ * - dead content that is not a definition — an unreferenced attribute of a live
+ *   part is invisible here, which is the price of not reporting 67 things.
+ */
+export function orphanReport(model: Model): OrphanReport {
+  const orphans: ElementRef[] = [];
+  let definitionsExamined = 0;
+  let packagesSkipped = 0;
+  let libraryExcluded = 0;
+  let implicitExcluded = 0;
+
+  for (const el of model.all()) {
+    if (!isDefinition(el.eClass)) continue;
+    // Ordered so each candidate is counted under exactly one heading: the
+    // library's packages are the library's, not the reader's skipped namespaces.
+    if (isLibrary(el)) {
+      libraryExcluded++;
+      continue;
+    }
+    if (!isUserElement(model, el)) {
+      implicitExcluded++;
+      continue;
+    }
+    if (NAMESPACE_KINDS.has(el.eClass)) {
+      packagesSkipped++;
+      continue;
+    }
+    definitionsExamined++;
+    // One predicate over both directions and both ends: a definition that is
+    // typed by nothing but specialises something IS used, and an edge that only
+    // reaches the library or an implicit copy is NOT the reader using it. The
+    // far end is what decides, because `edgesOf(...).length` counts an edge the
+    // reader did not write as if they had.
+    const usedHere = model.edgesOf(el.id).some((edge) =>
+      [...(edge.source ?? []), ...(edge.target ?? [])].some((otherId) => {
+        if (otherId === el.id) return false;
+        const other = model.get(otherId);
+        return other != null && isUserElement(model, other);
+      }),
+    );
+    if (!usedHere) orphans.push(ref(model, el));
+  }
+
+  return { orphans, definitionsExamined, packagesSkipped, libraryExcluded, implicitExcluded };
+}
+
+/* ───────────────────────── Connectivity report ──────────────────────────── */
 
 /** One declared port as it occurs under one part usage. */
 export interface PortOccurrence {
@@ -481,7 +930,7 @@ function liftImplicitEndpoint(model: Model, id: ElementId): ElementId {
     if (!el || el.attrs.implicit !== true) return current;
     const redefined = model
       .edgesOf(current)
-      .find((e) => e.eClass === 'Redefinition' && (e.source ?? []).includes(current))
+      .find((e) => e.eClass === COPY_TIE && (e.source ?? []).includes(current))
       ?.target?.[0];
     if (redefined == null || seen.has(redefined) || !model.get(redefined)) return current;
     seen.add(redefined);

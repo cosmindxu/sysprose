@@ -3,7 +3,10 @@ import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import {
   ModelApi,
   countByMetaclass,
+  impactClosure,
+  isUserElement,
   modelMetrics,
+  orphanReport,
   requirementSatisfaction,
   traceabilityMatrix,
   whereUsed,
@@ -380,5 +383,447 @@ describe('analytics — connectivity when one definition is used twice', () => {
       [ids.n1, ids.pa],
       [ids.n2, ids.pb],
     ]);
+  });
+});
+
+/* ───────────────── Orphan inventory & transitive impact ─────────────────── */
+
+/**
+ * A chain of references three hops long, with a library user and one of the
+ * tool's own implicit copies hanging off the far end.
+ *
+ * `Base` is specialised by `Mid`, `Mid` types the part `leaf`, and `client`
+ * depends on `leaf` — so "what does a change to `Base` reach" has a different
+ * answer at every depth, which is the whole point of a closure over a report
+ * that only ever looked one hop out.
+ */
+function referenceChain() {
+  const model = new Model();
+  const f = new ModelFactory(model);
+  const pkg = f.pkg('P');
+  const base = f.partDef('Base', pkg.id);
+  const mid = f.partDef('Mid', pkg.id);
+  f.subclassification(mid.id, base.id);
+  const leaf = f.part('leaf', pkg.id, mid.id);
+  const client = f.part('client', pkg.id);
+  f.dependency(client.id, leaf.id, pkg.id);
+
+  // A library part typed by `Base`, and one of the tool's own implicit copies:
+  // both reference `Base` and neither is the reader's own model.
+  const libPart = model.create('PartUsage', {
+    declaredName: 'libPart',
+    ownerId: pkg.id,
+    attrs: { isLibrary: true },
+  });
+  model.create('FeatureTyping', {
+    ownerId: libPart.id,
+    source: [libPart.id],
+    target: [base.id],
+    attrs: { isLibrary: true },
+  });
+  const shadow = model.create('PartUsage', {
+    declaredName: 'shadow',
+    ownerId: pkg.id,
+    attrs: { implicit: true },
+  });
+  model.create('FeatureTyping', { ownerId: shadow.id, source: [shadow.id], target: [base.id] });
+
+  return {
+    model,
+    ids: { base: base.id, mid: mid.id, leaf: leaf.id, client: client.id },
+  };
+}
+
+describe('analytics — orphan inventory', () => {
+  it('names the definitions nothing uses, and leaves the used ones alone', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const used = f.partDef('Used', pkg.id);
+    f.part('u', pkg.id, used.id);
+    f.partDef('Unused', pkg.id);
+    f.actionDef('Dead', pkg.id);
+    const r = orphanReport(model);
+    expect(r.orphans.map((o) => o.declaredName)).toEqual(['Unused', 'Dead']);
+    expect(r.definitionsExamined).toBe(3);
+  });
+
+  it('is an inventory of definitions, not of every element without an edge', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const def = f.partDef('D', pkg.id);
+    const part = f.part('p', pkg.id, def.id);
+    // Attributes, documentation and untyped parts carry no edges at all — the
+    // naive reading flags 67 of the 113 elements of the shipped UAV example and
+    // buries the two findings that mean something.
+    f.attribute('mass', part.id, { value: 1 });
+    f.doc(part.id, 'a note');
+    f.part('untyped', pkg.id);
+    expect(orphanReport(model).orphans).toEqual([]);
+  });
+
+  it('does not call a namespace package an orphan', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    f.pkg('Nested', pkg.id);
+    const r = orphanReport(model);
+    expect(r.orphans).toEqual([]);
+    expect(r.packagesSkipped).toBe(2);
+    expect(r.definitionsExamined).toBe(0);
+  });
+
+  it('leaves the bundled library and the tool’s own copies out, and says so', () => {
+    const { model } = withLibraryAndImplicit();
+    const r = orphanReport(model);
+    // `A` and `B` are both typed by a part usage, so nothing is orphaned …
+    expect(r.orphans).toEqual([]);
+    expect(r.definitionsExamined).toBe(2);
+    // … and the library's own package is not the reader's dead code.
+    expect(r.libraryExcluded).toBe(1);
+    expect(r.packagesSkipped).toBe(1);
+  });
+
+  it('counts a definition as used only when the far end is the reader’s own', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+
+    // Used by one of the tool's own implicit copies and by nothing else …
+    const byImplicit = f.partDef('OnlyUsedByImplicit', pkg.id);
+    const shadow = model.create('PartUsage', {
+      declaredName: 'shadow',
+      ownerId: pkg.id,
+      attrs: { implicit: true },
+    });
+    model.create('FeatureTyping', { ownerId: shadow.id, source: [shadow.id], target: [byImplicit.id] });
+
+    // … and used by the bundled library and by nothing else.
+    const byLibrary = f.partDef('OnlyUsedByLibrary', pkg.id);
+    const libPart = model.create('PartUsage', {
+      declaredName: 'libPart',
+      ownerId: pkg.id,
+      attrs: { isLibrary: true },
+    });
+    model.create('FeatureTyping', {
+      ownerId: libPart.id,
+      source: [libPart.id],
+      target: [byLibrary.id],
+      attrs: { isLibrary: true },
+    });
+
+    // An implicit DEFINITION, so `implicitExcluded` is exercised by the report
+    // that publishes it rather than only by its neighbours.
+    model.create('PartDefinition', {
+      declaredName: 'ImplicitDef',
+      ownerId: pkg.id,
+      attrs: { implicit: true },
+    });
+
+    const r = orphanReport(model);
+    // Counting an edge the reader did not write would keep both of these off
+    // the list — kept alive by content the reader cannot see — and would make
+    // this report disagree with the impact closure about whose model it is.
+    expect(r.orphans.map((o) => o.declaredName)).toEqual([
+      'OnlyUsedByImplicit',
+      'OnlyUsedByLibrary',
+    ]);
+    expect(r.definitionsExamined).toBe(2);
+    expect(r.implicitExcluded).toBe(1);
+    expect(impactClosure(model, byImplicit.id, 9).impacted).toEqual([]);
+  });
+
+  it('does not call a definition that specialises something an orphan', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const base = f.partDef('Base', pkg.id);
+    f.part('b', pkg.id, base.id);
+    // `DeadSubclass` has an OUTGOING edge and no incoming one: nothing
+    // instantiates it, and the rule still counts it as used, by whatever reads
+    // the specialisation. It is the only shape that exercises that half of the
+    // rule — every definition in both shipped examples has no outgoing edge at
+    // all — and the doc comment records it as a recall limit rather than a bug.
+    const dead = f.partDef('DeadSubclass', pkg.id);
+    f.subclassification(dead.id, base.id);
+    expect(model.edgesTo(dead.id)).toHaveLength(0);
+    expect(model.edgesFrom(dead.id)).toHaveLength(1);
+    expect(orphanReport(model).orphans).toEqual([]);
+    expect(orphanReport(model).definitionsExamined).toBe(2);
+  });
+});
+
+describe('analytics — transitive impact closure', () => {
+  it('at depth 1 reports exactly what whereUsed reports', () => {
+    const { model, ids } = referenceChain();
+    const closure = impactClosure(model, ids.base);
+    const direct = whereUsed(model, ids.base).usedBy.filter((u) =>
+      isUserElement(model, model.get(u.id)!),
+    );
+    expect(closure.impacted.map((i) => i.element.id)).toEqual(direct.map((u) => u.id));
+    expect(closure.impacted.map((i) => i.element.id)).toEqual([ids.mid]);
+    expect(closure.impacted[0].depth).toBe(1);
+    expect(closure.impacted[0].via).toBe('Subclassification');
+    expect(closure.impacted[0].from.id).toBe(ids.base);
+  });
+
+  it('reaches one further hop per depth, and says when it stopped short', () => {
+    const { model, ids } = referenceChain();
+    expect(impactClosure(model, ids.base, 2).impacted.map((i) => i.element.id)).toEqual([
+      ids.mid,
+      ids.leaf,
+    ]);
+    // Two hops short of the end, `truncated` says so …
+    expect(impactClosure(model, ids.base, 2).truncated).toBe(true);
+    const three = impactClosure(model, ids.base, 3);
+    expect(three.impacted.map((i) => i.element.id)).toEqual([ids.mid, ids.leaf, ids.client]);
+    expect(three.impacted.map((i) => i.depth)).toEqual([1, 2, 3]);
+    // … and at the hop that finishes the chain it does NOT, even though the
+    // limit was reached with a non-empty frontier. `truncated` is a lookahead
+    // for something still to report, not "the frontier is non-empty": the
+    // depth-3 and depth-99 answers are the same three elements, so exactly one
+    // of them may call itself a prefix.
+    expect(three.truncated).toBe(false);
+    // Asking for more than there is closes the walk instead of inventing hops.
+    const all = impactClosure(model, ids.base, 99);
+    expect(all.impacted).toHaveLength(3);
+    expect(all.truncated).toBe(false);
+    // The depth reported is the deepest element reported — never the barren
+    // pass that found nothing, which would claim a fourth hop for a set whose
+    // furthest element is three hops out.
+    expect(all.depth).toBe(3);
+    expect(all.depth).toBe(Math.max(...all.impacted.map((i) => i.depth)));
+  });
+
+  it('reads a depth that is not a usable number as 1 rather than as none', () => {
+    const { model, ids } = referenceChain();
+    const one = impactClosure(model, ids.base, 1);
+    // `--depth abc` parses to NaN, and `Math.max(1, NaN)` is NaN: the walk that
+    // clamp produced ran zero hops and reported "nothing uses this", which is
+    // the one answer a bad flag must never be allowed to fabricate.
+    for (const bad of [Number.NaN, 0, -3, 1.9]) {
+      const r = impactClosure(model, ids.base, bad);
+      expect(r.impacted.map((i) => i.element.id)).toEqual(one.impacted.map((i) => i.element.id));
+      expect(r.depth).toBe(1);
+    }
+    // `Infinity` is not a mistake, though: it is how you ask for the closure.
+    const unlimited = impactClosure(model, ids.base, Number.POSITIVE_INFINITY);
+    expect(unlimited.impacted).toHaveLength(3);
+    expect(unlimited.truncated).toBe(false);
+  });
+
+  it('crosses a connection whose two ends are ports of different definitions', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const outDef = f.portDef('PowerOut', pkg.id);
+    const inDef = f.portDef('PowerIn', pkg.id);
+    const src = f.partDef('Src', pkg.id);
+    const dst = f.partDef('Dst', pkg.id);
+    const o = f.port('o', src.id, { direction: 'out', typeId: outDef.id });
+    const i = f.port('i', dst.id, { direction: 'in', typeId: inDef.id });
+    const sys = f.partDef('Sys', pkg.id);
+    const s = f.part('s', sys.id, src.id);
+    const d = f.part('d', sys.id, dst.id);
+    // `connect s.o to d.i` wires the CONNECTION to usage-scoped copies of the
+    // two ports, not to the declarations: a walk that treats an implicit copy
+    // as a wall cannot cross a wire at all, and answered "what breaks if I
+    // change this port" with the port's own type and nothing on the far end.
+    const copy = (declared: string, ownerId: string) => {
+      const c = model.create('PortUsage', {
+        declaredName: model.get(declared)!.declaredName,
+        ownerId,
+        attrs: { implicit: true },
+      });
+      model.create('Redefinition', { ownerId: c.id, source: [c.id], target: [declared] });
+      return c;
+    };
+    f.connect(copy(o.id, s.id).id, copy(i.id, d.id).id, { ownerId: sys.id });
+
+    const closure = impactClosure(model, o.id, Number.POSITIVE_INFINITY);
+    expect(closure.impacted.map((x) => x.element.id)).toContain(i.id);
+    // And the report says the WIRE got it there. The last edge of the path is
+    // the far copy's `Redefinition` to the port it stands for — bookkeeping the
+    // reader never wrote — so naming that labelled a wire crossing with the one
+    // edge on the path that is not in the file, and "what breaks if I change
+    // this port" read as a redefinition of something.
+    const far = closure.impacted.find((x) => x.element.id === i.id)!;
+    expect(far.via).toBe('ConnectionUsage');
+    expect(far.from.id).toBe(o.id);
+    // Three hops: out to the copy, across the wire, back down to the far
+    // declaration. The label is lifted, the hop count is not.
+    expect(far.depth).toBe(3);
+    // The copies are crossed, not reported: nothing in the answer is an id the
+    // reader cannot find in their own file …
+    expect(closure.impacted.every((x) => model.get(x.element.id)!.attrs.implicit !== true)).toBe(
+      true,
+    );
+    expect(closure.implicitExcluded).toBe(2);
+    // … and each hop costs one, so depth 1 is still exactly what `whereUsed`
+    // reports of the reader's own model.
+    expect(impactClosure(model, o.id).impacted.map((x) => x.element.id)).toEqual([outDef.id]);
+    // The relationship itself is how the walk got there, never a destination.
+    expect(closure.impacted.some((x) => model.get(x.element.id)!.eClass === 'ConnectionUsage')).toBe(
+      false,
+    );
+  });
+
+  it('loses the wire to the typing detour when the ends are copies of one port definition', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    // ONE definition for both ends — `port def PowerPort` used by an out port
+    // and an in port, which is how both shipped examples and most real models
+    // are written.
+    const portDef = f.portDef('PowerPort', pkg.id);
+    const src = f.partDef('Src', pkg.id);
+    const dst = f.partDef('Dst', pkg.id);
+    const o = f.port('o', src.id, { direction: 'out', typeId: portDef.id });
+    const i = f.port('i', dst.id, { direction: 'in', typeId: portDef.id });
+    const sys = f.partDef('Sys', pkg.id);
+    const s = f.part('s', sys.id, src.id);
+    const d = f.part('d', sys.id, dst.id);
+    const copy = (declared: string, ownerId: string) => {
+      const c = model.create('PortUsage', {
+        declaredName: model.get(declared)!.declaredName,
+        ownerId,
+        attrs: { implicit: true },
+      });
+      model.create('Redefinition', { ownerId: c.id, source: [c.id], target: [declared] });
+      return c;
+    };
+    f.connect(copy(o.id, s.id).id, copy(i.id, d.id).id, { ownerId: sys.id });
+
+    const closure = impactClosure(model, o.id, Number.POSITIVE_INFINITY);
+    const far = closure.impacted.find((x) => x.element.id === i.id)!;
+    // The far port IS in the answer — but the walk got there up and down the
+    // shared definition in two hops, not across the wire in three, so the
+    // visited set closed it before the cable arrived. The label says so.
+    expect(far.depth).toBe(2);
+    expect(far.via).toBe('FeatureTyping');
+    expect(far.from.id).toBe(portDef.id);
+    // Which is the limit, stated as a measurement rather than as prose: on a
+    // model written this way NOTHING in the report is reached across a wire,
+    // however deep the walk goes. `connectivityReport` is the wiring question.
+    expect(closure.impacted.some((x) => x.via === 'ConnectionUsage')).toBe(false);
+    // The copies are still crossed and still counted — the conduit works, it is
+    // simply never the shortest way to anything here.
+    expect(closure.implicitExcluded).toBe(2);
+  });
+
+  it('refuses to name a cable when the crossing went through a hub on two of them', () => {
+    // A copy wired by TWO connections is a through-route: the crossing that
+    // enters it on one cable can leave on the other and land on a port that
+    // shares no wire with the query. Carrying the first cable's label to that
+    // landing reported "N1::p1 —ConnectionUsage→ N2::p2" about two ports with
+    // no edge between them — a meaningless label replaced by a false one.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const hub = f.partDef('Hub', pkg.id);
+    const n1 = f.partDef('N1', pkg.id);
+    const n2 = f.partDef('N2', pkg.id);
+    const h = f.port('h', hub.id, { typeId: f.portDef('PA', pkg.id).id });
+    const p1 = f.port('p1', n1.id, { typeId: f.portDef('PB', pkg.id).id });
+    const p2 = f.port('p2', n2.id, { typeId: f.portDef('PC', pkg.id).id });
+    const top = f.partDef('Top', pkg.id);
+    const hubUsage = f.part('hub', top.id, hub.id);
+    const copy = (declared: string, ownerId: string) => {
+      const c = model.create('PortUsage', {
+        declaredName: model.get(declared)!.declaredName,
+        ownerId,
+        attrs: { implicit: true },
+      });
+      model.create('Redefinition', { ownerId: c.id, source: [c.id], target: [declared] });
+      return c;
+    };
+    // ONE copy of `h` under the hub usage, carrying both cables — which is what
+    // the mapper materialises for two connections naming the same feature
+    // chain, and what makes the through-route possible at all.
+    const hCopy = copy(h.id, hubUsage.id);
+    f.connect(hCopy.id, copy(p1.id, f.part('n1', top.id, n1.id).id).id, { ownerId: top.id });
+    f.connect(hCopy.id, copy(p2.id, f.part('n2', top.id, n2.id).id).id, { ownerId: top.id });
+    expect(
+      model.edgesOf(p1.id).filter((e) => [...(e.source ?? []), ...(e.target ?? [])].includes(p2.id)),
+    ).toEqual([]);
+
+    const closure = impactClosure(model, p1.id, Number.POSITIVE_INFINITY);
+    // One cable is still named: `h` really is wired to `p1`.
+    const near = closure.impacted.find((x) => x.element.id === h.id)!;
+    expect(near.via).toBe('ConnectionUsage');
+    expect(near.from.id).toBe(p1.id);
+    // Two cables are not. The far port is still REACHED — a change to `p1` can
+    // reach it through the hub — but the report falls back to the literal last
+    // edge rather than claiming a wire that does not exist.
+    const far = closure.impacted.find((x) => x.element.id === p2.id)!;
+    expect(far.via).not.toBe('ConnectionUsage');
+    expect(far.via).toBe('Redefinition');
+  });
+
+  it('leaves a reader’s own edge onto an implicit element labelled with that edge', () => {
+    // The carry is a whitelist of connection kinds, not "anything that is not
+    // the copy tie". An implicit element carries the tool's `FeatureTyping` as
+    // well as its `Redefinition`, so a blacklist let that typing edge capture
+    // the label and suppress the `Dependency` the reader actually wrote — the
+    // same defect as labelling a wire by the copy tie, one edge family over.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const base = f.partDef('Base', pkg.id);
+    const client = f.part('client', pkg.id);
+    const shadow = model.create('PartUsage', {
+      declaredName: 'shadow',
+      ownerId: pkg.id,
+      attrs: { implicit: true },
+    });
+    model.create('FeatureTyping', { ownerId: shadow.id, source: [shadow.id], target: [base.id] });
+    f.dependency(client.id, shadow.id, pkg.id);
+
+    const closure = impactClosure(model, base.id, Number.POSITIVE_INFINITY);
+    expect(
+      closure.impacted.map((x) => `${x.depth} ${x.via} ${x.element.declaredName}`),
+    ).toEqual(['2 Dependency client']);
+    expect(closure.implicitExcluded).toBe(1);
+  });
+
+  it('filters the frontier to the reader’s own elements at every depth', () => {
+    const { model, ids } = referenceChain();
+    // whereUsed hands back all three users of `Base`; the closure keeps one.
+    expect(whereUsed(model, ids.base).usedBy).toHaveLength(3);
+    const closure = impactClosure(model, ids.base, 99);
+    expect(closure.libraryExcluded).toBe(1);
+    expect(closure.implicitExcluded).toBe(1);
+    expect(closure.impacted.some((i) => i.element.declaredName === 'libPart')).toBe(false);
+    expect(closure.impacted.some((i) => i.element.declaredName === 'shadow')).toBe(false);
+  });
+
+  it('terminates on a reference cycle instead of walking it forever', () => {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const a = f.part('a', pkg.id);
+    const b = f.part('b', pkg.id);
+    const c = f.part('c', pkg.id);
+    f.dependency(a.id, b.id, pkg.id);
+    f.dependency(b.id, c.id, pkg.id);
+    f.dependency(c.id, a.id, pkg.id);
+    // Bounded FIRST, and deliberately: the walk is a synchronous loop, so
+    // without the visited set vitest's per-test timer cannot interrupt it and
+    // removing the guard wedges the worker instead of failing. At depth 5 a
+    // ring of three either reports two elements or never returns.
+    const bounded = impactClosure(model, a.id, 5);
+    expect(bounded.impacted.map((i) => i.element.id).sort()).toEqual([b.id, c.id].sort());
+    const closure = impactClosure(model, a.id, 99);
+    expect(closure.impacted.map((i) => i.element.id).sort()).toEqual([b.id, c.id].sort());
+    expect(closure.truncated).toBe(false);
+  });
+
+  it('answers for an id that is not in the model instead of throwing', () => {
+    const { model } = referenceChain();
+    const closure = impactClosure(model, 'no-such-id', 3);
+    expect(closure.impacted).toEqual([]);
+    expect(closure.depth).toBe(0);
+    expect(closure.truncated).toBe(false);
   });
 });
