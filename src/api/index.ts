@@ -30,6 +30,7 @@ export type {
 
 // Analytics
 export {
+  isUserElement,
   countByMetaclass,
   modelMetrics,
   requirementSatisfaction,
@@ -51,6 +52,7 @@ export type {
   UsageRef,
   WhereUsedReport,
   ConnectivityReport,
+  PortOccurrence,
   ConstraintReport,
   ConstraintReportEntry,
   ExecutionReport,

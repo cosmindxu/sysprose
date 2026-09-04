@@ -55,14 +55,24 @@ function ref(model: Model, el: ElementRecord): ElementRef {
 /* ───────────────────────────── Counts & metrics ─────────────────────────── */
 
 /**
+ * Is `el` the user's own content — as opposed to context the tool put there?
+ *
  * Implicit features (usage-scoped connector endpoints materialized by the
  * feature-chain resolver, `attrs.implicit === true`) — and the elements they own
  * (e.g. their `Redefinition` to the type-owned prototype) — are re-derived
  * internals, not user-authored model content. They are excluded from
  * user-facing counts and metrics so a text-authored IBD does not inflate the
  * element census.
+ *
+ * Exported because every report in this module owes the reader the same answer.
+ * It was applied to the metrics and left off the requirement, traceability and
+ * connectivity reports, which is how the app's Requirement-satisfaction button
+ * came to call a fully-covered model 7.7% covered: the divisor was the bundled
+ * library's requirements. A report that answers "how big / how covered / how
+ * connected is MY model" has to agree with every other one about whose model it
+ * is, so the predicate is one function rather than a habit.
  */
-const isCountable = (model: Model, el: ElementRecord): boolean =>
+export const isUserElement = (model: Model, el: ElementRecord): boolean =>
   el.attrs.implicit !== true &&
   // The bundled standard library is not the user's model. It is ~38,700
   // elements, so counting it made an 8-element model report 38,770 — three
@@ -72,11 +82,14 @@ const isCountable = (model: Model, el: ElementRecord): boolean =>
   el.attrs.isLibrary !== true &&
   !(el.ownerId != null && model.get(el.ownerId)?.attrs.implicit === true);
 
+/** True when `el` is a bundled standard-library element. */
+const isLibrary = (el: ElementRecord): boolean => el.attrs.isLibrary === true;
+
 /** Number of elements per metaclass, e.g. `{ PartUsage: 3, Package: 1 }`. */
 export function countByMetaclass(model: Model): Record<string, number> {
   const out: Record<string, number> = {};
   for (const el of model.all()) {
-    if (!isCountable(model, el)) continue;
+    if (!isUserElement(model, el)) continue;
     out[el.eClass] = (out[el.eClass] ?? 0) + 1;
   }
   return out;
@@ -103,7 +116,7 @@ export interface ModelMetrics {
 }
 
 export function modelMetrics(model: Model): ModelMetrics {
-  const all = model.all().filter((el) => isCountable(model, el));
+  const all = model.all().filter((el) => isUserElement(model, el));
   let nodeCount = 0;
   let relationshipCount = 0;
   let maxDepth = 0;
@@ -143,15 +156,30 @@ export interface SatisfactionReport {
   satisfied: number;
   /** satisfied / total (0 when there are no requirements). */
   coverage: number;
+  /**
+   * Bundled standard-library requirements left out of `total`.
+   *
+   * Reported rather than dropped in silence: the ratio is only meaningful if
+   * the reader can see what the divisor is, and on a model bound against the
+   * full library the excluded figure dwarfs the model's own requirements.
+   */
+  libraryExcluded: number;
+  /** Implicit (re-derived) requirement copies left out of `total`. */
+  implicitExcluded: number;
 }
 
 /**
  * For each requirement, the elements that satisfy it (via `Satisfy` edges whose
  * `target` is the requirement and whose `source` is the satisfier), and whether
  * it is covered. Overall `coverage` = satisfied / total.
+ *
+ * Only the USER's requirements are counted. Counting the bundled library's made
+ * the shipped UAV example — every one of its requirements satisfied — report
+ * 2/26 = 7.7% coverage on the app's own Requirement-satisfaction button.
  */
 export function requirementSatisfaction(model: Model): SatisfactionReport {
-  const reqs = model.ofKind(...REQUIREMENT_KINDS);
+  const candidates = model.ofKind(...REQUIREMENT_KINDS);
+  const reqs = candidates.filter((r) => isUserElement(model, r));
   const requirements: RequirementStatus[] = reqs.map((r) => {
     const satisfierIds = model
       .edgesTo(r.id)
@@ -173,6 +201,8 @@ export function requirementSatisfaction(model: Model): SatisfactionReport {
     total: requirements.length,
     satisfied,
     coverage: requirements.length === 0 ? 0 : satisfied / requirements.length,
+    libraryExcluded: candidates.filter(isLibrary).length,
+    implicitExcluded: candidates.filter((r) => !isLibrary(r) && !isUserElement(model, r)).length,
   };
 }
 
@@ -189,12 +219,26 @@ export interface TraceabilityMatrix {
   cells: boolean[][];
   /** Flattened list of the existing links. */
   links: Array<{ from: string; to: string; relationshipId: string }>;
+  /**
+   * Bundled standard-library row and column candidates left out of the matrix.
+   *
+   * A matrix is read by scanning it, so a library row is worse than a wrong
+   * number: it is a line the reader has to dismiss by hand, every time. The
+   * count says how many were dismissed for them.
+   */
+  libraryExcluded: number;
+  /** Implicit (re-derived) row and column candidates left out of the matrix. */
+  implicitExcluded: number;
 }
 
 /**
  * Build a from×to traceability matrix: rows are elements of `fromKind`, columns
  * are elements of `toKind`, and a cell is set when a `relKind` edge runs from the
  * row element (source) to the column element (target).
+ *
+ * Rows and columns are the USER's elements. Unfiltered, the shipped UAV example
+ * built an 18-row PartUsage axis for the 7 parts it declares, the other 11
+ * coming from the bundled library.
  */
 export function traceabilityMatrix(
   model: Model,
@@ -202,15 +246,38 @@ export function traceabilityMatrix(
   toKind: string,
   relKind: string,
 ): TraceabilityMatrix {
-  const rows = model.ofKind(fromKind);
-  const columns = model.ofKind(toKind);
-  const edges = model.all().filter((e) => e.eClass === relKind);
+  const rowCandidates = model.ofKind(fromKind);
+  const columnCandidates = model.ofKind(toKind);
+  const rows = rowCandidates.filter((r) => isUserElement(model, r));
+  const columns = columnCandidates.filter((c) => isUserElement(model, c));
+
+  // One pass over the edges instead of a linear scan per cell: the matrix is
+  // rows × columns cells and the old `edges.find` inside it made the whole
+  // report O(rows·columns·edges) on a model that also carries the library's
+  // edges. First edge wins, which is the element order `find` returned.
+  //
+  // NUL joins the pair because an id is only guaranteed to be a string: a
+  // locally parsed model uses `newId()`, but an id can also arrive from an
+  // api-json import or the OMG REST client, where it is whatever the server
+  // called it. Written as an escape rather than a literal control character so
+  // the separator is visible to the next reader — and so the file stays text to
+  // the tools that grep it.
+  const PAIR = '\u0000';
+  const byPair = new Map<string, ElementRecord>();
+  for (const e of model.all()) {
+    if (e.eClass !== relKind) continue;
+    for (const from of e.source ?? []) {
+      for (const to of e.target ?? []) {
+        const key = `${from}${PAIR}${to}`;
+        if (!byPair.has(key)) byPair.set(key, e);
+      }
+    }
+  }
+
   const links: TraceabilityMatrix['links'] = [];
   const cells = rows.map((r) =>
     columns.map((c) => {
-      const edge = edges.find(
-        (e) => (e.source ?? []).includes(r.id) && (e.target ?? []).includes(c.id),
-      );
+      const edge = byPair.get(`${r.id}${PAIR}${c.id}`);
       if (edge) {
         links.push({ from: r.id, to: c.id, relationshipId: edge.id });
         return true;
@@ -218,6 +285,15 @@ export function traceabilityMatrix(
       return false;
     }),
   );
+  // De-duplicated by id: `fromKind` and `toKind` are often the SAME kind (a
+  // parts × parts dependency view, requirements × requirements over `Derive`),
+  // and a plain concatenation then counts every candidate twice — reporting 22
+  // dismissed library parts on the UAV example, which has 11. An exclusion
+  // count exists to be trusted at a glance, so it has to be a count of
+  // elements, not of slots.
+  const candidates = [
+    ...new Map([...rowCandidates, ...columnCandidates].map((e) => [e.id, e])).values(),
+  ];
   return {
     fromKind,
     toKind,
@@ -226,6 +302,8 @@ export function traceabilityMatrix(
     columns: columns.map((c) => ref(model, c)),
     cells,
     links,
+    libraryExcluded: candidates.filter(isLibrary).length,
+    implicitExcluded: candidates.filter((e) => !isLibrary(e) && !isUserElement(model, e)).length,
   };
 }
 
@@ -304,50 +382,230 @@ const CONNECTION_KINDS = new Set([
   'Allocation',
 ]);
 
+/** One declared port as it occurs under one part usage. */
+export interface PortOccurrence {
+  /** The part usage the port occurs under. */
+  part: ElementRef;
+  /** The port, as declared on that part's type (or on the part itself). */
+  port: ElementRef;
+}
+
 /** Ports, connections, and which ports are left unconnected. */
 export interface ConnectivityReport {
   portCount: number;
   connectionCount: number;
   connectedPortCount: number;
+  /**
+   * Declared ports that NO usage of them is wired to anything.
+   *
+   * Read it at the granularity it is: a port declared on a `part def` used
+   * three times is one entry here, and it stays off this list as soon as any
+   * one of the three is connected. The per-usage question — "which end is
+   * dangling in THIS part?" — is {@link unconnectedPortUsages}.
+   */
   unconnectedPorts: ElementRef[];
+  /**
+   * Every (part usage, declared port) pair with nothing wired to it.
+   *
+   * `unconnectedPorts` cannot answer this on its own: when one `part def` is
+   * used twice, connecting one usage's port marks the DECLARATION connected,
+   * so a genuinely dangling end in the other usage disappears from a report
+   * whose whole job is to surface it. Ports occur per usage, so the dangling
+   * ends are reported per usage too.
+   *
+   * Occurrences come from each part usage's types (and their supertypes), plus
+   * any port the part usage declares itself. A port on a definition that is
+   * never used has no occurrence and appears only in `unconnectedPorts`.
+   */
+  unconnectedPortUsages: PortOccurrence[];
   connections: Array<{
     connection: ElementRef;
+    /**
+     * The endpoint ids exactly as the model records them — usage-scoped copies
+     * included. Two usages of one definition have DISTINCT endpoints here;
+     * `sourcePorts`/`targetPorts` is where they become the same declared port.
+     */
     source: string[];
+    /** As recorded, like `source`. */
     target: string[];
+    /** `source` lifted onto the declared ports counted by `portCount`. */
+    sourcePorts: string[];
+    /** `target` lifted onto the declared ports counted by `portCount`. */
+    targetPorts: string[];
   }>;
+  /** Bundled standard-library ports and connections left out of the counts. */
+  libraryExcluded: number;
+  /**
+   * Implicit usage-scoped port copies left out of `portCount`: they are
+   * duplicates of a declared port, not ports of their own.
+   */
+  implicitExcluded: number;
+  /**
+   * Connection endpoints that named such a copy and were resolved back to the
+   * feature it redefines.
+   *
+   * Reported because it is the difference between "this model has 14 connected
+   * ports" and "this report quietly rewrote 18 endpoint references to get
+   * there" — and because a model with implicit copies but zero resolved
+   * endpoints is the signature of the lift having stopped working.
+   *
+   * "Feature", not "port": the lift runs on every endpoint of every connection
+   * kind, and an `Allocation` or `Flow` end can be a part, an item or an
+   * attribute.
+   */
+  implicitResolved: number;
+}
+
+/**
+ * The declared feature an implicit connector endpoint stands for, or `id` itself.
+ *
+ * `connect a.p to b.p` materialises a usage-scoped copy of each port under the
+ * PART and wires the connection to the copies, each carrying a `Redefinition`
+ * to the port declared on the part's type. The chain is followed to its end
+ * (a nested feature chain makes a copy of a copy) and guarded against a cycle.
+ *
+ * It is a FEATURE, not necessarily a port: `Allocation` and `Flow` ends can be
+ * parts, items or attributes, and they are lifted by the same rule.
+ *
+ * The lift is a mapping, not a replacement. Two usages of one part definition
+ * lift onto the SAME declared port, so substituting the lifted id for the raw
+ * one would turn `connect a.p to b.p` into a self-edge on `T::p` — the
+ * definition-edge collapse the endpoint materialisation exists to prevent.
+ * Callers keep both ends of the mapping.
+ */
+function liftImplicitEndpoint(model: Model, id: ElementId): ElementId {
+  const seen = new Set<ElementId>([id]);
+  let current = id;
+  for (;;) {
+    const el = model.get(current);
+    if (!el || el.attrs.implicit !== true) return current;
+    const redefined = model
+      .edgesOf(current)
+      .find((e) => e.eClass === 'Redefinition' && (e.source ?? []).includes(current))
+      ?.target?.[0];
+    if (redefined == null || seen.has(redefined) || !model.get(redefined)) return current;
+    seen.add(redefined);
+    current = redefined;
+  }
+}
+
+/**
+ * Every (part usage, declared port) pair in the user's model.
+ *
+ * A port is declared once and OCCURS once per usage of the thing that declares
+ * it. `part def Node { in port a; out port b; }` with two `Node` parts has two
+ * ports and four ends, and only the ends can be dangling — which is why the
+ * connectivity report cannot answer "what is unwired?" from the declarations
+ * alone.
+ *
+ * Occurrences are collected from the part usage's types and their supertypes
+ * (a `part def` that specialises another inherits its ports), cycle-guarded,
+ * plus any port the part usage declares itself. Library ports are skipped by
+ * the same predicate as everywhere else, so walking into the implicit library
+ * supertypes every `part def` gets costs a traversal, not rows.
+ */
+function portOccurrences(model: Model): Array<{ part: ElementRecord; port: ElementRecord }> {
+  const out: Array<{ part: ElementRecord; port: ElementRecord }> = [];
+  for (const part of model.ofKind('PartUsage')) {
+    if (!isUserElement(model, part)) continue;
+    const seenPorts = new Set<ElementId>();
+    const collect = (ownerId: ElementId): void => {
+      for (const child of model.children(ownerId)) {
+        if (child.eClass !== 'PortUsage' || !isUserElement(model, child)) continue;
+        if (seenPorts.has(child.id)) continue;
+        seenPorts.add(child.id);
+        out.push({ part, port: child });
+      }
+    };
+    collect(part.id);
+    const seenTypes = new Set<ElementId>([part.id]);
+    const queue = model.typesOf(part.id);
+    while (queue.length > 0) {
+      const type = queue.shift()!;
+      if (seenTypes.has(type.id)) continue;
+      seenTypes.add(type.id);
+      collect(type.id);
+      queue.push(...model.typesOf(type.id));
+    }
+  }
+  return out;
 }
 
 /**
  * Inventory of ports (PortUsage) and connection-like edges, flagging ports not
  * referenced by any connection endpoint as unconnected.
+ *
+ * Counts the USER's ports, and resolves every endpoint onto them. The filter
+ * alone is not enough and is worse than nothing: on the shipped UAV example the
+ * 9 connections reference only implicit copies, so dropping the copies from the
+ * port list — without lifting the endpoints that name them — turns "37 ports,
+ * 23 unconnected" into "15 ports, 15 unconnected", which is a new wrong answer
+ * and a more believable one. With the lift it is 15 ports, 14 connected, and
+ * the one genuinely dangling port is the finding worth reading.
+ *
+ * Each connection carries BOTH forms of its endpoints: `source`/`target` as the
+ * model records them, and `sourcePorts`/`targetPorts` lifted onto the ports the
+ * inventory counts. Reporting only the lifted form would make `connect a.p to
+ * b.p` between two usages of one definition read as a self-edge on the
+ * definition's port; reporting only the raw form leaves ids in the list that
+ * are absent from the inventory, which is unusable to a caller joining the two.
  */
 export function connectivityReport(model: Model): ConnectivityReport {
-  const ports = model.ofKind('PortUsage');
-  const connections = model
+  const portCandidates = model.ofKind('PortUsage');
+  const ports = portCandidates.filter((p) => isUserElement(model, p));
+  const connectionCandidates = model
     .all()
     .filter(
       (e) => CONNECTION_KINDS.has(e.eClass) && ((e.source?.length ?? 0) + (e.target?.length ?? 0) > 0),
     );
+  const connections = connectionCandidates.filter((c) => isUserElement(model, c));
 
   const connectedPortIds = new Set<string>();
-  for (const c of connections) {
-    for (const s of c.source ?? []) connectedPortIds.add(s);
-    for (const t of c.target ?? []) connectedPortIds.add(t);
-  }
+  // Which OCCURRENCE each endpoint wires up, keyed `<part usage> NUL <declared
+  // port>`: the lifted id alone cannot say which of a definition's usages the
+  // endpoint belonged to, and that is exactly what a dangling end is.
+  const OCC = '\u0000';
+  const wiredOccurrences = new Set<string>();
+  let implicitResolved = 0;
+  const lift = (ids: readonly ElementId[]): ElementId[] =>
+    ids.map((id) => {
+      const lifted = liftImplicitEndpoint(model, id);
+      if (lifted !== id) implicitResolved++;
+      connectedPortIds.add(lifted);
+      const owner = model.get(id)?.ownerId;
+      if (owner != null) wiredOccurrences.add(`${owner}${OCC}${lifted}`);
+      return lifted;
+    });
+  const endpoints = connections.map((c) => {
+    const source = [...(c.source ?? [])];
+    const target = [...(c.target ?? [])];
+    return {
+      connection: ref(model, c),
+      source,
+      target,
+      sourcePorts: lift(source),
+      targetPorts: lift(target),
+    };
+  });
+
   const unconnectedPorts = ports
     .filter((p) => !connectedPortIds.has(p.id))
     .map((p) => ref(model, p));
+  const unconnectedPortUsages = portOccurrences(model)
+    .filter((o) => !wiredOccurrences.has(`${o.part.id}${OCC}${o.port.id}`))
+    .map((o) => ({ part: ref(model, o.part), port: ref(model, o.port) }));
 
+  const candidates = [...portCandidates, ...connectionCandidates];
   return {
     portCount: ports.length,
     connectionCount: connections.length,
     connectedPortCount: ports.filter((p) => connectedPortIds.has(p.id)).length,
     unconnectedPorts,
-    connections: connections.map((c) => ({
-      connection: ref(model, c),
-      source: [...(c.source ?? [])],
-      target: [...(c.target ?? [])],
-    })),
+    unconnectedPortUsages,
+    connections: endpoints,
+    libraryExcluded: candidates.filter(isLibrary).length,
+    implicitExcluded: candidates.filter((e) => !isLibrary(e) && !isUserElement(model, e)).length,
+    implicitResolved,
   };
 }
 

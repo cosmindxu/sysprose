@@ -898,6 +898,53 @@ still labelled `<stdin>`) and in `test/unit/text.load.test.ts`, where a real
 `model.txt.bak` must still warn, so the fix cannot decay into deleting the
 check.
 
+**Three reports counted the bundled library as the author's model.** The metrics
+have always excluded the library and the tool's own implicit features, and
+report the library separately so its presence is visible; requirement
+satisfaction, the traceability matrix and the connectivity report simply never
+got that filter. On the shipped UAV example — whose two requirements are both
+satisfied — the app's Requirement-satisfaction button therefore read 2 of 26,
+7.7% covered, because the divisor was 24 library requirements; the matrix built
+an 18-row parts axis for the 7 parts the file declares; and connectivity counted
+37 ports where 15 are written down. The predicate is now one exported function
+(`isUserElement`) that all of them call, and each report says how many
+candidates it left out rather than shrinking in silence.
+
+Connectivity needed a second half, and the filter alone would have been worse
+than the bug. Of those 37 ports, 8 are the library's and 14 are the
+usage-scoped copies `connect a.p to b.p` materialises under the part — and the
+9 connections reference ONLY the copies. Filtering without lifting gives 15
+ports and 0 connected: still wrong, no longer obviously wrong. Every endpoint is
+now followed through its `Redefinition` to the port it redefines, which is 18
+resolved references, 14 connected ports, and one genuinely unconnected
+`DataLink::antenna` — the finding the report exists to surface.
+
+The lift is reported as a mapping, not as a substitution, because two usages of
+one `part def` lift onto the SAME declared port: `connect n1.p to n2.p` would
+read as a self-edge on the definition's port, which is precisely the collapse
+the usage-scoped endpoints exist to prevent. Each connection therefore carries
+its endpoints twice — as the model records them, and lifted onto the ports the
+inventory counts — so an id in the list is joinable without any identity being
+thrown away. The same reuse shape is why `unconnectedPorts` is not the whole
+answer: connect one usage's port and the DECLARATION is connected, so
+`part n1 : Node; part n2 : Node; connect n1.b to n2.a;` leaves `n1.a` and
+`n2.b` wired to nothing while a declaration-level report says the model is
+fully wired. Ports occur once per usage, so the dangling ends are now reported
+per usage as well, in `unconnectedPortUsages` — one entry on the UAV example
+(`AirVehicle::radio.antenna`), two on the reuse shape.
+
+Every figure quoted above is pinned, not remembered: on the real model in
+`test/integration/uav-example.test.ts` (2 of 2 requirements with 24 library ones
+excluded, 15/9/14 ports, 18 resolved endpoints, 7 matrix rows, 11 library parts
+excluded once rather than once per axis) and on small hand-built models in
+`test/unit/api.analytics.test.ts` (the library-and-implicit fixture, and the
+reused-definition one the UAV example cannot express because each of its part
+definitions is used exactly once). Removing either half of the connectivity fix
+moves `connectedPortCount`; hard-coding any exclusion count to zero, dropping
+the de-duplication, or rewriting the recorded endpoints to the lifted ones each
+move an assertion too, which is what makes them tripwires rather than
+comments.
+
 ### Known limitations, recorded rather than hidden
 
 **Re-homing cannot recover the faulty declaration itself.** It repairs
