@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildSampleModel, Model, ModelFactory, type ElementRecord } from '@core/index';
 import { parseModel, serializeModel } from '@text/index';
+import { validate } from '@validation/index';
 
 /** Attributes that carry semantic meaning for round-trip comparison. */
 const KEY_ATTRS = [
@@ -55,6 +56,10 @@ const KEY_ATTRS = [
   // `multiplicity` (finding D1/H11) and the serializer re-quotes whatever the
   // grammar cannot read bare, so it belongs in the round-trip signature.
   'unit',
+  // The language tag on `comment … locale "en-GB"`. Listed here so the snippet
+  // table below fails on a serializer that stops writing it, not only the
+  // targeted tests.
+  'locale',
 ] as const;
 
 /** A stable, order-independent signature of an element. */
@@ -496,6 +501,21 @@ describe('round-trip — hand-written snippets', () => {
           doc /* bound connector */
         }
         doc overview /* the big picture */
+      }`,
+    ],
+    [
+      'a comment keeps its name, its about targets and its locale',
+      `package Cm {
+        part def Engine;
+        part def Wheel;
+        comment Note about Engine, Wheel locale "en-GB" /* what the reader should know */
+      }`,
+    ],
+    [
+      'a quote inside a locale or a language tag survives the save',
+      `package Cq {
+        comment N locale "en\\"GB" /* an awkward tag */
+        rep R language "a\\"b" /* an awkward language */
       }`,
     ],
   ];
@@ -1257,5 +1277,117 @@ describe('round-trip — requirement cross-relationships (verify / refine / trac
     const clause = model.all().find((e) => e.attrs.requirementRole === 'verify');
     expect(clause?.eClass).toBe('ConstraintUsage');
     expect(clause?.declaredName).toBe('R');
+  });
+});
+
+describe('round-trip — a comment keeps what it points at', () => {
+  /** parse → serialize → parse, asserting a clean parse each way. */
+  function reparse(src: string): { text: string; model: Model } {
+    const { model, diagnostics } = parseModel(src);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const text = serializeModel(model);
+    const rt = parseModel(text);
+    expect(rt.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+    return { text, model: rt.model };
+  }
+  const comment = (m: Model): ElementRecord => m.all().find((e) => e.eClass === 'Comment')!;
+
+  it('keeps the comment name', () => {
+    const { text, model } = reparse(`package C { comment Note /* a human explanation */ }`);
+    expect(text).toContain('comment Note /* a human explanation */');
+    expect(comment(model).declaredName).toBe('Note');
+  });
+
+  it('keeps the about targets, in order', () => {
+    const { text, model } = reparse(
+      `package C { part def Engine; part def Wheel; comment about Engine, Wheel /* both */ }`,
+    );
+    expect(text).toContain('comment about Engine, Wheel /* both */');
+    expect(comment(model).attrs.about).toEqual(['Engine', 'Wheel']);
+  });
+
+  it('keeps the locale', () => {
+    const { text, model } = reparse(`package C { comment locale "en-GB" /* a lift, not a lorry */ }`);
+    expect(text).toContain('comment locale "en-GB" /* a lift, not a lorry */');
+    expect(comment(model).attrs.locale).toBe('en-GB');
+  });
+
+  it('keeps all three together, and is idempotent', () => {
+    const src = `package C {
+      part def Engine;
+      part def Wheel;
+      comment Note about Engine, Wheel locale "en-GB" /* what the reader should know */
+    }`;
+    const { text, model } = reparse(src);
+    expect(text).toContain(
+      'comment Note about Engine, Wheel locale "en-GB" /* what the reader should know */',
+    );
+    const c = comment(model);
+    expect(c.declaredName).toBe('Note');
+    expect(c.attrs.about).toEqual(['Engine', 'Wheel']);
+    expect(c.attrs.locale).toBe('en-GB');
+    expect(serializeModel(model)).toBe(text);
+  });
+
+  it('quotes a comment name the grammar cannot read bare, so it comes back as a name', () => {
+    // The grammar's `Name` is `ID | UNRESTRICTED_NAME | SoftKeyword`, so a HARD
+    // keyword and a name with a space in it only survive quoted. Unquoted,
+    // `comment part /* … */` is a mismatched token and the name is lost
+    // outright — which is the loss this asserts against, not the quote marks.
+    for (const name of ['part', 'my note']) {
+      const { text, model } = reparse(`package C { comment '${name}' /* a note */ }`);
+      expect(text).toContain(`comment '${name}' /* a note */`);
+      expect(comment(model).declaredName).toBe(name);
+    }
+  });
+
+  it('escapes a locale that contains a quote or a backslash', () => {
+    // The value came out of a STRING terminal, so it may contain that
+    // terminal's own delimiters. Written bare, `"en"GB"` ends the string early
+    // and the re-parse dies on `lexer/unterminated-string`, taking the rest of
+    // the file into recovery — reparse() asserts a clean re-parse, and these
+    // two assertions say the value itself came back whole.
+    for (const tag of ['en"GB', 'en\\GB']) {
+      const { model } = reparse(`package C { comment N locale ${JSON.stringify(tag)} /* b */ }`);
+      expect(comment(model).attrs.locale).toBe(tag);
+    }
+  });
+
+  it('keeps an empty locale, and a blank name, rather than laundering them away', () => {
+    // Presence, not truth. `locale ""` is a tag the author wrote; `comment ''`
+    // is a name the validator reports as blank. A save that quietly deleted
+    // either would erase the very evidence a reader needs — for the blank name,
+    // its own error.
+    const { text, model } = reparse(`package C { comment '' locale "" /* b */ }`);
+    expect(text).toContain(`comment '' locale "" /* b */`);
+    expect(comment(model).declaredName).toBe('');
+    expect(comment(model).attrs.locale).toBe('');
+    expect(validate(model).some((d) => d.ruleId === 'blank-name')).toBe(true);
+  });
+
+  it('puts a named comment in its namespace, exactly as doc and rep already are', () => {
+    // Keeping the name is what makes this true: before the fix a Comment was
+    // anonymous and could never collide. Pinned so the new error is a recorded
+    // consequence rather than a surprise.
+    const { model } = parseModel(`package C { comment N /* a */ comment N /* b */ }`);
+    const dups = validate(model).filter((d) => d.ruleId === 'duplicate-name');
+    expect(dups).toHaveLength(2);
+  });
+
+  it('escapes a rep language tag the same way', () => {
+    // Same STRING terminal, same helper: `language "a\\"b"` used to save as
+    // `language "a"b"` and break the file on re-parse.
+    const { model } = reparse(`package C { rep R language "a\\"b" /* x */ }`);
+    const rep = model.all().find((e) => e.eClass === 'TextualRepresentation')!;
+    expect(rep.attrs.language).toBe('a"b');
+  });
+
+  it('leaves a bare comment bare', () => {
+    const { text, model } = reparse(`package C { comment /* nothing special */ }`);
+    expect(text).toContain('comment /* nothing special */');
+    const c = comment(model);
+    expect(c.declaredName).toBeUndefined();
+    expect(c.attrs.about).toBeUndefined();
+    expect(c.attrs.locale).toBeUndefined();
   });
 });

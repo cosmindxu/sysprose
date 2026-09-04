@@ -1303,7 +1303,58 @@ puts it in. A dozen mutations were run against the finished guard, including
 each of the four that had slipped past the first draft; every one failed the
 case that names it, and the tree was restored after each.
 
+**A comment came back without what it was about.** `comment C about Engine,
+Wheel locale "en-GB" /* … */` parsed clean and saved as a bare `comment
+/* … */`: the mapper kept the body and dropped the name, the `about` targets
+and the locale. A save deleted most of the statement, and re-parsing that save
+reported nothing, because what came back was still valid text — the same
+laundering the faulted-save work above refused, arriving through a statement
+that never faulted. Prose written for a human reader rides on this statement, so
+the loss was not cosmetic: a note saying which parts it explains came back
+explaining nothing.
+
+All three parts are kept on the element now and written back in grammar order.
+The targets are stored as the raw qualified names, the shape `@Meta about X`
+already stores, because a comment may point at something declared later in the
+file or in another one; nothing resolves them to elements, and nothing here
+pretends they are resolved. The name goes through the same quoting rule as every
+other declared name, because the grammar's `Name` admits only an identifier, a
+quoted name or a soft keyword: a comment named `part` or `my note` written bare
+does not come back as a name at all — it is a mismatched token, and the rest of
+the line goes to recovery. The locale is escaped rather than wrapped in bare
+quotes, because it came out of a string literal and may contain that literal's
+own delimiters; the same escaping was applied to the `rep … language "…"` tag
+beside it, which had the unwritten version of the same fault and turned
+`language "a\"b"` into a file that no longer lexes.
+
+Two guards were written for presence rather than truth, which is the same
+distinction in miniature: `locale ""` is a tag the author wrote, and `comment ''`
+is a name the validator reports as blank. Testing either for truthiness would
+have deleted it on save — and for the blank name, deleted its own error report
+along with it.
+
+Keeping the name has one consequence worth stating: a comment now occupies a
+slot in its namespace, exactly as `doc` and `rep` already do. Text that checked
+clean before can therefore report an error now — two comments named `N` in one
+package are a duplicate-name error, and a comment named `Real` shadows the
+library type of that name. That is the correct reading of a declared name, and
+it is pinned by a test rather than left to be discovered. One golden moved with
+the fix, and it moved for the right reason — the unterminated-comment fixture's
+recovery residue reads `comment never ends`, so its `comment` element now
+carries the name `never` where the golden used to record an anonymous one.
+
 ### Known limitations, recorded rather than hidden
+
+**`doc … locale "…"` still drops its language tag.** The `doc` statement takes
+the same `locale` tag as `comment`, and the mapper still ignores it: `doc D
+locale "fr-FR" /* … */` saves as `doc D /* … */`. The name it already kept;
+the tag it does not. It was left alone with the comment fix above because a
+`doc` body has a second owner — on a requirement it is folded into that
+element's own text attribute instead of becoming a `Documentation` element — so
+keeping the tag means first deciding where it lives in that case. `doc ''` also
+still loses its blank name on save, and with it the blank-name error — the
+laundering the comment fix above closed, left standing one statement away for
+the same reason.
 
 **The impact closure loses a wire to a shorter detour whenever a connection's
 ends were copied.** It crosses a connection — that is what the conduit is for,

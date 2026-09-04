@@ -85,13 +85,34 @@ export function serializeElement(model: Model, id: ElementId, indent = 0): strin
     return `${pad}doc${name} /* ${attrStr(el, 'body')} */`;
   }
   if (el.eClass === 'Comment') {
-    return `${pad}comment /* ${attrStr(el, 'body')} */`;
+    // Grammar order: `comment (name)? ('about' A, B)? ('locale' STRING)? /* … */`.
+    // The name goes through the same quoting rule as every other declared name
+    // because the grammar's `Name` is only `ID | UNRESTRICTED_NAME | SoftKeyword`:
+    // a name that is a HARD keyword (`part`, `comment`) or is not a plain
+    // identifier (`my note`) does not parse back as a name at all — it becomes a
+    // mismatched token and the rest of the line is swept into recovery. (Soft
+    // keywords like `about` and `locale` are in `Name`, so Chevrotain resolves
+    // those toward the name on its own; they are quoted only because
+    // `RESERVED_WORDS` does not distinguish the two, which costs nothing.)
+    //
+    // The guards below test for PRESENCE, not truth: an empty locale is a
+    // language tag the author wrote, and an empty name is a name the validator
+    // reports as blank. Dropping either on save would launder the file exactly
+    // the way the missing name/about/locale did.
+    const parts = ['comment'];
+    if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
+    const about = el.attrs.about;
+    if (Array.isArray(about) && about.length) parts.push('about', about.map(String).join(', '));
+    const locale = el.attrs.locale;
+    if (typeof locale === 'string') parts.push('locale', quoteString(locale));
+    parts.push(`/* ${attrStr(el, 'body')} */`);
+    return `${pad}${parts.join(' ')}`;
   }
   if (el.eClass === 'TextualRepresentation') {
     const lang = el.attrs.language;
     if (typeof lang === 'string' && lang.length) {
       const repName = el.declaredName ? `rep ${quoteName(el.declaredName)} ` : '';
-      return `${pad}${repName}language "${lang}" /* ${attrStr(el, 'body')} */`;
+      return `${pad}${repName}language ${quoteString(lang)} /* ${attrStr(el, 'body')} */`;
     }
     return `${pad}/* ${attrStr(el, 'body')} */`;
   }
@@ -197,6 +218,23 @@ const RESERVED_WORDS = new Set<string>([
 function quoteName(name: string): string {
   if (PLAIN_IDENT.test(name) && !RESERVED_WORDS.has(name)) return name;
   return `'${name.replace(/([\\'])/g, '\\$1')}'`;
+}
+
+/**
+ * Write a value as a grammar STRING (`"…"`).
+ *
+ * Every caller here has a value that came back OUT of a STRING terminal, so it
+ * may already contain the characters that terminal is delimited by. The
+ * terminal is `/"(\\.|[^"\\])*"/`, so a bare `"` or `\` inside the value ends
+ * the string early or eats the next character; `language "a\"b"` used to save
+ * as `language "a"b"` and the re-parse died on `lexer/unterminated-string`,
+ * losing the rest of the file to recovery. `JSON.stringify` escapes exactly
+ * what that terminal escapes — `"`, `\` and the control characters, which the
+ * grammar reads back through the same `\\.` branch — so the value survives the
+ * round trip byte for byte.
+ */
+function quoteString(value: string): string {
+  return JSON.stringify(value);
 }
 
 function nameOf(el: ElementRecord): string {

@@ -1445,12 +1445,26 @@ class Mapper {
     switch (node.$type) {
       case 'Doc':
         return this.mapDoc(node as Doc, ownerId);
-      case 'Comment':
+      case 'Comment': {
+        // `comment C about A, B locale "en-GB" /* … */`. The name, the `about`
+        // targets and the locale are all in the grammar and were all dropped
+        // here, so a save rewrote the statement as a bare `comment` and the
+        // reader lost what it was about. `about` holds raw qualified names —
+        // the same shape `@Meta about X` stores (see mapAnnotation) — because
+        // a comment may point at something declared later, or outside the file.
+        const cm = node as CommentNode;
+        const cmAttrs: Record<string, AttrValue> = { body: stripBlockComment(cm.body) };
+        if (cm.about && cm.about.length) cmAttrs.about = [...cm.about];
+        // Presence, not truth: `locale ""` is a tag the author wrote, and
+        // dropping it here is the same silent loss this case exists to fix.
+        if (cm.locale !== undefined) cmAttrs.locale = cm.locale;
         this.create('Comment', {
           ownerId: ownerId ?? undefined,
-          attrs: { body: stripBlockComment((node as CommentNode).body) },
+          declaredName: unquoteName(cm.name),
+          attrs: cmAttrs,
         });
         return;
+      }
       case 'TextualRep': {
         // A free-standing `/* … */` block comment, or a `rep`/`language` textual
         // representation. Captured as a TextualRepresentation element so it
