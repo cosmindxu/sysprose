@@ -20,6 +20,7 @@
     "report": "tsx scripts/gen-test-report.ts",
     "interop": "tsx scripts/pilot-roundtrip.ts",
     "check": "tsx scripts/sysml-check.ts",
+    "sysprose": "tsx scripts/sysprose.ts",
     "campaign": "vitest run test/campaign",
     "codes": "tsx scripts/gen-diagnostic-codes.ts",
     "bench": "tsx scripts/agent-repair-bench.ts",

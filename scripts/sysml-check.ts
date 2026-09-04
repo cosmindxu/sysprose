@@ -20,6 +20,7 @@
 
 import { readFileSync } from 'node:fs';
 import { checkText, type CheckReport } from '../src/text/check';
+import { runMain } from './lib/exit';
 
 const USAGE = `sysml-check — check SysML v2 textual notation
 
@@ -139,12 +140,6 @@ async function main(): Promise<number> {
   return ok ? 0 : 1;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (err: unknown) => {
-    // Never exit 0 on an unexpected failure: a silent pass is the one outcome
-    // that would let a broken model through.
-    process.stderr.write(`sysml-check: internal error: ${err instanceof Error ? err.stack : String(err)}\n`);
-    process.exit(2);
-  },
-);
+// Ends the run the same way `sysprose` does — see scripts/lib/exit.ts for why
+// `process.exit` truncated `--json` through a pipe.
+runMain('sysml-check', main);

@@ -1038,6 +1038,125 @@ synchronous loop, so a per-test timer cannot reclaim it — which is why that ca
 is asserted at a bounded depth first, where a ring of three either reports two
 elements or hangs the run.
 
+**Every one of those reports was reachable only from a browser.** `npm run
+check` could say a file was valid; nothing could say what was IN it. The
+reporting functions are pure, exported and tested, so the gap was never the
+analysis — it was that a person at a terminal had no way to call one. `npm run
+sysprose -- <subcommand> <file>` is that call: one command with one subcommand
+per question — how big, what is in it, are the requirements covered, what traces
+to what, which ports are wired, what a change reaches, what nothing uses —
+each a thin shell over the same function the app calls, so a figure read in a
+terminal and the same figure read in the app cannot disagree.
+
+The contract is `sysml-check`'s, adopted rather than re-invented: 0 clean, 1
+findings, 2 usage or I/O, `-` for stdin, `--json` for the agent-facing form,
+stdout for data and stderr for everything about the run. One word of it had to
+be redefined, because these subcommands REPORT and do not judge: `orphans`
+finding four unused definitions is an answer, not a failure, so exit 1 is
+reserved for a model that did not load cleanly — the report is then of what
+error recovery salvaged, and a `degraded` banner on stderr says so while the
+partial report still goes to stdout. The two refusals are the other half of
+that: a model that PARSED and produced no elements exits 2 rather than reporting
+an empty success, because a mistyped path and an empty model must not look
+alike, and an element reference that matches several elements exits 2 with the
+candidates rather than reporting on the first one. The word *parsed* is doing
+work there. Checking the empty case first made a file of pure garbage report
+`no elements … nothing to report` and exit 2, which says the reader's command
+line was wrong about a file that is unreadable, and it discarded every
+diagnostic that would have said so. A file that did not parse is broken, not
+empty: it is exit 1, with the parse errors above the report.
+
+Findings go to stderr for every exit code, not only the two that fail. They used
+to be printed on the "nothing loaded" and "degraded" branches alone, so anything
+that left the report *ok* — a warning — never reached the reader at all:
+analysing `model.notsysml` printed a clean, confident set of figures and never
+mentioned that the loader did not recognise the file, while `npm run check` on
+the same file said so plainly. The report is of a file, and what is wrong with
+the file belongs beside it.
+
+The one defect that could have shipped silently was in how the command ENDS.
+Both CLIs here closed with `main().then((code) => process.exit(code))`, and
+`process.exit` does not drain a pending `process.stdout.write` — a write past
+the pipe buffer is asynchronous, so a report piped into `jq`, into `$( … )`, or
+into an agent harness was cut at the buffer's edge and the run still exited 0.
+Redirecting the same command to a file was whole, because a file write is
+synchronous, which is why every test passed: they all captured a payload small
+enough to fit. `elements --include-library` delivered 143,788 bytes of an
+8,194,617-byte answer as valid-looking, unparseable JSON. Setting
+`process.exitCode` and returning lets the event loop finish the write first;
+`scripts/lib/exit.ts` now owns that ending for both commands, together with the
+broken-pipe guard the change makes necessary, because the defect arrived by
+copying the idiom and the idiom is what had to change.
+
+The element listing needed a filter the app's Grid view does not. `buildGrid`
+excludes the bundled library and stops there, which is right for a view of
+everything the tool holds and wrong for a command answering "what is in it":
+fourteen of its ninety-four rows for the UAV example are the usage-scoped
+connector endpoints the feature-chain resolver materialises, so the listing
+reported twenty-nine `PortUsage`s for a model whose `stats` — and every other
+subcommand, all of which go through `isUserElement` — says has fifteen. Eighty
+is the answer, and the two subcommands now agree about whose model it is.
+
+There are two library flags and they are two different knobs, which is the kind
+of thing that is obvious once written down and invisible in a flag list.
+`--no-library` skips BINDING: it changes the model, and it is the same flag with
+the same meaning as the checker's. `--include-library` changes REPORTING: the
+library is bound and then listed alongside the model. Only the element listing
+can honour the second one — the analysis reports exclude the library by
+construction and each states its own excluded count — so it is rejected on the
+others rather than accepted and quietly ignored, which is the one behaviour that
+would let a reader believe they had asked for something.
+
+Naming an element is a cascade — an id, then the language's own name resolution,
+then a unique suffix of a qualified name — and only the last step is filtered to
+the reader's own elements. It has to be: `powerIn` matches ten elements in the
+shipped UAV example and five of them are the tool's usage-scoped copies, so an
+unfiltered candidate list asks the reader to choose between ids that are not in
+their file. The first two steps are deliberately left unfiltered, since an exact
+id or a fully-resolved name is unambiguous and asking where a library type is
+used is a fair question.
+
+The traceability axes are read off the model rather than fixed per relationship.
+A `satisfy` view joins a part usage to a requirement DEFINITION in the shipped
+UAV example and to a requirement USAGE in a model that declares its requirements
+as usages; either pair, hard-coded, reports an empty matrix for the other shape,
+and an empty matrix is indistinguishable from "nothing is traced". So the row
+and column metaclasses are the ones the model's own relationships of that family
+actually connect, printed above the matrix, with `--from` / `--to` to override
+them for the axis a reader wants to see whether anything reaches at all — and
+an override naming a metaclass the model has none of is REFUSED, because
+honouring it produces exactly the empty matrix the derivation exists to
+prevent, and a typo would then read as a finding about the model.
+
+One argument grammar, in `scripts/lib/args.ts`, because there were three and no
+two agreed: the checker switches on whole tokens and cannot express a flag with
+a value at all, the repair bench reads one with `argv[++i]` and never checks that
+there was one — a trailing `--rounds` becomes `NaN` and the run reports a number
+nobody asked for — and the corpus runner scans for literals. The new one takes
+`--flag`, `--flag value` and `--flag=value`, rejects an unknown `-`-prefixed
+token instead of reading it as a file name, and rejects a missing value instead
+of inventing one. It is declarative because the help text is rendered from the
+same specs the parser reads, which is what keeps a flag from existing without
+being documented.
+
+`test/campaign/cli.sysprose.test.ts` spawns the real script the way the
+checker's contract test does and pins the exit code, the JSON key set and the
+figures. The figures are the point: `requirements` reporting 2 of 2 rather than
+2 of 26, and `connectivity` reporting 14 connected ports rather than 0, are the
+two defects the previous commits removed, pinned again at the surface a person
+actually uses — routing either subcommand back at an unfiltered population fails
+here, as does unfiltering the ambiguity candidates, accepting the reporting flag
+where it cannot be honoured, letting a degraded model exit 0, or reporting an
+empty model as a success. Three of its cases pin things a report is worth
+nothing without, and each replaced a run that looked clean: a payload larger
+than the pipe buffer arriving whole and parsing; a file the loader does not
+recognise saying so on stderr, with `-` as the control that must not; and a
+file that failed to parse exiting 1 with its diagnostics rather than 2 as "no
+elements". Every one of the six `--relation` presets is exercised over a
+fixture that declares all six relationships, since five of them appear nowhere
+else in the repo and a preset string that stopped matching would otherwise ship
+as a silent empty matrix.
+
 ### Known limitations, recorded rather than hidden
 
 **The impact closure loses a wire to a shorter detour whenever a connection's
