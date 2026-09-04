@@ -1406,6 +1406,59 @@ resolving the names in `about` against scope. That is a resolver pass this
 module does not run, so the behaviour is asserted as a fact in the tests rather
 than left as an accident.
 
+**An agent can now ask what guidance applies to the element it is holding.**
+Marking a statement as a `prompt` is only half of the idea; the half that pays
+is being able to collect the prompts that govern one element without knowing
+where anybody chose to write them down. `promptsFor(model, id)` answers that,
+and the reason it is worth having is reuse: guidance written once on a port
+definition — check the fuel line before changing this port — is guidance about
+every port of that type, and an agent handed one port should not have to know
+that someone wrote it up a level.
+
+Three sources count as applying, because they are the three ways one element is
+about another here: the element itself, its types, and its owners. The walk
+takes both edges from every place it reaches, so a supertype's guidance reaches
+a derived part and a package's guidance reaches everything inside it, and it
+collects from a scope and its direct children only — guidance nested two levels
+down was written about the thing that owns it, and hoovering up a subtree would
+make every package-level question return the whole file. The answer is ordered
+nearest first, and at equal distance a type comes before an owner: a type says
+what the element IS, where an owner only says where it sits. That preference is
+decided across a whole ring of the walk rather than inside one element's own two
+edges, so it still holds two hops out, where the type of an owner and the owner
+of a type meet. Each prompt appears once, at the nearest place it was found, so
+a caller can read down the list and stop. The words come with it, from whichever
+of the three channels an author can write them in, because a prompt reported
+without its words is worse than one not reported at all — the caller acts as
+though nothing had been asked of it. A comment that names a different element is
+not one of those channels: since the previous commit that target survives, and
+reporting Engine's documentation as the instruction addressed to this element is
+the exact failure carrying the words was meant to prevent.
+
+One consequence is stated rather than discovered: taking both edges uniformly
+also reaches the owners of types, so a part typed by a definition from another
+package inherits that package's guidance. That is the rule carried to its
+conclusion — you used a definition from there — and it is why the walk is one
+rule and not two. It also means the attachment label alone does not separate the
+two kinds of owner: a caller who wants only its own containment chain has to
+intersect what the prompt is attached to with the element's ancestors, and the
+test says so rather than leaving it for that caller to discover.
+
+The walk obeys the rules the impact closure already follows, for the reasons
+that report learned them. The bundled library is dropped at every hop and the
+drop is counted: the library is tens of thousands of elements that all reference
+each other, and one unfiltered hop through a library type turns "what guidance
+applies to my part" into a walk of the whole standard library. The tool's own
+implicit copies go the other way — crossed, counted, never reported — because a
+connection through a feature chain materialises a usage-scoped copy of each port
+tied to its declaration, and a walk that stopped at the copy could not reach the
+definition where the guidance was written. Neither counter includes the element
+asked about; that is the question, not an exclusion. And a visited set, not the
+shape of the data, is what makes it terminate: `part def A :> B` with `part def
+B :> A` is an illegal model that parses, and a walk that assumed a tree away
+would hang on it rather than answer — which is what the test named "terminates
+on a cycle in the type graph" holds the walk to.
+
 ### Known limitations, recorded rather than hidden
 
 **`doc … locale "…"` still drops its language tag.** The `doc` statement takes

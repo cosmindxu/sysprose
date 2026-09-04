@@ -29,6 +29,7 @@ import {
   discoverTriggers as simTriggers,
   solve,
   evaluateMoEs,
+  statementKindOf,
   type ConstraintCheck,
   type MeasureResult,
   type SimStep,
@@ -711,6 +712,258 @@ export function impactClosure(model: Model, id: ElementId, depth = 1): ImpactRep
     depth: deepest,
     impacted,
     truncated,
+    libraryExcluded: libraryDropped.size,
+    implicitExcluded: implicitCrossed.size,
+  };
+}
+
+/* ────────────────────── The guidance that applies here ─────────────────── */
+
+/**
+ * The last hop that reached the element a prompt hangs on.
+ *
+ * `self` is the element asked about; `type` is a typing or specialization edge
+ * (`Model.typesOf`); `owner` is containment. A prompt two hops out is labelled
+ * by the LAST hop only — guidance on the package that owns a part's definition
+ * is reached `owner` at distance 2 — because a caller reading a list wants to
+ * know what the guidance is attached to, and the whole path is recoverable from
+ * {@link ApplicablePrompt.attachedTo} if they need it.
+ */
+export type PromptRelation = 'self' | 'owner' | 'type';
+
+/** One prompt that applies to an element, and where it came from. */
+export interface ApplicablePrompt {
+  /** The element carrying the `prompt` statement kind. */
+  prompt: ElementRef;
+  /**
+   * Its guidance, as text: the body of the first documentation or comment
+   * child that has one and is addressed to the prompt itself, else the
+   * prompt's own `text` attribute, else the empty string.
+   *
+   * Carried here rather than left for the caller to fetch, because every
+   * caller of this function wants the words and there is no shared accessor
+   * for them in the tree — the same three-line walk is hand-rolled in the
+   * properties panel and the grid builder, and a fourth copy in a CLI would be
+   * a fourth chance to read a different channel.
+   */
+  text: string;
+  /** The element the prompt hangs on: the query, an owner, or a type. */
+  attachedTo: ElementRef;
+  /** How `attachedTo` was reached — see {@link PromptRelation}. */
+  via: PromptRelation;
+  /** Hops from the element asked about to `attachedTo`; 0 means "written on it". */
+  distance: number;
+}
+
+/** What guidance applies to one element. */
+export interface PromptReport {
+  /** The element asked about. */
+  element: ElementRef;
+  /** Every prompt that applies, nearest first. */
+  prompts: ApplicablePrompt[];
+  /** Bundled standard-library elements dropped from the walk. */
+  libraryExcluded: number;
+  /**
+   * Elements the tool re-derived — implicit copies and what they own — walked
+   * through but never reported.
+   */
+  implicitExcluded: number;
+}
+
+/**
+ * Whether an annotating child is addressed to the element that owns it.
+ *
+ * A `doc`, and a bare `comment`, annotate their owner: there is nothing else
+ * they could be about. But `comment about Engine /* … *\/` written inside a
+ * prompt is about Engine — the author aimed it somewhere else, and since the
+ * previous commit the target survives the round-trip in `attrs.about` instead
+ * of being silently dropped. Reading it as the prompt's own words would hand an
+ * agent documentation written about a DIFFERENT element as the instruction
+ * addressed to it, which is the one failure this whole text field exists to
+ * prevent. Names, not ids: `about` holds raw qualified names, so a comment that
+ * names its own owner (legal, and redundant) is matched on the last segment.
+ */
+function annotatesOwner(el: ElementRecord, child: ElementRecord): boolean {
+  const about = child.attrs.about;
+  if (!Array.isArray(about) || about.length === 0) return true;
+  const names = new Set([el.declaredName, el.declaredShortName].filter((n) => n !== undefined));
+  return about.some((t) => typeof t === 'string' && names.has(t.split('::').pop()?.trim() ?? ''));
+}
+
+/**
+ * The guidance text a prompt carries, from whichever channel it is written in.
+ *
+ * An author can write those words in three disjoint places in this tool and no
+ * two writers agree: a `doc` under most elements becomes a `Documentation`
+ * child with a `body`, a `doc` under a REQUIREMENT is folded into that
+ * element's own `text` attribute instead, and a free-standing comment keeps its
+ * words in `body`. A reader that knew only one of them would silently report a
+ * prompt with no words, which is worse than reporting no prompt: the caller
+ * would act as though nothing had been asked of it. The last read — the
+ * prompt's own `body` — is a defence for models built through the API rather
+ * than parsed, where an element that is not a `Comment` can still be given one;
+ * no authored text produces it (`map-to-model.ts` writes `body` only on
+ * `Comment` and `TextualRepresentation`, neither of which can carry `#prompt`).
+ */
+function promptText(model: Model, el: ElementRecord): string {
+  for (const child of model.children(el.id)) {
+    if (child.eClass === 'Documentation' || child.eClass === 'Comment') {
+      if (!annotatesOwner(el, child)) continue;
+      const body = child.attrs.body;
+      if (typeof body === 'string' && body !== '') return body;
+    }
+  }
+  const text = el.attrs.text;
+  if (typeof text === 'string' && text !== '') return text;
+  const body = el.attrs.body;
+  return typeof body === 'string' ? body : '';
+}
+
+/**
+ * Every prompt that applies to `id` — guidance written for an agent working on
+ * this element — nearest first, each with where it came from.
+ *
+ * A `prompt` is a statement kind (`@semantics/statement-kind`): an element
+ * tagged `#prompt`, whose words are guidance addressed to a machine reader
+ * rather than a rule that binds or an explanation for a person. The point of
+ * making it findable is REUSE. Guidance written once on a port definition —
+ * "check the fuel line before changing this port" — is guidance about every
+ * port of that type, and an agent that has just been handed one port should not
+ * have to know that somebody wrote it up one level. So the question this
+ * answers is not "what is attached to this element" but "what governs it".
+ *
+ * WHAT COUNTS AS APPLYING. Three sources, and they are the three ways one
+ * element is ABOUT another here: the element itself (a prompt written on it, or
+ * one written inside it), its types (what it IS), and its owners (where it
+ * sits). The walk takes both edges from every scope it reaches, transitively,
+ * so a supertype's guidance reaches a derived part, and a package's guidance
+ * reaches everything in it. Prompts are collected from a scope and from the
+ * scope's DIRECT children only: guidance nested two levels down was written
+ * about the thing that owns it, and hoovering up a subtree would make every
+ * package-level query return the whole file.
+ *
+ * That uniform walk has one consequence worth stating out loud rather than
+ * discovering: it also reaches the OWNERS OF TYPES. A part typed by a
+ * definition that lives in another package inherits that package's guidance.
+ * That is the rule taken to its conclusion — you used a definition from there,
+ * so what that package says about its contents is addressed to you — and it is
+ * the reason the walk is one rule and not two. It also means `via: 'owner'` is
+ * not by itself the element's own owner chain: the owner of a type wears the
+ * same label. A caller that wants only its own containment chain has to
+ * intersect `attachedTo` with `model.ancestors(id)`; `via` and `distance` will
+ * not separate them.
+ *
+ * ORDER. Nearest first, by hop count, and at equal distance a type comes before
+ * an owner: a type says what the element IS, an owner only says where it sits,
+ * so of two statements the same distance away the type's is the more specific.
+ * That holds at EVERY distance, not just the first hop: each frontier is sorted
+ * before it is walked, so the type of an owner outranks the owner of a type two
+ * hops out as well. Each prompt is reported ONCE, at the nearest place it was
+ * found — and, at equal distance, along the preferred edge, since the sort runs
+ * before the collecting — so a caller can read down the list and stop.
+ *
+ * THE SAME RULES {@link impactClosure} FOLLOWS, for the same reasons. Bundled
+ * library elements are dropped at every hop, with no flag to turn it off: the
+ * library is ~38,700 elements that all reference each other, and one unfiltered
+ * hop through a library type turns "what guidance applies to my part" into a
+ * walk of the whole standard library. What was dropped is counted so the reader
+ * can see the walk was pruned. The tool's own implicit copies are treated the
+ * other way — walked THROUGH, counted, never reported — because `connect a.p to
+ * b.q` materialises a usage-scoped copy of each port tied to the declaration by
+ * a `Redefinition`, and a walk that stopped at the copy could not reach the port
+ * definition where the guidance was written. They are conduits, not
+ * destinations. Neither counter includes the element asked about: that is the
+ * question, not an exclusion.
+ *
+ * A model is a graph, not a tree — `part def A :> B` and `part def B :> A` is
+ * illegal and parses anyway — so a visited set, not the shape of the data, is
+ * what makes this terminate.
+ *
+ * Pure: reading a model never writes to it.
+ */
+export function promptsFor(model: Model, id: ElementId): PromptReport {
+  const el = model.get(id);
+  const element: ElementRef = el
+    ? ref(model, el)
+    : { id, eClass: '«unknown»', qualifiedName: '' };
+
+  /** An element the guidance may hang on, and how the walk got to it. */
+  interface Scope {
+    el: ElementRecord;
+    via: PromptRelation;
+    distance: number;
+  }
+
+  const prompts: ApplicablePrompt[] = [];
+  const visited = new Set<ElementId>(el ? [id] : []);
+  // Nearest wins: a prompt reached as a child of a near scope is not reported
+  // again when the walk meets it as a scope of its own further out.
+  const reported = new Set<ElementId>();
+  // Counted as SETS, not as increments, for the reason `impactClosure` gives:
+  // an exclusion count larger than the model is a number nobody can check.
+  const libraryDropped = new Set<ElementId>();
+  const implicitCrossed = new Set<ElementId>();
+
+  let frontier: Scope[] = el ? [{ el, via: 'self', distance: 0 }] : [];
+  while (frontier.length > 0) {
+    // Every step out of this whole level, gathered before any of it is taken,
+    // so that "a type before an owner" can be decided across the level rather
+    // than inside one scope's own two edges (see ORDER above). Deciding it per
+    // scope orders the first hop right and then loses the rule: at distance two
+    // the level is the concatenation of each scope's steps, so the owner of a
+    // type — queued by whichever scope the walk reached first — would come out
+    // ahead of the type of an owner, and would also be the one that claims the
+    // element if both lead to the same place.
+    const candidates: Scope[] = [];
+    for (const scope of frontier) {
+      const attachedTo = ref(model, scope.el);
+      for (const candidate of [scope.el, ...model.children(scope.el.id)]) {
+        if (reported.has(candidate.id)) continue;
+        // The library and implicit filters apply to the PROMPT as well as to
+        // the walk, so a library prompt reached from the element asked about —
+        // the one scope the walk does not filter — is still never reported.
+        if (!isUserElement(model, candidate)) continue;
+        if (statementKindOf(model, candidate.id) !== 'prompt') continue;
+        reported.add(candidate.id);
+        prompts.push({
+          prompt: ref(model, candidate),
+          text: promptText(model, candidate),
+          attachedTo,
+          via: scope.via,
+          distance: scope.distance,
+        });
+      }
+
+      const owner = scope.el.ownerId != null ? model.get(scope.el.ownerId) : undefined;
+      candidates.push(
+        ...model
+          .typesOf(scope.el.id)
+          .map((t) => ({ el: t, via: 'type' as const, distance: scope.distance + 1 })),
+        ...(owner ? [{ el: owner, via: 'owner' as const, distance: scope.distance + 1 }] : []),
+      );
+    }
+
+    // Stable, so the order the model holds things in still decides ties within
+    // each group; it only moves types ahead of owners.
+    candidates.sort((a, b) => (a.via === 'type' ? 0 : 1) - (b.via === 'type' ? 0 : 1));
+
+    const next: Scope[] = [];
+    for (const step of candidates) {
+      if (visited.has(step.el.id)) continue;
+      if (isLibrary(step.el)) {
+        libraryDropped.add(step.el.id);
+        continue;
+      }
+      visited.add(step.el.id);
+      if (!isUserElement(model, step.el)) implicitCrossed.add(step.el.id);
+      next.push(step);
+    }
+    frontier = next;
+  }
+
+  return {
+    element,
+    prompts,
     libraryExcluded: libraryDropped.size,
     implicitExcluded: implicitCrossed.size,
   };
