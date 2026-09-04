@@ -46,6 +46,7 @@ definitions** and repairs them from the tool's own feedback.
 
 ```bash
 npm run check -- model.sysml --json     # exit 0 clean · 1 findings · 2 usage/IO
+npm run sysprose -- stats model.sysml --json   # and what is IN it (see below)
 ```
 
 Every finding carries a **stable code**, an exact **source range** (line, column
@@ -109,6 +110,10 @@ npm run report         # regenerate docs/TEST-SUMMARY.md
 npm run campaign       # the agent authoring testing campaign
 npm run codes          # regenerate docs/DIAGNOSTIC-CODES.md from the catalogue
 npm run check -- <file.sysml> [--json]   # check a file from the command line
+npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
+                       # stats · elements · requirements · trace
+                       # connectivity · where-used · orphans
+                       # `npm run sysprose -- --help` lists them
 ```
 
 ## Deploy
