@@ -1343,6 +1343,69 @@ the fix, and it moved for the right reason — the unterminated-comment fixture'
 recovery residue reads `comment never ends`, so its `comment` element now
 carries the name `never` where the golden used to record an anonymous one.
 
+**Every statement can now say what kind of thing it is.** A model mixes three
+things that read alike and mean nothing alike: a normative statement that
+carries contractual value, an explanation written for a human reader that binds
+nothing, and guidance written for an AI agent working on the model. Nothing in
+the notation separated them, so a note about why a mass budget was chosen sat in
+the same shape as the budget itself, and an agent reading the file had no way to
+tell the rule from the commentary about it.
+
+`statementKind` is the answer, and it is Sysprose's own vocabulary —
+`requirement`, `prose`, `prompt`. The published specification has no
+enumeration of statement kinds: its one requirement-related `kind` classifies a
+membership inside a requirement body (`assume` / `require`), and the shipped
+library classifies requirements by what they specialize, not by an attribute.
+What the specification does give is the mechanism, and that is what is borrowed:
+a metadata usage exists to add tool-specific information to a model, and a
+metadata definition with no nested features acts as a user-defined syntactic tag
+written after a `#` (7.27.1 and 7.27.4; the library's own `<derive>` is exactly
+this shape). So a kind is a keyword — `#prose`, `#prompt`, `#'requirement'` —
+over three shipped metadata definitions, and no notation was invented: prefix
+metadata already parsed and round-tripped here, and the definitions are text
+that checks clean and saves back byte for byte.
+
+The `requirement` keyword is quoted because the bare word is a hard keyword and
+`#requirement` does not parse; `#'requirement'` is the notation's own escape for
+a name that collides with one, and the parser keeps the quotes, so reading a
+keyword unquotes its last segment and a qualified `#SysproseStatements::prose`
+reads the same as a bare one. Where no keyword is written the metaclass answers
+for itself — a requirement is a requirement, a documentation or a comment is
+prose — and everything else gets no kind at all rather than a default, so a
+caller can tell an unclassified part from a statement classified as normative.
+Reading never writes; writing replaces the keyword in place and leaves every
+other tag on the declaration alone.
+
+The write side refuses what the read side cannot promise, and working out what
+that meant took a second pass. A keyword only survives a save if the serializer
+writes the element through its generic declaration header, and which elements
+those are is not a question a metaclass can answer: the serializer dispatches on
+attributes and endpoints as well, so the same `ConnectionUsage` keeps a keyword
+as `connection c : C;` and has nowhere to put one as `connect a to b;`, and a
+plain action becomes `perform a;` the moment it carries an action kind. The
+first guard asked the metaclass alone and so accepted `connect`, every
+transition, a requirement's `subject` and `assume` and `require` clauses, a
+state's `entry`/`do`/`exit`, `perform`/`accept`/`send`/`assign`, `return`, the
+loops and `if` — 32 of the 94 elements it accepted in `uav-isr.sysml`, whose
+keyword then vanished on the next save without a word. Worse, on an enum
+literal (`low = 0.25;`, a keyword-less reference usage) the prefix *was* written
+out, into a file this tool could no longer parse. The guard now takes the
+element rather than its metaclass and mirrors that dispatch branch for branch,
+and the mirror is pinned by the only assertion that could have caught the
+original: write a kind on every element the guard accepts in both shipped
+examples, save, re-parse, and fail unless every one of them still reads back.
+
+Two honest gaps come with the mechanism. Nothing binds a keyword to the
+definition it names, because metadata is unchecked in this tool: a misspelt
+`#prosee` is not an error — it is simply no kind, and falls back to what the
+metaclass says. And only the `#keyword` prefix is read. The same mechanism has a
+second notation, the annotating usage `@prose about p1;`, which this tool parses
+and round-trips faithfully; a kind written that way is invisible to the reader,
+for the annotated element and for the annotation itself, because seeing it means
+resolving the names in `about` against scope. That is a resolver pass this
+module does not run, so the behaviour is asserted as a fact in the tests rather
+than left as an accident.
+
 ### Known limitations, recorded rather than hidden
 
 **`doc … locale "…"` still drops its language tag.** The `doc` statement takes

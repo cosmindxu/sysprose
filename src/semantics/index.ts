@@ -5,6 +5,11 @@
  * (generalization closure + effective features), conformance (specialization &
  * literal type checking), a self-contained expression parser/evaluator, and
  * model-level value/constraint evaluation.
+ *
+ * One exception, named here so the promise above stays true: `setStatementKind`
+ * WRITES — it is the editing counterpart of `statementKindOf`, and it calls
+ * `Model.setAttrs`, which mutates the element and emits an `update` event.
+ * Everything else exported from here only reads.
  */
 
 export { generalizationsOf, ownFeatures, effectiveFeatures } from './inheritance';
@@ -143,3 +148,16 @@ export {
   type Unit,
   type Prefix,
 } from './units';
+export {
+  STATEMENT_KINDS,
+  STATEMENT_KIND_PACKAGE,
+  STATEMENT_KIND_DEFINITIONS,
+  STATEMENT_KIND_KEYWORD,
+  STATEMENT_KIND_LIBRARY,
+  isStatementKind,
+  statementKindOfKeyword,
+  statementKindOf,
+  canCarryStatementKind,
+  setStatementKind,
+  type StatementKind,
+} from './statement-kind';
