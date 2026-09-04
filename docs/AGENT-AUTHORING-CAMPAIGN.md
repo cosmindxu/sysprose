@@ -1247,6 +1247,62 @@ the appendix's completeness case covered only the `tb-*` half, so the Panels
 table could have been deleted whole; a named list now pins the panel and
 bottom-panel controls that table must keep documenting.
 
+**The front page named the tool's parts and never said where to reach one.** It
+listed analytics as a Highlights bullet, the reporting command as one line of a
+code block and the guide not at all, so the claim this pass was built on — that
+a question has one answer and several doors onto it — was nowhere a reader
+could check it. `README.md` now carries a capability table with a row per
+question and a column per door: the control (by the `data-testid` a test can
+find it by, and the function that control runs), the subcommand, and the
+function with the file that exports it. The guide is linked from the top of the
+page and from the reference list, which now indexes every document under
+`docs/`, and `npm run commands` joined the script list it had been missing since
+the reference started being generated.
+
+**Writing the doors down disproved the claim about them.** The table was first
+drafted saying what this ledger, the guide and the generated command reference
+all said before it: that the app, the terminal and an import are three doors
+onto ONE function, so the same figure cannot differ between them. Naming a
+function per row made that falsifiable, and it is false for three rows. The
+Allocation view runs `buildAllocationMatrix`, whose rows are the elements that
+take part in a link, where `trace` runs `traceabilityMatrix`, whose rows are
+every element of the row kind — one row against seven on `examples/uav-isr.sysml`.
+Properties → *Used by* runs `whereUsed`, which keeps re-derived copies, where
+`where-used` runs `impactClosure`, which drops them, so the panel counts two
+where the command reports one. And no control in the app calls
+`connectivityReport` at all: the Interconnection view *draws* the ports. The
+identity that does hold is narrower and still worth having — each subcommand is
+a thin shell over the exported function beside it — so that is what the page now
+claims, with a dagger on every row where the app computes its own projection and
+a paragraph saying how the two differ. The same correction was made to the
+guide, to `scripts/sysprose.ts`'s header and to the generator behind
+`docs/CLI-REFERENCE.md`, because a sentence that is wrong on the front page is
+no better one click away.
+
+A table of several claims per row is the fastest-rotting documentation in a
+repository, so each column is checked against its own source
+(`test/unit/readme.test.ts`). Controls are checked against the ids the app can
+actually render — the same scan the guide's appendix uses, now shared from
+`test/support/ui-testids.ts` rather than copied, because one weak scan behind
+two documents is one bug behind two green guards. Set membership is not enough
+there and the first draft of the guard proved it: asking only "does this id
+exist somewhere in `src/ui`" passes when two rows' controls are swapped, when a
+row points at a `<code>` span that is no control, and when a cell is emptied
+outright. Rows are pinned in order instead, each with the control it names and
+the app-side function that control runs, and both are verified against the
+sources — the id must be one the app renders, and the function must really be
+called in the file named. Whether a row deserves its dagger is then DERIVED,
+not asserted: a row goes undaggered only when the control runs one of the
+functions the command and the import share. The terminal column is compared
+with the command table in BOTH directions, so neither a new subcommand left
+undocumented nor an invented one survives. The in-process column is checked
+three ways: the file it cites must really export the function, every function
+named must be one the command table credits (all of them — one right name beside
+a real-but-wrong one used to pass), and the file must be the file that table
+puts it in. A dozen mutations were run against the finished guard, including
+each of the four that had slipped past the first draft; every one failed the
+case that names it, and the tree was restored after each.
+
 ### Known limitations, recorded rather than hidden
 
 **The impact closure loses a wire to a shorter detour whenever a connection's

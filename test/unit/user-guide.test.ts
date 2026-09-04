@@ -17,76 +17,19 @@
  * guide fails the second.
  */
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 import { checkText } from '../../src/text/check';
+// The scan lives in `test/support` because the README's capability table names
+// controls the same way this appendix does, and one weak scan behind two
+// documents is one bug behind two green guards.
+import { renderedTestIds } from '../support/ui-testids';
 
 const root = (p: string) => resolve(process.cwd(), p);
 const read = (p: string) => readFileSync(root(p), 'utf8');
 
 const GUIDE = read('docs/USER-GUIDE.md');
-
-/** Every `.ts`/`.tsx` file under `dir`, recursively. */
-function sources(dir: string, out: string[] = []): string[] {
-  for (const e of readdirSync(root(dir), { withFileTypes: true })) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) sources(p, out);
-    else if (/\.tsx?$/.test(e.name)) out.push(p);
-  }
-  return out;
-}
-
-/**
- * Ids the two view-command tables declare, which the view bar renders verbatim.
- *
- * The view buttons are the one place an id reaches the DOM without ever being
- * written as `data-testid="…"`: `Toolbar.tsx` merges {@link VIEW_COMMANDS} with
- * its own `EXTRA_VIEW_COMMANDS` and renders `data-testid={meta.id}`. So the
- * declaration IS the id, and the two arrays are read here — the indirection is
- * asserted below rather than assumed, because an id that is only a string in a
- * list nobody renders is exactly the fiction this file exists to catch.
- */
-function viewBarTestIds(): Set<string> {
-  const ids = new Set<string>();
-  for (const [file, decl] of [
-    ['src/ui/commands.ts', 'VIEW_COMMANDS'],
-    ['src/ui/panels/Toolbar.tsx', 'EXTRA_VIEW_COMMANDS'],
-  ] as const) {
-    const body = new RegExp(`const ${decl}[^=]*=\\s*\\[([\\s\\S]*?)\\n\\];`).exec(read(file));
-    expect(body, `${file} no longer declares ${decl} as an array literal`).not.toBeNull();
-    for (const m of body![1].matchAll(/\bid:\s*'([a-z0-9-]+)'/g)) ids.add(m[1]);
-  }
-  return ids;
-}
-
-/**
- * Every test id the app can render.
- *
- * Two spellings reach the DOM directly: the JSX attribute itself, and a `testid`
- * prop passed down to a wrapper that renders it (`ScrollBox`, the toolbar's
- * export menu). The view renderers under `src/diagram` carry their own ids
- * (`grid-view`, `sequence-view`), so they are scanned too, plus the view-bar
- * ids from {@link viewBarTestIds}.
- *
- * A general `id: '…'` scan was tried and REMOVED. `commands.ts` gives every
- * toolbar command an `id` that mirrors its `data-testid`, so the scan accepted
- * the mirror as proof of the original: renaming `data-testid="tb-validate"` to
- * anything at all left this suite green, because `id: 'tb-validate'` was still
- * in `commands.ts`. The guard the appendix advertises is that a renamed control
- * fails a unit test, so the id has to be sourced from something the DOM
- * actually gets.
- */
-function renderedTestIds(): Set<string> {
-  const ids = viewBarTestIds();
-  for (const file of [...sources('src/ui'), ...sources('src/diagram')]) {
-    const src = readFileSync(root(file), 'utf8');
-    for (const m of src.matchAll(/data-testid="([a-z0-9-]+)"/g)) ids.add(m[1]);
-    for (const m of src.matchAll(/\btestid="([a-z0-9-]+)"/g)) ids.add(m[1]);
-    for (const m of src.matchAll(/\btestid:\s*'([a-z0-9-]+)'/g)) ids.add(m[1]);
-  }
-  return ids;
-}
 
 /**
  * The ids the guide names, read out of every table with a "Test id" column.

@@ -414,20 +414,33 @@ clicked.
 
 ### The same answers from a terminal
 
-Every reporting function the app calls is also a subcommand. The point is that
-they are literally the same function, so a figure read in a terminal and the
-same figure read in the app cannot disagree.
+Every question you can put to the app you can also put to a terminal. On the
+unmarked rows below the subcommand runs **the same function** the control runs,
+so those two figures cannot disagree. A **†** marks a row where the app answers
+the same question by drawing its own projection instead — there the two figures
+may legitimately differ, and the difference is spelled out under the table.
 
 | Question | In the app | From a terminal |
 |---|---|---|
-| Is this file sound? | **Validate** | `npm run check -- model.sysml` |
+| Is this file sound? | **Validate** † | `npm run check -- model.sysml` |
 | How big is it, what shape? | API Console → Metrics | `npm run sysprose -- stats model.sysml` |
 | What is in it? | **Grid** view | `npm run sysprose -- elements model.sysml` |
 | Are the requirements covered? | **Requirements** view | `npm run sysprose -- requirements model.sysml` |
-| What satisfies / allocates what? | **Allocation** view | `npm run sysprose -- trace model.sysml --relation satisfy` |
-| Which ports are wired? | **Interconnection** view | `npm run sysprose -- connectivity model.sysml` |
-| What breaks if I change this? | Properties → *Used by* | `npm run sysprose -- where-used model.sysml --element X` |
+| What satisfies / allocates what? | **Allocation** view † | `npm run sysprose -- trace model.sysml --relation satisfy` |
+| Which ports are wired? | **Interconnection** view † | `npm run sysprose -- connectivity model.sysml` |
+| What breaks if I change this? | Properties → *Used by* † | `npm run sysprose -- where-used model.sysml --element X` |
 | What did I declare and never use? | — | `npm run sysprose -- orphans model.sysml` |
+
+† **Validate** re-runs the rule engine over the model already in the editor;
+`check` parses the file first and then applies those same rules. The
+**Allocation** view tabulates only the elements that take part in a link, where
+`trace` tabulates every element of the row and column kinds and so also shows
+what links to nothing. The **Interconnection** view *draws* the ports and
+connections; it computes no connectivity report — `connectivity` exists only in
+the terminal and the SDK, as do `orphans` and the depth walk behind
+`where-used`. Properties → *Used by* lists everything referencing the
+selection, library and re-derived copies included, where `where-used` drops the
+library, walks to the `--depth` you ask for and tells you what it left out.
 
 Three real answers on the shipped example:
 
@@ -454,8 +467,9 @@ examples/uav-isr.sysml: 2 of 14 definition(s) unused
 ```
 
 Two things those transcripts are telling you, and both are on purpose. Every
-report **excludes the bundled library and the tool's own re-derived elements**
-and says how many it excluded, so the numbers are about *your* file. And
+report **excludes the bundled library and the tool's own re-derived elements**,
+so the numbers are about *your* file, and says how many it left out — `stats`
+counts the library, `elements` the re-derived copies, the rest both. And
 `orphans` is an inventory, not a verdict: the two "unused" definitions are the
 mission behaviour and the flight modes, which nothing in the model references
 yet — that is a fact about the model, not a defect in it.
