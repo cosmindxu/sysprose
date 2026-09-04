@@ -13,6 +13,7 @@ vi.mock('../../src/library/standard-library', () => ({
 
 import { useAppStore } from '../../src/ui/store';
 import { parseModel } from '@text/index';
+import { getRequirementAttr } from '@semantics/index';
 
 /** Reset the singleton store to a fresh, empty model before each test. */
 function reset(): void {
@@ -300,6 +301,92 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
     expect(st().duplicateElement(rel)).toBeNull();
     expect(st().model.size).toBe(sizeBefore); // no clone created
     expect(st().undoStack.length).toBe(undoBefore); // no undo entry pushed
+  });
+
+  it('setRequirementAttr writes a facet in ONE undo step, whatever it costs in elements', () => {
+    const req = st().createElement('RequirementUsage', null, 'maxMass');
+    const sizeBefore = st().model.size;
+    const undoBefore = st().undoStack.length;
+
+    st().setRequirementAttr(req, 'status', 'open');
+    // A carrier and an attribute: two new elements, one undo entry.
+    expect(st().model.size).toBe(sizeBefore + 2);
+    expect(st().undoStack.length).toBe(undoBefore + 1);
+    expect(getRequirementAttr(st().model, req, 'status')).toBe('open');
+
+    st().undo();
+    expect(st().model.size).toBe(sizeBefore);
+    expect(getRequirementAttr(st().model, req, 'status')).toBeUndefined();
+  });
+
+  it('setRequirementAttr refuses a value the key does not allow, leaving no phantom undo step', () => {
+    const req = st().createElement('RequirementUsage', null, 'maxMass');
+    st().setRequirementAttr(req, 'risk', 'high');
+    // Give the store a redo entry to protect: undo, then redo, then a bad write.
+    st().undo();
+    const redoBefore = st().redoStack.length;
+    expect(redoBefore).toBeGreaterThan(0);
+    const sizeBefore = st().model.size;
+    const undoBefore = st().undoStack.length;
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    st().setRequirementAttr(req, 'risk', 'extreme');
+    errors.mockRestore();
+
+    expect(st().model.size).toBe(sizeBefore); // nothing written
+    expect(st().undoStack.length).toBe(undoBefore); // no phantom step
+    expect(st().redoStack.length).toBe(redoBefore); // redo history survives
+  });
+
+  it('setRequirementAttr clears a facet, and the kind rides on the declaration', () => {
+    const req = st().createElement('RequirementUsage', null, 'maxMass');
+    st().setRequirementAttr(req, 'owner', 'chief engineer');
+    st().setRequirementAttr(req, 'statementKind', 'prose');
+    expect(st().model.get(req)?.attrs.metadata).toEqual(['prose']);
+
+    st().setRequirementAttr(req, 'owner', '');
+    expect(getRequirementAttr(st().model, req, 'owner')).toBeUndefined();
+    // The carrier went with the last facet it held.
+    expect(st().model.ofKind('MetadataUsage')).toHaveLength(0);
+    expect(getRequirementAttr(st().model, req, 'statementKind')).toBe('prose');
+  });
+
+  it('setRequirementAttr does nothing at all when a clear would clear nothing', () => {
+    const req = st().createElement('RequirementUsage', null, 'maxMass');
+    st().setRequirementAttr(req, 'status', 'open');
+    // Give the store a redo entry to protect, as the refusal test does.
+    st().undo();
+    const redoBefore = st().redoStack.length;
+    expect(redoBefore).toBeGreaterThan(0);
+    const sizeBefore = st().model.size;
+    const undoBefore = st().undoStack.length;
+
+    st().setRequirementAttr(req, 'owner', ''); // 'owner' was never set
+    st().setRequirementAttr(req, 'statementKind', ''); // no keyword to remove
+
+    expect(st().model.size).toBe(sizeBefore);
+    expect(st().undoStack.length).toBe(undoBefore); // no step spent on a no-op
+    expect(st().redoStack.length).toBe(redoBefore); // and redo survives it
+  });
+
+  it('setRequirementAttr leaves a library requirement alone — undo could not take it back', () => {
+    const model = st().model;
+    const libPkg = model.create('Package', { declaredName: 'Lib', attrs: { isLibrary: true } });
+    const libReq = model.create('RequirementUsage', {
+      declaredName: 'LibReq',
+      ownerId: libPkg.id,
+      attrs: { isLibrary: true },
+    });
+    const undoBefore = st().undoStack.length;
+
+    st().setRequirementAttr(libReq.id, 'status', 'open');
+    st().setRequirementAttr(libReq.id, 'statementKind', 'prose');
+
+    expect(getRequirementAttr(st().model, libReq.id, 'status')).toBeUndefined();
+    // `resetPreserving(snap, isLibraryEl)` keeps library elements verbatim, so a
+    // keyword written here would have outlived its own undo step.
+    expect(st().model.get(libReq.id)?.attrs.metadata).toBeUndefined();
+    expect(st().undoStack.length).toBe(undoBefore);
   });
 });
 

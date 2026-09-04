@@ -6,9 +6,10 @@
  * literal type checking), a self-contained expression parser/evaluator, and
  * model-level value/constraint evaluation.
  *
- * One exception, named here so the promise above stays true: `setStatementKind`
- * WRITES — it is the editing counterpart of `statementKindOf`, and it calls
- * `Model.setAttrs`, which mutates the element and emits an `update` event.
+ * Two exceptions, named here so the promise above stays true: `setStatementKind`
+ * and `setRequirementAttr` WRITE — they are the editing counterparts of
+ * `statementKindOf` and `getRequirementAttr`, and they create, remove and set
+ * attributes on elements, which mutates the model and emits change events.
  * Everything else exported from here only reads.
  */
 
@@ -161,3 +162,27 @@ export {
   setStatementKind,
   type StatementKind,
 } from './statement-kind';
+export {
+  STATUS_KIND_VALUES,
+  VERDICT_KIND_VALUES,
+  RISK_LEVEL_VALUES,
+  VERIFICATION_METHOD_VALUES,
+  PRIORITY_VALUES,
+  RM_ATTR_KEYS,
+  RM_ENUM_VALUES,
+  RM_METADATA_NAME,
+  requirementShortId,
+  requirementStatement,
+  requirementDoc,
+  getRequirementMetadata,
+  getRequirementAttr,
+  getRequirementAttrs,
+  hasRequirementAttr,
+  setRequirementAttr,
+  type StatusKind,
+  type VerdictKind,
+  type RiskLevel,
+  type VerificationMethod,
+  type Priority,
+  type RmAttrKey,
+} from './requirements';

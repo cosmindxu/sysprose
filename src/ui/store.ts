@@ -45,6 +45,7 @@
  *   select(id) · toggleExpand(id) · expand(id, open?) · setActiveView(v)
  *   rebuildDiagram() · createElement(eClass, ownerId?, name?) → id
  *   updateElement(id, patch) · setAttr(id, k, v) · deleteElement(id)
+ *   setRequirementAttr(id, key, value)
  *   reparent(id, ownerId) · connect(sourceId, targetId, kind)
  *   runValidation() · setTextBuffer(s) · applyText() · regenerateText()
  *   newProject() · saveProject(name?) · loadProject(name) · listProjects()
@@ -155,7 +156,10 @@ import {
 } from '@persistence/index';
 import {
   SimulationSession,
+  hasRequirementAttr,
   isSimulatable as semIsSimulatable,
+  setRequirementAttr as semSetRequirementAttr,
+  type RmAttrKey,
   type SimSample,
 } from '@semantics/index';
 import { parseModelDescription, importFmiBlock } from '@interop/index';
@@ -374,6 +378,18 @@ export interface AppState {
   createElement(eClass: string, ownerId?: ElementId | null, name?: string): ElementId;
   updateElement(id: ElementId, patch: Partial<Omit<ElementRecord, 'id' | 'ownerId'>>): void;
   setAttr(id: ElementId, key: string, value: AttrValue): void;
+  /**
+   * Set one requirement facet — status, verdict, risk, priority, criticality,
+   * rationale, source, owner, verification method, or the statement kind — or
+   * clear it with an empty value. ONE undo step per call, whatever it takes in
+   * the model (a lazily created metadata carrier, an attribute, a keyword).
+   * A value the key does not allow is refused: the model is untouched and the
+   * snapshot comes straight back off the undo stack. Two calls do nothing at
+   * all, before any snapshot is taken — a clear of a key that is not set, and
+   * anything aimed at a standard-library element, which undo restores verbatim
+   * and so could never take back.
+   */
+  setRequirementAttr(id: ElementId, key: RmAttrKey, value: string | null): void;
   deleteElement(id: ElementId): void;
   /** Deep-clone an element + its subtree as a sibling; returns the new root id. */
   duplicateElement(id: ElementId): ElementId | null;
@@ -1500,6 +1516,37 @@ export const useAppStore = create<AppState>((set, get) => {
       // A hand-edited value invalidates the parser's source lexeme for it.
       model.setAttrs(id, key === 'value' ? { value, valueText: undefined } : { [key]: value });
       afterMutation();
+    },
+
+    setRequirementAttr(id, key, value) {
+      const { model } = get();
+      const el = model.get(id);
+      if (!el) return;
+      // The standard library is not the user's to edit, and undo could not take
+      // the edit back if it were: `resetPreserving(snap, isLibraryEl)` restores
+      // a snapshot while keeping every library element exactly as it stands, so
+      // a facet written onto one would outlive its own undo step.
+      if (el.attrs.isLibrary === true) return;
+      // A clear of a key that is not set changes nothing. Pushing a snapshot for
+      // it would spend an undo step on a model that never moved and throw the
+      // redo stack away with it — the same early return duplicateElement and
+      // reparentMany make when there is nothing to do.
+      const clearing = value === undefined || value === null || value === '';
+      if (clearing && !hasRequirementAttr(model, id, key)) return;
+      // pushUndo clears redo; keep it so a REFUSED write doesn't destroy the
+      // user's redo history — same shape as reparent().
+      const redoBefore = get().redoStack;
+      pushUndo();
+      try {
+        semSetRequirementAttr(model, id, key, value);
+        afterMutation();
+      } catch (err) {
+        // The write validates before it mutates, so there is nothing to undo:
+        // drop the snapshot and put the redo stack back. Surfacing the reason
+        // is the panel's job — the store's job is not to leave a phantom step.
+        console.error('setRequirementAttr failed', err);
+        set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
+      }
     },
 
     deleteElement(id) {

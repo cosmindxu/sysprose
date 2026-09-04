@@ -287,8 +287,18 @@ function header(model: Model, el: ElementRecord): string {
   }
 
   // Short name <…> — requirements carry their id here.
+  //
+  // The element's OWN short name wins. Every reader prefers it
+  // (`semantics/requirements.ts` requirementShortId), so a writer that
+  // preferred the legacy `attrs.reqId` made the two disagree: an edited
+  // `declaredShortName` displayed as the new id, saved as the old one and
+  // reverted on the next open. Nothing produced today sets the two to different
+  // values — the mapper writes both from the same token, the factory writes
+  // only `reqId` — so the legacy key stays as the fallback that keeps those
+  // models emitting their id.
   const short =
-    (isRequirement(el.eClass) ? (el.attrs.reqId as string | undefined) : undefined) ?? el.declaredShortName;
+    el.declaredShortName ??
+    (isRequirement(el.eClass) ? (el.attrs.reqId as string | undefined) : undefined);
   if (short) parts.push(`<${quoteName(short)}>`);
 
   if (el.declaredName) parts.push(quoteName(el.declaredName));

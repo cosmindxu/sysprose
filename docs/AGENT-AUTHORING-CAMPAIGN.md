@@ -1459,6 +1459,89 @@ B :> A` is an illegal model that parses, and a walk that assumed a tree away
 would hang on it rather than answer — which is what the test named "terminates
 on a cycle in the type graph" holds the walk to.
 
+**A requirement carries its management facets again, and they survive a save.**
+A requirement in a real programme is not only a sentence: it has a status, a
+verification verdict and method, a risk, a priority, a criticality, a rationale,
+the source it came from and an owner who answers for it. A branch that modelled
+all nine was paused in July and never landed, and its base commit did not
+survive the restart of this history, so it could not be replayed — it was
+reimplemented against today's tree, with the statement kind as a tenth facet and
+three deliberate departures from what it did.
+
+The first is where a value lives. The paused work put the nine keys in the
+`attrs` bag of one owned metadata usage. That reads back perfectly through the
+JSON layers and vanishes entirely through the textual one: the notation has no
+form for an arbitrary bag, so the carrier saves as `metadata
+RequirementMetadata;` and every facet is gone the next time the file is opened.
+Each key is now an owned attribute under that same carrier — `metadata
+RequirementMetadata { attribute status = "open"; }` — which is ordinary
+notation that saves, re-parses and re-saves byte for byte. The value is written
+as a quoted string literal, the same lexeme-with-quotes shape the parser hands
+back for `= "open"`, so a rationale containing a space, a quote or a backslash
+cannot break the file it is saved into. The assertion that pins the decision
+writes all nine facets, saves, re-parses and reads every one of them back.
+
+The second is `priority`. It had a value list and an editing column, and it was
+missing from the validated set, so it was the one facet that accepted anything
+a caller typed. It is validated now, like the four the standard library names.
+The third is clearing: writing an empty value used to store an empty string, so
+a cleared status read back as a value that was not a status and every consumer
+had to know that `''` and "unset" meant the same thing. Clearing removes the key
+now, and the carrier goes with the last key it held rather than leaving an empty
+`metadata RequirementMetadata;` line behind in the saved file.
+
+The tenth facet is not stored beside the other nine. `statementKind` is carried
+by the keyword on the declaration, and reads and writes of it are forwarded to
+that module rather than copied, because two places holding the same answer is
+how they come to disagree. So `getRequirementAttrs` reports a kind for a
+requirement nobody has tagged — the metaclass settles it — while every stored
+facet is absent until someone sets it.
+
+Reading knows both shapes and writing only makes one. The identity is the
+element's own short name and the statement is an owned documentation child, but
+models saved before this — and everything the factory still authors today —
+keep them in `attrs.reqId` and `attrs.text`, so the two read helpers prefer the
+native slot and fall back to the legacy one. Nothing migrates a saved model
+behind the author's back, and nothing writes those two keys again from here.
+The legacy slot is not only history, either: a save and a reopen produce it,
+because the mapper folds a requirement's `doc` body into `attrs.text` and
+creates no documentation element at all, and re-derives the legacy id from the
+short name it just read. So the same requirement reads through its documentation
+child in memory and through the fallback once it has been round-tripped, and a
+requirement written with two `doc` bodies keeps only the last.
+
+The writer had to be made to agree with those readers. The serializer emitted
+the legacy `attrs.reqId` in preference to the element's own short name, which is
+the opposite of what every reader here does: with both present the tool showed
+one id and saved the other, and reopening the file reverted the edit. It emits
+the short name now and falls back to the legacy key, which changes nothing for
+the two shapes that exist — the mapper writes both from the same token, the
+factory writes only the legacy one — and a test saves a natively named
+requirement and reads its id back to keep it that way. The one store command
+that edits a facet validates before it mutates, so a refused value leaves the
+model untouched and its undo snapshot comes straight back off the stack instead
+of standing there as a step that changed nothing; a clear of a key that was
+never set, and any write onto a standard-library requirement, are refused before
+that snapshot is taken at all — the second because undo restores a snapshot
+while keeping library elements verbatim, so the edit would have outlived the
+step meant to take it back.
+
+Two gaps come with the facets, and one deliberate refusal. Nothing rules on a
+carrier a person wrote by hand: a misspelt `attribute stauts = "open";` is
+simply not a facet, a value outside the list reads back although no writer here
+would have accepted it, and a file carrying two `RequirementMetadata` carriers
+has one that answers every read and takes every write while the other's values
+sit in the file saying something else. `RequirementMetadata` itself names no
+definition this tool declares — metadata is unbound here exactly as the
+statement-kind keywords are — so the carrier line is a tag whose meaning lives
+in the module, and the reader accepts both the bare and the typed
+`: RequirementMetadata` spelling for it while refusing the annotating
+`@RequirementMetadata` form, which points elsewhere. And
+a requirement whose own declaration could not be parsed is refused a facet
+outright: the serializer re-emits a faulted declaration's source verbatim and
+nothing else, so a carrier underneath would read back in memory and be gone from
+the next saved file — the very loss the storage shape was chosen to avoid.
+
 ### Known limitations, recorded rather than hidden
 
 **`doc … locale "…"` still drops its language tag.** The `doc` statement takes
