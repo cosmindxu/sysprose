@@ -92,8 +92,12 @@ export function renderCliReference(): string {
 
 Two commands read a \`.sysml\` file from a terminal. [\`npm run check\`](#npm-run-check)
 says whether the file is **sound**; \`npm run sysprose\` says what is **in** it.
-Both are the same functions the app calls, so a figure read here and the same
-figure read in the browser cannot differ.
+Each subcommand is a thin shell over the exported function named in its
+\`Backed by\` line, so a figure read here and the same figure computed from that
+import cannot differ. The app answers the same QUESTIONS, but several of its
+views draw their own projection rather than call the reporting function — the
+[user guide](USER-GUIDE.md) and the README's capability table mark which, and
+say how the two can differ.
 
 For what the answers mean — and for the app the commands mirror — read the
 [user guide](USER-GUIDE.md). For what a diagnostic \`code\` means, read the

@@ -8,8 +8,12 @@
  * function, and until now every one of them was reachable only from the browser
  * or from a JavaScript console. `npm run check` could tell you a file was
  * VALID; nothing could tell you what was IN it. This is that half of the tool,
- * as one command with subcommands over the same functions the app calls, so a
- * figure read in a terminal and the same figure read in the app cannot differ.
+ * as one command with subcommands, each a thin shell over the exported function
+ * that computes the answer, so a figure read in a terminal and the same figure
+ * computed from that import cannot differ. Several of the app's views answer the
+ * same QUESTION by drawing their own projection instead of calling the reporting
+ * function (Allocation, Interconnection, Properties -> Used by), so those figures
+ * are not promised to match — see the capability table in `README.md`.
  *
  *   npm run sysprose -- stats examples/uav-isr.sysml
  *   npm run sysprose -- requirements examples/uav-isr.sysml --json
