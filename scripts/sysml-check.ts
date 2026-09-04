@@ -123,7 +123,9 @@ async function main(): Promise<number> {
         library: parsed.library,
         strict: parsed.strict,
         includeRanges: parsed.ranges,
-        fileName: file === '-' ? '<stdin>' : file,
+        // Piped input has no file name, so it is labelled rather than named:
+        // `<stdin>` is not a file whose extension anyone can fix.
+        ...(file === '-' ? { displayName: '<stdin>' } : { fileName: file }),
       }),
     );
   }

@@ -421,7 +421,7 @@ Problems with the input itself rather than its content: wrong format, encoding n
 
 - **Severity:** warning
 - **Source:** import
-- **Fires when:** The file extension is neither .sysml, .kerml nor .txt; the content was parsed as SysML text anyway.
+- **Fires when:** The source was given a file name whose extension is neither .sysml, .kerml nor .txt; the content was parsed as SysML text anyway. Text read from a pipe or a buffer carries a display name instead and is exempt.
 - **Hint given:** Rename the file to .sysml so every tool recognises it.
 
 ### `import/bom-stripped`

@@ -90,6 +90,16 @@ describe('L7 — CLI contract', () => {
     expect(r.stdout).toContain('duplicate-name');
   }, 60_000);
 
+  it('does not warn about the extension of a piped source', () => {
+    // `<stdin>` was passed as the file NAME, so it failed the extension test
+    // and every piped run emitted `import/wrong-extension` — a warning about a
+    // file that does not exist, which under --strict also failed the run.
+    const r = run(['-', '--strict'], 'package P {\n    part def A;\n}\n');
+    expect(r.stdout).not.toContain('wrong-extension');
+    expect(r.stdout, 'and the report is still labelled <stdin>').toContain('<stdin>: OK');
+    expect(r.code).toBe(0);
+  }, 60_000);
+
   it('checks several files at once and fails if any one fails', () => {
     const r = run([
       `${FIX}/L0-empty-file/fixed.sysml`,

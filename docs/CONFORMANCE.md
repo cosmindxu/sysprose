@@ -3,7 +3,7 @@
 > **Self-assessment, not certification.** This scorecard measures Sysprose against the OMG SysML v2 / KerML / API & Services specifications *as read by this project*. Sysprose is a candidate implementation; it has not been certified or conformance-tested by the OMG or anyone else, and nothing here is a conformance claim.
 
 *Generated: 2026-07-01; suite, corpus and parse-rate figures re-measured
-2026-09-03. Numbers below are captured from a live test run, not asserted from
+2026-09-04. Numbers below are captured from a live test run, not asserted from
 memory. Reproduce with the commands in the last section.*
 
 This is an honest conformance scorecard for the clean-room SysML v2 / KerML
@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **1835 passed / 0 failed / 0 skipped** across **118 files** + **127 E2E** across **78 spec files** = **1962 green** (measured 2026-09-03) |
+| Full automated suite | **1849 passed / 0 failed / 0 skipped** across **119 files** + **127 E2E** across **78 spec files** = **1976 green** (measured 2026-09-04) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -241,7 +241,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (1835 pass / 0 skip, 118 files)
+# Full unit + integration + conformance suite (1849 pass / 0 skip, 119 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

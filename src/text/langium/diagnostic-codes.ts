@@ -237,7 +237,7 @@ const CODES = [
     code: 'import/wrong-extension',
     source: 'import',
     severity: 'warning',
-    when: 'The file extension is neither .sysml, .kerml nor .txt; the content was parsed as SysML text anyway.',
+    when: 'The source was given a file name whose extension is neither .sysml, .kerml nor .txt; the content was parsed as SysML text anyway. Text read from a pipe or a buffer carries a display name instead and is exempt.',
     hint: 'Rename the file to .sysml so every tool recognises it.',
   },
   {

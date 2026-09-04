@@ -61,6 +61,26 @@ throws** — an internal failure becomes an `import/internal-error` finding with
 `ok: false`, because a checker that fails silently would let a broken model
 through as clean.
 
+Those stages live in `loadModelText` (`@text/index`), which returns the bound
+`model` and the element→range table alongside the same `report`; `checkText` is
+the wrapper that keeps only the report. Reach for the loader when you want to
+work on the model headlessly — the reporting functions in `src/api/analytics.ts`
+take a model and, before it existed, could only be handed one by the browser.
+`model` is absent when there is nothing to give (the input was refused, or the
+pipeline itself failed), so a caller cannot mistake "did not load" for "loaded
+and empty". Two separate costs, measured on `examples/uav-isr.sysml`
+(2026-09-04): building the parser costs about 1.2 s **once per process**, on the
+first load, whatever `library` is set to; binding the standard library costs
+about 60-100 ms **per model** and is not amortised, because each model gets its
+own copy of the library. So a first load runs about 1.4 s and a later one about
+0.12 s, of which roughly 0.1 s is that model's own library binding.
+
+```ts
+import { loadModelText } from '@text/index';
+const { model, report } = await loadModelText(source, { fileName: 'model.sysml' });
+if (model) { /* modelMetrics(model), whereUsed(model, id), … */ }
+```
+
 ### The agent loop
 
 ```bash
@@ -865,6 +885,19 @@ caught by `--strict`, but making the connector resolver alone ignore implicit
 bases would put it back out of step with every other resolver, which is the
 split this commit exists to end.
 
+**Piping a model into the checker warned about a file it never came from.**
+`cat model.sysml | npm run check -- -` passed `<stdin>` as the FILE NAME, so it
+failed the extension test and every piped run emitted `import/wrong-extension`:
+a warning naming a file that does not exist, carrying a hint (rename it to
+`.sysml`) that cannot be followed, and under `--strict` a failing exit code on a
+model with nothing wrong with it. A name and a label are now separate arguments
+— `fileName` is a file and is extension-checked, `displayName` is only what the
+report is labelled with — and piped input carries the label alone. Pinned in
+`test/campaign/cli.test.ts` (a clean model piped in exits 0, with no warning and
+still labelled `<stdin>`) and in `test/unit/text.load.test.ts`, where a real
+`model.txt.bak` must still warn, so the fix cannot decay into deleting the
+check.
+
 ### Known limitations, recorded rather than hidden
 
 **Re-homing cannot recover the faulty declaration itself.** It repairs
@@ -1037,6 +1070,21 @@ the cross-surface tests, not construction. Merging them is the one duplicate
 mechanism this pass left standing, and it is recorded rather than hidden
 because every unit defect in §4 above began as the two paths answering
 differently.
+
+**The library-binding sequence is still written out twice.** `loadModelText`
+removed the copy that lived in `check.ts`, but the app's
+`loadStandardLibraryAsync` (`src/ui/store.ts`) still spells the same four steps
+out itself, and it cannot call the loader: it binds an ALREADY-LIVE model —
+re-reading it from the store *after* the library asset is awaited, deliberately —
+rather than parsing text, and it falls back to the curated subset when the full
+bundle will not load. Nor can the three synchronous steps move to a shared
+helper under `src/library` without inverting the layering, because
+`resolveConnectorFeatureChains` lives in `src/text`. So the duplication stands,
+and a test pins the two copies to the same steps in the same order
+(`test/unit/text.load.test.ts`) instead — drift between them would be a silent
+correctness bug, with the app and the command line disagreeing about what a
+model means. A later commit that gives the loader a text-side
+`bindStandardLibrary` owns removing it.
 
 ### Pinned behaviours (decisions, not defects)
 

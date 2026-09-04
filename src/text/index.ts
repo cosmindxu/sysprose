@@ -28,6 +28,11 @@ export type { ParseResult, ParseDiagnostic } from './types';
 // point for agents and the CLI. See docs/AGENT-AUTHORING-CAMPAIGN.md.
 export { checkText } from './check';
 export type { CheckOptions, CheckReport, Normalization } from './check';
+
+// The same pipeline, keeping the BOUND MODEL as well as the report — what
+// headless analysis (metrics, coverage, traceability, where-used) loads with.
+export { loadModelText } from './load';
+export type { LoadOptions, LoadResult } from './load';
 export {
   DIAGNOSTIC_CODES,
   diagnosticCode,

@@ -37,6 +37,33 @@ const fixtureCount = readdirSync(root('test/fixtures/agent-authoring'), {
   withFileTypes: true,
 }).filter((e) => e.isDirectory()).length;
 
+/** Every `*.test.ts` / `*.spec.ts` under `dir`, skipping the directories named. */
+function specFiles(dir: string, skip: string[] = []): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(root(dir), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory()) {
+      if (!skip.includes(p) && e.name !== 'node_modules') out.push(...specFiles(p, skip));
+    } else if (/\.(test|spec)\.tsx?$/.test(e.name)) {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * The two file counts docs/CONFORMANCE.md quotes as measured.
+ *
+ * The scorecard says its numbers are "captured from a live test run", but
+ * nothing checked them, so adding one test file left three sentences stale with
+ * a green gate — the exact drift the previous commit fixed by hand. Test COUNTS
+ * cannot be derived without running the suite, but FILE counts can: they are
+ * the same globs vitest.config.ts and playwright.config.ts collect, so a commit
+ * that adds a test file fails here until the scorecard is re-measured.
+ */
+const vitestFileCount = specFiles('test', ['test/e2e']).length + specFiles('src').length;
+const e2eSpecCount = specFiles('test/e2e').length;
+
 /**
  * Every place a measured count is written out in prose. `pattern` must capture
  * the number in group 1; `actual` is what the tree says it should be.
@@ -116,6 +143,30 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     what: 'rule count in the sequence diagram',
     pattern: /validate\(model\) \[(\d+) rules/,
     actual: () => RULES.length,
+  },
+  {
+    file: 'docs/CONFORMANCE.md',
+    what: 'suite file count in the scorecard row',
+    pattern: /passed\s+\/\s+0\s+failed\s+\/\s+0\s+skipped\*\*\s+across\s+\*\*(\d+)\s+files\*\*/,
+    actual: () => vitestFileCount,
+  },
+  {
+    file: 'docs/CONFORMANCE.md',
+    what: 'suite file count in the reproduce command',
+    pattern: /0\s+skip,\s+(\d+)\s+files\)/,
+    actual: () => vitestFileCount,
+  },
+  {
+    file: 'docs/CONFORMANCE.md',
+    what: 'E2E spec-file count in the scorecard row',
+    pattern: /E2E\*\*\s+across\s+\*\*(\d+)\s+spec\s+files\*\*/,
+    actual: () => e2eSpecCount,
+  },
+  {
+    file: 'docs/CONFORMANCE.md',
+    what: 'E2E spec-file count in the reproduce command',
+    pattern: /End-to-end\s+\(\d+\s+tests\s+across\s+(\d+)\s+spec\s+files\)/,
+    actual: () => e2eSpecCount,
   },
 ];
 
