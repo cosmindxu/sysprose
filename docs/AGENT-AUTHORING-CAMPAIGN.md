@@ -1965,8 +1965,9 @@ loud one.
 Dropping the `ScalarValues` gate instead — the obvious cause-level fix, and the
 first one tried — is what the measurement refused. Binding an attribute to a
 full ISQ quantity kind pulls that definition's own feature tree onto the numeric
-surface, and `collectIds` in `src/semantics/solver.ts` recurses through it until
-the stack overflows; nineteen tests fail, ten of them in the dimension-guard
+surface, and `collectIds` in `src/semantics/relations.ts` (it was in
+`src/semantics/solver.ts` when this was measured, and moved with the rest of the
+relation layer) recurses through it until the stack overflows; nineteen tests fail, ten of them in the dimension-guard
 suites. The gate stays, and the reason it stays is a measurement rather than the
 module brief's unexplained asymmetry.
 
@@ -2488,6 +2489,35 @@ Before this pass `derive` there was a loud parse error; the silent split is the
 pre-existing shape of every soft keyword, and widening `RefName` means
 re-checking the parser's ambiguity set. Pinned by `langium.grammar.test.ts` so
 that widening is a decision, not a drift.
+
+**A binding connector spelled `equals` binds on every surface.** The relation
+layer was lifted out of `src/semantics/solver.ts` into
+`src/semantics/relations.ts` so a second engine can stand behind the same unit
+gates, and the lift de-duplicated `isBindingEdge`: one predicate, in
+`src/semantics/connectors.ts`, answers for the solver and for the executor. The
+two private copies it replaced were NOT identical. The solver's was; the
+executor's read only `kind === 'bind'` (and `attrs.bind === true`), so
+`propagateBindings` — and therefore `evaluateModel` — left a component
+undetermined across a connector whose `attrs.kind` was `equals` or `equality`,
+while `gatherConstraints` and `propagateValues` had always bound across it. The
+surviving predicate is the wide one, which is the direction the executor's own
+docstring already claimed ("BindingConnector / `bind` / equality connector").
+Nothing in the tree reaches it — no `.sysml` spelling, fixture, example or store
+command writes `attrs.kind` on a connector, and only the API/SDK path could —
+so no case moved; it is recorded here because a `refactor` subject would
+otherwise be the only trace of a semantic change to an exported function, and
+pinned by `semantics.relations.test.ts`.
+
+**The gates are asked about the relation's OWN variables.** `relationVarsOf`
+(also in `src/semantics/relations.ts`) builds the `vars` argument that
+`relationRefused` and `scaleOfRelation` take, from the ids the body actually
+references. It is published with the gates rather than left private, because
+gates (a) and (d) iterate that argument: a caller who passed the whole name
+scope instead would let a sibling the relation never mentions — a feature whose
+declared unit resolves to nothing, say — refuse a scale the numeric surface
+grants, and the relation would then be reported not-encodable by one engine and
+encoded by the other. A shared gate with a privately built argument is not a
+shared gate.
 
 ## 5. Phase status
 

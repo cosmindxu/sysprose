@@ -148,7 +148,7 @@ Sequence/Geometry/Parametric views, OSLC, multi-user server."* Every one ships.
 
 | Module / file | In plan module map? | Was "out of scope"? | Drift risk |
 |---|:-:|:-:|---|
-| `src/semantics/` (17 files, ~11 k LOC) | ❌ | — | **Critical** — undocumented layer; `api/` silently depends on it |
+| `src/semantics/` (19 files, ~11 k LOC) | ❌ | — | **Critical** — undocumented layer; `api/` silently depends on it |
 | `src/library/` + 8 MB stdlib JSON | ❌ | "full stdlib import" | **Critical** — full library is the *default* loader (`src/library/index.ts:64-81`) |
 | `src/collab/` (3 files) | ❌ | "real-time CRDT collab" | **Critical** — Yjs + y-websocket + awareness shipped |
 | `src/server/` (4 files, ~2.6 k LOC) | ❌ | "multi-user server" | **Critical** — Express app + OpenAPI + OSLC + RDF |

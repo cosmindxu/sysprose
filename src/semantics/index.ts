@@ -103,6 +103,26 @@ export {
   type ItemFlowInfo,
 } from './connectors';
 export {
+  INDETERMINATE,
+  NO_MARKERS,
+  idScopeFor,
+  lowerUnitLiterals,
+  nodeDimension,
+  parseRelationBody,
+  relationRefused,
+  relationScope,
+  relationVarsOf,
+  scaleOfRelation,
+  storageScaleOf,
+  substituteLiterals,
+  type LoweredBody,
+  type LoweredLiteral,
+  type MarkerDimensions,
+  type OperandDimension,
+  type ScaleMap,
+  type UnitScale,
+} from './relations';
+export {
   gatherConstraints,
   gatherInequalities,
   solve,

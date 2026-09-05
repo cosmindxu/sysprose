@@ -34,7 +34,7 @@ import {
 import { effectiveFeatures } from './inheritance';
 import { parseExpr, evaluate } from './expr';
 import { scopeFor, checkConstraints, type Scope, type ConstraintCheck } from './evaluate-model';
-import { propagateValues } from './connectors';
+import { isBindingEdge, propagateValues } from './connectors';
 
 /* ───────────────────────────── action flow ───────────────────────────── */
 
@@ -1490,13 +1490,6 @@ function runHierRegion(
 }
 
 /* ─────────────────────────── binding propagation ─────────────────────── */
-
-/** Is `el` a binding/equality connector that forces its endpoints equal? */
-function isBindingEdge(el: ElementRecord): boolean {
-  if (el.eClass === 'BindingConnectorAsUsage' || el.eClass === 'BindingConnector') return true;
-  const kind = el.attrs.connectorKind ?? el.attrs.kind;
-  return kind === 'bind' || el.attrs.bind === true;
-}
 
 /**
  * Force feature-value equality across every binding connector
