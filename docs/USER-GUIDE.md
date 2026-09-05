@@ -8,7 +8,7 @@ type is introduced here, in the order you need it.
 
 Sysprose runs entirely in a browser tab. There is no server, no login and no
 project on anyone's disk but yours. That shapes everything below, especially
-[what is kept and what is not](#7-what-is-kept-and-what-is-not).
+[what is kept and what is not](#8-what-is-kept-and-what-is-not).
 
 | | |
 |---|---|
@@ -26,9 +26,10 @@ project on anyone's disk but yours. That shapes everything below, especially
 4. [The views, and what each one answers](#4-the-views-and-what-each-one-answers)
 5. [Authoring, and the one dangerous button](#5-authoring-and-the-one-dangerous-button)
 6. [Checking and analysing](#6-checking-and-analysing)
-7. [What is kept, and what is not](#7-what-is-kept-and-what-is-not)
-8. [Limits](#8-limits)
-9. [Where to go next](#9-where-to-go-next)
+7. [Three kinds of statement](#7-three-kinds-of-statement)
+8. [What is kept, and what is not](#8-what-is-kept-and-what-is-not)
+9. [Limits](#9-limits)
+10. [Where to go next](#10-where-to-go-next)
 - [Appendix A — every control, and the id a test can find it by](#appendix-a--every-control-and-the-id-a-test-can-find-it-by)
 - [Appendix B — keyboard shortcuts](#appendix-b--keyboard-shortcuts)
 
@@ -73,7 +74,7 @@ tab's repository, an in-memory one).
 **Open the app.** The first thing you see is a "Loading standard library…"
 screen. That is the standard library — an 8.2 MB download of 38761 elements in 98
 packages — being merged into the model before anything is interactive. It is
-once per page load; see [Limits](#8-limits).
+once per page load; see [Limits](#9-limits).
 
 When it clears you get a small `VehicleModel` sample and a three-zone shell:
 
@@ -238,7 +239,10 @@ satisfy EnduranceRequirement by uav;
 ```
 
 **Documentation.** `doc /* … */` is part of the model and survives a
-round-trip. `//` line notes do not — they are stripped, like whitespace.
+round-trip. `//` line notes do not — they are stripped, like whitespace. A
+statement can also say what it is *for* — a rule, an explanation, or guidance
+for an agent — with one keyword in front of its declaration:
+[§7](#7-three-kinds-of-statement).
 
 **Everything else you will meet:** `import`, `alias … for …`, `dependency A to
 B`, `allocate`, `verify`, `refine`, `trace`, `derive`, `@Metadata`, and
@@ -486,7 +490,8 @@ counts requirements alone; by default every statement is listed and the ones the
 ratio leaves out say so on their own line. `prompts --element X` answers the
 question an agent has instead: what guidance applies *here* — the prompts written
 on that element, on what it is, on where it sits, and on where what it is sits,
-nearest first, each with the words it carries.
+nearest first, each with the words it carries. Both are worth a section of
+their own: [§7](#7-three-kinds-of-statement).
 
 Add `--json` to any `sysprose` **subcommand** for `{ok, file, <report>}` on
 stdout. `npm run check -- model.sysml --json` is the other shape —
@@ -512,7 +517,243 @@ it, every one of these engines is an importable function — `checkText`,
 
 ---
 
-## 7. What is kept, and what is not
+## 7. Three kinds of statement
+
+A model holds three quite different sorts of statement, and until you say which
+is which, the tool has to guess from the shape you wrote them in. A
+**requirement** binds: something has to satisfy it, and the coverage figure is
+about it. An **explanation** written for a person binds nothing. **Guidance
+written for an agent** binds nothing either — but it is addressed to a machine,
+so a machine ought to be able to find it.
+
+| Kind | What it is | What the tool does with it |
+|---|---|---|
+| `requirement` | a normative statement — the only kind with contractual value | counted by coverage, judged by the requirement rules |
+| `prose` | an explanation for the human reader | listed and labelled, never counted, passed over by the requirement rules |
+| `prompt` | guidance for an agent working on the model | the same, and collected for every element it applies to |
+
+**The vocabulary is this project's own; the way you write it is not.** The
+published SysML v2 specification has no enumeration of statement kinds. The one
+requirement-related *kind* it has — `RequirementConstraintKind = assumption |
+requirement` — classifies a membership inside a requirement body (`assume` /
+`require`), not an element, and the shipped library classifies requirements by
+subclassification instead (`FunctionalRequirementCheck`,
+`PerformanceRequirementCheck`, …). Nothing there separates an explanation from a
+rule, and nothing names guidance meant for a machine reader. What *is* borrowed
+is the mechanism: §7.27.1 of that specification says a metadata usage exists to
+add tool-specific information to a model, and that a metadata usage whose
+definition has no nested features of its own "simply acts as a user-defined
+syntactic tag on the annotated element"; §7.27.4 defines the user-defined
+keyword — `#name` written in front of a declaration — and the standard library
+ships exactly that shape for its own `<derive>` tag. So a kind here is a keyword
+over a metadata definition: no notation is invented, no grammar is changed, and
+a file carrying one is an ordinary file of the notation that any reader of it
+can still read.
+
+### Writing one
+
+The keyword goes in front of the declaration:
+
+```sysml
+#prose part note {
+    doc /* Written for the reader. Nothing has to satisfy it. */
+}
+```
+
+Three keywords, one of them awkward: `#prose`, `#prompt` and `#'requirement'`.
+The last is quoted because `requirement` is a hard keyword of the notation, and
+the notation's own escape for a name that collides with a keyword is the quoted
+form. `#requirement` does not parse.
+
+Those keywords name three metadata definitions, and nothing in this tool binds a
+keyword to a definition — metadata is unvalidated here — so a tag works whether
+or not the definitions are in your file, and a misspelt `#prosee` is silently no
+kind at all rather than an error. If you want them declared, this is the package,
+and it is the text the tool itself ships:
+
+```sysml
+package SysproseStatements {
+    doc /* Statement kinds are a Sysprose extension, carried as user-defined keywords over metadata definitions (SysML v2 7.27.1, 7.27.4). Writing #'requirement', #prose or #prompt in front of a declaration says what the statement is for. */
+    metadata def <'requirement'> RequirementStatement;
+    metadata def <prose> ProseStatement;
+    metadata def <prompt> PromptStatement;
+}
+```
+
+**Most statements need no keyword.** An element with no tag still has a kind
+wherever its metaclass settles the question: a `requirement` reads as a
+requirement, a `doc` and a `comment` read as prose, and everything else — a
+part, a package, an action — has no kind at all, which is a different answer
+from having the default one. You write a keyword for the cases the shape gets
+wrong: the paragraph of commentary written as a requirement because that is
+where it belongs in the tree, and the guidance written for an agent.
+
+**Where a keyword cannot go.** Prefix metadata belongs to a *declaration*, so
+`connect a to b;`, `perform x;`, a transition, an enumeration literal, a `doc`
+and a `comment` have nowhere to put one. The tool refuses rather than accepting
+a tag that would vanish on the next save: the Kind selector is absent on those
+elements and the writer throws. A `doc` and a `comment` still *read* as prose —
+they simply cannot be told to be anything else. The other way a kind can be
+invisible is the longer metadata form: `@ProseStatement about p1;` parses and
+round-trips, but it is not read as a kind, because reading it means resolving
+`about` against scope and this tool does not do that yet.
+
+In the app the kind is **Properties → Kind** (`prop-statement-kind`), offered on
+every element that can carry one — not only on requirements, since guidance is
+most useful on a definition or a package. The blank entry is a real state, "no
+keyword is written here", and it says what the element reads as without one.
+
+### What it changes
+
+Naming a kind is only worth doing if something acts on it. These do — and the
+last of them is the one that deliberately does not.
+
+- **Coverage counts requirements only.** An explanation written in requirement
+  shape used to enter the divisor and sit there with nothing satisfying it —
+  nothing is supposed to satisfy an explanation — so a fully covered model read
+  below 100% with a gap nobody could close. Tagged statements leave the divisor
+  and are *counted*, beside the library and re-derived exclusions.
+- **The requirement rules skip them.** `requirement-subject` asks what a
+  requirement constrains, which is a fair question for a rule and a meaningless
+  one for a paragraph, so it passes over prose and prompts.
+  `constraint-violation` exempts only what you explicitly tagged: a plain
+  `constraint c { … }` has no statement kind, and it is still checked exactly as
+  it was.
+- **The Requirements view keeps the row and labels it** in its Kind column,
+  rather than hiding it — the one editable grid in the app is not the place a
+  prose statement becomes uneditable.
+- **The terminal says which rows the ratio left out**, instead of stating a
+  figure the reader cannot reconcile with the rows above it.
+- **An untagged requirement is unaffected.** The kind falls back to the
+  metaclass, so every model written before any of this is counted and checked
+  the way it always was.
+
+Written out, all three kinds in one small model:
+
+```sysml
+package Brakes {
+    part def Vehicle;
+    part vehicle : Vehicle;
+
+    requirement <R1> stoppingDistance {
+        doc /* The vehicle shall stop within 40 m from 100 km/h on dry asphalt. */
+        subject v : Vehicle;
+    }
+
+    #prose requirement <N1> whyFortyMetres {
+        doc /* Forty metres is the figure the customer specification quotes, repeated here so a reader need not open it. */
+    }
+
+    #prompt requirement <P1> beforeChangingTheFigure {
+        doc /* Before changing a braking figure, re-run the deceleration analysis and record its verdict on R1. */
+    }
+
+    satisfy stoppingDistance by vehicle;
+}
+```
+
+and what the report makes of it:
+
+```console
+$ npm run sysprose -- requirements brakes.sysml
+brakes.sysml: 1 of 1 requirement(s) satisfied (100%)
+  [x] 1  stoppingDistance (R1) — satisfied by vehicle
+  [-] 2  whyFortyMetres (N1) — prose: an explanation for the reader, not counted
+  [-] 3  beforeChangingTheFigure (P1) — prompt: guidance for an agent, not counted
+  24 bundled library requirement(s) and 0 re-derived copy/copies are not counted
+  2 statement(s) tagged prose or prompt are not requirements and are not counted
+```
+
+Three statements, one ratio, and nothing hidden: `[-]` is a row that binds
+nothing, the last line says how many rows that was, and `--kind requirement`,
+`--kind prose` or `--kind prompt` narrows the listing to one of them. The filter
+deliberately does **not** move the headline ratio — coverage is a fact about the
+model, not about what you asked to see.
+
+### Writing a prompt
+
+A prompt is the kind this tool is unusually placed to have. An agent driving the
+model can collect the guidance that applies to whatever it is working on, which
+is only worth writing if it is worth writing **once**: guidance repeated onto
+every part that needs it is guidance that rots.
+
+So write it where it reaches. Asking what applies to an element walks two edge
+families out from it — **what it is** (its types) and **where it sits** (its
+owners) — transitively, and reports the prompts hanging on each scope and on that
+scope's direct children:
+
+```sysml
+package Propulsion {
+    #prompt part packageGuidance {
+        doc /* Parts in this package follow the fuel-system conventions in DOC-114. */
+    }
+
+    part def Engine {
+        #prompt part engineGuidance {
+            doc /* Give an engine its fuel and exhaust ports before connecting it to anything. */
+        }
+    }
+
+    part engine : Engine;
+}
+```
+
+```console
+$ npm run sysprose -- prompts propulsion.sysml --element engine
+propulsion.sysml: Propulsion::engine — 2 prompt(s) apply
+  1  type   Propulsion::Engine::engineGuidance via Propulsion::Engine
+      Give an engine its fuel and exhaust ports before connecting it to anything.
+  1  owner  Propulsion::packageGuidance via Propulsion
+      Parts in this package follow the fuel-system conventions in DOC-114.
+  nearest first; guidance reaches an element from what it is, where it sits, and where what it is sits
+  0 library element(s) dropped from the walk; 0 re-derived element(s) crossed but not reported
+```
+
+Neither prompt is written on `engine`, and both apply to it. What to know about
+that walk before you write one:
+
+- **Nearest first**, by hop count, and at equal distance what the element *is*
+  comes before where it *sits* — a type is more specific about it than an owner.
+  Each prompt is reported once, at the nearest place it was found, so you can
+  read down the list and stop.
+- **Direct children only**, per scope. Guidance nested two levels down was
+  written about the thing that owns it, and collecting whole subtrees would make
+  every package-level question return the file.
+- **Owners of types count too.** A part typed by a definition from another
+  package is handed that package's guidance, because you used a definition from
+  there. It is the same rule taken to its conclusion, and it means `owner` in
+  that listing is not only your own containment chain.
+- **The bundled library is dropped** at every hop and the count is printed. One
+  unfiltered hop through a library type would turn the question into a walk of
+  tens of thousands of elements. The tool's re-derived copies are the other way
+  round: walked *through* so a walk can reach the definition behind a copy, and
+  never reported.
+- **The words come from the `doc` body** you write under the tagged element (or
+  from a comment addressed to it). A prompt with a tag and no words says so on
+  its own line rather than printing a blank one.
+
+`--json` gives the same thing structurally — each prompt with its `text`,
+`attachedTo`, `via` and `distance` — which is the shape an agent should read.
+The question has no control in the app: Properties *writes* a kind, and nothing
+there collects what applies to a selection.
+
+Two limits worth knowing. A kind classifies an **element**, not each sentence
+inside it: a `doc` body cannot be tagged separately from the requirement that
+owns it. And `requirements --kind prompt` lists only prompts written in
+*requirement shape* — the population of that report is what a requirements table
+holds — so a `#prompt` on a part or a package is found by `prompts --element`,
+not there.
+
+**Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
+keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
+`nonNormativeExcluded` figure in `requirementSatisfaction`),
+`src/validation/rules.ts:526-542`, `889-910` (the two rules that ask),
+`scripts/sysprose.ts` (`requirements --kind`, `prompts`),
+`test/unit/semantics.statement-kind.test.ts`.
+
+---
+
+## 8. What is kept, and what is not
 
 Nothing here leaves your browser. Nothing here is saved for you automatically.
 
@@ -540,7 +781,7 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 
 ---
 
-## 8. Limits
+## 9. Limits
 
 Stated plainly, because finding these out by surprise is worse.
 
@@ -573,7 +814,7 @@ Stated plainly, because finding these out by surprise is worse.
 
 ---
 
-## 9. Where to go next
+## 10. Where to go next
 
 - [`CLI-REFERENCE.md`](CLI-REFERENCE.md) — every subcommand and flag, generated
   from the command table itself.
@@ -610,7 +851,7 @@ quietly go stale.
 | Export → Model JSON | The native model graph | `tb-export-json` |
 | Export → OMG API JSON | The OMG-API-shaped element graph | `tb-export-api-json` |
 | Export → Diagram SVG | The current diagram (drawable views only) | `tb-export-svg` |
-| Export → Diagram PNG | The same, rasterised on white — the scale is in [§8](#8-limits) | `tb-export-png` |
+| Export → Diagram PNG | The same, rasterised on white — the scale is in [§9](#9-limits) | `tb-export-png` |
 | Export → FMU (.fmu) | The selected block as an FMI 3.0 FMU | `tb-export-fmu` |
 | Export → FMI description | Just the `modelDescription.xml` | `tb-export-fmi-xml` |
 | Validate | Runs the rule engine into Problems | `tb-validate` |

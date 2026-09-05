@@ -423,12 +423,68 @@ describe('the README documentation index', () => {
     expect(missing, `documents the README never links:\n${missing.join('\n')}`).toEqual([]);
   });
 
+  /**
+   * The Develop block lists the subcommands too, and nothing checked that list.
+   *
+   * It is the second inventory of the same table — the capability rows are the
+   * first — and it is the one a reader skims before running anything. It went
+   * stale the moment `prompts` shipped: the block named seven subcommands of
+   * eight, so the front page's own quick-reference quietly stopped being an
+   * inventory and became a sample, with every other guard green. The names are
+   * read out of the comment lines under the `npm run sysprose` synopsis and
+   * compared with the command table both ways, so an invented name fails here
+   * as well as a missing one.
+   */
+  it('lists every subcommand in the Develop block, and no others', () => {
+    const block = /npm run sysprose -- <subcommand>[^\n]*\n((?: *#[^\n]*\n)+)/.exec(README);
+    expect(block, 'README.md no longer shows the `npm run sysprose` synopsis with its name list').not
+      .toBeNull();
+    const listed = block![1]
+      .split('\n')
+      // The last comment line points at `--help`; the name lines are the ones
+      // written as `a · b · c`.
+      .filter((l) => l.includes('\u00b7'))
+      .flatMap((l) => l.replace(/^\s*#\s*/, '').split('\u00b7'))
+      .map((n) => n.trim())
+      .filter((n) => n !== '');
+    expect([...listed].sort(), 'the Develop block and the command table disagree').toEqual(
+      COMMANDS.map((c) => c.name).sort(),
+    );
+  });
+
   it('has no dead links', () => {
-    const dead = [...README.matchAll(/\]\(([^)\s]+)\)/g)]
+    const hrefs = [...README.matchAll(/\]\(([^)\s]+)\)/g)]
       .map((m) => m[1])
-      .filter((href) => !/^(https?:|mailto:|#)/.test(href))
+      .filter((href) => !/^(https?:|mailto:|#)/.test(href));
+    const dead = hrefs
       .map((href) => href.replace(/#.*$/, ''))
       .filter((href) => href && !existsSync(root(href)));
     expect(dead, `README.md links files that do not exist:\n${dead.join('\n')}`).toEqual([]);
+
+    // A FRAGMENT is the half of a cross-document link that rots without the
+    // file moving. The README points into `docs/USER-GUIDE.md` by section
+    // number, and the guide renumbers its sections whenever one is inserted —
+    // so the target file existing says nothing about the link landing anywhere
+    // but the top of the page. The guide side of that link is pinned by its own
+    // guard; this is the README side, and it is the reason a renumber cannot
+    // pass here silently.
+    const slug = (heading: string) =>
+      heading
+        .replace(/`/g, '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^\w\- ]+/g, '')
+        .replace(/ +/g, '-');
+    const badAnchors: string[] = [];
+    for (const href of hrefs) {
+      const [path, fragment] = href.split('#');
+      if (!fragment || !path.endsWith('.md') || !existsSync(root(path))) continue;
+      const headings = [...read(path).matchAll(/^#{1,6} +(.+?)\s*$/gm)].map((m) => slug(m[1]));
+      if (!headings.includes(fragment)) badAnchors.push(href);
+    }
+    expect(
+      badAnchors,
+      `README.md links anchors no heading defines:\n${badAnchors.join('\n')}`,
+    ).toEqual([]);
   });
 });

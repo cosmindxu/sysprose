@@ -1676,6 +1676,80 @@ graph in to render a help line — and a unit test compares that copy against
 `STATEMENT_KINDS`, so a fourth kind cannot become a kind `--kind` silently
 refuses.
 
+**Documenting a vocabulary this project invented, and saying whose it is.** The
+rest of the guide describes notation somebody else specified, so a reader misled
+by it can go and read the specification. Statement kinds have no such backstop:
+`docs/USER-GUIDE.md` §7 is the only place a person is told how to write one,
+which makes the section the definition rather than a description of one.
+
+It is written to be checkable for that reason, and three doc guards now stand
+under it. The VOCABULARY is compared with `STATEMENT_KINDS` — every kind named,
+and named with the keyword the writer actually emits, so the guide cannot print
+`#requirement` where a reader has to type `#'requirement'` to get a file that
+parses. The package a reader is told to paste is compared byte for byte with
+`STATEMENT_KIND_LIBRARY`, because the module's own round-trip test pins that
+text and a hand-retyped copy in a document inherits none of it. Every `sysml`
+block in the section is parsed and checked as printed, the two-line one that
+shows where the keyword goes included — an unchecked snippet is how §3 came to
+teach an action line that did not parse. And both TRANSCRIPTS are compared with
+the analysis functions over the snippets printed above them: EVERY figure in
+them — the ratio, the percentage, and all four exclusion counts — against
+`requirementSatisfaction` and `promptsFor`, the mark on every row against
+`buildRequirementsTable`, the applies-to listing row for row, in order, with the
+words each prompt carries.
+
+Two of those figures had been left unregistered on the first pass, and the way
+they escaped is worth recording: `docs-counts.test.ts` matches a claim with a
+single `exec` over the whole document, so its `re-derived copy/copies` claim
+binds to the FIRST transcript quoting that sentence — §6's — and a second
+transcript of the same command over a different model is invisible to it. A
+per-section guard that extracts its own fenced block is the shape that scales to
+two transcripts of one command; a document-wide first-match scan is not.
+
+The transcripts' WORDING is pinned too, and separately. Comparing figures cannot
+see it: the note on a `[-]` row could be reworded to say the row IS counted and
+every figure would still agree. `scripts/sysprose.ts` cannot be imported to get
+at those sentences — it calls `runMain` at module scope, so importing it would
+run the CLI — so the guard reads the literals out of the file as text and
+requires the guide to quote them. That still splits the claim in two: what a
+report says about a model, and the words it says it in, are checked here; how it
+lays a line out, by the L7 CLI suite.
+
+The honesty basis is stated in the guide itself rather than left in a commit
+message. The published specification has no enumeration of statement kinds: its
+one requirement-related kind classifies a membership inside a requirement body,
+and its library classifies requirements by subclassification. So the three
+values are this project's own and the guide says so. What is borrowed is the
+mechanism, and the guide says that too, with the two clauses it rests on —
+§7.27.1, that a metadata usage exists to add tool-specific information to a
+model and that a metadata USAGE whose definition has no nested features acts as
+a user-defined syntactic tag on the annotated element (the actor in that clause
+is the usage, not the definition, and the guide had it the other way round until
+review caught it), and §7.27.4, the `#name` keyword, which the standard library
+itself uses for `<derive>`. The claim being made is that no notation was invented, and that
+is a claim about a file: it parses, it round-trips, and the section shows the
+model that proves it. Nothing here is a claim about the tool having been
+measured against a standard, which is what `docs/CONFORMANCE.md` is for.
+
+One stale inventory turned up while the front page was being edited. The README
+Develop block lists the subcommands as a quick reference, and it had named
+every one of them except `prompts` since that subcommand shipped — a second
+copy of the command table that nothing compared with the first, so it degraded
+from an inventory into a sample with every guard green. It is compared with
+`COMMANDS` both ways now, so an invented name fails as loudly as a missing one.
+
+Its new link into the guide exposed a second gap of the same shape: the
+README's dead-link guard stripped the `#fragment` and checked only that the file
+existed, which is precisely the half that cannot rot on its own. A link by
+section number is a link into a document that renumbers its sections — this
+commit renumbered three of them — so the fragment is now resolved against the
+target's own headings, slugged the way a Markdown host slugs them. And the
+guide's own "source of truth" line numbers, which no guard had ever read, are
+checked for the two validation rules §7 names: the cited range has to start on a
+rule's declaration, end on its closing brace, and contain that rule's id. Both
+ranges were off — one started on the line after the declaration and ran into a
+helper below the rule.
+
 ### Known limitations, recorded rather than hidden
 
 **`doc … locale "…"` still drops its language tag.** The `doc` statement takes

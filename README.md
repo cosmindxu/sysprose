@@ -34,6 +34,7 @@ tool does and does not keep for you.
 - **Validation** — a rule engine flags naming, typing, multiplicity, containment and traceability issues.
 - **API-first** — query the model with OMG-shaped constraint trees, compute analytics (metrics, requirement-satisfaction coverage, traceability, where-used), and script automations.
 - **Local-first** — projects persist in the browser (IndexedDB/localStorage); import/export `.sysml`, model JSON, and OMG element-graph JSON.
+- **A kind for every statement** — one keyword says whether a statement binds (`#'requirement'`), explains (`#prose`) or is guidance for an agent (`#prompt`); coverage counts the first, and the guidance is collectable for whatever it applies to.
 
 ## Name and standards status
 
@@ -77,6 +78,23 @@ thing in-process and never throws.
 - [`docs/AGENT-AUTHORING-CAMPAIGN.md`](docs/AGENT-AUTHORING-CAMPAIGN.md) — the test
   campaign that keeps this feedback good enough to act on, and the open defects
   it has found.
+
+A model can also tell you what each of its statements is **for**. One keyword in
+front of a declaration — `#'requirement'`, `#prose` or `#prompt` — separates a
+statement that binds from an explanation that does not, and from guidance
+written for you rather than for a reader. Coverage counts requirements alone and
+says what it left out; the requirement rules pass over the other two; and
+
+```bash
+npm run sysprose -- prompts model.sysml --element X --json
+```
+
+collects the guidance that applies to one element — what is written on it, on
+what it is, and on where either sits, nearest first, each with its provenance
+and its words. The three values are this project's own; the way they are written
+is the specification's own user-defined keyword over a metadata definition
+(§7.27.1, §7.27.4), so nothing about the notation is invented. How to write one:
+[`docs/USER-GUIDE.md` §7](docs/USER-GUIDE.md#7-three-kinds-of-statement).
 
 ## What it can do, and where
 
@@ -175,7 +193,7 @@ npm run commands       # regenerate docs/CLI-REFERENCE.md from the command table
 npm run check -- <file.sysml> [--json]   # check a file from the command line
 npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # stats · elements · requirements · trace
-                       # connectivity · where-used · orphans
+                       # connectivity · where-used · orphans · prompts
                        # `npm run sysprose -- --help` lists them
 ```
 
