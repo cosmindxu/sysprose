@@ -74,6 +74,19 @@ export const TRACE_PRESETS: ReadonlyMap<string, readonly string[]> = new Map([
   ['trace', ['Trace']],
 ]);
 
+/**
+ * The statement kinds `requirements --kind` accepts.
+ *
+ * Spelled out here rather than imported from `@semantics/statement-kind`,
+ * because this module is imported by a documentation generator and by three
+ * doc-guard tests, and pulling the model in to render a help line would give
+ * every one of them the whole core graph. The price of the copy is drift, so it
+ * is not left to good intentions: `test/unit/cli-reference.test.ts` compares
+ * this list against `STATEMENT_KINDS` and fails if a fourth kind is added to
+ * the vocabulary and not offered here.
+ */
+export const STATEMENT_KIND_FLAG_VALUES: readonly string[] = ['requirement', 'prose', 'prompt'];
+
 /** One subcommand. */
 export interface CommandSpec {
   name: string;
@@ -114,7 +127,15 @@ export const COMMANDS: readonly CommandSpec[] = [
     backedBy:
       'requirementSatisfaction (src/api/analytics.ts) + buildRequirementsTable (src/diagram/requirements-table.ts)',
     payloadKey: 'requirements',
-    flags: [],
+    flags: [
+      {
+        name: 'kind',
+        kind: 'value',
+        metavar: 'KIND',
+        fallback: 'every kind, each non-normative row labelled',
+        doc: `Show only statements of this kind: ${STATEMENT_KIND_FLAG_VALUES.join(' | ')}`,
+      },
+    ],
   },
   {
     name: 'trace',
@@ -177,6 +198,23 @@ export const COMMANDS: readonly CommandSpec[] = [
     backedBy: 'orphanReport (src/api/analytics.ts)',
     payloadKey: 'orphans',
     flags: [],
+  },
+  {
+    name: 'prompts',
+    question: 'What guidance applies to the element I am working on?',
+    backedBy: 'promptsFor (src/api/analytics.ts)',
+    payloadKey: 'prompts',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        // Deliberately the same words as `where-used`'s: it is the same
+        // resolution, and two spellings of one grammar is how a reader learns
+        // that the second command wants something else.
+        doc: 'The element: an id, a qualified name, or a name unique in the model',
+      },
+    ],
   },
 ];
 

@@ -1630,6 +1630,52 @@ keyword-clearing helper moved next to the writer and became part of the module's
 surface. Both commands spend exactly one undo step, refuse a library element
 before taking a snapshot, and put the redo stack back if the write throws.
 
+**The two questions a kind makes worth asking, from a terminal.** A vocabulary
+that only the browser can read is a vocabulary an agent cannot use, and an agent
+driving a model is who `prompt` exists for. So `requirements` gains `--kind` and
+there is a new `prompts` subcommand, both rows in the one command table the
+dispatcher parses, `--help` renders and `docs/CLI-REFERENCE.md` is generated
+from.
+
+The listing changed before the flag did. `requirements` used to print the rows
+the RATIO counts, which since coverage started excluding prose and prompts meant
+it printed a line saying "N statement(s) tagged prose or prompt are not counted"
+and then gave the reader no way to find out which ones. Every requirement-shaped
+statement is listed now, whatever kind it is, with the non-normative ones
+labelled by what they are and why they are not counted; `--kind` narrows that
+listing to one kind and leaves the headline ratio alone, because coverage is a
+fact about the model rather than about what was asked to be shown, and the
+filtered report says how many of how many rows are in front of the reader. Two
+smaller decisions are the same instinct: a re-derived copy is filtered out of the
+listing rather than shown as a row nobody can edit, and a non-normative row
+reports `satisfied: null` rather than `false`, because `false` is a claim about a
+requirement — that it has a gap — and a consumer counting gaps would have counted
+every explanation in the model.
+
+`--kind` is checked against the closed vocabulary before the file is read, so an
+empty listing under it is an answer rather than a typo, which is why it is NOT
+one of the command's refusals — unlike `--from`, where an unknown metaclass and
+an honestly empty matrix are indistinguishable. What the listing cannot answer,
+it says: the population is what a requirements table holds, so guidance written
+on a part or a package is not in it, and the line under a filtered listing names
+the subcommand that does find it.
+
+That subcommand is `prompts --element REF`, a shell over `promptsFor` — the
+guidance written on an element, on what it is, on where it sits, and on where
+what it is sits, nearest first, each with its provenance and the words it
+carries. That fourth clause is not padding: the walk reaches the owners of
+TYPES, so a part typed from another package is handed that package's guidance
+without sitting in it, and the legend under the listing has to describe the walk
+that produced the rows above it rather than a tidier one. It carries no view in
+the app: the Properties panel WRITES a kind, but nothing there collects what
+applies to a selection, and the capability table says "no view yet" rather than
+crediting the selector with an answer it does not compute. The one value list the
+command table copies rather than imports is the three kinds — the spec module is
+kept free of model imports so the documentation generator does not pull the core
+graph in to render a help line — and a unit test compares that copy against
+`STATEMENT_KINDS`, so a fourth kind cannot become a kind `--kind` silently
+refuses.
+
 ### Known limitations, recorded rather than hidden
 
 **`doc … locale "…"` still drops its language tag.** The `doc` statement takes

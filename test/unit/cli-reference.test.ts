@@ -16,12 +16,14 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { STATEMENT_KINDS } from '@semantics/index';
 import { renderCliReference } from '../../scripts/gen-cli-reference';
 import {
   CHECK_EXIT_CODES,
   COMMANDS,
   COMMON_FLAGS,
   EXIT_CODES,
+  STATEMENT_KIND_FLAG_VALUES,
   flagsFor,
 } from '../../scripts/lib/sysprose-spec';
 
@@ -74,6 +76,42 @@ describe('the generated command reference', () => {
   it('states the exit-code contract', () => {
     expect(DOC).toContain('0 clean');
     expect(DOC).toContain('2 usage/IO error');
+  });
+});
+
+/**
+ * The one value list the command table copies rather than imports.
+ *
+ * `scripts/lib/sysprose-spec.ts` is imported by the documentation generator and
+ * by three doc guards, and it is kept free of model imports so none of them
+ * pulls the core graph in to render a help line. The price is a hand-copied
+ * vocabulary, and a vocabulary in two places is a vocabulary that drifts: a
+ * fourth statement kind added to `@semantics/statement-kind` would be a kind
+ * `--kind` silently refuses, with the reference documenting three and the
+ * dispatcher accepting three. This is the assertion that makes the copy safe.
+ */
+describe('the `--kind` flag and the statement-kind vocabulary', () => {
+  it('offers exactly the kinds the semantics module declares, in the same order', () => {
+    expect(
+      STATEMENT_KIND_FLAG_VALUES,
+      '`requirements --kind` and `STATEMENT_KINDS` disagree about what a statement kind is',
+    ).toEqual([...STATEMENT_KINDS]);
+  });
+
+  it('names every one of them in the reference', () => {
+    const kindFlag = COMMANDS.flatMap((c) => c.flags).find((f) => f.name === 'kind');
+    expect(kindFlag, '`requirements` no longer declares `--kind`').toBeDefined();
+    // The flag's ROW, not the whole document. `toContain` over `DOC` passes on
+    // any of the three by accident — `prose` is inside the word `sysprose`,
+    // `prompt` inside the `prompts` section, `requirement` inside the
+    // `requirements` one — so deleting this row outright would not have failed
+    // it. A vocabulary guard that cannot see its own subject is not a guard.
+    const row = DOC.split('\n').find((l) => l.startsWith('| `--kind KIND` |'));
+    expect(row, 'the reference no longer renders a `--kind` row').toBeDefined();
+    for (const kind of STATEMENT_KINDS) {
+      expect(kindFlag!.doc, `--kind's doc line offers ${kind}`).toContain(kind);
+      expect(row!, `the reference's --kind row names ${kind}`).toContain(kind);
+    }
   });
 });
 

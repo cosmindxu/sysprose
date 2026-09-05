@@ -51,6 +51,7 @@ rather than reporting on the first one.
 | [`connectivity`](#connectivity) | Which ports are wired, and which are left dangling? | `connectivity` |
 | [`where-used`](#where-used) | What breaks if I change this element? | `whereUsed` |
 | [`orphans`](#orphans) | What did I declare and never use? | `orphans` |
+| [`prompts`](#prompts) | What guidance applies to the element I am working on? | `prompts` |
 
 ### Options every subcommand takes
 
@@ -105,7 +106,9 @@ Computed by `buildGrid (src/diagram/grid.ts)`. With `--json` the answer is publi
 npm run sysprose -- requirements <file.sysml|-> [options]
 ```
 
-_No flags of its own._
+| Flag | What it does | Default |
+|---|---|---|
+| `--kind KIND` | Show only statements of this kind: requirement \| prose \| prompt | every kind, each non-normative row labelled |
 
 Computed by `requirementSatisfaction (src/api/analytics.ts) + buildRequirementsTable (src/diagram/requirements-table.ts)`. With `--json` the answer is published under `requirements`, beside `ok` and `file`.
 
@@ -164,6 +167,20 @@ _No flags of its own._
 
 Computed by `orphanReport (src/api/analytics.ts)`. With `--json` the answer is published under `orphans`, beside `ok` and `file`.
 
+### `prompts`
+
+**What guidance applies to the element I am working on?**
+
+```bash
+npm run sysprose -- prompts <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The element: an id, a qualified name, or a name unique in the model | — |
+
+Computed by `promptsFor (src/api/analytics.ts)`. With `--json` the answer is published under `prompts`, beside `ok` and `file`.
+
 ### `trace` relationship presets
 
 A preset names the **relationship** kinds only. The row and column metaclasses
@@ -212,4 +229,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*7 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*8 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

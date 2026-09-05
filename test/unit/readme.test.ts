@@ -118,8 +118,12 @@ const APP_DOORS: ReadonlyArray<{
     ],
   },
   // `orphans` has no control at all — the row says so, and the case below holds
-  // it to saying so rather than letting an empty cell pass silently.
+  // it to saying so rather than letting an empty cell pass silently. `prompts`
+  // is the same: the Properties panel WRITES a statement kind, but nothing in
+  // the app collects the guidance that applies to an element, so the row must
+  // not credit the selector with an answer it does not compute.
   { command: 'orphans', controls: [] },
+  { command: 'prompts', controls: [] },
 ];
 
 interface Row {

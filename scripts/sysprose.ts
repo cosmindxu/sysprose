@@ -4,20 +4,22 @@
  *
  * WHY. Every reporting function in this repo — the size and shape of a model,
  * which requirements are covered, what traces to what, which ports are wired,
- * what a change reaches, what nothing uses — is a pure, tested, exported
- * function, and until now every one of them was reachable only from the browser
- * or from a JavaScript console. `npm run check` could tell you a file was
- * VALID; nothing could tell you what was IN it. This is that half of the tool,
- * as one command with subcommands, each a thin shell over the exported function
- * that computes the answer, so a figure read in a terminal and the same figure
- * computed from that import cannot differ. Several of the app's views answer the
- * same QUESTION by drawing their own projection instead of calling the reporting
- * function (Allocation, Interconnection, Properties -> Used by), so those figures
- * are not promised to match — see the capability table in `README.md`.
+ * what a change reaches, what nothing uses, what guidance applies where — is a
+ * pure, tested, exported function, and until now every one of them was
+ * reachable only from the browser or from a JavaScript console. `npm run check`
+ * could tell you a file was VALID; nothing could tell you what was IN it. This
+ * is that half of the tool, as one command with subcommands, each a thin shell
+ * over the exported function that computes the answer, so a figure read in a
+ * terminal and the same figure computed from that import cannot differ. Several
+ * of the app's views answer the same QUESTION by drawing their own projection
+ * instead of calling the reporting function (Allocation, Interconnection,
+ * Properties -> Used by), so those figures are not promised to match — see the
+ * capability table in `README.md`.
  *
  *   npm run sysprose -- stats examples/uav-isr.sysml
  *   npm run sysprose -- requirements examples/uav-isr.sysml --json
  *   npm run sysprose -- where-used examples/uav-isr.sysml --element AirVehicle --depth 2
+ *   npm run sysprose -- prompts model.sysml --element Engine
  *   cat model.sysml | npm run sysprose -- orphans -
  *
  * Exit codes are the contract, and they are `sysml-check`'s:
@@ -47,6 +49,13 @@
  * metaclass the model has none of, because the alternative is an empty matrix
  * and exit 0.
  *
+ * `--kind` is deliberately NOT one of those refusals. It is checked against the
+ * closed list of statement kinds before the file is read, so it cannot be a
+ * typo the way a metaclass name can; past that, "no statement of this kind" is
+ * a true answer about the model rather than a question that could not be
+ * asked, and the report says how many of how many rows it is showing so an
+ * empty one cannot be read as an empty model.
+ *
  * TWO LIBRARY FLAGS, because they are two knobs. `--no-library` skips BINDING:
  * it changes the model — library types report as unresolved — and it is the
  * same flag, with the same meaning, as `npm run check`'s. `--include-library`
@@ -68,11 +77,17 @@ import {
   isUserElement,
   modelMetrics,
   orphanReport,
+  promptsFor,
   requirementSatisfaction,
   traceabilityMatrix,
   type ElementRef,
 } from '../src/api/index';
-import { resolveFullName } from '../src/semantics/index';
+import {
+  isStatementKind,
+  resolveFullName,
+  statementKindOf,
+  type StatementKind,
+} from '../src/semantics/index';
 // Deep imports rather than `../src/diagram/index`: the diagram barrel pulls the
 // layout engine in with it, and neither of these two builders needs it.
 import { buildGrid } from '../src/diagram/grid';
@@ -82,6 +97,7 @@ import { flagGiven, flagValue, isArgError, parseArgs, type ParsedArgs } from './
 import { runMain } from './lib/exit';
 import {
   COMMANDS,
+  STATEMENT_KIND_FLAG_VALUES,
   TRACE_PRESETS,
   findCommand,
   flagsFor,
@@ -243,32 +259,94 @@ function reportElements(model: Model, name: string, includeLibrary: boolean): Re
   return { json: rows, text };
 }
 
-function reportRequirements(model: Model, name: string): Report {
+/**
+ * The kind `--kind` names, or a refusal. Shared with {@link precheckArgs} so a
+ * mistyped kind is rejected before a second of parsing and library binding.
+ *
+ * `undefined` is "every kind", which is the default: a reader who has not heard
+ * of statement kinds must not have to learn about them to see their own
+ * statements.
+ */
+function requirementsKind(args: ParsedArgs): StatementKind | undefined {
+  const raw = flagValue(args, 'kind');
+  if (raw === undefined) return undefined;
+  if (!isStatementKind(raw)) {
+    throw new UsageError(
+      `unknown --kind \`${raw}\` — one of ${STATEMENT_KIND_FLAG_VALUES.join(', ')}`,
+      true,
+    );
+  }
+  return raw;
+}
+
+/**
+ * What a non-normative row is doing in a coverage report, in the reader's words.
+ *
+ * Named rather than inlined because it is the whole labelling contract: a row
+ * that is not counted has to say both WHAT it is and that it is not counted, or
+ * a reader adds it to the divisor themselves.
+ */
+const NON_NORMATIVE_NOTE: Record<'prose' | 'prompt', string> = {
+  prose: 'prose: an explanation for the reader, not counted',
+  prompt: 'prompt: guidance for an agent, not counted',
+};
+
+function reportRequirements(model: Model, name: string, args: ParsedArgs): Report {
+  const kindFilter = requirementsKind(args);
   const sat = requirementSatisfaction(model);
   const table = buildRequirementsTable(model);
   const status = new Map(sat.requirements.map((r) => [r.requirement.id, r]));
 
-  // The ratio and the list are built from ONE population: a row the ratio does
-  // not count would be a line the reader adds up to a different number.
+  // EVERY requirement-shaped statement the reader wrote, whatever kind it is —
+  // not just the ones the ratio counts. Listing only the counted ones made the
+  // `N statement(s) tagged prose or prompt` line unfollowable: the reader was
+  // told a statement had left the divisor and given no way to find out which.
+  // The ratio is still over the normative ones alone, so each row says which it
+  // is and the exclusion lines below say how many are in neither.
+  //
+  // Re-derived copies stay out. `buildRequirementsTable` filters only the
+  // library, so a usage-scoped copy of a requirement is a row there; it is not
+  // in the reader's file, cannot be edited there, and is already counted under
+  // the report's own `implicitExcluded`.
   const rows = table.rows
-    .filter((r) => status.has(r.id))
+    .filter((r) => {
+      const el = model.get(r.id);
+      return el !== undefined && isUserElement(model, el);
+    })
     .map((r) => {
-      const st = status.get(r.id)!;
+      const st = status.get(r.id);
       return {
         id: r.id,
         number: r.number,
         reqId: r.reqId,
-        name: r.name || label(st.requirement),
+        name: r.name || qname(model, r.id),
         metaclass: r.eClass,
+        // The kind it READS as, which for an untagged requirement is
+        // `requirement` off the metaclass — the same answer coverage used.
+        kind: statementKindOf(model, r.id),
         text: r.text,
-        satisfied: st.satisfied,
-        satisfiedBy: st.satisfiers.map(label),
+        // `null`, not `false`, on a statement nothing is supposed to satisfy.
+        // `false` is a claim about a requirement — that it has a gap — and a
+        // consumer counting gaps would count every explanation in the model.
+        satisfied: st ? st.satisfied : null,
+        // The VERDICT is withheld on a non-normative row; the EDGES are not.
+        // `requirementSatisfaction` has no status for a prose row, so falling
+        // back to an empty list would have reported `satisfiedBy: []` on a
+        // statement the model really does carry a `satisfy` onto — an absence
+        // the reader can measure, and on exactly one of the five reference
+        // columns, while the four below it named the same element. The row's
+        // own column is the same edge set from the same walk, so it answers
+        // here and all five columns come from one source.
+        satisfiedBy: st ? st.satisfiers.map(label) : r.refs.satisfiedBy.map((x) => x.label),
         verifiedBy: r.refs.verifiedBy.map((x) => x.label),
         refinedBy: r.refs.refinedBy.map((x) => x.label),
         tracedTo: r.refs.tracedTo.map((x) => x.label),
         derivedFrom: r.refs.derivedFrom.map((x) => x.label),
       };
     });
+  // Anything the ratio counts that the table did not emit. The two populations
+  // agree today; a row missing from the list while sitting in the divisor is
+  // exactly the arithmetic nobody can check, so the safety net stays.
   const rowIds = new Set(rows.map((r) => r.id));
   for (const st of sat.requirements) {
     if (rowIds.has(st.requirement.id)) continue;
@@ -278,6 +356,7 @@ function reportRequirements(model: Model, name: string): Report {
       reqId: '',
       name: label(st.requirement),
       metaclass: st.requirement.eClass,
+      kind: statementKindOf(model, st.requirement.id),
       text: '',
       satisfied: st.satisfied,
       satisfiedBy: st.satisfiers.map(label),
@@ -287,6 +366,7 @@ function reportRequirements(model: Model, name: string): Report {
       derivedFrom: [],
     });
   }
+  const shown = kindFilter === undefined ? rows : rows.filter((r) => r.kind === kindFilter);
 
   const payload = {
     total: sat.total,
@@ -295,17 +375,38 @@ function reportRequirements(model: Model, name: string): Report {
     libraryExcluded: sat.libraryExcluded,
     implicitExcluded: sat.implicitExcluded,
     nonNormativeExcluded: sat.nonNormativeExcluded,
-    rows,
+    // What was ASKED for, so a consumer reading a payload out of a file knows
+    // whether `rows` is the whole listing or one kind of it.
+    kind: kindFilter ?? null,
+    rows: shown,
   };
   const pct = sat.total === 0 ? 0 : Math.round(sat.coverage * 100);
   const text = [
+    // The ratio is a fact about the MODEL, so it is the same headline under
+    // every filter. Only the listing narrows.
     `${name}: ${sat.satisfied} of ${sat.total} requirement(s) satisfied (${pct}%)`,
-    ...(rows.length === 0 ? ['  no requirements in this model'] : []),
-    ...rows.map((r) => {
-      const mark = r.satisfied ? '[x]' : '[ ]';
+    ...(kindFilter !== undefined
+      ? [`  showing ${shown.length} of ${rows.length} statement(s) — kind ${kindFilter}`]
+      : []),
+    ...(shown.length === 0
+      ? [
+          kindFilter === undefined
+            ? '  no requirements in this model'
+            : `  none of them is ${kindFilter}`,
+        ]
+      : []),
+    ...shown.map((r) => {
       const id = r.reqId ? ` (${r.reqId})` : '';
+      const number = r.number ? `${r.number}  ` : '';
+      // The mark IS the kind for a requirement: a checkbox only means anything
+      // about a statement something can satisfy. Spelling `requirement` on
+      // every line as well would be a word on every line of the overwhelmingly
+      // common all-requirements model, read past by everyone.
+      if (r.kind === 'prose' || r.kind === 'prompt') {
+        return `  [-] ${number}${r.name}${id} — ${NON_NORMATIVE_NOTE[r.kind]}`;
+      }
       const by = r.satisfied ? `satisfied by ${r.satisfiedBy.join(', ')}` : 'nothing satisfies it';
-      return `  ${mark} ${r.number ? `${r.number}  ` : ''}${r.name}${id} — ${by}`;
+      return `  ${r.satisfied ? '[x]' : '[ ]'} ${number}${r.name}${id} — ${by}`;
     }),
     `  ${sat.libraryExcluded} bundled library requirement(s) and ${sat.implicitExcluded} re-derived copy/copies are not counted`,
     // Only when there IS one. The exclusion line above is on every report
@@ -316,6 +417,16 @@ function reportRequirements(model: Model, name: string): Report {
     ...(sat.nonNormativeExcluded > 0
       ? [
           `  ${sat.nonNormativeExcluded} statement(s) tagged prose or prompt are not requirements and are not counted`,
+        ]
+      : []),
+    // Said only to a reader who asked for a non-normative kind, because they are
+    // the one who can mistake this for a listing of every such statement in the
+    // model. It is not: the population here is what a requirements table holds,
+    // and a `#prose` package or a `#prompt` part definition is not in it.
+    ...(kindFilter === 'prose' || kindFilter === 'prompt'
+      ? [
+          `  requirement-shaped statements only — a ${kindFilter} written on a part or a package is not here`,
+          '  `prompts --element REF` is the one that answers what guidance applies to an element',
         ]
       : []),
   ].join('\n');
@@ -554,6 +665,66 @@ function reportWhereUsed(model: Model, name: string, args: ParsedArgs): Report {
   return { json: payload, text };
 }
 
+/** The element `prompts` was asked about, or a refusal. Shared with the precheck. */
+function promptsRef(args: ParsedArgs): string {
+  const ref = flagValue(args, 'element');
+  if (ref === undefined) {
+    throw new UsageError('prompts needs --element <id|qualified name|unique name>', true);
+  }
+  return ref;
+}
+
+/**
+ * A prompt's words, indented under the line that says where they came from.
+ *
+ * Printed in full rather than truncated to a line: guidance is the payload of
+ * this report, and a report that shows the first 80 characters of an
+ * instruction is a report an agent has to go and read the file to use. Blank
+ * lines are dropped so a `doc` body written with paragraph breaks does not
+ * scatter the listing.
+ *
+ * A prompt with NO words is the one case worth spelling out. It is a tag
+ * somebody wrote and never filled in, and a blank line under it reads as
+ * guidance that was collected and lost rather than guidance that was never
+ * written.
+ */
+function promptTextLines(text: string): string[] {
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '');
+  if (lines.length === 0) return ['      (tagged as a prompt, but carries no words)'];
+  return lines.map((l) => `      ${l}`);
+}
+
+function reportPrompts(model: Model, name: string, args: ParsedArgs): Report {
+  const el = resolveElementRef(model, promptsRef(args));
+  const report = promptsFor(model, el.id);
+  const text = [
+    `${name}: ${qname(model, el.id)} — ${report.prompts.length} prompt(s) apply`,
+    ...(report.prompts.length === 0
+      ? ['  no guidance is written on it, on what it is, or on where either sits']
+      : report.prompts.flatMap((p) => [
+          `  ${p.distance}  ${p.via.padEnd(5)}  ${p.prompt.qualifiedName || label(p.prompt)}` +
+            // At distance 0 the prompt hangs on the element in the heading, so
+            // repeating it there would be a column of the same name.
+            (p.distance === 0 ? '' : ` via ${p.attachedTo.qualifiedName || label(p.attachedTo)}`),
+          ...promptTextLines(p.text),
+        ])),
+    // A legend for a list, so only when there is a list. Under "no guidance is
+    // written on it" it read as a promise about rows that are not there.
+    ...(report.prompts.length > 0
+      ? // The walk's third path is the owners of TYPES, so "everything under
+        // it" was a rule the rows above it broke: a part typed from another
+        // package is reported that package's guidance without sitting in it.
+        ['  nearest first; guidance reaches an element from what it is, where it sits, and where what it is sits']
+      : []),
+    `  ${report.libraryExcluded} library element(s) dropped from the walk; ` +
+      `${report.implicitExcluded} re-derived element(s) crossed but not reported`,
+  ].join('\n');
+  return { json: report, text };
+}
+
 function reportOrphans(model: Model, name: string): Report {
   const r = orphanReport(model);
   const text = [
@@ -577,7 +748,7 @@ function buildReport(cmd: CommandSpec, model: Model, name: string, args: ParsedA
     case 'elements':
       return reportElements(model, name, flagGiven(args, 'include-library'));
     case 'requirements':
-      return reportRequirements(model, name);
+      return reportRequirements(model, name, args);
     case 'trace':
       return reportTrace(model, name, args);
     case 'connectivity':
@@ -586,6 +757,8 @@ function buildReport(cmd: CommandSpec, model: Model, name: string, args: ParsedA
       return reportWhereUsed(model, name, args);
     case 'orphans':
       return reportOrphans(model, name);
+    case 'prompts':
+      return reportPrompts(model, name, args);
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.
@@ -606,9 +779,15 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
     case 'trace':
       traceRelation(args);
       return;
+    case 'requirements':
+      requirementsKind(args);
+      return;
     case 'where-used':
       whereUsedRef(args);
       whereUsedDepth(args);
+      return;
+    case 'prompts':
+      promptsRef(args);
       return;
     default:
       return;

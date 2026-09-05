@@ -434,6 +434,7 @@ may legitimately differ, and the difference is spelled out under the table.
 | Which ports are wired? | **Interconnection** view † | `npm run sysprose -- connectivity model.sysml` |
 | What breaks if I change this? | Properties → *Used by* † | `npm run sysprose -- where-used model.sysml --element X` |
 | What did I declare and never use? | — | `npm run sysprose -- orphans model.sysml` |
+| What guidance applies to this element? | — | `npm run sysprose -- prompts model.sysml --element X` |
 
 † **Validate** re-runs the rule engine over the model already in the editor;
 `check` parses the file first and then applies those same rules. The
@@ -441,7 +442,7 @@ may legitimately differ, and the difference is spelled out under the table.
 `trace` tabulates every element of the row and column kinds and so also shows
 what links to nothing. The **Interconnection** view *draws* the ports and
 connections; it computes no connectivity report — `connectivity` exists only in
-the terminal and the SDK, as do `orphans` and the depth walk behind
+the terminal and the SDK, as do `orphans`, `prompts` and the depth walk behind
 `where-used`. Properties → *Used by* lists everything referencing the
 selection, library and re-derived copies included, where `where-used` drops the
 library, walks to the `--depth` you ask for and tells you what it left out.
@@ -477,6 +478,15 @@ counts the library, `elements` the re-derived copies, the rest both. And
 `orphans` is an inventory, not a verdict: the two "unused" definitions are the
 mission behaviour and the flight modes, which nothing in the model references
 yet — that is a fact about the model, not a defect in it.
+
+Two of the subcommands are about what a statement is *for* rather than what it
+constrains. `requirements --kind prose` (or `prompt`, or `requirement`) narrows
+the listing to statements of one kind without moving the coverage ratio, which
+counts requirements alone; by default every statement is listed and the ones the
+ratio leaves out say so on their own line. `prompts --element X` answers the
+question an agent has instead: what guidance applies *here* — the prompts written
+on that element, on what it is, on where it sits, and on where what it is sits,
+nearest first, each with the words it carries.
 
 Add `--json` to any `sysprose` **subcommand** for `{ok, file, <report>}` on
 stdout. `npm run check -- model.sysml --json` is the other shape —

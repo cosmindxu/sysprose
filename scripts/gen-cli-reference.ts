@@ -50,14 +50,26 @@ function flagName(f: FlagSpec): string {
   return `${alias}\`--${f.name}${f.kind === 'value' ? ` ${f.metavar ?? 'VALUE'}` : ''}\``;
 }
 
+/**
+ * A flag's default, in code ticks only when it is a VALUE.
+ *
+ * Most defaults are literals a reader could type back at the flag (`satisfy`,
+ * `1`), and ticks say so. `--kind`'s is a sentence — "every kind, each
+ * non-normative row labelled" — and in the same ticks it read as a value the
+ * flag would accept. Ticks are the claim "this is what you would pass"; a
+ * fallback with a space in it is not making that claim.
+ */
+function fallbackCell(f: FlagSpec): string {
+  if (!f.fallback) return '—';
+  return f.fallback.includes(' ') ? cell(f.fallback) : `\`${f.fallback}\``;
+}
+
 /** One row per flag: how it is written, what it does, what it does otherwise. */
 function flagTable(flags: readonly FlagSpec[]): string {
   return [
     '| Flag | What it does | Default |',
     '|---|---|---|',
-    ...flags.map(
-      (f) => `| ${flagName(f)} | ${cell(f.doc)} | ${f.fallback ? `\`${f.fallback}\`` : '—'} |`,
-    ),
+    ...flags.map((f) => `| ${flagName(f)} | ${cell(f.doc)} | ${fallbackCell(f)} |`),
   ].join('\n');
 }
 

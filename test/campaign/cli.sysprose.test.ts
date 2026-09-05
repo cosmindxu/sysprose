@@ -129,46 +129,217 @@ describe('L7 — sysprose reporting command', () => {
     expect(human.stdout).not.toContain('prose or prompt');
   }, 120_000);
 
-  /**
-   * A non-normative statement leaves the ratio and SAYS SO.
-   *
-   * Dropping it silently would hand the reader a fraction the rows in front of
-   * them do not add up to — the same failure the bundled library caused, at a
-   * smaller scale and harder to spot.
-   */
-  it('says when a prose or prompt statement is left out of the ratio', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'sysprose-kind-'));
-    try {
-      const file = join(dir, 'kinds.sysml');
-      writeFileSync(
-        file,
-        `package K {
+  /** A model with one of each kind, written in requirement shape. */
+  const KINDS_MODEL = `package K {
     part def Vehicle;
     part v : Vehicle;
     requirement <R1> maxMass {
         subject s : Vehicle;
     }
-    #prose requirement <N1> note;
+    #prose requirement <N1> note {
+        doc /* Mass is measured dry. */
+    }
+    #prompt requirement <G1> guidance {
+        doc /* Ask for the weighing report before you close this. */
+    }
     satisfy maxMass by v;
+    satisfy note by v;
 }
-`,
-      );
+`;
+
+  /**
+   * A non-normative statement leaves the ratio, SAYS SO, and is still listed.
+   *
+   * Dropping it from the ratio silently would hand the reader a fraction the
+   * rows in front of them do not add up to — the same failure the bundled
+   * library caused, at a smaller scale and harder to spot. Dropping it from the
+   * LIST is the mirror of that: the reader would see a `prose or prompt` count
+   * and have no way to find out which statement it was about.
+   */
+  it('lists every kind by default, labels the ones the ratio leaves out', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-kind-'));
+    try {
+      const file = join(dir, 'kinds.sysml');
+      writeFileSync(file, KINDS_MODEL);
       const r = run(['requirements', file, '--json']);
       expect(r.code).toBe(0);
       const { body } = payload<{
-        requirements: { total: number; nonNormativeExcluded: number; rows: Array<{ name: string }> };
+        requirements: {
+          total: number;
+          nonNormativeExcluded: number;
+          kind: string | null;
+          rows: Array<{
+            name: string;
+            kind: string;
+            satisfied: boolean | null;
+            satisfiedBy: string[];
+          }>;
+        };
       }>(r);
+      // The ratio still counts the one normative statement, and says so.
       expect(body.requirements.total).toBe(1);
-      expect(body.requirements.nonNormativeExcluded).toBe(1);
-      expect(body.requirements.rows.map((x) => x.name)).toEqual(['maxMass']);
+      expect(body.requirements.nonNormativeExcluded).toBe(2);
+      expect(body.requirements.kind).toBeNull();
+      // The listing is every requirement-shaped statement, each carrying its kind.
+      expect(body.requirements.rows.map((x) => [x.name, x.kind])).toEqual([
+        ['maxMass', 'requirement'],
+        ['note', 'prose'],
+        ['guidance', 'prompt'],
+      ]);
+      // `satisfied` is null, not false, on a statement nothing is supposed to
+      // satisfy: reported as false it reads as an uncovered requirement.
+      expect(body.requirements.rows.map((x) => x.satisfied)).toEqual([true, null, null]);
+      // Withholding the VERDICT on a non-normative row must not delete its
+      // EDGES: the model really does say `satisfy note by v`, and a row that
+      // reported no satisfier would be contradicting the file it is reporting
+      // on — on one column, while its neighbours named the same element.
+      expect(body.requirements.rows.map((x) => x.satisfiedBy)).toEqual([['v'], ['v'], []]);
 
       const human = run(['requirements', file]);
       expect(human.stdout).toContain('1 of 1');
-      expect(human.stdout).toContain('1 statement(s) tagged prose or prompt');
+      expect(human.stdout).toContain('2 statement(s) tagged prose or prompt');
+      expect(human.stdout).toMatch(/note.*prose/);
+      expect(human.stdout).toMatch(/guidance.*prompt/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
+
+  /**
+   * `--kind` narrows the listing without moving the ratio.
+   *
+   * Coverage is a fact about the model, not about what the reader asked to see,
+   * so it is the same headline under every filter — and the report says how
+   * many of how many statements are in front of them, so a filtered list cannot
+   * be mistaken for the whole one.
+   */
+  it('requirements --kind shows one kind, and refuses a kind that is not one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-kind-'));
+    try {
+      const file = join(dir, 'kinds.sysml');
+      writeFileSync(file, KINDS_MODEL);
+
+      const prompt = run(['requirements', file, '--kind', 'prompt', '--json']);
+      expect(prompt.code).toBe(0);
+      const { body } = payload<{
+        requirements: {
+          total: number;
+          satisfied: number;
+          kind: string | null;
+          rows: Array<{ name: string; kind: string }>;
+        };
+      }>(prompt);
+      expect(body.requirements.kind).toBe('prompt');
+      expect(body.requirements.rows.map((x) => x.name)).toEqual(['guidance']);
+      // The ratio is about the model, so the filter does not move it.
+      expect(body.requirements.total).toBe(1);
+      expect(body.requirements.satisfied).toBe(1);
+
+      const req = run(['requirements', file, '--kind=requirement', '--json']);
+      const only = payload<{ requirements: { rows: Array<{ name: string }> } }>(req);
+      expect(only.body.requirements.rows.map((x) => x.name)).toEqual(['maxMass']);
+
+      const human = run(['requirements', file, '--kind', 'prose']);
+      expect(human.code).toBe(0);
+      expect(human.stdout).toContain('showing 1 of 3 statement(s)');
+      expect(human.stdout).toContain('note');
+      expect(human.stdout).not.toContain('maxMass');
+      // A listing of one kind must not be read as a listing of the model: a
+      // `#prompt` on a part or a package is guidance this command never sees.
+      expect(human.stdout).toContain('prompts --element');
+
+      // An unknown kind is refused, not defaulted.
+      const bad = run(['requirements', file, '--kind', 'notes']);
+      expect(bad.code).toBe(2);
+      expect(bad.stderr).toContain('unknown --kind');
+      expect(bad.stderr).toContain('requirement, prose, prompt');
+
+      // And refused BEFORE the file is read, which is the whole reason the
+      // check is wired into `precheckArgs` and not left to the report. Only an
+      // unreadable path can show the order: against a file that exists, a
+      // post-load check would satisfy the case above just as well.
+      const early = run(['requirements', join(dir, 'nope.sysml'), '--kind', 'notes']);
+      expect(early.code).toBe(2);
+      expect(early.stderr).toContain('unknown --kind');
+      expect(early.stderr).not.toContain('cannot read');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  /**
+   * `prompts` answers the question a filtered requirements listing cannot.
+   *
+   * Guidance is worth writing once, on the definition or the package, and the
+   * point of the command is that an agent handed the USAGE still finds it. So
+   * the case is deliberately the indirect one: the prompt is written inside a
+   * definition and asked for from a part typed by it.
+   */
+  it('prompts finds the guidance written on what an element is', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-prompt-'));
+    try {
+      const file = join(dir, 'guidance.sysml');
+      writeFileSync(
+        file,
+        `package G {
+    part def Engine {
+        #prompt part guidance {
+            doc /* Check the fuel line before you change this port. */
+        }
+    }
+    part e : Engine;
+    part def Wheel;
+    part w : Wheel;
+}
+`,
+      );
+
+      const r = run(['prompts', file, '--element', 'e', '--json']);
+      expect(r.code).toBe(0);
+      const { keys, body } = payload<{
+        prompts: {
+          element: { qualifiedName: string };
+          prompts: Array<{
+            prompt: { declaredName?: string };
+            text: string;
+            via: string;
+            distance: number;
+            attachedTo: { declaredName?: string };
+          }>;
+        };
+      }>(r);
+      expect(keys).toEqual(['file', 'ok', 'prompts']);
+      expect(body.prompts.element.qualifiedName).toBe('G::e');
+      expect(body.prompts.prompts).toHaveLength(1);
+      const [applied] = body.prompts.prompts;
+      expect(applied.prompt.declaredName).toBe('guidance');
+      expect(applied.text).toBe('Check the fuel line before you change this port.');
+      // Reached through the TYPE, one hop out — not written on `e` at all.
+      expect(applied.via).toBe('type');
+      expect(applied.distance).toBe(1);
+      expect(applied.attachedTo.declaredName).toBe('Engine');
+
+      const human = run(['prompts', file, '--element', 'e']);
+      expect(human.code).toBe(0);
+      expect(human.stdout).toContain('1 prompt(s) apply');
+      expect(human.stdout).toContain('Check the fuel line');
+      expect(human.stdout).toContain('Engine');
+
+      // An element nothing was written about says so, rather than reporting a
+      // prompt from somewhere else in the model.
+      const none = run(['prompts', file, '--element', 'w']);
+      expect(none.code).toBe(0);
+      expect(none.stdout).toContain('0 prompt(s)');
+      expect(none.stdout).not.toContain('fuel line');
+
+      // The element is the question; without it there is nothing to answer.
+      const bare = run(['prompts', file]);
+      expect(bare.code).toBe(2);
+      expect(bare.stderr).toContain('needs --element');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
 
   it('connectivity reports 15 ports, 9 connections and 14 connected', () => {
     // 0 connected (a filter with no lift) and 37 ports (no filter at all) are
@@ -558,7 +729,16 @@ describe('L7 — sysprose reporting command', () => {
     const top = run(['--help']);
     expect(top.code).toBe(0);
     expect(top.stdout).toContain('Usage');
-    for (const name of ['stats', 'elements', 'requirements', 'trace', 'connectivity', 'where-used', 'orphans']) {
+    for (const name of [
+      'stats',
+      'elements',
+      'requirements',
+      'trace',
+      'connectivity',
+      'where-used',
+      'orphans',
+      'prompts',
+    ]) {
       expect(top.stdout, `${name} must be listed`).toContain(name);
     }
 

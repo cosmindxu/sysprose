@@ -99,6 +99,7 @@ with the function that control runs.
 | Which ports are wired, and which dangle? | **Interconnection** view (`tb-view-interconnection` → `buildInterconnection`) † | `npm run sysprose -- connectivity model.sysml` | `connectivityReport` — `src/api/analytics.ts` |
 | What breaks if I change this element? | Properties → *Used by* (`prop-used-by` → `whereUsed`), *Impact graph* (`prop-impact` → `neighboursOf`) † | `npm run sysprose -- where-used model.sysml --element X` | `impactClosure` — `src/api/analytics.ts` |
 | What did I declare and never use? | — no view yet | `npm run sysprose -- orphans model.sysml` | `orphanReport` — `src/api/analytics.ts` |
+| What guidance applies to this element? | — no view yet | `npm run sysprose -- prompts model.sysml --element X` | `promptsFor` — `src/api/analytics.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -110,9 +111,9 @@ The **Interconnection** view *draws* ports and connections (`buildInterconnectio
 everything that references the selection, library and re-derived copies included (`whereUsed`,
 `src/api/analytics.ts`), where `where-used` drops the library, walks out to the `--depth` you ask
 for and says what it left out; the *Impact graph* draws one hop in each direction from its own
-walk (`neighboursOf`, `src/ui/panels/ImpactGraph.tsx`). `connectivity`, `orphans` and the
-depth-walking `impactClosure` have no control in the app at all — they are the terminal's and the
-SDK's alone.
+walk (`neighboursOf`, `src/ui/panels/ImpactGraph.tsx`). `connectivity`, `orphans`, `prompts` and
+the depth-walking `impactClosure` have no control in the app at all — they are the terminal's and
+the SDK's alone.
 
 Every subcommand takes `-` for stdin and `--json` for `{ok, file, <report>}`, and every report is
 about *your* file: the bundled standard library and the tool's own re-derived elements are
