@@ -121,7 +121,7 @@ one in this corpus was read and corrected by hand.
 | L0 | Recognition and encoding: empty file, comments only, BOM, CRLF, tabs, non-ASCII names, JSON offered as SysML, unknown extension | 8 |
 | L1 | Lexical: illegal character, unterminated string, unterminated comment | 3 |
 | L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword (with and without a `def` after it), a grammar-legal keyword this tool models no metaclass for, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, a non-ASCII unit symbol written bare, bad expressions, `=` vs `==`, bare `->`, two independent errors | 17 |
-| L3 | Referential: unresolved type, connection end, import, transition end, specialization and redefinition; forward references in a package; a type, a specialization or a connector end reached through an import, through inheritance, through a transitive supertype, through an implicit library base or through a library import written in text; an alias used as a type; a name declared in both a supertype and an enclosing namespace, written both ways round; a multi-endpoint dependency naming the endpoint that is missing; plus a pinned behaviour | 23 |
+| L3 | Referential: unresolved type, connection end, import, transition end, specialization and redefinition; forward references in a package; a type, a specialization or a connector end reached through an import, through inheritance, through a transitive supertype, through an implicit library base or through a library import written in text; an alias used as a type; a qualified path whose last segment collides with a library name; a name declared in both a supertype and an enclosing namespace, written both ways round; a multi-endpoint dependency naming the endpoint that is missing; plus a pinned behaviour | 24 |
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 23 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
@@ -131,7 +131,7 @@ one in this corpus was read and corrected by hand.
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
-so where they appear. Measured 2026-09-05: **80 fixture directories** under
+so where they appear. Measured 2026-09-05: **81 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **56
 catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
 rules** in `src/validation/rules.ts`. Reproduce them with
@@ -1895,6 +1895,97 @@ serialize → check today — and fails if any of them starts saving clean.
 `L0-json-as-sysml` is on the list too: its first save keeps an error even though
 that save is not idempotent (see below).
 
+A resolution pass then closed three ways a name could denote something the
+author never wrote, and made one report say what it cannot see.
+
+The blocker was that a DANGLING QUALIFIED reference bound to an unrelated
+library element. `findLibraryType` (`src/core/scope.ts`) matched the LAST
+`::`-segment of any query against a library-wide name index, so
+`part wheel : NoSuchPkg::B` resolved to `SI::byte` and
+`part gear : Totally::Bogus::Path::m` to `SI::metre`, and `npm run check`
+reported the file clean with exit 0. The qualifier was simply thrown away. The
+index is the safety net for a BARE name — `Real`, the unit symbol `m` — and it
+now refuses a qualified one: the tool cannot tell a typo from fiction, and a
+silent wrong answer is worse than a loud failure. The one name that justified
+the leniency, a member re-exported through a package import such as
+`ISQ::MassValue` (defined in `ISQBase`), never needed it: the converted library
+carries the real `Import` relationships, so the genuine KerML walk in
+`resolveQualifiedNameFull` answers it, and the library binder now ends on that
+walk instead of on strict containment. The same file now reports two
+`unresolved-type-ref` errors and two `ref/unresolved-specialization` warnings.
+
+The second was that the MAPPER bound a name to a different element than its own
+resolver. `resolveDeferredRefs` re-decides an already-bound reference when
+anything it resolves THROUGH gains a general, and the gate that decides
+"through" reads each scope's DIRECT import targets. `resolveName`'s import walk
+is transitive, so a general gained behind a RE-EXPORTED import — `Use → Mid → H`
+— was invisible to it, the round-1 answer was frozen, and the mapper answered
+`Outer::W` where `resolveFullName` answered `P::Grand::W`. Widening the gate a
+third time would have been the third guess at an approximation of a walk it
+cannot follow — the gate also cannot see the intermediate anchors of a qualified
+name, or a root-level import — so the fixpoint now re-decides EVERY request
+ungated before it is allowed to call itself a fixpoint. The gate survives as
+what its comment always claimed it was, a pure optimisation: it can cost a
+round, never an answer. A file pays two full resolution passes instead of one
+(2400 flat declarations: 729 ms → 1244 ms, measured alone), and the perf
+canaries' budgets were widened for it rather than the check being weakened.
+
+The third was that `import Lib::*;` written before `import Lib::**;` poisoned
+the recursive one. `resolveImportedFrom` keyed its cycle guard on the namespace
+id alone while the guard is shared across every import of a scope for one
+lookup, so the plain import marked `Lib` visited and the recursive import
+returned without descending into `Lib::Sub` — and `resolveName`'s name cache
+memoised that negative for the rest of the parse. Swapping the two lines swapped
+what the name denoted, which is exactly the failure `src/semantics/bind.ts`
+exists to eliminate. The guard is keyed on the PAIR now, with a recursive visit
+subsuming a non-recursive one and not the other way round.
+
+The fourth was a report that was blind and quiet about it. Every walk-based
+report navigates edges, and the library binder materialises a `FeatureTyping`
+for an AttributeUsage only when the resolved type sits in `ScalarValues` — so
+all thirteen of the shipped UAV example's ISQ-typed attributes carry their type
+as a display string and nothing else. `impactClosure`, `whereUsed`, `promptsFor`
+and `traceabilityMatrix` all answered "nothing" about them with
+`libraryExcluded: 0` beside it, which was true (nothing had been dropped from a
+walk that never got there) and useless: the reader could not tell "this
+attribute has no type" from "this report cannot see its type". The four reports
+count those under `unresolvedTypings` now, and the command line prints the
+figure on the same line as the two exclusion counts, so the silent zero is a
+loud one.
+
+Dropping the `ScalarValues` gate instead — the obvious cause-level fix, and the
+first one tried — is what the measurement refused. Binding an attribute to a
+full ISQ quantity kind pulls that definition's own feature tree onto the numeric
+surface, and `collectIds` in `src/semantics/solver.ts` recurses through it until
+the stack overflows; nineteen tests fail, ten of them in the dimension-guard
+suites. The gate stays, and the reason it stays is a measurement rather than the
+module brief's unexplained asymmetry.
+
+A review of that pass found what the narrowing had broken, and its fixes are
+what make the paragraphs above true. Refusing every qualified name in the index
+exposed a hole in the strict path beside it: `Model.resolveQualifiedName` starts
+at EVERY root and takes the first one answering to the leading segment, with no
+way back, so a user file opening `package Parts { … }` captured `Parts::Part` —
+the implicit base of every part — and the model silently lost its whole library
+tower: no `Items::Item`, no `Occurrences::Occurrence`, and `:>> timeSlices`
+raised an error. The library walk now seeds from the LIBRARY roots only, which
+is what the strict path always meant. The attribute branch of the library binder
+had been left on `findLibraryType` alone while the typeRef branch gained the
+import walk, so `attribute a : AnalysisTooling::Real` lost its typing while
+`item b : AnalysisTooling::Real` on the next line kept it — one written path,
+two answers, chosen by metaclass; both branches end on the same chain now, and
+the `ScalarValues` gate is once again the only thing deciding whether an
+attribute gets an edge. `whereUsed` counted the queried element's OWN
+unfollowable type, which is zero exactly where the report is most blind: asked
+about `ISQBase::MassValue`, the three attributes that name it in text were
+invisible. The counter reads the incoming direction too, resolving each written
+name through the binder's own chain rather than matching it against a
+`qualifiedName` it need not equal. And the command line's `trace` figure summed
+the two axes, so `--from K --to K` doubled it; it calls the API's
+de-duplicating counter now instead of re-deriving one. Each of those has a test
+that reads the figure back — including the printed lines, which nothing had
+pinned: all three could be hard-coded to zero with the suite green.
+
 ### Known limitations, recorded rather than hidden
 
 **Thirteen fixtures still re-parse clean after a save.** The save-and-recheck
@@ -1926,6 +2017,19 @@ delimiter to close and no escape for it, whereas a value is notation, so closing
 this one means checking that the value PARSES as an expression before it is
 stored. The scope is pinned by a test in `text.roundtrip.test.ts`, which fails
 the day the Value box is closed.
+
+**An attribute typed outside `ScalarValues` carries no typing EDGE.**
+`attribute mtow : ISQ::MassValue [kg]` keeps its type as a string on
+`attrs.type` and gets no `FeatureTyping`, so the graph-walking reports cannot
+see it while the units surface reads it happily — two surfaces, one attribute,
+different answers. It is not an oversight in the binder: binding it drags the
+library definition's feature tree onto the numeric surface and the solver
+recurses until the stack overflows (measured, see §4). What changed is that the
+blindness is now COUNTED — `unresolvedTypings` on the impact, where-used, prompt
+and traceability reports, and on the matching command lines — so the gap is a
+figure the reader can see rather than an empty answer they cannot distinguish
+from a real one. Closing it needs the solver to stop at a library type, which is
+a change to the numeric surface and not to the binder.
 
 **`doc … locale "…"` still drops its language tag.** The `doc` statement takes
 the same `locale` tag as `comment`, and the mapper still ignores it: `doc D
@@ -2294,7 +2398,7 @@ that widening is a decision, not a drift.
   compound / quoted / qualified unit spellings and the ISQ information kinds, a
   unit-aware numeric surface, a refused dimension clash, one name resolver where
   there had been two, and a faulted save that reproduces its fault instead of
-  laundering it. Measured across it: the corpus grew from 50 fixtures to 80, the
+  laundering it. Measured across it: the corpus grew from 50 fixtures to 81, the
   catalogue from 53 codes to 55, and the rule set from 22 to 23. What is left is
   recorded under "Known limitations", and every count in this document is now
   read off the tree (see §3).

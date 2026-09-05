@@ -12,6 +12,7 @@ import {
   whereUsed,
   connectivityReport,
   constraintReport,
+  promptsFor,
 } from '@api/index';
 import { setStatementKind } from '@semantics/index';
 
@@ -916,5 +917,136 @@ describe('analytics — constraintReport and statements that bind nothing', () =
     const req = f.requirement('maxMass', model.roots()[0].id);
     model.setAttrs(req.id, { expression: '30 <= 25' });
     expect(constraintReport(model).constraints.map((c) => c.id)).toContain(req.id);
+  });
+});
+
+/* ────────────── a type the walk cannot follow is a counted omission ────────── */
+
+describe('analytics — a declared type the walk cannot follow is COUNTED', () => {
+  /**
+   * A model whose one attribute declares a type as TEXT and carries no
+   * FeatureTyping for it — the shape the library binder leaves behind for every
+   * attribute typed by something outside `ScalarValues` (`ISQ::MassValue`, `SI`
+   * units): `attrs.type` holds the name, the graph holds no edge, and the
+   * mapper's unresolved-attribute-type path is silent by design.
+   */
+  function unfollowedTyping(): { model: Model; mtowId: string; defId: string } {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const vehicle = f.partDef('Vehicle', pkg.id);
+    const mtow = model.create('AttributeUsage', {
+      declaredName: 'mtow',
+      ownerId: vehicle.id,
+      attrs: { value: 18.5, unit: 'kg', type: 'ISQ::MassValue' },
+    });
+    // A second AttributeDefinition so the matrix has a column axis at all.
+    const def = model.create('AttributeDefinition', { declaredName: 'MassValue', ownerId: pkg.id });
+    return { model, mtowId: mtow.id, defId: def.id };
+  }
+
+  it('every walk-based report says how many typings it could not see', () => {
+    // Before this counter the reports were BLIND and said nothing: an untyped
+    // feature and a feature whose type the walk cannot reach produced the same
+    // empty answer with `libraryExcluded: 0` beside it — nothing was dropped
+    // from the walk, so the zero was true and useless. The reader could not
+    // tell "this attribute has no type" from "this report cannot see its type".
+    const { model, mtowId } = unfollowedTyping();
+
+    expect(model.typesOf(mtowId), 'the premise: no edge carries the type').toHaveLength(0);
+
+    const closure = impactClosure(model, mtowId, 4);
+    expect(closure.impacted).toEqual([]);
+    expect(closure.libraryExcluded).toBe(0);
+    expect(closure.unresolvedTypings).toBe(1);
+
+    const used = whereUsed(model, mtowId);
+    expect(used.usedBy).toEqual([]);
+    expect(used.unresolvedTypings).toBe(1);
+
+    const prompts = promptsFor(model, mtowId);
+    expect(prompts.prompts).toEqual([]);
+    expect(prompts.unresolvedTypings).toBe(1);
+
+    const tm = traceabilityMatrix(model, 'AttributeUsage', 'AttributeDefinition', 'FeatureTyping');
+    expect(tm.links).toEqual([]);
+    expect(tm.unresolvedTypings).toBe(1);
+  });
+
+  it('counts an element ONCE when it sits on both matrix axes', () => {
+    // `traceabilityMatrix(m, K, K, rel)` puts every user element of kind `K` on
+    // BOTH axes, so a counter that filtered `[...rows, ...columns]` without
+    // de-duplicating reported twice what the reader can see once — and the
+    // figure then exceeded the row count, which is the one thing a reader
+    // checks it against.
+    const { model } = unfollowedTyping();
+    const vehicle = model.all().find((e) => e.declaredName === 'Vehicle')!;
+    model.create('AttributeUsage', {
+      declaredName: 'range',
+      ownerId: vehicle.id,
+      attrs: { type: 'ISQ::LengthValue' },
+    });
+
+    const same = traceabilityMatrix(model, 'AttributeUsage', 'AttributeUsage', 'FeatureTyping');
+    expect(same.rows).toHaveLength(2);
+    expect(same.columns).toHaveLength(2);
+    expect(same.unresolvedTypings, 'two elements, seen twice, counted once').toBe(2);
+    expect(same.unresolvedTypings).toBeLessThanOrEqual(same.rows.length);
+  });
+
+  it('counts the elements that NAME the queried type in text', () => {
+    // The other direction, and the one that matters for the query a reader
+    // actually makes. `whereUsed`/`impactClosure` answer "what depends on this
+    // element"; asked about a TYPE, they walk edges, find none, and used to
+    // print 0 unresolved typings beside "nothing references it" — while the
+    // attributes that name that very type sat in the same file. The counter now
+    // covers the answer being given, not only the element being asked about.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const massValue = model.create('AttributeDefinition', {
+      declaredName: 'MassValue',
+      ownerId: pkg.id,
+    });
+    const vehicle = f.partDef('Vehicle', pkg.id);
+    for (const name of ['mtow', 'payloadMass']) {
+      model.create('AttributeUsage', {
+        declaredName: name,
+        ownerId: vehicle.id,
+        attrs: { type: 'MassValue' },
+      });
+    }
+
+    expect(
+      whereUsed(model, massValue.id).usedBy,
+      'the premise: no edge carries any of the typings',
+    ).toEqual([]);
+    expect(whereUsed(model, massValue.id).unresolvedTypings).toBe(2);
+    expect(impactClosure(model, massValue.id, 4).impacted).toEqual([]);
+    expect(impactClosure(model, massValue.id, 4).unresolvedTypings).toBe(2);
+
+    // A name that resolves ELSEWHERE is not counted against this element — the
+    // figure is about this query, not about the model's unfollowed typings in
+    // general.
+    const other = model.create('AttributeDefinition', {
+      declaredName: 'LengthValue',
+      ownerId: pkg.id,
+    });
+    expect(whereUsed(model, other.id).unresolvedTypings).toBe(0);
+  });
+
+  it('counts nothing once the typing is an edge the walk can follow', () => {
+    // The counter is about the EDGE, not about the name: give the same
+    // attribute a real FeatureTyping and every report goes back to zero.
+    const { model, mtowId, defId } = unfollowedTyping();
+    model.create('FeatureTyping', { ownerId: mtowId, source: [mtowId], target: [defId] });
+
+    expect(impactClosure(model, mtowId, 4).unresolvedTypings).toBe(0);
+    expect(whereUsed(model, mtowId).unresolvedTypings).toBe(0);
+    expect(promptsFor(model, mtowId).unresolvedTypings).toBe(0);
+    expect(
+      traceabilityMatrix(model, 'AttributeUsage', 'AttributeDefinition', 'FeatureTyping')
+        .unresolvedTypings,
+    ).toBe(0);
   });
 });

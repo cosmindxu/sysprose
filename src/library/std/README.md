@@ -63,9 +63,13 @@ that the standard exposes through a package's **public namespace import** — e.
 `ISQ::MassValue`, whose definition is actually owned by `ISQBase` and
 re-exported by `ISQ` — do **not** resolve through strict `resolveQualifiedName`
 (it does not follow imports), but they **do** resolve through
-`findLibraryType (src/core/scope.ts)` (this project's library resolver), which falls back to a
-last-segment match, and they resolve strictly under their owning package
-(`ISQBase::MassValue`).
+`resolveQualifiedNameFull (src/semantics/resolve-names.ts)`, the KerML import
+walk, because the conversion keeps the `NamespaceImport`/`MembershipImport`
+relationships that walk follows; and they resolve strictly under their owning
+package (`ISQBase::MassValue`). `findLibraryType (src/core/scope.ts)` answers a
+strict path from the library roots and a **bare** name or unit symbol (`Real`,
+`m`) by index — it does not match the last segment of a qualified name, so
+`findLibraryType('ISQ::MassValue')` is `undefined` by design.
 
 ## Regenerating
 

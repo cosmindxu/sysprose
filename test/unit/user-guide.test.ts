@@ -527,18 +527,24 @@ describe('§7 — the three kinds of statement', () => {
     for (const p of report.prompts) {
       expect(t, `the transcript shows the words of ${p.prompt.qualifiedName}`).toContain(p.text);
     }
-    // The two figures under the listing, which say what the walk did NOT
+    // The three figures under the listing, which say what the walk did NOT
     // report. They are the guide's own evidence for "the bundled library is
     // dropped at every hop and the count is printed", and nothing in this
     // repository read them before: `docs-counts.test.ts` has no claim for
-    // either sentence, and the strings occur only in `scripts/sysprose.ts` and
-    // here.
+    // any of the sentences, and the strings occur only in `scripts/sysprose.ts`
+    // and here. The third is the typings the walk cannot follow; its `0` here
+    // is a measurement, and a transcript that kept a stale figure after the
+    // snippet gained an ISQ-typed attribute must fail rather than agree.
     expect(figure(t, /(\d+) library element\(s\) dropped/), 'library elements dropped').toBe(
       report.libraryExcluded,
     );
     expect(figure(t, /(\d+) re-derived element\(s\) crossed/), 're-derived elements crossed').toBe(
       report.implicitExcluded,
     );
+    expect(
+      figure(t, /(\d+) declared type\(s\) this walk cannot follow/),
+      'declared types the walk cannot follow',
+    ).toBe(report.unresolvedTypings);
     // The legend, verbatim from the CLI. It is the sentence that tells a reader
     // the third path exists — guidance reaching an element from where its TYPE
     // sits — so a reword that dropped that clause would leave the guide

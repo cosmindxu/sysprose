@@ -163,16 +163,35 @@ function resolveInherited(
  * members and, transitively, the members re-exported by its own public
  * namespace imports (and, when `recursive`, its public owned sub-namespaces).
  * `visited` guards against import cycles.
+ *
+ * THE GUARD IS KEYED ON THE PAIR (namespace, recursive), not the namespace
+ * alone, because the two visits ask DIFFERENT questions and `visited` is shared
+ * across every import of one scope for one lookup. With
+ *
+ *     package U { import Lib::*; import Lib::**; }
+ *
+ * the plain import was walked first, found nothing, and marked `Lib` visited;
+ * the recursive one then returned on the first line without ever descending
+ * into `Lib::Sub`, and `resolveName`'s per-model name cache memoised that
+ * negative for the rest of the parse. Swapping the two lines changed what the
+ * name denoted — the same failure mode `src/semantics/bind.ts` exists to
+ * eliminate: the same text, two meanings, chosen by declaration order.
  */
 function resolveImportedFrom(
   model: Model,
   nsId: ElementId,
   name: string,
   recursive: boolean,
-  visited: Set<ElementId>,
+  visited: Set<string>,
 ): ElementRecord | undefined {
-  if (visited.has(nsId)) return undefined;
-  visited.add(nsId);
+  // A RECURSIVE visit subsumes a non-recursive one (it does everything the
+  // non-recursive visit does, then descends), so an earlier recursive visit
+  // also settles the non-recursive question. The converse is false, and that
+  // asymmetry is the whole point of keying on the pair.
+  const recursiveKey = `R:${nsId}`;
+  const key = recursive ? recursiveKey : `N:${nsId}`;
+  if (visited.has(key) || visited.has(recursiveKey)) return undefined;
+  visited.add(key);
 
   // Public owned + inherited members of the imported namespace.
   const owned = resolveOwned(model, nsId, name, /* publicOnly */ true);
@@ -206,7 +225,7 @@ function resolveViaImports(
   model: Model,
   scopeId: ElementId,
   name: string,
-  visited: Set<ElementId>,
+  visited: Set<string>,
   publicOnly: boolean,
 ): ElementRecord | undefined {
   for (const rel of model.children(scopeId)) {
@@ -267,7 +286,7 @@ export function resolveName(
   let result: ElementRecord | undefined = resolveOwned(model, scopeId, query, /* publicOnly */ false);
   if (!result && scopeId !== null) result = resolveInherited(model, scopeId, query);
   if (!result && scopeId !== null) {
-    result = resolveViaImports(model, scopeId, query, new Set<ElementId>(), /* publicOnly */ false);
+    result = resolveViaImports(model, scopeId, query, new Set<string>(), /* publicOnly */ false);
   }
 
   cache.set(key, result);
@@ -279,10 +298,14 @@ export function resolveName(
  * segment-by-segment: the first segment is resolved in the global root scope,
  * each subsequent segment in the scope of the previously resolved element.
  *
- * When the scoped walk fails AND the name refers to bundled-library content
- * whose `Import` relationships were stripped during conversion (see the module
- * note), this falls back to a library-wide lookup so names like `ISQ::MassValue`
- * still resolve. Returns `undefined` when nothing matches.
+ * When the scoped walk fails, this falls back to {@link findLibraryType}, which
+ * answers exactly two things: a strict path from the LIBRARY roots (so a user
+ * `package Parts` cannot shadow `Parts::Part` for the whole file), and a bare
+ * name or unit symbol by index. It does NOT match the last segment of a
+ * qualified name — a written path the library does not contain is answered by
+ * the walk or not at all — so a re-exported member such as `ISQ::MassValue` is
+ * the WALK's answer (the converted library keeps the `Import` relationships it
+ * follows), never the fallback's. Returns `undefined` when nothing matches.
  *
  * Memoised per model; cycle-safe.
  */
@@ -303,7 +326,7 @@ export function resolveQualifiedNameFull(
     for (let i = 1; i < segs.length && cur; i++) cur = resolveName(model, cur.id, segs[i]);
   }
 
-  // Fallback for import-stripped library content (and bare/short names).
+  // Fallback: a library path shadowed at the root, or a bare/short name.
   const result = cur ?? findLibraryType(model, query);
   cache.set(query, result);
   return result;

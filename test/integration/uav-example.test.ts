@@ -30,8 +30,10 @@ import {
   isUserElement,
   CONNECTION_KINDS,
   orphanReport,
+  promptsFor,
   requirementSatisfaction,
   traceabilityMatrix,
+  unitReport,
   whereUsed,
 } from '@api/index';
 import { elementSetDiffs } from './_shared';
@@ -339,5 +341,81 @@ describe('examples/uav-isr.sysml — what nothing uses, and what a change reache
     expect(impactClosure(model, powerOut.id).impacted.map((i) => i.element.id)).toEqual(
       direct.map((u) => u.id),
     );
+  });
+});
+
+
+describe('examples/uav-isr.sysml — the reports say what they cannot see', () => {
+  let model: Model;
+  beforeAll(async () => {
+    const loaded = await loadModelText(src, { fileName: 'uav-isr.sysml' });
+    model = loaded.model!;
+  });
+
+  it('counts the 13 attribute typings no walk-based report can follow', () => {
+    // `attribute mtow : ISQ::MassValue [kg]` and its twelve siblings resolve to
+    // real library AttributeDefinitions, but the library binder materialises a
+    // FeatureTyping for an AttributeUsage only inside `ScalarValues`, so the
+    // graph carries no edge for any of them. Every report here navigates edges,
+    // so all of them were blind — and said `libraryExcluded: 0` while being
+    // blind, because nothing had been dropped from a walk that never got there.
+    const mtow = model.all().find((e) => e.declaredName === 'mtow')!;
+    expect(model.typesOf(mtow.id), 'the premise: the typing is a string, not an edge').toHaveLength(
+      0,
+    );
+    expect(mtow.attrs.type).toBe('ISQ::MassValue');
+
+    // The one report that is NOT blind reads the string directly, which is how
+    // the blindness stayed invisible: the units surface answers about `mtow`
+    // while the graph surface has never heard of its type.
+    const unit = unitReport(model).features.find((f) => f.element.declaredName === 'mtow')!;
+    expect(unit.quantityKind).toBe('ISQ::MassValue');
+
+    const closure = impactClosure(model, mtow.id, 4);
+    expect(closure.impacted, 'still nothing to reach — the graph has no edge').toEqual([]);
+    expect(closure.libraryExcluded, 'and nothing was dropped: the zero was true').toBe(0);
+    expect(closure.unresolvedTypings, 'but ONE type could not be followed').toBe(1);
+
+    expect(whereUsed(model, mtow.id).unresolvedTypings).toBe(1);
+    expect(promptsFor(model, mtow.id).unresolvedTypings).toBe(1);
+
+    // Over the whole attribute axis: 13 of the example's attribute usages
+    // declare an ISQ quantity kind and none of them carries a typing edge.
+    const tm = traceabilityMatrix(model, 'AttributeUsage', 'AttributeDefinition', 'FeatureTyping');
+    expect(tm.links).toEqual([]);
+    expect(tm.unresolvedTypings).toBe(13);
+  });
+
+  it('counts the attributes that NAME a type, when asked about the type', () => {
+    // The direction a reader actually asks in. `ISQBase::MassValue` is what
+    // `ISQ::MassValue` denotes, and three of the example's attributes are
+    // written with it — none of them as an edge. Asked "what uses MassValue",
+    // both reports walk edges, find nothing, and would otherwise print a 0
+    // omission count beside "nothing references it": the exact silent zero this
+    // counter exists to remove, at the exact query where it is most misleading.
+    const massValue = model
+      .all()
+      .find((e) => e.declaredName === 'MassValue' && model.qualifiedName(e.id) === 'ISQBase::MassValue')!;
+    const namedBy = model
+      .all()
+      .filter((e) => e.attrs.isLibrary !== true && e.attrs.type === 'ISQ::MassValue')
+      .map((e) => e.declaredName);
+    expect(namedBy.sort()).toEqual(['mass', 'mass', 'mtow']);
+
+    // `usedBy` is not empty: the library's own quantity kinds specialize
+    // `MassValue` and those ARE edges. What is missing is every edge from the
+    // reader's model — the ten there are belong to the library, and the
+    // command line drops them as "library element(s) dropped from the walk".
+    const used = whereUsed(model, massValue.id);
+    expect(used.usedBy.length).toBeGreaterThan(0);
+    expect(
+      used.usedBy.filter((u) => model.get(u.id)!.attrs.isLibrary !== true),
+      'no edge from the user model',
+    ).toEqual([]);
+    expect(used.unresolvedTypings).toBe(3);
+
+    const closure = impactClosure(model, massValue.id, 4);
+    expect(closure.impacted).toEqual([]);
+    expect(closure.unresolvedTypings).toBe(3);
   });
 });

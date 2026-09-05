@@ -1023,10 +1023,12 @@ class Mapper {
    *     same round, and only once `c` is typed can `w1` see `G::W`. So a
    *     reference bound in an earlier round is re-decided when anything it
    *     resolves THROUGH gained a general — its scope chain, those scopes'
-   *     generals, and the namespaces they import (see
-   *     {@link scopeGainedGeneral}, which was too narrow when it walked the
-   *     scope chain alone). Monotone — generals are only ever ADDED, so a
-   *     re-decision moves inward and the loop terminates.
+   *     generals, and the namespaces they import ({@link scopeGainedGeneral}) —
+   *     and, before the loop is allowed to stop, unconditionally, because that
+   *     gate is an approximation of a transitive import walk and cannot be
+   *     trusted to be the last word on whether an answer is stale. Monotone —
+   *     generals are only ever ADDED, so a re-decision moves inward and the
+   *     loop terminates.
    *
    * WHICH mechanism answers WHICH witness, because they are easy to confuse:
    * the ORDERING in (2) answers the transitive-supertype witness (`Base :>
@@ -1062,9 +1064,12 @@ class Mapper {
 
     // (2) The specialization family to a fixpoint, BEFORE any typing is
     //     decided, so the inheritance graph is complete when typings resolve.
-    this.specializationFixpoint((r) => r.op !== ':');
-    // (3)+(4) Then everything, re-deciding earlier answers each round.
-    this.specializationFixpoint(() => true);
+    this.specializationFixpoint((r) => r.op !== ':', /* verify */ false);
+    // (3)+(4) Then everything, re-deciding earlier answers each round — and
+    // this one VERIFIES: its filter covers every request, including the ones
+    // the specialization-only pass above decided, so one ungated round here
+    // answers for both and the file pays a single extra resolution pass.
+    this.specializationFixpoint(() => true, /* verify */ true);
 
     // Endpoints, aliases and dependencies. They READ the graph above and never
     // extend it — a bound connector end adds no general — so one sweep is a
@@ -1080,35 +1085,49 @@ class Mapper {
    * Decide-then-apply rounds over the deferred specializations matching
    * `filter`, until no answer changes.
    *
-   * A request already bound is RE-decided every round: that is what closes the
+   * A request already bound is RE-decided: that is what closes the
    * transitive-supertype witness in the class comment. Retargeting an existing
    * relationship (rather than creating a second one) is what keeps the element
    * set stable and the pass idempotent.
+   *
+   * `verify` MAKES THE GATE COST-ONLY. {@link scopeGainedGeneral} is a FAST
+   * PATH that skips re-deciding references nothing relevant changed under, and
+   * it is a hand-written approximation of a resolver it cannot follow exactly:
+   * `resolveName`'s import walk is TRANSITIVE, and `resolveFullName` also asks
+   * intermediate anchors of a qualified name and root-level imports, none of
+   * which the gate's direct-import map reaches. It has twice been found too
+   * narrow rather than merely conservative, each time freezing a round-1 answer
+   * the mapper's OWN resolver disagreed with (a general gained behind a
+   * directly imported namespace, then behind a RE-EXPORTED one —
+   * `Use → Mid → H`). Rather than widen the approximation a third time and
+   * hope, a `verify` pass re-decides EVERY request ungated before the loop is
+   * allowed to stop, so the gate can only ever cost a round, never an answer.
+   *
+   * Only the caller whose filter covers every request passes `verify`: a second
+   * ungated pass over a subset would answer nothing the full one does not, and
+   * an ungated pass is the expensive thing here (it is the one shape that
+   * re-resolves the whole file).
    */
-  private specializationFixpoint(filter: (r: DeferredSpec) => boolean): void {
+  private specializationFixpoint(
+    filter: (r: DeferredSpec) => boolean,
+    verify: boolean,
+  ): void {
     // Each round either changes an answer or stops; an answer can change at
     // most once per general added, and generals only grow.
     const limit = this.deferredSpecs.length + 2;
-    /** Elements that gained a general in the previous round; null = first round. */
+    /** Elements that gained a general in the previous round; null = decide everything. */
     let gained: Set<ElementId> | null = null;
     for (let round = 0; round < limit; round++) {
       // Phase 1 — decide, without mutating (every resolver memo stays hot).
-      const decided: Array<{ req: DeferredSpec; targetId: ElementId }> = [];
-      for (const req of this.deferredSpecs) {
-        if (!filter(req)) continue;
-        // An ALREADY-BOUND reference is only worth re-deciding when its scope
-        // chain gained a general since — that is the only way full resolution
-        // can produce a different (nearer) answer. Without this gate every
-        // round re-resolves every reference in the file, which is quadratic on
-        // a big flat package and finds nothing.
-        if (req.targetId !== undefined && gained !== null && !this.scopeGainedGeneral(req, gained)) {
-          continue;
-        }
-        const target = this.resolveSpecTarget(req);
-        if (!target || target.id === req.targetId) continue;
-        decided.push({ req, targetId: target.id });
+      let decided = this.decideSpecRound(filter, gained);
+      if (decided.length === 0) {
+        // Nothing the GATE offered changed. Round 0 already asked everything,
+        // so there is nothing left to verify; otherwise ask everything before
+        // calling this a fixpoint.
+        if (!verify || gained === null) return;
+        decided = this.decideSpecRound(filter, null);
+        if (decided.length === 0) return;
       }
-      if (decided.length === 0) return;
 
       // Phase 2 — apply.
       const nowGained = new Set<ElementId>();
@@ -1133,13 +1152,50 @@ class Mapper {
   }
 
   /**
+   * One DECIDE phase: the answers that would change, without mutating anything.
+   *
+   * `gained` is the set of elements that gained a general in the previous round
+   * — the fast-path gate. `null` decides EVERY request in `filter`, which is
+   * both the first round and the verification round
+   * {@link specializationFixpoint} runs before it is allowed to stop.
+   */
+  private decideSpecRound(
+    filter: (r: DeferredSpec) => boolean,
+    gained: Set<ElementId> | null,
+  ): Array<{ req: DeferredSpec; targetId: ElementId }> {
+    const decided: Array<{ req: DeferredSpec; targetId: ElementId }> = [];
+    for (const req of this.deferredSpecs) {
+      if (!filter(req)) continue;
+      // An ALREADY-BOUND reference is only worth re-deciding when something it
+      // resolves through gained a general since — that is the only way full
+      // resolution can produce a different (nearer) answer. Without this gate
+      // every round re-resolves every reference in the file, which is quadratic
+      // on a big flat package and usually finds nothing.
+      if (req.targetId !== undefined && gained !== null && !this.scopeGainedGeneral(req, gained)) {
+        continue;
+      }
+      const target = this.resolveSpecTarget(req);
+      if (!target || target.id === req.targetId) continue;
+      decided.push({ req, targetId: target.id });
+    }
+    return decided;
+  }
+
+  /**
    * Did anything this reference resolves THROUGH gain a general last round?
    *
-   * "Through" is the scope chain, the general types of each scope, AND the
-   * namespaces each scope imports (plus THEIR generals) — because that is
-   * exactly what `resolveName` consults: owned + alias, then inherited, then
-   * imported. Walking only the scope chain made the gate too narrow rather
-   * than merely conservative: in
+   * A FAST PATH, not a decision procedure: an answer of `false` only skips a
+   * re-decision for one round, because {@link specializationFixpoint} re-decides
+   * every request UNGATED before it terminates. It has to be read that way,
+   * because it is an approximation of a resolver it cannot follow exactly —
+   * `resolveName`'s import walk is TRANSITIVE (`resolveImportedFrom` follows the
+   * imported namespace's own public imports), while the map below records each
+   * scope's DIRECT import targets only.
+   *
+   * "Through" is therefore the scope chain, the general types of each scope, and
+   * the namespaces each scope imports directly (plus THEIR generals) — most of
+   * what `resolveName` consults: owned + alias, then inherited, then imported.
+   * Walking only the scope chain made it miss even the direct case: in
    *
    *     package P { part def Grand { part def W; } part def T :> Grand;
    *                 part H : T; }
@@ -1148,8 +1204,11 @@ class Mapper {
    *
    * `H : T` and `C :> W` are decided in the SAME round, so `C` first answers
    * with `Outer::W`; the general `H` then gains is on a namespace reached
-   * through `Use`'s import, which the scope walk never visits, so nothing was
-   * ever re-decided and the mapper's answer disagreed with its own resolver.
+   * through `Use`'s import, which the scope walk never visits. Write the same
+   * model with `Mid` in between — `package Mid { import P::H::*; }` and
+   * `import Mid::*;` in `Use` — and even the direct-import map does not reach
+   * `H`, which is why the verification round, not this walk, is what makes the
+   * answer right.
    *
    * Import targets are read from a map built ONCE (imports are all bound in
    * step (1) and never change afterwards): scanning each scope's children per

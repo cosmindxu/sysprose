@@ -46,6 +46,7 @@ export {
   simulationReport,
   unitReport,
   analysisReport,
+  countUnfollowedTypings,
 } from './analytics';
 export type {
   ElementRef,

@@ -165,8 +165,15 @@ describe('standard library — loading & structure', () => {
     expect(model.relationships().every((r) => (r.target ?? []).every((t) => model.has(t)))).toBe(
       true,
     );
-    // ISQ was not requested.
-    expect(findLibraryType(model, 'ISQ::MassValue')).toBeUndefined();
+    // ISQ was not requested — by strict path AND by bare name, both of which
+    // the curated load answers (`ISQ::TimeValue` above). Not `ISQ::MassValue`:
+    // `findLibraryType` refuses a re-exported path on ANY load, so that
+    // assertion holds on an empty model and tests nothing about this one.
+    expect(findLibraryType(model, 'ISQ::TimeValue')).toBeUndefined();
+    expect(findLibraryType(model, 'TimeValue')).toBeUndefined();
+    const { model: full } = freshLibraryModel();
+    expect(findLibraryType(full, 'ISQ::TimeValue')).toBeDefined();
+    expect(findLibraryType(full, 'TimeValue')).toBeDefined();
   });
 
   it('records abstract markers and provenance notes faithfully', () => {

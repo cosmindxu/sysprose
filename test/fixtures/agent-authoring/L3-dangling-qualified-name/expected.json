@@ -1,0 +1,27 @@
+{
+  "level": "L3",
+  "title": "a qualified path whose last segment names a library element",
+  "note": "The library index used to match the LAST ::-segment of any query, so this dangling path bound to SI::byte and the file checked clean. A qualified name is now answered only when the library really contains it.",
+  "ok": false,
+  "diagnostics": [
+    {
+      "code": "validation/unresolved-type-ref",
+      "severity": "error",
+      "line": 3,
+      "column": 9
+    },
+    {
+      "code": "ref/unresolved-specialization",
+      "severity": "warning",
+      "line": 3,
+      "column": 20
+    }
+  ],
+  "invariants": {
+    "maxErrors": 1,
+    "rootsSurvive": [
+      "H"
+    ],
+    "minElements": 3
+  }
+}

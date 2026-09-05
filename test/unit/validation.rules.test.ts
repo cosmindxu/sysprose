@@ -351,8 +351,8 @@ describe('rule 4b — unresolved node-level specialization refs (finding H9)', (
   });
 
   it('negative: a library FEATURE no longer masks a dangling redefinition', () => {
-    // `findLibraryType` matches the LAST SEGMENT against every library element,
-    // and the bundled library has a function parameter named `w`
+    // `findLibraryType` matches an UNQUALIFIED name against every library
+    // element, and the bundled library has a function parameter named `w`
     // (`VectorFunctions::+::w`), so `:>> w` on a model with no `w` anywhere
     // passed validation silently. A library feature is not the answer to a user
     // reference; a bare library DEFINITION still is.

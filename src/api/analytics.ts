@@ -36,6 +36,10 @@ import {
   type SimStep,
   type SimTrace,
 } from '../semantics/index';
+// `@library/resolve` and NOT the `@library` barrel: the barrel statically
+// imports the multi-MB standard-library JSON, and this module is on the app's
+// synchronous entry graph (see the note at the top of `src/library/index.ts`).
+import { resolveDeclaredTypeName } from '@library/resolve';
 import { dimEqual, dimToString } from '@semantics/units';
 import { dimensionalFacets, evaluateQuantity } from '@semantics/units-eval';
 
@@ -88,6 +92,91 @@ export const isUserElement = (model: Model, el: ElementRecord): boolean =>
 
 /** True when `el` is a bundled standard-library element. */
 const isLibrary = (el: ElementRecord): boolean => el.attrs.isLibrary === true;
+
+/**
+ * Does `el` declare a type as TEXT that the graph does not carry as an EDGE?
+ *
+ * Every report in this module navigates edges (`model.typesOf`,
+ * `model.edgesOf`), so a feature whose type exists only as a string on
+ * `attrs.type`/`attrs.typeRef` is INVISIBLE to all of them. That is not a rare
+ * corner: the library binder materialises a `FeatureTyping` for an
+ * AttributeUsage only when the resolved type is a member of `ScalarValues`
+ * (`src/library/resolve.ts`), so every attribute typed by an ISQ quantity kind
+ * or an SI unit — `attribute mtow : ISQ::MassValue` in the shipped UAV example
+ * — keeps its type as a display string and nothing else, and the mapper's
+ * unresolved-attribute-type path is silent about it by design.
+ *
+ * The reports therefore answered "nothing" with `libraryExcluded: 0` beside it,
+ * which was affirmatively true (nothing had been dropped from the walk) and
+ * useless: a reader could not tell "this attribute has no type" from "this
+ * report cannot see its type". Each report counts these under
+ * `unresolvedTypings` so the silent zero becomes a figure.
+ *
+ * WHAT THE COUNT DOES NOT CLAIM. It says the walk could not follow a declared
+ * type; it does not say the name is wrong, nor that a type exists to be found.
+ * A name that resolves to nothing at all is counted the same way, because the
+ * report is equally blind either way — and a dangling one is already reported
+ * loudly by validation (`unresolved-type-ref`), which is not this report's job.
+ */
+function hasUnfollowedTyping(model: Model, el: ElementRecord): boolean {
+  return unfollowedTypeNameOf(model, el) !== undefined;
+}
+
+/** The type name `el` declares as text and the graph does not carry as an edge. */
+function unfollowedTypeNameOf(model: Model, el: ElementRecord): string | undefined {
+  const declared = el.attrs.type ?? el.attrs.typeRef;
+  if (typeof declared !== 'string' || declared.trim() === '') return undefined;
+  return model.typesOf(el.id).length === 0 ? declared.trim() : undefined;
+}
+
+/**
+ * How many of `ids` declare a type this module's edge walks cannot follow.
+ *
+ * Takes IDS, and de-duplicates them, because every caller assembles its input
+ * from sets that overlap — the two axes of a `Parts × Parts` matrix are the
+ * same elements twice — and a figure that double-counts is one the reader
+ * cannot check against the rows in front of them.
+ *
+ * Exported for `scripts/sysprose.ts`, which merges several sub-matrices into one
+ * view and must not re-derive this from scratch: the CLI figure and the API
+ * figure disagreeing is exactly the failure this counter exists to end.
+ */
+export function countUnfollowedTypings(model: Model, ids: Iterable<ElementId>): number {
+  let n = 0;
+  for (const id of new Set(ids)) {
+    const el = model.get(id);
+    if (el && hasUnfollowedTyping(model, el)) n++;
+  }
+  return n;
+}
+
+/**
+ * Every element that names `id` as its type IN TEXT with no edge to show for it.
+ *
+ * WHY A REPORT ABOUT `id` NEEDS THIS DIRECTION. `whereUsed` and `impactClosure`
+ * both answer "what depends on this element", and for the query that matters —
+ * a type — the blindness is INCOMING: the three attributes written
+ * `attribute … : ISQ::MassValue` in the shipped UAV example carry no
+ * `FeatureTyping`, so the edge walk finds nothing and a counter that looked only
+ * at what the walk STOOD ON printed 0 exactly where the report is most blind.
+ *
+ * The name is resolved by the binder's own chain
+ * ({@link resolveDeclaredTypeName}) rather than by matching text against
+ * `qualifiedName`: the two are not the same string for a member re-exported
+ * through a package import (`ISQ::MassValue` is written, `ISQBase::MassValue` is
+ * contained), and a report that re-derived its own answer could disagree with
+ * the model it is reporting on.
+ */
+function incomingUnfollowedTypings(model: Model, id: ElementId): ElementId[] {
+  const out: ElementId[] = [];
+  for (const el of model.all()) {
+    if (el.id === id || isLibrary(el)) continue;
+    const declared = unfollowedTypeNameOf(model, el);
+    if (declared === undefined) continue;
+    if (resolveDeclaredTypeName(model, declared, el.ownerId, el.id)?.id === id) out.push(el.id);
+  }
+  return out;
+}
 
 /** Number of elements per metaclass, e.g. `{ PartUsage: 3, Package: 1 }`. */
 export function countByMetaclass(model: Model): Record<string, number> {
@@ -254,6 +343,14 @@ export interface TraceabilityMatrix {
   libraryExcluded: number;
   /** Implicit (re-derived) row and column candidates left out of the matrix. */
   implicitExcluded: number;
+  /**
+   * Row/column candidates whose declared type this matrix cannot follow.
+   *
+   * See {@link hasUnfollowedTyping}: a feature typed only by a string on
+   * `attrs.type` carries no edge, so a `FeatureTyping` matrix shows it as a
+   * blank row and no exclusion counter accounts for it. This one does.
+   */
+  unresolvedTypings: number;
 }
 
 /**
@@ -329,6 +426,12 @@ export function traceabilityMatrix(
     links,
     libraryExcluded: candidates.filter(isLibrary).length,
     implicitExcluded: candidates.filter((e) => !isLibrary(e) && !isUserElement(model, e)).length,
+    // Counted over the candidates that made it onto an AXIS: a library or
+    // implicit candidate is already accounted for by its own counter, and
+    // counting it twice would make the three figures uncheckable against each
+    // other. `countUnfollowedTypings` de-duplicates, which matters here because
+    // a `Parts × Parts` view puts the same elements on both axes.
+    unresolvedTypings: countUnfollowedTypings(model, [...rows, ...columns].map((e) => e.id)),
   };
 }
 
@@ -353,6 +456,19 @@ export interface WhereUsedReport {
   references: UsageRef[];
   /** Distinct elements that reference the queried element (deduplicated). */
   usedBy: ElementRef[];
+  /**
+   * Declared types this report cannot follow, in BOTH directions: the queried
+   * element's own, plus every element that names it as a type in text without
+   * an edge to show for it.
+   *
+   * See {@link incomingUnfollowedTypings}. `references` is built from
+   * `model.edgesOf`, so a typing that lives only as a string on `attrs`
+   * produces no row here and an empty report reads as "nothing uses it" — a
+   * different statement from "this report cannot see what uses it". Asking
+   * where `ISQBase::MassValue` is used in the shipped UAV example is the case:
+   * three attributes name it (as `ISQ::MassValue`) and none of them is an edge.
+   */
+  unresolvedTypings: number;
 }
 
 /**
@@ -391,7 +507,14 @@ export function whereUsed(model: Model, id: string): WhereUsedReport {
       isTyping: isTypingSpecialization(e.eClass),
     });
   }
-  return { element, references, usedBy: [...usedByMap.values()] };
+  return {
+    element,
+    references,
+    usedBy: [...usedByMap.values()],
+    unresolvedTypings: el
+      ? countUnfollowedTypings(model, [el.id, ...incomingUnfollowedTypings(model, el.id)])
+      : 0,
+  };
 }
 
 /* ─────────────────── Impact closure & orphan inventory ──────────────────── */
@@ -470,6 +593,18 @@ export interface ImpactReport {
   libraryExcluded: number;
   /** Implicit (re-derived) elements walked through but never reported. */
   implicitExcluded: number;
+  /**
+   * Declared types this closure cannot follow — the elements it STOOD ON, plus
+   * the elements that name the queried element as a type in text.
+   *
+   * See {@link hasUnfollowedTyping} and {@link incomingUnfollowedTypings}.
+   * Includes the element asked about, unlike the two exclusion counters — it is
+   * the one whose blindness the caller is most likely to mistake for an answer,
+   * because a closure that reports nothing about a feature reads as "changing
+   * it reaches nothing", and one asked about a TYPE reads the same way while
+   * the attributes that name it sit right there in the file.
+   */
+  unresolvedTypings: number;
 }
 
 /**
@@ -736,6 +871,16 @@ export function impactClosure(model: Model, id: ElementId, depth = 1): ImpactRep
     truncated,
     libraryExcluded: libraryDropped.size,
     implicitExcluded: implicitCrossed.size,
+    // `seen` is every element the walk stood on: the query, the impacted
+    // elements, and the re-derived copies it crossed on the way (it is marked
+    // BEFORE the user-element test, so those are in). Library elements never
+    // enter it — they are dropped at the frontier — which is the right axis: a
+    // library type the walk declined to follow is already the
+    // `libraryExcluded` story.
+    unresolvedTypings: countUnfollowedTypings(model, [
+      ...seen,
+      ...incomingUnfollowedTypings(model, id),
+    ]),
   };
 }
 
@@ -790,6 +935,14 @@ export interface PromptReport {
    * through but never reported.
    */
   implicitExcluded: number;
+  /**
+   * Elements the walk STOOD ON whose declared type it could not follow.
+   *
+   * See {@link hasUnfollowedTyping}. Guidance reaches an element through what
+   * it IS as well as where it sits, so a type the walk cannot follow is a whole
+   * path of guidance this report silently did not look down.
+   */
+  unresolvedTypings: number;
 }
 
 /**
@@ -988,6 +1141,9 @@ export function promptsFor(model: Model, id: ElementId): PromptReport {
     prompts,
     libraryExcluded: libraryDropped.size,
     implicitExcluded: implicitCrossed.size,
+    // Same axis as `impactClosure`: every scope the walk stood on, the element
+    // asked about included.
+    unresolvedTypings: countUnfollowedTypings(model, visited),
   };
 }
 

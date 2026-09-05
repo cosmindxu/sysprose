@@ -706,7 +706,7 @@ propulsion.sysml: Propulsion::engine — 2 prompt(s) apply
   1  owner  Propulsion::packageGuidance via Propulsion
       Parts in this package follow the fuel-system conventions in DOC-114.
   nearest first; guidance reaches an element from what it is, where it sits, and where what it is sits
-  0 library element(s) dropped from the walk; 0 re-derived element(s) crossed but not reported
+  0 library element(s) dropped from the walk; 0 re-derived element(s) crossed but not reported; 0 declared type(s) this walk cannot follow
 ```
 
 Neither prompt is written on `engine`, and both apply to it. What to know about
@@ -728,6 +728,11 @@ that walk before you write one:
   tens of thousands of elements. The tool's re-derived copies are the other way
   round: walked *through* so a walk can reach the definition behind a copy, and
   never reported.
+- **A type the walk cannot follow is counted**, as the third figure on that
+  line. An attribute typed by something outside `ScalarValues` — `attribute mtow
+  : ISQ::MassValue` — keeps its type as text and gets no typing edge, so this
+  walk cannot go down it. Zero there means nothing was hidden from you; a number
+  means guidance may hang off a type this answer never reached.
 - **The words come from the `doc` body** you write under the tagged element (or
   from a comment addressed to it). A prompt with a tag and no words says so on
   its own line rather than printing a blank one.

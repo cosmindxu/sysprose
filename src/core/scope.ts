@@ -76,7 +76,7 @@ export function resolveTypeInScopeChain(
   const query = name.trim();
   if (query === '') return undefined;
   // A qualified name is not a simple-name lookup; `Model.resolveQualifiedName`
-  // and the library index own that case.
+  // owns that case (and, for a library path, {@link findLibraryType} step 1).
   if (query.includes('::')) return undefined;
 
   const seen = new Set<ElementId>();
@@ -115,16 +115,41 @@ export function resolveTypeInScopeChain(
  * `attrs.isLibrary === true`).
  *
  * Resolution order:
- *  1. exact fully-qualified name via strict containment (e.g.
- *     `ScalarValues::Real`, `SI::metre`, `Collections::List`, `Base::Anything`);
- *  2. failing that, the last `::`-segment matched against a library element's
- *     `declaredName` or `declaredShortName` (e.g. a bare `Real`, the unit symbol
- *     `m`, or a name re-exported through a package import such as
- *     `ISQ::MassValue`, whose definition is owned by `ISQBase`).
+ *  1. exact fully-qualified name by strict containment FROM THE LIBRARY ROOTS
+ *     (e.g. `ScalarValues::Real`, `SI::metre`, `Collections::List`,
+ *     `Base::Anything`);
+ *  2. failing that — and ONLY for an UNQUALIFIED name — that name matched
+ *     against a library element's `declaredName` or `declaredShortName` (a bare
+ *     `Real`, the unit symbol `m`).
  *
- * Step 1 uses {@link Model.resolveQualifiedName} (a roots→children walk) rather
- * than scanning + stringifying every library element, so it stays fast even
- * against the full library (tens of thousands of elements).
+ * WHY STEP 1 SEEDS FROM THE LIBRARY ROOTS. It used to call
+ * {@link Model.resolveQualifiedName}, which starts at ALL roots and takes the
+ * FIRST one answering to the leading segment, with no backtracking. A user file
+ * that opens `package Parts { … }` therefore captured `Parts::Part` — the
+ * implicit base every PartDefinition and PartUsage specializes
+ * (`IMPLICIT_BASE_TYPE`, src/semantics/featuring.ts) — and the whole model
+ * silently lost its library bases: no `Parts::Part`, so no `Items::Item`, no
+ * `Occurrences::Occurrence`, and inherited library members such as `timeSlices`
+ * stopped resolving. The library and the user model are different namespaces of
+ * last resort; this one searches only its own.
+ *
+ * WHY STEP 2 REFUSES A QUALIFIED NAME. It used to match the LAST `::`-segment
+ * of any query, throwing the qualifier away. Every dangling path whose final
+ * segment happened to collide with a library name therefore resolved to a
+ * stranger — `part wheel : NoSuchPkg::B` bound to `SI::byte`,
+ * `part gear : Totally::Bogus::Path::m` to `SI::metre` — and `npm run check`
+ * reported the file clean. A silent wrong answer is worse than a loud failure,
+ * and nothing here can tell whether a qualifier the library does not contain
+ * was a typo or fiction, so it declines to guess. The one name that justified
+ * the leniency, a member re-exported through a package import such as
+ * `ISQ::MassValue` (defined in `ISQBase`), is answered by the GENUINE KerML
+ * import walk in `resolveQualifiedNameFull` — the converted library carries the
+ * `Import` relationships that walk needs — so the qualified half of the safety
+ * net bought nothing it did not also break.
+ *
+ * Step 1 is a roots→children walk rather than a scan that stringifies every
+ * library element, so it stays fast even against the full library (tens of
+ * thousands of elements).
  *
  * @returns the matching {@link ElementRecord}, or `undefined` when none matches.
  */
@@ -133,25 +158,52 @@ export function findLibraryType(model: Model, name: string): ElementRecord | und
   if (query === '') return undefined;
   // No library merged yet ⇒ nothing to find. Worth its own line because this
   // runs for every unresolved reference during a PARSE, where the answer is
-  // always "no" and both steps below are whole-model work (`resolveQualifiedName`
-  // walks the root set; the name index rebuilds on every revision, and the
-  // mapper bumps the revision per element it creates).
+  // always "no" and both steps below are whole-model work (step 1 walks the
+  // root set; the name index rebuilds on every revision, and the mapper bumps
+  // the revision per element it creates).
   if (!model.hasLibrary) return undefined;
 
-  // 1. Exact qualified-name match via strict containment (fast).
-  const exact = model.resolveQualifiedName(query);
-  if (exact && exact.attrs.isLibrary === true) return exact;
+  // 1. Exact qualified-name match by strict containment from the LIBRARY roots
+  //    (fast, and unshadowable by a user package of the same name).
+  const exact = resolveLibraryPath(model, query);
+  if (exact) return exact;
 
-  // 2. Last-segment match on declaredName / declaredShortName among library
-  //    elements (handles bare names, unit symbols, and import re-exports).
-  //    Backed by a per-revision index so this is O(1) instead of an O(n) scan
-  //    over the full ~38k-element library on every unresolved reference.
-  const last = query.split('::').pop()?.trim();
-  if (!last) return undefined;
-  return libraryNameIndex(model).get(last);
+  // 2. Simple-name match on declaredName / declaredShortName among library
+  //    elements (bare names and unit symbols). A QUALIFIED name that step 1
+  //    could not find is NOT retried here: matching its last segment alone
+  //    answered a written path with an element that path does not name (see the
+  //    doc comment). Backed by a per-revision index so this is O(1) instead of
+  //    an O(n) scan over the full ~38k-element library on every unresolved
+  //    reference.
+  if (query.includes('::')) return undefined;
+  return libraryNameIndex(model).get(query);
 }
 
-/** rev-keyed cache of {last-segment name → first matching library element}. */
+/**
+ * Walk `A::B::C` segment by segment through OWNED members, seeded from the
+ * library roots only, and answer only with a library element.
+ *
+ * Deliberately not {@link Model.resolveQualifiedName}: that one seeds from every
+ * root, so a user `package Parts` shadows the library `Parts` for the whole
+ * path and the walk cannot back out of it (see the doc comment above).
+ */
+function resolveLibraryPath(model: Model, query: string): ElementRecord | undefined {
+  const segs = query
+    .split('::')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (segs.length === 0) return undefined;
+  let candidates = model.roots().filter((r) => r.attrs.isLibrary === true);
+  let found: ElementRecord | undefined;
+  for (const seg of segs) {
+    found = candidates.find((el) => named(el, seg));
+    if (!found) return undefined;
+    candidates = model.children(found.id);
+  }
+  return found && found.attrs.isLibrary === true ? found : undefined;
+}
+
+/** rev-keyed cache of {simple name → first matching library element}. */
 interface LibNameIndex {
   rev: number;
   byName: Map<string, ElementRecord>;

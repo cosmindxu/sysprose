@@ -471,6 +471,51 @@ describe('L7 — sysprose reporting command', () => {
     expect(human.stdout).toContain('uav');
   }, 120_000);
 
+  it('every walk-based report prints the typings it cannot follow', () => {
+    // The user-visible half of the omission counter, which nothing pinned: all
+    // three figures could be hard-coded to 0 and the suite stayed green. They
+    // are the whole point of the counter — a reader who sees "nothing
+    // references it" beside a silent 0 has no way to tell an untyped feature
+    // from a report that cannot see the type.
+    //
+    // The figures are measurements of `examples/uav-isr.sysml`: 13 attributes
+    // are typed by an ISQ quantity kind, which the library binder deliberately
+    // leaves without a `FeatureTyping`; three of them name `ISQ::MassValue`.
+    const matrix = run([
+      'trace', UAV, '--relation', 'satisfy',
+      '--from', 'AttributeUsage', '--to', 'AttributeUsage', '--json',
+    ]);
+    expect(matrix.code).toBe(0);
+    const { body: mBody } = payload<{
+      trace: { rows: unknown[]; columns: unknown[]; unresolvedTypings: number };
+    }>(matrix);
+    // Both axes are the SAME metaclass, so every element sits on both. A figure
+    // that summed the axes reported 26 in a matrix with 16 rows — larger than
+    // the thing the reader would check it against.
+    expect(mBody.trace.rows).toHaveLength(16);
+    expect(mBody.trace.unresolvedTypings).toBe(13);
+    expect(mBody.trace.unresolvedTypings).toBeLessThanOrEqual(mBody.trace.rows.length);
+    const matrixText = run([
+      'trace', UAV, '--relation', 'satisfy',
+      '--from', 'AttributeUsage', '--to', 'AttributeUsage',
+    ]);
+    expect(matrixText.stdout).toContain('13 declared type(s) this walk cannot follow');
+
+    // Asked about a TYPE, the walk finds no edge — and says how many written
+    // typings name it anyway.
+    const used = run(['where-used', UAV, '--element', 'ISQBase::MassValue']);
+    expect(used.code).toBe(0);
+    expect(used.stdout).toContain('nothing references it');
+    expect(used.stdout).toContain('3 declared type(s) this walk cannot follow');
+
+    // And asked about one of those attributes, it counts its own.
+    const prompts = run([
+      'prompts', UAV, '--element', 'UAVSurveillanceSystem::AirVehicle::mtow',
+    ]);
+    expect(prompts.code).toBe(0);
+    expect(prompts.stdout).toContain('1 declared type(s) this walk cannot follow');
+  }, 180_000);
+
   it('every --relation preset tabulates its own family', () => {
     // Five of the six presets have no relationship anywhere in the repo's
     // models, so a preset string that stopped matching the mapper's `eClass`

@@ -73,6 +73,7 @@ import { dirname } from 'node:path';
 import type { ElementRecord, Model } from '../src/core/index';
 import {
   connectivityReport,
+  countUnfollowedTypings,
   impactClosure,
   isUserElement,
   modelMetrics,
@@ -540,6 +541,13 @@ function reportTrace(model: Model, name: string, args: ParsedArgs): Report {
   const implicitExcluded = pool.filter(
     (el) => el.attrs.isLibrary !== true && !isUserElement(model, el),
   ).length;
+  // Over the AXES, not the pool: a library or implicit candidate is already
+  // named by its own counter above, and a figure that double-counts is one the
+  // reader cannot check against the rows in front of them. `--from K --to K`
+  // puts the same elements on both axes, so the union is de-duplicated — by the
+  // API's own counter, not a copy of it, so this line and
+  // `traceabilityMatrix(...).unresolvedTypings` cannot drift apart.
+  const unresolvedTypings = countUnfollowedTypings(model, [...rows.keys(), ...columns.keys()]);
 
   const unlinkedRows = rowList
     .filter((r) => !columnList.some((c) => linked.has(`${r.id}|${c.id}`)))
@@ -565,6 +573,7 @@ function reportTrace(model: Model, name: string, args: ParsedArgs): Report {
     unlinkedColumns,
     libraryExcluded,
     implicitExcluded,
+    unresolvedTypings,
   };
 
   const axes =
@@ -583,7 +592,8 @@ function reportTrace(model: Model, name: string, args: ParsedArgs): Report {
       ? [`  nothing links to: ${unlinkedColumns.join(', ')}`]
       : []),
     ...(unlinkedRows.length > 0 ? [`  links to nothing: ${unlinkedRows.join(', ')}`] : []),
-    `  ${libraryExcluded} library and ${implicitExcluded} re-derived candidate(s) left out of the axes`,
+    `  ${libraryExcluded} library and ${implicitExcluded} re-derived candidate(s) left out of the axes; ` +
+      `${unresolvedTypings} declared type(s) this walk cannot follow`,
   ].join('\n');
   return { json: payload, text };
 }
@@ -660,7 +670,8 @@ function reportWhereUsed(model: Model, name: string, args: ParsedArgs): Report {
       ? `  truncated: one more hop has somewhere to go — raise --depth`
       : '  complete: nothing further to reach',
     `  ${report.libraryExcluded} library element(s) dropped from the walk; ` +
-      `${report.implicitExcluded} re-derived element(s) crossed but not reported`,
+      `${report.implicitExcluded} re-derived element(s) crossed but not reported; ` +
+      `${report.unresolvedTypings} declared type(s) this walk cannot follow`,
   ].join('\n');
   return { json: payload, text };
 }
@@ -720,7 +731,8 @@ function reportPrompts(model: Model, name: string, args: ParsedArgs): Report {
         ['  nearest first; guidance reaches an element from what it is, where it sits, and where what it is sits']
       : []),
     `  ${report.libraryExcluded} library element(s) dropped from the walk; ` +
-      `${report.implicitExcluded} re-derived element(s) crossed but not reported`,
+      `${report.implicitExcluded} re-derived element(s) crossed but not reported; ` +
+      `${report.unresolvedTypings} declared type(s) this walk cannot follow`,
   ].join('\n');
   return { json: report, text };
 }

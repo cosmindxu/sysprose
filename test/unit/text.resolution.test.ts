@@ -90,6 +90,51 @@ describe('parseModel — declaration order does not decide what a name denotes (
     const c = find(model, 'C');
     expect(model.typesOf(c.id).map((t) => model.qualifiedName(t.id))).toEqual(['P::Grand::W']);
   });
+
+  it('re-decides through a RE-EXPORTED import whose namespace gained a general', () => {
+    // One indirection further out again: `Use` reaches `H` only as
+    // `Use → Mid → H`, through `Mid`'s own public import. The re-decision gate
+    // consulted each scope's DIRECT import targets, so the general `H` gains
+    // was invisible to it and the round-1 answer `Outer::W` was frozen — while
+    // the resolver the mapper itself calls answered `P::Grand::W`. The mapper
+    // must never bind a name to a different element than its own resolver.
+    const { model, codes } = parse(`package P {
+      part def Grand { part def W; }
+      part def T :> Grand;
+      part H : T;
+    }
+    package Mid { import P::H::*; }
+    package Outer {
+      part def W;
+      package Use { import Mid::*; part def C :> W; }
+    }`);
+    expect(codes).toEqual([]);
+    expect(typeNames(model, find(model, 'C'))).toEqual(['P::Grand::W']);
+  });
+
+  it('answers the same whichever order `import Lib::*;` and `import Lib::**;` are written', () => {
+    // Both imports name `Lib`; only the recursive one reaches `Lib::Sub::X`,
+    // which is the nearer answer because an IMPORTED member of `U` beats an
+    // OWNED member of the enclosing `Outer`. Swapping the two lines used to
+    // swap the answer between `Lib::Sub::X` and `Outer::X`.
+    const src = (recursiveFirst: boolean): string => `package Lib {
+      package Sub { part def X; }
+    }
+    package Outer {
+      part def X;
+      package U {
+        ${recursiveFirst ? 'import Lib::**;\n        import Lib::*;' : 'import Lib::*;\n        import Lib::**;'}
+        part def C :> X;
+      }
+    }`;
+    for (const recursiveFirst of [true, false]) {
+      const { model, codes } = parse(src(recursiveFirst));
+      expect(codes, `recursive import first: ${recursiveFirst}`).toEqual([]);
+      expect(typeNames(model, find(model, 'C')), `recursive import first: ${recursiveFirst}`).toEqual([
+        'Lib::Sub::X',
+      ]);
+    }
+  });
 });
 
 describe('parseModel — every reference kind uses the one resolver', () => {
@@ -302,22 +347,36 @@ describe('parseModel — resolution performance stays in budget', () => {
   };
 
   // GROSS-BLOWUP CANARIES, and nothing finer. Measured alone on the
-  // development machine (1200: ~230ms, 2400: ~650ms), but these run inside the
-  // full parallel suite, where the same 2400 case has been seen at 3600ms —
-  // so the budgets are the loose ones a wall-clock assertion can honestly
-  // carry, and they catch an order-of-magnitude regression, not a factor.
+  // development machine (1200: ~370ms, 2400: ~1300ms), but these run inside the
+  // full parallel suite — and, on a machine also running a second checkout's
+  // suite, the 2400 case has been seen at 9.4s, ~7x its solo time. So the
+  // budgets are the loose ones a wall-clock assertion can honestly carry.
+  // Say what that buys, in the units the assertion actually uses: run ALONE
+  // the headroom is ~20x (1200) and ~15x (2400), so a tenfold solo regression
+  // (~3.7s / ~13s) still passes; it is the loaded run, with ~2x headroom, that
+  // would catch it. What they catch run alone is a gross blow-up — the
+  // quadratic shapes this file has had before, which land at seconds per
+  // hundred declarations, not at a factor of two.
+  //
+  // The budgets ROSE when `specializationFixpoint` gained its verification
+  // round: it now re-decides every reference ungated before it is allowed to
+  // call itself a fixpoint, so a file pays two full resolution passes instead
+  // of one (2400 alone: 729ms → 1244ms). That is a deliberate price for an
+  // answer the mapper's own resolver agrees with, and the budgets were widened
+  // for it rather than the check being weakened.
   //
   // Say plainly what they do NOT catch, so nobody reads them as protection
-  // they are not: deleting the `scopeGainedGeneral` re-decision gate in
-  // `resolveDeferredRefs` leaves these green (measured ungated, alone: 340ms /
-  // 1253ms). That gate is a pure optimisation — its CORRECTNESS-visible half,
-  // re-deciding a reference whose scope gained a general, is pinned by the
-  // witnesses at the top of this file. A ratio assertion does not separate it
-  // either: parsing alone grows super-linearly here, so gated and ungated
-  // slopes overlap (4x input → 8.3x gated vs 10.1x ungated).
+  // they are not: deleting the `scopeGainedGeneral` re-decision gate entirely
+  // leaves these green — and, now, barely moves them (measured with the gate
+  // forced open, alone: 353ms / 1310ms), because the verification round
+  // dominates. The gate is a pure optimisation in the literal sense: with the
+  // verification round in place it cannot change any answer, only how many
+  // references get re-resolved on the way there. A ratio assertion does not
+  // separate it either: parsing alone grows super-linearly here, so gated and
+  // ungated slopes overlap.
   it.each([
-    ['flat 1200 declarations', flat(1200), 3000],
-    ['flat 2400 declarations', flat(2400), 6000],
+    ['flat 1200 declarations', flat(1200), 8000],
+    ['flat 2400 declarations', flat(2400), 20000],
   ])('parses %s within budget', (_label, src, budget) => {
     parseModel(src); // warm the parser
     const t0 = performance.now();

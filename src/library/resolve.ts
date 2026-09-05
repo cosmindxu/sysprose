@@ -38,6 +38,7 @@ import {
   resolveFullName,
   resolveImportTargets as bindImportTargets,
 } from '../semantics/bind';
+import { resolveQualifiedNameFull } from '../semantics/resolve-names';
 
 // `findLibraryType` lives in core (src/core/scope.ts) so that the semantics
 // layer can use it without depending on this module — that dependency was a
@@ -123,6 +124,47 @@ function resolveUserType(
 }
 
 /**
+ * The library-side half of type resolution for ONE written name: the library's
+ * own index first, then the genuine KerML walk from the roots.
+ *
+ * WHY BOTH, IN THIS ORDER. {@link findLibraryType} answers a bare name (`Real`),
+ * a unit symbol (`m`) and a path the library strictly contains (`SI::metre`) off
+ * an index, but it refuses a qualified path it does not contain rather than
+ * guessing from the last segment. {@link resolveQualifiedNameFull} then walks
+ * owned, inherited AND IMPORTED members at every hop, which is what still
+ * resolves a member re-exported through a package import — `ISQ::MassValue`,
+ * defined in `ISQBase`, or `AnalysisTooling::Real`, defined in `ScalarValues`.
+ *
+ * Factored out because BOTH branches of {@link resolveTypeReferences} need it
+ * and only one of them used to have it: an `attribute a : AnalysisTooling::Real`
+ * silently lost its typing while `item b : AnalysisTooling::Real` in the same
+ * file kept it — one written path, two answers, decided by metaclass.
+ */
+function resolveLibraryTypeName(model: Model, name: string): ElementRecord | undefined {
+  return findLibraryType(model, name) ?? resolveQualifiedNameFull(model, name);
+}
+
+/**
+ * The element a feature's written type name denotes, by the full binder chain:
+ * the user model first (the library is the namespace of LAST resort), then
+ * {@link resolveLibraryTypeName}.
+ *
+ * Exported so a report that has to ask "what does this unfollowed type string
+ * name?" (`src/api/analytics.ts`) asks the binder rather than re-deriving an
+ * answer that could differ from the one the model was built with.
+ */
+export function resolveDeclaredTypeName(
+  model: Model,
+  name: string,
+  scopeId: ElementId | null,
+  excludeId: ElementId,
+): ElementRecord | undefined {
+  const query = name.trim();
+  if (query === '') return undefined;
+  return resolveUserType(model, query, scopeId, excludeId) ?? resolveLibraryTypeName(model, query);
+}
+
+/**
  * Give every import its `target` so `resolveName`'s import walk can see it —
  * the shared, library-free pass from `src/semantics/bind.ts` plus this layer's
  * namespace of last resort, so `import ISQ::*;` binds to bundled library
@@ -176,10 +218,7 @@ export function resolveTypeReferences(model: Model): number {
           redundant.push(el.id); // already typed by a real type — the textual ref is redundant
           continue;
         }
-        const target =
-          resolveUserType(model, typeRef, el.ownerId, el.id) ??
-          findLibraryType(model, typeRef) ??
-          model.resolveQualifiedName(typeRef);
+        const target = resolveDeclaredTypeName(model, typeRef, el.ownerId, el.id);
         if (target && target.id !== el.id) {
           pending.push({ elementId: el.id, targetId: target.id, clearTypeRef: true });
         }
@@ -191,7 +230,12 @@ export function resolveTypeReferences(model: Model): number {
       if (el.eClass === 'AttributeUsage') {
         const type = el.attrs.type;
         if (typeof type === 'string' && type.trim() !== '' && !hasResolvedFeatureTyping(model, el)) {
-          const target = findLibraryType(model, type);
+          // The SAME library chain branch (1) uses. Ending on `findLibraryType`
+          // alone made the metaclass decide whether a re-exported path such as
+          // `AnalysisTooling::Real` was followed at all; the `isScalarValueType`
+          // gate below — not the resolver — is what keeps attribute typings to
+          // `ScalarValues` members.
+          const target = resolveLibraryTypeName(model, type);
           if (target && isScalarValueType(model, target)) {
             pending.push({ elementId: el.id, targetId: target.id, clearTypeRef: false });
           }

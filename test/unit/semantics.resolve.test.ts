@@ -128,6 +128,42 @@ describe('semantics — KerML scoping (owned / inherited / imported / aliased)',
     expect(resolveName(m, client2.id, 'Thing')?.id).toBe(thing.id);
   });
 
+  it('follows `::**` whichever side of a plain `::*` of the SAME namespace it sits', () => {
+    // `import Lib::*;` and `import Lib::**;` in ONE scope. Only the recursive
+    // one reaches `Lib::Sub::X`, and the answer must not depend on which line
+    // came first. The cycle guard used to be keyed on the namespace id alone
+    // and was shared across every import of the scope for one lookup, so a
+    // non-recursive visit that found nothing marked `Lib` visited and the
+    // recursive import returned immediately without ever descending into
+    // `Sub` — the same two lines, two meanings, chosen by declaration order.
+    const build = (recursiveFirst: boolean) => {
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const lib = f.pkg('Lib');
+      const sub = f.pkg('Sub', lib.id);
+      const x = f.partDef('X', sub.id);
+      const use = f.pkg('Use');
+      const add = (isRecursive: boolean): void => {
+        m.create('NamespaceImport', {
+          ownerId: use.id,
+          source: [use.id],
+          target: [lib.id],
+          attrs: { isRecursive },
+        });
+      };
+      add(recursiveFirst);
+      add(!recursiveFirst);
+      return { m, use, x };
+    };
+
+    for (const recursiveFirst of [true, false]) {
+      const { m, use, x } = build(recursiveFirst);
+      expect(resolveName(m, use.id, 'X')?.id, `recursive import first: ${recursiveFirst}`).toBe(
+        x.id,
+      );
+    }
+  });
+
   it('resolves a re-exported member through a chain of public namespace imports', () => {
     const m = new Model();
     const f = new ModelFactory(m);
