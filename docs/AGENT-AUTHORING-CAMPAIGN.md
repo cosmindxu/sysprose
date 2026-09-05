@@ -541,9 +541,12 @@ noise in the registry factors and a Newton-solved `x * x == 2` would have
 flipped; comparisons now use `|a − b| ≤ max(absTol, 1e-9·max(|a|, |b|))` with
 the absolute part supplied by the caller — and two values within that
 tolerance are EQUAL for every relational operator, the strict ones included:
-`0.9999999999 < 1.0` holds, `a != b` at 1e-10 apart is violated, exactly as
-the numeric surface judges its residual (`violated = g > tol`), so the two
-surfaces cannot disagree on float noise. °C and °F are affine scales, and the
+`0.9999999999 < 1.0` holds, `a != b` at 1e-10 apart is violated. The numeric
+surface shares that reading (`violated = g > tol`) for `<=`, `>=` and the
+equalities, so the two surfaces cannot disagree on float noise; where this
+evaluator DECLINES and both fall back to raw magnitudes, a strict `<`/`>` is
+read exactly on both instead (see the known limitation on that tie below).
+°C and °F are affine scales, and the
 affine map turned a 15 °C *interval* into 288.15 K, so `t2 - t1 <= 5.0 [°C]`
 answered SATISFIED (10 K ≤ 278.15 K); any `+ − == !=` touching an offset unit,
 or a derived feature computed from one, now answers unknown with the reason,
@@ -728,8 +731,10 @@ feasibility: a constraint that disappears reads as one that holds.
 A relation is now judged in SI, per relation, behind four gates — each of which
 exists because scaling past it produces a confident WRONG number: every
 variable must resolve to a storage scale (a known unit, a declared ISQ kind, or
-a derived dimension); none may sit on an offset scale (°C differences are not
-offset-invariant, and the unit-aware evaluator already refuses them); the two
+a derived dimension); a variable on an offset scale is scaled like any other,
+because the affine map is MONOTONE and an ORDERING may therefore be judged in
+kelvin — arithmetic on one may not, and that is a refusal that drops the whole
+relation (below); the two
 operands of every comparison, `==`, `+` and `-` must carry the SAME DIMENSION —
 which refuses two distinct wrongs with one predicate, the declared-unit contract
 (`range = 5.0 [km]` against `<= 10.0` still reads the literal in kilometres, on
@@ -762,8 +767,9 @@ gates REFUSED to scale stays unlabelled (its 405 is neither metres nor
 furlongs), and a dimension the registry gives several coherent units — T⁻¹ is
 `Hz`, `Bd`, and every bit rate — is labelled in composed base units (`s⁻¹`)
 rather than by whichever row comes first. A binding across an OFFSET scale
-copies verbatim, mirroring the solver's own refusal to scale one, so 20 °C does
-not arrive as 293.15 K in an equation still read in degrees.
+CONVERTS, like every other binding: `bind a = measureT` with `a = 20 ['°C']`
+fills a kelvin-storage `measureT` with 293.15, and the equation it stands for is
+read in SI on both sides, so it still converges at a residual of zero.
 
 **Tolerance is the part that had to be decided twice.** The numeric verdict now
 comes FIRST from the unit-aware evaluator (with the solved values as a
@@ -791,6 +797,65 @@ overshoot it had always tolerated. Pinned by `semantics.solver-units.test.ts`
 (numbers, not verdicts: solved values, slack + unit, convergence, feasibility)
 and `uav-example.test.ts`, which runs the shipped example through both
 surfaces.
+
+**Five ways a unit was still dropped between the two surfaces.** Each was
+reproduced twice from parsed text before it was touched. (1) An OFFSET-scale
+feature was refused a scaling and then LEFT in the relation set, so
+`checkConstraintsNumeric` read its verdict from the unit-aware evaluator and
+answered right while `solveFeasible` and `optimize` read the same residual raw
+and answered `100 >= 350` — infeasible for 100 °C against 350 K, which holds,
+and feasible for 30 °C against 300 K, which does not. The affine map is
+monotone, so an ORDERING is now SCALED and judged in kelvin (its slack reads
+23.15 K, not −250); arithmetic on an absolute — `+`, `-`, `==`, `!=`, a product,
+an exponent — is a REFUSAL that drops the relation from the equation and
+inequality sets, the way a dimension clash does, so nothing may drive a value
+from a question the unit-aware evaluator declines. (2) A BINDING across an
+offset scale copied the raw magnitude into a kelvin-storage feature, and the
+numeric surface then answered `measureT <= 273.15 [K]` "satisfied, 253.15 K of
+slack" while validation said `unknown` — no second opinion anywhere. A binding
+is an identity of physical values and publishes no verdict, so it converts:
+20 °C arrives as 293.15 K, the constraint reads violated by 20 K, and the
+binding equation, being SI on both sides, still converges at zero.
+(3) DIMENSION ONE is not "unitless". The ISO 80000-13 information units are
+dimension one and still carry a factor (a byte is 8 bit, a KiB 8192), so a gate
+asking "is this DIMENSIONED?" skipped them: `constraint { need == cap }`, with
+`cap = 2.0 [B]` and a `need` declaring `[bit]`, solved `need` to 2 and published
+"violated by 0". The gate asks whether there is anything to CONVERT — a
+dimension, a factor, or an origin — and the binding path, which had the same
+predicate, converts with it.
+(4) The numeric surface applied its ±1e-6 to `<` exactly as to `<=`, so
+`mass < 25.0` at 25 kg — a bare literal, where both surfaces fall back to the
+declared magnitudes — was `satisfied` here and `violated` there. A strict
+ordering has no slack at its boundary, and the fallback now reads the operator
+as `evaluate` in `src/semantics/expr.ts` reads it; `<=`, `>=` and equalities keep
+the tolerance that absorbs a solved value's float noise. (5) `expr [unit]`
+guarded re-dimensioning on the operand's DIMENSION, one predicate weaker than
+the property it names, so `cap [bit]` on a byte value passed, was rebuilt from
+the raw magnitude 2, and answered `cap [bit] <= 8.0 [bit]` a confident
+SATISFIED where 2 B is 16 bit. The guard is the operand's UNIT, with its own
+sentence for the dimension-one case. Pinned by
+`semantics.solver-units.test.ts` and `semantics.units-eval.test.ts`.
+
+**Each of those five fixes had a SECOND site that had to move with it.** A
+refused relation is dropped from the equation set, which is also how it leaves
+the sight of the set that tracks unit-blind values — so a measure of
+effectiveness took its number from the raw-magnitude fallback and was stamped
+with the coherent SI unit anyway, publishing a 20 °C magnitude as `20 [K]`. The
+label is now claimed only for a value the SOLVER produced, which is what its
+own doc always said. A feature value that is a BARE REFERENCE
+(`attribute t3 : TemperatureValue = t1`) states an identity exactly as a `bind`
+does and publishes no verdict, so it converts too (293.15 K) instead of
+vanishing from the solved values with nothing saying why; arithmetic on an
+absolute stays refused. Widening the scaling gate to count a FACTOR made the
+solver scale a `[B]` feature against a kind-less `Real` while the binding
+propagation still copied its magnitude, and the two writing 16 and 2 into one
+variable reported a converged model as NOT CONVERGED — both sites now read a
+kind-less feature as dimension one with a factor of 1, which is how the
+unit-aware evaluator reads it (`r : Real = 2.0` against `2 [B]` is violated on
+both surfaces, and `= 16.0` satisfied). And strictness could not live on the
+check surface alone: `solveFeasible` and `optimize` read the same residuals with
+no verdict in front of them, so one predicate now owns the rule for all three,
+consulting the unit-aware evaluator to know which reading a relation is under.
 
 **One resolver, and declaration order stopped deciding what a name means.**
 Two resolvers used to own different halves of reference binding. The textual
@@ -1861,8 +1926,8 @@ coincidence. Notes no longer do this.
 
 
 **A relation the solver cannot scale is judged in raw magnitudes, not refused.**
-The gates are conservative on purpose: an unresolvable unit, an offset scale, or
-operands whose dimensions do not match under a comparison, `+` or `-` leaves the
+The gates are conservative on purpose: an unresolvable unit, or operands whose
+dimensions do not match under a comparison, `+` or `-`, leaves the
 relation unscaled, where the residual — and so `slack`, `amount` and the penalty
 an optimizer descends — is still a difference of magnitudes in different units.
 The VERDICT is then taken from the unit-aware evaluator where it has one, and
@@ -1925,6 +1990,22 @@ a separate UI decision rather than an oversight — a value is legitimately
 textual sometimes (an expression, an FMI `INF`) and `setAttr` has one signature
 for every attribute, so the coercion rule has to be written per field, with the
 same care the mapper's bare-number guard needed.
+
+**A strict `<` is exact on the fallback path and tolerant on the dimensional
+one.** Where both surfaces read raw magnitudes (a bare literal beside a
+dimensioned value) `mass < 25.0` at 25 kg is violated on both — the boundary is
+the boundary — and `solveFeasible`/`optimize` say infeasible, all three reading
+the one rule that owns strictness. Where the unit-aware evaluator judges,
+`compareQ` counts operands within its relative tolerance as EQUAL for every
+operator, so `mass < 25.0 [kg]` at the same 25 kg is satisfied and feasible.
+Every surface agrees with every other on each path; what differs is the two
+PATHS' readings of a tie. Closing that means giving `compareQ` a
+strictness-aware tolerance, after which the shared rule would follow it — until
+then, the same tie reads two ways depending on whether the relation carries a
+unit the evaluator can use. One consequence to know about: a strict ordering
+violated exactly at its boundary reports a violation `amount` of 0, because the
+violation is the tie itself, so a row's verdict — not its amount — is what says
+whether it holds.
 
 **Offset-unit differences answer unknown rather than converting as intervals.**
 The difference of two absolute temperatures IS a well-defined quantity — a

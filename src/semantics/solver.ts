@@ -283,7 +283,12 @@ export interface NumericConstraintResult {
    * else in the raw magnitudes the model declares.
    */
   slack: number | null;
-  /** Violation magnitude (0 when satisfied/unknown). */
+  /**
+   * Violation magnitude — 0 when satisfied or unknown, and ALSO 0 for a STRICT
+   * ordering violated exactly at its boundary (`mass < 25.0` at 25 kg), where
+   * the violation is the tie itself and there is no magnitude to report. Read
+   * {@link result}, never this number, to learn whether a relation holds.
+   */
   amount: number;
   /**
    * The coherent SI unit {@link slack} and {@link amount} are expressed in —
@@ -334,6 +339,25 @@ function isDimensioned(s: UnitScale): boolean {
 }
 
 /**
+ * Is there anything to CONVERT on this scale — a dimension, a factor, or an
+ * origin?
+ *
+ * Asking `isDimensioned` alone missed the units that are deliberately
+ * DIMENSION ONE and still carry a factor: the ISO 80000-13 information units
+ * (byte and octet 8, hartley log₂10, nat 1/ln2, and every binary prefix — KiB
+ * 8192). `2 [B] == need [bit]` then stayed verbatim and solved `need` to 2
+ * where the model says 16, while the row published "violated by 0".
+ */
+function isScaled(s: UnitScale): boolean {
+  return isDimensioned(s) || s.factor !== 1 || s.offset !== 0;
+}
+
+/** Is this feature's magnitude read on an offset (affine) scale — °C, °F? */
+function isAbsoluteScale(s: UnitScale | undefined): boolean {
+  return s !== undefined && s.offset !== 0;
+}
+
+/**
  * The storage-unit scale of one feature, or `undefined` when the solver must
  * refuse to scale the relation it appears in.
  *
@@ -375,9 +399,13 @@ const DIMENSION_SENSITIVE = new Set(['==', '=', '!=', '<', '<=', '>', '>=', '+',
  *
  *  (a) every variable resolves to a storage scale — a known unit, a declared
  *      ISQ kind, a derived dimension, or a plain number;
- *  (b) no variable sits on an offset (affine) scale: °C differences and
- *      equalities are not offset-invariant, so the unit-aware evaluator refuses
- *      them and so does this;
+ *  (b) a variable on an offset (affine) scale is scaled like any other, because
+ *      the affine map is MONOTONE and so an ORDERING may be judged in kelvin —
+ *      which is what `compareQ` already does on the other surface. What may not
+ *      be judged is arithmetic on such a variable (°C differences and
+ *      equalities are not offset-invariant); that is a REFUSAL, and
+ *      {@link relationRefused} drops the whole relation rather than leaving it
+ *      here to be read in raw magnitudes;
  *  (c) the two operands of every comparison, `==`, `+` and `-` carry the SAME
  *      dimension. That covers two distinct wrongs with one predicate. A
  *      DIMENSIONLESS operand meeting a dimensioned one is the declared-unit
@@ -410,16 +438,15 @@ function scaleOfRelation(
   memo: DerivationMemo,
 ): ScaleMap | undefined {
   const scale: ScaleMap = new Map();
-  let anyDimensioned = forced;
+  let anyScaled = forced;
   for (const id of vars) {
     const s = storageScaleOf(model, id, memo);
     if (!s) return undefined; // (a)
-    if (s.offset !== 0) return undefined; // (b)
     if (dimensionClaim(model, id, memo) === 'mismatch') return undefined; // (d)
     scale.set(id, s);
-    if (isDimensioned(s)) anyDimensioned = true;
+    if (isScaled(s)) anyScaled = true; // (b) an origin counts as much as a factor
   }
-  if (!anyDimensioned) return undefined; // nothing to convert — stay verbatim
+  if (!anyScaled) return undefined; // nothing to convert — stay verbatim
   for (const node of nodes) {
     if (nodeDimension(node, scale, nameToId, markers) === INDETERMINATE) return undefined; // (c)
   }
@@ -484,7 +511,104 @@ function hasDimensionalFault(
   }
 }
 
-/** {@link hasDimensionalFault} over one relation body, scaled by its own vars. */
+/** The operators an ABSOLUTE (offset-scale) operand may appear directly under. */
+const ORDERING_OPS = new Set(['<', '<=', '>', '>=']);
+/** The operators that combine two BOOLEANS, under which an ordering may sit. */
+const BOOLEAN_OPS = new Set(['and', 'or', 'xor', 'implies']);
+
+/** Does this expression read any variable stored on an offset scale? */
+function readsAbsolute(node: ExprNode, scale: ScaleMap, nameToId: Map<string, ElementId>): boolean {
+  switch (node.kind) {
+    case 'ref':
+      return isAbsoluteScale(scale.get(nameToId.get(node.path.join('.')) ?? ''));
+    case 'unary':
+      return readsAbsolute(node.operand, scale, nameToId);
+    case 'binary':
+      return (
+        readsAbsolute(node.left, scale, nameToId) || readsAbsolute(node.right, scale, nameToId)
+      );
+    case 'if':
+      return (
+        readsAbsolute(node.cond, scale, nameToId) ||
+        readsAbsolute(node.then, scale, nameToId) ||
+        readsAbsolute(node.else, scale, nameToId)
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * Does this relation body do ARITHMETIC on an offset (affine) scale — the fault
+ * the unit-aware evaluator answers `offset` to?
+ *
+ * A °C value may be ORDERED (the affine map is monotone: `t2 >= 300 [K]` is a
+ * real question with a real answer, and `compareQ` answers it), so a bare
+ * reference to an absolute directly under `<`, `<=`, `>`, `>=` is fine.
+ * Anywhere else — `+`, `-`, `*`, `/`, `==`, `!=`, an exponent, a negation, even
+ * one step deeper under an ordering (`temp - ambient <= 5.0`) — the scale's
+ * origin does not cancel and no reading of the magnitudes is the author's.
+ *
+ * Refusing here (rather than merely declining to SI-scale, which is what
+ * gate (b) used to do) is what keeps the relation OUT of the equation and
+ * inequality sets: `solveFeasible` and `optimize` read those residuals with no
+ * unit-aware verdict in front of them, so a °C relation left in raw magnitudes
+ * reported `100 >= 350` — infeasible for 100 °C against 350 K, which holds.
+ * It also let an author's `dT == t1` PIN a kelvin-storage feature at 20 from a
+ * question the unit-aware evaluator declines to answer at all. (An IDENTITY is
+ * the deliberate exception: a BINDING, or a feature value that is a bare
+ * reference, states that two values are the same rather than asking whether
+ * they are, so it converts across the affine map — see `identity` in
+ * {@link relationRefused} and {@link bindingEquation}, which bypasses this
+ * entirely.)
+ */
+function hasOffsetFault(
+  node: ExprNode,
+  scale: ScaleMap,
+  nameToId: Map<string, ElementId>,
+): boolean {
+  switch (node.kind) {
+    case 'binary': {
+      if (ORDERING_OPS.has(node.op)) {
+        const side = (n: ExprNode): boolean =>
+          n.kind === 'ref' ? false : readsAbsolute(n, scale, nameToId);
+        return side(node.left) || side(node.right);
+      }
+      if (BOOLEAN_OPS.has(node.op)) {
+        return (
+          hasOffsetFault(node.left, scale, nameToId) ||
+          hasOffsetFault(node.right, scale, nameToId)
+        );
+      }
+      return readsAbsolute(node, scale, nameToId);
+    }
+    case 'unary':
+      return node.op === 'not'
+        ? hasOffsetFault(node.operand, scale, nameToId)
+        : readsAbsolute(node, scale, nameToId);
+    case 'if':
+      return (
+        hasOffsetFault(node.cond, scale, nameToId) ||
+        readsAbsolute(node.then, scale, nameToId) ||
+        readsAbsolute(node.else, scale, nameToId)
+      );
+    default:
+      return readsAbsolute(node, scale, nameToId);
+  }
+}
+
+/**
+ * {@link hasDimensionalFault} and {@link hasOffsetFault} over one relation
+ * body, scaled by its own vars — the two faults that make a body no numeric
+ * relation at all, so it is dropped from the relation set rather than judged.
+ *
+ * `identity` exempts the offset half for a relation that STATES an identity of
+ * two physical values rather than asking one — a binding, or a feature value
+ * that is a bare reference (`attribute t3 : TemperatureValue = t1`). Such a
+ * relation publishes no verdict anywhere, so there is no question to decline;
+ * refusing it instead made the feature vanish from `SolveResult.values` with
+ * nothing saying why, while the same identity written `bind` converted.
+ */
 function relationRefused(
   model: Model,
   node: ExprNode,
@@ -492,13 +616,15 @@ function relationRefused(
   nameToId: Map<string, ElementId>,
   markers: MarkerDimensions,
   memo: DerivationMemo,
+  identity = false,
 ): boolean {
   const scale: ScaleMap = new Map();
   for (const id of vars) {
     const s = storageScaleOf(model, id, memo);
     if (s) scale.set(id, s);
   }
-  return hasDimensionalFault(node, scale, nameToId, markers);
+  if (hasDimensionalFault(node, scale, nameToId, markers)) return true;
+  return !identity && hasOffsetFault(node, scale, nameToId);
 }
 
 /**
@@ -820,7 +946,15 @@ function relationEquation(
   return undefined;
 }
 
-/** Build a `feature = expr` {@link Equation} from a feature's value expression. */
+/**
+ * Build a `feature = expr` {@link Equation} from a feature's value expression.
+ *
+ * A value that is a BARE REFERENCE (`attribute t3 : TemperatureValue = t1`) is
+ * an identity of two physical values, exactly as a `bind` is, so it converts
+ * across an affine map rather than being refused: `t3` holds 293.15 K for a
+ * `t1` of 20 °C. Anything ARITHMETIC (`t1 + 5.0`) stays a refusal — the scale's
+ * origin does not cancel there, which is the `L4-temperature-difference` gap.
+ */
 function assignmentEquation(
   model: Model,
   el: ElementRecord,
@@ -857,10 +991,21 @@ function assignmentEquation(
   );
   nameToId.set(name, el.id); // the assignment target resolves to this feature
   const lhs: ExprNode = { kind: 'ref', path: [name] };
-  return makeEquation(model, lhs, node, s, nameToId, body, memo);
+  const identity = node.kind === 'ref' && !body.hadUnit;
+  return makeEquation(model, lhs, node, s, nameToId, body, memo, identity);
 }
 
-/** Build a synthetic `a = b` equality {@link Equation} between two feature ids. */
+/**
+ * Build a synthetic `a = b` equality {@link Equation} between two feature ids.
+ *
+ * A binding is not a predicate: it states that the two features DENOTE THE SAME
+ * QUANTITY, and it publishes no verdict anywhere. So — unlike an author's `==`,
+ * which {@link relationRefused} declines on an offset scale exactly as the
+ * unit-aware evaluator does — a binding across an affine map is CONVERTED:
+ * `bind a = measureT` with `a = 20 ['°C']` fills a kelvin-storage `measureT`
+ * with 293.15, not 20. Copying the magnitude instead let the numeric surface
+ * answer `measureT <= 273.15 [K]` "satisfied with 253.15 K of slack".
+ */
 function bindingEquation(
   model: Model,
   edgeId: ElementId,
@@ -900,6 +1045,7 @@ function makeEquation(
   nameToId: Map<string, ElementId>,
   body: LoweredBody | undefined,
   memo: DerivationMemo,
+  identity = false,
 ): Equation | undefined {
   const vars = new Set<ElementId>();
   collectVarIds(lhs, nameToId, vars);
@@ -914,7 +1060,7 @@ function makeEquation(
   // dimensioned value (`constraint { n == km }` must leave `n` at 5, not 5000).
   const joined: ExprNode = { kind: 'binary', op: '==', left: lhs, right: rhs };
   // Not a numeric equation at all — see {@link relationRefused}.
-  if (relationRefused(model, joined, varIds, nameToId, markers, memo)) return undefined;
+  if (relationRefused(model, joined, varIds, nameToId, markers, memo, identity)) return undefined;
   const scale = scaleOfRelation(model, varIds, [joined], nameToId, body?.hadUnit ?? false, markers, memo);
   // A body whose literals are already in SI cannot be judged in raw magnitudes.
   if (body?.hadUnit && !scale) return undefined;
@@ -1363,6 +1509,63 @@ function inequalityGate(
   return scale > 0 ? feasTol * scale : feasTol;
 }
 
+/**
+ * Does the residual `g` VIOLATE this ordering? The one place that owns the
+ * rule, for every surface that publishes a verdict about an inequality:
+ * {@link checkConstraintsNumeric}'s scalar fallback, {@link collectViolations}
+ * (so {@link solveFeasible}) and {@link optimize}'s feasibility check.
+ *
+ * `exact` says the verdict is being read from RAW MAGNITUDES because the
+ * unit-aware evaluator declined — the one path on which this side and the
+ * validation surface answer from the same numbers. There a STRICT ordering has
+ * no slack at its boundary: `mass < 25.0` at 25 kg is FALSE, exactly as
+ * `evaluate` in ./expr reads it, and the ±1e-6 that `<=` needs to absorb a
+ * solved value's float noise turned it into `satisfied`. Any residual in
+ * (0, gate] went the same way, not only an exact tie.
+ *
+ * Everywhere the unit-aware evaluator DOES answer, its reading governs and the
+ * gate stays tolerant — `compareQ` counts operands within its tolerance as
+ * equal for every operator, so `mass < 25.0 [kg]` at 25 kg is satisfied, and a
+ * feasibility check that read that tie exactly would contradict the very
+ * verdict the check surface publishes.
+ */
+function inequalityViolated(op: ComparisonOp, g: number, gate: number, exact: boolean): boolean {
+  if (exact && (op === '<' || op === '>')) return g >= 0;
+  return g > gate;
+}
+
+/**
+ * The inequalities whose verdict {@link checkConstraintsNumeric} reads from raw
+ * magnitudes — the unit-aware evaluator returning ignorance (not a REFUSAL,
+ * which is reported `unknown` and judged by no one). Only a STRICT ordering can
+ * be read differently for it, so only those are asked.
+ *
+ * This repeats the evaluator call `checkConstraintsNumeric` makes, once per
+ * strict ordering, so that feasibility and that surface cannot disagree about
+ * which rule a relation is read under.
+ */
+function exactlyReadIneqs(
+  model: Model,
+  ineqs: Inequality[],
+  values: Map<ElementId, number>,
+  feasTol: number,
+): Set<ElementId> {
+  const out = new Set<ElementId>();
+  const memo: DerivationMemo = new Map();
+  for (const iq of ineqs) {
+    if (iq.op !== '<' && iq.op !== '>') continue;
+    const el = model.get(iq.id);
+    if (!el) continue;
+    const detailed = evaluateConstraintQuantityDetailed(model, el, {
+      fallback: solvedQuantityScope(model, el, values, memo),
+      absTol: iq.scale ? 0 : feasTol,
+      memo,
+    });
+    if (detailed.verdict === 'unknown' && !isRefusalReason(detailed.reason)) out.add(iq.id);
+  }
+  return out;
+}
+
 /** Numeric-only view of {@link propagateValues}. */
 function numericPropagation(model: Model): Map<ElementId, number> {
   const out = new Map<ElementId, number>();
@@ -1767,6 +1970,9 @@ export function evaluateMoEs(model: Model): MeasureResult[] {
     seen.add(el.id);
 
     let value: number | undefined = solved.values.get(el.id);
+    // WHERE the number came from decides whether it may be labelled: only the
+    // solver reads a value unit-awarely. The fallbacks below are raw magnitudes.
+    const fromSolver = value !== undefined;
     if (value === undefined) value = numericSeedOf(model, el);
     if (value === undefined) {
       const r = evaluateFeatureValue(model, el.id);
@@ -1784,14 +1990,19 @@ export function evaluateMoEs(model: Model): MeasureResult[] {
     // `5400` beside a silent label reads as 5400 kilometres.
     //
     // The coherent-SI FALLBACK is claimed only for a value the solver reached
-    // unit-awarely. A relation the gates refused to scale is arithmetic over
-    // raw magnitudes — `totalMeasure == leg1 + leg2` with `leg1` in an unknown
-    // unit yields 405, which is neither 405 metres nor anything else — and
-    // stamping `m` on that number is the very contradiction this label exists
-    // to remove. Such a measure stays unlabelled, exactly as before.
+    // unit-awarely, which is TWO conditions. A relation the gates refused to
+    // scale is arithmetic over raw magnitudes — `totalMeasure == leg1 + leg2`
+    // with `leg1` in an unknown unit yields 405, which is neither 405 metres
+    // nor anything else — and stamping `m` on that number is the very
+    // contradiction this label exists to remove; `unitBlindIds` catches those.
+    // But a relation the gates REFUSE outright is dropped from the equation
+    // set, which is also how it leaves that set's sight: the number then comes
+    // from the seed/expression fallbacks below, in whatever unit the author
+    // wrote, and a 20 °C magnitude was published as `20 [K]`. So a value the
+    // solver did not itself produce is never labelled either.
     const facets = dimensionalFacets(model, el.id);
     const dimension = q?.dimension ?? facets.unitDimension ?? facets.kindDimension;
-    const inSI = !unitBlind.has(el.id);
+    const inSI = !unitBlind.has(el.id) && (fromSolver || value === undefined);
     const unit =
       q?.unit ?? facets.unit ?? (dimension && inSI ? siSymbolOf(dimension) : undefined);
     if (unit) res.unit = unit;
@@ -1806,6 +2017,12 @@ export function evaluateMoEs(model: Model): MeasureResult[] {
  * relation the gates refused to scale can write to, where at least one variable
  * carries a dimension. Everything else — a seed, a converted binding, a scaled
  * relation, a purely dimensionless system — leaves values in storage units.
+ *
+ * It sees only relations that SURVIVED {@link gatherConstraints}: a relation
+ * refused outright is dropped from that set, and the feature it would have
+ * written is then filled by a fallback instead. {@link evaluateMoEs} covers
+ * that half by labelling only values the solver itself produced — the two
+ * conditions together, never this one alone.
  */
 function unitBlindIds(model: Model): Set<ElementId> {
   const memo: DerivationMemo = new Map();
@@ -1918,9 +2135,11 @@ export function optimize(
   if (opts.constraints) {
     const res = solve(model, { fixed: best });
     const feasTol = Math.max(tol, 1e-6);
+    const exact = exactlyReadIneqs(model, ineqs, res.values, feasTol);
     result.feasible = ineqs.every((iq) => {
       const g = inequalityResidual(iq, res.values);
-      return g === undefined || g <= inequalityGate(iq, res.values, feasTol);
+      if (g === undefined) return true;
+      return !inequalityViolated(iq.op, g, inequalityGate(iq, res.values, feasTol), exact.has(iq.id));
     });
   }
   return result;
@@ -2070,7 +2289,8 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
     if (improved <= 1e-4 * P) break; // stalled (plateau / genuine infeasibility)
   }
 
-  const { violations, feasible } = collectViolations(ineqs, values, feasTol);
+  const exact = exactlyReadIneqs(model, ineqs, values, feasTol);
+  const { violations, feasible } = collectViolations(ineqs, values, feasTol, exact);
   return { values, feasible, violations, iterations };
 }
 
@@ -2122,6 +2342,7 @@ function collectViolations(
   ineqs: Inequality[],
   values: Map<ElementId, number>,
   feasTol: number,
+  exact: ReadonlySet<ElementId> = new Set(),
 ): { violations: ConstraintViolation[]; maxViolation: number; feasible: boolean } {
   const violations: ConstraintViolation[] = [];
   let maxViolation = 0;
@@ -2133,8 +2354,9 @@ function collectViolations(
     if (amount > maxViolation) maxViolation = amount;
     // A scaled inequality is judged against its own SI scale — the same 1e-6
     // made relative — not an absolute 1e-6 a nanosecond-scale system would
-    // clear vacuously.
-    if (amount > inequalityGate(iq, values, feasTol)) {
+    // clear vacuously. A strict ordering read from raw magnitudes is judged at
+    // its boundary instead: see {@link inequalityViolated}.
+    if (inequalityViolated(iq.op, g, inequalityGate(iq, values, feasTol), exact.has(iq.id))) {
       violations.push({ id: iq.id, name: iq.name, amount });
       feasible = false;
     }
@@ -2302,7 +2524,19 @@ export function checkConstraintsNumeric(
       delete row.slackUnit;
       if (detailed.detail) row.reason = detailed.detail;
     } else {
-      const violated = isIneq ? residual > tol : Math.abs(residual) > tol;
+      // The scalar fallback must read the OPERATOR exactly as the validation
+      // surface's scalar fallback does (`evaluate` in ./expr), because this is
+      // the one path on which both surfaces answer from the same raw
+      // magnitudes. {@link inequalityViolated} owns that rule for every surface
+      // that publishes an inequality verdict; this branch IS its `exact` case,
+      // reached only when the unit-aware evaluator returned ignorance rather
+      // than an answer or a refusal. Equalities keep the plain tolerance.
+      const violated =
+        isIneq && iq !== undefined
+          ? inequalityViolated(iq.op, residual, tol, true)
+          : isIneq
+            ? residual > tol
+            : Math.abs(residual) > tol;
       row.result = violated ? 'violated' : 'satisfied';
       if (!violated) row.amount = 0;
     }

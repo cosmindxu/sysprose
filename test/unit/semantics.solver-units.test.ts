@@ -666,21 +666,6 @@ describe('labels and seeds never outrun what the solver knows', () => {
     expect(moe!.unit).toBe('s⁻¹');
   });
 
-  it('a binding across an OFFSET scale copies, so its equation still converges', () => {
-    // The solver refuses to scale a relation touching °C (gate b), so the
-    // binding equation is read in raw magnitudes; converting the propagated
-    // value to kelvin would leave that equation with a residual of 273.15.
-    const m = parse(`package P {
-    attribute a : ISQ::TemperatureValue = 20.0 ['°C'];
-    attribute b : ISQ::TemperatureValue;
-    bind a = b;
-}
-`);
-    expect(solvedOf(m, 'b')).toBeCloseTo(20, 9);
-    expect(solve(m).converged).toBe(true);
-    expect(solve(m).residual).toBeCloseTo(0, 9);
-  });
-
   it('a self-contained `= 2 * 3 [kg]` value seeds the feature and everything downstream', () => {
     const m = parse(`package P {
     attribute m1 : ISQ::MassValue = 2.0 * 3.0 [kg];
@@ -708,5 +693,376 @@ describe('labels and seeds never outrun what the solver knows', () => {
     expect(row.kind).toBe('boolean');
     expect(row.result).toBe('satisfied');
     expect(row.slack).toBeNull();
+  });
+});
+
+/* ══════════════ F3 — offset scales, dimension one, strictness ═════════════ */
+
+/**
+ * An offset (affine) scale is ORDERED in kelvin and refused everywhere else —
+ * on BOTH surfaces, and in the relation set, not only in the published row.
+ *
+ * Gate (b) used to refuse to SCALE any relation touching °C/°F and then leave
+ * it in the set in raw magnitudes. `checkConstraintsNumeric` took its verdict
+ * from the unit-aware evaluator and so read right, but `solveFeasible` and
+ * `optimize` read the residual directly and so read 100 °C against 350 K as
+ * `100 >= 350` — INFEASIBLE for a model that holds, and feasible for one that
+ * does not. The affine map is monotone, so an ORDERING may be judged in SI (it
+ * is what `compareQ` already does); `+`, `-`, `==` and `!=` on an absolute
+ * stay refusals, and are now dropped from the relation set the way a
+ * dimension clash is, instead of driving a value nothing may judge.
+ */
+describe('an offset scale is ordered in SI and refused everywhere else', () => {
+  const tempReq = (temp: string, body: string) => `package P {
+    attribute temp : ISQ::ThermodynamicTemperatureValue = ${temp};
+    attribute limit : ISQ::ThermodynamicTemperatureValue = 350.0 [K];
+    constraint hot { ${body} }
+}
+`;
+
+  it('100 °C >= 350 K holds — and feasibility says so too', () => {
+    // 100 °C is 373.15 K, so the requirement holds. Read in raw magnitudes it
+    // is `100 >= 350`, which is where the inverted feasibility came from.
+    const m = parse(tempReq("100.0 ['°C']", 'temp >= limit'));
+    expect(unitAware(m)).toEqual(['satisfied']);
+    const row = only(m);
+    expect(row.result).toBe('satisfied');
+    expect(row.slack).toBeCloseTo(23.15, 6);
+    expect(row.slackUnit).toBe('K');
+    expect(solveFeasible(m).feasible).toBe(true);
+    expect(analysisReport(m).feasible).toBe(true);
+  });
+
+  it('30 °C <= 300 K does NOT hold — and feasibility says that too', () => {
+    const m = parse(`package P {
+    attribute temp : ISQ::ThermodynamicTemperatureValue = 30.0 ['°C'];
+    attribute limit : ISQ::ThermodynamicTemperatureValue = 300.0 [K];
+    constraint cool { temp <= limit }
+}
+`);
+    expect(unitAware(m)).toEqual(['violated']);
+    const row = only(m);
+    expect(row.result).toBe('violated');
+    expect(row.slack).toBeCloseTo(-3.15, 6);
+    expect(row.amount).toBeCloseTo(3.15, 6);
+    expect(solveFeasible(m).feasible).toBe(false);
+    expect(analysisReport(m).feasible).toBe(false);
+  });
+
+  it('an ordering against a [K] literal carries its slack in kelvin', () => {
+    const m = parse(req(`        attribute t2 : ISQ::TemperatureValue = 30.0 ['°C'];`, 'v.t2 >= 300.0 [K]'));
+    expect(unitAware(m)).toEqual(['satisfied']);
+    const row = only(m);
+    expect(row.result).toBe('satisfied');
+    expect(row.slack).toBeCloseTo(3.15, 6);
+    expect(row.slackUnit).toBe('K');
+  });
+
+  it('an EQUALITY touching an absolute scale determines nothing', () => {
+    // The unit-aware evaluator refuses `==` on an offset scale (the scale's
+    // zero is not the dimension's zero), so the solver must not answer it
+    // either: reading it raw filled a kelvin-storage feature with 20.
+    const m = parse(`package P {
+    attribute t1 : ISQ::TemperatureValue = 20.0 ['°C'];
+    attribute dT : ISQ::TemperatureValue;
+    constraint same { dT == t1 }
+}
+`);
+    expect(unitAware(m)).toEqual(['unknown']);
+    expect(only(m).result).toBe('unknown');
+    expect(solvedOf(m, 'dT')).toBeUndefined();
+  });
+});
+
+/**
+ * A BINDING is an identity of physical values, not a predicate: it publishes no
+ * verdict, so it converts across the affine map instead of being refused.
+ * Copying the magnitude filled a kelvin-storage feature with 20 and let the
+ * numeric surface answer a kelvin constraint confidently wrong. A test pinned
+ * that 20, justified by a residual objection that only held while the equation
+ * itself was read in raw degrees; scaled, both sides are SI and it converges.
+ */
+describe('a binding across an offset scale converts', () => {
+  const src = `package P {
+    attribute a : ISQ::TemperatureValue = 20.0 ['°C'];
+    attribute measureT : ISQ::TemperatureValue;
+    bind a = measureT;
+    constraint frozen { measureT <= 273.15 [K] }
+}
+`;
+
+  it('fills the kelvin-storage feature with 293.15, and still converges', () => {
+    const m = parse(src);
+    expect(solvedOf(m, 'measureT')).toBeCloseTo(293.15, 9);
+    expect(solve(m).converged).toBe(true);
+    expect(solve(m).residual).toBeCloseTo(0, 9);
+  });
+
+  it('and the kelvin constraint on it is violated, not satisfied by 253 K', () => {
+    const m = parse(src);
+    const row = only(m);
+    expect(row.result).toBe('violated');
+    expect(row.amount).toBeCloseTo(20, 6);
+  });
+});
+
+/**
+ * Dimension one is not "unitless": the ISO 80000-13 information units are
+ * deliberately dimension one (a byte is 8 bit, not 8 of something else), so a
+ * gate that asks "is this DIMENSIONED?" skips exactly the conversion that
+ * makes 2 B and 16 bit the same quantity.
+ */
+describe('a dimension-one unit with a factor is still converted', () => {
+  const store = (body: string) => `package P {
+    part def Store {
+        attribute cap : ISQ::StorageCapacityValue = 2.0 [B];
+        attribute need : ISQ::InformationContentValue [bit];
+        constraint fits { ${body} }
+    }
+    part s : Store;
+}
+`;
+
+  it('2 [B] == need [bit] solves need to 16, not 2', () => {
+    const m = parse(store('need == cap'));
+    expect(solvedOf(m, 'need')).toBeCloseTo(16, 9);
+    const row = only(m);
+    expect(row.result).toBe('satisfied');
+    expect(row.slack).toBeCloseTo(0, 9);
+  });
+
+  it('and the km/m control still solves the same way', () => {
+    const m = parse(`package P {
+    part def V {
+        attribute far : ISQ::LengthValue = 2.0 [km];
+        attribute near : ISQ::LengthValue [m];
+        constraint fits { near == far }
+    }
+    part v : V;
+}
+`);
+    expect(solvedOf(m, 'near')).toBeCloseTo(2000, 6);
+  });
+
+  it('a binding into a [bit] feature converts too', () => {
+    const m = parse(`package P {
+    part def Store {
+        attribute cap : ISQ::StorageCapacityValue = 2.0 [B];
+        attribute need : ISQ::InformationContentValue [bit];
+        bind cap = need;
+    }
+    part s : Store;
+}
+`);
+    expect(solvedOf(m, 'need')).toBeCloseTo(16, 9);
+  });
+});
+
+/**
+ * A STRICT ordering has no slack at its boundary. On the scalar-fallback path
+ * (a bare literal beside a dimensioned value, where the unit-aware evaluator
+ * declines and both surfaces read the declared magnitudes) the numeric side
+ * applied the same ±1e-6 to `<` as to `<=`, so `mass < 25.0` at 25 kg read
+ * SATISFIED here and VIOLATED on the validation surface — the two surfaces
+ * answering one model differently, which is the thing this seam exists to
+ * prevent.
+ */
+describe('strictness survives the scalar fallback', () => {
+  const massReq = (body: string) =>
+    req(`        attribute mass : ISQ::MassValue = 25.0 [kg];`, body);
+
+  it('`mass < 25.0` at 25 kg is violated on both surfaces', () => {
+    const m = parse(massReq('v.mass < 25.0'));
+    expect(unitAware(m)).toEqual(['violated']);
+    expect(numeric(m)).toEqual(['violated']);
+  });
+
+  it('`mass > 25.0` at 25 kg is violated on both surfaces', () => {
+    const m = parse(massReq('v.mass > 25.0'));
+    expect(unitAware(m)).toEqual(['violated']);
+    expect(numeric(m)).toEqual(['violated']);
+  });
+
+  it('but `<=` still holds at the boundary, on both', () => {
+    const m = parse(massReq('v.mass <= 25.0'));
+    expect(unitAware(m)).toEqual(['satisfied']);
+    expect(numeric(m)).toEqual(['satisfied']);
+  });
+
+  it('and a strictly smaller magnitude still satisfies `<`', () => {
+    const m = parse(massReq('v.mass < 25.5'));
+    expect(unitAware(m)).toEqual(['satisfied']);
+    expect(numeric(m)).toEqual(['satisfied']);
+  });
+});
+
+/**
+ * The fixes above moved three seams, and each one had a second site that has to
+ * move with it — a label, a value and a feasibility verdict that would
+ * otherwise contradict the surface the fix was made to agree with.
+ */
+describe('the second site of each fix agrees with the first', () => {
+  /**
+   * A relation the gates REFUSE is dropped from the equation set, which is
+   * also how it leaves `unitBlindIds`' sight. The measure's value then comes
+   * from the raw-magnitude fallback while the label says coherent SI: a 20 °C
+   * magnitude published as `20 [K]`. The label is claimed for a value the
+   * SOLVER produced, never for one a fallback supplied.
+   */
+  it('a measure whose relation was refused stays UNLABELLED', () => {
+    const m = parse(`package P {
+    part def Room {
+        attribute ambient : ISQ::ThermodynamicTemperatureValue = 20.0 ['°C'];
+        attribute measureT : ISQ::ThermodynamicTemperatureValue = ambient + 0.0;
+    }
+    part r : Room;
+}
+`);
+    const moe = evaluateMoEs(m).find((x) => x.name === 'measureT');
+    expect(moe!.value).toBeCloseTo(20, 9);
+    expect(moe!.unit).toBeUndefined();
+    expect(moe!.dimension).toBe('Θ');
+  });
+
+  /**
+   * A feature value that is a BARE REFERENCE states an identity, exactly as a
+   * binding does, and publishes no verdict — so it converts rather than being
+   * refused. Refusing it dropped the feature out of `SolveResult.values`
+   * altogether, with nothing anywhere saying why.
+   */
+  it('a pure-copy assignment across an offset scale converts, like a binding', () => {
+    const m = parse(`package P {
+    part def Room {
+        attribute ambient : ISQ::ThermodynamicTemperatureValue = 20.0 ['°C'];
+        attribute target : ISQ::ThermodynamicTemperatureValue = ambient;
+    }
+    part r : Room;
+}
+`);
+    expect(solvedOf(m, 'target')).toBeCloseTo(293.15, 9);
+    expect(solve(m).converged).toBe(true);
+    const moe = evaluateMoEs(m).find((x) => x.name === 'target');
+    expect(moe).toBeUndefined(); // not a measure — the copy is checked above
+  });
+
+  it('but ARITHMETIC on an absolute in a value expression is still refused', () => {
+    const m = parse(`package P {
+    part def Room {
+        attribute ambient : ISQ::ThermodynamicTemperatureValue = 20.0 ['°C'];
+        attribute warmer : ISQ::ThermodynamicTemperatureValue = ambient + 5.0;
+    }
+    part r : Room;
+}
+`);
+    expect(solvedOf(m, 'warmer')).toBeUndefined();
+  });
+
+  /**
+   * The solver scales a dimension-one unit with a factor against a KIND-LESS
+   * feature (a plain `Real`) — which is what the unit-aware evaluator does too,
+   * `r : Real = 2.0` against `2 [B]` being violated on both surfaces below. The
+   * binding propagation in ./connectors has to read the same feature the same
+   * way, or the two write 16 and 2 into the same variable and the model reports
+   * NOT CONVERGED.
+   */
+  it('a binding from a [B] feature into a plain Real converges', () => {
+    const m = parse(`package P {
+    attribute cap : ISQ::StorageCapacityValue = 2.0 [B];
+    attribute r : Real;
+    bind cap = r;
+}
+`);
+    expect(solve(m).converged).toBe(true);
+    expect(solve(m).residual).toBeCloseTo(0, 9);
+    expect(solvedOf(m, 'r')).toBeCloseTo(16, 9);
+  });
+
+  it('and the km-against-a-plain-Real control still copies verbatim', () => {
+    // A DIMENSIONED value against a kind-less one is the declared-unit
+    // contract: gate (c) refuses to scale it, and the binding copies the 5.
+    const m = parse(`package P {
+    attribute a : ISQ::LengthValue = 5.0 [km];
+    attribute r : Real;
+    bind a = r;
+}
+`);
+    expect(solve(m).converged).toBe(true);
+    expect(solvedOf(m, 'r')).toBeCloseTo(5, 9);
+  });
+
+  it('a plain Real is read in SI against a [B] value on BOTH surfaces', () => {
+    // The evidence that scaling `r == cap` is right rather than a broken
+    // plain-`Real` contract: the unit-aware evaluator reads dimension one in
+    // SI as well, so 2 is not 2 bytes and 16 is.
+    const two = parse(`package P {
+    attribute cap : ISQ::StorageCapacityValue = 2.0 [B];
+    attribute r : Real = 2.0;
+    constraint c { r == cap }
+}
+`);
+    expect(unitAware(two)).toEqual(['violated']);
+    expect(numeric(two)).toEqual(['violated']);
+    const sixteen = parse(`package P {
+    attribute cap : ISQ::StorageCapacityValue = 2.0 [B];
+    attribute r : Real = 16.0;
+    constraint c { r == cap }
+}
+`);
+    expect(unitAware(sixteen)).toEqual(['satisfied']);
+    expect(numeric(sixteen)).toEqual(['satisfied']);
+  });
+
+  /**
+   * `checkConstraintsNumeric` reads a strict ordering exactly on the fallback
+   * path; `solveFeasible` and `optimize` read the same relation's residual.
+   * Whichever way the rule goes, all three have to go with it, or the row says
+   * violated while feasibility says feasible.
+   */
+  it('feasibility reads a strict tie the way the check surface does', () => {
+    const m = parse(`package P {
+    part def V { attribute mass : ISQ::MassValue = 25.0 [kg]; }
+    part v : V;
+    constraint c5 { v.mass < 25.0 }
+}
+`);
+    expect(unitAware(m)).toEqual(['violated']);
+    expect(numeric(m)).toEqual(['violated']);
+    expect(solveFeasible(m).feasible).toBe(false);
+    expect(analysisReport(m).feasible).toBe(false);
+    const mass = m.all().find((e) => e.declaredName === 'mass' && e.attrs.isLibrary !== true);
+    expect(optimize(m, mass!.id, [], { constraints: true }).feasible).toBe(false);
+  });
+
+  it('and a residual inside the ±1e-6 gate goes the same way', () => {
+    const m = parse(`package P {
+    part def V { attribute mass : ISQ::MassValue = 25.0000005 [kg]; }
+    part v : V;
+    constraint c5 { v.mass < 25.0 }
+}
+`);
+    expect(numeric(m)).toEqual(['violated']);
+    expect(solveFeasible(m).feasible).toBe(false);
+  });
+
+  it('but a tie the unit-aware evaluator JUDGES is feasible on every surface', () => {
+    // `compareQ` counts operands within its tolerance as equal for every
+    // operator, so this tie is satisfied — and feasibility must not overrule a
+    // verdict the check surface publishes.
+    const scaled = parse(`package P {
+    attribute mass : ISQ::MassValue = 25.0 [kg];
+    constraint c { mass < 25.0 [kg] }
+}
+`);
+    expect(unitAware(scaled)).toEqual(['satisfied']);
+    expect(numeric(scaled)).toEqual(['satisfied']);
+    expect(solveFeasible(scaled).feasible).toBe(true);
+    const plain = parse(`package P {
+    attribute x = 25.0;
+    constraint c { x < 25.0 }
+}
+`);
+    expect(unitAware(plain)).toEqual(['satisfied']);
+    expect(numeric(plain)).toEqual(['satisfied']);
+    expect(solveFeasible(plain).feasible).toBe(true);
   });
 });

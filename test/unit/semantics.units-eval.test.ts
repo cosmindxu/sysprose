@@ -214,6 +214,25 @@ describe('derived features are quantities behind a dimension guard', () => {
     expect(checkConstraintsNumeric(bare).map((r) => r.result)).toEqual(['unknown']);
   });
 
+  it('`expr [unit]` on an operand that already carries a UNIT is a fault too', async () => {
+    // Dimension one is not "unitless": a byte is 8 bit. Guarding on the
+    // operand's DIMENSION let `cap [bit]` reread 2 bytes as 2 bits and answer
+    // `cap [bit] <= 8.0 [bit]` a confident SATISFIED, where the truth is
+    // 16 bit > 8 bit. The guard is the operand's UNIT.
+    const m = await bound(`package P {
+    attribute cap : ISQ::StorageCapacityValue = 2.0 [B];
+    constraint bad1 { cap [bit] <= 8.0 [bit] }
+}
+`);
+    const r = evaluateConstraintQuantityDetailed(m, constraintOf(m));
+    expect(r.verdict).toBe('unknown');
+    expect(r.reason).toBe('dimension-fault');
+    expect(r.detail).toContain('a unit literal [bit] was applied to an operand that already has unit "B"');
+    expect(verdicts(m)).toEqual(['unknown']);
+    // And the numeric surface refuses it as well — never a confident row.
+    expect(checkConstraintsNumeric(m).map((x) => x.result)).toEqual(['unknown']);
+  });
+
   it('walks a user attribute def that specializes an ISQ kind before declaring a mismatch', async () => {
     const m = await bound(
       `package P {

@@ -286,10 +286,23 @@ export function propagateValues(model: Model): Map<ElementId, unknown> {
 /**
  * The affine map from a feature's STORED magnitude to SI, and the dimension it
  * carries — the storage unit being its declared unit, else the coherent SI unit
- * of its declared quantity kind. `undefined` when the feature carries no
- * dimension at all (a plain `Real`) or names a unit the registry cannot
- * resolve; in both cases a binding copies the magnitude verbatim, exactly as it
- * always has.
+ * of its declared quantity kind. `undefined` only when the feature NAMES a unit
+ * the registry cannot resolve, where converting would invent a factor.
+ *
+ * DIMENSION ONE is a kind, not the absence of one. The ISO 80000-13
+ * information units are dimension one and still carry a factor (a byte is
+ * 8 bit), so a scale is returned for them too; refusing one whose dimension
+ * was `DIMENSIONLESS` copied 2 bytes into a `[bit]` feature as 2 bits.
+ *
+ * A feature with NO kind at all — a plain `Real` sink — is dimension one with a
+ * factor of 1: its magnitude IS its SI value. That is what the solver's gate
+ * (c) reads it as, and what the unit-aware evaluator reads it as (`r : Real =
+ * 2.0` against `2 [B]` is VIOLATED on both surfaces, 2 not being 16 bit). It is
+ * returned rather than refused so this site and the solver agree; refusing it
+ * left `bind cap = r` writing 2 here and 16 there, and the model NOT CONVERGED.
+ * Nothing changes for a model without units: two factor-1 sides copy verbatim,
+ * and a DIMENSIONED value against a kind-less one still copies, their
+ * dimensions being unequal.
  */
 function storageOf(
   model: Model,
@@ -298,11 +311,11 @@ function storageOf(
   const facets = dimensionalFacets(model, id);
   if (facets.unit !== undefined) {
     const u = resolveUnit(facets.unit);
-    if (!u || dimEqual(u.dimension, DIMENSIONLESS)) return undefined;
+    if (!u) return undefined;
     return { factor: u.factorToSI, offset: u.offsetSI ?? 0, dimension: u.dimension };
   }
   const kind = facets.kindDimension;
-  if (!kind || dimEqual(kind, DIMENSIONLESS)) return undefined;
+  if (!kind) return { factor: 1, offset: 0, dimension: DIMENSIONLESS };
   return { factor: 1, offset: 0, dimension: kind };
 }
 
@@ -313,22 +326,23 @@ function storageOf(
  * A binding equivalence class is a statement that two features denote the same
  * quantity, not that they hold the same number: `bind a = b` with `a` in
  * kilometres and `b` a unit-less `LengthValue` (which the quantity engine reads
- * as metres) must fill `b` with 5000, not 5. When either side has no dimension
- * — a plain `Real` sink, a boolean, a string — the value is copied verbatim,
- * which is what every model without units has always relied on.
+ * as metres) must fill `b` with 5000, not 5. When the two DIMENSIONS differ —
+ * a plain `Real` sink beside a length, a boolean, a string — the value is
+ * copied verbatim, which is what every model without units has always relied
+ * on.
  *
- * An OFFSET (affine) scale is copied verbatim too, mirroring the solver's gate
- * (b). The two must agree: the solver reads `bind a = b` as the equation
- * `a − b = 0` in RAW magnitudes when either side sits on an offset scale, so
- * converting 20 °C to 293.15 K here would leave that equation with a residual
- * of 273.15 and report a converged model as unconverged.
+ * An OFFSET (affine) scale converts like any other, and must: the solver reads
+ * `bind a = b` as the equation `a − b = 0` in SI, so copying 20 °C into a
+ * kelvin-storage feature as 20 is what would leave THAT equation with a
+ * residual of 273.15 — and it published a kelvin constraint on the copy as
+ * satisfied with 253.15 K of slack. The two sites must agree; they now do,
+ * both converting.
  */
 function convertInto(model: Model, fromId: ElementId, toId: ElementId, value: unknown): unknown {
   if (typeof value !== 'number' || !Number.isFinite(value)) return value;
   const from = storageOf(model, fromId);
   const to = storageOf(model, toId);
   if (!from || !to) return value;
-  if (from.offset !== 0 || to.offset !== 0) return value;
   if (!dimEqual(from.dimension, to.dimension)) return value;
   if (from.factor === to.factor && from.offset === to.offset) return value;
   return (value * from.factor + from.offset - to.offset) / to.factor;

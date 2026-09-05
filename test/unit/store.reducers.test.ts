@@ -529,6 +529,18 @@ describe('useAppStore.solveParametric — the Solve rows carry their units (I6)'
     expect(rows).toContain('violated inequality: x <= 10.0 (by 10.00)');
   });
 
+  it('a STRICT ordering violated at its boundary says so instead of "by 0.000"', () => {
+    // The violation is the tie itself, so the amount is 0 — and a row reading
+    // "violated … (by 0.000)" reads as no violation at all.
+    const rows = solveRows(`package P {
+    part def V { attribute mass : ISQ::MassValue = 25.0 [kg]; }
+    part v : V;
+    constraint c5 { v.mass < 25.0 }
+}
+`);
+    expect(rows).toContain('violated inequality: v.mass < 25.0 (at the boundary)');
+  });
+
   it('a relation neither engine can judge is an INFO row, not a silent drop', () => {
     const rows = solveRows(`package P {
     part def V { attribute range : ISQ::LengthValue = 5.0 [km]; }

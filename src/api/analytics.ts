@@ -1472,7 +1472,12 @@ export interface AnalysisViolation {
   kind: 'equality' | 'inequality' | 'boolean';
   /** The source text of the relation. */
   expression: string;
-  /** The amount by which the constraint is violated. */
+  /**
+   * The amount by which the constraint is violated — 0 for a STRICT ordering
+   * violated exactly at its boundary (`mass < 25.0` at 25 kg), where the
+   * violation is the tie itself. Presence in this list, not this number, is
+   * what says the relation does not hold.
+   */
   amount: number;
   /**
    * The coherent SI unit {@link amount} is expressed in, when the relation was

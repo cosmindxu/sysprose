@@ -748,14 +748,29 @@ function evalQ(node: QNode, scope: QScope, absTol: number): QEval {
 
 /**
  * `expr [unit]` — the spec's `'['` takes `in num: Number`: a bare number takes
- * the unit's dimension; an operand that already carries a dimension cannot be
- * re-dimensioned (`(2 [kg]) [m]` is a fault, not a conversion).
+ * the unit's dimension; an operand that already carries a UNIT (or a dimension)
+ * cannot be re-dimensioned (`(2 [kg]) [m]` is a fault, not a conversion).
+ *
+ * The guard is on the operand's unit FIRST, not only its dimension, because
+ * dimension one is not unitless: `2 [B]` carries a factor of 8 with an all-zero
+ * dimension, so a dimension-only guard let `cap [bit]` pass, rebuild the
+ * quantity from the raw magnitude 2, and answer `cap [bit] <= 8.0 [bit]` a
+ * confident SATISFIED where the truth is 16 bit > 8 bit.
  */
 function applyUnit(inner: QEval, unit: string): QEval {
   if (isQUnknown(inner)) return inner;
   if ('b' in inner) return unknownQ('not-quantity');
   const u = resolveUnit(unit);
   if (!u) return unknownQ('unit', unit);
+  if (inner.q.unit !== undefined && dimEqual(inner.q.dimension, DIMENSIONLESS)) {
+    // Same refusal, its own sentence: there is no dimension to name here, and
+    // the fault is that the operand's own unit — whose factor this would
+    // silently discard — is already fixed.
+    return unknownQ(
+      'dimension-fault',
+      `a unit literal [${unit}] was applied to an operand that already has unit "${inner.q.unit}"`,
+    );
+  }
   if (!dimEqual(inner.q.dimension, DIMENSIONLESS)) {
     // A REFUSAL, not ignorance: there is no dimensionless side here (the
     // branch is only reached when the operand already has a dimension), so no
@@ -943,11 +958,20 @@ function combineAddition(op: '+' | '-', a: Quantity, b: Quantity): QEval {
  * monotone), which is why `t2 >= 300 [K]` on a °C value still answers.
  *
  * Values within the tolerance count as EQUAL for every operator, the strict
- * ones included: `x < y` holds when `x − y ≤ tol`, exactly as the numeric
- * surface judges an inequality residual (`violated = g > tol`). Applying the
- * tolerance in the strict direction instead made `0.9999999999 < 1.0` a
- * confident VIOLATED here and satisfied there — a cross-surface disagreement
- * on float noise.
+ * ones included: `x < y` holds when `x − y ≤ tol`. Applying the tolerance in
+ * the strict direction instead made `0.9999999999 < 1.0` a confident VIOLATED
+ * here and satisfied on the numeric surface — a cross-surface disagreement on
+ * float noise.
+ *
+ * That tolerant reading is shared with the numeric surface for `<=` and `>=`
+ * (`violated = g > tol`) but NOT for `<` and `>`: where this evaluator declines
+ * and both surfaces fall back to raw magnitudes, a strict ordering is read
+ * EXACTLY, because the scalar `evaluate` the validation surface falls back to
+ * reads it exactly (`mass < 25.0` at 25 kg is violated there). So a tie under a
+ * strict ordering is satisfied wherever this function answers and violated
+ * where it does not — a known asymmetry between the two PATHS, recorded in
+ * docs/AGENT-AUTHORING-CAMPAIGN.md; the two SURFACES agree on each path, which
+ * is the property the seam exists to hold.
  */
 function compareQ(op: '<' | '<=' | '>' | '>=', a: Quantity, b: Quantity, absTol: number): QEval {
   if (!dimEqual(a.dimension, b.dimension)) return dimensionRefusal(a, b);

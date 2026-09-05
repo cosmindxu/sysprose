@@ -775,13 +775,19 @@ function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[]
       ? `Feasibility: no violated inequality constraint.${unjudgedNote}`
       : `Feasibility: ${report.violations.length} violated constraint(s).${unjudgedNote}`,
   };
+  // A STRICT ordering violated exactly at its boundary has an amount of 0 (the
+  // violation IS the tie), and "by 0.000" reads as no violation at all — so
+  // that row says where it stands instead of quoting the number.
   const violations: Diagnostic[] = report.violations.map((v, i) => ({
     id: `solve#viol#${i}`,
     ruleId: 'solve',
     severity: 'warning',
-    message: `violated ${v.kind}: ${v.expression} (by ${v.amount.toPrecision(4)}${
-      v.unit ? ` [${v.unit}]` : ''
-    })`,
+    message:
+      v.amount === 0
+        ? `violated ${v.kind}: ${v.expression} (at the boundary)`
+        : `violated ${v.kind}: ${v.expression} (by ${v.amount.toPrecision(4)}${
+            v.unit ? ` [${v.unit}]` : ''
+          })`,
     elementId: v.element.id,
   }));
   // A relation neither engine could judge is REPORTED, not dropped: an
