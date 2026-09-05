@@ -11,6 +11,8 @@
  * docs/03-architecture-and-plan.md §4 exactly so the UI integrates without glue.
  */
 
+import type { RmAttrKey } from '@semantics/requirements';
+
 /** The diagram/view kinds the modeler renders. */
 export type ViewKind =
   | 'general'
@@ -522,6 +524,21 @@ export interface ReqReference {
   relId: string;
 }
 
+/**
+ * One requirement-FACET column — the statement kind, or one of the nine
+ * management attributes (`src/semantics/requirements.ts`).
+ *
+ * `values` is the closed list the key accepts, carried WITH the column so an
+ * editor offers exactly what `setRequirementAttr` would take: a second list
+ * kept in the panel is a list that drifts from the one doing the validating.
+ * A key with no closed list takes free text and has no `values`.
+ */
+export interface ReqAttrColumn {
+  key: RmAttrKey;
+  label: string;
+  values?: readonly string[];
+}
+
 /** One requirement-relationship reference column. `kind` is the relationship metaclass. */
 export interface ReqRefColumn {
   key: string;
@@ -547,6 +564,13 @@ export interface ReqRow {
   eClass: string;
   /** Related elements per reference column key. */
   refs: Record<string, ReqReference[]>;
+  /**
+   * The facets this requirement carries, by key — only the ones that have a
+   * value, except `statementKind`, which every row has because a statement is
+   * always one kind of thing or another (an untagged requirement reads as
+   * `requirement`).
+   */
+  attrs: Partial<Record<RmAttrKey, string>>;
 }
 
 export interface RequirementsTableModel {
@@ -554,5 +578,7 @@ export interface RequirementsTableModel {
   scalarColumns: { key: string; label: string }[];
   /** Reference columns (Satisfied By / Verified By / …). */
   refColumns: ReqRefColumn[];
+  /** Facet columns (Kind, Status, Verdict, …), shown right of the references. */
+  attrColumns: ReqAttrColumn[];
   rows: ReqRow[];
 }

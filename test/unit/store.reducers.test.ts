@@ -13,7 +13,7 @@ vi.mock('../../src/library/standard-library', () => ({
 
 import { useAppStore } from '../../src/ui/store';
 import { parseModel } from '@text/index';
-import { getRequirementAttr } from '@semantics/index';
+import { getRequirementAttr, statementKindOf } from '@semantics/index';
 
 /** Reset the singleton store to a fresh, empty model before each test. */
 function reset(): void {
@@ -386,6 +386,75 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
     // `resetPreserving(snap, isLibraryEl)` keeps library elements verbatim, so a
     // keyword written here would have outlived its own undo step.
     expect(st().model.get(libReq.id)?.attrs.metadata).toBeUndefined();
+    expect(st().undoStack.length).toBe(undoBefore);
+  });
+
+  /**
+   * The kind is the one facet that is not about requirements.
+   *
+   * Guidance is most useful written on a definition or a package, where every
+   * element of that type or in that scope inherits it — and neither is a
+   * requirement, so `setRequirementAttr` refuses both. Without its own command
+   * the Kind control could only ever be offered on requirement rows, which is
+   * the one place a `prompt` is least useful.
+   */
+  it('setStatementKind tags a part — the element a prompt is most useful on', () => {
+    const part = st().createElement('PartUsage', null, 'engine');
+    const undoBefore = st().undoStack.length;
+
+    st().setStatementKind(part, 'prompt');
+    expect(statementKindOf(st().model, part)).toBe('prompt');
+    expect(st().undoStack.length).toBe(undoBefore + 1);
+
+    st().undo();
+    expect(statementKindOf(st().model, part)).toBeUndefined();
+  });
+
+  it('setStatementKind clears a kind, and spends no undo step on a no-op', () => {
+    const part = st().createElement('PartUsage', null, 'engine');
+    const untagged = st().createElement('PartUsage', null, 'wheel');
+    st().setStatementKind(part, 'prose');
+    st().setStatementKind(part, null);
+    expect(statementKindOf(st().model, part)).toBeUndefined();
+
+    // Give the store a redo entry to protect, as the refusal cases do; the undo
+    // puts `part` back to prose.
+    st().undo();
+    expect(statementKindOf(st().model, part)).toBe('prose');
+    const redoBefore = st().redoStack.length;
+    expect(redoBefore).toBeGreaterThan(0);
+    const undoBefore = st().undoStack.length;
+
+    st().setStatementKind(untagged, null); // nothing to clear
+    st().setStatementKind(part, 'prose'); // already prose
+    expect(st().undoStack.length).toBe(undoBefore);
+    expect(st().redoStack.length).toBe(redoBefore);
+  });
+
+  it('setStatementKind refuses a notation with nowhere to write the keyword', () => {
+    const part = st().createElement('PartUsage', null, 'engine');
+    const doc = st().createElement('Documentation', part);
+    const undoBefore = st().undoStack.length;
+    const redoBefore = st().redoStack.length;
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    st().setStatementKind(doc, 'prompt');
+    errors.mockRestore();
+
+    expect(st().model.get(doc)?.attrs.metadata).toBeUndefined();
+    expect(st().undoStack.length).toBe(undoBefore); // no phantom step
+    expect(st().redoStack.length).toBe(redoBefore);
+  });
+
+  it('setStatementKind leaves a library element alone', () => {
+    const model = st().model;
+    const libPart = model.create('PartUsage', {
+      declaredName: 'LibPart',
+      attrs: { isLibrary: true },
+    });
+    const undoBefore = st().undoStack.length;
+    st().setStatementKind(libPart.id, 'prose');
+    expect(st().model.get(libPart.id)?.attrs.metadata).toBeUndefined();
     expect(st().undoStack.length).toBe(undoBefore);
   });
 });

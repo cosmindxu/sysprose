@@ -36,6 +36,7 @@ import {
   type Quantity,
 } from './units-eval';
 import { DIMENSIONLESS, resolveUnit } from './units';
+import { isNonNormativeStatement } from './statement-kind';
 import { solve } from './solver';
 
 /** A primitive simulation value (what a value snapshot / plot can carry). */
@@ -454,6 +455,11 @@ function checkConstraintsWithStore(
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     if (el.attrs.isLibrary === true) continue;
     if (!inScope.has(el.id)) continue;
+    // A `#prose` / `#prompt` statement binds nothing, so it has no status to
+    // report: the Problems panel is silent about it and this panel must be too,
+    // or the same statement is a violation in one surface and absent from the
+    // other with no way for the author to tell which is right.
+    if (isNonNormativeStatement(model, el.id)) continue;
     const expr = el.attrs.expression;
     if (typeof expr !== 'string' || expr.trim() === '') continue;
     // The unit-aware evaluator gets the first word here for the faults it

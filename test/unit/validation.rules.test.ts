@@ -3,6 +3,7 @@ import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import type { SerializedModel } from '@core/index';
 import { validate, isValid, RULES, RULE_IDS, RULES_BY_ID } from '@validation/index';
 import { loadStandardLibrary } from '../../src/library/index';
+import { setStatementKind, statementKindOf } from '@semantics/index';
 
 /** Run a single rule in isolation and return its diagnostics. */
 function runRule(model: Model, ruleId: string) {
@@ -201,6 +202,35 @@ describe('rule 8 — requirement-subject', () => {
     const diags = runRule(m, 'requirement-subject');
     expect(diags).toHaveLength(1);
     expect(diags[0].severity).toBe('warning');
+  });
+
+  /**
+   * The rule is about NORMATIVE statements.
+   *
+   * A subject is what a requirement constrains, so the question "what is this
+   * about" is a fair one to ask of a rule and a meaningless one to ask of an
+   * explanation or of guidance for an agent. Before this, writing prose in
+   * requirement shape bought one warning per paragraph — a rule that punishes
+   * the feature the tool just shipped.
+   */
+  it('skips prose and prompt, which constrain nothing', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const note = f.requirement('Note', p.id);
+    setStatementKind(m, note.id, 'prose');
+    const guidance = f.requirement('Guidance', p.id);
+    setStatementKind(m, guidance.id, 'prompt');
+    expect(runRule(m, 'requirement-subject')).toHaveLength(0);
+  });
+
+  it('still flags a requirement tagged as one explicitly', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const req = f.requirement('Naked', p.id);
+    setStatementKind(m, req.id, 'requirement');
+    expect(runRule(m, 'requirement-subject')).toHaveLength(1);
   });
 });
 
@@ -507,6 +537,75 @@ describe('rule 12b — connector-end-not-feature', () => {
     expect(diags).toHaveLength(1);
     expect(diags[0].severity).toBe('error');
     expect(diags[0].message).toContain('is not a Feature');
+  });
+});
+
+describe('rule 15 — constraint-violation', () => {
+  /**
+   * A package to hang statements on. The expression below is a bare literal
+   * comparison, so what the rule says turns on the STATEMENT KIND alone and not
+   * on whether a name resolved.
+   */
+  const VIOLATED = '30 <= 25';
+
+  function violating(): { m: Model; pkg: string } {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    return { m, pkg: p.id };
+  }
+
+  it('negative: a violated requirement expression is a warning', () => {
+    const { m, pkg } = violating();
+    const f = new ModelFactory(m);
+    const req = f.requirement('MassLimit', pkg);
+    m.setAttrs(req.id, { expression: VIOLATED });
+    const diags = runRule(m, 'constraint-violation');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe('warning');
+  });
+
+  /**
+   * This rule reads REQUIREMENTS as well as constraints, so it is a requirement
+   * rule too and takes the same exemption as `requirement-subject`. Before this,
+   * an author who wrote `#prose` in front of a paragraph was told by the tool
+   * that the paragraph was violated — the tool contradicting the author's own
+   * tag, on the very statement the tag exists to exempt.
+   */
+  it('skips a requirement tagged prose or prompt', () => {
+    for (const kind of ['prose', 'prompt'] as const) {
+      const { m, pkg } = violating();
+      const f = new ModelFactory(m);
+      const req = f.requirement('ANote', pkg);
+      m.setAttrs(req.id, { expression: VIOLATED });
+      setStatementKind(m, req.id, kind);
+      expect(runRule(m, 'constraint-violation'), kind).toHaveLength(0);
+    }
+  });
+
+  /**
+   * The guard must NOT be "is this normative?". A plain `constraint c { … }`
+   * carries no statement kind at all, so that test would have failed for it and
+   * quietly stopped checking every ordinary constraint in every model.
+   */
+  it('still judges a plain constraint, which has no statement kind', () => {
+    const { m, pkg } = violating();
+    const con = m.create('ConstraintUsage', {
+      declaredName: 'c',
+      ownerId: pkg,
+      attrs: { expression: VIOLATED },
+    });
+    expect(statementKindOf(m, con.id)).toBeUndefined();
+    expect(runRule(m, 'constraint-violation')).toHaveLength(1);
+  });
+
+  it('still judges a requirement tagged as one explicitly', () => {
+    const { m, pkg } = violating();
+    const f = new ModelFactory(m);
+    const req = f.requirement('MassLimit', pkg);
+    m.setAttrs(req.id, { expression: VIOLATED });
+    setStatementKind(m, req.id, 'requirement');
+    expect(runRule(m, 'constraint-violation')).toHaveLength(1);
   });
 });
 

@@ -152,15 +152,69 @@ function keywordsOf(el: ElementRecord): string[] {
  * Pure: reading a model never writes to it.
  */
 export function statementKindOf(model: Model, id: ElementId): StatementKind | undefined {
+  const written = writtenStatementKind(model, id);
+  if (written) return written;
+  const el = model.get(id);
+  if (!el) return undefined;
+  if (isRequirement(el.eClass)) return 'requirement';
+  if (el.eClass === 'Documentation' || el.eClass === 'Comment') return 'prose';
+  return undefined;
+}
+
+/**
+ * The kind a keyword on `id` actually WRITES, with no metaclass fallback.
+ *
+ * {@link statementKindOf} answers what a statement IS, which is the question
+ * every reader has. An EDITOR has the other one: what does this element
+ * actually carry? The two differ on an untagged requirement — it READS as
+ * `requirement` and holds no keyword at all — and a control driven by the first
+ * cannot tell those states apart, so "take the tag off" looks like a no-op that
+ * changed nothing and "tag it explicitly" fires no change event because the
+ * value was already showing. A control needs this one; a rule wants the other.
+ *
+ * Pure: reading a model never writes to it.
+ */
+export function writtenStatementKind(model: Model, id: ElementId): StatementKind | undefined {
   const el = model.get(id);
   if (!el) return undefined;
   for (const keyword of keywordsOf(el)) {
     const kind = statementKindOfKeyword(keyword);
     if (kind) return kind;
   }
-  if (isRequirement(el.eClass)) return 'requirement';
-  if (el.eClass === 'Documentation' || el.eClass === 'Comment') return 'prose';
   return undefined;
+}
+
+/**
+ * True when `id` is tagged with a kind that binds nothing — an explanation or
+ * guidance for an agent, written in requirement or constraint shape.
+ *
+ * NOT the negation of "is normative". A plain `constraint c { … }` has no
+ * statement kind at all: it is a rule about the machine, and it is checked
+ * exactly as it always was. Only an author who SAID `#prose` or `#prompt` buys
+ * the exemption, which is what keeps every model written before statement kinds
+ * existed checked the way it was.
+ */
+export function isNonNormativeStatement(model: Model, id: ElementId): boolean {
+  const kind = statementKindOf(model, id);
+  return kind === 'prose' || kind === 'prompt';
+}
+
+/**
+ * What a Kind control calls the state "no keyword is written here".
+ *
+ * It is a real, reachable state — most elements are in it — so the blank entry
+ * of a Kind selector is not an empty slot but the current value, and it says
+ * what the element then reads as. The word `requirement` alone would be wrong
+ * there: the list would hold two entries reading the same word and meaning
+ * different things (untagged, versus tagged `#'requirement'` on purpose), and a
+ * click on either would look identical.
+ *
+ * ONE function, used by every Kind control there is, because a label that
+ * differs between the Properties panel and the requirements grid is two
+ * different promises about the same state.
+ */
+export function untaggedStatementKindLabel(effective: StatementKind | undefined): string {
+  return effective ? `(untagged — reads as ${effective})` : '(untagged)';
 }
 
 /* ────────────────────────────── Writing ───────────────────────────────── */
@@ -306,4 +360,28 @@ export function setStatementKind(
   }
   if (!written) next.push(keyword);
   return model.setAttrs(id, { metadata: next });
+}
+
+/**
+ * Take the statement kind off `id`, leaving every other keyword where it was.
+ *
+ * The counterpart of {@link setStatementKind}, and the only way back to "this
+ * element makes no statement of its own": an element with no kind keyword falls
+ * back to what its metaclass says, which for a part or a package is nothing at
+ * all. The `metadata` attribute is REMOVED rather than left as an empty array,
+ * because the serializer's prefix loop and the round-trip both read presence,
+ * and an empty list is a difference the saved file cannot express.
+ *
+ * @returns the element, or undefined when it does not exist. Clearing a kind
+ *   that was never written is a no-op, not an error — a caller clearing a
+ *   default has done nothing wrong.
+ */
+export function clearStatementKind(model: Model, id: ElementId): ElementRecord | undefined {
+  const el = model.get(id);
+  if (!el) return undefined;
+  const meta = el.attrs.metadata;
+  if (!Array.isArray(meta)) return el;
+  const kept = meta.map((m) => String(m)).filter((m) => !statementKindOfKeyword(m));
+  if (kept.length === meta.length) return el;
+  return model.setAttrs(id, { metadata: kept.length > 0 ? kept : undefined });
 }

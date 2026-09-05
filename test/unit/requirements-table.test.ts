@@ -5,8 +5,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Model, ModelFactory } from '@core/index';
-import { buildRequirementsTable } from '@diagram/index';
+import {
+  buildRequirementsTable,
+  REQUIREMENT_ATTR_COLUMNS,
+  REQUIREMENT_REF_COLUMNS,
+  REQUIREMENT_SCALAR_COLUMNS,
+} from '@diagram/index';
 import { parseModel, serializeModel } from '@text/index';
+import { setRequirementAttr } from '@semantics/index';
 
 /** Seed: two top-level requirements, one nested; a part; satisfy + verify links. */
 function seed() {
@@ -148,5 +154,83 @@ describe('buildRequirementsTable', () => {
     });
     const t = buildRequirementsTable(m);
     expect(t.rows.some((r) => r.name === 'LibReq')).toBe(false);
+  });
+});
+
+/**
+ * The facet columns — the kind, and the nine management attributes.
+ *
+ * The table is where a requirement is read as a ROW rather than as an element,
+ * so a facet that exists in the model and not in the row is a facet nobody
+ * sees. `Kind` leads them because it decides what the rest of the row means: a
+ * `prose` row is in the grid to be read, not to be covered.
+ */
+describe('buildRequirementsTable — the requirement facets', () => {
+  it('declares the kind column first, then the nine stored facets', () => {
+    const { m } = seed();
+    const t = buildRequirementsTable(m);
+    expect(t.attrColumns.map((c) => c.key)).toEqual([
+      'statementKind',
+      'status',
+      'verdict',
+      'risk',
+      'priority',
+      'criticality',
+      'rationale',
+      'source',
+      'owner',
+      'verificationMethod',
+    ]);
+    // A closed list travels with the column, so the editor offers exactly the
+    // values `setRequirementAttr` would accept and no second list can drift.
+    const kind = t.attrColumns.find((c) => c.key === 'statementKind')!;
+    expect(kind.label).toBe('Kind');
+    expect(kind.values).toEqual(['requirement', 'prose', 'prompt']);
+    expect(t.attrColumns.find((c) => c.key === 'status')!.values).toContain('open');
+    // Free text has no list rather than an empty one.
+    expect(t.attrColumns.find((c) => c.key === 'rationale')!.values).toBeUndefined();
+  });
+
+  /**
+   * The three column lists say in their doc comment that they are "exported so
+   * the panel + tests share them". Two of them were reachable from the barrel
+   * and the third was not, which made the sentence false for it and the
+   * constant dead. Ask for all three the way a consumer would.
+   */
+  it('publishes its column definitions on the @diagram barrel', () => {
+    const t = buildRequirementsTable(seed().m);
+    expect(REQUIREMENT_SCALAR_COLUMNS).toEqual(t.scalarColumns);
+    expect(REQUIREMENT_REF_COLUMNS).toEqual(t.refColumns);
+    expect(REQUIREMENT_ATTR_COLUMNS).toEqual(t.attrColumns);
+  });
+
+  it('carries each row\'s set facets, and its kind even when nothing is set', () => {
+    const { m, r1, r2 } = seed();
+    setRequirementAttr(m, r1.id, 'status', 'done');
+    setRequirementAttr(m, r1.id, 'risk', 'high');
+    setRequirementAttr(m, r2.id, 'statementKind', 'prose');
+    const t = buildRequirementsTable(m);
+    const rowR1 = t.rows.find((r) => r.id === r1.id)!;
+    const rowR2 = t.rows.find((r) => r.id === r2.id)!;
+    expect(rowR1.attrs.status).toBe('done');
+    expect(rowR1.attrs.risk).toBe('high');
+    expect(rowR1.attrs.owner).toBeUndefined();
+    // Untagged: the metaclass answers, so every row says what kind it is.
+    expect(rowR1.attrs.statementKind).toBe('requirement');
+    expect(rowR2.attrs.statementKind).toBe('prose');
+  });
+
+  it('keeps a prose row in the grid — it is labelled, not hidden', () => {
+    const { m, r2 } = seed();
+    setRequirementAttr(m, r2.id, 'statementKind', 'prose');
+    const t = buildRequirementsTable(m);
+    expect(t.rows.map((r) => r.id)).toContain(r2.id);
+  });
+
+  it('does not create a metadata carrier just by being read', () => {
+    const { m } = seed();
+    const before = m.size;
+    buildRequirementsTable(m);
+    expect(m.size).toBe(before);
   });
 });

@@ -20,6 +20,7 @@ export type {
   ReqRow,
   ReqReference,
   ReqRefColumn,
+  ReqAttrColumn,
   AnalysisConfig,
   GraphAnalysisModel,
   GraphAnalysisNode,
@@ -90,6 +91,7 @@ export {
   buildRequirementsTable,
   REQUIREMENT_REF_COLUMNS,
   REQUIREMENT_SCALAR_COLUMNS,
+  REQUIREMENT_ATTR_COLUMNS,
 } from './requirements-table';
 export {
   buildGraphAnalysis,

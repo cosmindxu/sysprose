@@ -22,6 +22,7 @@ import {
 import {
   checkConstraints,
   checkConstraintsNumeric,
+  isNonNormativeStatement,
   runActionFlow,
   runStateMachine,
   simulateStateMachine,
@@ -169,6 +170,17 @@ export interface SatisfactionReport {
   libraryExcluded: number;
   /** Implicit (re-derived) requirement copies left out of `total`. */
   implicitExcluded: number;
+  /**
+   * The user's own requirement-shaped statements left out of `total` because
+   * they are not normative — the ones tagged `#prose` or `#prompt`.
+   *
+   * Nothing is meant to satisfy an explanation, so counting one is the same
+   * mistake the bundled library was: a divisor the reader did not agree to.
+   * It is reported rather than dropped in silence for the same reason the other
+   * two are — a ratio the rows in front of you do not add up to is a number
+   * nobody can check.
+   */
+  nonNormativeExcluded: number;
 }
 
 /**
@@ -176,13 +188,22 @@ export interface SatisfactionReport {
  * `target` is the requirement and whose `source` is the satisfier), and whether
  * it is covered. Overall `coverage` = satisfied / total.
  *
- * Only the USER's requirements are counted. Counting the bundled library's made
- * the shipped UAV example — every one of its requirements satisfied — report
- * 2/26 = 7.7% coverage on the app's own Requirement-satisfaction button.
+ * Only the USER's NORMATIVE requirements are counted. Counting the bundled
+ * library's made the shipped UAV example — every one of its requirements
+ * satisfied — report 2/26 = 7.7% coverage on the app's own
+ * Requirement-satisfaction button. A statement tagged `#prose` or `#prompt`
+ * is left out for the neighbouring reason: it binds nothing, so nothing
+ * satisfies it, and a requirement-shaped explanation would sit in the divisor
+ * forever as a gap that can never be closed. Each exclusion is counted under
+ * its own name — see {@link SatisfactionReport}.
  */
 export function requirementSatisfaction(model: Model): SatisfactionReport {
   const candidates = model.ofKind(...REQUIREMENT_KINDS);
-  const reqs = candidates.filter((r) => isUserElement(model, r));
+  const own = candidates.filter((r) => isUserElement(model, r));
+  // An untagged requirement is normative: `statementKindOf` answers
+  // `requirement` from the metaclass, so a model that has never heard of
+  // statement kinds counts exactly what it counted before.
+  const reqs = own.filter((r) => statementKindOf(model, r.id) === 'requirement');
   const requirements: RequirementStatus[] = reqs.map((r) => {
     const satisfierIds = model
       .edgesTo(r.id)
@@ -206,6 +227,7 @@ export function requirementSatisfaction(model: Model): SatisfactionReport {
     coverage: requirements.length === 0 ? 0 : satisfied / requirements.length,
     libraryExcluded: candidates.filter(isLibrary).length,
     implicitExcluded: candidates.filter((r) => !isLibrary(r) && !isUserElement(model, r)).length,
+    nonNormativeExcluded: own.length - reqs.length,
   };
 }
 
@@ -1334,7 +1356,16 @@ export interface ConstraintReport {
  * reference. JSON-serialisable for the REST facade and UI.
  */
 export function constraintReport(model: Model): ConstraintReport {
-  const checks = checkConstraints(model).filter((c) => model.get(c.id)?.attrs.isLibrary !== true);
+  // Library elements are not the user's, and a statement the author tagged
+  // `#prose` / `#prompt` binds nothing, so it has no verdict to report. The
+  // second filter is not cosmetic: `runConstraintCheck` DROPS the validator's
+  // own `constraint-violation` rows and re-lists this report in their place, so
+  // without it the very rows the rule now suppresses came back into the same
+  // Problems panel by the other door.
+  const checks = checkConstraints(model).filter((c) => {
+    const el = model.get(c.id);
+    return el?.attrs.isLibrary !== true && !isNonNormativeStatement(model, c.id);
+  });
   let satisfied = 0;
   let violated = 0;
   let unknown = 0;

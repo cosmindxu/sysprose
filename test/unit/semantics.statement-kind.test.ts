@@ -13,7 +13,11 @@ import {
   isStatementKind,
   canCarryStatementKind,
   statementKindOf,
+  writtenStatementKind,
+  isNonNormativeStatement,
+  untaggedStatementKindLabel,
   setStatementKind,
+  clearStatementKind,
   type StatementKind,
 } from '@semantics/index';
 
@@ -150,6 +154,87 @@ describe('statement kinds — the fallbacks', () => {
   });
 });
 
+/**
+ * The distinction an EDITOR lives on: what an element READS as versus what it
+ * actually CARRIES.
+ *
+ * A Kind control driven by the effective answer shows `requirement` on an
+ * untagged requirement, and both moves out of that state become unreachable —
+ * clearing changes nothing, and choosing `requirement` fires no change event
+ * because the browser thinks it is already selected.
+ */
+describe('statement kinds — written versus effective', () => {
+  it('an untagged requirement reads as one but carries nothing', () => {
+    const { model } = parseModel(`package M { requirement <R1> r1; }`);
+    const r1 = byName(model, 'r1').id;
+    expect(statementKindOf(model, r1)).toBe('requirement');
+    expect(writtenStatementKind(model, r1)).toBeUndefined();
+  });
+
+  it('a keyword makes the two answers agree', () => {
+    const { model } = parseModel(`package M { #prose requirement <R1> r1; }`);
+    const r1 = byName(model, 'r1').id;
+    expect(statementKindOf(model, r1)).toBe('prose');
+    expect(writtenStatementKind(model, r1)).toBe('prose');
+  });
+
+  it('tagging a requirement explicitly is a real, readable change', () => {
+    const { model } = parseModel(`package M { requirement <R1> r1; }`);
+    const r1 = byName(model, 'r1').id;
+    setStatementKind(model, r1, 'requirement');
+    expect(writtenStatementKind(model, r1)).toBe('requirement');
+    clearStatementKind(model, r1);
+    expect(writtenStatementKind(model, r1)).toBeUndefined();
+    expect(statementKindOf(model, r1)).toBe('requirement');
+  });
+
+  it('an unknown id carries nothing', () => {
+    const { model } = parseModel(`package M { part p1; }`);
+    expect(writtenStatementKind(model, 'no-such-element')).toBeUndefined();
+  });
+
+  /**
+   * One label, so the Properties panel and the requirements grid cannot come to
+   * describe the same state two different ways — and never the bare word
+   * `requirement`, which would put two entries in a Kind list reading the same
+   * word and meaning different things.
+   */
+  it('the blank entry of a Kind control says what the element reads as', () => {
+    expect(untaggedStatementKindLabel(undefined)).toBe('(untagged)');
+    expect(untaggedStatementKindLabel('requirement')).toContain('requirement');
+    expect(untaggedStatementKindLabel('requirement')).not.toBe('requirement');
+    for (const kind of STATEMENT_KINDS) {
+      expect(untaggedStatementKindLabel(kind)).toContain('untagged');
+    }
+  });
+});
+
+/**
+ * The exemption a rule that also judges plain constraints has to ask for.
+ *
+ * It is deliberately NOT the negation of "is normative": a `constraint c { … }`
+ * carries no kind at all, and a rule using the negation would have stopped
+ * checking every ordinary constraint in every model.
+ */
+describe('statement kinds — what binds nothing', () => {
+  it('only an explicit prose or prompt tag is exempt', () => {
+    const { model } = parseModel(
+      `package M {\n    requirement <R1> r1;\n    #prose requirement <R2> note;\n    #prompt requirement <R3> hint;\n    constraint c { 1 < 2 }\n    part p1;\n}`,
+    );
+    expect(isNonNormativeStatement(model, byName(model, 'note').id)).toBe(true);
+    expect(isNonNormativeStatement(model, byName(model, 'hint').id)).toBe(true);
+    expect(isNonNormativeStatement(model, byName(model, 'r1').id)).toBe(false);
+    expect(isNonNormativeStatement(model, byName(model, 'c').id)).toBe(false);
+    expect(isNonNormativeStatement(model, byName(model, 'p1').id)).toBe(false);
+  });
+
+  it('a doc and a comment are prose, so they bind nothing either', () => {
+    const { model } = parseModel(`package M { part p1 { doc /* what it does */ } }`);
+    const doc = model.all().find((e) => e.eClass === 'Documentation')!;
+    expect(isNonNormativeStatement(model, doc.id)).toBe(true);
+  });
+});
+
 describe('statement kinds — writing a kind', () => {
   it('adds the keyword, and the saved text reads back as that kind', () => {
     const src = `package M { part p1; }`;
@@ -172,6 +257,50 @@ describe('statement kinds — writing a kind', () => {
     expect(model.require(p1.id).attrs.metadata).toEqual(['Safety', "'requirement'"]);
     expect(statementKindOf(model, p1.id)).toBe('requirement');
     expect(serializeModel(model)).toContain(`#Safety #'requirement' part p1;`);
+  });
+
+  /**
+   * Clearing is the way back to "this element makes no statement of its own".
+   *
+   * A part is not a statement until somebody says it is, so the writer needs an
+   * inverse — otherwise the first click in the Kind selector is one-way and the
+   * only way out of it is the text editor.
+   */
+  it('clearing removes the kind keyword and leaves the others alone', () => {
+    const { model } = parseModel(`package M { #Safety #prompt part p1; }`);
+    const p1 = byName(model, 'p1');
+    clearStatementKind(model, p1.id);
+    expect(model.require(p1.id).attrs.metadata).toEqual(['Safety']);
+    expect(statementKindOf(model, p1.id)).toBeUndefined();
+    expect(serializeModel(model)).toContain('#Safety part p1;');
+  });
+
+  it('clearing the only keyword removes the attribute, not just its contents', () => {
+    const { model } = parseModel(`package M { #prose part p1; }`);
+    const p1 = byName(model, 'p1');
+    clearStatementKind(model, p1.id);
+    expect(model.require(p1.id).attrs.metadata).toBeUndefined();
+    const saved = serializeModel(model);
+    expect(saved).toContain('part p1;');
+    expect(saved).not.toContain('#');
+  });
+
+  it('clearing a kind that was never written changes nothing', () => {
+    const { model } = parseModel(`package M { part p1; }`);
+    const p1 = byName(model, 'p1');
+    const before = serializeModel(model);
+    clearStatementKind(model, p1.id);
+    expect(model.require(p1.id).attrs.metadata).toBeUndefined();
+    expect(serializeModel(model)).toBe(before);
+  });
+
+  it('a requirement cleared of its keyword reads as a requirement again', () => {
+    const { model } = parseModel(`package M { #prose requirement r1; }`);
+    const r1 = byName(model, 'r1');
+    expect(statementKindOf(model, r1.id)).toBe('prose');
+    clearStatementKind(model, r1.id);
+    // Not undefined: the metaclass still says what it is.
+    expect(statementKindOf(model, r1.id)).toBe('requirement');
   });
 
   it('setting the same kind twice does not write it twice', () => {

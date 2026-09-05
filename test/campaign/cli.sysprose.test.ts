@@ -103,6 +103,7 @@ describe('L7 — sysprose reporting command', () => {
         satisfied: number;
         coverage: number;
         libraryExcluded: number;
+        nonNormativeExcluded: number;
         rows: Array<{ name: string; satisfied: boolean; satisfiedBy: string[] }>;
       };
     }>(r);
@@ -121,6 +122,52 @@ describe('L7 — sysprose reporting command', () => {
     const human = run(['requirements', UAV]);
     expect(human.stdout).toContain('2 of 2');
     expect(human.stdout).toContain('EnduranceRequirement');
+    // The shipped example tags nothing, so the divisor is untouched and the
+    // report says nothing about statement kinds — the transcript in the guide
+    // is this output.
+    expect(body.requirements.nonNormativeExcluded).toBe(0);
+    expect(human.stdout).not.toContain('prose or prompt');
+  }, 120_000);
+
+  /**
+   * A non-normative statement leaves the ratio and SAYS SO.
+   *
+   * Dropping it silently would hand the reader a fraction the rows in front of
+   * them do not add up to — the same failure the bundled library caused, at a
+   * smaller scale and harder to spot.
+   */
+  it('says when a prose or prompt statement is left out of the ratio', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-kind-'));
+    try {
+      const file = join(dir, 'kinds.sysml');
+      writeFileSync(
+        file,
+        `package K {
+    part def Vehicle;
+    part v : Vehicle;
+    requirement <R1> maxMass {
+        subject s : Vehicle;
+    }
+    #prose requirement <N1> note;
+    satisfy maxMass by v;
+}
+`,
+      );
+      const r = run(['requirements', file, '--json']);
+      expect(r.code).toBe(0);
+      const { body } = payload<{
+        requirements: { total: number; nonNormativeExcluded: number; rows: Array<{ name: string }> };
+      }>(r);
+      expect(body.requirements.total).toBe(1);
+      expect(body.requirements.nonNormativeExcluded).toBe(1);
+      expect(body.requirements.rows.map((x) => x.name)).toEqual(['maxMass']);
+
+      const human = run(['requirements', file]);
+      expect(human.stdout).toContain('1 of 1');
+      expect(human.stdout).toContain('1 statement(s) tagged prose or prompt');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 120_000);
 
   it('connectivity reports 15 ports, 9 connections and 14 connected', () => {

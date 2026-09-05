@@ -294,6 +294,7 @@ function reportRequirements(model: Model, name: string): Report {
     coverage: sat.coverage,
     libraryExcluded: sat.libraryExcluded,
     implicitExcluded: sat.implicitExcluded,
+    nonNormativeExcluded: sat.nonNormativeExcluded,
     rows,
   };
   const pct = sat.total === 0 ? 0 : Math.round(sat.coverage * 100);
@@ -307,6 +308,16 @@ function reportRequirements(model: Model, name: string): Report {
       return `  ${mark} ${r.number ? `${r.number}  ` : ''}${r.name}${id} — ${by}`;
     }),
     `  ${sat.libraryExcluded} bundled library requirement(s) and ${sat.implicitExcluded} re-derived copy/copies are not counted`,
+    // Only when there IS one. The exclusion line above is on every report
+    // because the library is always there to exclude; a non-normative statement
+    // is not, and a permanent `0 prose or prompt` line would teach every reader
+    // of every model a vocabulary most of them never use. When one does appear,
+    // the ratio moved and this says why.
+    ...(sat.nonNormativeExcluded > 0
+      ? [
+          `  ${sat.nonNormativeExcluded} statement(s) tagged prose or prompt are not requirements and are not counted`,
+        ]
+      : []),
   ].join('\n');
   return { json: payload, text };
 }

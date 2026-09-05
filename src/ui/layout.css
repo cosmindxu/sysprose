@@ -748,6 +748,16 @@ textarea:focus-visible,
   font-family: var(--mono);
 }
 
+/* The requirement-management facets, grouped under their own heading so nine
+   more fields read as one section rather than as more identity fields. */
+.properties-facets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
 /* ──────────────────────────────── Palette ───────────────────────────────── */
 
 .palette-group-title {

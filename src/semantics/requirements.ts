@@ -92,6 +92,7 @@
 import { isRequirement, type ElementId, type ElementRecord, type Model } from '@core/index';
 import {
   STATEMENT_KINDS,
+  clearStatementKind,
   isStatementKind,
   setStatementKind,
   statementKindOf,
@@ -348,21 +349,31 @@ export function hasRequirementAttr(model: Model, id: ElementId, key: RmAttrKey):
  * to avoid. `canCarryStatementKind` refuses these elements for the same reason,
  * and this mirrors its first block rather than importing it, because the rest
  * of that predicate answers a different question (where a KEYWORD may go).
+ *
+ * EXPORTED so an editor can ask BEFORE it offers the control. `setRequirementAttr`
+ * throws here, the store logs the throw and puts its snapshot back, and a panel
+ * that never asked the question therefore showed a live drop-down that snapped
+ * back with nothing written and nothing said. A control the write will refuse
+ * belongs disabled, with the reason on it.
  */
-function carriesItsOwnText(el: ElementRecord): boolean {
+export function carriesItsOwnText(el: ElementRecord): boolean {
   if (el.attrs.implicit === true) return false;
   const unparsed = el.attrs.unparsedText;
   return !(typeof unparsed === 'string' && unparsed.trim() !== '');
 }
 
-/** Remove every statement-kind keyword from a declaration, keeping the rest. */
-function clearStatementKind(model: Model, el: ElementRecord): ElementRecord {
-  const meta = el.attrs.metadata;
-  if (!Array.isArray(meta)) return el;
-  const kept = meta.map((m) => String(m)).filter((m) => !statementKindOfKeyword(m));
-  if (kept.length === meta.length) return el;
-  return model.setAttrs(el.id, { metadata: kept.length > 0 ? kept : undefined });
-}
+/**
+ * Why a facet write is refused, in words for the person holding the mouse.
+ *
+ * The throw {@link setRequirementAttr} raises is written for a developer
+ * reading a stack trace. Every editor that disables a control because
+ * {@link carriesItsOwnText} said no needs the other version, and it lives here,
+ * once, so the requirements grid and the Properties panel cannot come to give
+ * two different accounts of the same refusal.
+ */
+export const FAULTED_DECLARATION_REFUSAL =
+  'This requirement\u2019s declaration could not be parsed, so the file re-emits its own source and a ' +
+  'facet written here would be lost on the next save. Fix the declaration in the Text tab first.';
 
 /**
  * Set one facet of a requirement, or clear it with an empty value.
@@ -414,7 +425,7 @@ export function setRequirementAttr(
   }
 
   if (key === 'statementKind') {
-    if (clearing) return clearStatementKind(model, el);
+    if (clearing) return clearStatementKind(model, id);
     // `allowed` above has already refused anything else; the narrowing is for
     // the type system, and the throw is the honest answer if it ever changes.
     if (!isStatementKind(value)) throw new Error(`setRequirementAttr: invalid statementKind`);

@@ -314,6 +314,40 @@
   border-radius: 3px;
   padding: 1px 4px;
 }
+/* facet cells: a drop-down for a closed list, click-to-edit text otherwise */
+.req-attr-select {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 2px;
+  max-width: 110px;
+}
+.req-attr-text {
+  display: inline-block;
+  min-width: 60px;
+  border-radius: 3px;
+  cursor: text;
+}
+.req-attr-text:hover {
+  outline: 1px dashed var(--border-strong);
+}
+/* A facet the write would refuse: a requirement whose declaration could not be
+   parsed re-emits its own source on save, so the value would be lost. The cell
+   still shows what the model holds; it just does not pretend to be editable. */
+.req-attr-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.req-attr-locked {
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
+.req-attr-locked:hover {
+  outline: none;
+}
 .req-kw {
   color: var(--text-muted);
   font-size: 10px;

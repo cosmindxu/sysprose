@@ -1,5 +1,32 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { captureErrors, gotoApp, shot } from './fixtures';
+
+/**
+ * One facet of a requirement, read back out of the LIVE model rather than out of
+ * the cell that wrote it — the nine stored facets live on an owned
+ * `RequirementMetadata` carrier the write creates on demand.
+ */
+function readFacet(page: Page, reqId: string, key: string): Promise<unknown> {
+  return page.evaluate(
+    ({ reqId, key }) => {
+      const api = (window as unknown as {
+        sysml: {
+          children: (i: string) => { id: string; eClass: string; declaredName?: string }[];
+          getElement: (i: string) => { attrs?: Record<string, unknown> } | undefined;
+        };
+      }).sysml;
+      const carrier = api
+        .children(reqId)
+        .find((c) => c.eClass === 'MetadataUsage' && c.declaredName === 'RequirementMetadata');
+      if (!carrier) return null;
+      const cell = api
+        .children(carrier.id)
+        .find((c) => c.eClass === 'AttributeUsage' && c.declaredName === key);
+      return cell ? (api.getElement(cell.id)?.attrs?.value ?? null) : null;
+    },
+    { reqId, key },
+  );
+}
 
 /**
  * Requirements-table editor (the 'requirements' view). Drives the DOORS-NG-style
@@ -62,6 +89,64 @@ test('requirements table: add/edit requirement, link + unlink a satisfier', asyn
   await chip.hover();
   await chip.getByTestId('req-ref-remove').click();
   await expect(newRow.getByTestId('req-ref-chip')).toHaveCount(0);
+
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+/**
+ * The facet columns of the same grid: the Kind cell and the ten controls beside
+ * it, driven in a real browser and read back through the live model.
+ *
+ * The Properties panel's equivalents are covered by
+ * `properties-all-fields.spec.ts`; this pins that the SECOND editor of the same
+ * data writes the same places — a cell wired to the wrong column key, or to the
+ * wrong store command, passes every builder test and fails here.
+ */
+test('requirements table: the facet columns write through to the model', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await page.getByTestId('tb-view-requirements').click();
+  const table = page.getByTestId('requirements-table');
+  await expect(table).toBeVisible();
+
+  const row = table.getByTestId('req-row').first();
+  const reqId = (await row.getAttribute('data-element-id'))!;
+
+  // A closed-list facet: the drop-down offers exactly what the write accepts.
+  const status = row.locator('[data-testid="req-attr-select"][data-col-key="status"]');
+  await expect(status).toBeEnabled();
+  await status.selectOption('done');
+  await expect.poll(() => readFacet(page, reqId, 'status')).toBe('"done"');
+
+  // A free-text facet: click the cell, type, commit on blur.
+  await row.locator('[data-testid="req-attr-cell"][data-col-key="owner"] .req-attr-text').click();
+  const owner = row.locator('[data-testid="req-attr-input"][data-col-key="owner"]');
+  await expect(owner).toBeVisible();
+  await owner.fill('ada');
+  await owner.blur();
+  await expect.poll(() => readFacet(page, reqId, 'owner')).toBe('"ada"');
+
+  // The Kind cell shows what is WRITTEN: a sample requirement carries no
+  // keyword, so it sits on the blank entry, whose label says what it reads as.
+  const kind = row.locator('[data-testid="req-attr-select"][data-col-key="statementKind"]');
+  await expect(kind).toHaveValue('');
+  await expect(kind.locator('option[value=""]')).toHaveText('(untagged — reads as requirement)');
+  await kind.selectOption({ value: 'prose' });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (id) =>
+          (window as unknown as {
+            sysml: { getElement: (i: string) => { attrs?: Record<string, unknown> } | undefined };
+          }).sysml.getElement(id)?.attrs?.metadata ?? null,
+        reqId,
+      ),
+    )
+    .toEqual(['prose']);
+  // Tagged prose, the row STAYS in the grid — it is only out of the coverage
+  // ratio, not out of the editor — and its Kind cell now says so.
+  await expect(table.locator(`[data-testid="req-row"][data-element-id="${reqId}"]`)).toHaveCount(1);
+  await expect(kind).toHaveValue('prose');
 
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });

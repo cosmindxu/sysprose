@@ -13,18 +13,36 @@
  *    backing relationship), + to add a link (picks an element → creates the
  *    relationship with source = element, target = requirement);
  *  - hierarchical requirements (outline numbers, indentation) with add-child;
+ *  - facet cells (Kind, Status, Verdict, Risk, Priority, Criticality, Rationale,
+ *    Source, Owner, Verification) — a drop-down where the key has a closed list,
+ *    click-to-edit text where it does not, each write one undo step through
+ *    `setRequirementAttr`. The Kind cell shows the kind WRITTEN on the row (an
+ *    untagged row reads as `requirement` and its blank entry says so), and every
+ *    facet cell is disabled, with the reason on it, on a row whose declaration
+ *    could not be parsed — the one case where the write is refused;
  *  - add / delete requirement; row ↔ model selection sync.
  */
 
 import { useState } from 'react';
 import { useAppStore } from '../store';
 import { buildRequirementsTable } from '@diagram/index';
-import type { ReqReference, ReqRefColumn, ReqRow } from '@diagram/index';
+import type { ReqAttrColumn, ReqReference, ReqRefColumn, ReqRow } from '@diagram/index';
 import { isAnnotation, isRelationship, type ElementId, type ElementRecord } from '@core/index';
+import {
+  FAULTED_DECLARATION_REFUSAL,
+  canCarryStatementKind,
+  carriesItsOwnText,
+  statementKindOf,
+  untaggedStatementKindLabel,
+  writtenStatementKind,
+} from '@semantics/index';
 import './panels.css';
 
 /** An editable scalar column: which store write applies on commit. */
 type ScalarKey = 'reqId' | 'name' | 'text';
+
+/** What an unset facet cell shows — not `(id)`-style prose, so it stays narrow. */
+const EMPTY_FACET = '—';
 
 export function RequirementsTable(): JSX.Element {
   // Re-render on every model mutation; read the live model directly.
@@ -41,11 +59,17 @@ export function RequirementsTable(): JSX.Element {
   const setAttr = useAppStore((s) => s.setAttr);
   const deleteElement = useAppStore((s) => s.deleteElement);
   const connect = useAppStore((s) => s.connect);
+  const setRequirementAttr = useAppStore((s) => s.setRequirementAttr);
 
   // Which (row, column) scalar cell is being edited, and which (row, refColumn)
   // has its add-link picker open.
   const [editing, setEditing] = useState<{ id: ElementId; col: ScalarKey } | null>(null);
   const [picking, setPicking] = useState<{ id: ElementId; col: string } | null>(null);
+  // Free-text facets edit the same way the scalar cells do — click, type,
+  // commit on blur/Enter — but through a different store command, so they get
+  // their own bit of state rather than a widened `col` that would have to be
+  // narrowed again at every use.
+  const [editingAttr, setEditingAttr] = useState<{ id: ElementId; key: string } | null>(null);
 
   const table = buildRequirementsTable(model);
 
@@ -143,6 +167,102 @@ export function RequirementsTable(): JSX.Element {
       <span className={`req-cell-text${value ? '' : ' req-cell-empty'}`}>
         {col === 'name' && <span className="req-kw">«{shortKw(row.eClass)}»</span>}
         {value || placeholderFor(col)}
+      </span>
+    );
+  }
+
+  /**
+   * One facet cell.
+   *
+   * A closed list is a drop-down showing every value the write would accept
+   * (plus a blank that clears it); free text is click-to-edit. Both go through
+   * `setRequirementAttr`, which creates the metadata carrier on the first write
+   * and removes it with the last value — the cell never has to know that.
+   */
+  function attrCell(row: ReqRow, column: ReqAttrColumn): JSX.Element {
+    const el = model.get(row.id);
+    const isKind = column.key === 'statementKind';
+    // The Kind column writes a KEYWORD, the other nine write a metadata cell, so
+    // they are refused by different predicates — ask each column its own.
+    const writable = el ? (isKind ? canCarryStatementKind(el) : carriesItsOwnText(el)) : false;
+    // The Kind cell shows what is WRITTEN, not what the row reads as. They
+    // differ on an untagged requirement, and a cell showing the effective
+    // answer makes both transitions unreachable: `—` is a no-op the store
+    // returns from, and `requirement` fires no change event because the browser
+    // already shows it. Every other facet is stored, so read = written there.
+    const value = (isKind ? (writtenStatementKind(model, row.id) ?? '') : row.attrs[column.key]) ?? '';
+    // One label for "nothing written here", shared with the Properties panel:
+    // the blank entry is a real state, and on a requirement it must not read
+    // `requirement` or the list holds the same word twice meaning two things.
+    const blankLabel = isKind
+      ? untaggedStatementKindLabel(statementKindOf(model, row.id))
+      : EMPTY_FACET;
+    const cellTitle = writable ? (isKind ? blankLabel : column.label) : FAULTED_DECLARATION_REFUSAL;
+    if (column.values) {
+      return (
+        <select
+          className="req-attr-select"
+          data-testid="req-attr-select"
+          data-col-key={column.key}
+          value={value}
+          disabled={!writable}
+          title={cellTitle}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            e.stopPropagation();
+            setRequirementAttr(row.id, column.key, e.currentTarget.value || null);
+          }}
+        >
+          <option value="">{blankLabel}</option>
+          {column.values.map((v: string) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      );
+    }
+    const isEditing = editingAttr?.id === row.id && editingAttr.key === column.key;
+    if (isEditing) {
+      return (
+        <input
+          className="req-cell-input"
+          data-testid="req-attr-input"
+          data-col-key={column.key}
+          autoFocus
+          defaultValue={value}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={(e) => {
+            // Only write when the value actually moved. Blurring a cell you
+            // opened and left alone must not spend an undo step and throw the
+            // redo stack away with it — the Properties control makes the same
+            // comparison, and two controls doing one job must agree.
+            const next = e.currentTarget.value.trim();
+            if (next !== value) setRequirementAttr(row.id, column.key, next || null);
+            setEditingAttr(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            else if (e.key === 'Escape') {
+              e.stopPropagation();
+              setEditingAttr(null);
+            }
+          }}
+        />
+      );
+    }
+    return (
+      <span
+        className={`req-cell-text req-attr-text${value ? '' : ' req-cell-empty'}${
+          writable ? '' : ' req-attr-locked'
+        }`}
+        title={writable ? `${column.label} — click to edit` : FAULTED_DECLARATION_REFUSAL}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (writable) setEditingAttr({ id: row.id, key: column.key });
+        }}
+      >
+        {value || EMPTY_FACET}
       </span>
     );
   }
@@ -260,6 +380,9 @@ export function RequirementsTable(): JSX.Element {
                 {table.refColumns.map((c) => (
                   <th key={c.key}>{c.label}</th>
                 ))}
+                {table.attrColumns.map((c) => (
+                  <th key={c.key}>{c.label}</th>
+                ))}
                 <th></th>
               </tr>
             </thead>
@@ -306,6 +429,11 @@ export function RequirementsTable(): JSX.Element {
                   })}
                   {table.refColumns.map((c) => (
                     <td key={c.key}>{referenceCell(row, c)}</td>
+                  ))}
+                  {table.attrColumns.map((c) => (
+                    <td key={c.key} data-testid="req-attr-cell" data-col-key={c.key}>
+                      {attrCell(row, c)}
+                    </td>
                   ))}
                   <td className="req-row-actions">
                     <button

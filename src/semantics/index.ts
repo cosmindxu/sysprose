@@ -6,11 +6,12 @@
  * literal type checking), a self-contained expression parser/evaluator, and
  * model-level value/constraint evaluation.
  *
- * Two exceptions, named here so the promise above stays true: `setStatementKind`
- * and `setRequirementAttr` WRITE — they are the editing counterparts of
- * `statementKindOf` and `getRequirementAttr`, and they create, remove and set
- * attributes on elements, which mutates the model and emits change events.
- * Everything else exported from here only reads.
+ * Three exceptions, named here so the promise above stays true:
+ * `setStatementKind`, `clearStatementKind` and `setRequirementAttr` WRITE —
+ * they are the editing counterparts of `statementKindOf` and
+ * `getRequirementAttr`, and they create, remove and set attributes on elements,
+ * which mutates the model and emits change events. Everything else exported
+ * from here only reads.
  */
 
 export { generalizationsOf, ownFeatures, effectiveFeatures } from './inheritance';
@@ -158,8 +159,12 @@ export {
   isStatementKind,
   statementKindOfKeyword,
   statementKindOf,
+  writtenStatementKind,
+  isNonNormativeStatement,
+  untaggedStatementKindLabel,
   canCarryStatementKind,
   setStatementKind,
+  clearStatementKind,
   type StatementKind,
 } from './statement-kind';
 export {
@@ -179,6 +184,8 @@ export {
   getRequirementAttrs,
   hasRequirementAttr,
   setRequirementAttr,
+  carriesItsOwnText,
+  FAULTED_DECLARATION_REFUSAL,
   type StatusKind,
   type VerdictKind,
   type RiskLevel,

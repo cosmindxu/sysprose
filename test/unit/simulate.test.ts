@@ -5,6 +5,7 @@ import {
   simulateStateMachine,
   isSimulatable,
   discoverTriggers,
+  setStatementKind,
 } from '../../src/semantics/index';
 import { simulationReport } from '../../src/api/analytics';
 
@@ -201,6 +202,34 @@ describe('SimulationSession — effects, guards, values', () => {
     expect(before?.status).toBe('satisfied'); // speed 0 ≤ 100
     const after = s.inject('floor').constraints.find((c) => c.id === limit.id);
     expect(after?.status).toBe('violated'); // speed 120 ≤ 100 → violated
+  });
+
+  /**
+   * A `#prose` / `#prompt` statement binds nothing, so this panel has no status
+   * to report for it — and the Problems panel is already silent about it. Two
+   * surfaces calling the same statement `violated` and `not a constraint at all`
+   * is a disagreement no author could explain.
+   */
+  it('leaves out a statement the author tagged as binding nothing', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Speed');
+    f.attribute('speed', sm.id, { type: 'Real', value: 120 });
+    f.state('s0', sm.id);
+    const rule = m.create('ConstraintUsage', {
+      ownerId: sm.id,
+      declaredName: 'limit',
+      attrs: { expression: 'speed <= 100' },
+    });
+    const note = m.create('RequirementUsage', {
+      ownerId: sm.id,
+      declaredName: 'aNote',
+      attrs: { expression: 'speed <= 100' },
+    });
+    setStatementKind(m, note.id, 'prose');
+    const rows = new SimulationSession(m, sm.id).trace[0].constraints;
+    expect(rows.map((c) => c.id)).toEqual([rule.id]);
+    expect(rows.find((c) => c.id === note.id)).toBeUndefined();
   });
 });
 

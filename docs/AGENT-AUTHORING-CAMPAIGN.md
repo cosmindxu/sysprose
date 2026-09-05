@@ -1542,6 +1542,94 @@ outright: the serializer re-emits a faulted declaration's source verbatim and
 nothing else, so a carrier underneath would read back in memory and be gone from
 the next saved file — the very loss the storage shape was chosen to avoid.
 
+**A kind changes what the rest of the tool does with a statement.** A
+vocabulary nothing reads is decoration, so the five surfaces that treat a
+requirement AS a requirement now ask what kind of statement it is first.
+
+Coverage is the one that mattered most. `requirementSatisfaction` counted every
+requirement-shaped element the user owned, so an explanation written in
+requirement shape entered the divisor, had nothing satisfying it — nothing is
+supposed to satisfy an explanation — and pulled a fully covered model below
+100% with a gap that could never be closed. That is the bundled library's old
+failure at a smaller scale and harder to spot, so it gets the same answer:
+non-normative statements leave the divisor and are COUNTED, as
+`nonNormativeExcluded` beside `libraryExcluded` and `implicitExcluded`. A
+ratio the reader cannot reconcile with the rows in front of them is worth less
+than no ratio. The terminal report prints that count only when there is one —
+the library line is on every report because the library is always there to
+exclude, while a permanent `0 prose or prompt` line would teach every reader of
+every model a vocabulary most of them never use.
+
+The `requirement-subject` rule asked the same question the wrong way round. A
+subject is what a requirement constrains, which is a fair thing to demand of a
+rule and a meaningless thing to demand of a paragraph of commentary, so before
+this the tool spent one warning per paragraph arguing with its own feature. It
+skips prose and prompt now, through one predicate rather than an inline test,
+so the next requirement rule asks it the same way. Nothing else moved: an
+UNTAGGED requirement is normative, because the kind falls back to what the
+metaclass says, and a model written before any of this is counted and checked
+exactly as it was.
+
+`constraint-violation` is the second rule that judges requirements, and it was
+missed on the first pass — it enumerates RequirementUsage by name, so a `#prose`
+paragraph carrying an expression was reported violated by the checker while
+`requirement-subject` was correctly silent about the same element. It asks a
+DIFFERENT question, though, because it also judges plain constraints: a
+`constraint c { … }` carries no statement kind at all and would have failed a
+"is this normative?" test and gone unchecked. So the exemption is worded the
+other way round — a statement is skipped only when an author explicitly tagged
+it `#prose` or `#prompt`.
+
+Three places evaluate those expressions, and fixing one of them would have been
+worse than fixing none. The rule is the checker's answer; the Simulate panel
+runs its own loop over the same two metaclasses against live values; and
+`constraintReport` is what the Problems panel's "check constraints" command
+lists INSTEAD of the rule's rows, which it drops on purpose to avoid
+double-listing. Suppress the rule alone and the same warning walks back into the
+same panel through the other door. All three now read one predicate, so they
+cannot come to disagree about one statement again.
+
+The two places a person reads and edits statements show the kind rather than
+inferring it. The requirements table gains ten columns — the kind first, then
+the nine management facets — and a non-normative row STAYS in the grid, labelled
+by its Kind cell. Hiding it would have made the one editable grid in the app the
+one place a prose statement cannot be edited; coverage is the number that
+excludes them, and it says so. Each column carries the closed list its key
+accepts, copied from the table the writer validates against, so a cell cannot
+offer a value the write would refuse.
+
+Two things about those controls are worth writing down, because both were live
+controls that silently did nothing. A Kind selector is driven by the kind
+WRITTEN on the element, never by the kind it reads as: those differ on an
+untagged requirement, which reads `requirement` and carries no keyword, and a
+selector showing the effective answer makes both moves unreachable — clearing is
+a no-op the store returns from without a re-render, and tagging `#'requirement'`
+on purpose fires no change event because the browser already shows the word. The
+blank entry is therefore a real current state and is labelled with what the
+element reads as, from one function both panels call. And a facet control asks
+BEFORE it offers: the writer refuses a requirement whose declaration could not be
+parsed, because the file re-emits that source verbatim and the value would be
+gone on the next save, so a row like that gets disabled cells carrying the reason
+rather than a drop-down that accepts a value, snaps back, and logs to a console
+nobody has open. The Properties panel gains the same two
+things, and the Kind selector is offered on far more than requirements: guidance
+is most useful written on a definition or a package, where everything typed by
+it or inside it inherits it, and a selector confined to requirement rows would
+have hidden the control from the elements a `prompt` is most useful on. It is
+offered wherever the notation has somewhere to put the keyword — the same
+predicate the writer refuses on — so the control is absent exactly where the
+write would have thrown. Reading a requirement into either surface creates
+nothing: the facet reader answers from the carrier if there is one and never
+makes it.
+
+That selector needed a store command of its own, because the kind is the one
+facet that is not about requirements and the facet command refuses anything
+else. It clears as well as sets — a part is not a statement until somebody says
+it is, so a one-way control would have been a trap — which is why the private
+keyword-clearing helper moved next to the writer and became part of the module's
+surface. Both commands spend exactly one undo step, refuse a library element
+before taking a snapshot, and put the redo stack back if the write throws.
+
 ### Known limitations, recorded rather than hidden
 
 **`doc … locale "…"` still drops its language tag.** The `doc` statement takes

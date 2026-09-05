@@ -4,7 +4,10 @@
  * Shows the common identity fields (declaredName, declaredShortName, eClass),
  * plus metaclass-specific attributes (port direction, type reference, value,
  * multiplicity, requirement id/text, transition trigger/guard/effect, and
- * documentation). Edits flow through `updateElement` / `setAttr`. The
+ * documentation), the STATEMENT KIND wherever the notation can carry one, and
+ * the nine requirement-management facets on a requirement. Edits flow through
+ * `updateElement` / `setAttr`, and the facets through the two commands that
+ * validate before they write (`setStatementKind`, `setRequirementAttr`). The
  * element's qualifiedName and its relationships (types / specializations /
  * connections) are shown read-only. Reads the model directly and subscribes to
  * `rev` so fields stay in sync with every mutation.
@@ -24,6 +27,20 @@ import {
 } from '@core/index';
 import { whereUsed } from '@api/index';
 import { elementCentrality } from '@diagram/index';
+import {
+  RM_ATTR_KEYS,
+  RM_ENUM_VALUES,
+  STATEMENT_KINDS,
+  FAULTED_DECLARATION_REFUSAL,
+  canCarryStatementKind,
+  carriesItsOwnText,
+  getRequirementAttrs,
+  statementKindOf,
+  untaggedStatementKindLabel,
+  writtenStatementKind,
+  type RmAttrKey,
+  type StatementKind,
+} from '@semantics/index';
 import { DIMENSIONLESS, dimEqual, dimToString } from '@semantics/units';
 import { useAppStore } from '../store';
 import { ImpactGraph } from './ImpactGraph';
@@ -43,6 +60,19 @@ function refLabel(el: ElementRecord): string {
 
 const DIRECTIONS: FeatureDirection[] = ['in', 'out', 'inout'];
 
+/**
+ * The nine management facets, in the order {@link RM_ATTR_KEYS} declares them.
+ * The tenth — the kind — has a control of its own above, because it applies to
+ * far more than requirements.
+ */
+const RM_FACETS = RM_ATTR_KEYS.filter((k) => k !== 'statementKind');
+
+/** Sentence-case heading for a facet key: `verificationMethod` → `Verification method`. */
+function facetLabel(key: RmAttrKey): string {
+  const spaced = key.replace(/([A-Z])/g, ' $1');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 /** Cap the rendered "Used by" list so a widely-referenced element can't spawn
  *  thousands of DOM nodes; the section header still shows the true total. */
 const MAX_USED_BY = 50;
@@ -59,6 +89,8 @@ export function Properties(): JSX.Element {
   const setAttr = useAppStore((s) => s.setAttr);
   const createElement = useAppStore((s) => s.createElement);
   const select = useAppStore((s) => s.select);
+  const setStatementKind = useAppStore((s) => s.setStatementKind);
+  const setRequirementAttr = useAppStore((s) => s.setRequirementAttr);
 
   // `rev` is read so the component re-renders on model mutations.
   void rev;
@@ -154,6 +186,32 @@ export function Properties(): JSX.Element {
   const isPort = isUsage(eClass) && eClass.includes('Port');
   const isTransition = eClass.includes('Transition');
   const usage = isUsage(eClass);
+
+  // The statement kind is offered wherever the notation has somewhere to write
+  // the keyword — which is most declarations, not only requirements. That is
+  // the point of it: guidance written on a definition or a package reaches
+  // everything typed by it or inside it (`promptsFor`), so restricting the
+  // control to requirements would hide it from the elements it is most useful
+  // on. `canCarryStatementKind` is the same predicate the writer refuses on, so
+  // the control is absent exactly where the write would have thrown.
+  const canCarryKind = canCarryStatementKind(el);
+  // The selector is driven by the kind that is actually WRITTEN, not the kind
+  // the element reads as. On an untagged requirement those differ — it reads
+  // `requirement` and carries no keyword — and a selector showing the effective
+  // answer makes both transitions unreachable: picking `(untagged)` is a no-op
+  // the store returns from without a re-render, and picking `requirement`
+  // fires no change event because the browser thinks it is already chosen.
+  const writtenKind = writtenStatementKind(model, id);
+  const effectiveKind = statementKindOf(model, id);
+  // Read-only: `getRequirementAttrs` never creates the metadata carrier, so
+  // selecting a requirement does not change the model.
+  const requirementFacets = isRequirement(eClass)
+    ? getRequirementAttrs(model, id)
+    : ({} as Partial<Record<RmAttrKey, string>>);
+  // A faulted declaration re-emits its own source verbatim on save, so
+  // `setRequirementAttr` refuses it and the store logs the refusal. Ask first
+  // and disable, rather than offering a control whose value snaps back.
+  const facetsWritable = carriesItsOwnText(el);
 
   // Documentation: the body of the first child Documentation/Comment element.
   const docChild = model
@@ -332,6 +390,81 @@ export function Properties(): JSX.Element {
               value={attrString(el, 'text')}
               onChange={(e) => setAttrOrClear('text', e.target.value)}
             />
+          </div>
+        )}
+
+        {canCarryKind && (
+          <div className="field">
+            <label>Kind</label>
+            <select
+              data-testid="prop-statement-kind"
+              value={writtenKind ?? ''}
+              title="What this statement is for. Only a requirement counts towards coverage."
+              onChange={(e) =>
+                setStatementKind(id, (e.target.value || null) as StatementKind | null)
+              }
+            >
+              {/* The way back out: it takes the keyword OFF, which for a part
+                  or a package means the element makes no statement of its own,
+                  and for a requirement means the metaclass answers again. It is
+                  also the state an untagged element is IN, so it is labelled
+                  with what the element then reads as rather than left to look
+                  like nothing — and never with the bare word `requirement`,
+                  which would put two options in the list saying the same word
+                  and meaning different things. */}
+              <option value="">{untaggedStatementKindLabel(effectiveKind)}</option>
+              {STATEMENT_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {isRequirement(eClass) && (
+          <div className="properties-facets" data-testid="prop-req-attrs">
+            <div className="panel-title">Requirement attributes</div>
+            {RM_FACETS.map((key) => {
+              const values = RM_ENUM_VALUES[key];
+              const value = requirementFacets[key] ?? '';
+              return (
+                <div className="field" key={key}>
+                  <label>{facetLabel(key)}</label>
+                  {values ? (
+                    <select
+                      data-testid={`prop-rm-${key}`}
+                      value={value}
+                      disabled={!facetsWritable}
+                      title={facetsWritable ? undefined : FAULTED_DECLARATION_REFUSAL}
+                      onChange={(e) => setRequirementAttr(id, key, e.target.value || null)}
+                    >
+                      <option value="">(unset)</option>
+                      {values.map((v) => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      data-testid={`prop-rm-${key}`}
+                      // Committed on blur, not on every keystroke: each write is
+                      // one undo step, and a step per character would bury the
+                      // edit before it in a 50-deep stack.
+                      defaultValue={value}
+                      disabled={!facetsWritable}
+                      title={facetsWritable ? undefined : FAULTED_DECLARATION_REFUSAL}
+                      key={`${id}:${key}:${value}`}
+                      onBlur={(e) => {
+                        const next = e.currentTarget.value.trim();
+                        if (next !== value) setRequirementAttr(id, key, next || null);
+                      }}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 

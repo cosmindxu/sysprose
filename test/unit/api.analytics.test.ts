@@ -11,7 +11,9 @@ import {
   traceabilityMatrix,
   whereUsed,
   connectivityReport,
+  constraintReport,
 } from '@api/index';
+import { setStatementKind } from '@semantics/index';
 
 function sample() {
   const model = buildSampleModel();
@@ -825,5 +827,94 @@ describe('analytics — transitive impact closure', () => {
     expect(closure.impacted).toEqual([]);
     expect(closure.depth).toBe(0);
     expect(closure.truncated).toBe(false);
+  });
+});
+
+/**
+ * Coverage counts NORMATIVE statements only, and says what it left out.
+ *
+ * A `prose` or `prompt` statement written in requirement shape has no
+ * contractual value, so nothing is supposed to satisfy it. Left in the divisor
+ * it drags coverage down for a model that is fully covered — the same failure
+ * the bundled library caused — and dropping it in silence would leave a ratio
+ * nobody can reconcile with the rows in front of them. So it is excluded and
+ * COUNTED, beside `libraryExcluded` and `implicitExcluded`.
+ */
+describe('analytics — coverage counts requirements, not explanations', () => {
+  /** One satisfied requirement, one `#prose` note, one `#prompt` instruction. */
+  function withNonNormative() {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const part = f.part('p', pkg.id);
+    const req = f.requirement('r1', pkg.id);
+    f.satisfy(req.id, part.id, pkg.id);
+    const note = f.requirement('note', pkg.id);
+    setStatementKind(model, note.id, 'prose');
+    const guidance = f.requirement('guidance', pkg.id);
+    setStatementKind(model, guidance.id, 'prompt');
+    return { model, ids: { req: req.id, note: note.id, guidance: guidance.id } };
+  }
+
+  it('leaves prose and prompt out of the ratio and reports how many', () => {
+    const { model, ids } = withNonNormative();
+    const r = requirementSatisfaction(model);
+    expect(r.requirements.map((x) => x.requirement.id)).toEqual([ids.req]);
+    expect(r.total).toBe(1);
+    expect(r.satisfied).toBe(1);
+    expect(r.coverage).toBe(1);
+    expect(r.nonNormativeExcluded).toBe(2);
+    expect(r.libraryExcluded).toBe(0);
+    expect(r.implicitExcluded).toBe(0);
+  });
+
+  it('counts an untagged requirement, which is normative by default', () => {
+    const { model } = withNonNormative();
+    const f = new ModelFactory(model);
+    f.requirement('r2', model.roots()[0].id);
+    const r = requirementSatisfaction(model);
+    expect(r.total).toBe(2);
+    expect(r.satisfied).toBe(1);
+    expect(r.nonNormativeExcluded).toBe(2);
+  });
+});
+
+/**
+ * The Problems panel's "check constraints" command drops the validator's own
+ * `constraint-violation` rows and lists this report in their place
+ * (`store.runConstraintCheck`). Without the same exemption the rule takes, a
+ * `#prose` statement that the checker is silent about walks back into the same
+ * panel through the other door.
+ */
+describe('analytics — constraintReport and statements that bind nothing', () => {
+  function withProse() {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const con = model.create('ConstraintUsage', {
+      declaredName: 'limit',
+      ownerId: pkg.id,
+      attrs: { expression: '30 <= 25' },
+    });
+    const note = f.requirement('aNote', pkg.id);
+    model.setAttrs(note.id, { expression: '30 <= 25' });
+    setStatementKind(model, note.id, 'prose');
+    return { model, con: con.id, note: note.id };
+  }
+
+  it('leaves out a prose statement, and keeps the plain constraint', () => {
+    const { model, con, note } = withProse();
+    const r = constraintReport(model);
+    expect(r.constraints.map((c) => c.id)).toEqual([con]);
+    expect(r.constraints.find((c) => c.id === note)).toBeUndefined();
+    expect(r.violated).toBe(1);
+  });
+
+  it('still reports an untagged requirement, which is normative by default', () => {
+    const { model } = withProse();
+    const f = new ModelFactory(model);
+    const req = f.requirement('maxMass', model.roots()[0].id);
+    model.setAttrs(req.id, { expression: '30 <= 25' });
+    expect(constraintReport(model).constraints.map((c) => c.id)).toContain(req.id);
   });
 });

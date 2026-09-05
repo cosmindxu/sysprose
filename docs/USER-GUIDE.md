@@ -293,10 +293,14 @@ app.
 |---|---|---|---|
 | Allocation | A matrix of elements × elements with a mark wherever an Allocation joins them (falling back to Satisfy when a model declares no allocations) | What is allocated to what? | `tb-view-allocation` |
 | Grid | Every in-scope non-relationship element as a row: name, metaclass, type, multiplicity, value, redefines, doc | What is in this model, in bulk? | `tb-view-grid` |
-| Requirements | Hierarchical requirement rows with outline numbers, editable id / name / text, and chips for Satisfied By / Verified By / Refined By / Traced To / Derived From | Are my requirements covered, and by what? | `tb-view-requirements` |
+| Requirements | Hierarchical requirement rows with outline numbers, editable id / name / text, chips for Satisfied By / Verified By / Refined By / Traced To / Derived From, and a Kind cell plus the nine management attributes (status, verdict, risk, priority, criticality, rationale, source, owner, verification) | Are my requirements covered, and by what? | `tb-view-requirements` |
 
 The Requirements view edits the model directly: adding a chip creates the
-backing relationship, and ✕ deletes it.
+backing relationship, and ✕ deletes it. A cell with a closed list of values is a
+drop-down offering exactly what a write will accept; the rest are click-to-edit
+text. **Kind** says what a row is for — a `prose` or `prompt` row stays in the
+grid, labelled, and is left out of the coverage figure rather than counted as a
+gap nothing can close.
 
 ### Analyze
 
@@ -626,6 +630,9 @@ quietly go stale.
 | Focus a subtree | Narrows the Explorer to one element; the chip clears it | `tree-focus`, `explorer-focus`, `explorer-focus-clear` |
 | Add child / rename / delete | Per-row tree editing | `tree-add`, `tree-rename`, `tree-delete` |
 | Properties fields | Name, type, value, multiplicity, direction, documentation, requirement id and text | `prop-name`, `prop-type`, `prop-value`, `prop-doc` |
+| Statement kind | What the selected element is for — requirement / prose / prompt — offered wherever the notation can carry the keyword, which is most declarations and not only requirements | `prop-statement-kind` |
+| Requirement attributes | The nine management facets of a requirement — status, verdict, risk, priority, criticality, rationale, source, owner, verificationMethod — one control each, named `prop-rm-<facet>` after the key it writes | `prop-req-attrs` |
+| Requirement facet cells | The same ten facets as columns in the Requirements table — a drop-down (`req-attr-select`) where the key has a closed list, click-to-edit text (`req-attr-input`) where it does not; disabled, with the reason on the cell, on a row whose declaration could not be parsed | `req-attr-cell` |
 | Where-used list | Everything that references the selection, click to navigate | `prop-used-by` |
 | Impact graph | The 1-hop reference neighbourhood, drawn | `prop-impact` |
 | Breadcrumb | The containment path of the **selection** (not the diagram scope) | `breadcrumb` |

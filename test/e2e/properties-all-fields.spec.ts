@@ -6,7 +6,7 @@
  *  identity  — prop-name, prop-shortName;
  *  usage     — prop-type, prop-value, prop-multiplicity;
  *  port      — prop-direction;
- *  requirement — prop-reqId, prop-text;
+ *  requirement — prop-reqId, prop-text, prop-statement-kind, prop-rm-*;
  *  transition  — prop-trigger, prop-guard, prop-effect;
  *  docs      — prop-doc (lazily creates a Documentation child);
  *  units     — a quantity-valued feature shows prop-dimension and converts via
@@ -24,6 +24,34 @@ function readAttr(page: Page, id: string, key: string): Promise<unknown> {
         sysml: { getElement: (i: string) => { attrs?: Record<string, unknown> } | undefined };
       }).sysml.getElement(id)?.attrs?.[key] ?? null,
     { id, key },
+  );
+}
+
+/**
+ * Read one requirement facet's stored value — the `attrs.value` of the
+ * attribute named `key` under the owned `RequirementMetadata` carrier. Walked
+ * through the model rather than read off the panel, so the assertion is about
+ * what was WRITTEN, not what is displayed.
+ */
+function readFacet(page: Page, reqId: string, key: string): Promise<unknown> {
+  return page.evaluate(
+    ({ reqId, key }) => {
+      const api = (window as unknown as {
+        sysml: {
+          children: (i: string) => { id: string; eClass: string; declaredName?: string }[];
+          getElement: (i: string) => { attrs?: Record<string, unknown> } | undefined;
+        };
+      }).sysml;
+      const carrier = api
+        .children(reqId)
+        .find((c) => c.eClass === 'MetadataUsage' && c.declaredName === 'RequirementMetadata');
+      if (!carrier) return null;
+      const cell = api
+        .children(carrier.id)
+        .find((c) => c.eClass === 'AttributeUsage' && c.declaredName === key);
+      return cell ? api.getElement(cell.id)?.attrs?.value ?? null : null;
+    },
+    { reqId, key },
   );
 }
 
@@ -97,6 +125,35 @@ test('properties edits identity/usage/port/requirement/transition/doc/unit field
   await expect.poll(() => readAttr(page, reqId, 'text')).toBe(
     'Vehicle mass shall not exceed 2000 kg.',
   );
+
+  /* ── statement kind + management facets on the same requirement ── */
+  // The kind rides on the declaration as a user-defined keyword; `requirement`
+  // is quoted because it collides with the notation's own keyword.
+  // By VALUE, not by label: the list also carries an `(untagged)` entry, and a
+  // bare string would match either.
+  await page.getByTestId('prop-statement-kind').selectOption({ value: 'prose' });
+  await expect.poll(() => readAttr(page, reqId, 'metadata')).toEqual(['prose']);
+  await page.getByTestId('prop-statement-kind').selectOption({ value: 'requirement' });
+  await expect.poll(() => readAttr(page, reqId, 'metadata')).toEqual(["'requirement'"]);
+  // `(untagged)` takes the keyword off. The control shows what is WRITTEN, not
+  // what the element reads as, so it stays on the blank entry — whose label says
+  // the metaclass now answers `requirement`. Reading back the effective kind
+  // here would make this the one state the control could not express, and both
+  // moves out of it unreachable.
+  await page.getByTestId('prop-statement-kind').selectOption({ value: '' });
+  await expect.poll(() => readAttr(page, reqId, 'metadata')).toBe(null);
+  await expect(page.getByTestId('prop-statement-kind')).toHaveValue('');
+  await expect(
+    page.getByTestId('prop-statement-kind').locator('option[value=""]'),
+  ).toHaveText('(untagged — reads as requirement)');
+
+  // An enumerated facet, and a free-text one committed on blur. Both land under
+  // one lazily-created `RequirementMetadata` carrier.
+  await page.getByTestId('prop-rm-status').selectOption('done');
+  await expect.poll(() => readFacet(page, reqId, 'status')).toBe('"done"');
+  await page.getByTestId('prop-rm-rationale').fill('Airworthiness limit.');
+  await page.getByTestId('prop-rm-rationale').blur();
+  await expect.poll(() => readFacet(page, reqId, 'rationale')).toBe('"Airworthiness limit."');
   await shot(page, 'props-b-requirement');
 
   /* ── transition trigger/guard/effect on a freshly-created TransitionUsage ── */

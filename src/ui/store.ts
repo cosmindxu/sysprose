@@ -45,7 +45,7 @@
  *   select(id) · toggleExpand(id) · expand(id, open?) · setActiveView(v)
  *   rebuildDiagram() · createElement(eClass, ownerId?, name?) → id
  *   updateElement(id, patch) · setAttr(id, k, v) · deleteElement(id)
- *   setRequirementAttr(id, key, value)
+ *   setRequirementAttr(id, key, value) · setStatementKind(id, kind|null)
  *   reparent(id, ownerId) · connect(sourceId, targetId, kind)
  *   runValidation() · setTextBuffer(s) · applyText() · regenerateText()
  *   newProject() · saveProject(name?) · loadProject(name) · listProjects()
@@ -156,10 +156,14 @@ import {
 } from '@persistence/index';
 import {
   SimulationSession,
+  clearStatementKind as semClearStatementKind,
   hasRequirementAttr,
   isSimulatable as semIsSimulatable,
   setRequirementAttr as semSetRequirementAttr,
+  setStatementKind as semSetStatementKind,
+  statementKindOf,
   type RmAttrKey,
+  type StatementKind,
   type SimSample,
 } from '@semantics/index';
 import { parseModelDescription, importFmiBlock } from '@interop/index';
@@ -390,6 +394,20 @@ export interface AppState {
    * and so could never take back.
    */
   setRequirementAttr(id: ElementId, key: RmAttrKey, value: string | null): void;
+  /**
+   * Say what kind of statement an element makes — `requirement`, `prose` or
+   * `prompt` — or take the kind off with `null`.
+   *
+   * Separate from {@link setRequirementAttr} because the kind is the one facet
+   * that is NOT about requirements: the guidance a `prompt` carries is most
+   * useful on a definition or a package, where every element of that type or in
+   * that package inherits it, and those are not requirements. ONE undo step.
+   * Refused — model untouched, snapshot straight back off the stack — for a
+   * library element, and for an element whose notation has nowhere to write the
+   * keyword (a `connect`, a bare `doc`), which is a refusal the panel is
+   * expected to prevent by not offering the control at all.
+   */
+  setStatementKind(id: ElementId, kind: StatementKind | null): void;
   deleteElement(id: ElementId): void;
   /** Deep-clone an element + its subtree as a sibling; returns the new root id. */
   duplicateElement(id: ElementId): ElementId | null;
@@ -1545,6 +1563,36 @@ export const useAppStore = create<AppState>((set, get) => {
         // drop the snapshot and put the redo stack back. Surfacing the reason
         // is the panel's job — the store's job is not to leave a phantom step.
         console.error('setRequirementAttr failed', err);
+        set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
+      }
+    },
+
+    setStatementKind(id, kind) {
+      const { model } = get();
+      const el = model.get(id);
+      if (!el) return;
+      // Same two refusals setRequirementAttr makes, for the same reasons: undo
+      // restores a snapshot while keeping library elements verbatim, so an edit
+      // to one would outlive its own undo step; and a clear of a kind nobody
+      // wrote changes nothing, so it must not spend an undo step and throw the
+      // redo stack away with it.
+      if (el.attrs.isLibrary === true) return;
+      // `hasRequirementAttr` answers "is a kind keyword actually WRITTEN here",
+      // which is the question, and it is not requirement-only for this key —
+      // reusing it beats a second copy of the keyword scan in the UI layer.
+      const tagged = hasRequirementAttr(model, id, 'statementKind');
+      if (kind === null && !tagged) return;
+      if (kind !== null && tagged && kind === statementKindOf(model, id)) return;
+      const redoBefore = get().redoStack;
+      pushUndo();
+      try {
+        if (kind === null) semClearStatementKind(model, id);
+        else semSetStatementKind(model, id, kind);
+        afterMutation();
+      } catch (err) {
+        // `setStatementKind` validates before it mutates (it refuses a notation
+        // with nowhere to put the keyword), so there is nothing to undo.
+        console.error('setStatementKind failed', err);
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
       }
     },
