@@ -193,3 +193,9 @@ export {
   type Priority,
   type RmAttrKey,
 } from './requirements';
+export {
+  NOTE_BODY_TERMINATOR,
+  UNWRITABLE_NOTE_BODY_REFUSAL,
+  UnwritableNoteBodyError,
+  isWritableNoteBody,
+} from './notes';

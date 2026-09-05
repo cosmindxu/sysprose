@@ -256,7 +256,7 @@ wired relationship.
 | Interaction | Covered by | Result | Screenshot |
 |---|---|---|---|
 | Validate flags duplicate name → navigable row | `E validation`; `E panels-problems-text` | PASS | `06b-problem-selected` |
-| Validation engine — all 23 rules (pos/neg) | `U validation.rules` (50 cases); `I pipeline.validate` | PASS | — |
+| Validation engine — all 24 rules (pos/neg) | `U validation.rules` (60 cases); `I pipeline.validate` | PASS | — |
 | Check → constraint-check rows (satisfied/violated) | `E simulate-check`, `E toolbar-lifecycle`; `U semantics.constraints` | PASS | `simcheck-check` |
 | Simulate action flow → ordered trace in Problems | `E simulate`, `E simulate-check` (`ignite`→`accelerate`) | PASS | `simcheck-action` |
 | Simulate state machine → state trace in Problems | `E simulate-check` (`idle`→`running`) | PASS | `simcheck-state` |
@@ -311,7 +311,7 @@ The deep engine coverage that underpins the UI. (Condensed; full per-file counts
 | Interop client — self round-trip over HTTP + live pilot exchange | `X self-roundtrip`; `docs/CONFORMANCE.md` §6 | PASS |
 | Standard libraries — full 38.8k elements / 98 packages + resolution | `U library.load`; `I full-library.load`/`full-library.resolve` | PASS |
 | Persistence — store round-trip + export/import equivalence | `U persistence.io`; `I persist-api.persistence` | PASS |
-| Validation — 23 rules incl. the KerML semantic ones (value conformance, redefinition conformance, units and dimensions) | `U validation.rules`; `I pipeline.validate` | PASS |
+| Validation — 24 rules incl. the KerML semantic ones (value conformance, redefinition conformance, units and dimensions) | `U validation.rules`; `I pipeline.validate` | PASS |
 
 ### 2.13 Real-time collaboration (Yjs CRDT + presence)
 

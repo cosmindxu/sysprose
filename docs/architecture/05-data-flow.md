@@ -101,8 +101,8 @@ flowchart TB
     op["Model mutation:\ncreate / update / setAttr /\nreparent / connect / delete"]
     pushUndo["pushUndo()\nmodel.toJSON() deep clone"]
     afterMut["afterMutation()"]
-    validate["safeValidate(model)\n23 rules, full scan"]
-    serialize["safeSerialize(model)\nfull text regeneration"]
+    validate["safeValidate(model)\n24 rules, full scan"]
+    serialize["textView(model)\nfull text regeneration"]
     bump["rev++"]
     rebuild["rebuildDiagram() [async, awaited microtask]"]
     build["buildDiagram(model, view)\nfull projection"]
@@ -129,7 +129,7 @@ flowchart TB
 ```
 
 - **Debounced diagram rebuild.** `afterMutation` (`src/ui/store.ts:569-578`) runs
-  `safeValidate` + `safeSerialize` synchronously per mutation, then coalesces the
+  `safeValidate` + `textView` synchronously per mutation, then coalesces the
   diagram rebuild behind an 80 ms debounce (`REBUILD_DEBOUNCE_MS`/`scheduleRebuild`,
   `src/ui/store.ts:544-552`) so a burst of edits triggers one ELK layout. A single
   `setAttr` (e.g. typing in Properties) still re-validates and re-serializes the
@@ -152,7 +152,7 @@ sequenceDiagram
     participant P as parseModel (Langium)
     participant M as Model
     participant V as safeValidate
-    participant X as safeSerialize
+    participant X as textView
 
     U->>TE: type (keystroke)
     TE->>S: setTextBuffer (no parse)
@@ -168,6 +168,13 @@ sequenceDiagram
 
 - Typing does **not** parse — only the explicit "Apply" does (`src/ui/store.ts:918-941`).
 - `parseModel` is whole-document; there is **no incremental parsing**.
+- `textView` is the only writer of `textBuffer`. When the model cannot be
+  written as text at all — a note body carrying the sequence that ends a note, a
+  multiplicity carrying the bracket that ends one — the serializer throws rather
+  than emit a file that means something else, and `textView` keeps the LAST text
+  it could write and records the reason in `serializeError`. The Text tab says
+  so, and `applyText` refuses while it stands, because parsing a stale buffer
+  would replace the model with a text that never described it.
 
 ## Persistence & import/export projections
 

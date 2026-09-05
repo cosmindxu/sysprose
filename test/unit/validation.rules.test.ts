@@ -3,7 +3,7 @@ import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import type { SerializedModel } from '@core/index';
 import { validate, isValid, RULES, RULE_IDS, RULES_BY_ID } from '@validation/index';
 import { loadStandardLibrary } from '../../src/library/index';
-import { setStatementKind, statementKindOf } from '@semantics/index';
+import { NOTE_BODY_TERMINATOR, setStatementKind, statementKindOf } from '@semantics/index';
 
 /** Run a single rule in isolation and return its diagnostics. */
 function runRule(model: Model, ruleId: string) {
@@ -13,8 +13,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 23 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(23);
+  it('exposes all 24 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(24);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -694,6 +694,56 @@ describe('rule 17 — derived-dimension-mismatch', () => {
     const kind = runRule(withDerived('ISQ::DurationValue', 'mtow * 2.0'), 'derived-dimension-mismatch');
     expect(kind).toHaveLength(1);
     expect(kind[0].message).toMatch(/declared kind "ISQ::DurationValue" is T/);
+  });
+});
+
+describe('rule 18 — unwritable-note-body', () => {
+  /** A package holding one annotation with the given body. */
+  function withBody(eClass: 'Documentation' | 'Comment' | 'TextualRepresentation', body: string) {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    m.create(eClass, { ownerId: p.id, attrs: { body } });
+    return m;
+  }
+
+  it('positive: an ordinary note body, and one that merely contains a slash, are fine', () => {
+    expect(runRule(withBody('Documentation', 'the mass shall be under 25 kg'), 'unwritable-note-body')).toHaveLength(0);
+    expect(runRule(withBody('Comment', 'see /* the note above'), 'unwritable-note-body')).toHaveLength(0);
+  });
+
+  it('negative: a body carrying the note terminator is reported on every note kind', () => {
+    for (const eClass of ['Documentation', 'Comment', 'TextualRepresentation'] as const) {
+      const diags = runRule(withBody(eClass, `a ${NOTE_BODY_TERMINATOR} b`), 'unwritable-note-body');
+      expect(diags, eClass).toHaveLength(1);
+      expect(diags[0].severity).toBe('error');
+      expect(diags[0].elementId).toBeDefined();
+    }
+  });
+
+  it('negative: a requirement statement carrying it is reported too', () => {
+    // `attrs.text` is a second, unescaped doc-emitting site — the grid and the
+    // Properties panel both write it, and the serializer turns it into a `doc`
+    // line of its own.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const r = f.requirement('R', p.id);
+    m.setAttrs(r.id, { text: `mass <= 25 kg ${NOTE_BODY_TERMINATOR} satisfy R by V; doc /*` });
+    const diags = runRule(m, 'unwritable-note-body');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].elementId).toBe(r.id);
+  });
+
+  it('says nothing about an `attrs.text` on something that is not a requirement', () => {
+    // Only a requirement's text is written as a note; on anything else the key
+    // is not this rule's business, and flagging it would be a false report.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const a = f.partDef('A', p.id);
+    m.setAttrs(a.id, { text: `a ${NOTE_BODY_TERMINATOR} b` });
+    expect(runRule(m, 'unwritable-note-body')).toHaveLength(0);
   });
 });
 

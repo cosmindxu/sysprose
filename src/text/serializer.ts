@@ -25,6 +25,7 @@ import {
   type ElementRecord,
 } from '@core/index';
 import { resolveFullName, resolveRedefinedFeature } from '@semantics/bind';
+import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
 
 const INDENT = '    ';
 
@@ -81,8 +82,8 @@ export function serializeElement(model: Model, id: ElementId, indent = 0): strin
 
   // Annotations.
   if (el.eClass === 'Documentation') {
-    const name = el.declaredName ? ` ${quoteName(el.declaredName)}` : '';
-    return `${pad}doc${name} /* ${attrStr(el, 'body')} */`;
+    const name = el.declaredName !== undefined ? ` ${quoteName(el.declaredName)}` : '';
+    return `${pad}doc${name} /* ${noteBody(el, 'body')} */`;
   }
   if (el.eClass === 'Comment') {
     // Grammar order: `comment (name)? ('about' A, B)? ('locale' STRING)? /* … */`.
@@ -105,16 +106,17 @@ export function serializeElement(model: Model, id: ElementId, indent = 0): strin
     if (Array.isArray(about) && about.length) parts.push('about', about.map(String).join(', '));
     const locale = el.attrs.locale;
     if (typeof locale === 'string') parts.push('locale', quoteString(locale));
-    parts.push(`/* ${attrStr(el, 'body')} */`);
+    parts.push(`/* ${noteBody(el, 'body')} */`);
     return `${pad}${parts.join(' ')}`;
   }
   if (el.eClass === 'TextualRepresentation') {
     const lang = el.attrs.language;
     if (typeof lang === 'string' && lang.length) {
-      const repName = el.declaredName ? `rep ${quoteName(el.declaredName)} ` : '';
-      return `${pad}${repName}language ${quoteString(lang)} /* ${attrStr(el, 'body')} */`;
+      const repName =
+        el.declaredName !== undefined ? `rep ${quoteName(el.declaredName)} ` : '';
+      return `${pad}${repName}language ${quoteString(lang)} /* ${noteBody(el, 'body')} */`;
     }
-    return `${pad}/* ${attrStr(el, 'body')} */`;
+    return `${pad}/* ${noteBody(el, 'body')} */`;
   }
 
   // Imports.
@@ -296,19 +298,32 @@ function header(model: Model, el: ElementRecord): string {
   // values — the mapper writes both from the same token, the factory writes
   // only `reqId` — so the legacy key stays as the fallback that keeps those
   // models emitting their id.
+  //
+  // The element's own short name is tested for PRESENCE: `<''>` is a blank id
+  // the validator reports, and dropping it on save would erase the evidence for
+  // that error (finding grammar-text-3). The legacy FALLBACK keeps its
+  // truthiness test — `attrs.reqId` is written by the Properties panel, which
+  // clears the field to `''`, and an emptied box means "no id here", not "an id
+  // that is blank".
+  const legacyId = isRequirement(el.eClass) ? el.attrs.reqId : undefined;
   const short =
     el.declaredShortName ??
-    (isRequirement(el.eClass) ? (el.attrs.reqId as string | undefined) : undefined);
-  if (short) parts.push(`<${quoteName(short)}>`);
+    (typeof legacyId === 'string' && legacyId !== '' ? legacyId : undefined);
+  if (short !== undefined) parts.push(`<${quoteName(short)}>`);
 
-  if (el.declaredName) parts.push(quoteName(el.declaredName));
+  // Presence, not truth, for the declared name as well — and at every sibling
+  // site below. `part def ''` is a name the validator reports as blank; a save
+  // that dropped the quotes turned that error into an OK file and left behind a
+  // `split-declaration` warning that told the reader something false.
+  // `quoteName('')` already emits `''`.
+  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
 
   // Inline specializations.
   parts.push(...specializationFragments(model, el));
 
   // Multiplicity.
-  const mult = el.attrs.multiplicity;
-  if (typeof mult === 'string' && mult.length) parts.push(`[${mult}]`);
+  const mult = multiplicityLexeme(el);
+  if (mult !== undefined) parts.push(`[${mult}]`);
 
   // Feature modifiers (`ordered` / `nonunique`) — emitted AFTER the name, in the
   // declaration-tail spec section (grammar FeatureModifier in DeclSpecs). As a
@@ -450,7 +465,7 @@ function renderWithBody(
 
   // Requirement description → doc comment.
   if (isRequirement(el.eClass) && typeof el.attrs.text === 'string' && el.attrs.text.length) {
-    lines.push(`${INDENT.repeat(indent + 1)}doc /* ${el.attrs.text} */`);
+    lines.push(`${INDENT.repeat(indent + 1)}doc /* ${noteBody(el, 'text')} */`);
   }
 
   for (const child of bodyMembers(model, el)) {
@@ -483,8 +498,66 @@ function successionPrefix(el: ElementRecord): string[] {
 
 /** `[m..n]` multiplicity fragment, if present. */
 function multFragment(el: ElementRecord): string[] {
+  const m = multiplicityLexeme(el);
+  return m === undefined ? [] : [`[${m}]`];
+}
+
+/**
+ * Content that stops being multiplicity content once it is written: `]` (or an
+ * unmatched `[`) ends the bracket, a line break ends the line, and `/*` or the
+ * note terminator opens or closes a note across it. Everything after such a
+ * character is read back as model structure — the note-body defect in a second
+ * field, and this one is reachable from the Properties multiplicity box, which
+ * writes whatever is typed straight into `attrs.multiplicity`.
+ */
+const UNWRITABLE_MULTIPLICITY_RE = /[[\]\n\r]|\/\*|\*\//;
+
+/**
+ * Thrown when a multiplicity cannot be written back inside its brackets.
+ *
+ * Loud, not quiet, for the reason the whole file follows: dropping the value
+ * would produce a file that parses cleanly and says something the model does
+ * not. The Problems panel always names the element as well — every value this
+ * refuses is also reported by `validation/malformed-multiplicity`, since none
+ * of these characters can occur in a well-formed bound or in the bare
+ * identifier that rule exempts as a trailing unit.
+ */
+export class UnwritableMultiplicityError extends Error {
+  constructor(
+    /** Element whose multiplicity could not be written. */
+    readonly elementId: string,
+    /** The value that could not be written. */
+    readonly value: string,
+  ) {
+    super(
+      `Cannot serialize ${elementId}: its multiplicity "${value}" would close the ` +
+        'brackets it is written into, and the rest would be read back as model structure.',
+    );
+    this.name = 'UnwritableMultiplicityError';
+  }
+}
+
+/**
+ * The multiplicity to write, or `undefined` when there is none.
+ *
+ * The serializer's question is whether the value can be WRITTEN BACK, never
+ * whether it is well formed — that is `validation/malformed-multiplicity`'s
+ * question, and a serializer that answered it too dropped the bound on save, so
+ * the error the checker had just reported was gone from the saved file: one
+ * error in, zero out. It also cost bounds that were never in doubt, because a
+ * `MultTerm` may be a QUALIFIED NAME and a name may be written unrestricted
+ * (`['my bound']`, `['größe']`).
+ *
+ * The sentinel that started finding grammar-text-2 is not caught here and
+ * cannot be: `undefined` IS a legal `MultTerm`, so no shape check can tell it
+ * from a name someone meant. That fix belongs in the mapper, which knows the
+ * bound was never read.
+ */
+function multiplicityLexeme(el: ElementRecord): string | undefined {
   const m = el.attrs.multiplicity;
-  return typeof m === 'string' && m.length ? [`[${m}]`] : [];
+  if (typeof m !== 'string' || m === '') return undefined;
+  if (UNWRITABLE_MULTIPLICITY_RE.test(m)) throw new UnwritableMultiplicityError(el.id, m);
+  return m;
 }
 
 /** `:=` / `=` feature-value clause, if present. */
@@ -531,8 +604,8 @@ function unitLexeme(unit: string): string {
 /** accept / send / assign / perform / exhibit / include / terminate action. */
 function behaviorLine(model: Model, el: ElementRecord, indent: number): string {
   const parts = [...successionPrefix(el), String(el.attrs.actionKind)];
-  if (el.declaredShortName) parts.push(`<${quoteName(el.declaredShortName)}>`);
-  if (el.declaredName) parts.push(quoteName(el.declaredName));
+  if (el.declaredShortName !== undefined) parts.push(`<${quoteName(el.declaredShortName)}>`);
+  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el));
   if (typeof el.attrs.via === 'string') parts.push('via', el.attrs.via);
   if (typeof el.attrs.actionTarget === 'string') parts.push('to', el.attrs.actionTarget);
@@ -615,7 +688,7 @@ function ifLine(model: Model, el: ElementRecord, indent: number): string {
 /** `return name (= value)?`. */
 function returnLine(model: Model, el: ElementRecord, indent: number): string {
   const parts = ['return'];
-  if (el.declaredName) parts.push(quoteName(el.declaredName));
+  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el), ...valueClause(el));
   return renderWithBody(model, el, indent, parts.join(' '));
 }
@@ -623,7 +696,7 @@ function returnLine(model: Model, el: ElementRecord, indent: number): string {
 /** Requirement clause: `subject`, `require`, `assume`, `objective`, … */
 function requirementClauseLine(model: Model, el: ElementRecord, indent: number): string {
   const parts = [String(el.attrs.requirementRole)];
-  if (el.declaredName) parts.push(quoteName(el.declaredName));
+  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el), ...valueClause(el));
   return renderWithBody(model, el, indent, parts.join(' '));
 }
@@ -631,7 +704,7 @@ function requirementClauseLine(model: Model, el: ElementRecord, indent: number):
 /** State behaviour: `entry` / `do` / `exit` (optionally named). */
 function stateBehaviorLine(model: Model, el: ElementRecord, indent: number): string {
   const parts = [String(el.attrs.stateSubaction)];
-  if (el.declaredName) parts.push(quoteName(el.declaredName));
+  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el), ...valueClause(el));
   return renderWithBody(model, el, indent, parts.join(' '));
 }
@@ -693,7 +766,8 @@ function hasEndpoints(el: ElementRecord): boolean {
 function connectionLine(model: Model, el: ElementRecord, pad: string): string {
   const src = endpoint(model, el, 'source');
   const tgt = endpoint(model, el, 'target');
-  const prefix = el.declaredName ? `connection ${quoteName(el.declaredName)} ` : '';
+  const prefix =
+    el.declaredName !== undefined ? `connection ${quoteName(el.declaredName)} ` : '';
   return `${pad}${prefix}connect ${src} to ${tgt};`;
 }
 
@@ -774,8 +848,8 @@ function dependencyLine(model: Model, el: ElementRecord, pad: string): string {
     ? el.attrs.suppliers.map(String).join(', ')
     : endpoint(model, el, 'target');
   const id: string[] = [];
-  if (el.declaredShortName) id.push(`<${quoteName(el.declaredShortName)}>`);
-  if (el.declaredName) id.push(quoteName(el.declaredName));
+  if (el.declaredShortName !== undefined) id.push(`<${quoteName(el.declaredShortName)}>`);
+  if (el.declaredName !== undefined) id.push(quoteName(el.declaredName));
   const named = id.length ? `${id.join(' ')} from ` : '';
   return `${pad}dependency ${named}${clients} to ${suppliers};`;
 }
@@ -783,7 +857,7 @@ function dependencyLine(model: Model, el: ElementRecord, pad: string): string {
 function flowLine(model: Model, el: ElementRecord, pad: string): string {
   // A flow is a `from … to …` usage; the optional `of <payload>` precedes it.
   // (Without `from`/`to` the parser would not rebuild a Flow relationship.)
-  const named = el.declaredName ? ` ${quoteName(el.declaredName)}` : '';
+  const named = el.declaredName !== undefined ? ` ${quoteName(el.declaredName)}` : '';
   const payload = typeof el.attrs.payload === 'string' ? ` of ${el.attrs.payload}` : '';
   return `${pad}flow${named}${payload} from ${endpoint(model, el, 'source')} to ${endpoint(model, el, 'target')};`;
 }
@@ -847,8 +921,9 @@ function relationshipStmtLine(model: Model, el: ElementRecord, pad: string): str
 function aliasLine(model: Model, el: ElementRecord, indent: number): string {
   const vis = el.attrs.visibility;
   const visPrefix = vis === 'public' || vis === 'private' || vis === 'protected' ? `${vis} ` : '';
-  const short = el.declaredShortName ? `<${quoteName(el.declaredShortName)}> ` : '';
-  const name = el.declaredName ? `${quoteName(el.declaredName)} ` : '';
+  const short =
+    el.declaredShortName !== undefined ? `<${quoteName(el.declaredShortName)}> ` : '';
+  const name = el.declaredName !== undefined ? `${quoteName(el.declaredName)} ` : '';
   const tid = (el.target ?? [])[0];
   const target = tid
     ? refTo(model, tid, el.ownerId)
@@ -861,7 +936,7 @@ function aliasLine(model: Model, el: ElementRecord, indent: number): string {
 
 function transitionLine(model: Model, el: ElementRecord, pad: string): string {
   const parts = ['transition'];
-  if (el.declaredName) parts.push(quoteName(el.declaredName));
+  if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
   parts.push('first', endpoint(model, el, 'source'));
   if (typeof el.attrs.trigger === 'string' && el.attrs.trigger) parts.push('accept', el.attrs.trigger);
   if (typeof el.attrs.guard === 'string' && el.attrs.guard) parts.push(`if ${el.attrs.guard}`);
@@ -880,7 +955,9 @@ function controlNodeLine(el: ElementRecord, pad: string): string {
     DoneNode: 'done',
   };
   const word = kw[el.eClass] ?? el.eClass;
-  return `${pad}${word}${el.declaredName ? ` ${quoteName(el.declaredName)}` : ''};`;
+  return `${pad}${word}${
+    el.declaredName !== undefined ? ` ${quoteName(el.declaredName)}` : ''
+  };`;
 }
 
 /* ─────────────────────────── reference paths ──────────────────────────── */
@@ -1009,4 +1086,22 @@ function formatValue(v: unknown): string {
 function attrStr(el: ElementRecord, key: string): string {
   const v = el.attrs[key];
   return typeof v === 'string' ? v : v == null ? '' : String(v);
+}
+
+/**
+ * The text of a note body, or a THROW when it has none that can be written.
+ *
+ * This is emitted with no escaping at all, into a terminal that has no escape
+ * for its own terminator (see `semantics/notes.ts`, which also records the one
+ * other verbatim-written string — a value expression — that this does not
+ * cover). A body carrying it closes the note early and everything
+ * after it is re-read as declarations — silently, because the corrupted file
+ * parses. Refusing to produce the file is the honest answer: the write
+ * boundaries refuse such a value and `validation/unwritable-note-body` reports a
+ * model that already holds one, so reaching this throw means both were bypassed.
+ */
+function noteBody(el: ElementRecord, key: 'body' | 'text'): string {
+  const text = attrStr(el, key);
+  if (!isWritableNoteBody(text)) throw new UnwritableNoteBodyError(el.id, key);
+  return text;
 }

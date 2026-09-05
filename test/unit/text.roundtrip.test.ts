@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildSampleModel, Model, ModelFactory, type ElementRecord } from '@core/index';
 import { parseModel, serializeModel } from '@text/index';
 import { validate } from '@validation/index';
+import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError } from '@semantics/index';
 
 /** Attributes that carry semantic meaning for round-trip comparison. */
 const KEY_ATTRS = [
@@ -1365,6 +1366,33 @@ describe('round-trip — a comment keeps what it points at', () => {
     expect(validate(model).some((d) => d.ruleId === 'blank-name')).toBe(true);
   });
 
+  /**
+   * The same claim, across the forms that make it.
+   *
+   * The blank-name fix landed on the Comment branch alone, and the assertion
+   * above could not tell: every other declaration form still collapsed `''`
+   * into "anonymous" on save, so an error the checker had just reported came
+   * back OK from the saved file. One case per emitting site, so the title above
+   * stops promising more than it checks.
+   */
+  it.each([
+    ['definition', `package C { part def '' ; }`, `part def ''`],
+    ['usage', `package C { part def A; part '' : A; }`, `part '' : A`],
+    ['package', `package '' { part def A; }`, `package ''`],
+    ['doc', `package C { doc '' /* x */ }`, `doc '' /* x */`],
+    ['rep', `package C { rep '' language "js" /* x */ }`, `rep '' language "js"`],
+    ['comment', `package C { comment '' /* x */ }`, `comment '' /* x */`],
+  ])('keeps a blank declared name on a %s', (_form, src, expected) => {
+    const { text } = reparse(src);
+    expect(text, `the blank name was laundered away:\n${text}`).toContain(expected);
+  });
+
+  it('keeps a blank SHORT name, which is the requirement id an agent reads', () => {
+    const { text, model } = reparse(`package C { requirement <''> r; }`);
+    expect(text).toContain(`requirement <''> r`);
+    expect(model.all().find((e) => e.declaredName === 'r')?.declaredShortName).toBe('');
+  });
+
   it('puts a named comment in its namespace, exactly as doc and rep already are', () => {
     // Keeping the name is what makes this true: before the fix a Comment was
     // anonymous and could never collide. Pinned so the new error is a recorded
@@ -1389,5 +1417,95 @@ describe('round-trip — a comment keeps what it points at', () => {
     expect(c.declaredName).toBeUndefined();
     expect(c.attrs.about).toBeUndefined();
     expect(c.attrs.locale).toBeUndefined();
+  });
+});
+
+/**
+ * A note body is written with NO escaping, and the sequence that ends it has no
+ * spelling that survives inside it — the notation gives that delimiter no escape
+ * sequence at all, unlike a name or a string literal. Written
+ * verbatim it closes the note early and the rest of the value is re-read as
+ * DECLARATIONS: a requirement statement typed into the Properties panel grew a
+ * `Satisfy` nobody wrote, the saved file re-parsed with zero diagnostics, and
+ * the second save promoted the mis-parse into the canonical form. Refusing to
+ * produce that file is the only honest answer — see `semantics/notes.ts`.
+ */
+describe('round-trip — a note body cannot inject model structure', () => {
+  /** A body whose tail would be read back as two declarations. */
+  const INJECTION = `mass <= 25 kg ${NOTE_BODY_TERMINATOR} satisfy R1 by Vehicle; doc /*`;
+
+  const model = (): Model => parseModel('package P { part def Vehicle; }').model;
+
+  /** parse → serialize → parse, asserting a clean parse each way. */
+  function reparse(src: string): { text: string; model: Model } {
+    const { model: m, diagnostics } = parseModel(src);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const text = serializeModel(m);
+    const rt = parseModel(text);
+    expect(rt.diagnostics.filter((d) => d.severity === 'error'), text).toEqual([]);
+    return { text, model: rt.model };
+  }
+
+  it('refuses to write a Documentation body that would close its own note', () => {
+    const m = model();
+    const p = m.all().find((e) => e.eClass === 'Package')!;
+    const doc = m.create('Documentation', { ownerId: p.id, attrs: { body: INJECTION } });
+    expect(() => serializeModel(m)).toThrow(UnwritableNoteBodyError);
+    expect(() => serializeModel(m)).toThrow(doc.id);
+  });
+
+  it('refuses the same body on a comment and on a textual representation', () => {
+    for (const eClass of ['Comment', 'TextualRepresentation'] as const) {
+      const m = model();
+      const p = m.all().find((e) => e.eClass === 'Package')!;
+      m.create(eClass, { ownerId: p.id, attrs: { body: INJECTION, language: 'js' } });
+      expect(() => serializeModel(m), eClass).toThrow(UnwritableNoteBodyError);
+    }
+  });
+
+  it("refuses a requirement statement that would fabricate a Satisfy nobody wrote", () => {
+    // The original reproduction, end to end: the grid and the Properties panel
+    // both write `attrs.text`, and the serializer emits it as a second,
+    // unescaped doc-emitting site.
+    const { model: m } = parseModel(
+      'package P {\n    requirement <R1> maxMass;\n    part def Vehicle;\n}\n',
+    );
+    const req = m.all().find((e) => e.declaredName === 'maxMass')!;
+    m.setAttrs(req.id, { text: INJECTION });
+    expect(() => serializeModel(m)).toThrow(UnwritableNoteBodyError);
+  });
+
+  it('writes a body that merely CONTAINS a star or a slash, unchanged', () => {
+    // The refusal is about one two-character sequence, not about punctuation:
+    // `/*` inside a note is legal (the terminal does not nest) and must still
+    // round-trip.
+    const { text, model: rt } = reparse(`package C { doc /* a /* b * c / d */ }`);
+    expect(text).toContain('doc /* a /* b * c / d */');
+    expect(rt.all().find((e) => e.eClass === 'Documentation')?.attrs.body).toBe('a /* b * c / d');
+  });
+
+  it('does NOT cover a value expression — the same injection, recorded not fixed', () => {
+    // The claim this describe block makes is about note bodies, and it must not
+    // be read as a claim about every free-text box in the panel. `attrs.value`
+    // is written as the author typed it too (the Properties Value box takes free
+    // text), so a value ending in `;` injects declarations exactly the way a
+    // note body did. It is notation rather than prose — closing it means
+    // checking that the value parses as an expression, which is a different
+    // commit — so the campaign ledger records it under Known limitations, and
+    // this pins the scope: the day the value box is closed, this test fails and
+    // the ledger entry goes.
+    const { model: m } = parseModel(
+      'package P {\n    part def Vehicle {\n        attribute mass = 10;\n    }\n}\n',
+    );
+    const mass = m.all().find((e) => e.declaredName === 'mass')!;
+    m.setAttrs(mass.id, { value: '1; part def Injected; attribute q = 2', valueText: undefined });
+
+    const out = serializeModel(m);
+    const back = parseModel(out);
+    expect(back.diagnostics.filter((d) => d.severity === 'error'), out).toEqual([]);
+    expect(
+      back.model.all().some((e) => e.declaredName === 'Injected'),
+      'still open: a value expression is written verbatim',
+    ).toBe(true);
   });
 });

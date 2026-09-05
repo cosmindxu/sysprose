@@ -23,6 +23,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parseModel, serializeModel, checkText } from '@text/index';
+import { UnwritableMultiplicityError } from '@text/serializer';
 import type { Model } from '@core/index';
 
 const named = (model: Model, name: string) =>
@@ -314,5 +315,149 @@ describe('recovery honesty — the mark never costs more than it saves', () => {
       again.diagnostics.filter((d) => d.code === 'parse/unknown-keyword'),
       'the residual: one fault of the two survives the round trip',
     ).toHaveLength(1);
+  });
+});
+
+/**
+ * The same honesty claim, one layer down: not "the residue is re-emitted" but
+ * "nothing the serializer writes was invented". Both defects here turned ONE
+ * error on the way in into ZERO on the way out, which is the failure mode the
+ * file exists for — a saved file that checks clean is the strongest claim this
+ * tool makes about a file, and a save must never manufacture it.
+ */
+describe('recovery honesty — a save never fabricates notation', () => {
+  it('drops an unreadable multiplicity rather than writing the word `undefined` as notation', async () => {
+    // `[]` and `[` both leave `m.lower` undefined. `String(undefined)` wrote
+    // `[undefined]` into the file — and `undefined` is a legal MultTerm (a
+    // QualifiedName bound), so the saved file parsed clean, with a phantom
+    // feature named `undefined` standing in for the bound the author lost.
+    for (const src of [
+      'package P {\n    part def A;\n    part a : A [];\n}\n',
+      'package P {\n    part def A;\n    part a : A [;\n}\n',
+    ]) {
+      const before = await checkText(src, { library: 'none' });
+      expect(before.summary.errors, `${src} should not parse`).toBeGreaterThan(0);
+
+      const { model } = parseModel(src);
+      expect(named(model, 'a')?.attrs.multiplicity, 'no bound was read, so none is stored').toBeUndefined();
+
+      const out = serializeModel(model);
+      expect(out, 'a JavaScript sentinel is not notation').not.toContain('undefined');
+
+      const after = await checkText(out, { library: 'none' });
+      expect(
+        after.elements.count,
+        'the save invents no element the source did not have',
+      ).toBe(before.elements.count);
+    }
+  });
+
+  it('drops a half-read RANGE rather than narrowing it to the bound it did read', async () => {
+    // `[0..]` is the same defect one step along: the lower bound reads, the
+    // upper one does not, and writing the lower alone invents `[0]` — a
+    // different, well-formed bound the author never wrote, after which the file
+    // checks clean. A range whose upper bound could not be read is a bound that
+    // could not be read.
+    for (const src of [
+      'package P {\n    part def A;\n    part a : A [0..];\n}\n',
+      'package P {\n    part def A;\n    part a : A [ 0 .. ];\n}\n',
+    ]) {
+      const before = await checkText(src, { library: 'none' });
+      expect(before.summary.errors, `${src} should not parse`).toBeGreaterThan(0);
+
+      const { model } = parseModel(src);
+      expect(
+        named(model, 'a')?.attrs.multiplicity,
+        'half a range is not a bound',
+      ).toBeUndefined();
+
+      const out = serializeModel(model);
+      expect(out, 'the bound the author did not write').not.toContain('[0]');
+    }
+  });
+
+  it('keeps a bound the grammar admits but this tool would rather not read', () => {
+    // A `MultTerm` is a number, `*`, or a QUALIFIED NAME, and a name may be
+    // written unrestricted — `['my bound']`, `['größe']`. These parse with zero
+    // errors, so dropping them on save is plain content loss: the author's
+    // declaration comes back missing its multiplicity and the file still checks
+    // clean, which is the silent failure this file exists to forbid.
+    for (const bound of ["'my bound'", "'größe'", "'max-count'", "'n/2'"]) {
+      const src = `package P {\n    part def A;\n    attribute ${bound};\n    part a : A [${bound}];\n}\n`;
+      const { model, diagnostics } = parseModel(src);
+      expect(diagnostics.filter((d) => d.severity === 'error'), bound).toHaveLength(0);
+      expect(serializeModel(model), bound).toContain(`[${bound}]`);
+    }
+  });
+
+  it('writes a MALFORMED multiplicity back, so its error survives the save', async () => {
+    // The serializer is not a second, quieter validator. `malformed-multiplicity`
+    // reports every one of these; dropping them on save erased the evidence for
+    // the error the checker had just given — one error in, zero out — which is
+    // the same laundering as the blank name below. Whether it is well FORMED is
+    // the validator's question; the serializer's only question is whether it can
+    // be written back at all.
+    for (const bound of ["'max count'", '1.5', "0..'up to'"]) {
+      const src = `package P {\n    part def A;\n    part x : A [${bound}];\n}\n`;
+      const before = await checkText(src, { library: 'none' });
+      expect(before.diagnostics.map((d) => d.code), bound).toContain(
+        'validation/malformed-multiplicity',
+      );
+
+      const out = serializeModel(parseModel(src).model);
+      const after = await checkText(out, { library: 'none' });
+      expect(
+        after.summary.errors,
+        `saving [${bound}] laundered its error away:\n${out}`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it('refuses to write a multiplicity that would close its own bracket', () => {
+    // The one thing a multiplicity may not do is stop being one: a `]` inside
+    // the value ends the bracket and everything after it is read back as
+    // declarations — the note-body defect in a second field, reachable from the
+    // Properties multiplicity box. Refusing is loud where dropping was silent,
+    // and `malformed-multiplicity` always reports such a value too (none of
+    // these characters can occur in a well-formed one), so the Problems panel
+    // names the element while this stops the file being written.
+    const { model } = parseModel('package P {\n    part def A;\n    part a : A;\n}\n');
+    const a = named(model, 'a')!;
+    for (const bad of ['1]; part def Ghost; part y : A [1', '1 /* x', '1\n]']) {
+      model.setAttrs(a.id, { multiplicity: bad });
+      expect(() => serializeModel(model), JSON.stringify(bad)).toThrow(UnwritableMultiplicityError);
+    }
+    // …and a real one is still written.
+    model.setAttrs(a.id, { multiplicity: '0..*' });
+    expect(serializeModel(model)).toContain('[0..*]');
+  });
+
+  it('does not turn an emptied requirement id into a blank one', () => {
+    // The Properties panel clears the id field by writing `''` into the legacy
+    // `attrs.reqId`, so an emptied box means "no id here" — unlike a
+    // `declaredShortName` of `''`, which is a blank id the author wrote and the
+    // validator reports.
+    const { model } = parseModel('package P {\n    requirement r;\n}\n');
+    const r = named(model, 'r')!;
+    model.setAttrs(r.id, { reqId: '' });
+    expect(serializeModel(model)).not.toContain('<');
+  });
+
+  it('keeps a blank declared name, so a blank-name error cannot be saved away', async () => {
+    // `declaredName === ''` is a distinct, validator-visible state from
+    // `declaredName === undefined`. Collapsing them on save destroyed the
+    // evidence for the error the checker had just reported, and left behind a
+    // `split-declaration` warning that told the reader something false.
+    const src = "package P {\n    part def '';\n}\n";
+    const before = await checkText(src, { library: 'none' });
+    expect(before.diagnostics.map((d) => d.code)).toContain('validation/blank-name');
+
+    const out = serializeModel(parseModel(src).model);
+    const after = await checkText(out, { library: 'none' });
+    expect(
+      after.diagnostics.map((d) => d.code),
+      `saving laundered the error away:\n${out}`,
+    ).toContain('validation/blank-name');
+    expect(after.diagnostics.map((d) => d.code)).not.toContain('validation/split-declaration');
   });
 });

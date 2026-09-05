@@ -18,7 +18,7 @@ sequenceDiagram
     Main->>S: create store (zustand)
     S->>S: buildSampleModel() → initial Model
     S->>S: new ModelApi(model), new SysmlApiServer(model)
-    S->>S: safeValidate + safeSerialize (initial)
+    S->>S: safeValidate + textView (initial)
     S->>Lib: loadStandardLibraryAsync(model) [fire-and-forget]
     Main->>RF: <App/> render
     Note over S: on library ready → rev++ → re-validate, re-serialize
@@ -45,7 +45,7 @@ sequenceDiagram
     S->>M: setAttr → emits ChangeEvent
     S->>S: afterMutation()
     par synchronous fan-out
-        S->>V: validate(model) [23 rules, full scan]
+        S->>V: validate(model) [24 rules, full scan]
         S->>T: serialize(model) [full regeneration]
         S->>S: rev++
     and

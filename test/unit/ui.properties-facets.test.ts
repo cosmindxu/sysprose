@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, fireEvent, act } from '@testing-library/react';
 import React from 'react';
 import { Model } from '@core/index';
 
@@ -24,7 +24,7 @@ vi.mock('../../src/library/standard-library', () => ({
 import { useAppStore } from '../../src/ui/store';
 import { Properties } from '../../src/ui/panels/Properties';
 import { parseModel } from '@text/index';
-import { untaggedStatementKindLabel } from '@semantics/index';
+import { NOTE_BODY_TERMINATOR, untaggedStatementKindLabel } from '@semantics/index';
 
 /** Load `src`, select the element named `name`, and render the panel over it. */
 function mount(src: string, name: string) {
@@ -104,5 +104,67 @@ describe('Properties — the Kind selector', () => {
     const kind = view.getByTestId('prop-statement-kind') as HTMLSelectElement;
     expect(kind.value).toBe('');
     expect(kind.querySelector('option[value=""]')!.textContent).toBe('(untagged)');
+  });
+});
+
+/**
+ * The two free-text boxes in the panel — Documentation and Requirement text —
+ * are the other half of the same refusal. Both write straight into a note body,
+ * and a note body has no escape for the characters that end it: a value
+ * carrying them cannot be written back, so the panel must refuse the keystroke
+ * and say so rather than store a value the next save cannot hold.
+ */
+describe('Properties — a note body the file cannot hold', () => {
+  const INJECTION = `mass <= 25 kg ${NOTE_BODY_TERMINATOR} satisfy R1 by V; doc /*`;
+
+  it('refuses a requirement statement carrying the note terminator, with the reason', () => {
+    const { view, id } = mount(`package P {\n    requirement <R1> maxMass;\n}`, 'maxMass');
+    const before = useAppStore.getState().model.require(id).attrs.text;
+    fireEvent.change(view.getByTestId('prop-text'), { target: { value: INJECTION } });
+    expect(useAppStore.getState().model.require(id).attrs.text, 'nothing was written').toBe(before);
+    expect(view.getByTestId('prop-note-refusal').textContent).toMatch(/close the note/i);
+  });
+
+  it('refuses the same body in the Documentation box', () => {
+    const { view, id } = mount(`package P {\n    part p1 {\n        doc /* fine */\n    }\n}`, 'p1');
+    const model = useAppStore.getState().model;
+    const doc = model.children(id).find((c) => c.eClass === 'Documentation')!;
+    fireEvent.change(view.getByTestId('prop-doc'), { target: { value: INJECTION } });
+    expect(useAppStore.getState().model.require(doc.id).attrs.body).toBe('fine');
+    expect(view.getByTestId('prop-note-refusal').textContent).toMatch(/close the note/i);
+  });
+
+  it('writes an ordinary statement and takes the refusal back down', () => {
+    const { view, id } = mount(`package P {\n    requirement <R1> maxMass;\n}`, 'maxMass');
+    fireEvent.change(view.getByTestId('prop-text'), { target: { value: INJECTION } });
+    expect(view.queryByTestId('prop-note-refusal')).not.toBeNull();
+    fireEvent.change(view.getByTestId('prop-text'), { target: { value: 'under 25 kg' } });
+    expect(useAppStore.getState().model.require(id).attrs.text).toBe('under 25 kg');
+    expect(view.queryByTestId('prop-note-refusal')).toBeNull();
+  });
+
+  it('does not re-show the refusal when the element is selected again', () => {
+    // The notice belongs to the attempt, not to the element. It was kept in
+    // component state that nothing reset on a selection change, so looking at
+    // another element and coming back put a red refusal under a box the author
+    // had not touched since — a report of something that did not just happen.
+    const { view, model } = mount(
+      `package P {\n    requirement <R1> maxMass;\n    requirement <R2> other;\n}`,
+      'maxMass',
+    );
+    fireEvent.change(view.getByTestId('prop-text'), { target: { value: INJECTION } });
+    expect(view.queryByTestId('prop-note-refusal')).not.toBeNull();
+
+    const first = useAppStore.getState().selectionId!;
+    const second = model.all().find((e) => e.declaredName === 'other')!.id;
+    act(() => {
+      useAppStore.setState({ selectionId: second, selectionIds: [second] });
+    });
+    expect(view.queryByTestId('prop-note-refusal'), 'another element was never refused').toBeNull();
+
+    act(() => {
+      useAppStore.setState({ selectionId: first, selectionIds: [first] });
+    });
+    expect(view.queryByTestId('prop-note-refusal'), 'coming back is not another attempt').toBeNull();
   });
 });

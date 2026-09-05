@@ -313,6 +313,13 @@ const CODES = [
     hint: 'Give the element a name, or remove the empty quotes to leave it anonymous.',
   },
   {
+    code: 'validation/unwritable-note-body',
+    source: 'validation',
+    severity: 'error',
+    when: 'A doc/comment/rep body, or a requirement statement, contains the two characters that end a note — which the notation gives no way to escape.',
+    hint: 'Remove them from the text. Written into a note they would close it early, and everything after them would be read back as declarations instead of prose.',
+  },
+  {
     code: 'validation/dangling-endpoint',
     source: 'validation',
     severity: 'error',

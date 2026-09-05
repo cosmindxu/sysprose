@@ -287,6 +287,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A named element has an empty or whitespace-only name.
 - **Hint given:** Give the element a name, or remove the empty quotes to leave it anonymous.
 
+### `validation/unwritable-note-body`
+
+- **Severity:** error
+- **Source:** validation
+- **Fires when:** A doc/comment/rep body, or a requirement statement, contains the two characters that end a note — which the notation gives no way to escape.
+- **Hint given:** Remove them from the text. Written into a note they would close it early, and everything after them would be read back as declarations instead of prose.
+
 ### `validation/dangling-endpoint`
 
 - **Severity:** error
@@ -458,4 +465,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*55 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*56 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

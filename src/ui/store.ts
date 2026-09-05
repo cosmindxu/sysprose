@@ -36,6 +36,7 @@
  *   diagnostics  : Diagnostic[]       — current validation/parse findings
  *   textBuffer   : string             — textual-editor contents
  *   textDirty    : boolean            — buffer has edits not applied to model
+ *   serializeError: string | null     — why the model could not be written as text
  *   projectName  : string             — current project name
  *   queryResult  : QueryResult | null — last API-console query result
  *   rev          : number             — bumps on every model mutation
@@ -63,6 +64,7 @@ import {
   collectSubtrees,
   pasteSubtrees,
   isRelationship,
+  isRequirement,
   type AttrValue,
   type ClipboardPayload,
   type ElementId,
@@ -156,9 +158,11 @@ import {
 } from '@persistence/index';
 import {
   SimulationSession,
+  UNWRITABLE_NOTE_BODY_REFUSAL,
   clearStatementKind as semClearStatementKind,
   hasRequirementAttr,
   isSimulatable as semIsSimulatable,
+  isWritableNoteBody,
   setRequirementAttr as semSetRequirementAttr,
   setStatementKind as semSetStatementKind,
   statementKindOf,
@@ -281,6 +285,21 @@ export interface AppState {
   diagnostics: Diagnostic[];
   textBuffer: string;
   textDirty: boolean;
+  /**
+   * Why the model could not be written as text, or `null` when it could.
+   *
+   * A model can carry something the notation has no spelling for — a note body
+   * containing the sequence that ends a note, a multiplicity containing the
+   * bracket that ends one — and the serializer refuses rather than write a file
+   * that parses cleanly and means something else. That refusal used to be
+   * swallowed into the empty string, so the Text tab showed an empty document
+   * while the status strip still said "in sync with model". While this is set,
+   * {@link AppState.textBuffer} is the LAST text that could be written, the Text
+   * view says so, and `applyText` refuses — a stale buffer must not be able to
+   * replace the model it no longer describes. The element itself is named in the
+   * Problems panel by the rule that reports it.
+   */
+  serializeError: string | null;
   projectName: string;
   queryResult: QueryResult | null;
   /** Bumps on every model mutation; selector hook for model-backed panels. */
@@ -618,19 +637,39 @@ const EMPTY_SNAPSHOT: SerializedModel = {
 };
 
 /**
- * Safe serialization that never throws into a render. Library packages are
- * excluded so the Text view shows only the user's model and re-applying the
- * text never re-ingests (and duplicates) the standard library.
+ * The text view of the model — or, when the model cannot be written, the
+ * previous text and the reason.
+ *
+ * Never throws into a render. Library packages are excluded so the Text view
+ * shows only the user's model and re-applying the text never re-ingests (and
+ * duplicates) the standard library.
+ *
+ * The failure branch used to return the empty string, which is a claim about
+ * the model — "it is empty" — that the store then published as clean and in
+ * sync. Returning the previous buffer plus {@link AppState.serializeError}
+ * keeps the Text view honest and gives `applyText` something to refuse on. The
+ * patch is PARTIAL on failure: `textDirty` is left as it was, because whether
+ * the user has unapplied edits is not what just changed.
  */
-function safeSerialize(model: Model): string {
+function textView(model: Model, previous: string): Partial<AppState> {
   try {
-    return userRootIds(model)
-      .map((id) => serializeElement(model, id, 0))
-      .join('\n\n');
+    return {
+      textBuffer: userRootIds(model)
+        .map((id) => serializeElement(model, id, 0))
+        .join('\n\n'),
+      textDirty: false,
+      serializeError: null,
+    };
   } catch (err) {
     console.error('serialization failed', err);
-    return '';
+    return { textBuffer: previous, serializeError: serializeRefusal(err) };
   }
+}
+
+/** The sentence shown for a serializer refusal (its message, or a last resort). */
+function serializeRefusal(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message === '' ? 'The model could not be written as text.' : message;
 }
 
 /** Compact display form of a value-store value. */
@@ -887,7 +926,7 @@ const initialModel = buildSampleModel();
 const initialApi = new ModelApi(initialModel);
 const initialServer = new SysmlApiServer(initialModel);
 
-// Coalesce the per-mutation RECOMPUTE — validation (23 rules), textual
+// Coalesce the per-mutation RECOMPUTE — validation (24 rules), textual
 // re-serialization, and the ELK diagram rebuild — into a single pass after a
 // burst of edits settles, instead of running all three synchronously on every
 // edit (findings C4, C5, L6 — the dominant large-model cost). `rev` is bumped
@@ -936,12 +975,9 @@ export const useAppStore = create<AppState>((set, get) => {
    * model edit); remote CRDT applies pass `false` to preserve unapplied edits.
    */
   function recomputeNow(forceText: boolean): void {
-    const { model, textDirty } = get();
+    const { model, textDirty, textBuffer } = get();
     const patch: Partial<AppState> = { diagnostics: safeValidate(model) };
-    if (forceText || !textDirty) {
-      patch.textBuffer = safeSerialize(model);
-      patch.textDirty = false;
-    }
+    if (forceText || !textDirty) Object.assign(patch, textView(model, textBuffer));
     set(patch);
     void get().rebuildDiagram();
   }
@@ -1043,8 +1079,10 @@ export const useAppStore = create<AppState>((set, get) => {
     grid: null,
     scene: null,
     diagnostics: safeValidate(initialModel),
-    textBuffer: safeSerialize(initialModel),
+    textBuffer: '',
     textDirty: false,
+    serializeError: null,
+    ...textView(initialModel, ''),
     projectName: deriveProjectName(initialModel),
     queryResult: null,
     rev: 0,
@@ -1363,8 +1401,7 @@ export const useAppStore = create<AppState>((set, get) => {
           undoStack: s.undoStack.slice(0, -1),
           redoStack: redoBefore,
           diagnostics: safeValidate(model),
-          textBuffer: safeSerialize(model),
-          textDirty: false,
+          ...textView(model, s.textBuffer),
           rev: s.rev + 1,
           regroupApply: {
             ...plan,
@@ -1535,7 +1572,20 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setAttr(id, key, value) {
       const { model } = get();
-      if (!model.has(id)) return;
+      const el = model.get(id);
+      if (!el) return;
+      // A note body is written into the file with no escaping, and the notation
+      // gives the sequence that ENDS a note no escape at all:
+      // written back it would close the note early and the rest of the value
+      // would be read as declarations. So it must not be stored either. The
+      // panels ask `isWritableNoteBody` first and put the reason on the box;
+      // this is the backstop for every other caller, and it refuses BEFORE
+      // pushUndo so a refused write costs no undo step.
+      const isNote = key === 'body' || (key === 'text' && isRequirement(el.eClass));
+      if (isNote && !isWritableNoteBody(value)) {
+        console.error('setAttr refused', UNWRITABLE_NOTE_BODY_REFUSAL);
+        return;
+      }
       pushUndo();
       // A hand-edited value invalidates the parser's source lexeme for it.
       model.setAttrs(id, key === 'value' ? { value, valueText: undefined } : { [key]: value });
@@ -1972,6 +2022,13 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     applyText() {
+      // While the model cannot be written, the buffer is the LAST text that
+      // could be written — an older model. Parsing it here would replace the
+      // live model with a text that never described it, on one click, silently.
+      // A buffer the user has EDITED is a different thing: applying it is their
+      // explicit intent and it is the way out of the state, so the refusal is
+      // only over the buffer nobody typed into.
+      if (get().serializeError !== null && !get().textDirty) return;
       if (get().simSession) get().simStop(); // replacing the model orphans the sim target
       cancelRecompute();
       const { model, textBuffer } = get();
@@ -1985,6 +2042,12 @@ export const useAppStore = create<AppState>((set, get) => {
       set((s) => ({
         diagnostics: [...parseDiags, ...validationDiags],
         textDirty: false,
+        // The model now IS this text, so anything that could not be written
+        // before is gone with the model that held it: nothing the parser
+        // produces can carry a note body or a multiplicity that closes its own
+        // delimiter. Leaving the old reason standing would keep refusing the
+        // apply that just succeeded.
+        serializeError: null,
         rev: s.rev + 1,
         projectName: deriveProjectName(model),
         ...validSelection(s, model),
@@ -1997,7 +2060,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     regenerateText() {
-      set({ textBuffer: safeSerialize(get().model), textDirty: false });
+      set(textView(get().model, get().textBuffer));
     },
 
     /* ───────────────────────────── Projects ───────────────────────────── */
@@ -2070,8 +2133,7 @@ export const useAppStore = create<AppState>((set, get) => {
         ...rootSelection(model),
         expandedIds: new Set(userRootIds(model)),
         queryResult: null,
-        textBuffer: safeSerialize(model),
-        textDirty: false,
+        ...textView(model, s.textBuffer),
         rev: s.rev + 1,
       }));
       void get().rebuildDiagram();
@@ -2111,7 +2173,20 @@ export const useAppStore = create<AppState>((set, get) => {
 
     exportModel(fmt) {
       const { model, projectName } = get();
-      const text = ioExportModel(model, fmt);
+      let text: string;
+      try {
+        text = ioExportModel(model, fmt);
+      } catch (err) {
+        // The SysML export runs the same serializer as the Text view, so it can
+        // refuse for the same reason — and this is called straight from a
+        // Toolbar click handler and a command, neither of which has anywhere to
+        // catch a throw (the app has no error boundary). Record the refusal
+        // where the Text view shows it, export nothing, and let the Problems
+        // panel name the offending element.
+        console.error('export failed', err);
+        set({ serializeError: serializeRefusal(err) });
+        return '';
+      }
       const { filename, mime } = exportTarget(fmt, projectName);
       try {
         downloadText(filename, text, mime);
@@ -2318,8 +2393,7 @@ export const useAppStore = create<AppState>((set, get) => {
       set((s) => ({
         currentBranchId: branchId,
         diagnostics: safeValidate(model),
-        textBuffer: safeSerialize(model),
-        textDirty: false,
+        ...textView(model, s.textBuffer),
         projectName: deriveProjectName(model),
         ...rootSelection(model),
         expandedIds: new Set(userRootIds(model)),
@@ -2369,8 +2443,7 @@ export const useAppStore = create<AppState>((set, get) => {
         undoStack: undoStack.slice(0, -1),
         redoStack: [...redoStack, current].slice(-UNDO_LIMIT),
         diagnostics: safeValidate(model),
-        textBuffer: safeSerialize(model),
-        textDirty: false,
+        ...textView(model, s.textBuffer),
         projectName: deriveProjectName(model),
         ...validSelection(s, model),
         rev: s.rev + 1,
@@ -2389,8 +2462,7 @@ export const useAppStore = create<AppState>((set, get) => {
         redoStack: redoStack.slice(0, -1),
         undoStack: [...undoStack, current].slice(-UNDO_LIMIT),
         diagnostics: safeValidate(model),
-        textBuffer: safeSerialize(model),
-        textDirty: false,
+        ...textView(model, s.textBuffer),
         projectName: deriveProjectName(model),
         ...validSelection(s, model),
         rev: s.rev + 1,
@@ -2508,7 +2580,7 @@ function refreshAfterLibraryLoad(): void {
     const faulted = parseRows.some((d) => d.ruleId === 'parse' && d.severity === 'error');
     return {
       diagnostics: [...parseRows, ...safeValidate(model)],
-      ...(faulted ? { textDirty: true } : { textBuffer: safeSerialize(model), textDirty: false }),
+      ...(faulted ? { textDirty: true } : textView(model, s.textBuffer)),
       rev: s.rev + 1,
     };
   });

@@ -98,6 +98,22 @@
   color: var(--warning);
   font-weight: 600;
 }
+/* The model could not be written at all: the buffer below is the last text that
+   could be, so the strip must not read as a state the user can apply away. */
+.text-editor-status.is-refused {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.text-editor-refusal {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  color: var(--error);
+  font-size: 11px;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-muted);
+}
 
 .text-editor-body {
   flex: 1 1 auto;
@@ -1464,4 +1480,18 @@
   align-items: center;
   gap: 3px;
   color: var(--text-muted);
+}
+
+/* A write the panel refused, with the reason under the box that made it. The
+   two note boxes (requirement statement, documentation) are controlled, so a
+   refused keystroke leaves nothing behind to see — this is what says why. */
+.field-refusal,
+.req-note-refusal {
+  color: var(--error);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 3px;
+}
+.req-note-refusal {
+  padding: 2px 6px;
 }

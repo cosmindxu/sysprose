@@ -124,16 +124,16 @@ one in this corpus was read and corrected by hand.
 | L3 | Referential: unresolved type, connection end, import, transition end, specialization and redefinition; forward references in a package; a type, a specialization or a connector end reached through an import, through inheritance, through a transitive supertype, through an implicit library base or through a library import written in text; an alias used as a type; a name declared in both a supertype and an enclosing namespace, written both ways round; a multi-endpoint dependency naming the endpoint that is missing; plus a pinned behaviour | 23 |
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 23 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
-| L6 | **Sufficiency invariants over the whole corpus** (see below) | 13 assertions |
+| L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
 | L7 | The command-line contract: exit codes, JSON shape, stdin, strict and `--no-library` modes | 12 tests |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
-so where they appear. Measured 2026-09-03: **80 fixture directories** under
-`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **55
-catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **23 validation
+so where they appear. Measured 2026-09-05: **80 fixture directories** under
+`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **56
+catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
 rules** in `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
 `RULES.length`.
@@ -1815,7 +1815,117 @@ rule's declaration, end on its closing brace, and contain that rule's id. Both
 ranges were off — one started on the line after the declaration and ran into a
 helper below the rule.
 
+**A note body could inject model structure, silently, and cleanly on the second
+save.** A note body is written with no
+escaping at all, and the delimiter that ends it has no escape sequence: unlike a
+name or a string literal, there is no spelling of it that survives inside a
+note. The serializer assumed every body had come back out of a note token and so
+could not contain that sequence — but three UI paths write free text straight
+into one (the Properties documentation box, the Properties requirement-statement
+box, the Text column of the requirements grid), as does the element-graph API. A
+statement ending in a close-note followed by `satisfy R1 by Vehicle;` was written
+out verbatim: the note closed early, the tail was re-read as declarations, the
+model came back with a `Satisfy` nobody had written, the saved file re-parsed
+with ZERO diagnostics, and the second save promoted the mis-parse into the
+canonical form, at which point nothing could tell it had happened. A body that
+cannot be written back is now a loud failure rather than a save: the panels ask
+before they write and put the reason under the box, the store command refuses
+the same value for every other caller, `validation/unwritable-note-body` reports
+a model that already carries one, and the serializer itself throws rather than
+produce a file that means something other than the model. There is no fixture —
+the input for one cannot be written, which is the whole point — so it is pinned
+by unit tests over the serializer, the rule and both panels. The claim is narrow
+on purpose: a note body has no escape sequence AT ALL, unlike a name or a string
+literal. It is not the only authored string written verbatim — a value
+expression is too, and is recorded below rather than closed here.
+
+**A faulted multiplicity saved as the literal token `[undefined]`, and that file
+then checked OK.** `part a : A [];` and `part a : A [;` both parse (with an
+error) into a multiplicity whose lower bound is absent, and `String(m.lower)`
+turned that absence into the seven letters `undefined`, which went into the
+user's file as if they were notation. `undefined` is a legal `MultTerm` — the
+grammar admits a qualified name as a bound — so the saved file re-parsed clean,
+one error in and zero errors out, with a phantom feature standing in for the
+bound the author had lost. The mapper now stores no multiplicity it could not
+read — nor half a range, since `part a : A [0..];` read its lower bound and not
+its upper one, and writing the lower alone invented `[0]`, a well-formed bound
+the author never wrote. An unreadable bound is now simply ABSENT, so the save
+invents neither a phantom feature nor a bound nobody asked for. What it still
+does not do is reproduce the fault: no residue is recorded for a bracket, so the
+saved file re-parses clean — the same error-recovery laundering listed under
+Known limitations below, one input at a time rather than one fixture.
+
+The serializer's own guard asks a different question, and a first attempt at it
+asked the wrong one. Written as a SHAPE check — write a bracket only when its
+content looks like the grammar's `Multiplicity` — it made the defect worse in
+both directions: it dropped `['max count']`, `[1.5]` and `[0..'up to']`, which
+`validation/malformed-multiplicity` reports, so the saved file no longer carried
+the error the checker had just given (one error in, zero out, the very shape
+this commit exists to close); and it dropped `['my bound']` and `['größe']`,
+which parse with no error at all, because a `MultTerm` may be a qualified name
+and a name may be written unrestricted. Whether a multiplicity is well FORMED is
+the validator's question. The serializer's is only whether it can be written
+BACK, so a malformed bound is now written out, error and all, and the one thing
+refused is a value that would close its own bracket — loudly
+(`UnwritableMultiplicityError`), because dropping it would produce a file that
+parses cleanly and says something else, and because every such value is reported
+by `malformed-multiplicity` too, so the Problems panel names the element.
+
+**A blank declared name was laundered away by every serializer path except
+`comment`.** `part def '';` is `validation/blank-name`, an error; saving it wrote
+`part def;`, which checks OK — and left behind a `split-declaration` warning
+telling the reader that a misplaced keyword had split the declaration, which is
+not what the author did. The blank-name fix had been applied to the Comment
+branch alone, while `header()` and the twelve dedicated statement forms kept a
+truthiness guard that cannot tell `''` from "no name at all". Those are distinct,
+validator-visible states, and collapsing them on save destroyed the evidence for
+the very error the checker had just reported. Every site now tests for
+PRESENCE — the rule the Comment branch already stated — for the short name as
+well as the name, so a blank requirement id survives too. The one guard that
+still tests truthiness is the LEGACY `attrs.reqId` fallback, because the
+Properties panel clears that field to `''` and an emptied box means "no id",
+not "a blank id". Fixture: `L4-blank-name`, now also covered by the L6 invariant
+below.
+
+**The campaign gained a save-and-recheck invariant.** Both defects above turned
+one error on the way in into zero on the way out, and nothing in the corpus was
+watching for that shape. `test/campaign/invariants.test.ts` now round-trips a
+named list of nineteen fixtures — every case whose fault survives parse →
+serialize → check today — and fails if any of them starts saving clean.
+`L0-json-as-sysml` is on the list too: its first save keeps an error even though
+that save is not idempotent (see below).
+
 ### Known limitations, recorded rather than hidden
+
+**Thirteen fixtures still re-parse clean after a save.** The save-and-recheck
+invariant above is a named list, not a corpus-wide property, because for these
+thirteen it is error RECOVERY rather than the serializer that drops the fault:
+`L0-non-ascii-names`, `L1-unterminated-comment`, `L1-unterminated-string`,
+`L2-bad-multiplicity`, `L2-bare-transition-arrow`, `L2-empty-type`,
+`L2-empty-unit-bracket`, `L2-equals-in-constraint`, `L2-extra-closing-brace`,
+`L2-keyword-order`, `L2-missing-closing-brace`, `L2-unicode-unit-symbol`,
+`L4-dangling-then`. Recovery keeps what it could parse and the unparsed residue
+is re-emitted only where the mapper marked one (see "a faulted save reproduces
+its fault"); where it did not, the saved file is the honest content of the model
+but no longer reproduces the fault. The list is measured, and the invariant is
+the ratchet that stops it growing.
+
+**`L0-json-as-sysml` is the one file in the corpus a save does not settle.**
+JSON offered as `.sysml` is refused by the loader before a model exists; parsed
+directly it now serializes to a bare `;` (it used to be `[undefined];`), which
+still re-checks as an error — so it is on the invariant's list — but a SECOND
+save yields the empty string. The phantom element is gone; the residue is not.
+
+**A value expression is written verbatim, and can inject the same way a note
+body could.** `attrs.value` holds an expression as the author wrote it, and the
+Properties panel's Value box takes free text into it, so a value of
+`1; part def Injected; attribute q = 2` saves as exactly that: two declarations
+nobody wrote, in a file that re-parses with zero diagnostics. It is not covered
+by the note-body refusal above and is not the same fix — a note body has a
+delimiter to close and no escape for it, whereas a value is notation, so closing
+this one means checking that the value PARSES as an expression before it is
+stored. The scope is pinned by a test in `text.roundtrip.test.ts`, which fails
+the day the Value box is closed.
 
 **`doc … locale "…"` still drops its language tag.** The `doc` statement takes
 the same `locale` tag as `comment`, and the mapper still ignores it: `doc D

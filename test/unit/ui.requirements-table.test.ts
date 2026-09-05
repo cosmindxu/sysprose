@@ -30,6 +30,7 @@ import { useAppStore } from '../../src/ui/store';
 import { RequirementsTable } from '../../src/ui/panels/RequirementsTable';
 import { parseModel } from '@text/index';
 import {
+  NOTE_BODY_TERMINATOR,
   getRequirementAttr,
   statementKindOf,
   untaggedStatementKindLabel,
@@ -218,5 +219,100 @@ describe('Requirements panel — a requirement whose declaration did not parse',
       .map((r) => r.querySelector('[data-col-key="status"] select') as HTMLSelectElement);
     expect(selects.length).toBe(2);
     expect(selects.filter((s) => !s.disabled).length, 'exactly the unfaulted row').toBe(1);
+  });
+});
+
+describe('Requirements panel — a statement that could not be written back', () => {
+  // The Text column is one of the two places a person types free text straight
+  // into a note body. The characters that CLOSE that note have no escape in the
+  // notation, so a value carrying them cannot be saved — it used to be, and the
+  // tail of the value came back as declarations.
+  const SRC = `package P {\n    requirement <R1> maxMass { subject s; }\n}`;
+
+  it('refuses the write and says why, instead of storing text the file cannot hold', () => {
+    const view = mount(SRC);
+    const id = idOf(view, 'maxMass');
+    const before = st().model.require(id).attrs.text;
+
+    const cellEl = view
+      .getAllByTestId('req-cell')
+      .find((c) => c.getAttribute('data-col-key') === 'text')!;
+    fireEvent.click(cellEl);
+    const input = view.getByTestId('req-cell-input') as HTMLInputElement;
+    act(() => {
+      fireEvent.blur(input, {
+        target: { value: `mass <= 25 kg ${NOTE_BODY_TERMINATOR} satisfy R1 by V; doc /*` },
+      });
+    });
+
+    expect(st().model.require(id).attrs.text, 'nothing was written').toBe(before);
+    expect(view.getByTestId('req-note-refusal').textContent).toMatch(/close the note/i);
+  });
+
+  it('accepts an ordinary statement, and clears the refusal with it', () => {
+    const view = mount(SRC);
+    const id = idOf(view, 'maxMass');
+    const cellEl = view
+      .getAllByTestId('req-cell')
+      .find((c) => c.getAttribute('data-col-key') === 'text')!;
+    fireEvent.click(cellEl);
+    act(() => {
+      fireEvent.blur(view.getByTestId('req-cell-input'), {
+        target: { value: 'the mass shall be under 25 kg' },
+      });
+    });
+    expect(st().model.require(id).attrs.text).toBe('the mass shall be under 25 kg');
+    expect(view.queryByTestId('req-note-refusal')).toBeNull();
+  });
+
+  /**
+   * The notice belongs to the attempt, not to the row.
+   *
+   * It used to be cleared only by an accepted write in the SAME column, so
+   * editing the name, or pressing Escape out of the Text cell, left a red "the
+   * file cannot hold this" under a cell whose contents nobody had objected to.
+   * A refusal that outlives its cause is a false report.
+   */
+  function refuse(view: ReturnType<typeof mount>): void {
+    const cellEl = view
+      .getAllByTestId('req-cell')
+      .find((c) => c.getAttribute('data-col-key') === 'text')!;
+    fireEvent.click(cellEl);
+    act(() => {
+      fireEvent.blur(view.getByTestId('req-cell-input'), {
+        target: { value: `a ${NOTE_BODY_TERMINATOR} b` },
+      });
+    });
+    expect(view.getByTestId('req-note-refusal')).toBeTruthy();
+  }
+
+  it('takes the refusal back down when the row is edited elsewhere', () => {
+    const view = mount(SRC);
+    refuse(view);
+
+    const nameCell = view
+      .getAllByTestId('req-cell')
+      .find((c) => c.getAttribute('data-col-key') === 'name')!;
+    fireEvent.click(nameCell);
+    act(() => {
+      fireEvent.blur(view.getByTestId('req-cell-input'), { target: { value: 'maxWeight' } });
+    });
+
+    expect(view.queryByTestId('req-note-refusal'), 'nothing objected to the name').toBeNull();
+  });
+
+  it('takes the refusal back down when the edit is abandoned', () => {
+    const view = mount(SRC);
+    refuse(view);
+
+    const cellEl = view
+      .getAllByTestId('req-cell')
+      .find((c) => c.getAttribute('data-col-key') === 'text')!;
+    fireEvent.click(cellEl);
+    act(() => {
+      fireEvent.keyDown(view.getByTestId('req-cell-input'), { key: 'Escape' });
+    });
+
+    expect(view.queryByTestId('req-note-refusal'), 'the attempt was withdrawn').toBeNull();
   });
 });

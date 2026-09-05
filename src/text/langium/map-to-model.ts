@@ -246,10 +246,37 @@ function rangeOf(node: AstNode | undefined): TextRange | undefined {
   };
 }
 
-/** Format a multiplicity node back into the legacy compact string form. */
-function formatMultiplicity(m: Multiplicity): string {
+/**
+ * Format a multiplicity node back into the legacy compact string form, or
+ * `undefined` when there is no bound to format.
+ *
+ * `[]` and an unclosed `[` both parse (with an error) into a Multiplicity whose
+ * `lower` is absent. `String(m.lower)` turned that into the seven letters
+ * `undefined`, which the serializer then wrote into the user's file as if it
+ * were notation — and `undefined` is a legal `MultTerm` (a QualifiedName
+ * bound), so the saved file re-parsed CLEAN, with a phantom feature standing in
+ * for the bound the author lost: one error in, zero errors out. A bound that
+ * could not be read is simply absent; the parse error stays the honest report
+ * of what happened.
+ *
+ * The same holds half a step along. `[0..]` reads its LOWER bound and not its
+ * upper one, and writing the lower alone invents `[0]` — a different,
+ * well-formed bound the author never wrote, after which the file checks clean.
+ * The `..` is the evidence that a range was meant, so it is read back off the
+ * source text with quoted segments removed first (a bound may be an
+ * unrestricted name, and `['a..b']` is one bound, not two).
+ */
+function formatMultiplicity(m: Multiplicity): string | undefined {
+  if (m.lower === undefined || m.lower === null) return undefined;
   const lo = String(m.lower);
-  return m.upper !== undefined && m.upper !== null ? `${lo}..${String(m.upper)}` : lo;
+  if (m.upper !== undefined && m.upper !== null) return `${lo}..${String(m.upper)}`;
+  const outsideQuotes = (m.$cstNode?.text ?? '').replace(/'(?:\\.|[^'\\])*'/g, '');
+  return outsideQuotes.includes('..') ? undefined : lo;
+}
+
+/** The multiplicities of a declaration that could actually be read, in order. */
+function readableMultiplicities(mults: Multiplicity[] | undefined): string[] {
+  return (mults ?? []).map(formatMultiplicity).filter((m): m is string => m !== undefined);
 }
 
 /** Verbatim source text of an expression node (trimmed), for free-form fragments. */
@@ -1733,7 +1760,7 @@ class Mapper {
       attrs: { featureRole: 'return' },
     });
     for (const spec of node.specializations) this.applySpecialization(el, spec);
-    const mults = (node.multiplicity ?? []).map(formatMultiplicity);
+    const mults = readableMultiplicities(node.multiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
       this.model.setAttrs(el.id, this.splitValueUnit(node.value));
@@ -1785,7 +1812,7 @@ class Mapper {
       attrs,
     });
     for (const spec of node.specializations) this.applySpecialization(el, spec);
-    const mults = (node.multiplicity ?? []).map(formatMultiplicity);
+    const mults = readableMultiplicities(node.multiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
       this.model.setAttrs(el.id, this.splitValueUnit(node.value));
@@ -2172,7 +2199,7 @@ class Mapper {
     // legacy parser conflated the two — finding D1/H11). The semantics layer
     // reads `attrs.unit` first, falling back to a unit-named attrs.multiplicity
     // for models saved by the old parser.
-    const mults = (node.multiplicity ?? []).map(formatMultiplicity);
+    const mults = readableMultiplicities(node.multiplicity);
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
 
     // Feature value ( = / := ), with its unit split off.

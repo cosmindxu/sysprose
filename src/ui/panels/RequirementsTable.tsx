@@ -30,8 +30,10 @@ import type { ReqAttrColumn, ReqReference, ReqRefColumn, ReqRow } from '@diagram
 import { isAnnotation, isRelationship, type ElementId, type ElementRecord } from '@core/index';
 import {
   FAULTED_DECLARATION_REFUSAL,
+  UNWRITABLE_NOTE_BODY_REFUSAL,
   canCarryStatementKind,
   carriesItsOwnText,
+  isWritableNoteBody,
   statementKindOf,
   untaggedStatementKindLabel,
   writtenStatementKind,
@@ -70,6 +72,12 @@ export function RequirementsTable(): JSX.Element {
   // their own bit of state rather than a widened `col` that would have to be
   // narrowed again at every use.
   const [editingAttr, setEditingAttr] = useState<{ id: ElementId; key: string } | null>(null);
+  // The row whose Text cell was last refused. The statement is written into a
+  // note body, and the notation gives that note's terminator no escape, so a
+  // value carrying it cannot be saved — the cell keeps the value the model
+  // holds and this puts the reason beside it, the way a disabled facet control
+  // carries `FAULTED_DECLARATION_REFUSAL` in its title.
+  const [noteRefusal, setNoteRefusal] = useState<ElementId | null>(null);
 
   const table = buildRequirementsTable(model);
 
@@ -110,11 +118,29 @@ export function RequirementsTable(): JSX.Element {
     else updateElement(ref.relId, { source: src.filter((s) => s !== ref.targetId) });
   }
 
-  /** Commit an edited scalar cell to the model. */
+  /**
+   * Commit an edited scalar cell to the model — unless the file could not hold
+   * it.
+   *
+   * The Text column writes the requirement statement, which is saved as a note
+   * body. `setAttr` refuses an unwritable one as well, but a command that only
+   * returns leaves the cell looking as though the edit took: asking here lets
+   * the grid say what happened, exactly as the facet cells do for a faulted
+   * declaration.
+   */
   function commitScalar(id: ElementId, col: ScalarKey, raw: string): void {
     const value = col === 'text' ? raw : raw.trim();
+    if (col === 'text' && !isWritableNoteBody(value)) {
+      setNoteRefusal(id);
+      setEditing(null);
+      return;
+    }
     if (col === 'name') updateElement(id, { declaredName: value || undefined });
     else setAttr(id, col, value);
+    // The notice belongs to the attempt, not to the row: any accepted edit —
+    // in this cell or the one beside it — means the author has moved on, and a
+    // refusal left standing under a cell nobody objected to is a false report.
+    setNoteRefusal(null);
     setEditing(null);
   }
 
@@ -157,6 +183,7 @@ export function RequirementsTable(): JSX.Element {
             if (e.key === 'Enter') e.currentTarget.blur();
             else if (e.key === 'Escape') {
               e.stopPropagation();
+              setNoteRefusal(null); // the attempt was withdrawn, so its reason goes with it
               setEditing(null);
             }
           }}
@@ -164,10 +191,17 @@ export function RequirementsTable(): JSX.Element {
       );
     }
     return (
-      <span className={`req-cell-text${value ? '' : ' req-cell-empty'}`}>
-        {col === 'name' && <span className="req-kw">«{shortKw(row.eClass)}»</span>}
-        {value || placeholderFor(col)}
-      </span>
+      <>
+        <span className={`req-cell-text${value ? '' : ' req-cell-empty'}`}>
+          {col === 'name' && <span className="req-kw">«{shortKw(row.eClass)}»</span>}
+          {value || placeholderFor(col)}
+        </span>
+        {col === 'text' && noteRefusal === row.id && (
+          <div className="req-note-refusal" data-testid="req-note-refusal" role="alert">
+            {UNWRITABLE_NOTE_BODY_REFUSAL}
+          </div>
+        )}
+      </>
     );
   }
 

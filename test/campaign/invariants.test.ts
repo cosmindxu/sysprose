@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { checkText } from '@text/check';
-import { diagnosticCode, isKnownCode } from '@text/index';
+import { diagnosticCode, isKnownCode, parseModel, serializeModel } from '@text/index';
 import { loadCases } from './harness';
 import type { CheckReport } from '@text/check';
 import type { Diagnostic } from '@validation/types';
@@ -176,5 +176,72 @@ describe('L6 — a documented repair actually repairs', () => {
       if (r.summary.errors > 0) broken.push(`${c.name}: ${r.summary.errors} error(s)`);
     }
     expect(broken, `documented repairs that do not check clean:\n${broken.join('\n')}`).toEqual([]);
+  });
+});
+
+/**
+ * L6 — SAVING a flawed file does not launder it clean.
+ *
+ * The checker's report is only worth what the file is worth afterwards. Two
+ * defects turned one error on the way IN into zero on the way OUT: a blank
+ * declared name (`part def ''`) was collapsed to "anonymous" by every
+ * serializer path but `comment`, and an unreadable multiplicity (`[]`) was
+ * written back as the literal token `[undefined]` — legal notation naming a
+ * phantom feature. In both cases `check` said FAILED, the user pressed save,
+ * and `check` then said OK about a file that had lost the very thing it was
+ * complaining about.
+ *
+ * The property does not yet hold corpus-wide — thirteen cases still re-parse
+ * clean after a save, because error RECOVERY, not the serializer, is what
+ * dropped their fault (the campaign ledger lists them under Known limitations).
+ * So this is a named list: every case whose fault survives the round trip
+ * today, asserted case by case, which is a ratchet — a change that starts
+ * laundering any of them fails here.
+ */
+describe('L6 — an error cannot become OK by saving', () => {
+  /**
+   * Cases whose error survives parse → serialize → check.
+   *
+   * `L0-json-as-sysml` is in the list: its first save keeps an error, even
+   * though it is the one file in the corpus that is not IDEMPOTENT — the save
+   * leaves a bare `;`, which re-checks as `parse/not-all-input-parsed`, and a
+   * SECOND save yields the empty string. That residue is recorded in the
+   * campaign ledger under Known limitations; what this invariant asks of it is
+   * the same thing it asks of every other case, and the answer is yes.
+   */
+  const SAVE_KEEPS_THE_ERROR = [
+    'L0-json-as-sysml',
+    'L1-illegal-char',
+    'L2-two-independent-errors',
+    'L2-unclosed-paren',
+    'L2-unknown-keyword',
+    'L2-unknown-keyword-no-def',
+    'L2-unsupported-kerml-keyword',
+    'L3-unresolved-connection-end',
+    'L3-unresolved-redefinition',
+    'L3-unresolved-specialization',
+    'L3-unresolved-type',
+    'L4-blank-name',
+    'L4-duplicate-name',
+    'L4-specialization-cycle',
+    'L5-alias-body-after-fault',
+    'L5-nested-fault-rehomes-inner',
+    'L5-note-braces-after-fault',
+    'L5-recovery-keeps-siblings',
+    'L5-relationship-after-fault',
+  ];
+
+  it.each(SAVE_KEEPS_THE_ERROR)('%s still fails after being saved', async (name) => {
+    const c = cases.find((x) => x.name === name);
+    expect(c, `no fixture named ${name}`).toBeDefined();
+    const before = await checkText(c!.input, { library: 'full', fileName: `${name}.sysml` });
+    expect(before.summary.errors, `${name} is expected to fail on the way in`).toBeGreaterThan(0);
+
+    const saved = serializeModel(parseModel(c!.input).model);
+    const after = await checkText(saved, { library: 'full', fileName: `${name}.sysml` });
+    expect(
+      after.summary.errors,
+      `saving ${name} laundered its error away:\n${saved}`,
+    ).toBeGreaterThan(0);
   });
 });

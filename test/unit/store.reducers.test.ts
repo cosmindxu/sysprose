@@ -13,7 +13,7 @@ vi.mock('../../src/library/standard-library', () => ({
 
 import { useAppStore } from '../../src/ui/store';
 import { parseModel } from '@text/index';
-import { getRequirementAttr, statementKindOf } from '@semantics/index';
+import { NOTE_BODY_TERMINATOR, getRequirementAttr, statementKindOf } from '@semantics/index';
 
 /** Reset the singleton store to a fresh, empty model before each test. */
 function reset(): void {
@@ -38,6 +38,129 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
     expect(st().model.get(id)?.eClass).toBe('PartDefinition');
     expect(st().undoStack.length).toBe(1);
     expect(st().rev).toBeGreaterThan(before);
+  });
+
+  /**
+   * The store is the backstop for every caller that is not a panel.
+   *
+   * A note body is written into the file with no escaping and the notation
+   * gives the sequence that ends a note no escape, so a value carrying it
+   * cannot be saved — and must therefore not be stored. The panels ask first
+   * and put the reason on the box; this refuses the same value for the
+   * diagram, the API console and anything else holding the command, and it
+   * refuses BEFORE the undo snapshot so a refused write costs no undo step.
+   */
+  it('setAttr refuses a note body the file could not hold, without spending an undo step', () => {
+    const id = st().createElement('Documentation', null);
+    st().setAttr(id, 'body', 'a real note');
+    const undos = st().undoStack.length;
+
+    st().setAttr(id, 'body', `a ${NOTE_BODY_TERMINATOR} b`);
+    expect(st().model.get(id)?.attrs.body, 'the refused value was not stored').toBe('a real note');
+    expect(st().undoStack.length, 'a refused write is not an undo step').toBe(undos);
+  });
+
+  it('setAttr refuses a requirement statement carrying it, and allows it elsewhere', () => {
+    const req = st().createElement('RequirementUsage', null, 'R');
+    st().setAttr(req, 'text', `a ${NOTE_BODY_TERMINATOR} b`);
+    expect(st().model.get(req)?.attrs.text, 'a requirement statement is written as a note').toBeUndefined();
+
+    // On anything else `attrs.text` is never emitted as a note, so refusing it
+    // would be a refusal with no defect behind it.
+    const part = st().createElement('PartUsage', null, 'p');
+    st().setAttr(part, 'text', `a ${NOTE_BODY_TERMINATOR} b`);
+    expect(st().model.get(part)?.attrs.text).toBe(`a ${NOTE_BODY_TERMINATOR} b`);
+  });
+
+  /**
+   * What the Text view is allowed to say when the model cannot be written.
+   *
+   * The refusals above cover the panels and the store command, but a model can
+   * still arrive already carrying an unwritable note body — a model-JSON
+   * import, the element-graph API. The serializer then throws, and the throw
+   * used to be swallowed into the empty string: the Text tab showed an EMPTY
+   * document, the status strip still said "in sync with model", and one click
+   * on "Apply text → model" replaced the whole model with nothing. An empty
+   * document that claims to be the model is exactly the silent wrong answer
+   * this codebase refuses.
+   */
+  describe('a model that cannot be written as text', () => {
+    /** A model whose Documentation body carries the sequence that ends a note. */
+    function poison(): void {
+      const id = st().createElement('PartDefinition', null, 'Engine');
+      const doc = st().createElement('Documentation', id);
+      st().setAttr(doc, 'body', 'a real note');
+      st().regenerateText();
+      // Straight onto the model — the element-graph API and a model-JSON import
+      // both reach the serializer without passing the store's refusal.
+      st().model.setAttrs(doc, { body: `bad ${NOTE_BODY_TERMINATOR} part def Ghost; doc /*` });
+    }
+
+    it('keeps the last text it could write, and says why it is not the model', () => {
+      poison();
+      const before = st().textBuffer;
+      expect(before, 'the good text was written first').toContain('Engine');
+
+      st().regenerateText();
+      expect(st().textBuffer, 'an empty document is not the model').toBe(before);
+      expect(st().serializeError, 'the Text view says what happened').toContain(
+        NOTE_BODY_TERMINATOR,
+      );
+    });
+
+    it('refuses "Apply text → model" while the text is not the model', () => {
+      poison();
+      st().regenerateText();
+      // The buffer is now BEHIND the model: this element was added after the
+      // last text that could be written, so it exists nowhere in the buffer.
+      // Applying it would delete it — which is what "one click replaces the
+      // model with a text that never described it" costs in practice.
+      st().createElement('PartDefinition', null, 'Gearbox');
+
+      st().applyText();
+      expect(
+        st().model.all().some((e) => e.declaredName === 'Gearbox'),
+        'one click must not replace the model with a stale text',
+      ).toBe(true);
+    });
+
+    it('still applies a text the user actually typed — the way out of the state', () => {
+      // The refusal is over the buffer NOBODY typed into. A text the author
+      // edited is their explicit intent, and re-applying it is how the model
+      // stops carrying the thing that could not be written; refusing that too
+      // would leave the state with no exit but a page reload.
+      poison();
+      st().regenerateText();
+      st().setTextBuffer('package Q {\n    part def B;\n}\n');
+
+      st().applyText();
+      expect(st().model.all().some((e) => e.declaredName === 'B'), 'the edit was applied').toBe(
+        true,
+      );
+      expect(st().serializeError, 'the model can be written again').toBeNull();
+    });
+
+    it('exportModel refuses instead of throwing into the click handler', () => {
+      poison();
+      let text: string | undefined;
+      expect(() => {
+        text = st().exportModel('sysml');
+      }, 'a React click handler has nothing to catch this').not.toThrow();
+      expect(text, 'nothing is offered for download').toBe('');
+      expect(st().serializeError).toContain(NOTE_BODY_TERMINATOR);
+    });
+
+    it('clears the refusal once the model can be written again', () => {
+      poison();
+      st().regenerateText();
+      expect(st().serializeError).not.toBeNull();
+
+      const doc = st().model.all().find((e) => e.eClass === 'Documentation')!;
+      st().setAttr(doc.id, 'body', 'fixed');
+      st().regenerateText();
+      expect(st().serializeError).toBeNull();
+      expect(st().textBuffer).toContain('fixed');
+    });
   });
 
   it('setAttr and updateElement mutate the element', () => {

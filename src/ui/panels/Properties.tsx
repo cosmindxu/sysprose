@@ -32,9 +32,11 @@ import {
   RM_ENUM_VALUES,
   STATEMENT_KINDS,
   FAULTED_DECLARATION_REFUSAL,
+  UNWRITABLE_NOTE_BODY_REFUSAL,
   canCarryStatementKind,
   carriesItsOwnText,
   getRequirementAttrs,
+  isWritableNoteBody,
   statementKindOf,
   untaggedStatementKindLabel,
   writtenStatementKind,
@@ -158,9 +160,23 @@ export function Properties(): JSX.Element {
 
   const [targetUnit, setTargetUnit] = useState('');
   const [showImpact, setShowImpact] = useState(false);
+  // Which free-text box was last refused, and on which element. A note body has
+  // no escape for the sequence that ends it, so the refusal happens mid-typing
+  // on a CONTROLLED textarea: the character simply would not appear, and the
+  // author would be left guessing. The reason is shown under the box instead,
+  // and cleared by the next write that is accepted.
+  const [noteRefusal, setNoteRefusal] = useState<{ id: ElementId; field: 'text' | 'doc' } | null>(
+    null,
+  );
   useEffect(() => {
     setTargetUnit(baseUnit ?? '');
   }, [selectionId, baseUnit]);
+  // A refusal belongs to the attempt that caused it. Looking at another element
+  // and coming back is not another attempt, and the notice used to survive the
+  // trip — a red box under a field the author had not touched since.
+  useEffect(() => {
+    setNoteRefusal(null);
+  }, [selectionId]);
 
   let convertedValue = '';
   if (quantity && baseUnit && targetUnit) {
@@ -240,16 +256,54 @@ export function Properties(): JSX.Element {
     setAttr(id, key, value as AttrValue);
   }
 
-  function commitDoc(value: string): void {
-    if (docChild) {
-      setAttr(docChild.id, 'body', value);
+  /**
+   * Commit a value that will be written into a note body, or refuse it.
+   *
+   * `setAttr` refuses such a value too — it is the store's own backstop — but a
+   * command that only returns leaves a controlled textarea silently dropping
+   * characters. Asking first is the same shape `carriesItsOwnText` already sets
+   * for the facet controls: the panel asks the predicate, then either writes or
+   * says why it did not.
+   */
+  function commitNote(field: 'text' | 'doc', write: () => void, value: string): void {
+    if (!isWritableNoteBody(value)) {
+      setNoteRefusal({ id, field });
       return;
     }
-    if (!value) return;
-    // Lazily create a Documentation child, then restore selection to this el.
-    const docId = createElement('Documentation', id);
-    setAttr(docId, 'body', value);
-    select(id);
+    setNoteRefusal(null);
+    write();
+  }
+
+  function commitText(value: string): void {
+    commitNote('text', () => setAttrOrClear('text', value), value);
+  }
+
+  function commitDoc(value: string): void {
+    commitNote(
+      'doc',
+      () => {
+        if (docChild) {
+          setAttr(docChild.id, 'body', value);
+          return;
+        }
+        if (!value) return;
+        // Lazily create a Documentation child, then restore selection to this el.
+        const docId = createElement('Documentation', id);
+        setAttr(docId, 'body', value);
+        select(id);
+      },
+      value,
+    );
+  }
+
+  /** The refusal notice under a note box, when that box is the one refused. */
+  function noteRefusalNotice(field: 'text' | 'doc'): JSX.Element | null {
+    if (noteRefusal?.id !== id || noteRefusal.field !== field) return null;
+    return (
+      <div className="field-refusal" data-testid="prop-note-refusal" role="alert">
+        {UNWRITABLE_NOTE_BODY_REFUSAL}
+      </div>
+    );
   }
 
   return (
@@ -388,8 +442,9 @@ export function Properties(): JSX.Element {
             <textarea
               data-testid="prop-text"
               value={attrString(el, 'text')}
-              onChange={(e) => setAttrOrClear('text', e.target.value)}
+              onChange={(e) => commitText(e.target.value)}
             />
+            {noteRefusalNotice('text')}
           </div>
         )}
 
@@ -504,6 +559,7 @@ export function Properties(): JSX.Element {
             value={docBody}
             onChange={(e) => commitDoc(e.target.value)}
           />
+          {noteRefusalNotice('doc')}
         </div>
 
         {(types.length > 0 || specializations.length > 0 || connections.length > 0) && (
