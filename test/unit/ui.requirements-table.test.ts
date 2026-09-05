@@ -28,7 +28,7 @@ vi.mock('../../src/library/standard-library', () => ({
 
 import { useAppStore } from '../../src/ui/store';
 import { RequirementsTable } from '../../src/ui/panels/RequirementsTable';
-import { parseModel } from '@text/index';
+import { parseModel, serializeModel } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
   getRequirementAttr,
@@ -212,6 +212,18 @@ describe('Requirements panel — a requirement whose declaration did not parse',
     expect(cell(view, 'faulted', 'rationale').querySelector('input')).toBeNull();
   });
 
+  it('disables the facet cells of a requirement NESTED inside a faulted declaration', () => {
+    const view = mount(
+      `package P {\n    blok def V {\n        requirement <R1> nested { subject s; }\n    }\n}`,
+    );
+    const id = idOf(view, 'nested');
+    expect(st().model.require(id).attrs.unparsedText).toBeUndefined();
+    const status = cell(view, 'nested', 'status').querySelector('select')!;
+    expect(status.disabled).toBe(true);
+    expect(status.title).toMatch(/could not be parsed/i);
+    expect(cell(view, 'nested', 'statementKind').querySelector('select')!.disabled).toBe(true);
+  });
+
   it('leaves the healthy row on the same grid fully editable', () => {
     const view = mount(SRC);
     const selects = view
@@ -219,6 +231,65 @@ describe('Requirements panel — a requirement whose declaration did not parse',
       .map((r) => r.querySelector('[data-col-key="status"] select') as HTMLSelectElement);
     expect(selects.length).toBe(2);
     expect(selects.filter((s) => !s.disabled).length, 'exactly the unfaulted row').toBe(1);
+  });
+});
+
+/**
+ * The ID cell wrote `attrs.reqId` alone, which the serializer only falls back
+ * to: the cell showed the new id, the Text tab kept the old one, and reopening
+ * the file reverted the edit.
+ */
+describe('Requirements panel — the ID cell', () => {
+  it('writes the slot the file keeps', () => {
+    const view = mount(`package P {\n    requirement <R1> maxMass { subject s; }\n}`);
+    const id = idOf(view, 'maxMass');
+    const idCell = view
+      .getAllByTestId('req-row')[0]!
+      .querySelector('[data-col-key="reqId"]') as HTMLElement;
+    expect(idCell.textContent).toContain('R1');
+    fireEvent.click(idCell);
+    act(() => {
+      fireEvent.blur(view.getByTestId('req-cell-input'), { target: { value: 'R9' } });
+    });
+    expect(st().model.require(id).declaredShortName).toBe('R9');
+    expect(st().model.require(id).attrs.reqId).toBeUndefined();
+    expect(serializeModel(st().model)).toContain('<R9>');
+    const shown = view
+      .getAllByTestId('req-row')[0]!
+      .querySelector('[data-col-key="reqId"]') as HTMLElement;
+    expect(shown.textContent).toContain('R9');
+  });
+
+  const idCellOf = (view: ReturnType<typeof mount>, name: string): HTMLElement => {
+    const row = view.getAllByTestId('req-row').find((r) => rowName(r).includes(name))!;
+    return row.querySelector('[data-testid="req-cell"][data-col-key="reqId"]') as HTMLElement;
+  };
+
+  // The writer refuses an id that would not reach the file; a cell that opens
+  // anyway lets the author type an edit the next save drops.
+  it('is locked, with the reason, on a requirement NESTED inside a faulted declaration', () => {
+    const view = mount(
+      `package P {\n    blok def V {\n        requirement <R1> nested { subject s; }\n    }\n}`,
+    );
+    const idCell = idCellOf(view, 'nested');
+    expect(idCell.getAttribute('title')).toMatch(/could not be parsed/i);
+    fireEvent.click(idCell);
+    expect(view.queryByTestId('req-cell-input')).toBeNull();
+  });
+
+  // The cell commits on blur whether or not a key was pressed; a blank `<''>`
+  // id shows as '', and '' to the writer means "clear" — so the file lost its
+  // `<''>` on a click-in-click-out.
+  it('leaves a blank <\'\'> id in the file when opened and left alone', () => {
+    const src = "package P {\n    requirement <''> r;\n}";
+    const view = mount(src);
+    const undoBefore = st().undoStack.length;
+    fireEvent.click(idCellOf(view, 'r'));
+    act(() => {
+      fireEvent.blur(view.getByTestId('req-cell-input'), { target: { value: '' } });
+    });
+    expect(serializeModel(st().model)).toBe(src);
+    expect(st().undoStack.length).toBe(undoBefore);
   });
 });
 

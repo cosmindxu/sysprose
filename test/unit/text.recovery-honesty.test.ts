@@ -433,10 +433,10 @@ describe('recovery honesty — a save never fabricates notation', () => {
   });
 
   it('does not turn an emptied requirement id into a blank one', () => {
-    // The Properties panel clears the id field by writing `''` into the legacy
-    // `attrs.reqId`, so an emptied box means "no id here" — unlike a
-    // `declaredShortName` of `''`, which is a blank id the author wrote and the
-    // validator reports.
+    // A legacy `attrs.reqId` of `''` (a factory call, a saved JSON — the app's
+    // own id controls write the short name now and remove this key) means "no
+    // id here" — unlike a `declaredShortName` of `''`, which is a blank id the
+    // author wrote and the validator reports.
     const { model } = parseModel('package P {\n    requirement r;\n}\n');
     const r = named(model, 'r')!;
     model.setAttrs(r.id, { reqId: '' });

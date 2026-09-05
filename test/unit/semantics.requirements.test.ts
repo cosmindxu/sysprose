@@ -24,10 +24,13 @@ import {
   getRequirementAttrs,
   getRequirementMetadata,
   hasRequirementAttr,
+  carriesItsOwnText,
+  reachesTheFile,
   requirementDoc,
   requirementShortId,
   requirementStatement,
   setRequirementAttr,
+  setRequirementShortId,
   statementKindOf,
 } from '../../src/semantics/index';
 
@@ -68,6 +71,99 @@ describe('requirement identity and statement', () => {
     expect(requirementShortId(m, req.id)).toBe('');
     expect(requirementStatement(m, req.id)).toBe('');
     expect(requirementDoc(m, req.id)).toBeUndefined();
+  });
+
+  /**
+   * The id EDIT has to land in the slot the file keeps. The mapper writes both
+   * slots from `<R1>`, every reader and the serializer prefer the native one,
+   * and the app's two id controls wrote the legacy one alone — so the grid and
+   * the Properties box showed the new id while the Text tab and the saved file
+   * kept the old one, and reopening the file reverted the edit with nothing
+   * said. This is the write path both controls go through now.
+   */
+  it('writes the id into the slot the file keeps — a PARSED requirement re-saves with the new id', () => {
+    const { model } = parseModel(
+      'package P {\n    requirement <R1> maxMass {\n        doc /* body */\n    }\n}',
+    );
+    const req = model.ofKind('RequirementUsage')[0]!;
+    // Both slots hold the same token after a parse; the edit must move the
+    // native one and leave no stale copy in the legacy one.
+    expect(req.declaredShortName).toBe('R1');
+    expect(req.attrs.reqId).toBe('R1');
+
+    setRequirementShortId(model, req.id, 'R9');
+    expect(model.require(req.id).declaredShortName).toBe('R9');
+    expect(model.require(req.id).attrs.reqId).toBeUndefined();
+    expect(requirementShortId(model, req.id)).toBe('R9');
+
+    const saved = serializeModel(model);
+    expect(saved).toContain('<R9>');
+    expect(saved).not.toContain('<R1>');
+    const reopened = parseModel(saved).model;
+    expect(requirementShortId(reopened, reopened.ofKind('RequirementUsage')[0]!.id)).toBe('R9');
+  });
+
+  it('clears the id with an empty value, and the file then carries none', () => {
+    const { model } = parseModel('package P {\n    requirement <R1> maxMass;\n}');
+    const req = model.ofKind('RequirementUsage')[0]!;
+    setRequirementShortId(model, req.id, '');
+    expect(model.require(req.id).declaredShortName).toBeUndefined();
+    expect(model.require(req.id).attrs.reqId).toBeUndefined();
+    expect(requirementShortId(model, req.id)).toBe('');
+    // No id, not a blank id: `<''>` is a distinct state the file can hold,
+    // and an emptied box must not fabricate one.
+    expect(serializeModel(model)).not.toContain('<');
+  });
+
+  it('moves a legacy-only id into the native slot on the first edit', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const pkg = f.pkg('P');
+    const req = f.requirement('maxMass', pkg.id, { reqId: 'R1' });
+    setRequirementShortId(m, req.id, 'R2');
+    expect(m.require(req.id).declaredShortName).toBe('R2');
+    expect(m.require(req.id).attrs.reqId).toBeUndefined();
+    expect(serializeModel(m)).toContain('<R2>');
+  });
+
+  it('refuses to write an id onto something that is not a requirement', () => {
+    const m = new Model();
+    const part = m.create('PartUsage', { declaredName: 'p' });
+    expect(() => setRequirementShortId(m, part.id, 'X')).toThrow(/not a requirement/);
+    expect(m.require(part.id).declaredShortName).toBeUndefined();
+  });
+
+  /**
+   * The id writer asks the same question the facet writer does. It did not: a
+   * requirement under `blok def Vehicle { … }` took an id, showed it in the
+   * grid and in the Properties box, and the next save re-emitted the faulted
+   * declaration's residue — subtree included — with the old id in it.
+   */
+  it('refuses an id on a requirement nested inside a declaration that could not be parsed', () => {
+    const src =
+      'package P {\n' +
+      '    blok def Vehicle {\n' +
+      '        requirement <R1> r1;\n' +
+      '        part def Inner {\n' +
+      '            requirement <R2> r2;\n' +
+      '        }\n' +
+      '    }\n' +
+      '    requirement <R3> outside;\n' +
+      '}';
+    const { model: m } = parseModel(src);
+    const byName = (n: string) => m.all().find((e) => e.declaredName === n)!;
+    for (const nested of [byName('r1'), byName('r2')]) {
+      expect(nested.attrs.unparsedText, nested.declaredName).toBeUndefined();
+      expect(() => setRequirementShortId(m, nested.id, 'R9'), nested.declaredName).toThrow(
+        /declaration, or an enclosing one, could not be parsed/,
+      );
+      expect(requirementShortId(m, nested.id)).not.toBe('R9');
+    }
+    // Nothing moved, so the file is byte-for-byte what it was.
+    expect(serializeModel(m)).toBe(src);
+    // The sibling outside the residue is the ordinary case.
+    setRequirementShortId(m, byName('outside').id, 'R9');
+    expect(serializeModel(m)).toContain('<R9> outside');
   });
 
   it('falls back to the legacy attrs.reqId / attrs.text', () => {
@@ -310,6 +406,48 @@ describe('requirement attributes', () => {
     );
     expect(parsed.model.size).toBe(sizeBefore);
     expect(getRequirementMetadata(parsed.model, req.id)).toBeUndefined();
+  });
+
+  /**
+   * The guard has to look UP, not only at the element. The serializer re-emits a
+   * faulted declaration's original source verbatim and nothing else, its
+   * subtree included — so a requirement nested inside one has no residue of its
+   * own, passed the element-only test, took the facet, showed it, and lost it on
+   * the next save. Depth one and deeper are both pinned.
+   */
+  it('refuses a requirement nested inside a declaration that could not be parsed', () => {
+    const parsed = parseModel(
+      'package P {\n    blok def Vehicle {\n        requirement <R1> r1;\n        part deeper {\n            requirement <R2> r2;\n        }\n    }\n    requirement <R3> outside;\n}',
+    );
+    const m = parsed.model;
+    const byName = (n: string) => m.all().find((e) => e.declaredName === n)!;
+    const r1 = byName('r1');
+    const r2 = byName('r2');
+    const outside = byName('outside');
+    // Neither nested requirement carries residue itself — the carrier above them does.
+    expect(r1.attrs.unparsedText).toBeUndefined();
+    expect(r2.attrs.unparsedText).toBeUndefined();
+    expect(m.ancestors(r1.id).some((a) => typeof a.attrs.unparsedText === 'string')).toBe(true);
+
+    expect(reachesTheFile(m, r1.id)).toBe(false);
+    expect(reachesTheFile(m, r2.id)).toBe(false);
+    expect(reachesTheFile(m, outside.id)).toBe(true);
+    expect(carriesItsOwnText(m, r1.id)).toBe(false);
+    expect(carriesItsOwnText(m, r2.id)).toBe(false);
+    expect(carriesItsOwnText(m, outside.id)).toBe(true);
+
+    const sizeBefore = m.size;
+    for (const nested of [r1, r2]) {
+      expect(() => setRequirementAttr(m, nested.id, 'status', 'done'), nested.declaredName).toThrow(
+        /could not be parsed/,
+      );
+    }
+    expect(m.size).toBe(sizeBefore);
+    // The sibling outside the residue is unaffected, and its facet reaches the file.
+    setRequirementAttr(m, outside.id, 'status', 'done');
+    const reopened = parseModel(serializeModel(m)).model;
+    const again = reopened.all().find((e) => e.declaredName === 'outside')!;
+    expect(getRequirementAttr(reopened, again.id, 'status')).toBe('done');
   });
 
   it('does not mistake a carrier child of another kind for a facet cell', () => {

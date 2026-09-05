@@ -6,7 +6,8 @@
  * v2 model: every non-library `RequirementUsage`/`RequirementDefinition` becomes
  * a row, HIERARCHICAL by containment (nested requirements get outline numbers
  * like `1.2.1` and an indentation `depth`). Scalar columns (id/name/text) map to
- * `attrs.reqId` / `declaredName` / `attrs.text`; REFERENCE columns resolve the
+ * `requirementShortId` (the native short name, falling back to the legacy
+ * `attrs.reqId`) / `declaredName` / `attrs.text`; REFERENCE columns resolve the
  * requirement relationships to their related model elements; FACET columns
  * carry the statement kind and the nine management attributes
  * (`src/semantics/requirements.ts`), so a row says not only what a requirement
@@ -30,7 +31,12 @@
 
 import type { ElementId, ElementRecord } from '@core/index';
 import { Model, isRequirement } from '@core/index';
-import { RM_ATTR_KEYS, RM_ENUM_VALUES, getRequirementAttrs } from '@semantics/requirements';
+import {
+  RM_ATTR_KEYS,
+  RM_ENUM_VALUES,
+  getRequirementAttrs,
+  requirementShortId,
+} from '@semantics/requirements';
 import type {
   RequirementsTableModel,
   ReqAttrColumn,
@@ -106,9 +112,13 @@ export const REQUIREMENT_REF_COLUMNS = REF_COLUMNS;
 export const REQUIREMENT_SCALAR_COLUMNS = SCALAR_COLUMNS;
 export const REQUIREMENT_ATTR_COLUMNS = ATTR_COLUMNS;
 
-/** Best human label for a related element. */
+/**
+ * Best human label for a related element. The native short name comes before
+ * the legacy `attrs.reqId`, the same preference every reader of a requirement
+ * id has, so an edited id is the one a chip shows.
+ */
 function labelOf(el: ElementRecord): string {
-  return el.declaredName ?? (el.attrs.reqId as string | undefined) ?? el.declaredShortName ?? el.eClass;
+  return el.declaredName ?? el.declaredShortName ?? (el.attrs.reqId as string | undefined) ?? el.eClass;
 }
 
 /** Is `el` a user (non-library) requirement? */
@@ -156,7 +166,10 @@ export function buildRequirementsTable(model: Model): RequirementsTableModel {
       id: el.id,
       number,
       depth,
-      reqId: String(el.attrs.reqId ?? ''),
+      // The slot the FILE keeps, through the one reader every consumer shares:
+      // the cell read `attrs.reqId` alone while the serializer writes the
+      // native short name, so an edited id showed the stale legacy copy.
+      reqId: requirementShortId(model, el.id),
       name: el.declaredName ?? '',
       text: String(el.attrs.text ?? ''),
       eClass: el.eClass,

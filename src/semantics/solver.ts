@@ -36,6 +36,19 @@
  * which is what keeps this surface and `checkConstraints` from answering the
  * same model differently.
  *
+ * STATEMENT KINDS. A constraint the author tagged `#prose` or `#prompt` binds
+ * nothing (`./statement-kind` {@link isNonNormativeStatement}), and this
+ * surface honours that exactly as the validator, `constraintReport` and the
+ * Simulate panel do: such a body is neither an equation nor an inequality
+ * ({@link gatherConstraints}, {@link gatherInequalities}) and gets no row in
+ * {@link checkConstraintsNumeric}. Before it did, a `#prose constraint pc
+ * { mass <= 2000.0 }` was reported violated by the Solve run in the same
+ * Problems panel the other three surfaces keep quiet in, made
+ * `analysisReport.feasible` false on its account, and a tagged equality SOLVED
+ * the feature it named. The exemption is asked with the same predicate, not
+ * with `!isNormative`: a plain `constraint c { … }` carries no kind and is
+ * judged exactly as it always was.
+ *
  * Every function is deterministic and bounded. This is an ORIGINAL, clean-room
  * implementation (no third-party solver was copied).
  */
@@ -45,6 +58,7 @@ import { parseExpr, evaluate, type ExprNode } from './expr';
 import { effectiveFeatures } from './inheritance';
 import { propagateValues } from './connectors';
 import { evaluateFeatureValue } from './evaluate-model';
+import { isNonNormativeStatement } from './statement-kind';
 import {
   derivedDimensionOf,
   dimensionClaim,
@@ -864,8 +878,12 @@ export function gatherConstraints(model: Model, scopeId?: ElementId): Equation[]
     if (el.attrs.isLibrary === true) continue;
     if (!inScope(el)) continue;
 
-    // (1) Constraint / calculation relation bodies.
+    // (1) Constraint / calculation relation bodies. A `#prose` / `#prompt`
+    // relation is not an equation: the author said it binds nothing, and
+    // solving a feature from it would give that feature a value no normative
+    // statement in the model asked for.
     if (RELATION_KINDS.has(el.eClass)) {
+      if (isNonNormativeStatement(model, el.id)) continue;
       const eq = relationEquation(model, el, memo);
       if (eq) eqs.push(eq);
       continue;
@@ -1129,6 +1147,9 @@ export function gatherInequalities(model: Model, scopeId?: ElementId): Inequalit
     if (el.attrs.isLibrary === true) continue;
     if (!inScope(el)) continue;
     if (!RELATION_KINDS.has(el.eClass)) continue;
+    // Same exemption as {@link gatherConstraints}: a tagged relation
+    // constrains nothing, so it cannot make the model infeasible.
+    if (isNonNormativeStatement(model, el.id)) continue;
     const ineq = relationInequality(model, el, memo);
     if (ineq) out.push(ineq);
   }
@@ -2439,6 +2460,10 @@ export function checkConstraintsNumeric(
   for (const el of model.all()) {
     if (el.attrs.isLibrary === true) continue;
     if (!RELATION_KINDS.has(el.eClass)) continue;
+    // A `#prose` / `#prompt` relation has no verdict to report — the other
+    // three surfaces are silent about it, and `analysisReport` lists every
+    // `violated` row here as a warning in the same Problems panel.
+    if (isNonNormativeStatement(model, el.id)) continue;
     const raw = el.attrs.expression;
     if (typeof raw !== 'string' || raw.trim() === '') continue;
 

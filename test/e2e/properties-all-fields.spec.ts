@@ -119,8 +119,11 @@ test('properties edits identity/usage/port/requirement/transition/doc/unit field
   /* ── requirement id + text on the `maxMass` RequirementUsage ── */
   const reqId = await findElementId(page, 'RequirementUsage', 'maxMass');
   await selectElementById(page, reqId);
+  // The id is the `<…>` short name the file keeps; the legacy `attrs.reqId`
+  // the box used to write is removed with the edit, so the two cannot disagree.
   await page.getByTestId('prop-reqId').fill('REQ-42');
-  await expect.poll(() => readAttr(page, reqId, 'reqId')).toBe('REQ-42');
+  await expect.poll(() => readField(page, reqId, 'declaredShortName')).toBe('REQ-42');
+  await expect.poll(() => readAttr(page, reqId, 'reqId')).toBe(null);
   await page.getByTestId('prop-text').fill('Vehicle mass shall not exceed 2000 kg.');
   await expect.poll(() => readAttr(page, reqId, 'text')).toBe(
     'Vehicle mass shall not exceed 2000 kg.',

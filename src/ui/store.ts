@@ -46,7 +46,8 @@
  *   select(id) · toggleExpand(id) · expand(id, open?) · setActiveView(v)
  *   rebuildDiagram() · createElement(eClass, ownerId?, name?) → id
  *   updateElement(id, patch) · setAttr(id, k, v) · deleteElement(id)
- *   setRequirementAttr(id, key, value) · setStatementKind(id, kind|null)
+ *   setRequirementShortId(id, value) · setRequirementAttr(id, key, value)
+ *   setStatementKind(id, kind|null)
  *   reparent(id, ownerId) · connect(sourceId, targetId, kind)
  *   runValidation() · setTextBuffer(s) · applyText() · regenerateText()
  *   newProject() · saveProject(name?) · loadProject(name) · listProjects()
@@ -163,7 +164,9 @@ import {
   hasRequirementAttr,
   isSimulatable as semIsSimulatable,
   isWritableNoteBody,
+  requirementShortId,
   setRequirementAttr as semSetRequirementAttr,
+  setRequirementShortId as semSetRequirementShortId,
   setStatementKind as semSetStatementKind,
   statementKindOf,
   type RmAttrKey,
@@ -401,6 +404,17 @@ export interface AppState {
   createElement(eClass: string, ownerId?: ElementId | null, name?: string): ElementId;
   updateElement(id: ElementId, patch: Partial<Omit<ElementRecord, 'id' | 'ownerId'>>): void;
   setAttr(id: ElementId, key: string, value: AttrValue): void;
+  /**
+   * Set a requirement's ID — the `<R1>` short name the file keeps — or clear it
+   * with an empty value. ONE undo step; the same value again is not a change
+   * and spends none. Both id controls (the grid's ID cell and the Properties
+   * box) go through here rather than `setAttr(id, 'reqId', …)`: that wrote the
+   * legacy slot the serializer only falls back to, so the edited id was shown
+   * and the old one saved. Refused, before any snapshot, for a standard-library
+   * element (undo restores those verbatim) and for anything that is not a
+   * requirement.
+   */
+  setRequirementShortId(id: ElementId, value: string | null): void;
   /**
    * Set one requirement facet — status, verdict, risk, priority, criticality,
    * rationale, source, owner, verification method, or the statement kind — or
@@ -1590,6 +1604,37 @@ export const useAppStore = create<AppState>((set, get) => {
       // A hand-edited value invalidates the parser's source lexeme for it.
       model.setAttrs(id, key === 'value' ? { value, valueText: undefined } : { [key]: value });
       afterMutation();
+    },
+
+    setRequirementShortId(id, value) {
+      const { model } = get();
+      const el = model.get(id);
+      if (!el) return;
+      // Same refusal as the facet commands: undo keeps library elements
+      // verbatim, so an edit to one would outlive its own undo step.
+      if (el.attrs.isLibrary === true) return;
+      const next = value === null || value === '' ? undefined : value;
+      // Not a change: the id the controls SHOW is the one coming back. The
+      // comparison is on the displayed value, not the raw slot, because the
+      // grid commits on blur whether or not a key was pressed, and a blank
+      // `<''>` id — displayed as '' — would otherwise be read as "clear it"
+      // and the file would lose the `<''>` it held. A snapshot here would
+      // also spend an undo step on a model that never moved — and the
+      // Properties box calls this on every keystroke, including the ones that
+      // re-type the current value.
+      if (requirementShortId(model, id) === (next ?? '')) return;
+      const redoBefore = get().redoStack;
+      pushUndo();
+      try {
+        semSetRequirementShortId(model, id, next);
+        afterMutation();
+      } catch (err) {
+        // The writer validates before it mutates (a non-requirement, or one
+        // under a faulted declaration, is refused whole), so there is nothing
+        // to undo: drop the snapshot, keep the redo.
+        console.error('setRequirementShortId failed', err);
+        set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
+      }
     },
 
     setRequirementAttr(id, key, value) {

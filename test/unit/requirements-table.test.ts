@@ -42,6 +42,50 @@ describe('buildRequirementsTable', () => {
     expect(t.scalarColumns.map((c) => c.key)).toEqual(['reqId', 'name', 'text']);
   });
 
+  it('reads the ID cell from the slot the file keeps, falling back to the legacy one', () => {
+    // The cell read `attrs.reqId` alone while the file is written from
+    // `declaredShortName`, so an id edited in the native slot showed the stale
+    // legacy copy — and a natively named requirement showed nothing.
+    const m = new Model();
+    const pkg = m.create('Package', { declaredName: 'P' });
+    const native = m.create('RequirementUsage', {
+      declaredName: 'native',
+      declaredShortName: 'N-1',
+      ownerId: pkg.id,
+    });
+    const both = m.create('RequirementUsage', {
+      declaredName: 'both',
+      declaredShortName: 'NEW',
+      ownerId: pkg.id,
+      attrs: { reqId: 'STALE' },
+    });
+    const legacy = m.create('RequirementUsage', {
+      declaredName: 'legacy',
+      ownerId: pkg.id,
+      attrs: { reqId: 'L-1' },
+    });
+    const rows = buildRequirementsTable(m).rows;
+    const idOf = (id: string) => rows.find((r) => r.id === id)!.reqId;
+    expect(idOf(native.id)).toBe('N-1');
+    expect(idOf(both.id)).toBe('NEW');
+    expect(idOf(legacy.id)).toBe('L-1');
+  });
+
+  it('labels a chip by the short name the file keeps before a stale legacy id', () => {
+    // The chip is the related element's best label; an unnamed requirement
+    // labels by its id, and the id edit removes the legacy key — so a chip
+    // that read the legacy key first showed the pre-edit id.
+    const { m, pkg, r1 } = seed();
+    const parent = m.create('RequirementUsage', {
+      declaredShortName: 'NEW',
+      ownerId: pkg.id,
+      attrs: { reqId: 'STALE' },
+    });
+    m.create('Derive', { ownerId: pkg.id, source: [parent.id], target: [r1.id] });
+    const row = buildRequirementsTable(m).rows.find((r) => r.id === r1.id)!;
+    expect(row.refs.derivedFrom!.map((ref) => ref.label)).toEqual(['NEW']);
+  });
+
   it('nests requirements by containment with outline numbers + depth', () => {
     const { m, r1, r1a, r2 } = seed();
     const t = buildRequirementsTable(m);

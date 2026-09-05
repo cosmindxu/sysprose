@@ -62,6 +62,7 @@ export function RequirementsTable(): JSX.Element {
   const deleteElement = useAppStore((s) => s.deleteElement);
   const connect = useAppStore((s) => s.connect);
   const setRequirementAttr = useAppStore((s) => s.setRequirementAttr);
+  const setRequirementShortId = useAppStore((s) => s.setRequirementShortId);
 
   // Which (row, column) scalar cell is being edited, and which (row, refColumn)
   // has its add-link picker open.
@@ -98,7 +99,7 @@ export function RequirementsTable(): JSX.Element {
 
   function label(el: ElementRecord): string {
     return (
-      el.declaredName ?? (el.attrs.reqId as string | undefined) ?? el.declaredShortName ?? el.eClass
+      el.declaredName ?? el.declaredShortName ?? (el.attrs.reqId as string | undefined) ?? el.eClass
     );
   }
 
@@ -127,6 +128,11 @@ export function RequirementsTable(): JSX.Element {
    * returns leaves the cell looking as though the edit took: asking here lets
    * the grid say what happened, exactly as the facet cells do for a faulted
    * declaration.
+   *
+   * The ID column writes the short name the FILE keeps, through its own
+   * command. It used to go through `setAttr(id, 'reqId', …)`, the legacy slot
+   * the serializer only falls back to — so the cell showed the new id, the
+   * Text tab kept the old one, and reopening the file reverted the edit.
    */
   function commitScalar(id: ElementId, col: ScalarKey, raw: string): void {
     const value = col === 'text' ? raw : raw.trim();
@@ -136,6 +142,7 @@ export function RequirementsTable(): JSX.Element {
       return;
     }
     if (col === 'name') updateElement(id, { declaredName: value || undefined });
+    else if (col === 'reqId') setRequirementShortId(id, value);
     else setAttr(id, col, value);
     // The notice belongs to the attempt, not to the row: any accepted edit —
     // in this cell or the one beside it — means the author has moved on, and a
@@ -218,7 +225,11 @@ export function RequirementsTable(): JSX.Element {
     const isKind = column.key === 'statementKind';
     // The Kind column writes a KEYWORD, the other nine write a metadata cell, so
     // they are refused by different predicates — ask each column its own.
-    const writable = el ? (isKind ? canCarryStatementKind(el) : carriesItsOwnText(el)) : false;
+    const writable = el
+      ? isKind
+        ? canCarryStatementKind(model, row.id)
+        : carriesItsOwnText(model, row.id)
+      : false;
     // The Kind cell shows what is WRITTEN, not what the row reads as. They
     // differ on an untagged requirement, and a cell showing the effective
     // answer makes both transitions unreachable: `—` is a no-op the store
@@ -440,16 +451,27 @@ export function RequirementsTable(): JSX.Element {
                   {table.scalarColumns.map((c) => {
                     const key = c.key as ScalarKey;
                     const isEditing = editing?.id === row.id && editing.col === key;
+                    // The ID cell writes the short name the FILE keeps, and a
+                    // requirement under a faulted declaration has no text of
+                    // its own in that file — the writer refuses, so the cell is
+                    // locked with the reason, like the facet cells beside it.
+                    // The Name and Text cells stay live: their writers do not
+                    // ask yet (a recorded limitation).
+                    const locked = key === 'reqId' && !carriesItsOwnText(model, row.id);
                     return (
                       <td
                         key={c.key}
                         data-testid="req-cell"
                         data-col-key={c.key}
-                        className={isEditing ? undefined : 'req-cell-editable'}
-                        title={isEditing ? undefined : 'Click to edit'}
+                        className={
+                          isEditing ? undefined : locked ? 'req-attr-locked' : 'req-cell-editable'
+                        }
+                        title={
+                          isEditing ? undefined : locked ? FAULTED_DECLARATION_REFUSAL : 'Click to edit'
+                        }
                         style={c.key === 'name' ? { paddingLeft: 8 + row.depth * 16 } : undefined}
                         onClick={
-                          isEditing
+                          isEditing || locked
                             ? undefined
                             : (e) => {
                                 e.stopPropagation();

@@ -337,7 +337,11 @@ export function buildGraphAnalysis(model: Model, config: AnalysisConfig): GraphA
     const p = pos.get(el.id) ?? { x: 0, y: 0 };
     return {
       id: el.id,
-      label: el.declaredName ?? (el.attrs.reqId as string | undefined) ?? el.eClass,
+      // An unnamed requirement labels by its id: the short name the file keeps
+      // first, then the legacy `attrs.reqId` a saved JSON may still hold. The
+      // id edit removes the legacy key, so a reader that only knew that key
+      // labelled the requirement by its metaclass the moment it was edited.
+      label: el.declaredName ?? el.declaredShortName ?? (el.attrs.reqId as string | undefined) ?? el.eClass,
       eClass: el.eClass,
       category: categoryOf(el.eClass),
       x: p.x,
@@ -441,7 +445,11 @@ export function buildDSM(model: Model, config: AnalysisConfig): DSMModel {
     const el = byId.get(id)!;
     return {
       id,
-      label: el.declaredName ?? (el.attrs.reqId as string | undefined) ?? el.eClass,
+      // An unnamed requirement labels by its id: the short name the file keeps
+      // first, then the legacy `attrs.reqId` a saved JSON may still hold. The
+      // id edit removes the legacy key, so a reader that only knew that key
+      // labelled the requirement by its metaclass the moment it was edited.
+      label: el.declaredName ?? el.declaredShortName ?? (el.attrs.reqId as string | undefined) ?? el.eClass,
       eClass: el.eClass,
       module: moduleOf.get(id) ?? 0,
     };

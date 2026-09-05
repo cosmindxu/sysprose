@@ -399,6 +399,22 @@ export class Model {
     return this.update(id, { declaredName });
   }
 
+  /**
+   * Set or REMOVE an element's short name (`<R1>`).
+   *
+   * {@link update} reads an absent patch key as "leave it alone", so it cannot
+   * clear a short name — and `''` is not a clearing either: it is a blank id,
+   * a distinct state the file can hold and the serializer writes out as `<''>`
+   * (no validation rule reports it today). A requirement whose id was emptied
+   * must carry NO short name, so this is the one setter that can take it off.
+   */
+  setShortName(id: ElementId, declaredShortName: string | undefined): ElementRecord {
+    const el = this.require(id);
+    el.declaredShortName = declaredShortName;
+    this.emit({ type: 'update', id, element: el });
+    return el;
+  }
+
   /** Reparent an element to a new owner (or root when `null`). */
   reparent(id: ElementId, newOwnerId: ElementId | null): ElementRecord {
     const el = this.require(id);

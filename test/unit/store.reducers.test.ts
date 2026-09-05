@@ -12,8 +12,13 @@ vi.mock('../../src/library/standard-library', () => ({
 }));
 
 import { useAppStore } from '../../src/ui/store';
-import { parseModel } from '@text/index';
-import { NOTE_BODY_TERMINATOR, getRequirementAttr, statementKindOf } from '@semantics/index';
+import { parseModel, serializeModel } from '@text/index';
+import {
+  NOTE_BODY_TERMINATOR,
+  getRequirementAttr,
+  requirementShortId,
+  statementKindOf,
+} from '@semantics/index';
 
 /** Reset the singleton store to a fresh, empty model before each test. */
 function reset(): void {
@@ -510,6 +515,88 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
     // keyword written here would have outlived its own undo step.
     expect(st().model.get(libReq.id)?.attrs.metadata).toBeUndefined();
     expect(st().undoStack.length).toBe(undoBefore);
+  });
+
+  /**
+   * The id edit used to go through `setAttr(id, 'reqId', …)`, which writes the
+   * legacy slot the serializer only falls back to: the grid showed the new id,
+   * the Text tab kept the old one, and the saved file reverted the edit.
+   */
+  it('setRequirementShortId writes the slot the file keeps, in one undo step', () => {
+    const { model } = parseModel(
+      'package P {\n    requirement <R1> maxMass {\n        doc /* body */\n    }\n}',
+    );
+    useAppStore.setState({ model });
+    const req = model.ofKind('RequirementUsage')[0]!.id;
+    const undoBefore = st().undoStack.length;
+
+    st().setRequirementShortId(req, 'R9');
+    expect(requirementShortId(st().model, req)).toBe('R9');
+    expect(st().model.require(req).attrs.reqId).toBeUndefined();
+    const text = serializeModel(st().model);
+    expect(text).toContain('<R9>');
+    expect(text).not.toContain('<R1>');
+    expect(st().undoStack.length).toBe(undoBefore + 1);
+
+    // The same value again is not a change and spends no undo step.
+    st().setRequirementShortId(req, 'R9');
+    expect(st().undoStack.length).toBe(undoBefore + 1);
+
+    st().undo();
+    expect(requirementShortId(st().model, req)).toBe('R1');
+    expect(serializeModel(st().model)).toContain('<R1>');
+  });
+
+  it('setRequirementShortId leaves a library requirement alone, and refuses a non-requirement', () => {
+    const model = st().model;
+    const libPkg = model.create('Package', { declaredName: 'Lib', attrs: { isLibrary: true } });
+    const libReq = model.create('RequirementUsage', {
+      declaredName: 'LibReq',
+      declaredShortName: 'L1',
+      ownerId: libPkg.id,
+      attrs: { isLibrary: true },
+    });
+    const part = model.create('PartUsage', { declaredName: 'p' });
+    const undoBefore = st().undoStack.length;
+    st().setRequirementShortId(libReq.id, 'L2');
+    st().setRequirementShortId(part.id, 'X');
+    expect(st().model.require(libReq.id).declaredShortName).toBe('L1');
+    expect(st().model.require(part.id).declaredShortName).toBeUndefined();
+    expect(st().undoStack.length).toBe(undoBefore);
+  });
+
+  /**
+   * The grid commits on blur whether or not a key was pressed, and the
+   * writer reads `''` as "clear". Compared on the raw slot, a blank `<''>` id
+   * — displayed as '' — looked like a change, and clicking into the cell and
+   * away rewrote the author's file without the `<''>`.
+   */
+  it('setRequirementShortId leaves a blank <\'\'> id alone when the value it shows comes back', () => {
+    const src = "package P {\n    requirement <''> r;\n}";
+    const { model } = parseModel(src);
+    useAppStore.setState({ model });
+    const req = model.ofKind('RequirementUsage')[0]!.id;
+    expect(requirementShortId(st().model, req)).toBe('');
+    const undoBefore = st().undoStack.length;
+    st().setRequirementShortId(req, '');
+    expect(serializeModel(st().model)).toBe(src);
+    expect(st().undoStack.length).toBe(undoBefore);
+  });
+
+  it('setRequirementShortId refuses a requirement under a faulted declaration, at no undo cost', () => {
+    const src = 'package P {\n    blok def V {\n        requirement <R1> nested;\n    }\n}';
+    const { model } = parseModel(src);
+    useAppStore.setState({ model, undoStack: [], redoStack: [] });
+    const req = model.ofKind('RequirementUsage')[0]!.id;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      st().setRequirementShortId(req, 'R9');
+    } finally {
+      errors.mockRestore();
+    }
+    expect(requirementShortId(st().model, req)).toBe('R1');
+    expect(serializeModel(st().model)).toBe(src);
+    expect(st().undoStack.length).toBe(0);
   });
 
   /**

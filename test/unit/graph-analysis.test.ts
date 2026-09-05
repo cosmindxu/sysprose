@@ -11,6 +11,8 @@ import {
   categoryOf,
 } from '@diagram/index';
 import type { AnalysisConfig } from '@diagram/index';
+import { parseModel } from '@text/index';
+import { setRequirementShortId } from '@semantics/index';
 
 /**
  * A small system: two "modules" — {ctrl, sensor, actuator} wired by connections,
@@ -231,5 +233,47 @@ describe('node size scaling controls (sizeScale / sizeContrast)', () => {
       const b = byId(full);
       for (const [id, s] of a) expect(s).toBeCloseTo(b.get(id)!, 9);
     }
+  });
+});
+
+/**
+ * An unnamed requirement is labelled by its id. The id edit writes the short
+ * name and REMOVES the legacy `attrs.reqId`; these two views read the legacy
+ * key with no short-name fallback, so the label fell through to the metaclass
+ * the moment an id was edited, and stayed that way until a save and reopen.
+ */
+describe('labels of an unnamed requirement', () => {
+  const labels = (m: Model) => ({
+    graph: buildGraphAnalysis(m, cfg()).nodes.map((n) => n.label),
+    dsm: buildDSM(m, cfg()).elements.map((e) => e.label),
+  });
+
+  it('follow the id across an edit in the network view and the DSM', () => {
+    const { model } = parseModel('package P {\n    requirement <R1>;\n    part def V;\n}');
+    const req = model.ofKind('RequirementUsage')[0]!;
+    expect(labels(model).graph).toContain('R1');
+    expect(labels(model).dsm).toContain('R1');
+
+    setRequirementShortId(model, req.id, 'R9');
+    const after = labels(model);
+    expect(after.graph).toContain('R9');
+    expect(after.dsm).toContain('R9');
+    expect(after.graph).not.toContain('RequirementUsage');
+    expect(after.dsm).not.toContain('RequirementUsage');
+  });
+
+  it('prefer the short name the file keeps over a stale legacy id', () => {
+    const m = new Model();
+    const pkg = m.create('Package', { declaredName: 'P' });
+    m.create('RequirementUsage', {
+      declaredShortName: 'NEW',
+      ownerId: pkg.id,
+      attrs: { reqId: 'STALE' },
+    });
+    const { graph, dsm } = labels(m);
+    expect(graph).toContain('NEW');
+    expect(dsm).toContain('NEW');
+    expect(graph).not.toContain('STALE');
+    expect(dsm).not.toContain('STALE');
   });
 });

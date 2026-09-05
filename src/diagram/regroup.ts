@@ -46,7 +46,7 @@ const CONNECTION_KINDS = new Set([
 ]);
 
 const labelOf = (el: ElementRecord): string =>
-  el.declaredName ?? (el.attrs.reqId as string | undefined) ?? el.declaredShortName ?? el.eClass;
+  el.declaredName ?? el.declaredShortName ?? (el.attrs.reqId as string | undefined) ?? el.eClass;
 
 /**
  * Stable identity of ONE proposed delegation port: a bundle + the inside

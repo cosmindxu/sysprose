@@ -80,6 +80,81 @@ describe('Properties — the requirement attributes block', () => {
   });
 });
 
+/**
+ * A residue carrier's subtree is re-emitted with it, verbatim: a requirement
+ * NESTED in a faulted declaration has no residue of its own, so the element-only
+ * guard offered it live controls and the next save dropped what they wrote.
+ */
+describe('Properties — a requirement nested inside a faulted declaration', () => {
+  const NESTED =
+    `package P {\n` +
+    `    blok def Vehicle {\n` +
+    `        requirement <R1> nested { subject s; }\n` +
+    `    }\n` +
+    `    requirement <R2> outside { subject t; }\n}`;
+
+  it('disables the facet controls, with the reason on them', () => {
+    const { view, model, id } = mount(NESTED, 'nested');
+    expect(model.require(id).attrs.unparsedText).toBeUndefined();
+    const status = view.getByTestId('prop-rm-status') as HTMLSelectElement;
+    expect(status.disabled).toBe(true);
+    expect(status.title).toMatch(/could not be parsed/i);
+    expect((view.getByTestId('prop-rm-rationale') as HTMLInputElement).disabled).toBe(true);
+    expect(view.queryByTestId('prop-statement-kind')).toBeNull();
+  });
+
+  // The id box is a facet like the others: its writer refuses an id that
+  // would not reach the file, so the box is locked with the same reason.
+  it('disables the id box, with the reason on it', () => {
+    const { view } = mount(NESTED, 'nested');
+    const box = view.getByTestId('prop-reqId') as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    expect(box.title).toMatch(/could not be parsed/i);
+  });
+
+  it('leaves the requirement outside the residue live', () => {
+    const { view } = mount(NESTED, 'outside');
+    expect((view.getByTestId('prop-rm-status') as HTMLSelectElement).disabled).toBe(false);
+    expect((view.getByTestId('prop-reqId') as HTMLInputElement).disabled).toBe(false);
+    expect(view.queryByTestId('prop-statement-kind')).not.toBeNull();
+  });
+});
+
+/**
+ * The id box wrote the legacy `attrs.reqId` alone, which the serializer only
+ * falls back to: the box showed the new id and the file kept the old one.
+ */
+describe('Properties — the requirement id box', () => {
+  it('shows the short name and writes the slot the file keeps', () => {
+    const { view, model, id } = mount(`package P {\n    requirement <R1> maxMass;\n}`, 'maxMass');
+    const box = view.getByTestId('prop-reqId') as HTMLInputElement;
+    expect(box.value).toBe('R1');
+    act(() => {
+      fireEvent.change(box, { target: { value: 'R9' } });
+    });
+    expect(model.require(id).declaredShortName).toBe('R9');
+    expect(model.require(id).attrs.reqId).toBeUndefined();
+    expect((view.getByTestId('prop-reqId') as HTMLInputElement).value).toBe('R9');
+  });
+
+  /**
+   * The generic "Short name" box wrote the same slot through `updateElement`,
+   * which leaves the legacy `attrs.reqId` standing and cannot clear the slot,
+   * so a requirement had two boxes for one field that disagreed after an edit.
+   */
+  it('is the only short-name control a requirement gets', () => {
+    const { view } = mount(`package P {\n    requirement <R1> maxMass;\n}`, 'maxMass');
+    expect(view.queryByTestId('prop-shortName')).toBeNull();
+    expect(view.queryByTestId('prop-reqId')).not.toBeNull();
+  });
+
+  it('leaves the generic Short name box on everything that is not a requirement', () => {
+    const { view } = mount(`package P {\n    part def <V1> Vehicle;\n}`, 'Vehicle');
+    expect((view.getByTestId('prop-shortName') as HTMLInputElement).value).toBe('V1');
+    expect(view.queryByTestId('prop-reqId')).toBeNull();
+  });
+});
+
 describe('Properties — the Kind selector', () => {
   it('sits on the blank entry for an untagged requirement, labelled with what it reads as', () => {
     const { view } = mount(`package P {\n    requirement <R1> maxMass;\n}`, 'maxMass');

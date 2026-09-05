@@ -26,7 +26,7 @@ const GROUPING_KINDS: Record<string, Set<string>> = {
 const DEPENDENCY_KINDS = new Set(['Dependency', 'Derive', 'Trace', 'Refine']);
 
 const labelOf = (el: ElementRecord): string =>
-  el.declaredName ?? (el.attrs.reqId as string | undefined) ?? el.declaredShortName ?? el.eClass;
+  el.declaredName ?? el.declaredShortName ?? (el.attrs.reqId as string | undefined) ?? el.eClass;
 
 /**
  * Each atomic element's workload: a positive numeric value, else 1. Reads the

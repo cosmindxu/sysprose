@@ -49,11 +49,26 @@
  * everything `ModelFactory.requirement` still writes today — keep the ID in
  * `attrs.reqId` and the statement in `attrs.text`. {@link requirementShortId}
  * and {@link requirementStatement} prefer the native slot and fall back to the
- * legacy one. The fallback is READ-ONLY: nothing here writes those keys again,
- * and nothing migrates a saved model behind the author's back. The serializer
- * has the same preference — it emits `declaredShortName` and falls back to
- * `attrs.reqId` — because a writer that preferred the other one made an edited
- * id display as the new value, save as the old one, and revert on reopen.
+ * legacy one. Nothing migrates a saved model behind the author's back. The
+ * serializer has the same preference — it emits `declaredShortName` and falls
+ * back to `attrs.reqId` — because a writer that preferred the other one made an
+ * edited id display as the new value, save as the old one, and revert on reopen.
+ *
+ * THE ID IS WRITTEN IN ONE PLACE, AND IT IS THE NATIVE ONE. The mapper sets
+ * BOTH slots from `<R1>`, so after a parse they agree; the app's two id
+ * controls then wrote the legacy slot alone, and the two disagreed — the grid
+ * and the Properties box showed the new id while the file, which the serializer
+ * writes from the native slot, kept the old one. {@link setRequirementShortId}
+ * is the one write path the app has for a requirement's id: it sets
+ * `declaredShortName` and REMOVES `attrs.reqId`, so a stale legacy copy cannot
+ * outlive the edit — and the Properties panel's generic Short name box, which
+ * wrote the same slot through `Model.update` and left the legacy copy standing,
+ * is not offered on a requirement. That removal is the single write this
+ * module makes to a legacy key, and it only ever takes one away. Every label
+ * a requirement gets — the grid's cell, the chips, the network view, the DSM,
+ * the regroup and planning views — prefers the short name over the legacy key
+ * for the same reason: a reader that knew only the legacy key labelled an
+ * unnamed requirement by its metaclass the moment the edit removed it.
  *
  * THE LEGACY SLOT IS NOT ONLY HISTORICAL. Every save-and-reopen produces it:
  * the mapper's requirement special case folds a requirement's `doc` body into
@@ -94,6 +109,7 @@ import {
   STATEMENT_KINDS,
   clearStatementKind,
   isStatementKind,
+  reachesTheFile,
   setStatementKind,
   statementKindOf,
   statementKindOfKeyword,
@@ -178,6 +194,54 @@ export function requirementShortId(model: Model, id: ElementId): string {
   if (el.declaredShortName) return el.declaredShortName;
   const legacy = el.attrs.reqId;
   return typeof legacy === 'string' ? legacy : '';
+}
+
+/**
+ * Set the requirement's ID — its `declaredShortName` — or take it off with an
+ * empty value.
+ *
+ * This is the write path the requirements grid and the Properties panel share,
+ * and it writes the slot the serializer emits: the native short name. The
+ * legacy `attrs.reqId` is REMOVED at the same time, whatever it held, so the
+ * two slots can never say different things after an edit — which is exactly
+ * what happened when the panels wrote the legacy one alone: the edited id was
+ * displayed, the old one was saved, and reopening the file reverted the edit.
+ *
+ * An empty value clears: the element then carries NO short name and no legacy
+ * id, and the file carries no `<…>`. It is not written as `''`, which is a
+ * blank id — a distinct state the file can hold and the serializer writes out
+ * as `<''>` (no validation rule reports it today; `blank-name` looks at the
+ * name only). A cleared box means "no id here", not "an id that is blank".
+ *
+ * The write has to reach the file, like every other facet: a requirement
+ * under a faulted declaration is re-emitted from that declaration's residue,
+ * so an id written there would show in the grid and be gone on the next save
+ * — the exact defect this writer exists to close, so it asks
+ * {@link carriesItsOwnText} first and refuses out loud.
+ *
+ * @returns the element written to.
+ * @throws when `id` is not a requirement — an id in `<…>` is a short name any
+ *   element may carry, but this writer is the requirements grid's, and a caller
+ *   aiming it elsewhere has the wrong command; and when the requirement's
+ *   declaration, or one enclosing it, could not be parsed.
+ */
+export function setRequirementShortId(
+  model: Model,
+  id: ElementId,
+  value: string | null | undefined,
+): ElementRecord {
+  const el = model.get(id);
+  if (!el || !isRequirement(el.eClass)) {
+    throw new Error(`setRequirementShortId: ${id} is not a requirement`);
+  }
+  if (!carriesItsOwnText(model, id)) {
+    throw new Error(
+      `setRequirementShortId: a ${el.eClass} whose declaration, or an enclosing one, could not be parsed cannot take an id — the saved file re-emits that source verbatim, and the edit would be lost`,
+    );
+  }
+  const next = value === undefined || value === null || value === '' ? undefined : value;
+  model.setShortName(id, next);
+  return model.setAttrs(id, { reqId: undefined });
 }
 
 /**
@@ -338,17 +402,20 @@ export function hasRequirementAttr(model: Model, id: ElementId, key: RmAttrKey):
 }
 
 /**
- * True when this element's own text is what gets saved, so something written
- * onto it reaches the file.
+ * True when this element's text is what gets saved, so a facet written onto it
+ * reaches the file.
  *
  * A faulted declaration keeps its original source in `attrs.unparsedText`, and
  * the serializer re-emits that text verbatim and NOTHING else, its subtree
  * included; an implicit element serializes to the empty string. Either way a
  * facet carrier created underneath reads back perfectly in memory and is gone
  * from the next saved file — the same silent loss the storage shape was chosen
- * to avoid. `canCarryStatementKind` refuses these elements for the same reason,
- * and this mirrors its first block rather than importing it, because the rest
- * of that predicate answers a different question (where a KEYWORD may go).
+ * to avoid. "Underneath" is the word that matters: a requirement NESTED in a
+ * faulted declaration has no residue of its own, so the element alone cannot
+ * answer this, and a version of this predicate that looked at the record alone
+ * said yes to it. The answer is {@link reachesTheFile}, which walks the owners;
+ * this name is kept because it is the question a facet editor asks, and the
+ * requirements grid and the Properties panel both ask it by this name.
  *
  * EXPORTED so an editor can ask BEFORE it offers the control. `setRequirementAttr`
  * throws here, the store logs the throw and puts its snapshot back, and a panel
@@ -356,10 +423,8 @@ export function hasRequirementAttr(model: Model, id: ElementId, key: RmAttrKey):
  * back with nothing written and nothing said. A control the write will refuse
  * belongs disabled, with the reason on it.
  */
-export function carriesItsOwnText(el: ElementRecord): boolean {
-  if (el.attrs.implicit === true) return false;
-  const unparsed = el.attrs.unparsedText;
-  return !(typeof unparsed === 'string' && unparsed.trim() !== '');
+export function carriesItsOwnText(model: Model, id: ElementId): boolean {
+  return reachesTheFile(model, id);
 }
 
 /**
@@ -372,8 +437,9 @@ export function carriesItsOwnText(el: ElementRecord): boolean {
  * two different accounts of the same refusal.
  */
 export const FAULTED_DECLARATION_REFUSAL =
-  'This requirement\u2019s declaration could not be parsed, so the file re-emits its own source and a ' +
-  'facet written here would be lost on the next save. Fix the declaration in the Text tab first.';
+  'This requirement\u2019s declaration, or one enclosing it, could not be parsed, so the file re-emits ' +
+  'that source verbatim and a facet written here would be lost on the next save. Fix the declaration ' +
+  'in the Text tab first.';
 
 /**
  * Set one facet of a requirement, or clear it with an empty value.
@@ -392,9 +458,10 @@ export const FAULTED_DECLARATION_REFUSAL =
  *   stored key, the requirement itself for `statementKind` — or undefined when
  *   a clear left nothing behind.
  * @throws when `id` is not a requirement, `key` is not one of the facets, the
- *   value is not one the key allows, or the requirement's own declaration
- *   could not be parsed — a facet written under a faulted declaration would be
- *   dropped by the very next save, and saying so beats losing it quietly.
+ *   value is not one the key allows, or the requirement's declaration — or one
+ *   enclosing it — could not be parsed: a facet written under a faulted
+ *   declaration would be dropped by the very next save, and saying so beats
+ *   losing it quietly.
  */
 export function setRequirementAttr(
   model: Model,
@@ -411,9 +478,9 @@ export function setRequirementAttr(
       `setRequirementAttr: unknown requirement attribute "${key}" (${RM_ATTR_KEYS.join(', ')})`,
     );
   }
-  if (!carriesItsOwnText(el)) {
+  if (!carriesItsOwnText(model, id)) {
     throw new Error(
-      `setRequirementAttr: a ${el.eClass} whose declaration could not be parsed cannot carry facets — the saved file re-emits its own source, and the value would be lost`,
+      `setRequirementAttr: a ${el.eClass} whose declaration, or an enclosing one, could not be parsed cannot carry facets — the saved file re-emits that source verbatim, and the value would be lost`,
     );
   }
   const clearing = value === undefined || value === null || value === '';

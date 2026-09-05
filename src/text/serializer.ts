@@ -291,20 +291,24 @@ function header(model: Model, el: ElementRecord): string {
   // Short name <…> — requirements carry their id here.
   //
   // The element's OWN short name wins. Every reader prefers it
-  // (`semantics/requirements.ts` requirementShortId), so a writer that
-  // preferred the legacy `attrs.reqId` made the two disagree: an edited
-  // `declaredShortName` displayed as the new id, saved as the old one and
-  // reverted on the next open. Nothing produced today sets the two to different
-  // values — the mapper writes both from the same token, the factory writes
-  // only `reqId` — so the legacy key stays as the fallback that keeps those
-  // models emitting their id.
+  // (`semantics/requirements.ts` requirementShortId), and so does the one
+  // writer: `setRequirementShortId`, which both id controls in the app go
+  // through, sets `declaredShortName` and REMOVES `attrs.reqId`. It has to be
+  // that way round on both sides — when this line preferred the legacy key, an
+  // edited short name displayed as the new id and saved as the old one; and
+  // when the panels wrote the legacy key alone while this line preferred the
+  // short name, the same thing happened the other way. The legacy key is still
+  // produced — by the mapper, which sets both slots from the same token, by the
+  // factory, which writes only `reqId`, and by any saved JSON — so it stays as
+  // the fallback that keeps those models emitting their id.
   //
   // The element's own short name is tested for PRESENCE: `<''>` is a blank id
-  // the validator reports, and dropping it on save would erase the evidence for
-  // that error (finding grammar-text-3). The legacy FALLBACK keeps its
-  // truthiness test — `attrs.reqId` is written by the Properties panel, which
-  // clears the field to `''`, and an emptied box means "no id here", not "an id
-  // that is blank".
+  // — a state the file can hold, which no validation rule reports today — and
+  // dropping it on save would silently collapse it into "no id" (finding
+  // grammar-text-3). The legacy FALLBACK keeps its
+  // truthiness test: nothing in the app writes `attrs.reqId` any more, but a
+  // factory call or a saved JSON may hold `''` there, and that means "no id
+  // here", not "an id that is blank" — only a short name can be blank.
   const legacyId = isRequirement(el.eClass) ? el.attrs.reqId : undefined;
   const short =
     el.declaredShortName ??

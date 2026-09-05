@@ -220,7 +220,40 @@ export function untaggedStatementKindLabel(effective: StatementKind | undefined)
 /* ────────────────────────────── Writing ───────────────────────────────── */
 
 /**
- * True when THIS element's textual form has somewhere to put the keyword.
+ * True when what is written onto `id` reaches the saved file at all.
+ *
+ * Two things make the serializer write something OTHER than an element's own
+ * text. An implicit element (a connector endpoint materialised by the resolver)
+ * serializes to the empty string and is filtered out of its owner's body. A
+ * faulted declaration keeps its original source in `attrs.unparsedText`, and
+ * the serializer re-emits that text verbatim and NOTHING else — its subtree
+ * included, so a body is not written twice. Either way, everything UNDER such
+ * an element is written from the residue or not at all: a descendant has no
+ * residue of its own, and a test of the element alone says yes to it while the
+ * next save drops whatever was written there.
+ *
+ * So this walks the owners. It is the question every writer of a facet or a
+ * keyword has to ask first, and the one the element-only guards used to answer
+ * one level short: a requirement nested in `blok def Vehicle { … }` took a
+ * status, showed it, and lost it on save with nothing said.
+ */
+export function reachesTheFile(model: Model, id: ElementId): boolean {
+  const el = model.get(id);
+  if (!el) return false;
+  if (!hasOwnTextualDeclaration(el)) return false;
+  return model.ancestors(id).every(hasOwnTextualDeclaration);
+}
+
+/** The element-only half of {@link reachesTheFile}: this record's own text is what gets saved. */
+function hasOwnTextualDeclaration(el: ElementRecord): boolean {
+  if (el.attrs.implicit === true) return false;
+  const unparsed = el.attrs.unparsedText;
+  return !(typeof unparsed === 'string' && unparsed.trim() !== '');
+}
+
+/**
+ * True when `id`'s textual form has somewhere to put the keyword — and that
+ * form is what the file will hold.
  *
  * Prefix metadata belongs to a DECLARATION — a package, a definition, a usage —
  * and only the serializer's generic `header()` path writes one. Everything the
@@ -246,13 +279,14 @@ export function untaggedStatementKindLabel(effective: StatementKind | undefined)
  * `connect`, a `perform` or a transition can carry no kind at all today, and
  * saying so out loud beats writing one that disappears.
  */
-export function canCarryStatementKind(el: ElementRecord): boolean {
-  // No textual declaration at all: an implicit connector endpoint serializes to
-  // the empty string, and a faulted declaration re-emits its original source
-  // verbatim. A keyword on either is written nowhere.
-  if (el.attrs.implicit === true) return false;
-  const unparsed = el.attrs.unparsedText;
-  if (typeof unparsed === 'string' && unparsed.trim() !== '') return false;
+export function canCarryStatementKind(model: Model, id: ElementId): boolean {
+  const el = model.get(id);
+  if (!el) return false;
+  // No textual declaration of its own, or none that reaches the file: an
+  // implicit connector endpoint serializes to the empty string, a faulted
+  // declaration re-emits its original source verbatim — and so does everything
+  // under either. A keyword written there is written nowhere.
+  if (!reachesTheFile(model, id)) return false;
 
   // Annotating statements (`doc`, `comment`, `rep`, `@Meta`), every relationship
   // statement (`satisfy`, `import`, `alias`, `redefinition`, …) and the control
@@ -267,21 +301,26 @@ export function canCarryStatementKind(el: ElementRecord): boolean {
     return false;
   if (el.eClass === 'MetadataUsage' && el.attrs.annotation === true) return false;
   if (isRelationship(el.eClass) || isControlNode(el.eClass)) return false;
+  // `disjoint A from B;` — the ONE statement form in the serializer's dispatch
+  // chain that `isRelationship` does not cover (`Disjoining` is catalogued as a
+  // node). It goes to `disjoiningLine`, which has no prefix-metadata slot, so
+  // without this line a keyword on it is accepted and gone on the next save.
+  // `ALL_STATEMENT_FORMS` in the test carries the form so the corpus invariant
+  // sees it.
   if (el.eClass === 'Disjoining') return false;
 
-  // Endpoint-bearing usages: `connect a to b`, `flow a to b`, `bind a = b`,
-  // `transition first s1 then s2`. The same metaclasses WITHOUT endpoints are
-  // plain features (`connection c : C;`) and keep their header.
-  if (
-    (el.eClass === 'ConnectionUsage' ||
-      el.eClass === 'FlowUsage' ||
-      el.eClass === 'Connector' ||
-      el.eClass === 'Flow') &&
-    hasEndpoints(el)
-  )
+  // Endpoint-bearing USAGES: `connect a to b`, `flow a to b`, `bind a = b`,
+  // `transition first s1 then s2`. The same two metaclasses WITHOUT endpoints
+  // are plain features (`connection c : C;`, `flow f : T;`) and keep their
+  // header. Their KerML-layer cousins `Connector` and `Flow`, and
+  // `TransitionFeature`, take the same dedicated lines in the serializer, but
+  // they are relationships in the catalogue and `isRelationship` above has
+  // already refused them, with or without endpoints — so they are not tested
+  // again here.
+  if ((el.eClass === 'ConnectionUsage' || el.eClass === 'FlowUsage') && hasEndpoints(el))
     return false;
   if (el.eClass === 'BindingConnectorAsUsage') return false;
-  if (el.eClass === 'TransitionUsage' || el.eClass === 'TransitionFeature') return false;
+  if (el.eClass === 'TransitionUsage') return false;
 
   // Statement forms the serializer picks by attribute: `perform`/`accept`/`send`/
   // `assign`/`include`/`exhibit`, the loops and `if`, `return`, a requirement's
@@ -341,7 +380,12 @@ export function setStatementKind(
   }
   const el = model.get(id);
   if (!el) throw new Error(`setStatementKind: no such element ${id}`);
-  if (!canCarryStatementKind(el)) {
+  if (!reachesTheFile(model, id)) {
+    throw new Error(
+      `setStatementKind: a ${el.eClass} whose declaration, or an enclosing one, could not be parsed cannot carry a statement-kind keyword — the saved file re-emits that source verbatim, and the keyword would be lost`,
+    );
+  }
+  if (!canCarryStatementKind(model, id)) {
     throw new Error(
       `setStatementKind: a ${el.eClass} cannot carry a statement-kind keyword — its notation has no place to write one`,
     );

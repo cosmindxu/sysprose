@@ -37,6 +37,7 @@ import {
   carriesItsOwnText,
   getRequirementAttrs,
   isWritableNoteBody,
+  requirementShortId,
   statementKindOf,
   untaggedStatementKindLabel,
   writtenStatementKind,
@@ -89,6 +90,7 @@ export function Properties(): JSX.Element {
   const selectionId = useAppStore((s) => s.selectionId);
   const updateElement = useAppStore((s) => s.updateElement);
   const setAttr = useAppStore((s) => s.setAttr);
+  const setRequirementShortId = useAppStore((s) => s.setRequirementShortId);
   const createElement = useAppStore((s) => s.createElement);
   const select = useAppStore((s) => s.select);
   const setStatementKind = useAppStore((s) => s.setStatementKind);
@@ -209,8 +211,9 @@ export function Properties(): JSX.Element {
   // everything typed by it or inside it (`promptsFor`), so restricting the
   // control to requirements would hide it from the elements it is most useful
   // on. `canCarryStatementKind` is the same predicate the writer refuses on, so
-  // the control is absent exactly where the write would have thrown.
-  const canCarryKind = canCarryStatementKind(el);
+  // the control is absent exactly where the write would have thrown — and it
+  // looks UP: nothing under a faulted declaration reaches the file either.
+  const canCarryKind = canCarryStatementKind(model, id);
   // The selector is driven by the kind that is actually WRITTEN, not the kind
   // the element reads as. On an untagged requirement those differ — it reads
   // `requirement` and carries no keyword — and a selector showing the effective
@@ -224,10 +227,11 @@ export function Properties(): JSX.Element {
   const requirementFacets = isRequirement(eClass)
     ? getRequirementAttrs(model, id)
     : ({} as Partial<Record<RmAttrKey, string>>);
-  // A faulted declaration re-emits its own source verbatim on save, so
+  // A faulted declaration re-emits its own source verbatim on save — subtree
+  // included, so a requirement NESTED in one is just as unwritable — and
   // `setRequirementAttr` refuses it and the store logs the refusal. Ask first
   // and disable, rather than offering a control whose value snaps back.
-  const facetsWritable = carriesItsOwnText(el);
+  const facetsWritable = carriesItsOwnText(model, id);
 
   // Documentation: the body of the first child Documentation/Comment element.
   const docChild = model
@@ -335,16 +339,23 @@ export function Properties(): JSX.Element {
           />
         </div>
 
-        <div className="field">
-          <label>Short name</label>
-          <input
-            data-testid="prop-shortName"
-            value={el.declaredShortName ?? ''}
-            onChange={(e) =>
-              updateElement(id, { declaredShortName: e.target.value || undefined })
-            }
-          />
-        </div>
+        {/* A requirement's short name IS its id, and the "Requirement id" box
+            below is its one writer: this generic box wrote the same slot through
+            `updateElement`, which leaves the legacy `attrs.reqId` standing and
+            cannot clear the slot at all, so the two boxes disagreed after an
+            edit. It is not offered where the other one is. */}
+        {!isRequirement(eClass) && (
+          <div className="field">
+            <label>Short name</label>
+            <input
+              data-testid="prop-shortName"
+              value={el.declaredShortName ?? ''}
+              onChange={(e) =>
+                updateElement(id, { declaredShortName: e.target.value || undefined })
+              }
+            />
+          </div>
+        )}
 
         {isPort && (
           <div className="field">
@@ -428,10 +439,19 @@ export function Properties(): JSX.Element {
         {isRequirement(eClass) && (
           <div className="field">
             <label>Requirement id</label>
+            {/* The slot the FILE keeps — the `<R1>` short name — read and
+                written through the same pair every other consumer uses. This
+                box used to write the legacy `attrs.reqId`, which the serializer
+                only falls back to, so it showed the new id while the Text tab
+                and the saved file kept the old one. Locked, with the reason,
+                where the facet controls are: the writer refuses an id that
+                would not reach the file. */}
             <input
               data-testid="prop-reqId"
-              value={attrString(el, 'reqId')}
-              onChange={(e) => setAttrOrClear('reqId', e.target.value)}
+              value={requirementShortId(model, id)}
+              disabled={!facetsWritable}
+              title={facetsWritable ? undefined : FAULTED_DECLARATION_REFUSAL}
+              onChange={(e) => setRequirementShortId(id, e.target.value)}
             />
           </div>
         )}

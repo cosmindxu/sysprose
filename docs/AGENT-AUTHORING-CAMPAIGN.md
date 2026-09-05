@@ -1567,7 +1567,9 @@ element's own short name and the statement is an owned documentation child, but
 models saved before this — and everything the factory still authors today —
 keep them in `attrs.reqId` and `attrs.text`, so the two read helpers prefer the
 native slot and fall back to the legacy one. Nothing migrates a saved model
-behind the author's back, and nothing writes those two keys again from here.
+behind the author's back; the one write to a legacy key from here is the
+REMOVAL of `attrs.reqId` when an id is edited (see "the id edit wrote the slot
+the file does not keep", below), so a stale copy cannot outlive the edit.
 The legacy slot is not only history, either: a save and a reopen produce it,
 because the mapper folds a requirement's `doc` body into `attrs.text` and
 creates no documentation element at all, and re-derives the legacy id from the
@@ -1579,10 +1581,12 @@ The writer had to be made to agree with those readers. The serializer emitted
 the legacy `attrs.reqId` in preference to the element's own short name, which is
 the opposite of what every reader here does: with both present the tool showed
 one id and saved the other, and reopening the file reverted the edit. It emits
-the short name now and falls back to the legacy key, which changes nothing for
-the two shapes that exist — the mapper writes both from the same token, the
-factory writes only the legacy one — and a test saves a natively named
-requirement and reads its id back to keep it that way. The one store command
+the short name now and falls back to the legacy key, and a test saves a natively
+named requirement and reads its id back to keep it that way. That pass believed
+the two shapes could no longer disagree — the mapper writes both from the same
+token, the factory writes only the legacy one — and overlooked the third writer:
+the app's two id controls wrote the legacy key alone, so the same disagreement
+came straight back the other way round. It is closed below. The one store command
 that edits a facet validates before it mutates, so a refused value leaves the
 model untouched and its undo snapshot comes straight back off the stack instead
 of standing there as a step that changed nothing; a clear of a key that was
@@ -1645,14 +1649,17 @@ DIFFERENT question, though, because it also judges plain constraints: a
 other way round — a statement is skipped only when an author explicitly tagged
 it `#prose` or `#prompt`.
 
-Three places evaluate those expressions, and fixing one of them would have been
+Four places evaluate those expressions, and fixing one of them would have been
 worse than fixing none. The rule is the checker's answer; the Simulate panel
-runs its own loop over the same two metaclasses against live values; and
+runs its own loop over the same two metaclasses against live values;
 `constraintReport` is what the Problems panel's "check constraints" command
 lists INSTEAD of the rule's rows, which it drops on purpose to avoid
-double-listing. Suppress the rule alone and the same warning walks back into the
-same panel through the other door. All three now read one predicate, so they
-cannot come to disagree about one statement again.
+double-listing; and the solver's numeric surface is what the Solve command lists
+in that same panel. Suppress the rule alone and the same warning walks back into
+the same panel through the other door. The first pass wired three of the four
+and missed the solver — recorded and closed below — so that a `#prose`
+constraint was silent under Check and violated under Solve. All four now read
+one predicate, so they cannot come to disagree about one statement again.
 
 The two places a person reads and edits statements show the kind rather than
 inferring it. The requirements table gains ten columns — the kind first, then
@@ -1672,9 +1679,10 @@ a no-op the store returns from without a re-render, and tagging `#'requirement'`
 on purpose fires no change event because the browser already shows the word. The
 blank entry is therefore a real current state and is labelled with what the
 element reads as, from one function both panels call. And a facet control asks
-BEFORE it offers: the writer refuses a requirement whose declaration could not be
-parsed, because the file re-emits that source verbatim and the value would be
-gone on the next save, so a row like that gets disabled cells carrying the reason
+BEFORE it offers: the writer refuses a requirement whose declaration — or one
+enclosing it — could not be parsed, because the file re-emits that source
+verbatim, subtree included, and the value would be gone on the next save, so a
+row like that gets disabled cells carrying the reason
 rather than a drop-down that accepts a value, snaps back, and logs to a console
 nobody has open. The Properties panel gains the same two
 things, and the Kind selector is offered on far more than requirements: guidance
@@ -1882,10 +1890,11 @@ validator-visible states, and collapsing them on save destroyed the evidence for
 the very error the checker had just reported. Every site now tests for
 PRESENCE — the rule the Comment branch already stated — for the short name as
 well as the name, so a blank requirement id survives too. The one guard that
-still tests truthiness is the LEGACY `attrs.reqId` fallback, because the
-Properties panel clears that field to `''` and an emptied box means "no id",
-not "a blank id". Fixture: `L4-blank-name`, now also covered by the L6 invariant
-below.
+still tests truthiness is the LEGACY `attrs.reqId` fallback: a factory call or
+a saved JSON may hold `''` there, and that means "no id", not "a blank id" —
+only a short name can be blank, and the app's own id controls write the short
+name now and remove the legacy key (below). Fixture: `L4-blank-name`, now also
+covered by the L6 invariant below.
 
 **The campaign gained a save-and-recheck invariant.** Both defects above turned
 one error on the way in into zero on the way out, and nothing in the corpus was
@@ -1985,6 +1994,94 @@ the two axes, so `--from K --to K` doubled it; it calls the API's
 de-duplicating counter now instead of re-deriving one. Each of those has a test
 that reads the figure back — including the printed lines, which nothing had
 pinned: all three could be hard-coded to zero with the suite green.
+
+**Editing a requirement's id in the app wrote the slot the file does not
+keep.** Three modules held three opinions about where the id lives. The mapper
+sets BOTH `declaredShortName` and `attrs.reqId` from `<R1>`; every reader and
+the serializer prefer the short name; and the only two WRITERS in the app — the
+grid's ID cell and the Properties box — wrote `attrs.reqId` alone, while the
+grid's own cell read that legacy slot back. So an edited id showed in the grid
+and in the box, the Text tab and the saved file kept `<R1>`, and reopening the
+file reverted the edit with nothing said — and the serializer's comment stated
+the opposite as fact ("nothing produced today sets the two to different
+values"). There is one write path in the app now: `setRequirementShortId` sets
+the short name and REMOVES the legacy key; the store command wrapping it spends
+one undo step, and none when the id it shows comes back unchanged — the grid
+commits on blur whether or not a key was pressed, and a blank `<''>` id, shown
+as an empty cell, would otherwise have been read as "clear it" and dropped from
+the file; the grid's ID cell and the Properties id box both call it, and the
+panel's generic Short name box — which wrote the same slot through
+`updateElement`, left the legacy copy standing and could not clear — is not
+offered on a requirement any more. The writer asks `reachesTheFile` like the
+facet writers do (below), so an id edited under a faulted declaration is
+refused out loud, and both id controls are locked with the reason. Every reader
+now prefers the short name over the legacy key: the grid's cell through
+`requirementShortId`, the chips of the requirements table, and the labels of
+the network view, the DSM, the regroup and planning views — the network view
+and the DSM read the legacy key with no short-name fallback at all, so an
+unnamed requirement was labelled by its metaclass the moment the edit removed
+that key. A cleared box
+carries NO short name, not `''` — `<''>` is a distinct state the file can hold,
+and a save that wrote it for an emptied box would fabricate one (no validation
+rule reports a blank short name today; `blank-name` looks at the name only).
+`Model.setShortName` exists because `update` reads an absent key as "leave it
+alone" and so could not clear the slot. Tests edit the id through the store on
+a PARSED requirement and read `<R9>` back out of the text, refuse it under a
+faulted declaration at more than one depth, keep `<''>` across an untouched
+blur, and pin the network and DSM labels of an unnamed requirement across an
+id edit; the browser test reads the short name instead of the legacy key.
+
+**A `#prose` / `#prompt` constraint still bound the solver, and was reported
+violated in the very Problems panel the exemption was written for.** The
+exemption had been applied on three surfaces and not the fourth:
+`gatherConstraints`, `gatherInequalities` and `checkConstraintsNumeric` filtered
+only library elements, so a tagged constraint was both an equation and a judged
+relation. `analysisReport` consumed the rows unfiltered, the Solve command
+pushed every `violated` one into the Problems list as a warning, `feasible`
+went false on the tagged statement's account, and `#prose constraint pc { mass
+== 42.0 }` SOLVED `mass` to 42 — a value no normative statement asked for.
+All three collection points now ask `isNonNormativeStatement`, the same
+predicate and the same wording as the other three surfaces (a plain
+`constraint c { … }` carries no kind and is judged as it always was), and a
+test puts one tagged constraint beside one plain one and asserts the tagged one
+appears in none of `validate`, `constraintReport`, `checkConstraintsNumeric`,
+`analysisReport.violations`, `solve().values` or `solveFeasible`, while the
+plain one is still judged.
+
+**A facet or a kind written on an element NESTED inside a faulted declaration
+was accepted, shown, and dropped by the next save.** `carriesItsOwnText` and
+`canCarryStatementKind` inspected only the element handed to them, and mirrored
+the serializer's early return without its SCOPE: the serializer re-emits a
+faulted declaration's source verbatim and nothing else, subtree included, so a
+requirement inside `blok def Vehicle { … }` has no residue of its own, passed
+both guards, took a status, showed it in the grid and the Properties panel —
+both of which enable their controls on exactly those two predicates — and lost
+it on save. The existing refusal test faulted the requirement itself, so depth
+one and deeper were untested and unguarded. Both predicates now take the model
+and walk the owners through one `reachesTheFile(model, id)`: false when the
+element or ANY ancestor carries residue or is implicit. The facet writer and the
+kind writer throw for the nested case with a message that says "or an enclosing
+one", the panels' shared refusal text says the same, and the corpus test gains a
+snippet with a faulted declaration over good children at three depths, asserting
+the writer refuses every one of them and that what it does accept survives a
+save.
+
+**The `disjoint` guard in `canCarryStatementKind` was unkillable, and the
+"every declaration form" snippet was missing one.** `Disjoining` is the one
+metaclass in the serializer's statement-form dispatch that `isRelationship`
+does not cover (it is catalogued as a node), so the one line refusing it was
+the only thing between `disjoint A from B;` and the silent keyword loss the
+whole suite exists to catch — and neither the "every declaration form the
+notation has" snippet nor the two shipped examples contain a `disjoint`
+statement, so removing that line changed nothing any test could see (verified:
+177 of 177 still passed with it deleted). The snippet carries the form now and
+the named refusal list carries `Disjoining`; the same mutation fails two
+assertions. Two comments in that predicate over-claimed as well: `Connector`,
+`Flow` and `TransitionFeature` were tested "with endpoints" as though the
+endpoint-less ones kept a header, but all three are relationships and
+`isRelationship` had already refused them either way. The dead branches are
+gone and the comment says which two metaclasses the endpoint test is actually
+about (`ConnectionUsage`, `FlowUsage`).
 
 ### Known limitations, recorded rather than hidden
 
@@ -2120,6 +2217,25 @@ IDENTICALLY to a residue (`constraint c { a x }` is the same shape as
 `blok def Vehicle;`), so the strip happens only when the mark lands: the two
 are halves of one signal, and a real expression is never deleted on offsets
 alone.
+
+**A NAME edited under a faulted declaration is still lost silently.** The
+facet, kind and id writers refuse everything under a residue carrier now
+(above), but `updateElement` — the command behind the Name cell of the requirements grid
+and the Name box of the Properties panel — has no such guard: renaming `part x;`
+inside `blok def V { part x; }` to `renamedX` shows the new name in memory and
+serializes back to the untouched verbatim `blok def V { part x; }` (probe
+2026-09-05). The same is true of every other plain attribute written through
+`setAttr` on such an element. The honest fix is the same `reachesTheFile`
+question asked once in those two commands, with the reason on the control; it
+is not done here. A second, smaller gap in the same command: `Model.update`
+reads an absent patch key as "leave it alone", so `updateElement(id, {
+declaredName: undefined })` — which is what the grid's Name cell sends when a
+name is emptied — changes nothing, and a name cannot be cleared from the app
+at all. `Model.setShortName` was added for the id precisely because of this;
+the name has no counterpart yet, and the Short name box of every element that
+is NOT a requirement still writes through `updateElement` and cannot clear
+either (on a requirement that box is gone and the id box, which can, is the
+one control).
 
 **Re-homing is a proximity heuristic, and declines rather than guess.** The
 owner of a declaration is "the latest-starting element before its enclosing

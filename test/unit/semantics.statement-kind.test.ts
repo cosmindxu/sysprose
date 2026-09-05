@@ -4,6 +4,9 @@ import { describe, it, expect } from 'vitest';
 import { Model, type ElementRecord } from '@core/index';
 import { parseModel, serializeModel } from '@text/index';
 import { checkText } from '@text/check';
+import { validate } from '@validation/index';
+import { analysisReport, constraintReport } from '@api/index';
+import { checkConstraintsNumeric, solve, solveFeasible } from '@semantics/index';
 import {
   STATEMENT_KINDS,
   STATEMENT_KIND_KEYWORD,
@@ -12,6 +15,7 @@ import {
   STATEMENT_KIND_LIBRARY,
   isStatementKind,
   canCarryStatementKind,
+  reachesTheFile,
   statementKindOf,
   writtenStatementKind,
   isNonNormativeStatement,
@@ -235,6 +239,64 @@ describe('statement kinds — what binds nothing', () => {
   });
 });
 
+/**
+ * The exemption has FOUR surfaces, not three. The validator, the constraint
+ * report and the Simulate panel skipped a tagged constraint; the solver did
+ * not — it took `#prose constraint pc { mass <= 2000.0 }` as an equation and as
+ * a judged relation, so the Solve run listed it as violated in the same
+ * Problems panel the other three keep quiet in, reported the model infeasible
+ * on its account, and a `#prose constraint { mass == 42.0 }` SOLVED `mass`.
+ */
+describe('statement kinds — a tagged constraint binds nothing on the numeric surface either', () => {
+  const SRC = `package P {
+    part def V {
+        attribute mass = 3000.0;
+        #prose constraint pc { mass <= 2000.0 }
+        #prompt constraint hint { mass <= 1000.0 }
+        constraint ok { mass <= 5000.0 }
+    }
+}`;
+
+  it('appears in none of the four surfaces, while the plain constraint is still judged', () => {
+    const { model } = parseModel(SRC);
+    const violations = validate(model).filter((d) => d.ruleId === 'constraint-violation');
+    expect(violations).toEqual([]);
+
+    const report = constraintReport(model);
+    expect(report.constraints.map((c) => `${c.result} ${c.expression}`)).toEqual([
+      'satisfied mass <= 5000.0',
+    ]);
+
+    const numeric = checkConstraintsNumeric(model);
+    expect(numeric.map((c) => `${c.name}:${c.result}`)).toEqual(['ok:satisfied']);
+
+    const analysis = analysisReport(model);
+    expect(analysis.violations).toEqual([]);
+    expect(analysis.unknowns).toEqual([]);
+    expect(analysis.feasible).toBe(true);
+  });
+
+  it('is not an equation: a tagged equality solves nothing', () => {
+    const { model } = parseModel(
+      `package P {\n    part def V {\n        attribute mass;\n        #prose constraint pc { mass == 42.0 }\n    }\n}`,
+    );
+    const mass = byName(model, 'mass');
+    expect(solve(model).values.has(mass.id)).toBe(false);
+    // …and the same equality untagged does solve it, so the exemption is the
+    // only thing standing between the two answers.
+    const plain = parseModel(
+      `package P {\n    part def V {\n        attribute mass;\n        constraint pc { mass == 42.0 }\n    }\n}`,
+    ).model;
+    expect(solve(plain).values.get(byName(plain, 'mass').id)).toBe(42);
+  });
+
+  it('a tagged inequality does not make the model infeasible', () => {
+    const { model } = parseModel(SRC);
+    expect(solveFeasible(model).feasible).toBe(true);
+    expect(solveFeasible(model).violations).toEqual([]);
+  });
+});
+
 describe('statement kinds — writing a kind', () => {
   it('adds the keyword, and the saved text reads back as that kind', () => {
     const src = `package M { part p1; }`;
@@ -340,16 +402,16 @@ describe('statement kinds — writing a kind', () => {
     // The truth table, both halves. Every `false` row is a shape the serializer
     // routes away from `header()` — or, for the enum literal, one whose emitted
     // prefix does not parse back.
-    expect(canCarryStatementKind(part)).toBe(true);
-    expect(canCarryStatementKind(pkg)).toBe(true);
-    expect(canCarryStatementKind(doc)).toBe(false);
-    expect(canCarryStatementKind(comment)).toBe(false);
-    expect(canCarryStatementKind(rep)).toBe(false);
-    expect(canCarryStatementKind(annotation)).toBe(false);
-    expect(canCarryStatementKind(fork)).toBe(false);
-    expect(canCarryStatementKind(implicit)).toBe(false);
-    expect(canCarryStatementKind(faulted)).toBe(false);
-    expect(canCarryStatementKind(edge)).toBe(false);
+    expect(canCarryStatementKind(model, part.id)).toBe(true);
+    expect(canCarryStatementKind(model, pkg.id)).toBe(true);
+    expect(canCarryStatementKind(model, doc.id)).toBe(false);
+    expect(canCarryStatementKind(model, comment.id)).toBe(false);
+    expect(canCarryStatementKind(model, rep.id)).toBe(false);
+    expect(canCarryStatementKind(model, annotation.id)).toBe(false);
+    expect(canCarryStatementKind(model, fork.id)).toBe(false);
+    expect(canCarryStatementKind(model, implicit.id)).toBe(false);
+    expect(canCarryStatementKind(model, faulted.id)).toBe(false);
+    expect(canCarryStatementKind(model, edge.id)).toBe(false);
 
     for (const el of [doc, comment, rep, annotation, fork, implicit, faulted, edge]) {
       expect(() => setStatementKind(model, el.id, 'prose'), el.eClass).toThrow(/cannot carry/i);
@@ -388,6 +450,8 @@ const ALL_STATEMENT_FORMS = `package M {
     flow ff from a to b;
     bind a = b;
     part def PD;
+    part def PD2;
+    disjoint PD from PD2;
     part p2 : PD;
     enum def Level {
         low = 0.25;
@@ -442,7 +506,7 @@ function writeEverywhereAndReload(src: string): {
   errors: string[];
 } {
   const { model } = parseModel(src);
-  const accepted = model.all().filter(canCarryStatementKind);
+  const accepted = model.all().filter((e) => canCarryStatementKind(model, e.id));
   for (const el of accepted) setStatementKind(model, el.id, 'prompt');
   const saved = serializeModel(model);
   const reloaded = parseModel(saved);
@@ -475,7 +539,7 @@ describe('statement kinds — what the writer accepts, a save keeps', () => {
 
   it('refuses every statement form that has no prefix-metadata slot', () => {
     const { model } = parseModel(ALL_STATEMENT_FORMS);
-    const refused = model.all().filter((el) => !canCarryStatementKind(el));
+    const refused = model.all().filter((el) => !canCarryStatementKind(model, el.id));
     // Named one by one: each of these once passed the metaclass guard.
     for (const expected of [
       'NamespaceImport', // import Base::*;
@@ -483,6 +547,7 @@ describe('statement kinds — what the writer accepts, a save keeps', () => {
       'ConnectionUsage', // connect a to b;   (the endpoint-bearing one)
       'Flow ff', // flow ff from a to b;
       'BindingConnectorAsUsage', // bind a = b;
+      'Disjoining', // disjoint PD from PD2;  (the one statement form isRelationship misses)
       'ReferenceUsage low', // enum literal
       'ReferenceUsage v', // subject
       'ConstraintUsage ac', // assume
@@ -511,13 +576,14 @@ describe('statement kinds — what the writer accepts, a save keeps', () => {
     }
     // …and the plain declarations are still writable, the endpoint-less
     // connection and the DECLARED metadata usage among them.
-    const accepted = model.all().filter(canCarryStatementKind).map(label);
+    const accepted = model.all().filter((e) => canCarryStatementKind(model, e.id)).map(label);
     expect(accepted).toEqual([
       'Package M',
       'PartUsage a',
       'PartUsage b',
       'ConnectionUsage c1',
       'PartDefinition PD',
+      'PartDefinition PD2',
       'PartUsage p2',
       'EnumerationDefinition Level',
       'RequirementUsage r1',
@@ -540,6 +606,45 @@ describe('statement kinds — what the writer accepts, a save keeps', () => {
     expect(accepted.length).toBeGreaterThan(10);
   });
 
+  /**
+   * A faulted declaration keeps its original source and the serializer re-emits
+   * that text verbatim, SUBTREE INCLUDED — so nothing under it reaches the file
+   * either, and a descendant has no residue of its own to be refused on. Before
+   * the guard looked upward, `good` and `deepest` were accepted, tagged, and
+   * silent on the next save. Nothing in the two shipped examples places an
+   * element under a residue carrier, which is why this snippet exists.
+   */
+  const FAULTED_TREE = `package M {
+    part def Good;
+    blok def V {
+        requirement <R1> r1;
+        part good;
+        part deeper {
+            part deepest;
+        }
+    }
+    part after;
+}`;
+
+  it('refuses everything under a faulted declaration, and the save then loses nothing', () => {
+    const { model } = parseModel(FAULTED_TREE);
+    const named = (n: string) => model.all().find((e) => e.declaredName === n)!;
+    expect(named('deepest').attrs.unparsedText, 'no residue of its own').toBeUndefined();
+    expect(reachesTheFile(model, named('deepest').id)).toBe(false);
+    expect(reachesTheFile(model, named('after').id)).toBe(true);
+    for (const n of ['r1', 'good', 'deeper', 'deepest']) {
+      expect(canCarryStatementKind(model, named(n).id), n).toBe(false);
+      expect(() => setStatementKind(model, named(n).id, 'prompt'), n).toThrow(/could not be parsed/);
+    }
+    for (const n of ['M', 'Good', 'after']) {
+      expect(canCarryStatementKind(model, named(n).id), n).toBe(true);
+    }
+    const { accepted, lost, errors } = writeEverywhereAndReload(FAULTED_TREE);
+    expect(errors.filter((e) => !e.startsWith('parse/'))).toEqual([]);
+    expect(lost, 'these kept no kind across the save').toEqual([]);
+    expect(accepted).toEqual(['Package M', 'PartDefinition Good', 'PartUsage after']);
+  });
+
   it.each(['examples/uav-isr.sysml', 'examples/vehicle.sysml'])(
     '%s: every kind the writer accepts survives a save',
     (file: string) => {
@@ -560,7 +665,7 @@ describe('statement kinds — what the writer accepts, a save keeps', () => {
     const { model } = parseModel(`package M {\n    enum def Level {\n        low = 0.25;\n    }\n}`);
     const low = byName(model, 'low');
     expect(low.attrs.keywordless).toBe(true);
-    expect(canCarryStatementKind(low)).toBe(false);
+    expect(canCarryStatementKind(model, low.id)).toBe(false);
     expect(() => setStatementKind(model, low.id, 'prose')).toThrow(/cannot carry/i);
     // Ground truth for the refusal: written by hand, that file is rejected.
     const byHand = parseModel(

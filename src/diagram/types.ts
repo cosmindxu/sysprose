@@ -554,7 +554,7 @@ export interface ReqRow {
   number: string;
   /** Nesting depth (0 = top-level) for indentation. */
   depth: number;
-  /** The requirement's own id (`attrs.reqId`). */
+  /** The requirement's own id (`requirementShortId`: the native short name, else the legacy `attrs.reqId`). */
   reqId: string;
   /** Display name (`declaredName`). */
   name: string;
