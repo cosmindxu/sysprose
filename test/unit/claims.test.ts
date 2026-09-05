@@ -51,6 +51,9 @@ const SKIP_FILES = (rel: string): boolean =>
   rel.startsWith(`src${sep}library${sep}std${sep}`) ||
   rel === join('docs', '01-state-of-the-art.md') ||
   rel === join('docs', '02-omg-standard-reference.md') ||
+  // The verification plan quotes every banned form verbatim in order to ban it:
+  // its MUST-NEVER list IS the list of sentences this guard exists to catch.
+  rel === join('docs', '04-formal-verification-plan.md') ||
   rel === join('test', 'unit', 'claims.test.ts') ||
   rel === 'CLAUDE.md' ||
   rel === 'package-lock.json';
