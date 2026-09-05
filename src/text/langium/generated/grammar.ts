@@ -4087,17 +4087,22 @@ export const SysMLGrammar = (): Grammar => loadedSysMLGrammar ?? (loadedSysMLGra
                     }
                   },
                   {
-                    "$type": "Alternatives",
-                    "elements": [
-                      {
-                        "$type": "Keyword",
-                        "value": "constraint"
-                      },
-                      {
-                        "$type": "Keyword",
-                        "value": "requirement"
-                      }
-                    ],
+                    "$type": "Assignment",
+                    "feature": "declares",
+                    "operator": "=",
+                    "terminal": {
+                      "$type": "Alternatives",
+                      "elements": [
+                        {
+                          "$type": "Keyword",
+                          "value": "constraint"
+                        },
+                        {
+                          "$type": "Keyword",
+                          "value": "requirement"
+                        }
+                      ]
+                    },
                     "cardinality": "?"
                   },
                   {

@@ -34,6 +34,7 @@ import {
   ModelFactory,
   isDefinition,
   isMembership,
+  isRequirement as isRequirementKind,
   isRelationship,
   isSpecialization,
   refSegments,
@@ -719,6 +720,20 @@ class Mapper {
     tokenOffset: number;
     weldedTo: ElementId;
   }> = [];
+
+  /**
+   * The `Verify` elements built from a BARE `verify R;` requirement clause, and
+   * the name each one would have declared had it been read as a clause.
+   *
+   * The reference reading is provisional: it is right only when `R` names a
+   * requirement. `verify Deep::far;` does not parse (the clause slot holds one
+   * `Name`), and what error recovery leaves behind is `verify Deep;` plus a
+   * stray `far;` — so a reference reading bound a traceability edge from the
+   * case to the PACKAGE `Deep`, an assertion the file never made, and the next
+   * save wrote it out as a stable fixed point. {@link bindEndpointRefs} keeps
+   * the grammar's own clause reading for any target that is not a requirement.
+   */
+  private readonly bareVerifyClauses = new Map<ElementId, string>();
 
   /**
    * Create an element and record its source span. Every `create` inside the
@@ -1446,7 +1461,7 @@ class Mapper {
           el.eClass === 'Redefinition' && srcId
             ? resolveRedefinedFeature(this.model, tref, srcId, this.model.get(srcId)?.ownerId ?? scope)
             : this.resolveRef(tref, scope, el.id);
-        if (r && r.id !== el.id) {
+        if (r && r.id !== el.id && this.mayBindVerifyTarget(el, r)) {
           this.model.update(el.id, { target: [r.id] });
           this.model.setAttrs(el.id, { targetRef: undefined });
         }
@@ -1465,6 +1480,34 @@ class Mapper {
         }
       }
     }
+  }
+
+  /**
+   * Guard for the bare `verify R;` clause: only a REQUIREMENT can be verified.
+   *
+   * Answers whether the target binding may proceed. When `R` names something else —
+   * a package, a part definition — the provisional reference reading is undone
+   * and the grammar's own clause reading is restored: a `ConstraintUsage` named
+   * `R` with `requirementRole = 'verify'`, which is exactly what the clause
+   * alternative at `sysml.langium`:282 says the text declares. Nothing is
+   * invented and nothing is lost — the text round-trips as `verify R;` either
+   * way — but the model no longer asserts a traceability edge the file never
+   * made. An UNRESOLVED name is left alone: it keeps its textual `targetRef`
+   * and raises `ref/unresolved-requirement`, like every other requirement
+   * relationship.
+   */
+  private mayBindVerifyTarget(el: ElementRecord, target: ElementRecord): boolean {
+    const declaredName = this.bareVerifyClauses.get(el.id);
+    if (declaredName === undefined) return true;
+    if (isRequirementKind(target.eClass)) return true;
+    this.model.update(el.id, {
+      eClass: 'ConstraintUsage',
+      declaredName,
+      source: [],
+      target: [],
+    });
+    this.model.setAttrs(el.id, { targetRef: undefined, requirementRole: 'verify' });
+    return false;
   }
 
   /**
@@ -1592,19 +1635,23 @@ class Mapper {
         return this.mapSatisfy(node as Satisfy, ownerId);
       case 'Verify': {
         const v = node as Verify;
-        return this.mapRequirementRelation('Verify', v.requirement, v.by, node, ownerId, v.visibility);
+        this.mapRequirementRelation('Verify', v.requirement, v.by, node, ownerId, v.visibility);
+        return;
       }
       case 'Refine': {
         const r = node as Refine;
-        return this.mapRequirementRelation('Refine', r.requirement, r.by, node, ownerId, r.visibility);
+        this.mapRequirementRelation('Refine', r.requirement, r.by, node, ownerId, r.visibility);
+        return;
       }
       case 'Trace': {
         const t = node as Trace;
-        return this.mapRequirementRelation('Trace', t.requirement, t.to, node, ownerId, t.visibility);
+        this.mapRequirementRelation('Trace', t.requirement, t.to, node, ownerId, t.visibility);
+        return;
       }
       case 'Derive': {
         const d = node as Derive;
-        return this.mapRequirementRelation('Derive', d.requirement, d.from, node, ownerId, d.visibility);
+        this.mapRequirementRelation('Derive', d.requirement, d.from, node, ownerId, d.visibility);
+        return;
       }
       case 'Allocate':
         return this.mapAllocate(node as Allocate, ownerId);
@@ -1955,7 +2002,7 @@ class Mapper {
     node: AstNode,
     ownerId: ElementId | null,
     visibility?: string,
-  ): void {
+  ): ElementRecord {
     const el = this.create(eClass, {
       ownerId: ownerId ?? undefined,
       source: [],
@@ -1975,6 +2022,7 @@ class Mapper {
       (r) => `Unresolved requirement '${r}'`,
       (r) => `Unresolved ${eClass.toLowerCase()} element '${r}'`,
     );
+    return el;
   }
 
   private mapAllocate(node: Allocate, ownerId: ElementId | null): void {
@@ -2086,28 +2134,118 @@ class Mapper {
     });
   }
 
+  /**
+   * `verify R;` — the bare reference form of the `verify` clause.
+   *
+   * The grammar (`sysml.langium`:282) reads `R` as the DECLARED NAME of a new
+   * clause, uniform with `actor a;` and `frame f;`. A reader does not: `verify`
+   * names an existing requirement and says this case checks it, which is what
+   * the `verify R by X;` statement form means and what every traceability
+   * surface wants. So the mapper reads the name as a REFERENCE whenever the
+   * clause declares nothing else — no specialization, no multiplicity, no
+   * value, no body. Anything more and the reference reading would have to throw
+   * that content away, so the clause reading wins instead.
+   */
+  private isBareVerifyReference(node: RequirementClause): boolean {
+    return (
+      node.kind === 'verify' &&
+      node.name !== undefined &&
+      node.specializations.length === 0 &&
+      node.multiplicity.length === 0 &&
+      node.value === undefined &&
+      node.body === undefined &&
+      node.members.length === 0
+    );
+  }
+
   private mapRequirementClause(node: RequirementClause, ownerId: ElementId | null): void {
+    const visibility: Record<string, AttrValue> = node.visibility
+      ? { visibility: node.visibility }
+      : {};
+    if (this.isBareVerifyReference(node)) {
+      // The name is passed VERBATIM, as the `verify R by X;` statement form
+      // passes `v.requirement`: this slot is a source LEXEME that the deferred
+      // resolver reads and the writer echoes when the name does not resolve.
+      // Unquoting it here turned `verify 'A::B';` into `verify A::B;` on save —
+      // one statement written into a slot the grammar reads as a single `Name`,
+      // which re-parsed as two.
+      const rel = this.mapRequirementRelation(
+        'Verify',
+        node.name,
+        undefined,
+        node,
+        ownerId,
+        node.visibility,
+      );
+      // The reference reading is provisional until the name is resolved: only a
+      // REQUIREMENT can be verified, and the clause reading is kept for anything
+      // else (see `mayBindVerifyTarget`).
+      this.bareVerifyClauses.set(rel.id, unquoteName(node.name) ?? '');
+      return;
+    }
     if (node.kind === 'subject') {
       const el = this.create('ReferenceUsage', {
         ownerId: ownerId ?? undefined,
         declaredName: unquoteName(node.name),
-        attrs: { requirementRole: 'subject' },
+        attrs: { requirementRole: 'subject', ...visibility },
       });
       for (const spec of node.specializations) this.applySpecialization(el, spec);
+      this.mapRequirementClauseTail(node, el);
       return;
     }
-    // require / assume constraint
+    // require / assume / assert constraint, actor, stakeholder, objective, frame
     const el = this.create('ConstraintUsage', {
       ownerId: ownerId ?? undefined,
       declaredName: unquoteName(node.name),
-      attrs: { requirementRole: node.kind },
+      attrs: {
+        requirementRole: node.kind,
+        ...visibility,
+        // Which of the published grammar's two alternatives the author wrote:
+        // `require sat;` REFERENCES an existing constraint, `require constraint
+        // sat;` DECLARES a new one, and the two build the same element. Without
+        // the keyword recorded the writer cannot tell them apart, and pushing
+        // `constraint` unconditionally rewrote every reference into a
+        // declaration on every save.
+        ...(node.declares ? { declares: node.declares } : {}),
+      },
     });
     for (const spec of node.specializations) this.applySpecialization(el, spec);
-    if (node.expr) {
+    this.mapRequirementClauseTail(node, el);
+  }
+
+  /**
+   * Everything a requirement clause carries after its declaration head:
+   * multiplicity, feature value, body members and trailing expression.
+   *
+   * This used to read `node.expr` and nothing else, which deleted the content of
+   * every clause that carries a `Body` — `objective { … }`, `actor a { … }`,
+   * `stakeholder h { … }`, `frame f { … }` — and the doc note and multiplicity
+   * and value of the ones that do not. The deletion was idempotent, so a save
+   * destroyed the standard's own home for a behaviour's precondition and
+   * postcondition without a diagnostic and without a second save noticing.
+   *
+   * The two clause shapes hold the same two things in different places: the
+   * `require`/`assume`/`assert` alternative inlines `members` and `expr` on the
+   * clause itself, every other alternative wraps them in a `Body`
+   * (`sysml.langium`:279-287). Both are walked here.
+   */
+  private mapRequirementClauseTail(node: RequirementClause, el: ElementRecord): void {
+    const mults = readableMultiplicities(node.multiplicity);
+    if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
+    if (node.valueOp && node.value) {
+      this.model.setAttrs(el.id, this.splitValueUnit(node.value));
+      if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
+        this.model.setAttrs(el.id, { initialValue: true });
+      }
+    }
+    // Walked in document order, like every other body — single-pass resolution.
+    for (const m of node.body ? node.body.members : node.members) this.mapMember(m, el.id);
+    const expr = node.body ? node.body.expr : node.expr;
+    if (expr) {
       // The expression is always written; `markUnparsedResidue` takes it back
       // if this turns out to be a swallowed unknown keyword it can re-home.
-      this.model.setAttrs(el.id, { expression: exprText(node.expr) });
-      this.noteResidueOfFault(node.expr, el.id);
+      this.model.setAttrs(el.id, { expression: exprText(expr) });
+      this.noteResidueOfFault(expr, el.id);
     }
   }
 

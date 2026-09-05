@@ -2084,6 +2084,67 @@ endpoint-less ones kept a header, but all three are relationships and
 gone and the comment says which two metaclasses the endpoint test is actually
 about (`ConnectionUsage`, `FlowUsage`).
 
+**Every requirement clause but one threw its body away, and the writer named a
+constraint instead of declaring one.** `mapRequirementClause` read `kind`,
+`name`, `specializations` and — for `require`/`assume`/`assert` only — the
+trailing `expr`. Nothing else. So an objective written the way the standard
+means it,
+`objective { doc /* … */ assume constraint { armed == true } require constraint { altitude > 0.0 } }`,
+mapped to one `ConstraintUsage` with **zero children** and saved as
+`objective;`: a behaviour's precondition and its postcondition, deleted without
+a diagnostic. The deletion was IDEMPOTENT — the second save reproduced the
+first byte for byte — so no round-trip invariant could see it either. It was
+wider than an objective: `actor a { … }`, `stakeholder h { … }` and
+`frame f { … }` lost their bodies the same way, `require constraint bound { doc
+/* … */ x < 10.0 }` lost its doc note, a `subject` clause lost its value and
+its multiplicity (`subject s : Real [1] = 5;` came back as `subject s : Real;`),
+and every clause lost its visibility (`private assert constraint c { … }`, the
+standard library's own spelling, came back `assert c { … }`). The two clause
+shapes hold the same two things in different places — the
+`require`/`assume`/`assert` alternative inlines `members` and `expr`, every
+other alternative wraps them in a `Body` (`sysml.langium`:279-287) — and both
+are walked now, along with the multiplicity, the feature value and the
+visibility.
+
+Meeting it was the second defect: `requirementClauseLine` wrote `assume { … }`
+without the `constraint` keyword. Under the published grammar an anonymous
+`require { … }`, carrying neither `constraint` nor a `#keyword`, matches **no**
+alternative at all. Sysprose re-read its own output only because its own grammar
+makes the keyword optional (`sysml.langium`:285), so a reader indulgence hid a
+writer defect; a stricter tool would have rejected the file. Neither defect
+could be shown fixed without the other, because the evidence for both is one
+round trip.
+
+The keyword can only be pushed where the clause actually DECLARES. The published
+grammar gives `RequirementConstraintUsage` two alternatives that mean different
+things — `require sat;` is an `OwnedReferenceSubsetting` NAMING an existing
+constraint, `require constraint sat;` DECLARES a new one — and both map to the
+same element, so the writer cannot tell them apart from the model. The first cut
+of this fix pushed `constraint` unconditionally and rewrote every reference into
+a declaration on every save, on the OMG's own published models included
+(`require Load;` → `require constraint Load;`, four times in
+`HSUVRequirements.sysml`). The author's own keyword is recorded instead —
+`declares` on the grammar rule, `attrs.declares` on the element — and the writer
+emits it only where it was written, or where the clause is anonymous and the
+reference alternative therefore cannot apply.
+
+Measured over 236 corpus files (`examples/`, the 140 fixture `.sysml` files, and
+the 94 files of `~/.stdlib-src/sysml.library`), the writer's output moves on
+**29** of them — 2 examples, 11 fixtures and 16 standard-library files, **+2,817
+bytes** in total: 46 clause lines gain the `constraint` keyword, 3 regain a
+`private`, and **9** of the 29 files also recover clause-body content the
+standard library had been losing on every save — doc notes and nested members on
+`TradeStudies`, `CausationConnections`, `SpatialItems`, `MeasurementReferences`,
+`DerivationConnections`, `Cases`, `Items`, `Requirements` and
+`VerificationCases` (a tenth, `Views.sysml`, recovers a multiplicity rather than
+a body). The other 207 files are byte-identical. Across the wider OMG
+release-model corpus (`~/.stdlib-src/sysml/src`, 251 files) 50 files move and
+**no** reference-form clause line is rewritten — checked line by line over all
+487 files. Regression test: `test/unit/text.clause-bodies.test.ts`, 29 cases,
+each of which fails when the body walk, the body's trailing expression, the
+value/multiplicity mapping, the visibility, the `declares` gate or the
+single-name refusal is removed.
+
 ### Known limitations, recorded rather than hidden
 
 **Thirteen fixtures still re-parse clean after a save.** The save-and-recheck
@@ -2098,6 +2159,20 @@ is re-emitted only where the mapper marked one (see "a faulted save reproduces
 its fault"); where it did not, the saved file is the honest content of the model
 but no longer reproduces the fault. The list is measured, and the invariant is
 the ratchet that stops it growing.
+
+**A qualified `verify` target still splits into two statements on save.**
+`verify Deep::far;` is not legal in a requirement clause — the slot is one
+`Name` (`sysml.langium`:282) — and the parse fails with
+`parse/mismatched-token`. What error recovery leaves behind is a clause named
+`Deep` plus a keyword-less `far`, and the save writes both out: one source
+statement becomes two, and the saved file re-checks CLEAN. This is the same
+recovery family as the thirteen fixtures above, and the same before this commit
+as after — the difference is only that the objective's body is no longer deleted
+wholesale, so the residue is now visible. What the commit does close is the part
+that was inventing: the mapper no longer binds a traceability edge to the
+package `Deep`, and the writer refuses a target text that is not one `Name`.
+Making the residue reproduce its own fault needs the `markUnparsedResidue`
+machinery to cover a clause head, which is not attempted here.
 
 **`L0-json-as-sysml` is the one file in the corpus a save does not settle.**
 JSON offered as `.sysml` is refused by the loader before a model exists; parsed
@@ -2294,13 +2369,6 @@ move that precisely, where before the same model was reported feasible without
 either engine having looked. The verdict surfaces are unaffected: they read the
 unit-aware evaluator.
 
-**A requirement `subject` clause drops its value AND its multiplicity.**
-`subject s : Real [1] = 5;` parses — the grammar carries both parts — and
-re-emits as `subject s : Real;`. `mapRequirementClause` reads the name and the
-specializations and nothing else, so only the type survives. An earlier
-revision of this entry said the multiplicity survived; it does not, and the
-round trip above is what says so.
-
 **A `->` after a transition guard is absorbed into the guard.** In
 `transition first a if g -> b then b;` the guard expression is `g -> b`: the
 arrow is a legal function-operation operator, so the guard swallows it and no
@@ -2394,6 +2462,46 @@ model means. A later commit that gives the loader a text-side
 `bindStandardLibrary` owns removing it.
 
 ### Pinned behaviours (decisions, not defects)
+
+**A bare `verify R;` clause is read as a reference, not a declaration — when
+`R` names a requirement.** The grammar (`sysml.langium`:282) parses `verify R;`
+the way it parses `actor a;` — `R` is the DECLARED NAME of a new clause. A
+reader does not read it that way, and neither does the `verify R by X;`
+statement form: `R` is the requirement being verified. So the mapper builds a
+`Verify` relationship whose TARGET is `R`, with no source, and the serializer
+writes it back as `verify R;` in the clause's own place. This is a deliberate
+deviation from the grammar's declared clause shape, taken because a case's
+objective is where the traceability surfaces look for what a case checks.
+
+Three guards keep the deviation from inventing anything. It applies only to the
+BARE form: a `verify` clause that also declares a specialization, a
+multiplicity, a value or a body stays a clause, because the reference reading
+would have to throw that content away. It binds only to a REQUIREMENT: `verify
+Deep::far;` does not parse (the clause slot holds one `Name`) and what error
+recovery leaves behind is `verify Deep;` plus a stray `far;`, which the
+reference reading turned into a traceability edge from the case to the *package*
+`Deep` — an assertion the file never made, written back out as a stable fixed
+point; anything that is not a requirement keeps the clause reading instead, and
+an unresolved name keeps its textual `targetRef` and its
+`ref/unresolved-requirement` warning. And the name is carried as the author's
+own LEXEME, quotes included: unquoting it wrote `verify 'A::B';` back as
+`verify A::B;`, one statement written into a one-`Name` slot that re-parsed as
+two — and for `verify 'end';` the re-parse was CLEAN. A target text that is not
+one `Name` is now refused (`UnwritableRequirementRefError`), the sibling of the
+note-body refusal. `test/unit/text.clause-bodies.test.ts` and
+`test/unit/text.roundtrip.test.ts` pin every half; the anti-hijack property the
+round-trip case was originally written for is asserted on the AST node, because
+the model record the clause path builds is indistinguishable from the one the
+statement path would build.
+
+**A source-less `Verify` does not answer `validation/requirement-subject`.**
+`satisfy R by X;` and `verify R by X;` name the thing being checked AGAINST the
+requirement, which is the subject in all but name, so the rule takes them as an
+answer. The bare `verify R;` clause names no such thing — it says only which
+requirement a case checks — so it does not, and a requirement with no subject is
+still reported when a case mentions it. Without this the reference reading above
+would have silently switched the rule off for every requirement named in an
+objective.
 
 **An inherited connector end materialises a per-usage implicit feature.** When
 `connect a to x;` names an `x` the enclosing type INHERITS, the endpoint binds

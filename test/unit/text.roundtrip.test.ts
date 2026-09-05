@@ -3,6 +3,7 @@ import { buildSampleModel, Model, ModelFactory, type ElementRecord } from '@core
 import { parseModel, serializeModel } from '@text/index';
 import { validate } from '@validation/index';
 import { NOTE_BODY_TERMINATOR, UnwritableNoteBodyError } from '@semantics/index';
+import { parseDocument } from '@text/langium/module';
 
 /** Attributes that carry semantic meaning for round-trip comparison. */
 const KEY_ATTRS = [
@@ -1264,20 +1265,41 @@ describe('round-trip — requirement cross-relationships (verify / refine / trac
     expect(serializeModel(m2)).toBe(text);
   });
 
-  it('does not hijack the nested requirement-clause forms (verify inside a body)', () => {
-    const { model, diagnostics } = parseModel(`
+  /**
+   * RE-RECORDED with the clause-body fix (`test/unit/text.clause-bodies.test.ts`).
+   *
+   * The GRAMMAR still parses `verify requirement R;` as a RequirementClause
+   * member rather than letting the `verify … by …` statement rule hijack it —
+   * that lookahead property is what this test was written for. The MODEL can no
+   * longer witness it: the mapper now reads the bare clause as a REFERENCE, and
+   * the record it builds (`Verify`, `targetRef = 'R'`, no source) is
+   * indistinguishable from the one the statement path would build if `by` were
+   * ever made optional. So the property is asserted where it lives, on the AST
+   * — the member must be a `RequirementClause` node — and the model assertions
+   * below record the mapper's reading instead.
+   */
+  it('maps the nested bare `verify R;` clause form to a Verify relationship', () => {
+    const src = `
       verification def V {
         subject s : System;
         verify requirement R;
       }
-    `);
+    `;
+    // The anti-hijack property, on the node the parser actually built.
+    const ast = parseDocument(src).ast;
+    const body = (ast.members[0] as { body?: { members: { $type: string }[] } }).body!;
+    expect(body.members.map((m) => m.$type)).toEqual(['RequirementClause', 'RequirementClause']);
+
+    const { model, diagnostics } = parseModel(src);
     expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
-    // `verify requirement R;` (no `by` tail) is still a RequirementClause
-    // member, NOT a Verify relationship.
-    expect(count(model, 'Verify')).toBe(0);
-    const clause = model.all().find((e) => e.attrs.requirementRole === 'verify');
-    expect(clause?.eClass).toBe('ConstraintUsage');
-    expect(clause?.declaredName).toBe('R');
+    expect(count(model, 'Verify')).toBe(1);
+    const verify = model.all().find((e) => e.eClass === 'Verify')!;
+    expect(verify.attrs.targetRef).toBe('R');
+    expect(verify.source ?? []).toHaveLength(0);
+    // No clause element is left behind carrying the requirement's name.
+    expect(model.all().find((e) => e.attrs.requirementRole === 'verify')).toBeUndefined();
+    // It re-emits in the clause's own place, inside the verification body.
+    expect(serializeModel(model)).toContain('verify R;');
   });
 });
 

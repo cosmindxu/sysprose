@@ -44,6 +44,36 @@ const MODIFIER_ORDER: readonly string[] = [
 ];
 const MODIFIER_ORDER_SET = new Set<string>(MODIFIER_ORDER);
 
+/**
+ * Thrown when a requirement reference cannot be written into the one-`Name`
+ * slot that holds it.
+ *
+ * The sibling of {@link UnwritableNoteBodyError}, and for the same reason: the
+ * alternative to refusing is a file that parses cleanly and means something
+ * else. `verify 'A::B';` written unquoted becomes `verify A;` plus a second
+ * statement `B;`, and the re-check is clean — the exact laundering the L6
+ * ratchet exists to catch. Reaching this is an assertion failure, not a user
+ * path: the mapper keeps the author's own lexeme, so every parsed model writes
+ * a name the grammar can read back.
+ */
+export class UnwritableRequirementRefError extends Error {
+  constructor(
+    /** Relationship whose endpoint could not be written. */
+    readonly elementId: string,
+    /** The clause keyword the endpoint would have followed (`verify`). */
+    readonly keyword: string,
+    /** The text that is not one `Name`. */
+    readonly text: string,
+  ) {
+    super(
+      `Cannot serialize ${elementId}: "${text}" is not a single name, and ` +
+        `\`${keyword} <name>;\` holds exactly one. Writing it would split one ` +
+        'statement into two that name different elements.',
+    );
+    this.name = 'UnwritableRequirementRefError';
+  }
+}
+
 /** Serialize an entire model to text (roots in declaration order). */
 export function serializeModel(model: Model): string {
   return model
@@ -697,9 +727,54 @@ function returnLine(model: Model, el: ElementRecord, indent: number): string {
   return renderWithBody(model, el, indent, parts.join(' '));
 }
 
-/** Requirement clause: `subject`, `require`, `assume`, `objective`, … */
+/**
+ * The `public` / `private` / `protected` keyword an element carries, as zero or
+ * one declaration-prefix word.
+ *
+ * {@link header} does the same thing for a definition or usage; a requirement
+ * clause is not built by `header` and so simply LOST its visibility — the
+ * grammar carries it (`sysml.langium`:278) and `public objective { … }` came
+ * back as `objective { … }`, idempotently.
+ */
+function visibilityPrefix(el: ElementRecord): string[] {
+  const vis = el.attrs.visibility;
+  return vis === 'public' || vis === 'private' || vis === 'protected' ? [String(vis)] : [];
+}
+
+/** Clause kinds whose content is a CONSTRAINT: `require`, `assume`, `assert`. */
+const CONSTRAINT_CLAUSE_KINDS = new Set(['require', 'assume', 'assert']);
+
+/**
+ * The keyword that follows `require`/`assume`/`assert`, or `''` for none.
+ *
+ * The published grammar gives `RequirementConstraintUsage` two alternatives and
+ * they mean different things. `require sat;` is an `OwnedReferenceSubsetting`:
+ * it NAMES an existing constraint `sat`. `require constraint sat;` is a
+ * `ConstraintUsageDeclaration`: it DECLARES a new one. Both map to the same
+ * element, so the writer cannot tell them apart from the model alone — it reads
+ * `attrs.declares`, which the mapper fills in from the author's own keyword.
+ *
+ * Pushing `constraint` unconditionally (the first form of this fix) rewrote
+ * every reference into a declaration on every save — measured on five files of
+ * the OMG's own published models, `require Load;` → `require constraint Load;`,
+ * a different model with no diagnostic either way.
+ *
+ * An ANONYMOUS clause still gets the keyword whatever the model says: the
+ * reference alternative has no name to subset, so `require { … }` matches no
+ * published alternative at all, and that — not the named form — is the writer
+ * defect this commit closes.
+ */
+function clauseDeclarator(el: ElementRecord): string[] {
+  const declares = el.attrs.declares;
+  if (typeof declares === 'string' && declares) return [declares];
+  return el.declaredName === undefined ? ['constraint'] : [];
+}
+
+/** Requirement clause: `subject`, `require constraint`, `objective`, … */
 function requirementClauseLine(model: Model, el: ElementRecord, indent: number): string {
-  const parts = [String(el.attrs.requirementRole)];
+  const role = String(el.attrs.requirementRole);
+  const parts = [...visibilityPrefix(el), role];
+  if (CONSTRAINT_CLAUSE_KINDS.has(role)) parts.push(...clauseDeclarator(el));
   if (el.declaredName !== undefined) parts.push(quoteName(el.declaredName));
   parts.push(...specializationFragments(model, el), ...multFragment(el), ...valueClause(el));
   return renderWithBody(model, el, indent, parts.join(' '));
@@ -814,11 +889,64 @@ function requirementRelLine(
   return lines.join('\n');
 }
 
+/**
+ * Is `text` ONE `Name` token — a plain identifier that is not a keyword, or a
+ * single-quoted name?
+ *
+ * The slot `requirementOnlyLine` writes into is `name=Name`
+ * (`sysml.langium`:282), which holds exactly one such token. `A::B`, `A.B` and
+ * `has space` are not one, and writing them there does not fail loudly: the
+ * re-parse takes `verify A;` and leaves `B;` behind as a second statement, or
+ * (for a name that happens to be a keyword) `verify;` and `end ref;`. One
+ * statement silently becomes two and the file re-checks clean.
+ */
+const QUOTED_NAME = /^'(?:\\.|[^'\\])*'$/;
+function isSingleName(text: string): boolean {
+  if (QUOTED_NAME.test(text)) return true;
+  return PLAIN_IDENT.test(text) && !RESERVED_WORDS.has(text);
+}
+
+/**
+ * The tail-less form — `<vis>? <keyword> <req>;` — for a requirement
+ * relationship that names a requirement and nothing to relate it to. Only the
+ * `verify` clause produces one; the same skipping rules as
+ * {@link requirementRelLine} apply, so an anonymous or empty target emits
+ * nothing rather than unparseable text.
+ *
+ * A target text that is not ONE `Name` is REFUSED rather than written. It is an
+ * assertion, not a user path — the mapper stores the author's own lexeme and
+ * only binds a target the enclosing scope can name simply — so reaching it
+ * means the model was built some other way, and the honest answer is the same
+ * one {@link UnwritableNoteBodyError} gives: no file, rather than a file that
+ * parses cleanly and means something else.
+ */
+function requirementOnlyLine(
+  model: Model,
+  el: ElementRecord,
+  pad: string,
+  keyword: string,
+): string {
+  const visPrefix = visibilityPrefix(el).map((v) => `${v} `).join('');
+  return endpointList(model, el, 'target')
+    .filter((req) => req && !req.includes('«'))
+    .map((req) => {
+      if (!isSingleName(req)) throw new UnwritableRequirementRefError(el.id, keyword, req);
+      return `${pad}${visPrefix}${keyword} ${req};`;
+    })
+    .join('\n');
+}
+
 function satisfyLine(model: Model, el: ElementRecord, pad: string): string {
   return requirementRelLine(model, el, pad, 'satisfy', 'by');
 }
 
 function verifyLine(model: Model, el: ElementRecord, pad: string): string {
+  // `verify R;` — the requirement-clause form carries no `by` element at all
+  // (see `Mapper.isBareVerifyReference`). `requirementRelLine` pairs every
+  // source with every target, so a Verify with neither a resolved source nor a
+  // textual `sourceRef` would render as the empty string and be dropped.
+  if ((el.source ?? []).length === 0 && el.attrs.sourceRef === undefined)
+    return requirementOnlyLine(model, el, pad, 'verify');
   return requirementRelLine(model, el, pad, 'verify', 'by');
 }
 

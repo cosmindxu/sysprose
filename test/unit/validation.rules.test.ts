@@ -232,6 +232,36 @@ describe('rule 8 — requirement-subject', () => {
     setStatementKind(m, req.id, 'requirement');
     expect(runRule(m, 'requirement-subject')).toHaveLength(1);
   });
+
+  /**
+   * A `verify R by X;` names the thing being checked AGAINST the requirement,
+   * which is the subject in all but name — so it answers the rule. A SOURCE-LESS
+   * `Verify`, which is what the bare `verify R;` clause inside a case objective
+   * builds, says only WHICH requirement the case checks. It names no subject,
+   * and must not silence a requirement that still has none: reading the clause
+   * as a reference otherwise turned this warning off for every requirement a
+   * case mentions.
+   */
+  it('a two-ended verify answers the rule; a source-less one does not', () => {
+    const withSource = new Model();
+    const fa = new ModelFactory(withSource);
+    const pa = fa.pkg('P');
+    const reqA = fa.requirement('R', pa.id);
+    const part = fa.part('X', pa.id);
+    withSource.create('Verify', {
+      ownerId: pa.id,
+      source: [part.id],
+      target: [reqA.id],
+    });
+    expect(runRule(withSource, 'requirement-subject')).toHaveLength(0);
+
+    const sourceless = new Model();
+    const fb = new ModelFactory(sourceless);
+    const pb = fb.pkg('P');
+    const reqB = fb.requirement('R', pb.id);
+    sourceless.create('Verify', { ownerId: pb.id, source: [], target: [reqB.id] });
+    expect(runRule(sourceless, 'requirement-subject')).toHaveLength(1);
+  });
 });
 
 describe('rule 9 — redefinition-target-missing', () => {

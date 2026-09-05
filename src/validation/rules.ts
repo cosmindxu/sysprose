@@ -592,9 +592,18 @@ function hasSubject(model: Model, req: ElementRecord): boolean {
   ) {
     return true;
   }
+  // A `satisfy R by X;` / `verify R by X;` names the thing being checked against
+  // the requirement, which is the subject in all but name. A SOURCE-LESS one
+  // does not: the bare `verify R;` clause inside a case objective says only
+  // WHICH requirement the case checks, never who or what it checks it on, so it
+  // must not silence a requirement that still has no subject.
   return model
     .relationshipsTo(req.id)
-    .some((r) => r.eClass === 'Satisfy' || r.eClass === 'Verify');
+    .some(
+      (r) =>
+        (r.eClass === 'Satisfy' || r.eClass === 'Verify') &&
+        ((r.source ?? []).length > 0 || typeof r.attrs.sourceRef === 'string'),
+    );
 }
 
 /** (9) A redefinition/subsetting whose target is missing or unresolved. */

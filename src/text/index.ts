@@ -41,7 +41,7 @@ export {
 } from './langium/diagnostic-codes';
 export type { DiagnosticCode } from './langium/diagnostic-codes';
 
-export { serializeModel, serializeElement } from './serializer';
+export { serializeModel, serializeElement, UnwritableRequirementRefError } from './serializer';
 export { lex } from './lexer';
 export type { Token, TokenKind } from './lexer';
 

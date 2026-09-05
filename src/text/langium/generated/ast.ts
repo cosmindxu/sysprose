@@ -972,6 +972,7 @@ export interface RequirementClause extends langium.AstNode {
     readonly $container: Body | Namespace | RequirementClause;
     readonly $type: 'RequirementClause';
     body?: Body;
+    declares?: 'constraint' | 'requirement';
     expr?: Expression;
     kind: 'actor' | 'assert' | 'assume' | 'frame' | 'objective' | 'require' | 'stakeholder' | 'subject' | 'verify';
     members: Array<Member>;
@@ -1769,6 +1770,7 @@ export class SysMLAstReflection extends langium.AbstractAstReflection {
                     name: RequirementClause,
                     properties: [
                         { name: 'body' },
+                        { name: 'declares' },
                         { name: 'expr' },
                         { name: 'kind' },
                         { name: 'members', defaultValue: [] },

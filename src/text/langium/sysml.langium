@@ -282,7 +282,7 @@ RequirementClause infers RequirementClause:
     | kind=('actor' | 'stakeholder' | 'objective' | 'frame' | 'verify') ('requirement')?
         (name=Name)? (specializations+=Specialization | multiplicity+=Multiplicity)*
         (valueOp=ValueOp value=Expression)? (body=Body | ';')?
-    | kind=('require' | 'assume' | 'assert') ('constraint' | 'requirement')? (name=Name)?
+    | kind=('require' | 'assume' | 'assert') (declares=('constraint' | 'requirement'))? (name=Name)?
         (specializations+=Specialization)?
         ('{' (members+=Member)* (expr=Expression)? '}' | ';'?)
     );
