@@ -83,7 +83,7 @@ import {
 } from './contracts';
 import { type ExprNode } from './expr';
 import { foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
-import { NO_MARKERS, idScopeFor, parseRelationBody, storageScaleOf } from './relations';
+import { NO_MARKERS, idScopeFor, parseRelationBody } from './relations';
 import { getRequirementAttr } from './requirements';
 import { isNonNormativeStatement } from './statement-kind';
 import { type DerivationMemo } from './units-eval';
@@ -159,6 +159,23 @@ export interface Obligation {
   node: ExprNode | null;
   vars: ContractVariable[];
   sortPerVar: Record<string, VarSort>;
+  /**
+   * Did the gates grant this relation a `ScaleMap` — is it judged in coherent
+   * SI, or verbatim in the magnitudes the file stores?
+   *
+   * PUBLISHED BECAUSE IT IS NOT DERIVABLE FROM THE ROW. `ContractVariable`
+   * carries `siFactor` whatever the gates decided, so a consumer that scaled a
+   * variable because it COULD would read `range = 5.0 [km]` against a bare
+   * `<= 10.0` as `5000 <= 10` — a confident wrong verdict on a satisfied
+   * constraint, and the exact reading the declared-unit contract exists to
+   * forbid (`scaleOfRelation`, gate (c)). The SMT engine is the second consumer
+   * of this worklist and it has to encode each relation the way the gates read
+   * it; the numeric surface already does, through the same `ScaleMap` this flag
+   * reports the presence of.
+   *
+   * `false` for a row with no relation at all.
+   */
+  scaled: boolean;
   encodable: Encodable;
   nonlinear: boolean;
   verifiedBy: ContractRef[];
@@ -441,6 +458,7 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
       node: reading.node,
       vars: reading.variables,
       sortPerVar: reading.sortPerVar,
+      scaled: reading.scale !== undefined,
       encodable: reading.encodable,
       nonlinear: reading.nonlinear,
       verifiedBy: contract?.verifiedBy ?? [],
@@ -486,6 +504,7 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
       node: null,
       vars: [],
       sortPerVar: {},
+      scaled: false,
       encodable: {
         reason: 'no-formal-clause',
         detail: 'the requirement carries prose and no constraint body, so there is nothing to encode',
@@ -580,6 +599,7 @@ function featureValueAxiom(
     node: reading.node,
     vars: reading.variables,
     sortPerVar: reading.sortPerVar,
+    scaled: reading.scale !== undefined,
     encodable: reading.encodable,
     nonlinear: reading.nonlinear,
     verifiedBy: [],
@@ -590,14 +610,24 @@ function featureValueAxiom(
 }
 
 /**
- * The axiom a literal feature value states, in SI.
+ * The axiom a literal feature value states, in the magnitude the FILE STORES.
  *
- * The magnitude is converted here and the variable is left in its storage unit,
- * which is the same split the numeric surface makes: values are STORED in the
- * feature's own unit and converted at the point of use through the relation's
- * scale map. An encoder that maps each variable to `factor·x + offset`
- * therefore meets an SI number on the other side of the equality, exactly as it
- * does for a `[unit]` literal lowered out of a body.
+ * `mtow = 18.5 [kg]` states `mtow == 18.5`, not `mtow == 18.5` converted into
+ * something else, and `capacity = 640.0 [Wh]` states `capacity == 640`. The
+ * variable denotes the stored magnitude everywhere in this lane — that is the
+ * encoder's own charter, "one variable per feature, declared in its STORAGE
+ * unit, read in SI" — and each relation lifts its reads by whatever ITS OWN
+ * scale map grants ({@link Obligation.scaled}).
+ *
+ * IT USED TO CONVERT THE MAGNITUDE INTO SI, and that was wrong in a way nothing
+ * could see until a solver read the worklist. The gates never grant this
+ * relation a scale: `f == <bare literal>` puts a dimensioned operand against a
+ * dimensionless one, which is gate (c)'s declared-unit contract, so
+ * `scaleOfRelation` returns `undefined` and the row is read VERBATIM. The
+ * converted number then met an unscaled variable: `capacity == 2304000` beside
+ * `endurance == 3600·capacity · … ` — one symbol pinned twice, 3600 times
+ * apart. Every obligation over the model became "axioms inconsistent", which is
+ * a proof from a contradiction and therefore no proof at all.
  */
 function literalAxiom(
   model: Model,
@@ -606,9 +636,7 @@ function literalAxiom(
   raw: number | boolean,
   memo: DerivationMemo,
 ): Obligation {
-  const scale = storageScaleOf(model, el.id, memo);
-  const value =
-    typeof raw === 'boolean' ? raw : raw * (scale?.factor ?? 1) + (scale?.offset ?? 0);
+  const value = raw;
   const nameToId = new Map<string, ElementId>(idScopeFor(model, el.id));
   nameToId.set(name, el.id);
   const node: ExprNode = {
@@ -629,6 +657,7 @@ function literalAxiom(
     node: reading.node,
     vars: reading.variables,
     sortPerVar: reading.sortPerVar,
+    scaled: reading.scale !== undefined,
     encodable: reading.encodable,
     nonlinear: reading.nonlinear,
     verifiedBy: [],
@@ -681,6 +710,7 @@ function bindAxiom(
     node: reading.node,
     vars: reading.variables,
     sortPerVar: reading.sortPerVar,
+    scaled: reading.scale !== undefined,
     encodable: reading.encodable,
     nonlinear: reading.nonlinear,
     verifiedBy: [],

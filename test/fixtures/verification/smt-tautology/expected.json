@@ -1,0 +1,37 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 0,
+  "counts": {
+    "discharged": 1,
+    "violated": 0,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "Tautology::AreaIdentity",
+      "shortId": "",
+      "clause": "Tautology::AreaIdentity::«ConstraintUsage»",
+      "expression": "panel.area == panel.area",
+      "obligationDigest": "sha256:f0687347204b3a52778040e65d2eea7641eb7f1e48238de8cf95551330ec9004",
+      "claim": "proved",
+      "verdict": "pass",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "tautology": true,
+      "witnessSymbols": [
+        "Tautology::Panel::area"
+      ],
+      "detail": "A ∧ P ∧ ¬G unsat, QF_LRA, 1 fixed / 0 free, timeout 5000 ms; assumptions satisfiable. TAUTOLOGY: the goal is unsat when negated on its own, so it is true of every model and says nothing about this one",
+      "premises": []
+    }
+  ]
+}

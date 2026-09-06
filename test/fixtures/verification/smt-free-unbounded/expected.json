@@ -1,0 +1,42 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [
+    "uav.cruisePower"
+  ],
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "OneSidedFree::EnduranceRequirement",
+      "shortId": "",
+      "clause": "OneSidedFree::EnduranceRequirement::«ConstraintUsage»",
+      "expression": "uav.endurance >= 45.0 [min]",
+      "obligationDigest": "sha256:8134c28a14d989ec3b42a7302d500c3b8ec25a1d70b6aadb527d8240eda8adac",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/free-variable-unbounded",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "freed feature OneSidedFree::AirVehicle::cruisePower is unbounded below: the axioms and premises admit a value beyond ±1000000000000 in its stored magnitude, and a witness outside the physical domain is not a counterexample. This tool derives no domain axiom from a quantity kind — it does not know that a power or a mass is non-negative — so the premise has to say so on both sides before a verdict is available",
+      "premises": [
+        {
+          "expression": "uav.cruisePower <= 600.0 [W]",
+          "holds": "fails"
+        }
+      ]
+    }
+  ]
+}

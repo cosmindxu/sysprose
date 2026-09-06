@@ -3,6 +3,8 @@
   "engine": "literal",
   "toolAbsent": false,
   "allowInconclusive": true,
+  "strictVacuity": false,
+  "free": [],
   "exitCode": 1,
   "counts": {
     "discharged": 0,
@@ -22,8 +24,10 @@
       "claim": "refuted",
       "verdict": "fail",
       "discharged": false,
-      "code": null,
+      "code": "verification/refuted",
       "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
       "detail": "refuted with every feature at its model value: `chassis.mass <= 2000.0 [kg]` is false here (3000 vs 2000 in M, coherent SI)",
       "premises": []
     }

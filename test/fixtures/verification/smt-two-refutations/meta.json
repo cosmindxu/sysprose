@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A false plain `constraint` and a violated `require` are two refutations and exit 1, never `axioms inconsistent`",
+  "model": "test/fixtures/verification/models/two-refutations.sysml",
+  "engine": "smt",
+  "note": "A plain `constraint` states a claim, not a fact: read as an axiom it would make the context contradictory and every obligation in the run undecided, so a model with two plain faults would report nothing wrong with either of them. Paired with literal-two-refutations, which must agree."
+}

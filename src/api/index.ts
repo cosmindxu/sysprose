@@ -87,6 +87,8 @@ export {
   verifyModel,
   ALLOW_INCONCLUSIVE_CODES,
   VERIFICATION_CODES,
+  VERIFICATION_ERROR_CODES,
+  VerifyOptionError,
 } from './verification';
 export type {
   ContractReport,

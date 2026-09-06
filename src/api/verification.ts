@@ -71,6 +71,14 @@ import {
   type ValueBinding,
 } from '../semantics/engines/literal';
 import {
+  freeableFeatures,
+  judgeBySmt,
+  resolveFreeFeatures,
+  type SmtOutcome,
+} from '../semantics/engines/smt';
+import { DEFAULT_TIMEOUT_MS, loadZ3, type Z3Load } from '../semantics/smt/z3-bridge';
+import type { WitnessValue } from '../semantics/smt/z3-bridge';
+import {
   modelVersionOf,
   obligationDigest,
   recordEvidence,
@@ -710,6 +718,25 @@ export interface VerifyOptions {
   allowInconclusive?: boolean;
   /** Restrict to obligations at or under this element. */
   scopeId?: ElementId;
+  /**
+   * The per-check budget in milliseconds — an SMT-engine option.
+   *
+   * No check in this lane is unbounded and there is no spelling for "no
+   * timeout": `src/semantics/smt/z3-bridge.ts` refuses a non-finite or
+   * non-positive budget rather than repairing it. The budget is recorded in
+   * every record's `flags`, because "unknown after 5000 ms" and "unknown after
+   * 50 ms" are different statements about the same model.
+   */
+  timeoutMs?: number;
+  /**
+   * Raise the vacuity row from an info line to `verification/vacuous-property`,
+   * an ERROR — and change nothing else.
+   *
+   * §2 is explicit that this flag does **not** move the exit code: vacuity is
+   * inconclusive ⇒ exit 2 with it and without it. What it changes is how loud
+   * the row is, so a vacuity that was easy to scroll past becomes a finding.
+   */
+  strictVacuity?: boolean;
   /** The file's bytes, so the record binds the text as well as the graph. */
   sourceText?: string;
   /** The command a reader could re-run, recorded in every record. */
@@ -763,6 +790,23 @@ export interface ObligationVerdict {
   bound: EvidenceBound;
   /** The model's own values for the features the relation reads. */
   bindings: ValueBinding[];
+  /**
+   * The solver's own witness, exactly as z3 wrote it, in STORED magnitudes.
+   *
+   * Empty for the literal engine and for every row no check answered `sat` on.
+   * It is kept beside {@link bindings} rather than folded into it because the
+   * two are different facts: `bindings` is what the MODEL says, and under
+   * `--free` this is what the SOLVER chose. A record that presented the second
+   * as the first would say the model contains a value it does not.
+   */
+  witness: WitnessValue[];
+  /**
+   * `check(¬G)` alone was unsat: the goal is true of every model.
+   *
+   * Still `proved` — it is — and FLAGGED, because `x == x` is not evidence
+   * about a design. False for every row that was not proved.
+   */
+  tautology: boolean;
 }
 
 /** What a run came to, with the arithmetic behind its exit code. */
@@ -789,6 +833,10 @@ export interface VerifyReport {
   exitCode: 0 | 1 | 2;
   allowInconclusive: boolean;
   free: string[];
+  /** The per-check budget the SMT engine ran under, or `null` when none did. */
+  timeoutMs: number | null;
+  /** Was the vacuity row raised to an error? It changes no exit code (§2). */
+  strictVacuity: boolean;
   modelVersion: ModelVersion;
   /** One record per obligation, ready to write with `--record`. */
   records: EvidenceRecord[];
@@ -805,7 +853,15 @@ const DISCHARGES: Record<VerifyEngine, ReadonlySet<EvidenceClaim>> = {
 /** What the literal engine's outcome is called, and under which code. */
 const LITERAL_CLAIM: Record<LiteralOutcome, { claim: EvidenceClaim; code: string | null }> = {
   'holds-at-values': { claim: 'holds-at-values', code: null },
-  refuted: { claim: 'refuted', code: null },
+  // ONE CODE FOR BOTH ENGINES' REFUTATIONS. It arrives with the SMT engine and
+  // is fitted here in the same commit, because a violation is a violation
+  // whichever engine found it and the exit contract is stated over codes: with
+  // `null` here the loudest verdict this lane can reach was the only row that
+  // filed no diagnostic at all, so a consumer reading `diagnostics` saw every
+  // undecided row and no failure. What differs between the engines is the
+  // CLAIM's strength — a point evaluation refutes at the model's values, the
+  // solver refutes over everything the axioms admit — and `detail` says which.
+  refuted: { claim: 'refuted', code: 'verification/refuted' },
   // Vacuity is its own claim, not a flavour of inconclusive: the exit contract
   // treats it as undecided, and the register treats it as a declared deviation.
   vacuous: { claim: 'vacuous', code: 'verification/vacuous-pass' },
@@ -817,6 +873,83 @@ const LITERAL_CLAIM: Record<LiteralOutcome, { claim: EvidenceClaim; code: string
   // because it says nothing about whether the requirement holds.
   unsupported: { claim: 'inconclusive', code: 'verification/unsupported-construct' },
 };
+
+/**
+ * What the SMT engine's outcome is called, and under which code.
+ *
+ * READ THE `null` ROWS FIRST: `proved` and `refuted` are the two DECIDED
+ * outcomes, and only they may write a verdict facet. Everything else carries a
+ * code, and the code — not the prose — is what the exit contract is written
+ * over.
+ *
+ * Three of these codes are new in this commit and each names a way a proof can
+ * be void rather than absent:
+ *
+ *  - `verification/inconsistent-axioms`: `check(A)` was unsat, so every
+ *    negation over that context is unsat and every "proof" from it is a proof
+ *    from a contradiction. Never forgiven — a contradictory model is a finding,
+ *    not an undecided obligation.
+ *  - `verification/vacuous`: `A ∧ P` was unsat. The literal engine's sibling is
+ *    `verification/vacuous-pass` (an assumption FALSE AT THE VALUES); this one
+ *    is the stronger statement that no assignment at all satisfies the
+ *    premises, and the two are kept apart because a reader acts on them
+ *    differently. Both are the plan's one declared deviation from the
+ *    standard's `allTrue(assumptions) implies allTrue(constraints)` reading,
+ *    both are inconclusive, and no flag launders either.
+ *  - `verification/free-variable-unbounded`: a freed feature the context does
+ *    not confine on both sides. BLOCKING, and never `refuted` — it is the rule
+ *    that stops the flagship example printing `cruisePower = -1 W` as a
+ *    counterexample.
+ *
+ * `verification/refuted` is the one code on a DECIDED row. It exists because a
+ * violation is the thing this lane is for, and a consumer filtering the lane's
+ * diagnostics had no way to see one: every other row carried a code and the
+ * refutation carried `null`, so the loudest verdict in the run was the only one
+ * absent from the diagnostic list.
+ */
+const SMT_CLAIM: Record<SmtOutcome, { claim: EvidenceClaim; code: string | null }> = {
+  proved: { claim: 'proved', code: null },
+  refuted: { claim: 'refuted', code: 'verification/refuted' },
+  'design-admitted': { claim: 'design-admitted', code: 'verification/design-admitted' },
+  vacuous: { claim: 'vacuous', code: 'verification/vacuous' },
+  'axioms-inconsistent': { claim: 'inconclusive', code: 'verification/inconsistent-axioms' },
+  'free-unbounded': { claim: 'inconclusive', code: 'verification/free-variable-unbounded' },
+  timeout: { claim: 'inconclusive', code: 'verification/timeout' },
+  'witness-unconfirmed': { claim: 'inconclusive', code: 'verification/not-evaluable' },
+  unsupported: { claim: 'inconclusive', code: 'verification/unsupported-construct' },
+  'not-evaluable': { claim: 'inconclusive', code: 'verification/not-evaluable' },
+};
+
+/**
+ * The code `--strict-vacuity` promotes a vacuity row to.
+ *
+ * ONE code for both engines' vacuity, because the flag's promise is about the
+ * READER — "a vacuity you could scroll past becomes a finding" — and a reader
+ * who has to know which engine ran to know which error to grep for has not been
+ * given a finding. It changes the code and the severity and NOTHING else: the
+ * claim stays `vacuous`, the row stays undecided, and the exit code stays 2
+ * (§2, and asserted in the L8 corpus with and without the flag).
+ */
+const STRICT_VACUITY_CODE = 'verification/vacuous-property';
+
+/**
+ * The codes this lane raises as errors rather than as info lines.
+ *
+ * EXPORTED SO IT CAN BE BOUND TO THE CATALOGUE. It is a second statement of a
+ * severity `src/text/langium/diagnostic-codes.ts` already carries, kept local
+ * because `src/api` imports nothing from `src/text` and one severity lookup is
+ * not a reason to open that edge — but a second copy that nothing compares is a
+ * copy that drifts, so `test/unit/diagnostic-codes.test.ts` asserts this set is
+ * exactly the `verification/*` entries the catalogue marks `error`. Edit either
+ * one alone and that test goes red.
+ */
+export const VERIFICATION_ERROR_CODES: ReadonlySet<string> = new Set([
+  // A violated requirement is a defect in the model, and the one thing this
+  // lane exists to find. Every other code says what the tool did NOT decide.
+  'verification/refuted',
+  // Only ever present because `--strict-vacuity` asked for it.
+  STRICT_VACUITY_CODE,
+]);
 
 /**
  * Every `verification/*` code this lane can put in front of a reader.
@@ -833,83 +966,72 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   ...Object.values(LITERAL_CLAIM)
     .map((v) => v.code)
     .filter((c): c is string => c !== null),
+  ...Object.values(SMT_CLAIM)
+    .map((v) => v.code)
+    .filter((c): c is string => c !== null),
+  STRICT_VACUITY_CODE,
   'verification/tool-absent',
   'verification/design-admitted',
 ]);
 
 /**
- * Is a z3 backend AND an engine to drive it present in this build?
+ * The sentence a `tool-absent` row prints, which names what is actually missing.
  *
- * Two absences, one honest answer. Since commit 4 of the verification plan
- * `z3-solver` IS an optional dependency and this probe finds it — and the SMT
- * engine that would drive it is still a later commit, so `--engine auto` still
- * reports `verification/tool-absent` for every obligation. That was the point of
- * making the probe real rather than a hard-coded `null`: the reason this refuses
- * is now the missing ENGINE, and {@link toolAbsentDetail} says so instead of
- * blaming a solver that is installed. The honest-absence path is exercised on
- * every push by the plan's §5 CI job with `SYSPROSE_NO_Z3=1`, which this reads
- * exactly as `src/semantics/smt/z3-bridge.ts` does.
+ * ONE PROBE FOR THE WHOLE LANE. This module used to carry its own dynamic
+ * import beside `src/semantics/smt/z3-bridge.ts`'s, which was honest while
+ * there was no engine to drive the backend and is a second reading of one
+ * switch now that there is: the CI job that asserts exit 2 under
+ * `SYSPROSE_NO_Z3` (§5) and the suite that asserts an absent backend must mean
+ * the same thing, and two readings of one environment variable is one reading
+ * too many. `loadZ3()` answers both questions at once — a backend, or an
+ * absence with the sentence a person can act on — and this function only
+ * decides how that sentence is introduced and what a reader can do INSTEAD.
  *
- * The specifier is held in a variable and marked `@vite-ignore` so the bundler
- * does not try to resolve a package that is not there; the browser never gets
- * this far in any case (§6 non-goal 9 — no in-browser solver in this plan).
+ * The remedy is added here rather than left to the bridge because it is a fact
+ * about this command, not about the loader: `--engine literal` is `verify`'s
+ * other engine, and a bridge that named it would be a module telling its caller
+ * which flag to type. Two of the three absence sentences do not carry it, and
+ * the one that does is not made to say it twice.
  */
-async function loadZ3(): Promise<Z3Probe> {
-  const off =
-    typeof process !== 'undefined' &&
-    process.env?.SYSPROSE_NO_Z3 !== undefined &&
-    process.env.SYSPROSE_NO_Z3 !== '' &&
-    process.env.SYSPROSE_NO_Z3 !== '0';
-  // Switched off is not the same as missing, and the row says which. The whole
-  // L8 corpus runs under this switch on a machine that HAS the package, so
-  // collapsing the two would make the tool print a false statement about the
-  // machine — and pin it, byte for byte, in a golden.
-  if (off) return { backendPresent: false, disabled: true };
-  if (typeof process === 'undefined') return { backendPresent: false, disabled: false };
-  try {
-    const spec = 'z3-solver';
-    await import(/* @vite-ignore */ spec);
-    return { backendPresent: true, disabled: false };
-  } catch {
-    return { backendPresent: false, disabled: false };
+function toolAbsentDetail(load: Z3Load): string {
+  if (!load.absent) {
+    // Unreachable while the caller only asks for a sentence when the backend is
+    // absent. Stated rather than thrown, because a `tool-absent` row that threw
+    // would turn an honest inconclusive into a crash.
+    return 'solver absent — the backend loaded, so this row should not exist';
   }
-}
-
-/** What the probe found: a backend, a switched-off one, or nothing installed. */
-interface Z3Probe {
-  backendPresent: boolean;
-  /** True when `SYSPROSE_NO_Z3` forced the absence — see {@link loadZ3}. */
-  disabled: boolean;
+  const remedy =
+    'Nothing in this run can decide this obligation; run `--engine literal` for a point ' +
+    'evaluation at the model’s values, which is not a proof';
+  return load.reason.includes('--engine literal')
+    ? `solver absent — ${load.reason}`
+    : `solver absent — ${load.reason}. ${remedy}`;
 }
 
 /**
- * The sentence a `tool-absent` row prints, which names what is actually missing.
+ * A problem with what was ASKED of `verify`, not a finding about the model.
  *
- * Three cases, because there are three: an engine that does not ship yet, a
- * solver switched off in this environment, and a solver nobody installed. The
- * middle one used to print the third one's sentence, which was false on every
- * machine that has the optional dependency — including the one the corpus runs
- * on. `src/semantics/smt/z3-bridge.ts` draws the same distinction in its own
- * `Z3Absent.disabled`.
+ * A DISTINCT TYPE, so the caller can tell the two apart. `--free` naming
+ * nothing is the reader's spelling, not a defect in this tool, and it reached
+ * the terminal as `sysprose: internal error:` with four stack frames — which
+ * tells a person the tool is broken when in fact their argument is. That is the
+ * same defect class `scripts/sysprose.ts` already records as fixed for `--out`
+ * naming a directory; the CLI re-raises this as its own `UsageError`, and the
+ * reader gets one sentence and no stack.
  */
-function toolAbsentDetail(probe: Z3Probe): string {
-  if (probe.backendPresent) {
-    return (
-      'solver absent — the z3 backend is installed but this build carries no SMT engine to drive it ' +
-      '(docs/04-formal-verification-plan.md, commit 5); run `--engine literal` for a point evaluation at the model’s values'
-    );
+export class VerifyOptionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VerifyOptionError';
   }
-  if (probe.disabled) {
-    return (
-      'solver absent — the solver is switched off by SYSPROSE_NO_Z3 in this environment, so nothing ' +
-      'can decide this obligation; unset it, or run `--engine literal` for a point evaluation at the ' +
-      'model’s values, which is not a proof'
-    );
-  }
-  return (
-    'solver absent — `z3-solver` is not installed, so nothing can decide this obligation; ' +
-    'run `--engine literal` for a point evaluation at the model’s values, which is not a proof'
-  );
+}
+
+/** The features a `--free` spelling could have named, for the sentence refusing one. */
+function freeableSentence(rows: readonly Obligation[]): string {
+  const all = freeableFeatures(rows);
+  if (all.length === 0) return 'nothing — no relation in this model reads a feature at all';
+  const shown = all.slice(0, 8);
+  return shown.join(', ') + (all.length > shown.length ? `, and ${all.length - shown.length} more` : '');
 }
 
 /**
@@ -923,11 +1045,11 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
   const free = [...(opts.free ?? [])];
   const allowInconclusive = opts.allowInconclusive === true;
   if (engineAsked === 'literal' && free.length > 0) {
-    // A programming error, not a finding about the model: the literal engine
-    // evaluates AT the values, so a freed feature has no value to evaluate.
-    // Accepting the flag and ignoring it would print a verdict under a bound
-    // the record then claimed was in force.
-    throw new Error(
+    // A problem with what was ASKED, not a finding about the model: the literal
+    // engine evaluates AT the values, so a freed feature has no value to
+    // evaluate. Accepting the flag and ignoring it would print a verdict under
+    // a bound the record then claimed was in force.
+    throw new VerifyOptionError(
       '`free` is an SMT-engine option: the literal engine evaluates at the model’s own values, ' +
         'so there is nothing for it to release. Ask for `--engine smt`, or drop `--free`.',
     );
@@ -935,41 +1057,64 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
 
   const rows = obligationsOf(model, opts.scopeId !== undefined ? { scopeId: opts.scopeId } : {});
   const modelVersion = modelVersionOf(model, opts.sourceText);
-  const probe: Z3Probe =
-    engineAsked === 'literal' ? { backendPresent: false, disabled: false } : await loadZ3();
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const strictVacuity = opts.strictVacuity === true;
   const engine: VerifyEngine = engineAsked === 'literal' ? 'literal' : 'smt';
   // `auto` resolves to `smt` and stops there. There is no third arm, and adding
   // one that fell back to `literal` would make a green build mean "no solver".
-  const toolAbsent = engine === 'smt';
+  const load: Z3Load | null = engine === 'smt' ? await loadZ3() : null;
+  const toolAbsent = load !== null && load.absent;
 
-  const results: ObligationVerdict[] = toolAbsent
-    ? rows
-        .filter((row) => row.role === 'obligation')
-        .map((row) =>
-          toVerdict(row, {
-            claim: 'inconclusive',
-            code: 'verification/tool-absent',
-            detail: toolAbsentDetail(probe),
-            premises: [],
-            bindings: [],
-            bound: { kind: 'none', detail: 'nothing was run, so nothing is claimed' },
-            engine,
-            allowInconclusive,
-          }),
-        )
-    : judgeLiterally(model, rows).map(({ row, judgement }) => {
-        const { claim, code } = LITERAL_CLAIM[judgement.outcome];
-        return toVerdict(row, {
-          claim,
-          code,
-          detail: judgement.detail,
-          premises: judgement.premises,
-          bindings: judgement.bindings,
-          bound: boundOf(judgement),
-          engine,
-          allowInconclusive,
-        });
-      });
+  // A `--free` spelling that names nothing is refused BEFORE anything is
+  // judged. The flag changes what a verdict means — it turns a violation into
+  // a design the model admits — so a misspelt name that quietly freed nothing
+  // would print a verdict under a bound the record then claimed was in force.
+  const freed = engine === 'smt' ? resolveFreeFeatures(model, free, rows) : null;
+  if (freed) {
+    // THREE WAYS TO FREE NOTHING, all refused with the same exit 2 and the
+    // same reason: the header, the bound and the record all say the feature
+    // was released, and every one of them would be false. See
+    // {@link resolveFreeFeatures} for the measured case behind each.
+    const refusals: string[] = [];
+    if (freed.unresolved.length > 0) {
+      refusals.push(
+        `--free names nothing in this model: \`${freed.unresolved.join('`, `')}\`. Write the ` +
+          'qualified name, the dotted path a constraint body would use (`uav.cruisePower`), or a ' +
+          'feature name unique in scope',
+      );
+    }
+    for (const a of freed.ambiguous) {
+      refusals.push(
+        `--free \`${a.spelling}\` names ${a.candidates.length} elements of this model ` +
+          `(${a.candidates.join(', ')}). A bare name is accepted only where it is unique — write ` +
+          'the qualified name of the one you mean',
+      );
+    }
+    for (const u of freed.unread) {
+      refusals.push(
+        `--free \`${u.spelling}\` resolves to ${u.qualifiedName}, which no relation in this model ` +
+          'reads: releasing it would change nothing, and the run would report a verdict under a ' +
+          `bound that was never in force. Releasable here: ${freeableSentence(rows)}`,
+      );
+    }
+    if (refusals.length > 0) {
+      throw new VerifyOptionError(
+        `${refusals.join('; ')}. A spelling that freed nothing would print a verdict under a bound ` +
+          'that was never in force.',
+      );
+    }
+  }
+
+  const results: ObligationVerdict[] = await judge({
+    model,
+    rows,
+    engine,
+    load,
+    free: freed?.qualifiedNames ?? new Set<string>(),
+    timeoutMs,
+    strictVacuity,
+    allowInconclusive,
+  });
 
   const discharged = results.filter((r) => r.discharged).length;
   const violated = results.filter((r) => r.claim === 'refuted').length;
@@ -992,6 +1137,8 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
     exitCode: exitCodeOf(results, toolAbsent),
     allowInconclusive,
     free,
+    timeoutMs: engine === 'smt' && !toolAbsent ? timeoutMs : null,
+    strictVacuity,
     modelVersion,
     records: recordEvidence({
       rows: results.map((r) => ({
@@ -1017,10 +1164,107 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
         engine: engineAsked,
         free,
         allowInconclusive,
+        // The budget is part of the claim: "unknown after 5000 ms" and
+        // "unknown after 50 ms" are different statements about one model, and
+        // a record that did not carry the bound could be replayed as the
+        // stronger of the two.
+        ...(engine === 'smt' ? { timeoutMs } : {}),
+        ...(strictVacuity ? { strictVacuity } : {}),
       },
     }),
     diagnostics: numbered(results.filter((r) => r.code !== null).map(verdictFinding)),
   };
+}
+
+/**
+ * Run the engine that was asked for, and turn its outcomes into verdict rows.
+ *
+ * THREE ARMS, and the middle one is the whole exit contract: `smt` with no
+ * backend is `verification/tool-absent` on every obligation, never a silent
+ * downgrade to a point evaluation. A reader who typed `--engine auto` on a
+ * machine with no solver has been told nothing about their model, and the only
+ * honest way to say so is exit 2.
+ */
+async function judge(input: {
+  model: Model;
+  rows: readonly Obligation[];
+  engine: VerifyEngine;
+  load: Z3Load | null;
+  free: ReadonlySet<string>;
+  timeoutMs: number;
+  strictVacuity: boolean;
+  allowInconclusive: boolean;
+}): Promise<ObligationVerdict[]> {
+  const { model, rows, engine, load, strictVacuity, allowInconclusive } = input;
+
+  if (engine === 'smt' && load !== null && load.absent) {
+    return rows
+      .filter((row) => row.role === 'obligation')
+      .map((row) =>
+        toVerdict(row, {
+          claim: 'inconclusive',
+          code: 'verification/tool-absent',
+          detail: toolAbsentDetail(load),
+          premises: [],
+          bindings: [],
+          bound: { kind: 'none', detail: 'nothing was run, so nothing is claimed' },
+          engine,
+          allowInconclusive,
+          strictVacuity,
+        }),
+      );
+  }
+
+  if (engine === 'smt' && load !== null && !load.absent) {
+    const judged = await judgeBySmt(model, rows, {
+      backend: load,
+      free: input.free,
+      timeoutMs: input.timeoutMs,
+    });
+    return judged.map(({ row, judgement }) => {
+      const { claim, code } = SMT_CLAIM[judgement.outcome];
+      return toVerdict(row, {
+        claim,
+        code,
+        detail: judgement.detail,
+        premises: judgement.premises,
+        bindings: judgement.bindings,
+        bound: {
+          kind: judgement.boundKind,
+          detail: judgement.boundDetail,
+          ...(judgement.lhsSI !== undefined && judgement.rhsSI !== undefined
+            ? {
+                si: {
+                  lhs: judgement.lhsSI,
+                  rhs: judgement.rhsSI,
+                  ...(judgement.dimension !== undefined ? { dimension: judgement.dimension } : {}),
+                },
+              }
+            : {}),
+        },
+        engine,
+        allowInconclusive,
+        strictVacuity,
+        witness: judgement.witness,
+        tautology: judgement.tautology,
+      });
+    });
+  }
+
+  return judgeLiterally(model, rows).map(({ row, judgement }) => {
+    const { claim, code } = LITERAL_CLAIM[judgement.outcome];
+    return toVerdict(row, {
+      claim,
+      code,
+      detail: judgement.detail,
+      premises: judgement.premises,
+      bindings: judgement.bindings,
+      bound: boundOf(judgement),
+      engine,
+      allowInconclusive,
+      strictVacuity,
+    });
+  });
 }
 
 /**
@@ -1071,9 +1315,19 @@ function toVerdict(
     bound: EvidenceBound;
     engine: VerifyEngine;
     allowInconclusive: boolean;
+    /** Raises a vacuity row's code to an error. Changes nothing else (§2). */
+    strictVacuity: boolean;
+    witness?: WitnessValue[];
+    tautology?: boolean;
   },
 ): ObligationVerdict {
   const discharged = DISCHARGES[input.engine].has(input.claim);
+  // `--strict-vacuity` rewrites the CODE of a vacuity row and nothing else: the
+  // claim stays `vacuous`, the row stays undecided, and `exitCodeOf` below
+  // cannot see the flag at all. That is the guarantee §2 makes — "it does not
+  // change the exit code" — expressed as a place the flag has no reach.
+  const code =
+    input.strictVacuity && input.claim === 'vacuous' ? STRICT_VACUITY_CODE : input.code;
   return {
     requirement: row.requirement,
     shortId: row.shortId,
@@ -1083,13 +1337,14 @@ function toVerdict(
     claim: input.claim,
     verdict: verdictFor(input.claim),
     discharged,
-    code: input.code,
-    forgiven:
-      input.allowInconclusive && input.code !== null && ALLOW_INCONCLUSIVE_CODES.has(input.code),
+    code,
+    forgiven: input.allowInconclusive && code !== null && ALLOW_INCONCLUSIVE_CODES.has(code),
     detail: input.detail,
     premises: input.premises,
     bound: input.bound,
     bindings: input.bindings,
+    witness: input.witness ?? [],
+    tautology: input.tautology ?? false,
   };
 }
 
@@ -1107,7 +1362,7 @@ function toVerdict(
  * an empty row set.
  *
  *  1. **The engine never ran ⇒ 2.** Nothing was discharged *by the engine that
- *     was asked for*, whatever the rows say, because there was no engine.
+ *     was asked for*, whatever the rows say, because no solver loaded.
  *  2. **Nothing to verify ⇒ 2.** Exit 0 means "every obligation discharged",
  *     and a model that states none has not been shown anything. A build that
  *     went green because every requirement was deleted is the failure this lane
@@ -1128,17 +1383,27 @@ function exitCodeOf(results: readonly ObligationVerdict[], toolAbsent: boolean):
   return 0;
 }
 
-/** One row's code, as a diagnostic the whole lane files under one source. */
+/**
+ * One row's code, as a diagnostic the whole lane files under one source.
+ *
+ * The severity is READ FROM THE CODE ({@link VERIFICATION_ERROR_CODES}), never fixed at
+ * `info`. Every code this lane emitted before the SMT engine landed said what
+ * the tool had NOT decided, and info was right for all of them; a refutation
+ * and a `--strict-vacuity` vacuity say something about the MODEL, and a
+ * consumer filtering on severity would have seen the loudest verdict in the run
+ * at the same level as "this construct is outside the fragment".
+ */
 function verdictFinding(r: ObligationVerdict): Finding {
   return {
-    severity: 'info',
+    severity: r.code !== null && VERIFICATION_ERROR_CODES.has(r.code) ? 'error' : 'info',
     message: `${r.requirement?.qualifiedName ?? r.clause.qualifiedName}: ${r.detail}`,
     elementId: r.clause.id,
     elementName: r.clause.qualifiedName,
     code: r.code as string,
-    hint:
-      r.forgiven
-        ? 'This row was forgiven by `--allow-inconclusive`, which lowers exactly the undecided codes and nothing else; the claim itself is unchanged and the record still says `inconclusive`.'
+    hint: r.forgiven
+      ? 'This row was forgiven by `--allow-inconclusive`, which lowers exactly the undecided codes and nothing else; the claim itself is unchanged and the record still says `inconclusive`.'
+      : r.claim === 'refuted'
+        ? 'The requirement does not hold with every feature at the value the model binds it to. Read the witness on the row, fix the design or the requirement, and re-run; `--allow-inconclusive` does not forgive a violation and exit 1 outranks it.'
         : 'The obligation is not discharged. Run `npm run sysprose -- obligations <file>` to see what it stands on, and read `docs/DIAGNOSTIC-CODES.md` for what this code means.',
   };
 }

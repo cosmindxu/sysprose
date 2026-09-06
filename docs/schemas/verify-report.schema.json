@@ -50,6 +50,7 @@
   "definitions": {
     "report": {
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "engineAsked",
         "engine",
@@ -92,6 +93,15 @@
         },
         "allowInconclusive": { "type": "boolean" },
         "free": { "type": "array", "items": { "type": "string" } },
+        "timeoutMs": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "The per-check budget the SMT engine ran under, or `null` when no solver ran — the literal engine evaluates at the model's own values and has nothing to bound, and so does an `auto` run that found no backend. Every check in the solver lane IS bounded and there is no spelling for \"no timeout\", so a row reported `verification/timeout` was decided by nothing but this number."
+        },
+        "strictVacuity": {
+          "type": "boolean",
+          "description": "Was `--strict-vacuity` given? It promotes a vacuity row to `verification/vacuous-property`, an error, and changes NOTHING else — not the claim, not `discharged`, not the exit code."
+        },
         "modelVersion": { "type": "object" },
         "records": { "type": "array" },
         "diagnostics": { "type": "array" }
@@ -99,6 +109,7 @@
     },
     "obligationVerdict": {
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "requirement",
         "shortId",
@@ -153,7 +164,23 @@
           }
         },
         "bound": { "type": "object" },
-        "bindings": { "type": "array" }
+        "bindings": { "type": "array" },
+        "witness": {
+          "type": "array",
+          "description": "The solver's own model, in the magnitudes the file stores: the counterexample for a refutation, the satisfiable-assumptions witness for a proof. Empty for every literal-engine row and for any SMT row no check answered `sat` on.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "symbol": { "type": "string" },
+              "term": { "type": "string" },
+              "value": { "type": ["number", "boolean", "null"] }
+            }
+          }
+        },
+        "tautology": {
+          "type": "boolean",
+          "description": "`check(¬G)` alone was unsat: the goal is true of every model, so it is honestly proved and says nothing about THIS design. Always false from the literal engine, which never proves anything."
+        }
       }
     }
   }

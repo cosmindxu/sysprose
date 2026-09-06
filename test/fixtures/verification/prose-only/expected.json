@@ -3,6 +3,8 @@
   "engine": "literal",
   "toolAbsent": false,
   "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
   "exitCode": 2,
   "counts": {
     "discharged": 0,
@@ -24,6 +26,8 @@
       "discharged": false,
       "code": "verification/unsupported-construct",
       "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
       "detail": "nothing to evaluate: the requirement carries prose and no constraint body, so there is nothing to encode",
       "premises": []
     }

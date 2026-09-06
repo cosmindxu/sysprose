@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A refused axiom that shares no symbol with the goal does not suppress the refutation",
+  "model": "test/fixtures/verification/models/refused-axiom-irrelevant.sysml",
+  "engine": "smt",
+  "note": "\"A refutation needs the whole context\" is a rule about THIS obligation's context, not about the file. Reading the run-level refused set made one unencodable feature value anywhere in a model downgrade every confirmed counterexample in it to `verification/not-evaluable` and exit 2, while `--engine literal` reported the same row `refuted` and exit 1. `parity` cannot exclude a witness for `bus.mass`, and the relevance closure the engine already computes is what says so."
+}

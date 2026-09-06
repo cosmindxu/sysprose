@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "The same two refutations at the model's values, so the two engines agree about what is wrong",
+  "model": "test/fixtures/verification/models/two-refutations.sysml",
+  "engine": "literal",
+  "note": "The literal half of the pair. With nothing freed the SMT engine answers the question `checkConstraints` answers, so the two engines must find the same two violations; only the claim word differs, and neither may be `axioms inconsistent`."
+}

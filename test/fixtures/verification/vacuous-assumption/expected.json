@@ -3,6 +3,8 @@
   "engine": "literal",
   "toolAbsent": false,
   "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
   "exitCode": 2,
   "counts": {
     "discharged": 0,
@@ -24,6 +26,8 @@
       "discharged": false,
       "code": "verification/vacuous-pass",
       "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
       "detail": "vacuous at the model's values: the assumption `false` is false here, so the requirement is discharged by an antecedent that does not hold and says nothing about the design",
       "premises": [
         {

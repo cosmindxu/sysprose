@@ -617,34 +617,103 @@ blur.** The literal engine substitutes the values your file states and reads off
 the answer. That is worth having — it is what the **Analyze** button already
 computes, it needs nothing installed, and it is the first thing anyone wants —
 but it holds at *one point* of a design space that is infinite. `proved` is
-reserved for a solver showing that the negation of the obligation is
-unsatisfiable, and nothing in this build can say it.
+reserved for the solver showing that the negation of the obligation is
+unsatisfiable, and only the SMT engine can say it.
 
 **Three engines, and the one that is missing never goes green.**
 
 | `--engine` | What it does |
 |---|---|
 | `literal` | Evaluates at your model's values. `holds-at-values` counts as discharged, **because you asked for a point evaluation by name**. |
-| `smt` | The solver. The z3 backend loads; **no engine drives it yet** — every obligation comes back `verification/tool-absent`, exit 2. |
+| `smt` | The solver. `proved` is available here and nowhere else. With no solver installed, every obligation comes back `verification/tool-absent`, exit 2. |
 | `auto` (default) | Resolves to `smt` when a solver backend loads, and otherwise reports `tool-absent` for everything. **It never falls back to `literal`.** |
 
-That last line is the rule to remember: the same file that is exit 0 under
-`--engine literal` is exit **2** under the default `--engine auto` today,
-because no SMT engine is in this build. "No solver, nothing to report, exit 0"
-would be indistinguishable from a proof, so it does not happen — and the row
-says which half is missing, the engine or the solver itself.
+That last line is the rule to remember: with no solver present, the same file
+that is exit 0 under `--engine literal` is exit **2** under the default
+`--engine auto`. "No solver, nothing to report, exit 0" would be
+indistinguishable from a proof, so it does not happen.
+
+**What `proved` stands on.** The engine asks four questions per obligation, and
+each of the last three exists to stop a proof that would be void rather than
+absent:
+
+```console
+$ npm run sysprose -- verify examples/uav-isr.sysml --engine smt
+examples/uav-isr.sysml: 0 inconclusive, 2 discharged, 0 refuted — engine smt
+  negation-unsat under a satisfiable axiom set — `proved` means exactly that, at 5000 ms per check, with every feature value bound as the model states it
+  UAVSurveillanceSystem::EnduranceRequirement  uav.endurance >= 45.0 [min]
+    proved: A ∧ P ∧ ¬G unsat, QF_NRA, 4 fixed / 0 free, timeout 5000 ms; assumptions satisfiable
+    bound: every feature at the value the model binds it to; 4 symbol(s), 0 free; compared as 2835.69… vs 2700 in T, coherent SI; decided by z3 Z3 5.1.0.0, seed 0
+  ...
+$ echo $?
+0
+```
+
+- **Is the model's own axiom set satisfiable?** Asked once per run. If your file
+  contradicts itself, *every* negation is unsat and every obligation would print
+  as proved — so instead every row is `verification/inconsistent-axioms` with
+  the colliding facts named, and nothing is decided.
+- **Is the negation unsatisfiable?** Unsat ⇒ the obligation holds everywhere
+  your axioms and assumptions allow. Sat ⇒ a counterexample, which is checked
+  before it is printed (below).
+- **Can the assumptions all hold at once?** If not, the obligation was
+  discharged for free: `verification/vacuous`, exit 2, never a pass.
+- **Is the goal true of *every* model?** `panel.area == panel.area` is honestly
+  proved and honestly useless, so it is proved **and flagged as a tautology**.
+
+**A counterexample is re-checked before you see it.** Every witness the solver
+returns is substituted back through this tool's own evaluator, and with nothing
+freed it must also read as *violated* on the numeric surface — a second,
+independent path. A witness that fails either gate is reported as
+`inconclusive: witness not confirmed`, never as a violation. That is what
+catches an encoder defect in the direction that matters, and it is why an exact
+strict boundary (`mass < 18.5 [kg]` at 18.5 kg, where the two surfaces genuinely
+read the tie differently) comes back undecided rather than as a refutation of a
+requirement the checker passes.
+
+**Freeing a feature is a two-sided act.** `--free F` releases a value so the
+solver may vary it — but this tool derives no domain axiom from a quantity kind.
+It does not know that a power is non-negative. Freeing `uav.cruisePower` under
+an assumption that only caps it from above lets a solver answer with **−1 W**,
+and the re-evaluation gate *confirms that arithmetic*, so it would print as a
+genuine refutation of a requirement nothing is wrong with. So a freed feature
+the assumptions do not confine on **both** sides is
+`verification/free-variable-unbounded` — inconclusive, exit 2, never refuted.
+Write the premise both ways round first:
+
+```sysml
+assume constraint { uav.cruisePower >= 100.0 [W] and uav.cruisePower <= 600.0 [W] }
+```
+
+**`--timeout MS` is a budget, not a switch.** Every check in this lane is
+bounded (5000 ms by default) and there is no spelling for "no timeout":
+`--timeout 0` and `--timeout forever` are refused rather than quietly replaced
+by the default, because a reader who asked for a bound the tool did not honour
+would read every `unknown` under a bound that was never in force. A solver that
+runs out of time reports `verification/timeout`, which says nothing about
+whether the requirement holds, and it is not retried with a weaker encoding.
+
+**`--strict-vacuity` is loud and inert.** It raises a vacuous obligation from an
+info line to `verification/vacuous-property`, an **error** — and changes the
+exit code not at all. Vacuity is inconclusive and exits 2 with the flag and
+without it. Use it when a vacuity is something you want a build log to shout
+about rather than something to scroll past.
 
 **What is inconclusive, and what a flag may forgive.**
 
 | The row says | What happened | `--allow-inconclusive`? |
 |---|---|---|
 | `verification/unsupported-construct` | The relation is well formed and its **shape** is outside the fragment this lane encodes — `%`, a variable exponent, a collection, arithmetic on °C — or the requirement is prose with no constraint body | **Yes** — lowered to exit 0 |
-| `verification/timeout` | The solver ran out of time (from the SMT engine) | **Yes** |
-| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, or does not parse | No |
+| `verification/timeout` | The solver ran out of time — raise it with `--timeout MS` | **Yes** |
+| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, does not parse, or produced a witness this tool could not confirm | No |
 | `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
+| `verification/vacuous` | The solver found the assumptions unsatisfiable — nothing at all can satisfy them | No |
+| `verification/vacuous-property` | Either vacuity, raised to an **error** because you passed `--strict-vacuity`. Same exit code | No |
+| `verification/inconsistent-axioms` | Your model's own facts collide, so nothing can be proved from them | No |
+| `verification/free-variable-unbounded` | A feature you freed is not confined on both sides, so a witness could come from outside the physical domain | No |
 | `verification/tool-absent` | No engine ran | No |
 | `verification/design-admitted` | Refuted only after `--free` released a value your model states | No |
-| *refuted* | False with every feature at its model value | No — exit **1** beats the flag |
+| `verification/refuted` | False with every feature at its model value | No — exit **1** beats the flag |
 
 **A vacuous requirement is reported as undecided, and that is a deliberate
 disagreement with the specification.** Part 1 §9.2.14.2.8 gives a requirement
@@ -673,10 +742,24 @@ salvaged. Fix the findings first, or read the verdict on stdout without
 
 `--free F` releases a feature value so a solver may vary it; a refutation
 obtained that way is a design your model *admits*, not a violation of it, and it
-is reported as `design-admitted` and exit 2 — never exit 1. The literal engine
-refuses the flag outright rather than accepting and ignoring it.
+is reported as `design-admitted` and exit 2 — never exit 1. A spelling that
+frees nothing is refused rather than ignored, because a name that quietly freed
+nothing would print a verdict under a bound the record then claims was in force
+— and there are three ways to free nothing, all three refused: a name that
+matches no element, a bare name that matches **more than one** (`--free uav` on
+the shipped example names three: the part usage and the `subject uav` of each
+requirement — write the qualified name of the one you mean), and a name that
+resolves to something no relation in the run reads. That last one is not
+hypothetical: `--free UAVSurveillanceSystem::uav` names the part usage, which is
+not a variable any relation reads, so it released nothing at all — and the run
+printed `proved` and exited 0 under a header reading "with uav released", where
+the intended `--free uav.cruisePower` is `design-admitted` and exits 2. The
+refusal names what *could* be freed here, so the next attempt is a
+copy-and-paste. The literal engine refuses the flag outright rather than
+accepting and ignoring it.
 
-**Source of truth:** `src/semantics/engines/literal.ts`, `src/api/evidence.ts`,
+**Source of truth:** `src/semantics/engines/literal.ts`,
+`src/semantics/engines/smt.ts`, `src/api/evidence.ts`,
 `src/api/verification.ts`, and the golden verdict corpus in
 `test/fixtures/verification/`.
 

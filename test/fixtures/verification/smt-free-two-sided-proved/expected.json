@@ -1,0 +1,47 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [
+    "uav.cruisePower"
+  ],
+  "exitCode": 0,
+  "counts": {
+    "discharged": 1,
+    "violated": 0,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "TwoSidedFree::EnduranceRequirement",
+      "shortId": "",
+      "clause": "TwoSidedFree::EnduranceRequirement::«ConstraintUsage»",
+      "expression": "uav.endurance >= 45.0 [min]",
+      "obligationDigest": "sha256:671a45ced18fd4494379f32339f83e98b8944bbca24ca8ef6982e17c520dcd67",
+      "claim": "proved",
+      "verdict": "pass",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [
+        "TwoSidedFree::AirVehicle::endurance",
+        "TwoSidedFree::BatteryPack::capacity",
+        "TwoSidedFree::AirVehicle::usableEnergyFraction",
+        "TwoSidedFree::AirVehicle::cruisePower"
+      ],
+      "detail": "A ∧ P ∧ ¬G unsat, QF_NRA, 3 fixed / 1 free, timeout 5000 ms; assumptions satisfiable",
+      "premises": [
+        {
+          "expression": "uav.cruisePower >= 100.0 [W] and uav.cruisePower <= 600.0 [W]",
+          "holds": "fails"
+        }
+      ]
+    }
+  ]
+}

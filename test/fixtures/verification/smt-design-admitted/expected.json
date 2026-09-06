@@ -1,0 +1,47 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [
+    "uav.cruisePower"
+  ],
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 1,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "AdmittedByDesign::EnduranceRequirement",
+      "shortId": "",
+      "clause": "AdmittedByDesign::EnduranceRequirement::«ConstraintUsage»",
+      "expression": "uav.endurance >= 45.0 [min]",
+      "obligationDigest": "sha256:40a58f3b761eddefb4715718fb407bafd2913c8557b7a9834d74645208454497",
+      "claim": "design-admitted",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/design-admitted",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [
+        "AdmittedByDesign::AirVehicle::endurance",
+        "AdmittedByDesign::BatteryPack::capacity",
+        "AdmittedByDesign::AirVehicle::usableEnergyFraction",
+        "AdmittedByDesign::AirVehicle::cruisePower"
+      ],
+      "detail": "design admitted by the model, not a violation of it: the counterexample exists only because --free released AdmittedByDesign::AirVehicle::cruisePower, and a `=` value is a binding the model states. Re-run without --free for the verdict at the model’s own values",
+      "premises": [
+        {
+          "expression": "uav.cruisePower >= 100.0 [W] and uav.cruisePower <= 900.0 [W]",
+          "holds": "holds"
+        }
+      ]
+    }
+  ]
+}

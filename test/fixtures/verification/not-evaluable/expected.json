@@ -3,6 +3,8 @@
   "engine": "literal",
   "toolAbsent": false,
   "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
   "exitCode": 2,
   "counts": {
     "discharged": 0,
@@ -24,6 +26,8 @@
       "discharged": false,
       "code": "verification/not-evaluable",
       "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
       "detail": "not evaluable at the model's values: Could not evaluate: \"motor.torque\" has no value in scope",
       "premises": []
     }

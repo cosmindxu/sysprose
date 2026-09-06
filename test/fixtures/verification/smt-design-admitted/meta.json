@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "A refutation found only after `--free` is a design the model admits: exit 2, never 1",
+  "model": "test/fixtures/verification/models/free-two-sided-refutable.sysml",
+  "engine": "smt",
+  "free": ["uav.cruisePower"],
+  "note": "Two-sided, so the witness is inside a domain the premise admits — and the model binds the power to 650 W, so the counterexample at 900 W is not a violation of this model. Calling it one would make every `--free` exploration read as a defect report."
+}

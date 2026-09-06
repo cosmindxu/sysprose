@@ -640,7 +640,7 @@ export function relationScope(model: Model, el: ElementRecord): Map<string, Elem
  */
 export function idScopeFor(model: Model, contextId: ElementId): Map<string, ElementId> {
   const map = new Map<string, ElementId>();
-  collectIds(model, contextId, '', map, new Set());
+  collectIds(model, contextId, '', map, new Set(), new Set());
   return map;
 }
 
@@ -650,10 +650,33 @@ function collectIds(
   prefix: string,
   map: Map<string, ElementId>,
   visited: Set<string>,
+  onPath: Set<ElementId>,
 ): void {
+  // TWO guards, because they answer different questions — the same pair, for
+  // the same reason, as `featureIdsFor`'s collector in `./evaluate-model`.
+  //
+  // `onPath` is the CYCLE guard and must be keyed on the owner ALONE: a feature
+  // whose type is one of its own owners (`item def Person { timeslice
+  // asPresident : Person; }`, the L4-self-typed-feature fixture) generates an
+  // unbounded name tower `asPresident.asPresident…`, and a key that carries the
+  // prefix never repeats, so it cannot see the cycle. `visited` is only a WORK
+  // BOUND for a diamond reached twice at the same prefix, so it keeps the
+  // prefix: two sibling features of one type (`part a : T; part b : T;`) are
+  // different scopes and both must be walked.
+  //
+  // The numeric surface's collector was given both guards when that fixture was
+  // filed; this one was not, and nothing reached it until an engine read the
+  // WORKLIST — `obligationsOf` resolves every relation body through
+  // `idScopeFor`, so on that fixture the whole verification lane died with a
+  // RangeError rather than reporting anything about the model. A gatherer that
+  // throws is the loudest form of the blind spot the relation census exists to
+  // close: no relation is refused, none is encoded, and there is no report to
+  // read the absence in.
+  if (onPath.has(ownerId)) return;
   const guardKey = `${prefix} ${ownerId}`;
   if (visited.has(guardKey)) return;
   visited.add(guardKey);
+  onPath.add(ownerId);
 
   for (const feat of effectiveFeatures(model, ownerId)) {
     const name = feat.declaredName;
@@ -662,9 +685,11 @@ function collectIds(
     if (!map.has(full)) map.set(full, feat.id);
     if (!map.has(name)) map.set(name, feat.id);
     for (const type of model.typesOf(feat.id)) {
-      collectIds(model, type.id, full, map, visited);
+      collectIds(model, type.id, full, map, visited, onPath);
     }
   }
+
+  onPath.delete(ownerId);
 }
 
 /** Merge id-scope maps; earlier maps win on key collisions. */

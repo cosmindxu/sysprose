@@ -1,0 +1,37 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "RefusedAxiomRelevant::MassLimit",
+      "shortId": "",
+      "clause": "RefusedAxiomRelevant::MassLimit::«ConstraintUsage»",
+      "expression": "bus.mass <= 2000.0 [kg]",
+      "obligationDigest": "sha256:4c26c79c8eecaf0caab498f46a55f4deb63183b86a569e7618483d412c35ee55",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/not-evaluable",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [
+        "RefusedAxiomRelevant::Bus::mass"
+      ],
+      "detail": "a counterexample was found under a PARTIAL context: 1 relation(s) in the proof context were refused by a gate (RefusedAxiomRelevant::Bus::massPerSeat: unsupported-operator), and the very relation that was dropped may exclude this witness. A proof under a partial context would still be sound; a refutation is not",
+      "premises": []
+    }
+  ]
+}

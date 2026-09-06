@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "The shipped example is PROVED under the solver, where the literal engine could only say holds-at-values",
+  "model": "examples/uav-isr.sysml",
+  "engine": "smt",
+  "note": "The same file as holds-at-values-uav, under the other engine, and the pair is the point: `proved` is negation-unsat under a satisfiable axiom set and `holds-at-values` is a point evaluation, and a commit that let either engine print the other's word shows up here as a diff."
+}

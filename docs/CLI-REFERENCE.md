@@ -255,6 +255,8 @@ npm run sysprose -- verify <file.sysml|-> [options]
 | `--free F` | Release a feature value (qualified name) so the engine may vary it; a refutation obtained this way is `design-admitted`, not a violation. An SMT-engine option: the literal engine evaluates AT the values and refuses it | none — every feature value is a binding the proof carries |
 | `--record PATH` | Write the evidence records to PATH: one per obligation, each naming the claim, the engine, the tool version, the bound and the canonical model digest | — |
 | `--allow-inconclusive` | Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, a vacuous obligation or a design-admitted one, and never over a refutation | — |
+| `--timeout MS` | The per-check budget in milliseconds — an SMT-engine option. No check is unbounded and there is no spelling for "no timeout"; a solver that runs out of time reports verification/timeout, which says nothing about whether the requirement holds | 5000 ms per check |
+| `--strict-vacuity` | Raise a vacuous obligation from an info line to verification/vacuous-property, an error. It does NOT change the exit code: vacuity is inconclusive and exits 2 with the flag and without it | — |
 
 Computed by `verifyModel (src/api/verification.ts)`. With `--json` the answer is published under `verify`, beside `ok` and `file`.
 

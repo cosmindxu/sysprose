@@ -68,6 +68,7 @@ import {
   type VerifyEngineOption,
   type VerifyReport,
 } from '@api/index';
+import { loadZ3, z3Disabled } from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
 
 const root = (p: string) => resolve(process.cwd(), p);
@@ -83,6 +84,17 @@ interface Meta {
   model: string;
   engine: VerifyEngineOption;
   allowInconclusive?: boolean;
+  /**
+   * Features released by `--free`, in the spellings a person types.
+   *
+   * An SMT-engine option — the literal engine REFUSES it rather than accepting
+   * and ignoring it — and the one flag in this lane that changes what a verdict
+   * MEANS: a refutation under it is a design the model admits, not a violation
+   * of it.
+   */
+  free?: string[];
+  /** Raise a vacuity row to `verification/vacuous-property`, an error (§2). */
+  strictVacuity?: boolean;
   /**
    * Run with `SYSPROSE_NO_Z3=1`, the switch the plan's §5 CI job uses to
    * exercise the honest-absence path on every push. It is set here rather than
@@ -108,6 +120,17 @@ interface Golden {
    * checked against a run that never asked for it.
    */
   allowInconclusive: boolean;
+  /**
+   * The other two flags that change what was shown, for the same reason.
+   *
+   * `strictVacuity` is half of a pair whose whole assertion is that it moves
+   * the CODE and not the exit status, and `free` is the flag that turns a
+   * violation into a design the model admits — a golden that did not record
+   * which features were released would pin a verdict without pinning the bound
+   * it was reached under.
+   */
+  strictVacuity: boolean;
+  free: string[];
   exitCode: number;
   counts: {
     discharged: number;
@@ -128,6 +151,26 @@ interface Golden {
     discharged: boolean;
     code: string | null;
     forgiven: boolean;
+    /**
+     * `check(¬G)` alone was unsat — the goal is true of every model.
+     *
+     * In the golden because it is a claim ABOUT a proof rather than a proof:
+     * `x == x` is honestly `proved` and honestly useless, and a commit that
+     * dropped the flag would leave a corpus of identities reading as a verified
+     * design with every other field unchanged.
+     */
+    tautology: boolean;
+    /**
+     * The SYMBOLS of the solver's witness, never its terms.
+     *
+     * Whether a row carries a witness at all is a property of this tool — a
+     * proof stands on a satisfiable-assumptions model, a refutation on a
+     * counterexample — and which symbols it names is a property of the encoding.
+     * The VALUES are z3's own exact rationals, and pinning those would make
+     * every golden a pin on a solver's model-construction order rather than on
+     * this tool's behaviour. The cases that need a number assert it directly.
+     */
+    witnessSymbols: string[];
     detail: string;
     premises: Array<{ expression: string; holds: string }>;
   }>;
@@ -140,6 +183,8 @@ function project(r: VerifyReport): Golden {
     engine: r.engine,
     toolAbsent: r.toolAbsent,
     allowInconclusive: r.allowInconclusive,
+    strictVacuity: r.strictVacuity,
+    free: r.free,
     exitCode: r.exitCode,
     counts: {
       discharged: r.discharged,
@@ -160,11 +205,59 @@ function project(r: VerifyReport): Golden {
       discharged: v.discharged,
       code: v.code,
       forgiven: v.forgiven,
+      tautology: v.tautology,
+      witnessSymbols: v.witness.map((w) => w.symbol),
       detail: v.detail,
       premises: v.premises.map((p) => ({ expression: p.expression, holds: p.holds })),
     })),
   };
 }
+
+/**
+ * The solver, or the reason it is absent — `z3-solver` is an OPTIONAL dependency.
+ *
+ * A clone that skipped optional dependencies must still run every suite, so the
+ * cases whose ANSWER needs a backend degrade to a SKIP rather than to a
+ * failure, exactly as `test/integration/smt-z3.integration.test.ts` does it.
+ * The skip is guarded in `beforeAll` below, so it can never fire on a machine
+ * that has the package: a suite that skipped everything because `loadZ3()`
+ * quietly broke would read as a suite that passed.
+ */
+let backendPresent = false;
+let absentReason = '';
+const installed = existsSync(root('node_modules/z3-solver/package.json'));
+
+beforeAll(async () => {
+  const load = await loadZ3();
+  if (load.absent) absentReason = load.reason;
+  else backendPresent = true;
+  if (!backendPresent && installed && !z3Disabled()) {
+    throw new Error(
+      '`node_modules/z3-solver` is installed and SYSPROSE_NO_Z3 is unset, so `loadZ3()` must ' +
+        `return a backend. It answered: ${absentReason}`,
+    );
+  }
+}, 60_000);
+
+/** Does this case mean what it says only when a backend answered? */
+function needsSolver(meta: Meta): boolean {
+  return meta.noZ3 !== true && meta.engine !== 'literal';
+}
+
+/** Skip a solver case where the optional dependency is not installed. */
+const withZ3 = (name: string, fn: () => void | Promise<void>, timeout = 120_000) =>
+  it(
+    name,
+    async (ctx) => {
+      if (!backendPresent) {
+        expect(absentReason.length, 'no backend and no reason either').toBeGreaterThan(20);
+        ctx.skip();
+        return;
+      }
+      await fn();
+    },
+    timeout,
+  );
 
 const caseNames = readdirSync(CASES, { withFileTypes: true })
   .filter((e) => e.isDirectory() && e.name !== 'models')
@@ -197,6 +290,8 @@ async function runCase(meta: Meta): Promise<VerifyReport> {
     return await verifyModel(model, {
       engine: meta.engine,
       allowInconclusive: meta.allowInconclusive === true,
+      ...(meta.free !== undefined ? { free: meta.free } : {}),
+      ...(meta.strictVacuity === true ? { strictVacuity: true } : {}),
       sourceText: read(meta.model),
     });
   } finally {
@@ -221,9 +316,14 @@ describe('L8 — the verdict corpus', () => {
   for (const name of caseNames) {
     it(
       `${name} matches its golden verdict`,
-      async () => {
+      async (ctx) => {
         const dir = `test/fixtures/verification/${name}`;
         const meta = JSON.parse(read(`${dir}/meta.json`)) as Meta;
+        if (needsSolver(meta) && !backendPresent) {
+          expect(absentReason.length, 'no backend and no reason either').toBeGreaterThan(20);
+          ctx.skip();
+          return;
+        }
         const actual = project(await runCase(meta));
         const goldenPath = root(`${dir}/expected.json`);
         if (UPDATE) {
@@ -255,12 +355,21 @@ describe('L8 — the verdict corpus', () => {
  * back to the literal engine reddened only the two golden comparisons until
  * these were moved onto the live runs. The models are cached, so the second
  * sweep costs a few hundred milliseconds.
+ *
+ * Commit 5 adds the rules that only exist once a solver can answer: what
+ * `proved` is allowed to stand on, that a design admitted under `--free` is
+ * never a violation, and that `--strict-vacuity` is loud and inert.
  */
 describe('L8 — the exit contract holds over the whole corpus', () => {
   const goldens: Array<{ name: string; meta: Meta; golden: Golden }> = [];
   beforeAll(async () => {
     for (const name of caseNames) {
       const meta = JSON.parse(read(`test/fixtures/verification/${name}/meta.json`)) as Meta;
+      // With no backend a solver case reports `verification/tool-absent` for
+      // every row, which is the honest answer and is NOT the answer these rules
+      // are written over. It is left out rather than asserted against; the
+      // rules that need it are `withZ3` cases and skip.
+      if (needsSolver(meta) && !backendPresent) continue;
       goldens.push({ name, meta, golden: project(await runCase(meta)) });
     }
   }, 240_000);
@@ -359,6 +468,221 @@ describe('L8 — the exit contract holds over the whole corpus', () => {
     }
   });
 
+  /* ── the rules that only exist once a solver can answer (commit 5) ──────── */
+
+  it('says `proved` only from the SMT engine, and only on a decided row', () => {
+    // The one sentence this repository is built around. `proved` may appear
+    // under exactly one engine, it always writes the pass facet, it is always
+    // discharged, and it never carries a code — because a code is what an
+    // UNDECIDED row carries, and a proof is decided.
+    for (const { name, golden } of goldens) {
+      for (const o of golden.obligations) {
+        if (o.claim !== 'proved') continue;
+        expect(golden.engine, `${name}: a non-SMT engine printed \`proved\``).toBe('smt');
+        expect(golden.toolAbsent, `${name}: \`proved\` from a run where no solver ran`).toBe(false);
+        expect(o.verdict, `${name}: a proof that did not write the pass facet`).toBe('pass');
+        expect(o.discharged, `${name}: a proof that did not discharge its obligation`).toBe(true);
+        expect(o.code, `${name}: a proof carrying an undecided code`).toBeNull();
+        // The sentence a person reads has to say what the proof stood on.
+        expect(o.detail, `${name}: a proof that did not name the negation check`).toContain('¬G unsat');
+        expect(o.detail, `${name}: a proof with no satisfiable-assumptions witness`).toContain(
+          'assumptions satisfiable',
+        );
+        expect(o.witnessSymbols.length, `${name}: a proof with an empty witness`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  withZ3('flags a tautology, and flags nothing else', () => {
+    // `x == x` is honestly proved and honestly useless. The flag is the only
+    // thing that tells the two apart, and it may only ever sit on a proof.
+    for (const { name, golden } of goldens) {
+      for (const o of golden.obligations) {
+        if (!o.tautology) continue;
+        expect(o.claim, `${name}: a tautology flag on a row that was not proved`).toBe('proved');
+        expect(o.detail, `${name}: the flag is set and the sentence does not say so`).toContain(
+          'TAUTOLOGY',
+        );
+      }
+    }
+    const taut = goldens.find((g) => g.name === 'smt-tautology');
+    expect(taut, 'the tautology case left the corpus').toBeDefined();
+    expect(taut!.golden.obligations.map((o) => o.tautology)).toEqual([true]);
+  });
+
+  it('never calls a refutation under `--free` a violation of the model', () => {
+    // A `=` value is a binding. A counterexample that exists only because the
+    // binding was released is a design the model ADMITS, and reporting it as
+    // exit 1 would make every exploration read as a defect report.
+    for (const { name, golden } of goldens) {
+      for (const o of golden.obligations) {
+        if (o.claim !== 'design-admitted') continue;
+        expect(golden.free.length, `${name}: design-admitted with nothing freed`).toBeGreaterThan(0);
+        expect(o.verdict, `${name}: design-admitted wrote a verdict facet`).toBe('inconclusive');
+        expect(o.code, `${name}`).toBe('verification/design-admitted');
+        expect(golden.exitCode, `${name}: a design the model admits was reported as exit 1`).toBe(2);
+        expect(o.forgiven, `${name}: a flag forgave a design-admitted row`).toBe(false);
+      }
+      // And with nothing freed, `design-admitted` is unreachable by construction.
+      if (golden.free.length === 0) {
+        expect(
+          golden.counts.designAdmitted,
+          `${name}: a design was admitted under a bound nobody released`,
+        ).toBe(0);
+      }
+    }
+  });
+
+  it('never refutes over a freed feature the context does not confine on both sides', () => {
+    // The rule that stops the fabricated counterexample. A row that reported
+    // `free-variable-unbounded` must not ALSO be a refutation, and the sentence
+    // has to name the side that escaped so a reader can add the premise.
+    for (const { name, golden } of goldens) {
+      for (const o of golden.obligations) {
+        if (o.code !== 'verification/free-variable-unbounded') continue;
+        expect(o.claim, `${name}: an unbounded free variable produced a verdict`).toBe('inconclusive');
+        expect(o.detail, `${name}: the side that escaped is not named`).toMatch(
+          /unbounded (above|below)/,
+        );
+        expect(golden.exitCode, `${name}`).toBe(2);
+        expect(o.forgiven, `${name}: a flag forgave an unbounded free variable`).toBe(false);
+      }
+    }
+  });
+
+  withZ3(
+    'names no point on a row whose own proof context released one',
+    async () => {
+      // THE POINT A CLAIM WAS READ AT IS A FACT ABOUT THE RUN, and where the
+      // context released a variable there is no single point to name.
+      //
+      // MEASURED: `bindings` was keyed on the GOAL's own variables while the
+      // bound was keyed on the whole proof context, and the two disagree
+      // whenever the freed feature reaches the goal through a premise or a
+      // derived equation. `uav.endurance >= 45.0 [min]` reads only
+      // `endurance`; `--free uav.cruisePower` reaches it through the model's
+      // own endurance equation. So a `design-admitted` row — the row reporting
+      // that the requirement FAILS somewhere in the released domain — carried
+      // the model's own 650 W point as its witness plus an SI pair
+      // `{lhs: 2835.69, rhs: 2700}`, which is the comparison SATISFIED. One
+      // predicate has to decide both, and this is what keeps them one.
+      let freedRows = 0;
+      for (const name of caseNames) {
+        const meta = JSON.parse(read(`test/fixtures/verification/${name}/meta.json`)) as Meta;
+        if (meta.free === undefined || meta.free.length === 0) continue;
+        const report = await runCase(meta);
+        for (const o of report.results) {
+          if (o.bound.kind !== 'free-variables') continue;
+          freedRows += 1;
+          expect(
+            o.bindings,
+            `${name}: the model's own values offered as the point a released claim was read at`,
+          ).toEqual([]);
+          expect(
+            o.bound.si,
+            `${name}: an SI pair read at the model's own point, under a domain the run released`,
+          ).toBeUndefined();
+        }
+      }
+      expect(freedRows, 'no case releases anything — this rule holds vacuously').toBeGreaterThan(0);
+      // The other direction, so the rule is not "the point is never named":
+      // with nothing freed there IS one point, and it is named with the pair
+      // the comparison was made on.
+      const pinned = await runCase(
+        JSON.parse(read('test/fixtures/verification/smt-uav-proved/meta.json')) as Meta,
+      );
+      expect(pinned.results.length, 'the pinned control left the corpus').toBeGreaterThan(0);
+      for (const o of pinned.results) {
+        expect(o.bound.kind, 'a run that released nothing stopped naming its point').toBe('model-values');
+        expect(o.bindings.length, 'a pinned row with no values').toBeGreaterThan(0);
+        expect(o.bound.si, 'a pinned row with no SI pair').toBeDefined();
+      }
+    },
+    240_000,
+  );
+
+  withZ3('`--strict-vacuity` changes the code and changes nothing else', () => {
+    // §2's promise, asserted as the DIFFERENCE between two runs of one model:
+    // the flag is loud and inert. Anything else moving here is the flag
+    // deciding something, which is exactly what it may not do.
+    const plain = goldens.find((g) => g.name === 'smt-vacuous');
+    const strict = goldens.find((g) => g.name === 'smt-vacuous-strict');
+    expect(plain && strict, 'the strict-vacuity pair left the corpus').toBeTruthy();
+    expect(strict!.golden.exitCode, 'the flag moved the exit code').toBe(plain!.golden.exitCode);
+    expect(strict!.golden.exitCode).toBe(2);
+    expect(strict!.golden.counts).toEqual(plain!.golden.counts);
+    expect(plain!.golden.obligations.map((o) => o.code)).toEqual(['verification/vacuous']);
+    expect(strict!.golden.obligations.map((o) => o.code)).toEqual(['verification/vacuous-property']);
+    // Everything but the code is byte-identical, which is the honest way to
+    // state "and nothing else".
+    const strip = (g: Golden) => ({ ...g, strictVacuity: false, obligations: g.obligations.map((o) => ({ ...o, code: null })) });
+    expect(strip(strict!.golden)).toEqual(strip(plain!.golden));
+  });
+
+  it('never forgives a proof-voiding code, whatever the flag says', () => {
+    // The four codes that say a proof would be VOID rather than absent. None of
+    // them is a limit of the tool, so none of them is in the flag's scope: a
+    // contradictory model, an unsatisfiable premise set and an unconfined free
+    // variable all survive `--allow-inconclusive` and all exit 2.
+    const never = [
+      'verification/inconsistent-axioms',
+      'verification/vacuous',
+      'verification/vacuous-property',
+      'verification/free-variable-unbounded',
+      'verification/refuted',
+    ];
+    for (const { name, golden } of goldens) {
+      for (const o of golden.obligations) {
+        if (o.code === null || !never.includes(o.code)) continue;
+        expect(o.forgiven, `${name} forgave ${o.code}`).toBe(false);
+        expect(ALLOW_INCONCLUSIVE_CODES.has(o.code), `${o.code} entered the flag's scope`).toBe(false);
+      }
+    }
+  });
+
+  withZ3('decides nothing at all over a contradictory axiom set, and names the core', () => {
+    // The loudest way this lane could be silently wrong: every negation is
+    // unsat under a contradiction, so the failure mode is a full sheet of
+    // proofs rather than an error.
+    const bad = goldens.find((g) => g.name === 'smt-inconsistent-axioms');
+    expect(bad, 'the inconsistent-axioms case left the corpus').toBeDefined();
+    expect(bad!.golden.counts.discharged, 'something was proved from a contradiction').toBe(0);
+    expect(bad!.golden.exitCode).toBe(2);
+    for (const o of bad!.golden.obligations) {
+      expect(o.claim).toBe('inconclusive');
+      expect(o.code).toBe('verification/inconsistent-axioms');
+      expect(o.detail, 'the colliding facts are not named').toContain('core: ');
+    }
+  });
+
+  withZ3('reads a false plain `constraint` as a claim, not as a fact', () => {
+    // Both engines, one model: two refutations and exit 1. Read as an axiom the
+    // false claim would make the context contradictory and the run would report
+    // nothing wrong with either fault — a model with two visible defects coming
+    // back "undecided" is worse than one coming back wrong.
+    for (const name of ['smt-two-refutations', 'literal-two-refutations']) {
+      const g = goldens.find((x) => x.name === name);
+      expect(g, `${name} left the corpus`).toBeDefined();
+      expect(g!.golden.exitCode, `${name}`).toBe(1);
+      expect(g!.golden.counts.violated, `${name}`).toBe(2);
+      for (const o of g!.golden.obligations) {
+        expect(o.claim, `${name}`).toBe('refuted');
+        expect(o.code, `${name}`).toBe('verification/refuted');
+        expect(o.detail, `${name}: a refutation reported as a contradictory context`).not.toContain(
+          'axiom set is unsatisfiable',
+        );
+      }
+    }
+    // And the two engines agree about WHICH relations are wrong, expression by
+    // expression — the differential gate in miniature, pinned as a golden.
+    const smt = goldens.find((g) => g.name === 'smt-two-refutations')!.golden;
+    const lit = goldens.find((g) => g.name === 'literal-two-refutations')!.golden;
+    expect(smt.obligations.map((o) => o.expression)).toEqual(lit.obligations.map((o) => o.expression));
+    expect(smt.obligations.map((o) => o.obligationDigest)).toEqual(
+      lit.obligations.map((o) => o.obligationDigest),
+    );
+  });
+
   it('says the refusal out loud on a relation a gate refused but the values decided', () => {
     // `%` evaluates on the numeric surface and is refused by the gates. The
     // point evaluation is honest and is reported; the refusal must travel with
@@ -373,7 +697,56 @@ describe('L8 — the exit contract holds over the whole corpus', () => {
     expect(only.detail).toContain('unsupported-operator');
   });
 
-  it('covers all three exit codes, both sides of the flag, and an empty run', () => {
+  withZ3('never lowers a gate-refused relation the values read `violated`, on either engine', () => {
+    // §2: `--allow-inconclusive` lowers the two UNDECIDED codes and never a
+    // violation. A relation `%` puts outside the encodable fragment can still
+    // be FALSE at the model's own values, and reporting that row
+    // `verification/unsupported-construct` put it inside the flag's scope: the
+    // same file was exit 0 under `--engine smt --allow-inconclusive` and exit 1
+    // under `--engine literal --allow-inconclusive`, with `auto` resolving to
+    // the first. The pair pins both halves of the answer.
+    const smt = goldens.find((g) => g.name === 'smt-gate-refused-refuted');
+    const lit = goldens.find((g) => g.name === 'literal-gate-refused-refuted');
+    expect(smt && lit, 'the gate-refused refutation pair left the corpus').toBeTruthy();
+    for (const g of [smt!, lit!]) {
+      expect(g.meta.allowInconclusive, `${g.name}: the case stopped asking for the flag`).toBe(true);
+      expect(g.golden.exitCode, `${g.name}: a violation was lowered to a green build`).toBe(1);
+      expect(g.golden.counts.forgiven, `${g.name}: a violation was forgiven`).toBe(0);
+      expect(g.golden.obligations.map((o) => o.code), `${g.name}`).toEqual(['verification/refuted']);
+      expect(g.golden.obligations.map((o) => o.claim), `${g.name}`).toEqual(['refuted']);
+      // The refusal still travels with the verdict: a reader has to be able to
+      // see that no engine will ever prove this row either way.
+      expect(g.golden.obligations[0].detail, `${g.name}: the refusal was dropped`).toContain(
+        'a gate refuses this relation',
+      );
+    }
+    // One flag, one scope: the two engines agree code for code and exit for exit.
+    expect(smt!.golden.obligations.map((o) => o.code)).toEqual(lit!.golden.obligations.map((o) => o.code));
+    expect(smt!.golden.exitCode).toBe(lit!.golden.exitCode);
+  });
+
+  withZ3('suppresses a refutation only for a refused relation the goal can REACH', () => {
+    // "A refutation needs the whole context" is a rule about this obligation's
+    // context, not about the file. Reading the run-level refused set made one
+    // unencodable feature value anywhere in a model downgrade every confirmed
+    // counterexample in it. The pair is the control: same shape, same refusal
+    // reason, and the only difference is whether the refused relation reads the
+    // symbol the requirement constrains.
+    const off = goldens.find((g) => g.name === 'smt-refused-axiom-irrelevant');
+    const on = goldens.find((g) => g.name === 'smt-refused-axiom-relevant');
+    expect(off && on, 'the refused-axiom relevance pair left the corpus').toBeTruthy();
+    expect(off!.golden.exitCode, 'an unrelated refusal suppressed a refutation').toBe(1);
+    expect(off!.golden.obligations.map((o) => o.code)).toEqual(['verification/refuted']);
+    expect(on!.golden.exitCode, 'a refusal that touches the goal did not suppress one').toBe(2);
+    expect(on!.golden.obligations.map((o) => o.code)).toEqual(['verification/not-evaluable']);
+    expect(on!.golden.obligations[0].detail, 'the dropped relation is not named').toContain(
+      'PARTIAL context',
+    );
+    expect(on!.golden.obligations[0].detail).toContain('massPerSeat');
+    expect(on!.golden.obligations[0].forgiven, 'a partial context was forgiven').toBe(false);
+  });
+
+  withZ3('covers all three exit codes, both sides of the flag, and an empty run', () => {
     // A corpus that lost its exit-1 or its forgiven case would still be green
     // above: every rule there is an implication, and an implication with no
     // instance holds trivially.
@@ -412,6 +785,31 @@ describe('L8 — the exit contract holds over the whole corpus', () => {
         g.golden.obligations.some((o) => o.code === 'verification/unsupported-construct' && o.forgiven),
       ),
       'no case shows an out-of-fragment construct being forgiven',
+    ).toBe(true);
+    // The SMT engine's own positive controls. Every rule added at commit 5 is
+    // an implication over rows of a given claim, and an implication with no
+    // instance holds trivially — so losing the case that produces the claim
+    // would silently retire the rule rather than fail it.
+    const anyRow = (p: (o: Golden['obligations'][number]) => boolean) =>
+      goldens.some((g) => g.golden.obligations.some(p));
+    expect(anyRow((o) => o.claim === 'proved'), 'no case reaches `proved` at all').toBe(true);
+    expect(anyRow((o) => o.tautology), 'no case exercises the tautology flag').toBe(true);
+    expect(anyRow((o) => o.claim === 'design-admitted'), 'no case exercises `--free`').toBe(true);
+    for (const code of [
+      'verification/refuted',
+      'verification/vacuous',
+      'verification/vacuous-property',
+      'verification/inconsistent-axioms',
+      'verification/free-variable-unbounded',
+    ]) {
+      expect(anyRow((o) => o.code === code), `no case reaches ${code}`).toBe(true);
+    }
+    // A proof under `--free` and a proof with nothing freed are different
+    // claims, and both have to be reachable or the two-sided rule could be
+    // "no verdict is ever available under --free" and stay green.
+    expect(
+      goldens.some((g) => g.golden.free.length > 0 && g.golden.counts.discharged > 0),
+      'no case proves anything over a released domain',
     ).toBe(true);
   });
 });
@@ -599,5 +997,107 @@ describe('L8 — `--free` is refused by the engine that cannot honour it', () =>
     await expect(
       verifyModel(model!, { engine: 'literal', free: ['UAVSurveillanceSystem::AirVehicle::cruisePower'] }),
     ).rejects.toThrow(/SMT-engine option/);
+  }, 120_000);
+});
+
+/**
+ * L8 — single-field mutations, which is the plan's §5 "Mutation" for this layer.
+ *
+ * A golden corpus catches a verdict that MOVED. It cannot catch a verdict that
+ * stopped moving: an engine that answered `proved` for everything, or one whose
+ * digest was a constant, would match every golden in this directory on the day
+ * it was recorded and would keep matching forever. So each case here edits ONE
+ * field of one model and asserts the verdict moves in the direction that edit
+ * implies — and that the digest the record is indexed by moves with it, because
+ * a claim that cannot be told apart from the claim about a different model is
+ * not evidence about either.
+ *
+ * The two edits are the ones §5 names: a literal moved by one tick
+ * (`18.5` → `18.6`), and a non-strict ordering made strict at an exact
+ * boundary. The second moves the verdict CONSERVATIVELY rather than to the
+ * opposite verdict, and that is the honest answer: the unit-aware evaluator
+ * counts a tie as equal for every operator and the encoder reasons over exact
+ * rationals, so at the boundary the two surfaces genuinely differ and the
+ * witness gate declines instead of printing a refutation.
+ */
+describe('L8 — a single-field mutation moves the verdict, and moves the digest', () => {
+  const base = [
+    'package Mutation {',
+    '    part def Chassis {',
+    '        attribute mass : ISQ::MassValue = 18.5 [kg];',
+    '    }',
+    '    part chassis : Chassis;',
+    '    requirement def MassLimit {',
+    '        subject chassis : Chassis;',
+    '        require constraint { chassis.mass <= 18.5 [kg] }',
+    '    }',
+    '    satisfy MassLimit by chassis;',
+    '}',
+    '',
+  ].join('\n');
+
+  /** One run over one text: the single row's claim, and the two digests. */
+  async function judge(text: string): Promise<{
+    claim: string;
+    code: string | null;
+    obligationDigest: string;
+    modelDigest: string;
+  }> {
+    const { model } = await loadModelText(text, { fileName: 'mutation.sysml' });
+    const report = await verifyModel(model!, { engine: 'smt', sourceText: text });
+    expect(report.results.length, 'the mutation changed how many obligations there are').toBe(1);
+    const [only] = report.results;
+    return {
+      claim: only.claim,
+      code: only.code,
+      obligationDigest: only.obligationDigest,
+      modelDigest: report.modelVersion.graph,
+    };
+  }
+
+  withZ3('is proved at the boundary before anything is touched', async () => {
+    const before = await judge(base);
+    expect(before.claim, 'the control case stopped being provable').toBe('proved');
+    expect(before.code).toBeNull();
+  }, 120_000);
+
+  withZ3('`18.5` → `18.6` in the VALUE flips proved to refuted and moves the model digest', async () => {
+    const before = await judge(base);
+    const after = await judge(base.replace('= 18.5 [kg]', '= 18.6 [kg]'));
+    expect(after.claim, 'the verdict did not move when the value went over the limit').toBe('refuted');
+    expect(after.code).toBe('verification/refuted');
+    expect(after.modelDigest, 'the model digest did not move on an edited literal').not.toBe(
+      before.modelDigest,
+    );
+    // The OBLIGATION digest is a function of the relation's normal form alone,
+    // so it must NOT move: the same requirement is being judged, about a
+    // different model. A record that moved both could not be matched back.
+    expect(after.obligationDigest, 'the obligation digest moved when only a value did').toBe(
+      before.obligationDigest,
+    );
+  }, 120_000);
+
+  withZ3('`18.5` → `18.6` in the RELATION moves the obligation digest and keeps the verdict', async () => {
+    const before = await judge(base);
+    const after = await judge(base.replace('<= 18.5 [kg] }', '<= 18.6 [kg] }'));
+    expect(after.claim, '18.5 <= 18.6 stopped holding').toBe('proved');
+    expect(after.obligationDigest, 'the obligation digest did not move on an edited relation').not.toBe(
+      before.obligationDigest,
+    );
+    expect(after.modelDigest, 'the relation is part of the model').not.toBe(before.modelDigest);
+  }, 120_000);
+
+  withZ3('`<=` → `<` at the exact boundary moves the verdict conservatively, never to a refutation', async () => {
+    const before = await judge(base);
+    const after = await judge(base.replace('<= 18.5 [kg] }', '< 18.5 [kg] }'));
+    expect(after.claim, 'the strict ordering did not move the verdict at all').not.toBe('proved');
+    // The direction matters and is the whole point: the two surfaces read a tie
+    // differently, so the engine declines. A refutation here would be this tool
+    // contradicting its own checker on a boundary case.
+    expect(after.claim, 'a boundary tie was printed as a violation').toBe('inconclusive');
+    expect(after.code).toBe('verification/not-evaluable');
+    expect(after.obligationDigest, 'the operator is part of the normal form').not.toBe(
+      before.obligationDigest,
+    );
   }, 120_000);
 });

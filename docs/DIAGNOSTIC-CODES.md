@@ -408,7 +408,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 ## Formal verification
 
-The verification lane reporting what it will and will not undertake. Always INFO: none of these is a defect in the model. They say that a relation is outside the fragment the lane encodes, that a contract has nothing to show, or that a clause sits somewhere the standard does not admit it — each stated rather than left to be inferred from a silence.
+The verification lane, and the severity splits it in two. Almost all of these are INFO because none of them is a defect in the model: they say that a relation is outside the fragment the lane encodes, that a contract has nothing to show, that a clause sits somewhere the standard does not admit it, or that a proof would be void rather than absent — each stated rather than left to be inferred from a silence. Exactly two are ERRORS, because they say something about the MODEL: `verification/refuted`, the violation this lane exists to find, and `verification/vacuous-property`, which exists only because `--strict-vacuity` asked for a vacuity to be loud.
 
 ### `verification/unsupported-expression`
 
@@ -484,8 +484,43 @@ The verification lane reporting what it will and will not undertake. Always INFO
 
 - **Severity:** info
 - **Source:** verification
-- **Fires when:** A solver was asked and did not answer inside the time it was given — it returned `unknown` after the timeout rather than sat or unsat. No engine in this build emits it; it is the SMT engine’s undecided code and the second of the two `--allow-inconclusive` may lower.
-- **Hint given:** Raise the timeout, narrow the obligation, or read the row as undecided — a solver that ran out of time has said nothing about whether the requirement holds. It exits 2 by default.
+- **Fires when:** A solver was asked and did not answer inside the time it was given — it returned `unknown` after the timeout rather than sat or unsat. It is the SMT engine’s undecided code and the second of the two `--allow-inconclusive` may lower.
+- **Hint given:** Raise the budget with `--timeout MS`, narrow the obligation, or read the row as undecided — a solver that ran out of time has said nothing about whether the requirement holds. It exits 2 by default, and the row was not retried with a weaker encoding.
+
+### `verification/refuted`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A requirement does not hold with every feature at the value the model binds it to. Both engines file it: the literal one evaluates the relation and reads it as false, and the SMT one finds `A ∧ P ∧ ¬G` satisfiable and confirms the witness in process. It is the one code on a DECIDED row, and the run exits 1.
+- **Hint given:** Read the row’s `detail` for the two magnitudes the comparison was made on, and the witness for the assignment that breaks the requirement in the units the file stores. Fix the design or the requirement and re-run. `--allow-inconclusive` does not forgive a violation, and exit 1 outranks every undecided row in the same run.
+
+### `verification/vacuous`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** The SMT engine found the premises unsatisfiable under the axioms — `A ∧ P` is unsat — so the obligation was discharged by an antecedent that no assignment satisfies. `verification/vacuous-pass` is the literal engine’s weaker sibling: an assumption false AT THE MODEL’S VALUES, rather than one nothing at all can satisfy.
+- **Hint given:** Read the unsat core printed on the row for the facts that collide, then fix the assumption or drop it: an obligation discharged for free says nothing about the design. It is inconclusive and exits 2, no flag launders it, and `--strict-vacuity` raises it to `verification/vacuous-property` without changing the exit code.
+
+### `verification/vacuous-property`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** `--strict-vacuity` was given and an obligation was vacuous. It is the same row as `verification/vacuous` or `verification/vacuous-pass`, raised from an info line to an error so a vacuity cannot be scrolled past.
+- **Hint given:** The flag changes the code and the severity and NOTHING else: the claim stays `vacuous`, the row stays undecided, and the run exits 2 exactly as it does without the flag. Fix the antecedent so the obligation stands on something that can hold.
+
+### `verification/inconsistent-axioms`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** The once-per-run consistency check found the axiom set itself unsatisfiable — `check(A)` is unsat. Every obligation in the run is reported under this code, because a negation is unsat under a contradictory context whatever it says, and a proof from a contradiction is void.
+- **Hint given:** Read the unsat core named on the row: it is the smallest set of the model’s own facts the solver found colliding. Nothing in the run was decided until they are reconciled. `--allow-inconclusive` never lowers this — proving everything is not the same as proving anything.
+
+### `verification/free-variable-unbounded`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A feature released by `--free` is not confined on both sides by the axioms and premises the obligation stands on, so the solver may place a witness outside the physical domain. Reported instead of a refutation, never beside one.
+- **Hint given:** Add a two-sided premise — `assume constraint { x >= lo and x <= hi }` — before freeing the feature. This tool derives no domain axiom from a quantity kind: it does not know that a power or a mass is non-negative, so a witness at a negative power is arithmetically confirmable and physically meaningless. It exits 2 and no flag lowers it.
 
 ## Input handling
 
@@ -546,4 +581,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*67 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*72 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

@@ -1,0 +1,55 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 1,
+  "counts": {
+    "discharged": 0,
+    "violated": 2,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": null,
+      "shortId": "",
+      "clause": "TwoRefutations::enoughSeats",
+      "expression": "bus.seats >= 40",
+      "obligationDigest": "sha256:edd6ce3a6d81a85f9989b8406c9d0cab12c8c78a5453193ca7dee2463094f64c",
+      "claim": "refuted",
+      "verdict": "fail",
+      "discharged": false,
+      "code": "verification/refuted",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [
+        "TwoRefutations::Bus::seats"
+      ],
+      "detail": "refuted with every feature at its model value: `bus.seats >= 40` is false here (30 vs 40 in 1, coherent SI), confirmed by re-evaluation on the numeric surface",
+      "premises": []
+    },
+    {
+      "requirement": "TwoRefutations::MassLimit",
+      "shortId": "",
+      "clause": "TwoRefutations::MassLimit::«ConstraintUsage»",
+      "expression": "bus.mass <= 2000.0 [kg]",
+      "obligationDigest": "sha256:48a7c6ed372d3f168f9b1ac9f002697d4dc4a01e5005b0f0e259a107eba90025",
+      "claim": "refuted",
+      "verdict": "fail",
+      "discharged": false,
+      "code": "verification/refuted",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [
+        "TwoRefutations::Bus::mass"
+      ],
+      "detail": "refuted with every feature at its model value: `bus.mass <= 2000.0 [kg]` is false here (3000 vs 2000 in M, coherent SI), confirmed by re-evaluation on the numeric surface",
+      "premises": []
+    }
+  ]
+}

@@ -100,6 +100,7 @@ import {
   type KeywordUse,
   type ObligationVerdict,
   type VerifyEngineOption,
+  VerifyOptionError,
   type VerifyReport,
 } from '../src/api/index';
 import {
@@ -1138,6 +1139,27 @@ function verifyFree(args: ParsedArgs, engine: VerifyEngineOption): string[] {
   return free;
 }
 
+/**
+ * `--timeout MS`, refused rather than repaired when it is not a budget.
+ *
+ * No check in this lane is unbounded and there is no spelling for one, so a
+ * `--timeout 0` or a `--timeout forever` is a usage error rather than a value
+ * quietly replaced by the default: a reader who asked for a budget the tool did
+ * not honour would read every `unknown` under a bound that was never in force.
+ */
+function verifyTimeout(args: ParsedArgs): number | undefined {
+  const raw = flagValue(args, 'timeout');
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const ms = Number(raw);
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw new UsageError(
+      `--timeout must be a positive number of milliseconds; got ${raw}. Every check in this lane ` +
+        'is bounded, so there is no spelling for "no timeout".',
+    );
+  }
+  return ms;
+}
+
 /** One judged obligation, as a person reads it. */
 function verdictLines(v: ObligationVerdict): string[] {
   const id = v.shortId ? ` (${v.shortId})` : '';
@@ -1147,6 +1169,18 @@ function verdictLines(v: ObligationVerdict): string[] {
     `  ${where}${id}  ${what}`,
     `    ${v.claim}: ${v.detail}`,
     ...(v.code !== null ? [`    ${v.code}${v.forgiven ? ' — forgiven by --allow-inconclusive' : ''}`] : []),
+    // A tautology is still proved and is still worth saying out loud: `x == x`
+    // holds of every model, so it is evidence about arithmetic rather than
+    // about this design.
+    ...(v.tautology ? ['    tautology: true of every model, so it says nothing about this one'] : []),
+    // The solver's own witness, in the magnitudes the file stores — for the two
+    // claims it is the ARGUMENT for. A proof also carries one (step 2's
+    // non-vacuity model), and printing every symbol of it under every proved
+    // row buries the two rows where a reader has to check a number in twelve
+    // exact rationals they cannot act on; the record keeps it either way.
+    ...(v.witness.length > 0 && (v.claim === 'refuted' || v.claim === 'design-admitted')
+      ? [`    witness: ${v.witness.map((w) => `${w.symbol} = ${w.term}`).join(', ')} (stored magnitudes)`]
+      : []),
     // The assumptions are printed whether or not they mattered: a pass that
     // stands on three assumptions is a different claim from an unconditional
     // one, and a reader who is shown only the second cannot tell them apart.
@@ -1190,13 +1224,38 @@ async function reportVerify(
         'findings above, or drop --record and read the verdict on stdout.',
     );
   }
-  const r = await verifyModel(model, {
-    engine,
-    free,
-    allowInconclusive: flagGiven(args, 'allow-inconclusive'),
-    sourceText: text,
-    producedBy: `npm run sysprose -- verify ${name} --engine ${engine}`,
-  });
+  const timeoutMs = verifyTimeout(args);
+  const strictVacuity = flagGiven(args, 'strict-vacuity');
+  // A `--free` spelling this model cannot honour is a problem with what was
+  // ASKED, and it is re-raised as one. `verifyModel` refuses it from the API's
+  // side (an in-process caller needs the refusal too), and without this arm it
+  // reached the terminal as `sysprose: internal error:` over four stack frames
+  // — the same shape `--out` naming a directory used to have, and the same
+  // reading it gave a person: the tool is broken, rather than the argument is.
+  let r: VerifyReport;
+  try {
+    r = await verifyModel(model, {
+      engine,
+      free,
+      allowInconclusive: flagGiven(args, 'allow-inconclusive'),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(strictVacuity ? { strictVacuity: true } : {}),
+      sourceText: text,
+      // The command a reader can re-run to get this record — INCLUDING the
+      // flags that changed what was shown. `--free` above all: a proof under a
+      // released feature value is a different claim, and a `producedBy` that
+      // dropped it would print a command whose output is not the record beside
+      // it.
+      producedBy:
+        `npm run sysprose -- verify ${name} --engine ${engine}` +
+        free.map((f) => ` --free ${f}`).join('') +
+        (timeoutMs !== undefined ? ` --timeout ${timeoutMs}` : '') +
+        (strictVacuity ? ' --strict-vacuity' : ''),
+    });
+  } catch (err) {
+    if (err instanceof VerifyOptionError) throw new UsageError(err.message);
+    throw err;
+  }
 
   if (record !== undefined) {
     try {
@@ -1223,9 +1282,18 @@ async function reportVerify(
     // report rather than typed: the sentence used to hard-code "exit 2" while
     // `exitCodeOf` could still return 0 over an empty row set, so a run printed
     // one number and exited with another.
+    // Three engines' worth of sentence, because there are three states and the
+    // reader has to be able to tell them apart from the first line: a point
+    // evaluation, a solver that ran, and no solver at all. The middle one is
+    // new in commit 5 and is the only one under which `proved` may appear.
     r.engine === 'literal'
       ? '  a point evaluation at the model’s own values — `holds-at-values`, never `proved`'
-      : `  no solver ran: every obligation below is reported as undecided, and this run is exit ${r.exitCode}`,
+      : r.toolAbsent
+        ? `  no solver ran: every obligation below is reported as undecided, and this run is exit ${r.exitCode}`
+        : `  negation-unsat under a satisfiable axiom set — \`proved\` means exactly that, at ${r.timeoutMs ?? 0} ms per check` +
+          (r.free.length > 0
+            ? `, with ${r.free.join(', ')} released: a refutation under \`--free\` is a design the model admits, not a violation of it`
+            : ', with every feature value bound as the model states it'),
     ...(r.allowInconclusive
       ? [
           `  --allow-inconclusive forgave ${r.forgiven} of ${r.inconclusive} inconclusive row(s) — ` +
@@ -1235,7 +1303,10 @@ async function reportVerify(
     ...(r.vacuous > 0
       ? [
           `  ${r.vacuous} obligation(s) vacuous — discharged by an antecedent that does not hold; ` +
-            'this tool reports that as undecided, which is a declared deviation (docs/CONFORMANCE.md)',
+            'this tool reports that as undecided, which is a declared deviation (docs/CONFORMANCE.md)' +
+            (r.strictVacuity
+              ? '; --strict-vacuity raises each of them to `verification/vacuous-property`, an error, and changes no exit code'
+              : ''),
         ]
       : []),
     ...(r.results.length === 0

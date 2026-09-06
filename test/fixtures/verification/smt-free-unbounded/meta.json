@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "A freed feature bounded on one side only is inconclusive, never refuted",
+  "model": "test/fixtures/verification/models/free-one-sided.sysml",
+  "engine": "smt",
+  "free": ["uav.cruisePower"],
+  "note": "The case that stops a fabricated counterexample. With only an upper premise the solver answers sat at a NEGATIVE cruise power, the in-process re-evaluation gate confirms that arithmetic, and the row would print as a genuine violation of a requirement nothing is wrong with. The tool derives no domain axiom from a quantity kind, so the premise has to say so on both sides."
+}

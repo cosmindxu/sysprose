@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "…and the literal engine says the same thing about the same file, with the same code",
+  "model": "test/fixtures/verification/models/gate-refused-but-false.sysml",
+  "engine": "literal",
+  "allowInconclusive": true,
+  "note": "The pair. One flag has one scope whichever engine ran, so the codes and the exit status of these two cases must match: a gate-refused relation the values read `violated` is `verification/refuted` and exit 1 on both. The differential gate asserts the property over the whole corpus; this pins it as a diff on the one model where the two engines disagreed."
+}

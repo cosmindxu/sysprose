@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A model whose own facts collide decides nothing, and names the two that collide",
+  "model": "test/fixtures/verification/models/inconsistent-axioms.sysml",
+  "engine": "smt",
+  "note": "The loudest way a verification lane can be silently wrong: an unsatisfiable axiom set makes every negation unsat, so without the once-per-run consistency check this model would print `proved` for a requirement its own facts contradict. The unsat core has two elements and both are named."
+}

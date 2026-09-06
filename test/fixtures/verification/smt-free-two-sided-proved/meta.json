@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "The same requirement over a two-sided released domain is proved, in QF_NRA",
+  "model": "test/fixtures/verification/models/free-two-sided.sysml",
+  "engine": "smt",
+  "free": ["uav.cruisePower"],
+  "note": "The positive control for the unboundedness rule: add the lower premise and the verdict becomes available. It is a claim over the WHOLE released interval, not at one point of it, and it is nonlinear — endurance divides by the freed variable — so the script is QF_NRA and the proof stands on a satisfiable-assumptions witness."
+}

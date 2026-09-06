@@ -97,6 +97,19 @@ const OUTSIDE_THE_FRAGMENT: ReadonlySet<RefusalReason> = new Set<RefusalReason>(
   'non-numeric-operand',
 ]);
 
+/**
+ * Is this refusal a SHAPE this lane declines to encode, rather than a relation
+ * nobody can read?
+ *
+ * Exported because the SMT engine has to answer it the same way. Two engines
+ * with two copies of this set would be two different scopes for
+ * `--allow-inconclusive` — the flag would forgive a misspelt feature name under
+ * one engine and refuse it under the other, over the same file.
+ */
+export function isOutsideTheFragment(reason: RefusalReason): boolean {
+  return OUTSIDE_THE_FRAGMENT.has(reason);
+}
+
 /** One assumption, and what it said at the model's values. */
 export interface PremiseReading {
   clause: ContractRef;
@@ -187,8 +200,15 @@ export function judgeLiterally(model: Model, rows: readonly Obligation[]): Liter
   return out;
 }
 
-/** The reading of one assumption at the model's values. */
-function readPremise(row: Obligation, checks: ReadonlyMap<ElementId, ConstraintCheck>): PremiseReading {
+/**
+ * The reading of one assumption at the model's values.
+ *
+ * Exported for the SMT engine, which ASSERTS the premises rather than
+ * evaluating them and still has to print what each one says at the values —
+ * a proof that stands on three assumptions is a different claim from an
+ * unconditional one, and the two engines must describe them identically.
+ */
+export function readPremise(row: Obligation, checks: ReadonlyMap<ElementId, ConstraintCheck>): PremiseReading {
   const check = checks.get(row.element.id);
   const holds =
     check?.result === 'satisfied' ? 'holds' : check?.result === 'violated' ? 'fails' : 'unknown';
@@ -220,7 +240,7 @@ function judgeOne(
 ): LiteralJudgement {
   const premises = (row.requirement ? premisesByRequirement.get(row.requirement.id) : undefined) ?? [];
   const readings = premises.map((p) => readPremise(p, checks));
-  const bindings = bindingsOf(model, row);
+  const bindings = modelBindings(model, row);
   const base = { premises: readings, bindings };
 
   if (row.status === 'no-formal-clause') {
@@ -360,8 +380,13 @@ function quantities(
  * declared unit at all — which is why every binding carries its role, and why
  * the pair the comparison was made on lives in the bound's `si` slot instead of
  * being inferred from these numbers.
+ *
+ * Exported for the SMT engine, which records the same point for a run with
+ * nothing freed: with every value a binding, the solver's witness IS the
+ * model's own values, and a record that showed a solver's rendering of them
+ * instead would be a different artefact for the same fact.
  */
-function bindingsOf(model: Model, row: Obligation): ValueBinding[] {
+export function modelBindings(model: Model, row: Obligation): ValueBinding[] {
   const out: ValueBinding[] = [];
   for (const v of row.vars) {
     const r = evaluateFeatureValue(model, v.featureId);

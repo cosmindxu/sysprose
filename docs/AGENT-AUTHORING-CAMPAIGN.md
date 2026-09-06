@@ -125,15 +125,15 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **both** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 59 tests |
-| L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`) | 17 cases |
+| L7 | The command-line contract: **both** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 61 tests |
+| L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`) | 33 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
 so where they appear. Measured 2026-09-06: **82 fixture directories** under
-`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **67
+`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **72
 catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
 rules** in `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -2948,6 +2948,99 @@ the gates granted a `ScaleMap` is not carried on an `Obligation` — only on the
 worklist rows and guesses that answer would scale a relation both other surfaces
 read verbatim, which is the one encoder defect that produces a confident wrong
 verdict rather than a refusal.
+
+**Nothing could say `proved`, and every way that word can be false had to be
+closed before it could be said once.** Commit 5 of the formal-verification plan
+adds the SMT engine (`src/semantics/engines/smt.ts`) over the seam commit 4
+built. `proved` now means one thing and is checked to mean it: `A ∧ P ∧ ¬G`
+UNSAT, under an axiom set shown SATISFIABLE, with premises shown satisfiable,
+over a domain bounded on both sides — and nothing else in this repository may
+print the word. The gap above is closed by publishing `scaled` on the worklist
+row, so the engine encodes each relation the way the gates read it rather than
+guessing.
+
+Four checks carry it, and each is a way a proof can be **void** rather than
+absent. **The axiom set is checked once per run**: an unsatisfiable one makes
+every negation unsat, so a model that contradicts itself would print a full
+sheet of proofs — the loudest way a verification lane can be silently wrong. It
+is `verification/inconsistent-axioms` on every row instead, with the unsat core
+named (the `mtow >= 30` against `mtow = 18.5` case comes back with a two-element
+core). **The premises are checked**: unsat ⇒ `verification/vacuous`, the
+stronger sibling of the literal engine's `vacuous-pass`, and no flag launders
+either. **The goal is checked alone**: unsat when negated with no context is
+still `proved` and is FLAGGED, because `panel.area == panel.area` is not
+evidence about a design. And **a freed feature must be two-sided**: this tool
+derives no domain axiom from a quantity kind, so `--free uav.cruisePower` under
+an assumption that only caps it from above lets z3 answer sat at **−1 W** — and
+the in-process re-evaluation gate *confirms that arithmetic*. That row is
+`verification/free-variable-unbounded`, blocking, never a refutation; add the
+lower premise and the same requirement is proved in QF_NRA over the whole
+released interval.
+
+**Two mechanisms verify the verifier, and the second exists because of the
+first's blind spot.** The **differential gate**
+(`test/integration/verification.differential.test.ts`) runs both engines over
+both examples, all 82 campaign fixtures and the L8 corpus models and asserts
+they agree on every encodable relation: `proved` ⇔ `satisfied`, `refuted` ⇔
+`violated`, and the row the first draft left undefined — `unknown` ⇔
+`inconclusive: not evaluable`. A verdict may never disagree; the solver may only
+be MORE conservative, and only for a reason it names. But that gate compares two
+consumers of ONE gatherer, so a relation the gatherer drops is absent from both
+and the gate is green. The **relation census** in the same file is the
+counter-measure: every constraint-bearing user element is counted by an
+independent walk and accounted for as encoded or refused-with-reason, and the
+counts must equal the census. Its own teeth are tested by handing the
+reconciliation a worklist with one row removed.
+
+**Both mechanisms found something on their first run, which is the argument for
+them.** The census found that `obligationsOf` **died with a RangeError** on
+`L4-self-typed-feature` — a file that checks clean. `idScopeFor`'s cycle guard
+was keyed on the dotted prefix, which never repeats while the prefix grows;
+`featureIdsFor`'s sibling collector was given an owner-keyed guard when that
+fixture was filed and this one was not, and nothing reached it until an engine
+read the worklist. A gatherer that throws is the loudest form of the blind spot
+the census exists to close: no relation refused, none encoded, and no report to
+read the absence in. The differential gate found that `constraint c { a + + 2 }`
+(`L2-double-operator`) was `verification/unsupported-construct` under the SMT
+engine and `verification/not-evaluable` under the literal one — so
+`--allow-inconclusive` lowered one malformed constraint body to exit **0** under
+`--engine smt` and left it at exit 2 under `--engine literal`, on one file. Two
+engines with two scopes for one flag is exactly what exporting
+`isOutsideTheFragment` was meant to prevent; a refusal the GATES did not make is
+now never forgivable.
+
+Three smaller decisions travelled with it. `verification/refuted` is filed by
+**both** engines, not only the solver: the exit contract is written over codes,
+and with `null` there the loudest verdict in a run was the only row that filed
+no diagnostic at all. Severity now splits the lane in two — a refutation and a
+`--strict-vacuity` vacuity are **errors** because they say something about the
+MODEL, and every other code stays info because it says what the tool did not
+decide. And the tool-absent sentence is read from **one** probe: `loadZ3()`
+answers both "is there a backend" and "why not", so the CI job that asserts exit
+2 under `SYSPROSE_NO_Z3` and the suite that asserts an absent backend cannot
+drift apart. That CI job ships here as
+`.github/workflows/verify-examples.yml` — three jobs, one file: `--engine smt`
+with the solver (exit 0), `--engine auto` with `SYSPROSE_NO_Z3=1` (exit **2**,
+asserted), `--engine literal` with the same switch (exit 0). The middle one is
+the point and the other two are its controls.
+
+The L8 corpus grows from 17 cases to 33 with the SMT half: the shipped example
+proved under the solver beside the same file `holds-at-values` under the point
+evaluation, a tautology, a contradictory axiom set with and without
+`--allow-inconclusive`, a vacuity with and without `--strict-vacuity`, a
+one-sided and a two-sided freed domain, and a design-admitted refutation with
+and without the flag. Four more came out of the adversarial review, all four on
+the seam where a relation NOTHING encoded still says something: a `%` constraint
+false at the model's own values, read on both engines, because
+`--allow-inconclusive` had been lowering it to exit 0 under `--engine smt`
+while `--engine literal` exited 1 on the same file; and a refused feature-value
+axiom that shares a symbol with the goal beside one that shares none, because
+reading the run-level refused set let one irrelevant refusal anywhere in a file
+suppress every refutation in it. The golden gained four fields — `tautology`,
+`witnessSymbols`, `strictVacuity` and `free` — because each is part of what a
+verdict MEANS rather than of how it was reached; the witness VALUES stay out,
+since pinning z3's exact rationals would make every golden a pin on a solver's
+model-construction order.
 
 
 ### Pinned behaviours (decisions, not defects)

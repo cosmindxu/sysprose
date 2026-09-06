@@ -1,0 +1,157 @@
+# The exit contract of `verify`, executed on every push.
+#
+# THREE JOBS, AND THE MIDDLE ONE IS WHY THIS FILE EXISTS. A missing solver must
+# never be a green build — `--engine auto` resolves to `smt` or reports
+# `verification/tool-absent` for every obligation, and it does NOT fall back to
+# the point evaluation. That path is the single most likely thing in this lane
+# to rot into a silent green: it is only reachable when something is absent, so
+# nobody runs it by accident, and the day it starts exiting 0 every downstream
+# pipeline would go green while being told nothing about its model. So it is
+# forced here with `SYSPROSE_NO_Z3=1` on a runner that HAS the solver, and the
+# job asserts exit **2** — a job that passes because the command failed to fail
+# is the shape this contract needs.
+#
+# The other two are its controls. Without the `smt` job, "exit 2 with no solver"
+# would also pass if the solver never worked; without the `literal` job, it
+# would also pass if the whole command were broken. One file, three engines,
+# three different exit codes that all have to be exactly what they are.
+#
+# `continue-on-error` is deliberately NOT used anywhere below: every assertion
+# is written as an explicit comparison so the job fails with a sentence naming
+# what it expected, rather than with a bare non-zero status a reader has to
+# reconstruct.
+name: verify examples
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-examples-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smt:
+    name: '--engine smt (solver installed) → exit 0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `npm ci` installs optional dependencies, which is how z3-solver gets
+      # here. If that ever stops being true this job fails at the assertion
+      # below rather than quietly becoming a fourth copy of the absence test.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prove both shipped examples
+        run: |
+          set -uo pipefail
+          for f in examples/uav-isr.sysml examples/vehicle.sysml; do
+            echo "::group::$f"
+            code=0
+            npm run --silent sysprose -- verify "$f" --engine smt | tee out.txt || code=$?
+            echo "::endgroup::"
+            if [ "$code" -ne 0 ]; then
+              echo "::error::$f: expected exit 0 from --engine smt, got $code"
+              exit 1
+            fi
+            if ! grep -q 'proved: A ∧ P ∧ ¬G unsat' out.txt; then
+              echo "::error::$f: exit 0 with no negation-unsat proof in the report"
+              exit 1
+            fi
+            if grep -q 'verification/tool-absent' out.txt; then
+              echo "::error::$f: the solver job ran without a solver"
+              exit 1
+            fi
+          done
+
+  tool-absent:
+    name: '--engine auto (SYSPROSE_NO_Z3=1) → exit 2'
+    runs-on: ubuntu-latest
+    env:
+      SYSPROSE_NO_Z3: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # THE ASSERTION THIS FILE IS FOR. `set -e` would abort on the non-zero
+      # exit we are expecting, so the status is captured with `|| code=$?` and
+      # compared. Exit 0 here is the failure: it means a run that decided
+      # nothing reported success.
+      - name: A missing solver is exit 2, and --allow-inconclusive cannot lower it
+        run: |
+          set -uo pipefail
+          for args in "--engine auto" "--engine auto --allow-inconclusive" "--engine smt"; do
+            echo "::group::verify examples/uav-isr.sysml $args"
+            code=0
+            npm run --silent sysprose -- verify examples/uav-isr.sysml $args | tee out.txt || code=$?
+            echo "::endgroup::"
+            if [ "$code" -ne 2 ]; then
+              echo "::error::$args: a missing solver must be exit 2, got $code"
+              exit 1
+            fi
+            if ! grep -q 'verification/tool-absent' out.txt; then
+              echo "::error::$args: exit 2 without saying the solver was absent"
+              exit 1
+            fi
+            if grep -q 'proved:' out.txt; then
+              echo "::error::$args: a row claimed \`proved\` with no solver"
+              exit 1
+            fi
+          done
+
+  literal:
+    name: '--engine literal (SYSPROSE_NO_Z3=1) → exit 0'
+    runs-on: ubuntu-latest
+    env:
+      SYSPROSE_NO_Z3: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The point evaluation needs no solver and says so: `holds-at-values`,
+      # never `proved`. It is the control that keeps the job above from passing
+      # for the wrong reason — if the command itself were broken, this would
+      # fail too.
+      - name: A point evaluation needs no solver, and never says proved
+        run: |
+          set -uo pipefail
+          for f in examples/uav-isr.sysml examples/vehicle.sysml; do
+            echo "::group::$f"
+            code=0
+            npm run --silent sysprose -- verify "$f" --engine literal | tee out.txt || code=$?
+            echo "::endgroup::"
+            if [ "$code" -ne 0 ]; then
+              echo "::error::$f: expected exit 0 from --engine literal, got $code"
+              exit 1
+            fi
+            if ! grep -q "holds at the model's values" out.txt; then
+              echo "::error::$f: exit 0 with no point evaluation in the report"
+              exit 1
+            fi
+            if grep -q 'proved:' out.txt; then
+              echo "::error::$f: the literal engine printed \`proved\`"
+              exit 1
+            fi
+          done

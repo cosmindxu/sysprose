@@ -1,0 +1,35 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": true,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 1,
+  "counts": {
+    "discharged": 0,
+    "violated": 1,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "OddSeating::EvenSeats",
+      "shortId": "",
+      "clause": "OddSeating::EvenSeats::«ConstraintUsage»",
+      "expression": "bus.seats % 2 == 0",
+      "obligationDigest": "sha256:1ac71b71a7c68615cf5467a8e77b36c56ff84721ddbdba190cfac9db037928af",
+      "claim": "refuted",
+      "verdict": "fail",
+      "discharged": false,
+      "code": "verification/refuted",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "refuted with every feature at its model value: `bus.seats % 2 == 0` is false here — a gate refuses this relation for the solver lane (unsupported-operator: the remainder operator `%` has no encoding in this fragment), so a point evaluation is all any engine will offer for it",
+      "premises": []
+    }
+  ]
+}

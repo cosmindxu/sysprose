@@ -57,16 +57,25 @@ interface Run {
  * empty string — which is how a warning the command never printed looked like a
  * warning it correctly suppressed.
  */
-function run(args: string[], input?: string): Run {
+function run(args: string[], input?: string, env?: Record<string, string>): Run {
   const r = spawnSync('npx', ['tsx', CLI, ...args], {
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
+    // Merged rather than replaced: the child needs PATH and HOME to run tsx at
+    // all. `env` is here for ONE switch — `SYSPROSE_NO_Z3`, which forces the
+    // honest-absence path on a machine that has the solver. Without it the
+    // absent-engine cases below could only be written on a machine where the
+    // optional dependency is missing, which is to say nowhere that runs CI.
+    ...(env !== undefined ? { env: { ...process.env, ...env } } : {}),
     ...(input !== undefined ? { input } : {}),
     stdio: input !== undefined ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
   });
   if (r.error) throw r.error;
   return { code: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
+
+/** `SYSPROSE_NO_Z3=1` — the switch the §5 CI job asserts exit 2 under. */
+const NO_Z3 = { SYSPROSE_NO_Z3: '1' };
 
 /** Parse a `--json` payload and hand back its top-level key set as well. */
 function payload<T>(r: Run): { keys: string[]; body: T } {
@@ -1334,10 +1343,11 @@ package P {
    * The suite above (`test/campaign/verification.test.ts`, level L8) pins the
    * verdicts in process. This case pins the thing only a spawned process can
    * show: the **exit code**, which is `verify`'s whole contract and the one
-   * thing an automation branches on. Exit 0 under `--engine literal` and exit 2
-   * under `--engine auto` on the SAME file — with `--allow-inconclusive` unable
-   * to move the second — is the honest-absence path, and it is the single most
-   * likely thing in this lane to rot into a silent green.
+   * thing an automation branches on. Three engines, one file: a point
+   * evaluation, a solver, and no solver at all — the third with
+   * `--allow-inconclusive` unable to move it. That third is the honest-absence
+   * path, the single most likely thing in this lane to rot into a silent green,
+   * and it is forced with `SYSPROSE_NO_Z3` because this machine HAS the solver.
    */
   it('verify exits 0 at the model’s values and 2 with no solver, on the same file', () => {
     const lit = run(['verify', UAV, '--engine', 'literal']);
@@ -1353,13 +1363,158 @@ package P {
     expect(lit.stdout).toContain('never `proved`');
     expect(lit.stdout, 'a row claimed `proved` from the literal engine').not.toMatch(/\bproved:/);
 
-    const auto = run(['verify', UAV, '--engine', 'auto']);
+    // The solver, on the same file: the one place in this repository where
+    // `proved` may be printed, and it says what it stood on.
+    const smt = run(['verify', UAV, '--engine', 'auto']);
+    expect(smt.code, 'the shipped example does not verify').toBe(0);
+    expect(smt.stdout).toContain('0 inconclusive, 2 discharged, 0 refuted');
+    expect(smt.stdout).toContain('negation-unsat under a satisfiable axiom set');
+    expect(smt.stdout).toMatch(/proved: A ∧ P ∧ ¬G unsat/);
+    expect(smt.stdout, 'a proof with no satisfiable-assumptions witness').toContain(
+      'assumptions satisfiable',
+    );
+
+    const auto = run(['verify', UAV, '--engine', 'auto'], undefined, NO_Z3);
     expect(auto.code, 'a missing solver must never be a green build').toBe(2);
     expect(auto.stdout).toContain('verification/tool-absent');
+    expect(auto.stdout, 'the reader is not told what to run instead').toContain('--engine literal');
+    expect(auto.stdout, 'a row claimed `proved` with no solver').not.toMatch(/\bproved:/);
 
-    const forgiven = run(['verify', UAV, '--engine', 'auto', '--allow-inconclusive']);
+    const forgiven = run(['verify', UAV, '--engine', 'auto', '--allow-inconclusive'], undefined, NO_Z3);
     expect(forgiven.code, '--allow-inconclusive must not lower an absent solver').toBe(2);
-  }, 240_000);
+  }, 300_000);
+
+  /**
+   * The two flags this commit adds, at the process boundary.
+   *
+   * Both are pinned for what they DO NOT do as much as for what they do:
+   * `--timeout` is refused rather than repaired when it is not a budget,
+   * because a reader who asked for a bound the tool silently replaced would
+   * read every `unknown` under a bound that was never in force; and
+   * `--strict-vacuity` raises a vacuity to an error and moves NO exit code,
+   * which is the one property a flag that sounds like it decides something has
+   * to be shown not to.
+   */
+  it('verify --timeout is refused when it is not a budget, and --strict-vacuity is loud and inert', () => {
+    const vacuous = `${FIXV}/models/premises-unsatisfiable.sysml`;
+
+    const plain = run(['verify', vacuous, '--engine', 'smt']);
+    expect(plain.code, 'a vacuous obligation is undecided, which is exit 2').toBe(2);
+    expect(plain.stdout).toContain('verification/vacuous');
+    expect(plain.stdout, 'the flag was not asked for and the tool acted as if it had been').not.toContain(
+      'verification/vacuous-property',
+    );
+
+    const strict = run(['verify', vacuous, '--engine', 'smt', '--strict-vacuity']);
+    expect(strict.code, '--strict-vacuity moved the exit code').toBe(plain.code);
+    expect(strict.stdout).toContain('verification/vacuous-property');
+    expect(strict.stdout).toContain('changes no exit code');
+
+    // A budget that is honoured, printed in the header so a reader can see the
+    // bound every `unknown` below it would have been reached under.
+    const budgeted = run(['verify', UAV, '--engine', 'smt', '--timeout', '9000']);
+    expect(budgeted.code).toBe(0);
+    expect(budgeted.stdout).toContain('at 9000 ms per check');
+    expect(budgeted.stdout).toContain('timeout 9000 ms');
+
+    for (const bad of ['0', 'forever', '1e999']) {
+      const r = run(['verify', UAV, '--engine', 'smt', '--timeout', bad]);
+      expect(r.code, `--timeout ${bad} was accepted`).toBe(2);
+      expect(r.stderr).toContain('--timeout must be a positive number of milliseconds');
+      expect(r.stderr, 'the refusal does not say why there is no "off"').toContain('no timeout');
+    }
+    // `-1` is refused one layer earlier and for a different reason: a leading
+    // `-` is the next OPTION to the argument reader, so the flag is reported as
+    // having no value at all. Pinned rather than glossed — it is still exit 2
+    // and still a usage error, and a parser change that made `-1` reach the
+    // budget check would be a change worth noticing here.
+    const negative = run(['verify', UAV, '--engine', 'smt', '--timeout', '-1']);
+    expect(negative.code, '--timeout -1 was accepted').toBe(2);
+    expect(negative.stderr).toContain('missing value for --timeout');
+  }, 300_000);
+
+  /**
+   * `--free` at the process boundary: the flag that changes what a verdict
+   * MEANS, and the two ways it must refuse rather than mislead.
+   */
+  it('verify --free reports a design the model admits, refuses a one-sided domain, and refuses a name that means nothing', () => {
+    const oneSided = `${FIXV}/models/free-one-sided.sysml`;
+    const admitted = `${FIXV}/models/free-two-sided-refutable.sysml`;
+
+    const unbounded = run(['verify', oneSided, '--engine', 'smt', '--free', 'uav.cruisePower']);
+    expect(unbounded.code, 'an unconfined free variable must not be green').toBe(2);
+    expect(unbounded.stdout).toContain('verification/free-variable-unbounded');
+    expect(unbounded.stdout).toMatch(/unbounded (above|below)/);
+    expect(unbounded.stdout, 'a fabricated counterexample was printed').not.toMatch(/refuted:/);
+
+    const design = run(['verify', admitted, '--engine', 'smt', '--free', 'uav.cruisePower']);
+    expect(design.code, 'a design the model admits is never exit 1').toBe(2);
+    expect(design.stdout).toContain('design admitted by the model, not a violation of it');
+    expect(design.stdout).toContain('witness:');
+    // The header has to name the release, or a reader takes the row for a
+    // verdict at the model's own values.
+    expect(design.stdout).toContain('with uav.cruisePower released');
+
+    const misspelt = run(['verify', admitted, '--engine', 'smt', '--free', 'uav.cruisePowr']);
+    expect(misspelt.code, 'a --free that named nothing still printed a verdict').toBe(2);
+    expect(misspelt.stderr).toContain('--free names nothing in this model');
+    // AND IT READS AS A USAGE ERROR, not as a crash. It reached the terminal as
+    // `sysprose: internal error:` over four stack frames — which tells a person
+    // the tool is broken when their argument is what named nothing. Same defect
+    // class as `--out` naming a directory, which this file already pins.
+    expect(misspelt.stderr, 'a usage error was reported as a tool defect').not.toContain(
+      'internal error',
+    );
+    expect(misspelt.stderr, 'a usage error printed a stack trace').not.toMatch(/\n\s+at /);
+
+    // A SPELLING THAT RESOLVES AND FREES NOTHING is the same defect wearing a
+    // verdict. `AdmittedByDesign::uav` names the part usage: no relation reads
+    // it, so the release is inert — and this run printed `proved` and exited 0
+    // under a header reading "with uav released", where the intended
+    // `--free uav.cruisePower` two assertions above is exit 2.
+    //
+    // Spelled QUALIFIED, and that is not incidental: the bare `uav` is
+    // ambiguous in this model — the part usage and the requirement's own
+    // `subject uav` both declare the name — so it is refused one rule earlier,
+    // by the uniqueness check below. Both refusals are honest and the bare
+    // spelling would test the wrong one.
+    const inert = run(['verify', admitted, '--engine', 'smt', '--free', 'AdmittedByDesign::uav']);
+    expect(inert.code, 'a --free that released nothing still printed a verdict').toBe(2);
+    expect(inert.stderr).toContain('which no relation in this model reads');
+    expect(inert.stderr, 'the refusal does not say what could be freed instead').toContain(
+      'AdmittedByDesign::AirVehicle::cruisePower',
+    );
+    expect(inert.stdout, 'a verdict was printed under a bound nobody released').not.toContain('proved:');
+    // The bare spelling of the same name: refused too, by the other rule.
+    const bare = run(['verify', admitted, '--engine', 'smt', '--free', 'uav']);
+    expect(bare.code, 'a bare --free naming two elements printed a verdict').toBe(2);
+    expect(bare.stderr).toContain('names 2 elements of this model');
+    expect(bare.stdout, 'a verdict was printed under a bound nobody released').not.toContain('proved:');
+
+    // And a bare name that names TWO features is refused rather than resolved
+    // to whichever the model walk reached first: `--free` is documented as
+    // taking "a feature name unique in scope", and uniqueness is a promise the
+    // resolver has to be able to check.
+    const ambiguous = run(['verify', `${FIXV}/models/ambiguous-name.sysml`, '--engine', 'smt', '--free', 'mass']);
+    expect(ambiguous.code, 'an ambiguous --free was resolved silently').toBe(2);
+    expect(ambiguous.stderr).toContain('names 2 elements of this model');
+    expect(ambiguous.stderr, 'the candidates are not named').toContain('AmbiguousName::Wing::mass');
+    expect(ambiguous.stderr).toContain('AmbiguousName::Fuselage::mass');
+    // The control: the same model, the same feature, spelled unambiguously —
+    // ACCEPTED, which is asserted on the refusal channel and on the header
+    // rather than on the exit code. This run is still exit 2, because a `mass`
+    // nothing confines from above is `free-variable-unbounded`; reading exit 0
+    // as "accepted" would make the control pass for the wrong reason on a
+    // model that happened to bound its features and fail on one that did not.
+    const unique = run([
+      'verify', `${FIXV}/models/ambiguous-name.sysml`, '--engine', 'smt',
+      '--free', 'AmbiguousName::Wing::mass',
+    ]);
+    expect(unique.stderr, 'a qualified --free was refused as ambiguous').not.toContain('--free');
+    expect(unique.stdout, 'the header does not name the release it ran under').toContain(
+      'with AmbiguousName::Wing::mass released',
+    );
+  }, 300_000);
 
   it('verify --json publishes a top-level verdict block, and --record writes the evidence', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
@@ -1391,6 +1546,22 @@ package P {
         JSON.parse(readFileSync(resolve(process.cwd(), 'docs/schemas/verify-report.schema.json'), 'utf8')) as object,
       );
       expect(validate(body), ajv.errorsText(validate.errors)).toBe(true);
+
+      // AND THE SMT PAYLOAD, which is the shape that drifted. Four public
+      // fields arrived with this engine — `timeoutMs`, `strictVacuity`,
+      // `witness`, `tautology` — and the only case validating this schema ran
+      // `--engine literal`, where all four are the empty/false defaults. The
+      // schema is `additionalProperties: false` on both definitions, so a
+      // field added to the report or to a row without a schema entry fails
+      // here rather than reaching a consumer undocumented.
+      const smt = run(['verify', UAV, '--engine', 'smt', '--json']);
+      expect(smt.code, 'the shipped example stopped proving under the solver').toBe(0);
+      const smtBody = payload<{ verify: { results: Array<{ claim: string }> } }>(smt).body;
+      expect(validate(smtBody), `--engine smt: ${ajv.errorsText(validate.errors)}`).toBe(true);
+      expect(
+        smtBody.verify.results.every((r) => r.claim === 'proved'),
+        'the SMT payload validated is not the one that exercises the new fields',
+      ).toBe(true);
 
       const records = JSON.parse(readFileSync(out, 'utf8')) as Array<{
         schema: string;
@@ -1498,9 +1669,19 @@ package P {
         'package NoObligations {\n    part def Widget { attribute mass : ISQ::MassValue = 1.0 [kg]; }\n' +
           '    part w : Widget;\n}\n',
       );
+      // With NO SOLVER: the run says "exit 2" and must exit 2, which is where
+      // the hole was. Forced with `SYSPROSE_NO_Z3` — the sentence about a
+      // missing solver is only reachable when one is missing.
+      const absent = run(['verify', file, '--engine', 'auto'], undefined, NO_Z3);
+      expect(absent.code, 'no solver, nothing verified, and the build went green').toBe(2);
+      expect(absent.stdout).toContain('this run is exit 2');
+      expect(absent.stdout).toContain('this model states no obligation at all');
+
+      // And WITH one: a solver that ran and had nothing to decide is the same
+      // answer. Exit 0 says every obligation was discharged; a model that
+      // states none has been shown nothing, and that is true of every engine.
       const auto = run(['verify', file, '--engine', 'auto']);
-      expect(auto.code, 'no solver, nothing verified, and the build went green').toBe(2);
-      expect(auto.stdout).toContain('this run is exit 2');
+      expect(auto.code, 'a solver ran, decided nothing, and the build went green').toBe(2);
       expect(auto.stdout).toContain('this model states no obligation at all');
 
       const lit = run(['verify', file, '--engine', 'literal']);
@@ -1508,7 +1689,7 @@ package P {
 
       // And the payload agrees with the process, which is the one thing an
       // automation cannot recover from.
-      const json = run(['verify', file, '--engine', 'auto', '--json']);
+      const json = run(['verify', file, '--engine', 'auto', '--json'], undefined, NO_Z3);
       const { body } = payload<{ verdict: { exitCode: number } }>(json);
       expect(body.verdict.exitCode).toBe(json.code);
       expect(body.verdict.exitCode).toBe(2);

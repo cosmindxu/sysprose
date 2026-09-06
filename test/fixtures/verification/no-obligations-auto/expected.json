@@ -3,6 +3,8 @@
   "engine": "smt",
   "toolAbsent": true,
   "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
   "exitCode": 2,
   "counts": {
     "discharged": 0,

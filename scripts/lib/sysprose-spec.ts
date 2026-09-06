@@ -363,6 +363,18 @@ export const COMMANDS: readonly CommandSpec[] = [
         kind: 'boolean',
         doc: 'Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, a vacuous obligation or a design-admitted one, and never over a refutation',
       },
+      {
+        name: 'timeout',
+        kind: 'value',
+        metavar: 'MS',
+        fallback: '5000 ms per check',
+        doc: 'The per-check budget in milliseconds — an SMT-engine option. No check is unbounded and there is no spelling for "no timeout"; a solver that runs out of time reports verification/timeout, which says nothing about whether the requirement holds',
+      },
+      {
+        name: 'strict-vacuity',
+        kind: 'boolean',
+        doc: 'Raise a vacuous obligation from an info line to verification/vacuous-property, an error. It does NOT change the exit code: vacuity is inconclusive and exits 2 with the flag and without it',
+      },
     ],
   },
 ];

@@ -1,0 +1,35 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": true,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 1,
+  "counts": {
+    "discharged": 0,
+    "violated": 1,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "OddSeating::EvenSeats",
+      "shortId": "",
+      "clause": "OddSeating::EvenSeats::«ConstraintUsage»",
+      "expression": "bus.seats % 2 == 0",
+      "obligationDigest": "sha256:1ac71b71a7c68615cf5467a8e77b36c56ff84721ddbdba190cfac9db037928af",
+      "claim": "refuted",
+      "verdict": "fail",
+      "discharged": false,
+      "code": "verification/refuted",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "refuted with every feature at its model value: `bus.seats % 2 == 0` is false on the numeric surface — a gate refuses this relation for the solver lane (unsupported-operator: the remainder operator `%` has no encoding in this fragment), so no proof is available for it either way, but a requirement that is false at the values the model states is a violation whichever engine reads it and no flag forgives one",
+      "premises": []
+    }
+  ]
+}

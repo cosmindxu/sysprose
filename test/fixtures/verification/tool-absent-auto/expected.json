@@ -3,6 +3,8 @@
   "engine": "smt",
   "toolAbsent": true,
   "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
   "exitCode": 2,
   "counts": {
     "discharged": 0,
@@ -24,7 +26,9 @@
       "discharged": false,
       "code": "verification/tool-absent",
       "forgiven": false,
-      "detail": "solver absent — the solver is switched off by SYSPROSE_NO_Z3 in this environment, so nothing can decide this obligation; unset it, or run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "solver absent — the solver is switched off by SYSPROSE_NO_Z3 in this environment; unset it to load `z3-solver`. Nothing in this run can decide this obligation; run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
       "premises": []
     },
     {
@@ -38,7 +42,9 @@
       "discharged": false,
       "code": "verification/tool-absent",
       "forgiven": false,
-      "detail": "solver absent — the solver is switched off by SYSPROSE_NO_Z3 in this environment, so nothing can decide this obligation; unset it, or run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "solver absent — the solver is switched off by SYSPROSE_NO_Z3 in this environment; unset it to load `z3-solver`. Nothing in this run can decide this obligation; run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
       "premises": []
     }
   ]

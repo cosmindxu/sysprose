@@ -1,0 +1,35 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": true,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "InconsistentAxioms::MassLimit",
+      "shortId": "",
+      "clause": "InconsistentAxioms::MassLimit::«ConstraintUsage»",
+      "expression": "airframe.mtow <= 25.0 [kg]",
+      "obligationDigest": "sha256:04741ad4fb6ead3ca8655478c95bc40dd7a3ada9423ca0ad3c611057e7c2be58",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/inconsistent-axioms",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "the axiom set is unsatisfiable, so nothing can be proved from it: a proof from a contradiction is void. core: axiom:InconsistentAxioms::Airframe::mtow, axiom:InconsistentAxioms::MassLimit::«ConstraintUsage»",
+      "premises": []
+    }
+  ]
+}

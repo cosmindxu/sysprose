@@ -3,6 +3,8 @@
   "engine": "literal",
   "toolAbsent": false,
   "allowInconclusive": true,
+  "strictVacuity": false,
+  "free": [],
   "exitCode": 2,
   "counts": {
     "discharged": 0,
@@ -24,6 +26,8 @@
       "discharged": false,
       "code": "verification/not-evaluable",
       "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
       "detail": "not evaluable at the model's values — the relation itself cannot be read (unresolved-name): `chassis.masss` names nothing this tool can resolve in the scope of the relation, so there is no variable to encode. This is a defect in the relation, not a construct outside the fragment, so `--allow-inconclusive` does not forgive it",
       "premises": []
     }

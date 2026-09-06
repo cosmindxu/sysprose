@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "`--allow-inconclusive` does not lower a contradictory axiom set",
+  "model": "test/fixtures/verification/models/inconsistent-axioms.sysml",
+  "engine": "smt",
+  "allowInconclusive": true,
+  "note": "The flag is scoped over two codes and `verification/inconsistent-axioms` is not one of them. A model that contradicts itself is a finding, not an obligation the tool merely failed to reach, and forgiving it would turn the one case where everything is provable into a green build."
+}

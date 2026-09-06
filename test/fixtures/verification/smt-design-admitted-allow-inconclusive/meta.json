@@ -1,0 +1,9 @@
+{
+  "level": "L8",
+  "title": "`--allow-inconclusive` does not lower a design-admitted row either",
+  "model": "test/fixtures/verification/models/free-two-sided-refutable.sysml",
+  "engine": "smt",
+  "free": ["uav.cruisePower"],
+  "allowInconclusive": true,
+  "note": "The flag lowers two undecided codes and `verification/design-admitted` is not one of them: the solver decided this row, and what it decided is that the released design space contains a failure. Forgiving it would hide a real finding behind a flag meant for the tool's own limits."
+}

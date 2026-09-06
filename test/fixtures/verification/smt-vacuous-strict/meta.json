@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "`--strict-vacuity` raises the same row to an error and changes the exit code not at all",
+  "model": "test/fixtures/verification/models/premises-unsatisfiable.sysml",
+  "engine": "smt",
+  "strictVacuity": true,
+  "note": "The pair with smt-vacuous is the whole assertion: the code becomes `verification/vacuous-property` and the severity becomes error, while the claim stays `vacuous`, the row stays undecided and the run stays exit 2. A flag that moved the exit code would be a flag that decided something."
+}

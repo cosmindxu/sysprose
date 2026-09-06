@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2533 passed / 0 failed / 0 skipped** across **137 files** + **128 E2E** across **78 spec files** = **2661 green** (measured 2026-09-06) |
+| Full automated suite | **2571 passed / 0 failed / 0 skipped** across **138 files** + **128 E2E** across **78 spec files** = **2699 green** (measured 2026-09-06) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -339,16 +339,45 @@ That facet is written for **two claims only** — `proved` ⇒ `pass`, `refuted`
 
 `--engine literal` evaluates the model's own feature values through the same
 `checkConstraints` surface the app's **Analyze** button uses. Its claim word is
-`holds-at-values` and it can never reach `proved`, which is reserved for
-UNSAT-of-negation under a satisfiable axiom set. `--engine auto` resolves to the
-SMT engine or reports `verification/tool-absent` for every obligation, exit 2;
-it never falls back to a point evaluation. **No SMT ENGINE ships in this build**,
-so every `auto` and `smt` run today is exit 2 — which is the honest answer, and
-is exercised on every run of the L8 corpus with `SYSPROSE_NO_Z3=1`. The solver
-BACKEND now ships (§8.4): `z3-solver` is an optional dependency and
-`loadZ3()` returns it, but nothing drives it yet, and a backend with no engine
-behind it decides nothing. `verification/tool-absent` says which of the two is
-missing.
+`holds-at-values` and it can never reach `proved`. `--engine auto` resolves to
+the SMT engine or reports `verification/tool-absent` for every obligation, exit
+2; it never falls back to a point evaluation, and `--allow-inconclusive` never
+lowers that row. The absence is exercised on every run of the L8 corpus and on
+every push in CI (`.github/workflows/verify-examples.yml`) with
+`SYSPROSE_NO_Z3=1`, because it is only reachable when something is missing and
+is therefore the single most likely path in this lane to rot into a silent
+green.
+
+**`--engine smt` ships and may say `proved` — and that word means exactly one
+thing.** Per obligation *O* with premises *P* under axioms *A*, the engine runs
+`check(A)` once per run, then `check(A ∧ P ∧ ¬O)`, `check(A ∧ P)` and
+`check(¬O)`. `proved` requires: the negation UNSAT, the axiom set SATISFIABLE
+(an unsatisfiable one makes every negation unsat, so every obligation in such a
+run is `verification/inconsistent-axioms` with the core named — never a proof),
+the premises SATISFIABLE (otherwise `verification/vacuous`), and every feature
+released by `--free` confined on BOTH sides (otherwise
+`verification/free-variable-unbounded`, which is blocking and never a
+refutation). A goal that is unsat when negated with no context at all is still
+`proved` and is FLAGGED as a tautology, because `x == x` is not evidence about a
+design. Every `sat` witness is substituted back through the tool's own
+evaluator before it is printed, and with nothing freed it must also read as
+`violated` on the numeric surface; a witness that fails either gate is
+`inconclusive: witness not confirmed`, never a violation. A counterexample found
+under `--free` is `design-admitted` — exit 2, never exit 1 — because a `=` value
+is a binding the model states.
+
+**What the two engines agreeing does and does not establish.** With `--free
+none` the SMT engine answers the question `checkConstraints` answers, and
+`test/integration/verification.differential.test.ts` asserts they agree on every
+encodable relation of both examples, all 82 campaign fixtures and the L8 corpus
+models: `proved` ⇔ `satisfied`, `refuted` ⇔ `violated`, and `unknown` ⇔
+`inconclusive: not evaluable`. But that gate compares **two consumers of one
+gatherer** — a relation neither surface gathers is absent from both and the gate
+is green. So the **relation census** in the same file accounts for every
+constraint-bearing user element as encoded or refused-with-reason and asserts
+the counts equal the element census; a relation that leaves the pipeline without
+a word said about it fails there. Neither mechanism is a claim that the gatherer
+reads every construct the standard defines.
 
 Evidence records bind a claim to a canonical model digest taken over **qualified
 names, never element ids** (ids are fresh UUIDs on every load), to the tool
@@ -362,7 +391,7 @@ record or verdict facet. The write path is tested only inside Sysprose. The
 interop probe that would answer it is a later commit of the plan; until it runs,
 no claim is made about what an external reader does with either.
 
-### 8.4 The SMT seam: a solver backend, an encoder, and no engine yet
+### 8.4 The SMT seam: the solver backend and the encoder the engine stands on
 
 `z3-solver` ^5.2.0 is an **optional** dependency. `src/semantics/smt/z3-bridge.ts`
 loads it through a dynamic import behind a variable specifier and answers either
@@ -415,9 +444,10 @@ because they decide what a later verdict means:
   literal zero, a degenerate unit scale, and a sort clash are each refused with
   the same branchable `reason` vocabulary the rest of the lane uses.
 
-**What ships and what does not.** The seam is tested; there is no engine over it.
-Nothing in this build hands an obligation to z3, so no verdict in this build was
-produced by a solver, and none says `proved`.
+**What ships over it.** The SMT engine (`src/semantics/engines/smt.ts`) drives
+this seam as of commit 5 of the verification plan; §8.3 above states what it may
+and may not claim. The seam's own rules are unchanged by that, and they are what
+keep an engine defect from reading as a verdict.
 
 **Not in the browser, and the build enforces it.** z3 WASM needs
 `SharedArrayBuffer`, i.e. COOP/COEP headers a static host cannot set, so the
@@ -444,8 +474,22 @@ checks and only the solver is fresh**, because a context per check leaks ~9 MB
 of WASM heap that nothing gives back — 400 checks cost 2 GB before the fix and
 ~140 MB after, and a suite case runs 200 checks against a stated bound. `npm
 test` itself is **296 s** on this machine, past the plan's 241 s budget; the SMT
-suites are ~5 s of it, so that overrun is not theirs to fix, and the budget is
-re-registered at commit 5 with the same command on the same machine.
+suites are ~5 s of it, so that overrun is not theirs to fix.
+
+**Re-registered at commit 5, same command, same machine** (§6 asks for the wall
+clock before and after, not for a promise). Measured with `/usr/bin/time npx
+vitest run`: **287 s** over 137 files with the engine present and none of its
+suites written, and **351 s** over 138 files with all of them — a **+64 s**
+delta, on a run that also went from 2 533 tests to 2 581. The engine's own cost
+is the differential gate and the relation census, which load 103 models and run
+BOTH engines over each (**~18 s** measured on their own), plus the sixteen SMT
+cases the L8 corpus gained and four single-field mutation cases. The last 18 s
+of the delta arrived with the adversarial review, which added four L8 cases on
+the gate-refused seam and widened the flag-scope sweep from the encodable rows
+to every censused one. The budget the
+plan set was 241 s and this build does not meet it: the overrun predates the
+engine — 296 s was already registered at commit 4 — and it is recorded rather
+than rounded away.
 
 ---
 
@@ -459,7 +503,7 @@ re-registered at commit 5 with the same command on the same machine.
 | **Annotation vocabulary (§7.27 keywords)** | Prefix keywords are read, resolved against the `MetadataDefinition`s in scope and preserved verbatim through a save (`src/semantics/keywords.ts`); Sysprose's own `#exceptional` ships as text a user pastes, over the mechanism §7.27.1/§7.27.4 defines | **The vocabulary is Sysprose's, not the specification's**, and the tool says so on every line that prints one. A third-party spelling is read only through a declared alias table, contributes to no worklist unless `obligations --from-keywords` asks it to, and is never reported as standard; `hasKeyword` — what a later engine asks — answers only from real resolution, so an alias hit is never mistaken for the shipped keyword. `#observable` is designed and deliberately unshipped. |
 | **OSLC PSM** | OSLC Core catalog/provider/query + Turtle/RDF-XML/JSON-LD + **`oslc:ResourceShape` full-shape resources** (`test/server/oslc-shapes`) | A representative subset of the OSLC SysML PSM (no delegated dialogs). |
 | **Requirements — contracts and obligations** | `contracts` / `obligations` read `RequirementDefinition` / `RequirementUsage` clause roles and case `objective`s into an assumption/guarantee inventory and a proof worklist (`src/semantics/contracts.ts`, `src/semantics/obligations.ts`) | **These commands report structure only.** They evaluate nothing and decide nothing: no solver stands behind them, and neither prints a word about whether a requirement holds. A requirement USAGE is not read through its definition's clauses (the definition carries its own contract, and the usage's row names it rather than being counted as bodiless); an attribute declared in a `port def` is one element however many ports reach it, so the variables a clause reads are reported per PATH and their `in`/`out` direction is taken from the port the path names; `discharged` and `stale` are declared in the status vocabulary and never produced, because both are read back from an evidence record that does not ship yet. |
-| **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/semantics/engines/literal.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). The only engine that ships evaluates at the model's own values, so its claim is `holds-at-values` and never `proved`; the z3 backend and the encoder ship (§8.4) and no engine drives them, so `--engine auto` and `--engine smt` are exit 2 with `verification/tool-absent`. What an external tool makes of a record or a verdict facet is untested. |
+| **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine — a point evaluation (`src/semantics/engines/literal.ts`) or negation-UNSAT in z3 (`src/semantics/engines/smt.ts`) — and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). `proved` is reachable only under `--engine smt`, only as UNSAT-of-negation over a satisfiable axiom set with satisfiable premises and a two-sided domain, and only for the quantifier-free arithmetic fragment the unit gates pass — anything else is inconclusive with a code, and a missing solver is exit 2 rather than a fallback. The two engines are held to one answer by a differential gate over the whole fixture corpus, and every constraint-bearing element is accounted for by a relation census; neither says the gatherer reads every construct the standard defines. What an external tool makes of a record or a verdict facet is untested. |
 
 **The load-bearing gap.** The interop client round-trips **fully** against our own
 spec-shaped server (§6), but the environment is **offline**, so there is **no live
@@ -478,7 +522,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2533 pass / 0 skip, 137 files)
+# Full unit + integration + conformance suite (2571 pass / 0 skip, 138 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

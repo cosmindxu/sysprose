@@ -172,6 +172,39 @@ describe('contracts — the inventory of examples/uav-isr.sysml', () => {
   });
 
   /**
+   * THE AXIOM MAGNITUDE, PINNED BY VALUE — the invariant that was invisible for
+   * two commits.
+   *
+   * A literal feature value states the magnitude the FILE STORES: `capacity =
+   * 640.0 [W*h]` states `capacity == 640`, not `capacity == 2304000`. The gates
+   * never grant that relation a scale (a dimensioned operand against a bare
+   * literal is gate (c)'s declared-unit contract), so the row is read verbatim,
+   * and a converted number met an unscaled variable in the derived-endurance
+   * equation — one symbol pinned twice, 3600 apart, which made every obligation
+   * over the shipped example `verification/inconsistent-axioms`. Nothing
+   * asserted an axiom's number in either direction: the only thing that would
+   * have gone red is an SMT golden that did not exist yet.
+   */
+  it('states a literal feature value in the magnitude the file stores, never in SI', () => {
+    const axioms = new Map(
+      obligationsOf(model)
+        .filter((o) => o.role === 'axiom' && o.source === 'feature-value')
+        .map((o) => [o.element.qualifiedName.split('::').pop() ?? '', o]),
+    );
+    // 640 W·h, not 2 304 000 J; 25 km, not 25 000 m.
+    expect(axioms.get('capacity')?.expression).toBe('capacity == 640');
+    expect(axioms.get('range')?.expression).toBe('range == 25');
+    // `scaled` is the published answer to "did the gates grant this row a scale
+    // map?", and it is what every reader of the worklist lifts its variables
+    // by. `false` here is the whole reason the magnitude above is the stored one.
+    expect(axioms.get('capacity')?.scaled, 'a literal axiom was granted a scale').toBe(false);
+    expect(axioms.get('range')?.scaled).toBe(false);
+    // And the variable really does carry the SI factor, so the conversion is
+    // available to whoever needs it — it is simply not baked into the axiom.
+    expect(axioms.get('range')?.vars[0]?.unit).toBe('km');
+  });
+
+  /**
    * The fragment rule, on the one relation in the shipped examples that turns
    * on it. `endurance = battery.capacity * usableEnergyFraction / cruisePower`
    * is a product AND a quotient, so it is nonlinear in general — and linear as

@@ -1,0 +1,58 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 0,
+  "counts": {
+    "discharged": 2,
+    "violated": 0,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "UAVSurveillanceSystem::EnduranceRequirement",
+      "shortId": "",
+      "clause": "UAVSurveillanceSystem::EnduranceRequirement::«ConstraintUsage»",
+      "expression": "uav.endurance >= 45.0 [min]",
+      "obligationDigest": "sha256:e4618d6fd278f0b61d3cfb371ee1c3ec8fad02a0cf2ad962e1a34179c845490e",
+      "claim": "proved",
+      "verdict": "pass",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [
+        "UAVSurveillanceSystem::AirVehicle::endurance",
+        "UAVSurveillanceSystem::BatteryPack::capacity",
+        "UAVSurveillanceSystem::AirVehicle::usableEnergyFraction",
+        "UAVSurveillanceSystem::AirVehicle::cruisePower"
+      ],
+      "detail": "A ∧ P ∧ ¬G unsat, QF_NRA, 4 fixed / 0 free, timeout 5000 ms; assumptions satisfiable",
+      "premises": []
+    },
+    {
+      "requirement": "UAVSurveillanceSystem::MassRequirement",
+      "shortId": "",
+      "clause": "UAVSurveillanceSystem::MassRequirement::«ConstraintUsage»",
+      "expression": "uav.mtow <= 25.0 [kg]",
+      "obligationDigest": "sha256:24296a7c6a06b2e66207cc2c3f3dac028f58123a199b55cbf7842f45ef02d545",
+      "claim": "proved",
+      "verdict": "pass",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [
+        "UAVSurveillanceSystem::AirVehicle::mtow"
+      ],
+      "detail": "A ∧ P ∧ ¬G unsat, QF_LRA, 1 fixed / 0 free, timeout 5000 ms; assumptions satisfiable",
+      "premises": []
+    }
+  ]
+}

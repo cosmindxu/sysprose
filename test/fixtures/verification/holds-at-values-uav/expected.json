@@ -3,6 +3,8 @@
   "engine": "literal",
   "toolAbsent": false,
   "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
   "exitCode": 0,
   "counts": {
     "discharged": 2,
@@ -24,6 +26,8 @@
       "discharged": true,
       "code": null,
       "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
       "detail": "holds at the model's values (no assumptions — the pass is unconditional at these values)",
       "premises": []
     },
@@ -38,6 +42,8 @@
       "discharged": true,
       "code": null,
       "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
       "detail": "holds at the model's values (no assumptions — the pass is unconditional at these values)",
       "premises": []
     }

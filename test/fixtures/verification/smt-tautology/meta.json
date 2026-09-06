@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "`panel.area == panel.area` is proved AND flagged: true of every model, so evidence about none",
+  "model": "test/fixtures/verification/models/tautology.sysml",
+  "engine": "smt",
+  "note": "Step 3 of the engine — `check(¬G)` with no context at all. The row is honestly `proved` and honestly useless, and printing only the first half is how a suite of identities comes to look like a verified design."
+}

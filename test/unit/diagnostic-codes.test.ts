@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DIAGNOSTIC_CODES, diagnosticCode, isKnownCode, renderHint } from '@text/index';
-import { VERIFICATION_CODES } from '@api/index';
+import { VERIFICATION_CODES, VERIFICATION_ERROR_CODES } from '@api/index';
 
 const DOC = readFileSync(resolve(process.cwd(), 'docs/DIAGNOSTIC-CODES.md'), 'utf8');
 const documented = new Set([...DOC.matchAll(/^### `([^`]+)`$/gm)].map((m) => m[1]));
@@ -53,6 +53,34 @@ describe('diagnostic-code catalogue', () => {
       missing,
       `named in source but absent from the catalogue — add the entry in src/text/langium/diagnostic-codes.ts:\n${missing.join('\n')}`,
     ).toEqual([]);
+  });
+
+  it('agrees with the verification lane about which of its codes are errors', () => {
+    // `src/api/verification.ts` keeps its own set of the `verification/*` codes
+    // it raises as ERRORS rather than as info lines, because `src/api` imports
+    // nothing from `src/text` and one severity lookup is not a reason to open
+    // that edge. A second copy nothing compares is a copy that drifts: a
+    // catalogue edit would leave the emitted diagnostic at `error` while
+    // docs/DIAGNOSTIC-CODES.md printed `info`, and a consumer filtering on
+    // severity would read the loudest verdict in a run at the same level as
+    // "this construct is outside the fragment". This is the comparison.
+    const catalogueErrors = DIAGNOSTIC_CODES.filter(
+      (c) => c.code.startsWith('verification/') && c.severity === 'error',
+    )
+      .map((c) => c.code)
+      .sort();
+    expect([...VERIFICATION_ERROR_CODES].sort(), 'the runtime severity and the catalogue disagree').toEqual(
+      catalogueErrors,
+    );
+    // Both sides non-empty, or the equality holds over two empty sets.
+    expect(catalogueErrors.length, 'the lane stopped raising anything as an error').toBeGreaterThan(0);
+    // And every other verification code is an info line — the reading rule the
+    // catalogue states in prose, asserted.
+    for (const c of DIAGNOSTIC_CODES) {
+      if (!c.code.startsWith('verification/')) continue;
+      if (VERIFICATION_ERROR_CODES.has(c.code)) continue;
+      expect(c.severity, `${c.code} is neither an error the lane raises nor an info line`).toBe('info');
+    }
   });
 
   it('has no duplicate codes', () => {

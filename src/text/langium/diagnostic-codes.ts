@@ -481,15 +481,23 @@ const CODES = [
     hint: 'Declare or import the `metadata def` the keyword names — `import SysproseVerification::*;` for the one this tool ships — or correct the spelling. The keyword is kept in the file either way.',
   },
 
-  // The six `verify` codes. They are what an INCONCLUSIVE run says, and the
-  // exit contract is written over them rather than over prose: `verify` exits 2
-  // on every one, and `--allow-inconclusive` lowers exactly two of them —
-  // `verification/unsupported-construct` and (from the SMT engine)
-  // `verification/timeout`. It never lowers `tool-absent`, never lowers
-  // `vacuous-pass`, never lowers `design-admitted`, and never outranks a
-  // refutation, which is exit 1. All six are INFO: none of them is a defect in
-  // the model, and none of them is a verdict — they are the tool saying what it
-  // did not decide, which is the one thing a silence could never say.
+  // The `verify` codes. The exit contract is written over them rather than over
+  // prose: `verify` exits 2 on every UNDECIDED one, and `--allow-inconclusive`
+  // lowers exactly two — `verification/unsupported-construct` and
+  // `verification/timeout`. It never lowers `tool-absent`, never lowers either
+  // vacuity code, never lowers `design-admitted`, and never outranks a
+  // refutation, which is exit 1.
+  //
+  // SEVERITY SPLITS THEM IN TWO, and the split is the reading rule. The
+  // undecided codes are INFO: none of them is a defect in the model, and none
+  // of them is a verdict — they are the tool saying what it did not decide,
+  // which is the one thing a silence could never say. Exactly two are ERRORS
+  // because they say something about the MODEL: `verification/refuted`, the
+  // violation this lane exists to find, and `verification/vacuous-property`,
+  // which exists only because `--strict-vacuity` asked for a vacuity to be
+  // loud. A consumer filtering on severity would otherwise read the loudest
+  // verdict in a run at the same level as "this construct is outside the
+  // fragment".
   {
     code: 'verification/vacuous-pass',
     source: 'verification',
@@ -537,8 +545,48 @@ const CODES = [
     code: 'verification/timeout',
     source: 'verification',
     severity: 'info',
-    when: 'A solver was asked and did not answer inside the time it was given — it returned `unknown` after the timeout rather than sat or unsat. No engine in this build emits it; it is the SMT engine’s undecided code and the second of the two `--allow-inconclusive` may lower.',
-    hint: 'Raise the timeout, narrow the obligation, or read the row as undecided — a solver that ran out of time has said nothing about whether the requirement holds. It exits 2 by default.',
+    when: 'A solver was asked and did not answer inside the time it was given — it returned `unknown` after the timeout rather than sat or unsat. It is the SMT engine’s undecided code and the second of the two `--allow-inconclusive` may lower.',
+    hint: 'Raise the budget with `--timeout MS`, narrow the obligation, or read the row as undecided — a solver that ran out of time has said nothing about whether the requirement holds. It exits 2 by default, and the row was not retried with a weaker encoding.',
+  },
+  // The five codes the SMT engine brought with it. Four of them name a way a
+  // proof can be VOID rather than absent, which is the failure mode a
+  // verification lane has to be loudest about: a run that says nothing is
+  // obviously useless, and a run that proves everything from a contradiction
+  // looks exactly like a run that worked.
+  {
+    code: 'verification/refuted',
+    source: 'verification',
+    severity: 'error',
+    when: 'A requirement does not hold with every feature at the value the model binds it to. Both engines file it: the literal one evaluates the relation and reads it as false, and the SMT one finds `A ∧ P ∧ ¬G` satisfiable and confirms the witness in process. It is the one code on a DECIDED row, and the run exits 1.',
+    hint: 'Read the row’s `detail` for the two magnitudes the comparison was made on, and the witness for the assignment that breaks the requirement in the units the file stores. Fix the design or the requirement and re-run. `--allow-inconclusive` does not forgive a violation, and exit 1 outranks every undecided row in the same run.',
+  },
+  {
+    code: 'verification/vacuous',
+    source: 'verification',
+    severity: 'info',
+    when: 'The SMT engine found the premises unsatisfiable under the axioms — `A ∧ P` is unsat — so the obligation was discharged by an antecedent that no assignment satisfies. `verification/vacuous-pass` is the literal engine’s weaker sibling: an assumption false AT THE MODEL’S VALUES, rather than one nothing at all can satisfy.',
+    hint: 'Read the unsat core printed on the row for the facts that collide, then fix the assumption or drop it: an obligation discharged for free says nothing about the design. It is inconclusive and exits 2, no flag launders it, and `--strict-vacuity` raises it to `verification/vacuous-property` without changing the exit code.',
+  },
+  {
+    code: 'verification/vacuous-property',
+    source: 'verification',
+    severity: 'error',
+    when: '`--strict-vacuity` was given and an obligation was vacuous. It is the same row as `verification/vacuous` or `verification/vacuous-pass`, raised from an info line to an error so a vacuity cannot be scrolled past.',
+    hint: 'The flag changes the code and the severity and NOTHING else: the claim stays `vacuous`, the row stays undecided, and the run exits 2 exactly as it does without the flag. Fix the antecedent so the obligation stands on something that can hold.',
+  },
+  {
+    code: 'verification/inconsistent-axioms',
+    source: 'verification',
+    severity: 'info',
+    when: 'The once-per-run consistency check found the axiom set itself unsatisfiable — `check(A)` is unsat. Every obligation in the run is reported under this code, because a negation is unsat under a contradictory context whatever it says, and a proof from a contradiction is void.',
+    hint: 'Read the unsat core named on the row: it is the smallest set of the model’s own facts the solver found colliding. Nothing in the run was decided until they are reconciled. `--allow-inconclusive` never lowers this — proving everything is not the same as proving anything.',
+  },
+  {
+    code: 'verification/free-variable-unbounded',
+    source: 'verification',
+    severity: 'info',
+    when: 'A feature released by `--free` is not confined on both sides by the axioms and premises the obligation stands on, so the solver may place a witness outside the physical domain. Reported instead of a refutation, never beside one.',
+    hint: 'Add a two-sided premise — `assume constraint { x >= lo and x <= hi }` — before freeing the feature. This tool derives no domain axiom from a quantity kind: it does not know that a power or a mass is non-negative, so a witness at a negative power is arithmetically confirmable and physically meaningless. It exits 2 and no flag lowers it.',
   },
 
   /* ── round-trip oracle ── */

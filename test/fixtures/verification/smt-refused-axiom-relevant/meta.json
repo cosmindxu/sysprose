@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "…and one that DOES share a symbol with the goal still suppresses it",
+  "model": "test/fixtures/verification/models/refused-axiom-relevant.sysml",
+  "engine": "smt",
+  "note": "The other half, and the reason the rule exists: `massPerSeat` is refused by the gates and reads `mass`, the very symbol the requirement constrains, so the relation that was dropped may be the one that excludes this witness. The counterexample is reported as undecided with the refused relation named. It is also the only case in the corpus that reaches the partial-context branch at all."
+}

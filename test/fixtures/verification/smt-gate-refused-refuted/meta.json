@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "`--allow-inconclusive` never lowers a gate-refused relation the values read `violated`",
+  "model": "test/fixtures/verification/models/gate-refused-but-false.sysml",
+  "engine": "smt",
+  "allowInconclusive": true,
+  "note": "The half `gate-refused-holds-at-values` could not test, because its relation is TRUE. `%` is outside the encodable fragment, so this engine reported the row `verification/unsupported-construct` — one of the two codes the flag lowers — and `--engine smt --allow-inconclusive` exited 0 over a requirement the tool's own numeric surface calls false, while `--engine literal --allow-inconclusive` exited 1 on the same file. `auto` resolves to `smt`, so that was the default invocation. §2: the flag never lowers a violation."
+}

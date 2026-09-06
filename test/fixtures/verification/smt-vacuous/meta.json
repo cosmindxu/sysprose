@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "Premises unsatisfiable under the axioms is `vacuous`, exit 2, with the colliding core named",
+  "model": "test/fixtures/verification/models/premises-unsatisfiable.sysml",
+  "engine": "smt",
+  "note": "Step 2 of the engine, and the stronger sibling of the literal engine's `vacuous-pass`: not an assumption false at the values but one no assignment at all satisfies. The standard would read the requirement as true; this tool reports it undecided, which is the lane's one declared deviation."
+}

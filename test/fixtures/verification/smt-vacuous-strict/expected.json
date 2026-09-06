@@ -1,0 +1,40 @@
+{
+  "engineAsked": "smt",
+  "engine": "smt",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": true,
+  "free": [],
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 1,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "PremisesUnsatisfiable::FlowCeiling",
+      "shortId": "",
+      "clause": "PremisesUnsatisfiable::FlowCeiling::«ConstraintUsage»",
+      "expression": "pump.flow <= 10.0 [L/min]",
+      "obligationDigest": "sha256:5826c485b4a57aa878fc13647875c351550811af2c22d139c679c5acda5ec556",
+      "claim": "vacuous",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/vacuous-property",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "the premises are unsatisfiable under the axioms, so the obligation is discharged by an antecedent that cannot hold and says nothing about the design. core: axiom:PremisesUnsatisfiable::Pump::flow, premise:PremisesUnsatisfiable::FlowCeiling::«ConstraintUsage»",
+      "premises": [
+        {
+          "expression": "pump.flow >= 3.0 [L/min]",
+          "holds": "fails"
+        }
+      ]
+    }
+  ]
+}
