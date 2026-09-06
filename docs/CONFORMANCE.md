@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2467 passed / 0 failed / 0 skipped** across **135 files** + **128 E2E** across **78 spec files** = **2595 green** (measured 2026-09-06) |
+| Full automated suite | **2533 passed / 0 failed / 0 skipped** across **137 files** + **128 E2E** across **78 spec files** = **2661 green** (measured 2026-09-06) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -342,9 +342,13 @@ That facet is written for **two claims only** — `proved` ⇒ `pass`, `refuted`
 `holds-at-values` and it can never reach `proved`, which is reserved for
 UNSAT-of-negation under a satisfiable axiom set. `--engine auto` resolves to the
 SMT engine or reports `verification/tool-absent` for every obligation, exit 2;
-it never falls back to a point evaluation. **No solver ships in this build**, so
-every `auto` and `smt` run today is exit 2 — which is the honest answer, and is
-exercised on every run of the L8 corpus with `SYSPROSE_NO_Z3=1`.
+it never falls back to a point evaluation. **No SMT ENGINE ships in this build**,
+so every `auto` and `smt` run today is exit 2 — which is the honest answer, and
+is exercised on every run of the L8 corpus with `SYSPROSE_NO_Z3=1`. The solver
+BACKEND now ships (§8.4): `z3-solver` is an optional dependency and
+`loadZ3()` returns it, but nothing drives it yet, and a backend with no engine
+behind it decides nothing. `verification/tool-absent` says which of the two is
+missing.
 
 Evidence records bind a claim to a canonical model digest taken over **qualified
 names, never element ids** (ids are fresh UUIDs on every load), to the tool
@@ -358,6 +362,91 @@ record or verdict facet. The write path is tested only inside Sysprose. The
 interop probe that would answer it is a later commit of the plan; until it runs,
 no claim is made about what an external reader does with either.
 
+### 8.4 The SMT seam: a solver backend, an encoder, and no engine yet
+
+`z3-solver` ^5.2.0 is an **optional** dependency. `src/semantics/smt/z3-bridge.ts`
+loads it through a dynamic import behind a variable specifier and answers either
+a backend or `{ absent, reason }` — it never throws because a package is
+missing, and `SYSPROSE_NO_Z3=1` forces the absent path so that a machine which
+HAS z3 can still exercise it. Every check is bounded (5000 ms by default, no
+spelling for "unbounded"), the `random_seed` is fixed at 0, and z3's version is
+captured rather than assumed. A script z3 REFUSES — a malformed term, or a
+`set-logic` its assertions do not fit — is reported as `error`, never folded
+into the `unknown` that `--allow-inconclusive` may forgive.
+
+`src/semantics/smt/encode.ts` turns a body the unit gates already passed into an
+SMT-LIB2 script. Four properties of that encoding belong in a conformance record
+because they decide what a later verdict means:
+
+- **One variable per feature, declared in its STORAGE unit, read as
+  `factor·x + offset`** from the gates' own `ScaleMap`. When the gates granted
+  no scaling — `range = 5.0 [km]` compared against a bare `10.0` is read in
+  kilometres on every surface of this tool — the read is the bare symbol.
+  Scaling there would report `5000 <= 10` for a constraint that holds.
+- **Numerals are exact rationals.** Every numeral in a BODY is the binary64
+  this tool holds, converted exactly through its significand: `18.5` is
+  `(/ 37.0 2.0)` and `0.1` is `3602879701896397 / 2⁵⁵`, not the tenth that was
+  typed. Nothing is rounded on the way into a solver, and nothing is re-parsed
+  from a decimal — so the number z3 reasons about is the number
+  `checkConstraints` evaluates. The author's own `attrs.valueText` IS the right
+  reading for a feature's declared value, and `valueTextNumeral()` is the
+  affordance for it; it is deliberately not applied to body literals, because an
+  axiom and a goal that disagreed about a boundary number would decide the
+  boundary case by which side of the proof the number arrived on. The engine
+  that builds feature-value axioms is a later commit and is its only caller.
+- **Symbols and assertion labels are qualified names, never element ids** (ids
+  are fresh UUIDs per load). Two loads of one file produce byte-identical
+  scripts. A consequence stated rather than hidden: two distinct PATHS that
+  resolve to one feature — `u.powerIn.voltage` and `u.powerOut.voltage`, one
+  attribute owned by a `port def` — share one symbol, which is how every other
+  surface of this tool reads them too.
+- **The fragment is checked by z3, not asserted by us — and the report's word
+  and the script's logic are different questions.** The script carries a
+  `set-logic` line (`QF_LRA` / `QF_NRA`, and their mixed integer/real forms
+  `QF_LIRA` / `QF_NIRA` when an `Int`-sorted feature is declared) computed from
+  the SYNTAX of the terms it emits, because that is what z3 checks it against: a
+  product or a quotient of two declared features is a nonlinear SCRIPT whether
+  or not an axiom pins one of them, and a `QF_LRA` header over it is refused
+  outright — reported as `error`, i.e. as a defect in our own output, never as
+  an inconclusive row a flag could forgive. The REPORT's `qf-lra` / `qf-nra`
+  vocabulary stays free-relative, as the plan words it: freeing a divisor
+  promotes `qf-lra` to `qf-nra` and the encoding names the variable that did it.
+  `%`, a variable or fractional exponent, a string, `null`, a division by the
+  literal zero, a degenerate unit scale, and a sort clash are each refused with
+  the same branchable `reason` vocabulary the rest of the lane uses.
+
+**What ships and what does not.** The seam is tested; there is no engine over it.
+Nothing in this build hands an obligation to z3, so no verdict in this build was
+produced by a solver, and none says `proved`.
+
+**Not in the browser, and the build enforces it.** z3 WASM needs
+`SharedArrayBuffer`, i.e. COOP/COEP headers a static host cannot set, so the
+package is excluded from the bundle (`optimizeDeps.exclude` and
+`rollupOptions.external` in `vite.config.ts`) and nothing in `src/` imports it
+statically. `external` alone would point the wrong way for an import — it leaves
+a bare `z3-solver` specifier in the emitted chunk, which builds green and breaks
+the published page at load time — so a `refuse-bundled-z3` build plugin fails
+the build when any emitted chunk names the package in an import or a require.
+The app's affordance is the terminal command, not a smaller solver.
+
+**Measured on this machine, not remembered** (Node 22, z3 5.1.0 via `z3-solver`
+5.2.0): `init()` **~105 ms**, three checks (unsat, negation-unsat, sat with a
+witness) **~137 ms** — the plan carried one combined figure of 343 ms and could
+not say which half it was. The two SMT suites were run under vitest's default
+worker pool and under a single fork: **66 passed both ways, 5.4 s against 7.1 s
+wall clock**, and they add ~5 s to `npm test`. z3 WASM is worker-safe here, so
+the suites are NOT pinned to one worker. The cost the plan asked to be known
+rather than assumed is contention, and it is visible: inside the FULL suite (137
+files across the default worker pool) the same two figures measure **311 ms and
+358 ms**, with no change to any verdict. A related figure, measured because a
+later commit's call counts depend on it: **one z3 context is reused across
+checks and only the solver is fresh**, because a context per check leaks ~9 MB
+of WASM heap that nothing gives back — 400 checks cost 2 GB before the fix and
+~140 MB after, and a suite case runs 200 checks against a stated bound. `npm
+test` itself is **296 s** on this machine, past the plan's 241 s budget; the SMT
+suites are ~5 s of it, so that overrun is not theirs to fix, and the budget is
+re-registered at commit 5 with the same command on the same machine.
+
 ---
 
 ## Mapping to OMG conformance statements — and the honest gaps
@@ -370,7 +459,7 @@ no claim is made about what an external reader does with either.
 | **Annotation vocabulary (§7.27 keywords)** | Prefix keywords are read, resolved against the `MetadataDefinition`s in scope and preserved verbatim through a save (`src/semantics/keywords.ts`); Sysprose's own `#exceptional` ships as text a user pastes, over the mechanism §7.27.1/§7.27.4 defines | **The vocabulary is Sysprose's, not the specification's**, and the tool says so on every line that prints one. A third-party spelling is read only through a declared alias table, contributes to no worklist unless `obligations --from-keywords` asks it to, and is never reported as standard; `hasKeyword` — what a later engine asks — answers only from real resolution, so an alias hit is never mistaken for the shipped keyword. `#observable` is designed and deliberately unshipped. |
 | **OSLC PSM** | OSLC Core catalog/provider/query + Turtle/RDF-XML/JSON-LD + **`oslc:ResourceShape` full-shape resources** (`test/server/oslc-shapes`) | A representative subset of the OSLC SysML PSM (no delegated dialogs). |
 | **Requirements — contracts and obligations** | `contracts` / `obligations` read `RequirementDefinition` / `RequirementUsage` clause roles and case `objective`s into an assumption/guarantee inventory and a proof worklist (`src/semantics/contracts.ts`, `src/semantics/obligations.ts`) | **These commands report structure only.** They evaluate nothing and decide nothing: no solver stands behind them, and neither prints a word about whether a requirement holds. A requirement USAGE is not read through its definition's clauses (the definition carries its own contract, and the usage's row names it rather than being counted as bodiless); an attribute declared in a `port def` is one element however many ports reach it, so the variables a clause reads are reported per PATH and their `in`/`out` direction is taken from the port the path names; `discharged` and `stale` are declared in the status vocabulary and never produced, because both are read back from an evidence record that does not ship yet. |
-| **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/semantics/engines/literal.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). The only engine that ships evaluates at the model's own values, so its claim is `holds-at-values` and never `proved`; there is no solver in this build, so `--engine auto` and `--engine smt` are exit 2 with `verification/tool-absent`. What an external tool makes of a record or a verdict facet is untested. |
+| **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/semantics/engines/literal.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). The only engine that ships evaluates at the model's own values, so its claim is `holds-at-values` and never `proved`; the z3 backend and the encoder ship (§8.4) and no engine drives them, so `--engine auto` and `--engine smt` are exit 2 with `verification/tool-absent`. What an external tool makes of a record or a verdict facet is untested. |
 
 **The load-bearing gap.** The interop client round-trips **fully** against our own
 spec-shaped server (§6), but the environment is **offline**, so there is **no live
@@ -389,7 +478,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2467 pass / 0 skip, 135 files)
+# Full unit + integration + conformance suite (2533 pass / 0 skip, 137 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

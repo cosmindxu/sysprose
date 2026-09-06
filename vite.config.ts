@@ -66,11 +66,58 @@ self.addEventListener('fetch', (event) => {
   };
 }
 
+/**
+ * Fail the BUILD if the solver ever reaches an emitted chunk.
+ *
+ * `rollupOptions.external` alone points the wrong way for the import: it turns
+ * a static `import … from 'z3-solver'` into a bare specifier left verbatim in
+ * the entry chunk, which builds green and then breaks the published SPA at
+ * load time, in a browser, with no error anyone here would see. External is
+ * still right for the WASM asset — nothing should ever be bundled — so this
+ * plugin supplies the missing half: the specifier may appear in `src/` ONLY as
+ * the variable-held, `@vite-ignore`d dynamic import the bridge uses, and any
+ * emitted chunk that names it in an import or a require is a build failure with
+ * the chunk named.
+ *
+ * The patterns are deliberately narrow: the string `'z3-solver'` on its own is
+ * allowed through, because that is exactly what the bridge's variable specifier
+ * compiles to and a later commit may legitimately pull the bridge into a module
+ * the app reaches (it answers `absent` in the browser by design).
+ */
+function refuseBundledZ3(): Plugin {
+  const forbidden = [
+    /\bfrom\s*["']z3-solver["']/,
+    /\brequire\s*\(\s*["']z3-solver["']\s*\)/,
+    /\bimport\s*\(\s*["']z3-solver["']\s*\)/,
+    /\bimport\s*["']z3-solver["']/,
+  ];
+  return {
+    name: 'refuse-bundled-z3',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      for (const [fileName, chunk] of Object.entries(bundle)) {
+        if (chunk.type !== 'chunk') continue;
+        const hit = forbidden.find((re) => re.test(chunk.code));
+        if (hit) {
+          this.error(
+            `${fileName} carries a static reference to \`z3-solver\` (${String(hit)}). The solver ` +
+              'cannot run in the browser at all (z3 WASM needs SharedArrayBuffer, i.e. COOP/COEP ' +
+              'headers a static host cannot set) and it is an OPTIONAL dependency, so a bare ' +
+              'specifier left in a chunk is a page that fails to load rather than a build that ' +
+              'fails. Reach it the way `src/semantics/smt/z3-bridge.ts` does: a variable specifier ' +
+              'behind `import(/* @vite-ignore */ spec)`, guarded by an absent path.',
+          );
+        }
+      }
+    },
+  };
+}
+
 export default defineConfig({
   // Relative base so the static build works on any host path (GitHub Pages
   // subpath, a plain file server, or the root) without reconfiguration.
   base: './',
-  plugins: [react(), pwaServiceWorker()],
+  plugins: [react(), pwaServiceWorker(), refuseBundledZ3()],
   resolve: {
     alias: {
       '@core': fileURLToPath(new URL('./src/core', import.meta.url)),
@@ -88,6 +135,17 @@ export default defineConfig({
     },
   },
   server: { port: 5173, strictPort: true },
+  // `z3-solver` never enters the browser build. Three reasons, and the first is
+  // the one that decides it: the app CANNOT run it — z3 WASM needs
+  // `SharedArrayBuffer`, i.e. the COOP/COEP headers a static host such as GitHub
+  // Pages cannot set (docs/04-formal-verification-plan.md §6, non-goal 9). The
+  // WASM asset is also tens of megabytes beside an entry chunk measured in
+  // hundreds of kilobytes, and the package is an OPTIONAL dependency, so a clone
+  // that skipped it must still `npm run build`. `src/semantics/smt/z3-bridge.ts`
+  // reaches it through a dynamic import behind a variable specifier for exactly
+  // that reason; these two lines make the exclusion the bundler's rule rather
+  // than a property of how the import happens to be written.
+  optimizeDeps: { exclude: ['z3-solver'] },
   // Minification is ON (esbuild). It was previously disabled because the ~8MB
   // standard library was pulled into a JS chunk (a dynamic-imported ~8MB module)
   // and vite's build-import-analysis (es-module-lexer) failed to re-parse that
@@ -104,6 +162,12 @@ export default defineConfig({
     sourcemap: true,
     minify: 'esbuild',
     rollupOptions: {
+      // The other half of the exclusion above: nothing in `dist/` may carry the
+      // solver or its WASM. `external` keeps the package and its WASM out of
+      // every chunk; `refuseBundledZ3()` above fails the build if a specifier
+      // survives into one, because an externalised bare specifier is a runtime
+      // break rather than a build error.
+      external: ['z3-solver'],
       output: {
         // Split heavyweight vendor libraries out of the entry chunk so vendor
         // code caches independently of app code across redeploys. Function form

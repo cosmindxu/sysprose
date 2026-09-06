@@ -2862,6 +2862,94 @@ requirement written in `[min]`, which read as refuting the verdict it supported.
 Every binding now carries its role, and the bound carries the SI pair the
 comparison was actually made on.
 
+**A solver that is not installed is an import error, and an encoder is where a
+proof quietly becomes about the wrong number.** Commit 4 of the
+formal-verification plan adds the SMT seam and nothing that uses it: a bridge
+(`src/semantics/smt/z3-bridge.ts`) that loads `z3-solver` — an **optional**
+dependency, reached through a dynamic import behind a variable specifier — or
+answers `{ absent, reason }`, and an encoder (`src/semantics/smt/encode.ts`)
+that turns a body the unit gates already passed into an SMT-LIB2 script. There
+is still no engine over them, so `--engine auto` and `--engine smt` are still
+`verification/tool-absent`, exit 2; what changed is that the sentence now names
+which of the two halves is missing.
+
+The bridge holds four rules, each of which is a way the lane could have gone
+quietly green. **A missing package is an ANSWER, not an exception** — nothing
+here throws because `node_modules` is short of a 36 MB WASM asset, and a clone
+that skipped optional dependencies still typechecks, builds and runs every
+suite. **`SYSPROSE_NO_Z3=1` forces that path**, so the machine which HAS z3 can
+still exercise the absence the plan's CI job asserts; the switch is read exactly
+as `src/api/verification.ts` reads it, and a case pins the four spellings.
+**Every check is bounded** — 5000 ms by default, and there is no spelling for
+"no timeout": a hard nonlinear integer instance comes back `unknown` with
+`reasonUnknown() === 'timeout'` and the budget printed beside it. **A script z3
+REFUSES is an `error`, not an `unknown`**, because folding a defect in our own
+output into an ordinary inconclusive row would hand it to the one flag that
+forgives inconclusive rows. And **one context, a fresh solver per check**: the
+assertions live on the solver, so a new one per check is the whole isolation
+this needs, while a new CONTEXT per check adds ~9 MB of WASM heap that nothing
+ever gives back — 185 MB after init and 2 GB after 400 checks, measured, which
+is a fault tree or an explorer run exhausting memory rather than answering.
+
+The encoder's four load-bearing decisions are about what a number MEANS by the
+time a solver sees it. One variable per feature, **declared in its storage unit
+and read as `factor·x + offset`** from the gates' own `ScaleMap` — so
+`45.0 [min]` meets `2700` and a witness stays a number a reader can find in the
+file; and where the gates granted no scale, the read is the bare symbol, because
+`range = 5.0 [km]` against a bare `10.0` is ten kilometres on every surface of
+this tool and scaling it would publish `5000 <= 10` for a constraint that holds.
+**Numerals in a body are exact rationals**: every one is the binary64 this tool
+holds, converted through its significand rather than re-printed — `18.5` is
+`(/ 37.0 2.0)` and `0.1` is `3602879701896397 / 2⁵⁵`, not the tenth that was
+typed — so the number z3 reasons about is the number `checkConstraints`
+evaluates. The author's own `valueText` is the right reading for a feature's
+declared VALUE and `valueTextNumeral()` is the affordance for it, deliberately
+not applied to body literals: an axiom and a goal that disagreed about a
+boundary number would decide the boundary case by which side of the proof the
+number arrived on. **Symbols and labels are qualified names**, never element
+ids, so two loads of one file encode to the same bytes — and a label is made
+unique AFTER the `|`-mangling a quoted symbol forces, because two names that
+differ only there become one label and z3 refuses a script that defines one
+twice. And **the fragment is checked rather than claimed**: the `set-logic` line
+is computed from the SYNTAX of the emitted terms, not from the free set, because
+that is what z3 checks it against — `a * b` with `b` pinned by an axiom is
+linear reasoning and a nonlinear script, and a `QF_LRA` header over it is
+refused outright. The report keeps the plan's free-relative words, so freeing a
+divisor still promotes `qf-lra` to `qf-nra` and the encoding still names the
+variable that did it, which is what a report has to print. `%`, a variable or fractional exponent,
+a string, `null`, a division by the literal zero and a sort clash are each
+refused with the same branchable `reason` vocabulary the rest of the lane uses.
+
+Two things were measured rather than assumed. **Init is now separate from the
+checks**: the plan carried one combined figure of 343 ms; on this machine
+`init()` is ~105 ms and the three probe checks are ~137 ms (Node 22, z3 5.1.0
+via `z3-solver` 5.2.0). And **z3 WASM is worker-safe here**: the two SMT suites
+were run under vitest's default worker pool and under a single fork — 66 passed
+both ways, 5.4 s against 7.1 s wall clock — so they are NOT pinned to one
+worker. The cost the plan warned about is contention, and it is visible in the
+numbers rather than argued about: inside the full 137-file suite the same two
+figures measure 311 ms and 358 ms, with no verdict moving. The suites add ~5 s
+to `npm test`, which is 296 s here against the plan's 241 s budget — an overrun
+the SMT lane did not cause and cannot fix, recorded so the re-registration at
+commit 5 starts from a measured number.
+
+**The browser keeps nothing, and the BUILD is what says so.** `external` alone
+was the wrong guard rail: it turns a static `import … from 'z3-solver'` into a
+bare specifier left verbatim in the entry chunk, which builds green and then
+fails to load in a browser with nothing here to see it. A `refuse-bundled-z3`
+build plugin fails the build when any emitted chunk names the package in an
+import or a require, and the variable specifier the bridge actually uses is
+allowed through — the WASM stays out either way.
+
+**The gap this commit leaves, named because commit 5 has to close it.** Whether
+the gates granted a `ScaleMap` is not carried on an `Obligation` — only on the
+`RelationReading` that produced it — so `encodeVariablesOf` takes the reading and
+`encodeVariables` makes the caller state `scaled` outright. An engine that reads
+worklist rows and guesses that answer would scale a relation both other surfaces
+read verbatim, which is the one encoder defect that produces a confident wrong
+verdict rather than a refusal.
+
+
 ### Pinned behaviours (decisions, not defects)
 
 **A bare `verify R;` clause is read as a reference, not a declaration — when

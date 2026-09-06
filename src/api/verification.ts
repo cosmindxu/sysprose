@@ -840,42 +840,76 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
 /**
  * Is a z3 backend AND an engine to drive it present in this build?
  *
- * Two absences, one honest answer. `z3-solver` is not a dependency of this
- * commit and the SMT engine is a later one, so this returns `null` today and
- * `--engine auto` therefore reports `verification/tool-absent` — which is the
- * truth, and is the path the plan's §5 CI job exercises on every push with
- * `SYSPROSE_NO_Z3=1`. The probe is real rather than a hard-coded `null` so that
- * the day the package lands, the reason this still refuses is the missing
- * ENGINE and the message says so instead of blaming a solver that is installed.
+ * Two absences, one honest answer. Since commit 4 of the verification plan
+ * `z3-solver` IS an optional dependency and this probe finds it — and the SMT
+ * engine that would drive it is still a later commit, so `--engine auto` still
+ * reports `verification/tool-absent` for every obligation. That was the point of
+ * making the probe real rather than a hard-coded `null`: the reason this refuses
+ * is now the missing ENGINE, and {@link toolAbsentDetail} says so instead of
+ * blaming a solver that is installed. The honest-absence path is exercised on
+ * every push by the plan's §5 CI job with `SYSPROSE_NO_Z3=1`, which this reads
+ * exactly as `src/semantics/smt/z3-bridge.ts` does.
  *
  * The specifier is held in a variable and marked `@vite-ignore` so the bundler
  * does not try to resolve a package that is not there; the browser never gets
  * this far in any case (§6 non-goal 9 — no in-browser solver in this plan).
  */
-async function loadZ3(): Promise<{ backendPresent: boolean }> {
+async function loadZ3(): Promise<Z3Probe> {
   const off =
     typeof process !== 'undefined' &&
     process.env?.SYSPROSE_NO_Z3 !== undefined &&
     process.env.SYSPROSE_NO_Z3 !== '' &&
     process.env.SYSPROSE_NO_Z3 !== '0';
-  if (off) return { backendPresent: false };
-  if (typeof process === 'undefined') return { backendPresent: false };
+  // Switched off is not the same as missing, and the row says which. The whole
+  // L8 corpus runs under this switch on a machine that HAS the package, so
+  // collapsing the two would make the tool print a false statement about the
+  // machine — and pin it, byte for byte, in a golden.
+  if (off) return { backendPresent: false, disabled: true };
+  if (typeof process === 'undefined') return { backendPresent: false, disabled: false };
   try {
     const spec = 'z3-solver';
     await import(/* @vite-ignore */ spec);
-    return { backendPresent: true };
+    return { backendPresent: true, disabled: false };
   } catch {
-    return { backendPresent: false };
+    return { backendPresent: false, disabled: false };
   }
 }
 
-/** The sentence a `tool-absent` row prints, which names what is actually missing. */
-function toolAbsentDetail(backendPresent: boolean): string {
-  return backendPresent
-    ? 'solver absent — the z3 backend is installed but this build carries no SMT engine to drive it ' +
-        '(docs/04-formal-verification-plan.md, commit 4); run `--engine literal` for a point evaluation at the model’s values'
-    : 'solver absent — `z3-solver` is not installed, so nothing can decide this obligation; ' +
-        'run `--engine literal` for a point evaluation at the model’s values, which is not a proof';
+/** What the probe found: a backend, a switched-off one, or nothing installed. */
+interface Z3Probe {
+  backendPresent: boolean;
+  /** True when `SYSPROSE_NO_Z3` forced the absence — see {@link loadZ3}. */
+  disabled: boolean;
+}
+
+/**
+ * The sentence a `tool-absent` row prints, which names what is actually missing.
+ *
+ * Three cases, because there are three: an engine that does not ship yet, a
+ * solver switched off in this environment, and a solver nobody installed. The
+ * middle one used to print the third one's sentence, which was false on every
+ * machine that has the optional dependency — including the one the corpus runs
+ * on. `src/semantics/smt/z3-bridge.ts` draws the same distinction in its own
+ * `Z3Absent.disabled`.
+ */
+function toolAbsentDetail(probe: Z3Probe): string {
+  if (probe.backendPresent) {
+    return (
+      'solver absent — the z3 backend is installed but this build carries no SMT engine to drive it ' +
+      '(docs/04-formal-verification-plan.md, commit 5); run `--engine literal` for a point evaluation at the model’s values'
+    );
+  }
+  if (probe.disabled) {
+    return (
+      'solver absent — the solver is switched off by SYSPROSE_NO_Z3 in this environment, so nothing ' +
+      'can decide this obligation; unset it, or run `--engine literal` for a point evaluation at the ' +
+      'model’s values, which is not a proof'
+    );
+  }
+  return (
+    'solver absent — `z3-solver` is not installed, so nothing can decide this obligation; ' +
+    'run `--engine literal` for a point evaluation at the model’s values, which is not a proof'
+  );
 }
 
 /**
@@ -901,7 +935,8 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
 
   const rows = obligationsOf(model, opts.scopeId !== undefined ? { scopeId: opts.scopeId } : {});
   const modelVersion = modelVersionOf(model, opts.sourceText);
-  const probe = engineAsked === 'literal' ? { backendPresent: false } : await loadZ3();
+  const probe: Z3Probe =
+    engineAsked === 'literal' ? { backendPresent: false, disabled: false } : await loadZ3();
   const engine: VerifyEngine = engineAsked === 'literal' ? 'literal' : 'smt';
   // `auto` resolves to `smt` and stops there. There is no third arm, and adding
   // one that fell back to `literal` would make a green build mean "no solver".
@@ -914,7 +949,7 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
           toVerdict(row, {
             claim: 'inconclusive',
             code: 'verification/tool-absent',
-            detail: toolAbsentDetail(probe.backendPresent),
+            detail: toolAbsentDetail(probe),
             premises: [],
             bindings: [],
             bound: { kind: 'none', detail: 'nothing was run, so nothing is claimed' },

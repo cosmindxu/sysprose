@@ -24,7 +24,7 @@
       "discharged": false,
       "code": "verification/tool-absent",
       "forgiven": false,
-      "detail": "solver absent — `z3-solver` is not installed, so nothing can decide this obligation; run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
+      "detail": "solver absent — the solver is switched off by SYSPROSE_NO_Z3 in this environment, so nothing can decide this obligation; unset it, or run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
       "premises": []
     },
     {
@@ -38,7 +38,7 @@
       "discharged": false,
       "code": "verification/tool-absent",
       "forgiven": false,
-      "detail": "solver absent — `z3-solver` is not installed, so nothing can decide this obligation; run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
+      "detail": "solver absent — the solver is switched off by SYSPROSE_NO_Z3 in this environment, so nothing can decide this obligation; unset it, or run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
       "premises": []
     }
   ]

@@ -625,13 +625,14 @@ unsatisfiable, and nothing in this build can say it.
 | `--engine` | What it does |
 |---|---|
 | `literal` | Evaluates at your model's values. `holds-at-values` counts as discharged, **because you asked for a point evaluation by name**. |
-| `smt` | The solver. Not in this build yet — every obligation comes back `verification/tool-absent`, exit 2. |
+| `smt` | The solver. The z3 backend loads; **no engine drives it yet** — every obligation comes back `verification/tool-absent`, exit 2. |
 | `auto` (default) | Resolves to `smt` when a solver backend loads, and otherwise reports `tool-absent` for everything. **It never falls back to `literal`.** |
 
 That last line is the rule to remember: the same file that is exit 0 under
 `--engine literal` is exit **2** under the default `--engine auto` today,
-because no solver is installed. "No solver, nothing to report, exit 0" would be
-indistinguishable from a proof, so it does not happen.
+because no SMT engine is in this build. "No solver, nothing to report, exit 0"
+would be indistinguishable from a proof, so it does not happen — and the row
+says which half is missing, the engine or the solver itself.
 
 **What is inconclusive, and what a flag may forgive.**
 
