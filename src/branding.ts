@@ -23,6 +23,18 @@ export const PRODUCT_SHORT_NAME = 'Sysprose';
 /** Machine-readable slug: package name, generator id, container/image names. */
 export const PRODUCT_SLUG = 'sysprose';
 
+/**
+ * The build's own version, as `package.json` declares it.
+ *
+ * Here rather than read from `package.json` because this module is bundled for
+ * the browser, where there is no `package.json` to read, and because an
+ * evidence record that names the tool version (docs/04-formal-verification-plan.md
+ * §3.10) needs the answer synchronously in both environments.
+ * `test/unit/branding.test.ts` fails if this and `package.json` ever disagree,
+ * which is the same treatment `PRODUCT_SLUG` and `PRODUCT_NAME` already get.
+ */
+export const PRODUCT_VERSION = '0.1.0';
+
 /** One-line positioning statement. */
 export const PRODUCT_TAGLINE =
   'Another system modeler — models as prose, tested by agents in the browser.';

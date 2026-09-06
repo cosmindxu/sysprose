@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "--allow-inconclusive does NOT forgive a relation naming a feature that does not exist",
+  "model": "test/fixtures/verification/models/unresolved-name.sysml",
+  "engine": "literal",
+  "allowInconclusive": true,
+  "note": "Every gate refusal used to map to verification/unsupported-construct, which the flag may lower to 0 — so a requirement reading `chassis.masss` (a typo) exited 0 with the flag. A misspelt feature is a defect in the model, not a construct outside the encodable fragment, and it is verification/not-evaluable, which nothing forgives."
+}

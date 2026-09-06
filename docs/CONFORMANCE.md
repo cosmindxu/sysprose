@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2408 passed / 0 failed / 0 skipped** across **133 files** + **128 E2E** across **78 spec files** = **2536 green** (measured 2026-09-06) |
+| Full automated suite | **2467 passed / 0 failed / 0 skipped** across **135 files** + **128 E2E** across **78 spec files** = **2595 green** (measured 2026-09-06) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -295,6 +295,71 @@ does.
 
 ---
 
+## 8. `verify` — one declared deviation, and two slots this tool does not bind
+
+`npm run sysprose -- verify` reaches a verdict. Three things about it belong in
+a conformance record rather than in a release note.
+
+### 8.1 The declared deviation: a requirement with a false assumption
+
+Part 1 §9.2.14.2.8 gives the result of a `RequirementCheck` as
+`allTrue(assumptions) implies allTrue(constraints)` — the shipped
+`Systems Library/Requirements.sysml` spells it with the call parentheses — so a
+requirement whose assumption is **false** is **true** under the specification's
+own semantics.
+
+**Sysprose reports it as `vacuous` ⇒ inconclusive ⇒ exit 2 instead.** A
+requirement discharged by an antecedent that does not hold tells an engineer
+nothing, and it is the classic way a requirement set passes while meaning
+nothing. This is a **deviation, not an interpretation**, it is the only one in
+the verification lane, and no flag launders it: `--allow-inconclusive` is scoped
+to `verification/timeout` and `verification/unsupported-construct` and does not
+reach `verification/vacuous-pass`. The case is pinned in
+`test/fixtures/verification/vacuous-assumption/` and its `--allow-inconclusive`
+twin.
+
+### 8.2 The verdict slot the standard defines, and this tool does not bind
+
+The standard's own verdict slot is
+`VerificationCases::VerificationCase::verdict : VerdictKind {redefines result}`.
+**Sysprose does not bind it.** What it writes instead — from a later commit of
+the verification plan — is a `metadata RequirementMetadata { attribute verdict =
+"…"; }` facet, which is a **tool-local, unbound tag holding a quoted string**:
+`RequirementMetadata` has **0 occurrences** in Part 1, which has only
+`DerivedRequirementMetadata` and `OriginalRequirementMetadata`, and
+`src/semantics/requirements.ts` says in its own header that the identifier
+resolves to nothing. A conforming reader is entitled to ignore that line
+entirely, and nothing obliges it to interpret the string. The value list mirrors
+the library's `VerdictKind` literals; it is not a `VerdictKind` reference.
+
+That facet is written for **two claims only** — `proved` ⇒ `pass`, `refuted` ⇒
+`fail` — and everything else, `holds-at-values` included, writes `inconclusive`.
+
+### 8.3 What the engines may and may not claim
+
+`--engine literal` evaluates the model's own feature values through the same
+`checkConstraints` surface the app's **Analyze** button uses. Its claim word is
+`holds-at-values` and it can never reach `proved`, which is reserved for
+UNSAT-of-negation under a satisfiable axiom set. `--engine auto` resolves to the
+SMT engine or reports `verification/tool-absent` for every obligation, exit 2;
+it never falls back to a point evaluation. **No solver ships in this build**, so
+every `auto` and `smt` run today is exit 2 — which is the honest answer, and is
+exercised on every run of the L8 corpus with `SYSPROSE_NO_Z3=1`.
+
+Evidence records bind a claim to a canonical model digest taken over **qualified
+names, never element ids** (ids are fresh UUIDs on every load), to the tool
+version, and to the flags that changed what was shown. They carry no timestamp,
+so they are byte-stable across runs. Their shape is
+[`schemas/evidence-record.schema.json`](schemas/evidence-record.schema.json),
+and every record the corpus produces is validated against it.
+
+**Untested, and stated as such:** what another tool makes of a Sysprose evidence
+record or verdict facet. The write path is tested only inside Sysprose. The
+interop probe that would answer it is a later commit of the plan; until it runs,
+no claim is made about what an external reader does with either.
+
+---
+
 ## Mapping to OMG conformance statements — and the honest gaps
 
 | OMG conformance area | Addressed by | Honest gap |
@@ -305,6 +370,7 @@ does.
 | **Annotation vocabulary (§7.27 keywords)** | Prefix keywords are read, resolved against the `MetadataDefinition`s in scope and preserved verbatim through a save (`src/semantics/keywords.ts`); Sysprose's own `#exceptional` ships as text a user pastes, over the mechanism §7.27.1/§7.27.4 defines | **The vocabulary is Sysprose's, not the specification's**, and the tool says so on every line that prints one. A third-party spelling is read only through a declared alias table, contributes to no worklist unless `obligations --from-keywords` asks it to, and is never reported as standard; `hasKeyword` — what a later engine asks — answers only from real resolution, so an alias hit is never mistaken for the shipped keyword. `#observable` is designed and deliberately unshipped. |
 | **OSLC PSM** | OSLC Core catalog/provider/query + Turtle/RDF-XML/JSON-LD + **`oslc:ResourceShape` full-shape resources** (`test/server/oslc-shapes`) | A representative subset of the OSLC SysML PSM (no delegated dialogs). |
 | **Requirements — contracts and obligations** | `contracts` / `obligations` read `RequirementDefinition` / `RequirementUsage` clause roles and case `objective`s into an assumption/guarantee inventory and a proof worklist (`src/semantics/contracts.ts`, `src/semantics/obligations.ts`) | **These commands report structure only.** They evaluate nothing and decide nothing: no solver stands behind them, and neither prints a word about whether a requirement holds. A requirement USAGE is not read through its definition's clauses (the definition carries its own contract, and the usage's row names it rather than being counted as bodiless); an attribute declared in a `port def` is one element however many ports reach it, so the variables a clause reads are reported per PATH and their `in`/`out` direction is taken from the port the path names; `discharged` and `stale` are declared in the status vocabulary and never produced, because both are read back from an evidence record that does not ship yet. |
+| **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/semantics/engines/literal.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). The only engine that ships evaluates at the model's own values, so its claim is `holds-at-values` and never `proved`; there is no solver in this build, so `--engine auto` and `--engine smt` are exit 2 with `verification/tool-absent`. What an external tool makes of a record or a verdict facet is untested. |
 
 **The load-bearing gap.** The interop client round-trips **fully** against our own
 spec-shaped server (§6), but the environment is **offline**, so there is **no live
@@ -323,7 +389,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2408 pass / 0 skip, 133 files)
+# Full unit + integration + conformance suite (2467 pass / 0 skip, 135 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

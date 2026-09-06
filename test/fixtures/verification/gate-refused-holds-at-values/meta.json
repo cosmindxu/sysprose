@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "a relation the gates refuse still gets its point evaluation, and the refusal is said out loud",
+  "model": "test/fixtures/verification/models/gate-refused-but-true.sysml",
+  "engine": "literal",
+  "note": "`bus.seats % 2 == 0` evaluates fine on the numeric surface and is refused by the SMT gates (`%` has no encoding). The literal engine answers it honestly — the point evaluation happened — but the detail names the refusal, because a reader shown only `holds-at-values` cannot tell that no other engine will ever confirm it."
+}

@@ -1,0 +1,184 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:sysprose:evidence-record",
+  "title": "Sysprose evidence record",
+  "description": "One claim, about one obligation, by one engine, over one model version. Written by `npm run sysprose -- verify --record PATH`, one record per obligation, as a JSON array. A record is a pure function of the model, the engine and the options — it carries NO timestamp, so two runs over an unchanged file produce byte-identical records and a diff answers 'did anything change?'. Every identity in it is a qualified name: element ids in this tool are fresh UUIDs on every load, so an id here would go stale on a no-op reparse.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "obligation",
+    "verdict",
+    "claim",
+    "engine",
+    "tool",
+    "bound",
+    "modelVersion",
+    "producedBy",
+    "flags",
+    "detail"
+  ],
+  "properties": {
+    "schema": { "const": "sysprose-evidence/1" },
+    "obligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Which obligation this record is about. `obligationDigest` is REQUIRED: without it a record could not be matched back to a normal form and so could not be checked against an edited model. It is NOT a unique key on its own — it is the RELATION'S normal form, so two requirements stating the same relation over the same features hash identically. A consumer keys a record by the pair (obligation.clause, obligation.obligationDigest); keying on the digest alone would let a `fail` on one requirement be matched to a `pass` on another.",
+      "required": ["requirement", "shortId", "clause", "obligationDigest", "expression"],
+      "properties": {
+        "requirement": {
+          "type": ["string", "null"],
+          "description": "Qualified name of the requirement, or null for a model-level relation."
+        },
+        "shortId": { "type": "string", "description": "The `<R-UAV-001>` short name, or ''." },
+        "clause": { "type": "string", "description": "Qualified name of the clause. Never an element id." },
+        "obligationDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "SHA-256 over the canonical ExprNode after unit lowering, with references canonicalised to qualified names — the same normal form the SMT-LIB exporter serialises. Stable across a reparse; moves when a literal, a unit or a referenced feature changes."
+        },
+        "expression": { "type": "string", "description": "The relation as written, for a person." }
+      }
+    },
+    "verdict": {
+      "enum": ["pass", "fail", "inconclusive"],
+      "description": "The facet, written for two claims only: `pass` iff the claim is `proved`, `fail` iff it is `refuted`. Everything else — including `holds-at-values` — is `inconclusive`, and the finer claim is in `claim`."
+    },
+    "claim": {
+      "enum": [
+        "proved",
+        "holds-at-values",
+        "holds-structurally",
+        "holds-within-bound",
+        "refuted",
+        "design-admitted",
+        "vacuous",
+        "inconclusive"
+      ],
+      "description": "`proved` is reserved for UNSAT-of-negation under a satisfiable axiom set; the literal engine can never reach it."
+    },
+    "engine": { "enum": ["literal", "smt"] },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "git": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The commit, when `git rev-parse` answered. Absent otherwise — never invented."
+        }
+      }
+    },
+    "bound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "description": "The point, scope or bound the claim holds within, never left to be inferred.",
+      "properties": {
+        "kind": { "enum": ["model-values", "free-variables", "timeout", "scope", "none"] },
+        "detail": { "type": "string" },
+        "si": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lhs", "rhs"],
+          "description": "The two magnitudes the comparison was actually made on, in coherent SI. Present whenever the unit-aware evaluator had both sides. It is here because a witness value read on its own can contradict the claim it supports: a DERIVED feature stores whatever its own equation produced, in whatever unit that arithmetic landed in and with no declared unit (`uav.endurance` stores 0.7877 — hours — beside a requirement written `>= 45.0 [min]`).",
+          "properties": {
+            "lhs": { "type": "number" },
+            "rhs": { "type": "number" },
+            "dimension": { "type": "string", "description": "The dimension the comparison was made in, as the unit registry writes it." }
+          }
+        }
+      }
+    },
+    "witness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "values"],
+      "description": "The point the claim was read at.",
+      "properties": {
+        "kind": { "const": "model-values" },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "qualifiedName", "value", "unit", "role"],
+            "properties": {
+              "path": { "type": "string" },
+              "qualifiedName": { "type": "string" },
+              "value": { "type": ["number", "boolean", "string", "null"] },
+              "unit": { "type": ["string", "null"] },
+              "role": {
+                "enum": ["input", "output", "parameter", "derived"],
+                "description": "How the feature gets its value. A `derived` value is COMPUTED, in whatever unit its own equation landed in and with `unit` null — read it against `bound.si`, never against the relation's own units."
+              }
+            }
+          }
+        }
+      }
+    },
+    "certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "text"],
+      "description": "A machine-checkable artefact from an external engine. No engine in this build produces one.",
+      "properties": { "format": { "type": "string" }, "text": { "type": "string" } }
+    },
+    "modelVersion": { "$ref": "#/definitions/modelVersion" },
+    "producedBy": {
+      "type": "string",
+      "description": "The command a reader can run to reproduce this record."
+    },
+    "flags": {
+      "type": "object",
+      "description": "Every option that changed what was shown — `--free` above all. A proof obtained under a released feature value may not be replayed as though the model had said something it did not.",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "array"],
+        "items": { "type": "string" }
+      }
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^verification/[a-z-]+$",
+      "description": "The catalogue code, for any claim that is not `proved` or `refuted`. See docs/DIAGNOSTIC-CODES.md."
+    },
+    "detail": { "type": "string", "description": "The sentence the report printed." }
+  },
+  "definitions": {
+    "modelVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["graph", "library", "sysprose"],
+      "properties": {
+        "graph": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "SHA-256 over the canonical USER model: library elements excluded, elements sorted by qualified name, every element id replaced by the qualified name it denotes."
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "SHA-256 over the source text, when the caller had it."
+        },
+        "library": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Elements the bundled standard library declares, per its own manifest."
+        },
+        "sysprose": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" },
+            "git": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -22,16 +22,28 @@
  *   npm run sysprose -- prompts model.sysml --element Engine
  *   cat model.sysml | npm run sysprose -- orphans -
  *
- * Exit codes are the contract, and they are `sysml-check`'s:
+ * Exit codes are the contract, and there are TWO of them here — see
+ * `EXIT_CODES` and `VERIFY_EXIT_CODES` in `./lib/sysprose-spec`, which every
+ * help text and the generated reference are renderings of. Each subcommand
+ * declares which one it obeys (`CommandSpec.exitContract`).
+ *
+ * For a subcommand that REPORTS, the contract is `sysml-check`'s:
  *   0  the model loaded cleanly and the report is of all of it
  *   1  the model did NOT load cleanly — the report is of what parsed, and a
  *      `degraded` banner on stderr says so
  *   2  usage or I/O problem — nothing was reported
  *
- * Note what 1 does NOT mean here. These subcommands report; they do not judge.
+ * Note what 1 does NOT mean there. Those subcommands report; they do not judge.
  * `orphans` finding four unused definitions is an answer, not a failure, so it
  * exits 0 — the exit code is about whether the model under the report is the
  * whole model, which is the only thing an automation can act on generically.
+ *
+ * For a subcommand that JUDGES — `verify` — 1 means the obligation was
+ * **refuted** with every feature at its model value, and every inconclusive
+ * (including an absent solver) is 2, as is a degraded model: a verdict over
+ * half a model is not a verdict. The two contracts are opposites at 1, which is
+ * why every judging run also publishes a top-level `verdict` block under
+ * `--json` rather than leaving a consumer to guess which contract it is reading.
  *
  * The report goes to stdout and everything about the FILE goes to stderr, for
  * every exit code: a file that parsed with warnings still had something wrong
@@ -83,8 +95,12 @@ import {
   promptsFor,
   requirementSatisfaction,
   traceabilityMatrix,
+  verifyModel,
   type ElementRef,
   type KeywordUse,
+  type ObligationVerdict,
+  type VerifyEngineOption,
+  type VerifyReport,
 } from '../src/api/index';
 import {
   isStatementKind,
@@ -137,6 +153,46 @@ interface Report {
   json: unknown;
   /** The human rendering, without a trailing newline. */
   text: string;
+  /**
+   * The run of a subcommand that JUDGES, for {@link judge} to turn into an exit
+   * code and a top-level `verdict` block.
+   *
+   * Absent for every `exitContract: 'report'` subcommand and present for every
+   * `'verify'` one, so a consumer reading a `--json` body with no `verdict`
+   * beside it can be certain nothing was judged.
+   */
+  verify?: VerifyReport;
+}
+
+/** The four figures the verify exit contract is computed from, and the answer. */
+interface Verdict {
+  discharged: number;
+  violated: number;
+  inconclusive: number;
+  designAdmitted: number;
+  exitCode: number;
+}
+
+/**
+ * The exit code of a judging run, degradation included.
+ *
+ * ONE PLACE, because the rule that a degraded model is exit 2 lives nowhere
+ * else. `verifyModel` computes the code from the obligations, which is all it
+ * can see; whether the model under those obligations was the whole model is a
+ * fact about the FILE, and it belongs here beside the `degraded` banner. A
+ * verdict over half a model is not a verdict, so degradation outranks
+ * everything — including a clean sweep of discharges, which is exactly the
+ * combination that would otherwise print a green build over a file that did not
+ * parse.
+ */
+function judge(report: VerifyReport, degraded: boolean): Verdict {
+  return {
+    discharged: report.discharged,
+    violated: report.violated,
+    inconclusive: report.inconclusive,
+    designAdmitted: report.designAdmitted,
+    exitCode: degraded ? 2 : report.exitCode,
+  };
 }
 
 /* ────────────────────────────── small helpers ───────────────────────────── */
@@ -1040,6 +1096,164 @@ function reportObligations(model: Model, name: string, args: ParsedArgs): Report
   return { json: r, text };
 }
 
+/* ─────────────────────────────── verify ─────────────────────────────────── */
+
+/** The three engine names, checked before the file is read. */
+const ENGINES: readonly VerifyEngineOption[] = ['auto', 'literal', 'smt'];
+
+/** `--engine`, refused rather than defaulted when it is not one of the three. */
+function verifyEngine(args: ParsedArgs): VerifyEngineOption {
+  const raw = flagValue(args, 'engine');
+  if (raw === undefined) return 'auto';
+  const found = ENGINES.find((e) => e === raw);
+  if (!found) {
+    throw new UsageError(`unknown --engine: ${raw} — one of ${ENGINES.join(', ')}`, true);
+  }
+  return found;
+}
+
+/**
+ * `--free`, and the one combination that is refused outright.
+ *
+ * The literal engine evaluates AT the model's values, so a freed feature has no
+ * value for it to read. Accepting the flag and ignoring it would print
+ * `holds-at-values` under a bound the evidence record then claimed was in
+ * force — a verdict about a design space nobody explored. It is refused with
+ * exit 2, in the same spirit as `--include-library` on a report that cannot
+ * honour it.
+ */
+function verifyFree(args: ParsedArgs, engine: VerifyEngineOption): string[] {
+  const raw = flagValue(args, 'free');
+  if (raw === undefined || raw.trim() === '') return [];
+  const free = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+  if (free.length > 0 && engine === 'literal') {
+    throw new UsageError(
+      '--free is an SMT-engine option: `--engine literal` evaluates at the model’s own values, so ' +
+        'there is nothing for it to release. Ask for `--engine smt`, or drop --free.',
+    );
+  }
+  return free;
+}
+
+/** One judged obligation, as a person reads it. */
+function verdictLines(v: ObligationVerdict): string[] {
+  const id = v.shortId ? ` (${v.shortId})` : '';
+  const where = v.requirement?.qualifiedName ?? v.clause.qualifiedName;
+  const what = v.expression === '' ? '(no constraint body)' : v.expression;
+  return [
+    `  ${where}${id}  ${what}`,
+    `    ${v.claim}: ${v.detail}`,
+    ...(v.code !== null ? [`    ${v.code}${v.forgiven ? ' — forgiven by --allow-inconclusive' : ''}`] : []),
+    // The assumptions are printed whether or not they mattered: a pass that
+    // stands on three assumptions is a different claim from an unconditional
+    // one, and a reader who is shown only the second cannot tell them apart.
+    ...v.premises.map((p) => `    assuming \`${p.expression}\` — ${p.holds} at these values`),
+    `    bound: ${v.bound.detail}`,
+    `    digest ${v.obligationDigest}`,
+  ];
+}
+
+/**
+ * `verify` — the subcommand that judges, and the only one whose exit code is a
+ * verdict.
+ *
+ * The header states the ENGINE first and the counts second, because the counts
+ * mean different things under different engines: `2 discharged` under
+ * `--engine literal` means "both hold at the values the file states", which is
+ * not a proof and is labelled as one point of the design space on every row.
+ */
+async function reportVerify(
+  model: Model,
+  name: string,
+  text: string,
+  args: ParsedArgs,
+  degraded: boolean,
+): Promise<Report> {
+  const engine = verifyEngine(args);
+  const free = verifyFree(args, engine);
+  const record = flagValue(args, 'record');
+  if (record !== undefined && degraded) {
+    // §3.10: the evidence write path refuses a degraded model at all. A record
+    // is the DURABLE artefact — it outlives the process status that was the
+    // only honest signal here — and one written over half a model would say
+    // `holds-at-values` about a file the same run's stderr calls unreadable,
+    // with a `modelVersion.graph` taken over the SALVAGED model, so a consumer
+    // re-checking it against the same broken file would find it current. This
+    // follows the `--include-library` precedent: a flag a run cannot honour is
+    // refused, never accepted and quietly reinterpreted.
+    throw new UsageError(
+      `--record refuses a model that did not load cleanly: ${name} is degraded, and an evidence ` +
+        'record over half a model is a durable claim about a file nobody could read. Fix the ' +
+        'findings above, or drop --record and read the verdict on stdout.',
+    );
+  }
+  const r = await verifyModel(model, {
+    engine,
+    free,
+    allowInconclusive: flagGiven(args, 'allow-inconclusive'),
+    sourceText: text,
+    producedBy: `npm run sysprose -- verify ${name} --engine ${engine}`,
+  });
+
+  if (record !== undefined) {
+    try {
+      mkdirSync(dirname(record), { recursive: true });
+      writeFileSync(record, `${JSON.stringify(r.records, null, 2)}\n`);
+    } catch (err) {
+      throw new UsageError(
+        `cannot write ${record}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const rendered = [
+    // The INCONCLUSIVE count leads (§2). A reader scanning one line must see
+    // the undecided figure before the green one: `2 discharged, 0 refuted, 1
+    // inconclusive` reads as a pass with a footnote, and the footnote is the
+    // part that decides the exit code.
+    `${name}: ${r.inconclusive} inconclusive, ${r.discharged} discharged, ${r.violated} refuted` +
+      `${r.designAdmitted > 0 ? `, ${r.designAdmitted} design-admitted` : ''}` +
+      ` — engine ${r.engine}${r.engineAsked !== r.engine ? ` (asked for ${r.engineAsked})` : ''}`,
+    // The sentence that keeps the whole command honest, and it is engine-shaped:
+    // a point evaluation may never be read as a proof, and a run with no engine
+    // may never be read as a clean one. The exit code in it is READ OFF the
+    // report rather than typed: the sentence used to hard-code "exit 2" while
+    // `exitCodeOf` could still return 0 over an empty row set, so a run printed
+    // one number and exited with another.
+    r.engine === 'literal'
+      ? '  a point evaluation at the model’s own values — `holds-at-values`, never `proved`'
+      : `  no solver ran: every obligation below is reported as undecided, and this run is exit ${r.exitCode}`,
+    ...(r.allowInconclusive
+      ? [
+          `  --allow-inconclusive forgave ${r.forgiven} of ${r.inconclusive} inconclusive row(s) — ` +
+            'it lowers the undecided codes only, never an absent solver, a vacuous obligation or a violation',
+        ]
+      : []),
+    ...(r.vacuous > 0
+      ? [
+          `  ${r.vacuous} obligation(s) vacuous — discharged by an antecedent that does not hold; ` +
+            'this tool reports that as undecided, which is a declared deviation (docs/CONFORMANCE.md)',
+        ]
+      : []),
+    ...(r.results.length === 0
+      ? [
+          '  this model states no obligation at all — there was nothing to verify, ' +
+            'which is exit 2: exit 0 means every obligation was discharged, and none was',
+        ]
+      : r.results.flatMap(verdictLines)),
+    `  model ${r.modelVersion.graph}`,
+    `  ${r.modelVersion.sysprose.name} ${r.modelVersion.sysprose.version}` +
+      `${r.modelVersion.sysprose.git ? ` (git ${r.modelVersion.sysprose.git.slice(0, 12)})` : ' (no git commit — none was found, and none is invented)'}` +
+      ` · standard library ${r.modelVersion.library} element(s)`,
+    ...(record !== undefined ? [`  ${r.records.length} evidence record(s) written to ${record}`] : []),
+    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text: rendered, verify: r };
+}
+
 function reportOrphans(model: Model, name: string): Report {
   const r = orphanReport(model);
   const text = [
@@ -1056,7 +1270,20 @@ function reportOrphans(model: Model, name: string): Report {
 
 /* ──────────────────────────────── dispatch ──────────────────────────────── */
 
-function buildReport(cmd: CommandSpec, model: Model, name: string, args: ParsedArgs): Report {
+/**
+ * Async because ONE subcommand is: `verify` resolves `--engine auto` by asking
+ * whether a solver backend can be imported, which is a dynamic import. Every
+ * other arm stays synchronous and is awaited for free.
+ */
+async function buildReport(
+  cmd: CommandSpec,
+  model: Model,
+  name: string,
+  text: string,
+  args: ParsedArgs,
+  /** Did the file load cleanly? Only `verify` reads it — see the `--record` refusal. */
+  degraded: boolean,
+): Promise<Report> {
   switch (cmd.name) {
     case 'stats':
       return reportStats(model, name);
@@ -1078,6 +1305,8 @@ function buildReport(cmd: CommandSpec, model: Model, name: string, args: ParsedA
       return reportContracts(model, name, args);
     case 'obligations':
       return reportObligations(model, name, args);
+    case 'verify':
+      return reportVerify(model, name, text, args, degraded);
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.
@@ -1107,6 +1336,11 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
       return;
     case 'prompts':
       promptsRef(args);
+      return;
+    case 'verify':
+      // Both before the file is read: a mistyped engine name, and `--free` on
+      // the engine that cannot honour it, are answers about the command line.
+      verifyFree(args, verifyEngine(args));
       return;
     default:
       return;
@@ -1258,11 +1492,16 @@ async function main(): Promise<number> {
 
   let built: Report;
   try {
-    built = buildReport(cmd, model, name, parsed);
+    built = await buildReport(cmd, model, name, text, parsed, degraded);
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
     return writeUsageError(cmd, err);
   }
+
+  // Computed once, here, because it is what the process exits with AND what the
+  // `--json` body publishes: a payload whose `verdict.exitCode` disagreed with
+  // the process's own status is the one thing an automation cannot recover from.
+  const verdict = built.verify ? judge(built.verify, degraded) : undefined;
 
   const body = flagGiven(parsed, 'json')
     ? JSON.stringify(
@@ -1278,6 +1517,10 @@ async function main(): Promise<number> {
                 },
               }
             : {}),
+          // Top level, beside `ok` and `file`, for every judging subcommand: an
+          // automation reads the verdict without knowing which payload key this
+          // subcommand publishes under or how its report is shaped.
+          ...(verdict ? { verdict } : {}),
           [cmd.payloadKey]: built.json,
         },
         null,
@@ -1312,11 +1555,14 @@ async function main(): Promise<number> {
     process.stderr.write(
       `sysprose ${cmd.name}: degraded — ${name} did not load cleanly ` +
         `(${report.summary.errors} error(s), ${report.summary.warnings} warning(s)); ` +
-        `reporting on what parsed\n`,
+        `${verdict ? 'nothing is judged over half a model' : 'reporting on what parsed'}\n`,
     );
-    return 1;
   }
-  return 0;
+  // A judging subcommand exits with its verdict — 1 for refuted, 2 for any
+  // inconclusive or a degraded model — and NOT with the reporting contract's 1,
+  // which means something else entirely (`VERIFY_EXIT_CODES`).
+  if (verdict) return verdict.exitCode;
+  return degraded ? 1 : 0;
 }
 
 runMain('sysprose', main);

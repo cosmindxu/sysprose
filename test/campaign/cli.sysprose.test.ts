@@ -27,8 +27,9 @@
  * are generous and the cases are chosen, not exhaustive.
  */
 import { describe, it, expect } from 'vitest';
+import Ajv from 'ajv';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 // The shipped package is imported rather than retyped: the whole point of the
@@ -41,6 +42,8 @@ const CLI = resolve(process.cwd(), 'scripts/sysprose.ts');
 const CHECK_CLI = resolve(process.cwd(), 'scripts/sysml-check.ts');
 const UAV = resolve(process.cwd(), 'examples/uav-isr.sysml');
 const FIX = resolve(process.cwd(), 'test/fixtures/agent-authoring');
+/** The L8 verdict corpus, whose models this level re-uses at the process boundary. */
+const FIXV = resolve(process.cwd(), 'test/fixtures/verification');
 
 interface Run {
   code: number;
@@ -791,9 +794,16 @@ describe('L7 — sysprose reporting command', () => {
       'prompts',
       'contracts',
       'obligations',
+      'verify',
     ]) {
       expect(top.stdout, `${name} must be listed`).toContain(name);
     }
+    // The top-level text names ONE contract and then says which subcommands do
+    // not obey it. Printing `EXIT_CODES` alone over a table that holds two
+    // contracts would tell a `verify` reader that exit 1 means the model did
+    // not load cleanly, when it means the requirement was refuted.
+    expect(top.stdout).toContain('for every subcommand that REPORTS');
+    expect(top.stdout).toContain('`verify` judges');
 
     const sub = run(['where-used', '--help']);
     expect(sub.code).toBe(0);
@@ -1317,6 +1327,195 @@ package P {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 180_000);
+
+  /**
+   * `verify` at the surface a person and a pipeline actually use.
+   *
+   * The suite above (`test/campaign/verification.test.ts`, level L8) pins the
+   * verdicts in process. This case pins the thing only a spawned process can
+   * show: the **exit code**, which is `verify`'s whole contract and the one
+   * thing an automation branches on. Exit 0 under `--engine literal` and exit 2
+   * under `--engine auto` on the SAME file — with `--allow-inconclusive` unable
+   * to move the second — is the honest-absence path, and it is the single most
+   * likely thing in this lane to rot into a silent green.
+   */
+  it('verify exits 0 at the model’s values and 2 with no solver, on the same file', () => {
+    const lit = run(['verify', UAV, '--engine', 'literal']);
+    expect(lit.code).toBe(0);
+    // The INCONCLUSIVE count leads (§2): a reader scanning one line must see
+    // the undecided figure before the green one.
+    expect(lit.stdout).toContain('0 inconclusive, 2 discharged, 0 refuted');
+    expect(lit.stdout).toContain("holds at the model's values");
+    // The claim word this engine may never print, at the surface a person
+    // reads. Matched as `proved:` — the claim is rendered `${claim}: ${detail}`
+    // — because the header line deliberately contains the word `proved` inside
+    // the disclaimer that says this engine never reaches it.
+    expect(lit.stdout).toContain('never `proved`');
+    expect(lit.stdout, 'a row claimed `proved` from the literal engine').not.toMatch(/\bproved:/);
+
+    const auto = run(['verify', UAV, '--engine', 'auto']);
+    expect(auto.code, 'a missing solver must never be a green build').toBe(2);
+    expect(auto.stdout).toContain('verification/tool-absent');
+
+    const forgiven = run(['verify', UAV, '--engine', 'auto', '--allow-inconclusive']);
+    expect(forgiven.code, '--allow-inconclusive must not lower an absent solver').toBe(2);
+  }, 240_000);
+
+  it('verify --json publishes a top-level verdict block, and --record writes the evidence', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const out = join(dir, 'nested', 'uav.json');
+      const r = run(['verify', UAV, '--engine', 'literal', '--json', '--record', out]);
+      expect(r.code).toBe(0);
+      const { keys, body } = payload<{
+        verdict: { discharged: number; violated: number; inconclusive: number; designAdmitted: number; exitCode: number };
+        verify: { engine: string; results: Array<{ claim: string; obligationDigest: string }> };
+      }>(r);
+      // Top level, beside `ok` and `file`: an automation reads the verdict
+      // without knowing this subcommand's payload key or report shape.
+      expect(keys).toEqual(['file', 'ok', 'verdict', 'verify']);
+      expect(body.verdict).toEqual({
+        discharged: 2,
+        violated: 0,
+        inconclusive: 0,
+        designAdmitted: 0,
+        exitCode: 0,
+      });
+      expect(body.verdict.exitCode, 'the payload and the process must agree').toBe(r.code);
+
+      // Against the schema that documents the envelope, not against a hand
+      // list of keys: `docs/schemas/verify-report.schema.json` is what a
+      // consumer is told to parse, and a schema nothing validates is prose.
+      const ajv = new Ajv({ allErrors: true, allowUnionTypes: true });
+      const validate = ajv.compile(
+        JSON.parse(readFileSync(resolve(process.cwd(), 'docs/schemas/verify-report.schema.json'), 'utf8')) as object,
+      );
+      expect(validate(body), ajv.errorsText(validate.errors)).toBe(true);
+
+      const records = JSON.parse(readFileSync(out, 'utf8')) as Array<{
+        schema: string;
+        claim: string;
+        verdict: string;
+        obligation: { obligationDigest: string };
+        modelVersion: { graph: string };
+      }>;
+      expect(records).toHaveLength(2);
+      for (const [i, rec] of records.entries()) {
+        expect(rec.schema).toBe('sysprose-evidence/1');
+        expect(rec.claim).toBe('holds-at-values');
+        // The facet is written for `proved` and `refuted` alone; a point
+        // evaluation never writes a pass.
+        expect(rec.verdict).toBe('inconclusive');
+        expect(rec.obligation.obligationDigest).toBe(body.verify.results[i].obligationDigest);
+        expect(rec.modelVersion.graph).toMatch(/^sha256:[0-9a-f]{64}$/);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('verify refuses a mistyped engine and --free on the engine that cannot honour it', () => {
+    const bad = run(['verify', UAV, '--engine', 'nope']);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toContain('unknown --engine');
+
+    // Accepted-and-ignored would print `holds-at-values` under a bound the
+    // evidence record then claimed was in force.
+    const freed = run(['verify', UAV, '--engine', 'literal', '--free', 'UAV::AirVehicle::cruisePower']);
+    expect(freed.code).toBe(2);
+    expect(freed.stderr).toContain('--free is an SMT-engine option');
+  }, 120_000);
+
+  it('verify exits 1 on a refutation and 2 on a degraded model', () => {
+    const refuted = run(['verify', `${FIXV}/models/refuted-at-values.sysml`, '--engine', 'literal']);
+    // 1 means REFUTED here, which is the opposite of what 1 means for every
+    // reporting subcommand — the reason `verify` carries its own contract.
+    expect(refuted.code).toBe(1);
+    expect(refuted.stdout).toContain('0 inconclusive, 0 discharged, 1 refuted');
+
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const broken = join(dir, 'broken.sysml');
+      // A file that does not parse cleanly still salvages a requirement. A
+      // reporting subcommand answers 1 over it; a verdict over half a model is
+      // not a verdict, so this is 2.
+      writeFileSync(
+        broken,
+        'package P {\n    part def A { attribute m : Real = 1.0; }\n    part a : A;\n' +
+          '    requirement def R { subject a : A; require constraint { a.m <= 2.0 } }\n' +
+          '    part def ?? ;\n}\n',
+      );
+      const degraded = run(['verify', broken, '--engine', 'literal']);
+      expect(degraded.code).toBe(2);
+      expect(degraded.stderr).toContain('nothing is judged over half a model');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it('verify --record refuses a model that did not load cleanly, and writes nothing', () => {
+    // §3.10 makes the refusal explicit for the write path, and this is where it
+    // has teeth: a record is the DURABLE artefact — it outlives the process
+    // status, which was the only honest signal — and one written here said
+    // `holds-at-values` about a file the same run's stderr calls half a model,
+    // with a `modelVersion.graph` taken over the SALVAGED elements, so a
+    // consumer re-checking it against the same broken file would find it
+    // current. Commit 7's `evidence-attach` consumes exactly these files.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const broken = join(dir, 'broken.sysml');
+      writeFileSync(
+        broken,
+        'package P {\n    part def A { attribute m : Real = 1.0; }\n    part a : A;\n' +
+          '    requirement def R { subject a : A; require constraint { a.m <= 2.0 } }\n' +
+          '    part def ?? ;\n}\n',
+      );
+      const out = join(dir, 'rec.json');
+      const r = run(['verify', broken, '--engine', 'literal', '--record', out]);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain('--record refuses a model that did not load cleanly');
+      expect(existsSync(out), 'a record was written over half a model').toBe(false);
+
+      // Without --record the same file still reports, and still exits 2.
+      const plain = run(['verify', broken, '--engine', 'literal']);
+      expect(plain.code).toBe(2);
+      expect(plain.stderr).toContain('nothing is judged over half a model');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it('verify exits 2 over a model that states no obligation, under every engine', () => {
+    // The hole this closes: `exitCodeOf` read the rows alone, so an `auto` run
+    // with no solver over a model with no requirements printed "no solver ran
+    // … this run is exit 2" and exited 0. The printed sentence and the process
+    // status must agree, and neither may be green.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const file = join(dir, 'empty.sysml');
+      writeFileSync(
+        file,
+        'package NoObligations {\n    part def Widget { attribute mass : ISQ::MassValue = 1.0 [kg]; }\n' +
+          '    part w : Widget;\n}\n',
+      );
+      const auto = run(['verify', file, '--engine', 'auto']);
+      expect(auto.code, 'no solver, nothing verified, and the build went green').toBe(2);
+      expect(auto.stdout).toContain('this run is exit 2');
+      expect(auto.stdout).toContain('this model states no obligation at all');
+
+      const lit = run(['verify', file, '--engine', 'literal']);
+      expect(lit.code, 'nothing was discharged, so nothing is green').toBe(2);
+
+      // And the payload agrees with the process, which is the one thing an
+      // automation cannot recover from.
+      const json = run(['verify', file, '--engine', 'auto', '--json']);
+      const { body } = payload<{ verdict: { exitCode: number } }>(json);
+      expect(body.verdict.exitCode).toBe(json.code);
+      expect(body.verdict.exitCode).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
 
   it('--no-library skips binding and still reports the file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));

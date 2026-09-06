@@ -1,0 +1,36 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": true,
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 1,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "FalseAssumption::TankMassLimit",
+      "shortId": "",
+      "clause": "FalseAssumption::TankMassLimit::«ConstraintUsage»",
+      "expression": "tank.mass <= 50.0 [kg]",
+      "obligationDigest": "sha256:e48e7e9460f58eeb4a02e1dcf243a575643186ab9df8ae71ee937416c0a03f01",
+      "claim": "vacuous",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/vacuous-pass",
+      "forgiven": false,
+      "detail": "vacuous at the model's values: the assumption `false` is false here, so the requirement is discharged by an antecedent that does not hold and says nothing about the design",
+      "premises": [
+        {
+          "expression": "false",
+          "holds": "fails"
+        }
+      ]
+    }
+  ]
+}

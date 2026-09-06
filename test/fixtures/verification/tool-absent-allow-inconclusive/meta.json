@@ -1,0 +1,9 @@
+{
+  "level": "L8",
+  "title": "An absent solver is still exit 2 with --allow-inconclusive",
+  "model": "examples/uav-isr.sysml",
+  "engine": "auto",
+  "noZ3": true,
+  "allowInconclusive": true,
+  "note": "A missing tool may never produce a green build: \"no solver installed, nothing to report, exit 0\" is indistinguishable from a proof."
+}

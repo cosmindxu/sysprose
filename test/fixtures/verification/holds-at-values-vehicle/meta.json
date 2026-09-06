@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "The vehicle mass requirement holds at 1500 kg against a 2000 kg limit",
+  "model": "examples/vehicle.sysml",
+  "engine": "literal",
+  "note": "The second shipped example, whose single requirement is a bare-literal comparison rather than a unit-literal one — a different path through the evaluator, same verdict word."
+}

@@ -25,12 +25,18 @@ npm run sysprose -- --help                 # the subcommand list
 npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
-**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+**The exit-code contract is per subcommand, and there are two of them.** Most
+subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations` — for those,
+0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify`
+*judges*, and its 1 means **refuted**; its section below states its own contract
+in full, and every section states which of the two it obeys.
 
-Exit **1** is about the *model*, not the report: these subcommands report and do
-not judge, so finding four unused definitions is an answer and exits 0. A model
-that did not load cleanly still produces a report — of what error recovery
-salvaged — with a `degraded` banner on stderr saying so.
+Under the reporting contract, exit **1** is about the *model*, not the report:
+those subcommands report and do not judge, so finding four unused definitions is
+an answer and exits 0. A model that did not load cleanly still produces a
+report — of what error recovery salvaged — with a `degraded` banner on stderr
+saying so. Under the judging contract a degraded model is exit **2**: a verdict
+over half a model is not a verdict.
 
 **stdout carries the report; stderr carries everything about the file**, for
 every exit code, so a pipeline gets the data and a person gets the warnings.
@@ -42,18 +48,19 @@ rather than reporting on the first one.
 
 ### The subcommands
 
-| Subcommand | Question it answers | `--json` key |
-|---|---|---|
-| [`stats`](#stats) | How big is this model, and what shape is it? | `stats` |
-| [`elements`](#elements) | What is in it? | `elements` |
-| [`requirements`](#requirements) | Are my requirements covered, and by what? | `requirements` |
-| [`trace`](#trace) | What satisfies, allocates, verifies, refines, derives or traces what? | `trace` |
-| [`connectivity`](#connectivity) | Which ports are wired, and which are left dangling? | `connectivity` |
-| [`where-used`](#where-used) | What breaks if I change this element? | `whereUsed` |
-| [`orphans`](#orphans) | What did I declare and never use? | `orphans` |
-| [`prompts`](#prompts) | What guidance applies to the element I am working on? | `prompts` |
-| [`contracts`](#contracts) | What does each requirement assume and guarantee, on which subject, honoured by which part? | `contracts` |
-| [`obligations`](#obligations) | What must be shown, over which axioms, and what do the unit gates refuse? | `obligations` |
+| Subcommand | Question it answers | `--json` key | Exit contract |
+|---|---|---|---|
+| [`stats`](#stats) | How big is this model, and what shape is it? | `stats` | reports |
+| [`elements`](#elements) | What is in it? | `elements` | reports |
+| [`requirements`](#requirements) | Are my requirements covered, and by what? | `requirements` | reports |
+| [`trace`](#trace) | What satisfies, allocates, verifies, refines, derives or traces what? | `trace` | reports |
+| [`connectivity`](#connectivity) | Which ports are wired, and which are left dangling? | `connectivity` | reports |
+| [`where-used`](#where-used) | What breaks if I change this element? | `whereUsed` | reports |
+| [`orphans`](#orphans) | What did I declare and never use? | `orphans` | reports |
+| [`prompts`](#prompts) | What guidance applies to the element I am working on? | `prompts` | reports |
+| [`contracts`](#contracts) | What does each requirement assume and guarantee, on which subject, honoured by which part? | `contracts` | reports |
+| [`obligations`](#obligations) | What must be shown, over which axioms, and what do the unit gates refuse? | `obligations` | reports |
+| [`verify`](#verify) | Does each obligation hold, by which engine, and under what bound? | `verify` | judges |
 
 ### Options every subcommand takes
 
@@ -86,6 +93,8 @@ _No flags of its own._
 
 Computed by `modelMetrics + countByMetaclass (src/api/analytics.ts)`. With `--json` the answer is published under `stats`, beside `ok` and `file`.
 
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
 ### `elements`
 
 **What is in it?**
@@ -100,6 +109,8 @@ npm run sysprose -- elements <file.sysml|-> [options]
 
 Computed by `buildGrid (src/diagram/grid.ts)`. With `--json` the answer is published under `elements`, beside `ok` and `file`.
 
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
 ### `requirements`
 
 **Are my requirements covered, and by what?**
@@ -113,6 +124,8 @@ npm run sysprose -- requirements <file.sysml|-> [options]
 | `--kind KIND` | Show only statements of this kind: requirement \| prose \| prompt | every kind, each non-normative row labelled |
 
 Computed by `requirementSatisfaction (src/api/analytics.ts) + buildRequirementsTable (src/diagram/requirements-table.ts)`. With `--json` the answer is published under `requirements`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
 
 ### `trace`
 
@@ -130,6 +143,8 @@ npm run sysprose -- trace <file.sysml|-> [options]
 
 Computed by `traceabilityMatrix (src/api/analytics.ts)`. With `--json` the answer is published under `trace`, beside `ok` and `file`.
 
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
 ### `connectivity`
 
 **Which ports are wired, and which are left dangling?**
@@ -141,6 +156,8 @@ npm run sysprose -- connectivity <file.sysml|-> [options]
 _No flags of its own._
 
 Computed by `connectivityReport (src/api/analytics.ts)`. With `--json` the answer is published under `connectivity`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
 
 ### `where-used`
 
@@ -157,6 +174,8 @@ npm run sysprose -- where-used <file.sysml|-> [options]
 
 Computed by `impactClosure (src/api/analytics.ts)`. With `--json` the answer is published under `whereUsed`, beside `ok` and `file`.
 
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
 ### `orphans`
 
 **What did I declare and never use?**
@@ -168,6 +187,8 @@ npm run sysprose -- orphans <file.sysml|-> [options]
 _No flags of its own._
 
 Computed by `orphanReport (src/api/analytics.ts)`. With `--json` the answer is published under `orphans`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
 
 ### `prompts`
 
@@ -182,6 +203,8 @@ npm run sysprose -- prompts <file.sysml|-> [options]
 | `--element REF` | The element: an id, a qualified name, or a name unique in the model | — |
 
 Computed by `promptsFor (src/api/analytics.ts)`. With `--json` the answer is published under `prompts`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
 
 ### `contracts`
 
@@ -198,6 +221,8 @@ npm run sysprose -- contracts <file.sysml|-> [options]
 
 Computed by `contractReport (src/api/verification.ts)`. With `--json` the answer is published under `contracts`, beside `ok` and `file`.
 
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
 ### `obligations`
 
 **What must be shown, over which axioms, and what do the unit gates refuse?**
@@ -213,6 +238,27 @@ npm run sysprose -- obligations <file.sysml|-> [options]
 | `--from-keywords` | Let a third-party `#precondition` / `#postcondition` file a premise or an obligation; each such row prints the spelling that filed it | a keyword files nothing |
 
 Computed by `obligationsReport (src/api/verification.ts)`. With `--json` the answer is published under `obligations`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
+### `verify`
+
+**Does each obligation hold, by which engine, and under what bound?**
+
+```bash
+npm run sysprose -- verify <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--engine NAME` | Which engine decides: auto \| literal \| smt. `auto` resolves to `smt` when a solver backend loads and otherwise reports every obligation as `verification/tool-absent` — it never falls back to `literal`, because a point evaluation is green only when asked for by name | `auto` |
+| `--free F` | Release a feature value (qualified name) so the engine may vary it; a refutation obtained this way is `design-admitted`, not a violation. An SMT-engine option: the literal engine evaluates AT the values and refuses it | none — every feature value is a binding the proof carries |
+| `--record PATH` | Write the evidence records to PATH: one per obligation, each naming the claim, the engine, the tool version, the bound and the canonical model digest | — |
+| `--allow-inconclusive` | Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, a vacuous obligation or a design-admitted one, and never over a refutation | — |
+
+Computed by `verifyModel (src/api/verification.ts)`. With `--json` the answer is published under `verify`, beside `ok` and `file`.
+
+**Exit codes.** 0 every obligation discharged non-vacuously by the engine that was asked for, and there was at least one to discharge · 1 at least one obligation refuted with every feature at its model value · 2 usage/IO error, a degraded model, a model that states no obligation at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it.
 
 ### `trace` relationship presets
 
@@ -262,4 +308,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*10 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*11 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

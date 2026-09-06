@@ -1,0 +1,31 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": true,
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "Misspelt::MassLimit",
+      "shortId": "",
+      "clause": "Misspelt::MassLimit::«ConstraintUsage»",
+      "expression": "chassis.masss <= 2000.0 [kg]",
+      "obligationDigest": "sha256:40447eff9da792adc143a03b702311f35b10d0a3ec5427f6f692821bbff9134f",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/not-evaluable",
+      "forgiven": false,
+      "detail": "not evaluable at the model's values — the relation itself cannot be read (unresolved-name): `chassis.masss` names nothing this tool can resolve in the scope of the relation, so there is no variable to encode. This is a defect in the relation, not a construct outside the fragment, so `--allow-inconclusive` does not forgive it",
+      "premises": []
+    }
+  ]
+}

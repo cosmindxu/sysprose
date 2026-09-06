@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "--allow-inconclusive does NOT forgive kilograms compared against metres",
+  "model": "test/fixtures/verification/models/dimension-clash.sysml",
+  "engine": "literal",
+  "allowInconclusive": true,
+  "note": "The second half of the refusal split, and the reason it is stated over reasons rather than over the mere fact that a gate spoke. A dimensional error is a defect in the relation — nobody can say whether it holds — so it is verification/not-evaluable and exits 2 with the flag, where `%` or a collection is verification/unsupported-construct and may be lowered to 0."
+}

@@ -1,0 +1,45 @@
+{
+  "engineAsked": "auto",
+  "engine": "smt",
+  "toolAbsent": true,
+  "allowInconclusive": false,
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 2,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "UAVSurveillanceSystem::EnduranceRequirement",
+      "shortId": "",
+      "clause": "UAVSurveillanceSystem::EnduranceRequirement::«ConstraintUsage»",
+      "expression": "uav.endurance >= 45.0 [min]",
+      "obligationDigest": "sha256:e4618d6fd278f0b61d3cfb371ee1c3ec8fad02a0cf2ad962e1a34179c845490e",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/tool-absent",
+      "forgiven": false,
+      "detail": "solver absent — `z3-solver` is not installed, so nothing can decide this obligation; run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
+      "premises": []
+    },
+    {
+      "requirement": "UAVSurveillanceSystem::MassRequirement",
+      "shortId": "",
+      "clause": "UAVSurveillanceSystem::MassRequirement::«ConstraintUsage»",
+      "expression": "uav.mtow <= 25.0 [kg]",
+      "obligationDigest": "sha256:24296a7c6a06b2e66207cc2c3f3dac028f58123a199b55cbf7842f45ef02d545",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/tool-absent",
+      "forgiven": false,
+      "detail": "solver absent — `z3-solver` is not installed, so nothing can decide this obligation; run `--engine literal` for a point evaluation at the model’s values, which is not a proof",
+      "premises": []
+    }
+  ]
+}

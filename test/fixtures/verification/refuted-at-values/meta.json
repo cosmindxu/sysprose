@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A 3000 kg chassis against a 2000 kg limit is refuted, and that is exit 1",
+  "model": "test/fixtures/verification/models/refuted-at-values.sysml",
+  "engine": "literal",
+  "note": "The only thing in this lane that is exit 1. Every feature is at its model value, so this is a violation of the requirement rather than a design the model admits."
+}

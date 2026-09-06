@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A requirement with prose and no constraint body is an unsupported construct, exit 2",
+  "model": "test/fixtures/verification/models/prose-only.sysml",
+  "engine": "literal",
+  "note": "The commonest row a real requirement set produces. Nothing was decided about it, so the default is exit 2 — never a silence that reads as a pass."
+}

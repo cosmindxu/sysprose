@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A relation this lane encodes whose features carry no value is `not evaluable`, never a pass",
+  "model": "test/fixtures/verification/models/no-value-in-scope.sysml",
+  "engine": "literal",
+  "note": "`checkConstraints` has a third status and this is it. A constraint that silently disappears reads as one that holds, which is the failure direction the whole lane exists to avoid."
+}

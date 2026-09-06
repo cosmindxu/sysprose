@@ -1,0 +1,31 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": true,
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "DimClash::MassLimit",
+      "shortId": "",
+      "clause": "DimClash::MassLimit::«ConstraintUsage»",
+      "expression": "chassis.mass <= 2000.0 [m]",
+      "obligationDigest": "sha256:2948d1064e5cca851d167159f25e2bd7d3309dbf2a916efadd20ab893fa39269",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/not-evaluable",
+      "forgiven": false,
+      "detail": "not evaluable at the model's values — the relation itself cannot be read (dimension-clash): two operands that must share a dimension do not — no conversion relates them, so the comparison cannot be judged. This is a defect in the relation, not a construct outside the fragment, so `--allow-inconclusive` does not forgive it",
+      "premises": []
+    }
+  ]
+}

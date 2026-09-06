@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DIAGNOSTIC_CODES, diagnosticCode, isKnownCode, renderHint } from '@text/index';
+import { VERIFICATION_CODES } from '@api/index';
 
 const DOC = readFileSync(resolve(process.cwd(), 'docs/DIAGNOSTIC-CODES.md'), 'utf8');
 const documented = new Set([...DOC.matchAll(/^### `([^`]+)`$/gm)].map((m) => m[1]));
@@ -34,6 +35,24 @@ describe('diagnostic-code catalogue', () => {
       expect(c.when.length, `${c.code} has no trigger description`).toBeGreaterThan(10);
       expect(c.hint.length, `${c.code} has no hint`).toBeGreaterThan(10);
     }
+  });
+
+  it('explains every `verification/*` code the tool names to a reader', () => {
+    // The verification lane states its contracts over CODE STRINGS —
+    // `ALLOW_INCONCLUSIVE_CODES` is the scope of `--allow-inconclusive`, and
+    // `verify --help`, docs/CLI-REFERENCE.md and docs/USER-GUIDE.md all print
+    // those strings and tell the reader to look them up here. Nothing used to
+    // enforce that they could be: `verification/timeout` was named in four
+    // shipped surfaces and was in no catalogue entry, and the only thing
+    // stopping the next engine from adding a fifth such code was somebody
+    // remembering. A code a person is shown is a code the catalogue explains,
+    // whether or not an engine can reach it yet.
+    expect(VERIFICATION_CODES.size, 'the verification lane stopped naming any code').toBeGreaterThan(4);
+    const missing = [...VERIFICATION_CODES].filter((c) => !isKnownCode(c));
+    expect(
+      missing,
+      `named in source but absent from the catalogue — add the entry in src/text/langium/diagnostic-codes.ts:\n${missing.join('\n')}`,
+    ).toEqual([]);
   });
 
   it('has no duplicate codes', () => {

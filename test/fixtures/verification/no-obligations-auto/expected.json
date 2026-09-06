@@ -1,0 +1,16 @@
+{
+  "engineAsked": "auto",
+  "engine": "smt",
+  "toolAbsent": true,
+  "allowInconclusive": false,
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": []
+}

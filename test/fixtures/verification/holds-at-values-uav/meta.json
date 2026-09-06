@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "Both shipped UAV requirements hold at the model's own values",
+  "model": "examples/uav-isr.sysml",
+  "engine": "literal",
+  "note": "The plan's first deliverable. `--engine literal` was asked for by name, so `holds-at-values` counts as discharged and the run is exit 0 — and every row still says `holds-at-values`, never `proved`."
+}

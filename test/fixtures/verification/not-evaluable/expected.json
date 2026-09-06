@@ -1,0 +1,31 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "NoValue::TorqueLimit",
+      "shortId": "",
+      "clause": "NoValue::TorqueLimit::«ConstraintUsage»",
+      "expression": "motor.torque <= 10.0 [N*m]",
+      "obligationDigest": "sha256:99d7cd3d21d8b8770a369c179770a56d5c54847f170cafca489fae40df250fb1",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/not-evaluable",
+      "forgiven": false,
+      "detail": "not evaluable at the model's values: Could not evaluate: \"motor.torque\" has no value in scope",
+      "premises": []
+    }
+  ]
+}

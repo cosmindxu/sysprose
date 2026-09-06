@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "A refutation is still exit 1 with --allow-inconclusive",
+  "model": "test/fixtures/verification/models/refuted-at-values.sysml",
+  "engine": "literal",
+  "allowInconclusive": true,
+  "note": "The flag is scoped to obligations that are UNDECIDED. A violation is decided, and exit 1 beats the flag: forgiving it would turn the one thing this lane exists to find into a green build."
+}

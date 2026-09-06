@@ -24,6 +24,7 @@ import {
   COMMON_FLAGS,
   EXIT_CODES,
   STATEMENT_KIND_FLAG_VALUES,
+  VERIFY_EXIT_CODES,
   flagsFor,
 } from '../../scripts/lib/sysprose-spec';
 
@@ -76,6 +77,59 @@ describe('the generated command reference', () => {
   it('states the exit-code contract', () => {
     expect(DOC).toContain('0 clean');
     expect(DOC).toContain('2 usage/IO error');
+  });
+
+  /**
+   * The third contract, guarded where it can actually go wrong: PER SECTION.
+   *
+   * This document used to state the exit codes once for the whole `sysprose`
+   * section, which was true while every subcommand reported. `verify` judges,
+   * and under that one paragraph its exit **1** would have been documented as
+   * "the model did not load cleanly" — the exact opposite of *refuted*. A
+   * document-wide `toContain` would not have noticed: `VERIFY_EXIT_CODES`
+   * appearing SOMEWHERE says nothing about it appearing in the right place, or
+   * about the reporting sections not carrying it too. So each section is sliced
+   * out and checked against the contract its own row declares, both ways.
+   */
+  it('quotes each subcommand’s own exit contract in its own section, and no other', () => {
+    const sections = new Map<string, string>();
+    const heads = [...DOC.matchAll(/^### `([a-z-]+)`$/gm)];
+    for (const [i, m] of heads.entries()) {
+      const start = m.index!;
+      const end = i + 1 < heads.length ? heads[i + 1].index! : DOC.length;
+      sections.set(m[1], DOC.slice(start, end));
+    }
+    // Both contracts must actually be in play, or every assertion below holds
+    // trivially over a table that lost one of them.
+    expect(
+      COMMANDS.map((c) => c.exitContract).filter((v, i, a) => a.indexOf(v) === i).sort(),
+      'the command table no longer declares both exit contracts',
+    ).toEqual(['report', 'verify']);
+
+    for (const cmd of COMMANDS) {
+      const section = sections.get(cmd.name);
+      expect(section, `no section for \`${cmd.name}\``).toBeDefined();
+      const own = cmd.exitContract === 'verify' ? VERIFY_EXIT_CODES : EXIT_CODES;
+      const other = cmd.exitContract === 'verify' ? EXIT_CODES : VERIFY_EXIT_CODES;
+      const body = (s: string) => s.replace('Exit codes: ', '');
+      expect(
+        section!.includes(body(own)),
+        `\`${cmd.name}\` declares exitContract '${cmd.exitContract}' but its section does not quote that contract — run \`npm run commands\``,
+      ).toBe(true);
+      expect(
+        section!.includes(body(other)),
+        `\`${cmd.name}\`'s section quotes the WRONG exit contract`,
+      ).toBe(false);
+    }
+  });
+
+  it('states in words that `verify`’s 1 means refuted, not a load failure', () => {
+    // The two contracts are opposites at 1, and that is the sentence a reader
+    // acts on. It is asserted against the constant rather than retyped.
+    expect(VERIFY_EXIT_CODES).toContain('1 at least one obligation refuted');
+    expect(EXIT_CODES).toContain('1 the model did not load cleanly');
+    expect(VERIFY_EXIT_CODES).not.toBe(EXIT_CODES);
+    expect(VERIFY_EXIT_CODES).not.toBe(CHECK_EXIT_CODES);
   });
 });
 

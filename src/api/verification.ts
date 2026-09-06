@@ -1,6 +1,6 @@
 /**
- * The verification lane's reporting surface: `contractReport` and
- * `obligationsReport`.
+ * The verification lane's reporting surface: `contractReport`,
+ * `obligationsReport` — and `verifyModel`, which is the one that judges.
  *
  * THE CHARTER OF THIS LANE, IN ONE LINE: **encode after the gates; report what
  * the gates refuse.** It is the same sentence that heads
@@ -8,12 +8,12 @@
  * every consumer comes through and the invariant has to be legible at the door.
  * What follows from it, and what nothing in this lane may break:
  *
- *  - **These two commands report STRUCTURE, never truth.** They may say how
+ *  - **The two REPORT commands report STRUCTURE, never truth.** They may say how
  *    many contracts there are, on how many subjects, and which fragment each
  *    relation lands in. They may never say satisfied, proved, consistent, or
  *    anything about whether a requirement holds. There is no solver behind
- *    them and there will not be one: `verify` is a separate command with a
- *    separate exit contract.
+ *    them: `verify` is a separate command, with a separate exit contract, and
+ *    it is the only function here that reaches a verdict.
  *  - **A relation a gate refuses is LISTED with its reason, never omitted.**
  *    A relation that disappears from a worklist reads as one that holds, which
  *    is the failure direction this whole lane exists to avoid. Every refusal
@@ -21,9 +21,10 @@
  *  - **An empty inventory is stated, never rendered as zero problems.** A model
  *    with requirements and no contracts is a finding about the reader's model
  *    or about this tool, and either way they have to be told.
- *  - **`discharged` and `stale` are read back from an evidence record**, never
- *    computed here. Until that record ships there is no way for these reports
- *    to produce either, and they do not.
+ *  - **`discharged` and `stale` on a WORKLIST row are read back from an evidence
+ *    record**, never computed by `obligationsReport`. `verifyModel` is what
+ *    produces the record; reading it back into the worklist is a later commit,
+ *    so `obligationsOf` still returns neither.
  *  - **One diagnostic source and one prefix for the whole lane**:
  *    `verification/*`, under the single `DiagnosticSource` `'verification'`.
  *    Four sources for one lane would let a consumer filter three of them and
@@ -63,6 +64,23 @@ import {
   type ObligationOptions,
   type ObligationStatus,
 } from '../semantics/obligations';
+import {
+  judgeLiterally,
+  type LiteralOutcome,
+  type PremiseReading,
+  type ValueBinding,
+} from '../semantics/engines/literal';
+import {
+  modelVersionOf,
+  obligationDigest,
+  recordEvidence,
+  verdictFor,
+  type EvidenceBound,
+  type EvidenceClaim,
+  type EvidenceRecord,
+  type EvidenceVerdict,
+  type ModelVersion,
+} from './evidence';
 
 /* ─────────────────────────── the contract report ─────────────────────────── */
 
@@ -632,4 +650,460 @@ function readableHost(eClass: string): string {
     default:
       return eClass;
   }
+}
+
+/* ══════════════════════════════ verify ═══════════════════════════════════ */
+
+/**
+ * `verify` — the only function in this module that reaches a verdict.
+ *
+ * READ THE EXIT CONTRACT FIRST (`VERIFY_EXIT_CODES` in
+ * `scripts/lib/sysprose-spec.ts`, and §2 of the plan). It is the third
+ * exit-code contract in this repository and it does not resemble the other two:
+ * **1 means refuted**, not "the model did not load cleanly", and **every
+ * inconclusive is 2**. A consumer that branched on `sysprose`'s reporting
+ * contract here would read a refutation as a parse failure.
+ *
+ * THE FOUR RULES THIS FUNCTION EXISTS TO ENFORCE, each of which was won at some
+ * cost and none of which may be relaxed by a later engine:
+ *
+ *  1. **A missing solver is never a green build.** `--engine auto` resolves to
+ *     `smt` when a backend loads and otherwise emits `verification/tool-absent`
+ *     for every obligation ⇒ inconclusive ⇒ exit 2. It NEVER falls back to the
+ *     literal engine. A point evaluation is only ever green when it was asked
+ *     for by name.
+ *  2. **`--allow-inconclusive` is scoped over CODES, not over prose.** It lowers
+ *     2 → 0 for {@link ALLOW_INCONCLUSIVE_CODES} and nothing else: never
+ *     `tool-absent`, never `vacuous`, never `design-admitted`, and never over a
+ *     violation — exit 1 beats it.
+ *  3. **The verdict facet is written for two claims only.** `proved` ⇒ `pass`,
+ *     `refuted` ⇒ `fail`; everything else writes `inconclusive` and puts the
+ *     finer claim in the record. `discharged` is a different question from
+ *     `verdict`, and the two are separate fields here for exactly that reason:
+ *     under `--engine literal` a `holds-at-values` row IS discharged (the
+ *     reader asked for a point evaluation) and its facet is still `inconclusive`.
+ *  4. **Vacuity is inconclusive, always, and no flag launders it.** It is this
+ *     plan's one declared deviation from the standard's
+ *     `allTrue(assumptions) implies allTrue(constraints)` reading (§6, §8.4.17),
+ *     recorded in `docs/CONFORMANCE.md`, and it exits 2 with and without
+ *     `--allow-inconclusive`.
+ */
+
+/** Which engine decides. `auto` picks `smt` when a backend loads, else nothing. */
+export type VerifyEngine = 'literal' | 'smt';
+export type VerifyEngineOption = 'auto' | VerifyEngine;
+
+/** How a run may be narrowed, and what it is allowed to forgive. */
+export interface VerifyOptions {
+  /** Default `auto`, which never silently downgrades to `literal`. */
+  engine?: VerifyEngineOption;
+  /**
+   * Feature values to release, by qualified name — an SMT-engine option.
+   *
+   * The literal engine evaluates AT the model's values, so there is nothing for
+   * it to free: asking is a programming error and throws rather than being
+   * accepted and ignored. `--free` is also two-sided by rule (§3.4): a freed
+   * feature unbounded on either side yields `inconclusive`, never `refuted`.
+   */
+  free?: readonly string[];
+  /** Lower 2 → 0 for the undecided codes only. Never for a violation. */
+  allowInconclusive?: boolean;
+  /** Restrict to obligations at or under this element. */
+  scopeId?: ElementId;
+  /** The file's bytes, so the record binds the text as well as the graph. */
+  sourceText?: string;
+  /** The command a reader could re-run, recorded in every record. */
+  producedBy?: string;
+}
+
+/**
+ * The inconclusive codes `--allow-inconclusive` may lower to 0.
+ *
+ * Stated as a SET of codes rather than as a sentence, so every gate in the plan
+ * can be read against it mechanically. `verification/timeout` is not emitted
+ * until the SMT engine lands; it is listed now because the flag's scope is part
+ * of the exit contract and a scope that grew quietly with each new engine would
+ * be no scope at all.
+ */
+export const ALLOW_INCONCLUSIVE_CODES: ReadonlySet<string> = new Set([
+  'verification/timeout',
+  'verification/unsupported-construct',
+]);
+
+/** What one obligation came to, and everything a reader needs to argue with it. */
+export interface ObligationVerdict {
+  requirement: ContractRef | null;
+  shortId: string;
+  clause: ContractRef;
+  expression: string;
+  /** The canonical identity of the relation — never an element id. */
+  obligationDigest: string;
+  claim: EvidenceClaim;
+  /** The FACET: `pass` only for `proved`, `fail` only for `refuted`. */
+  verdict: EvidenceVerdict;
+  /** Does this row count as discharged UNDER THE ENGINE THAT WAS ASKED FOR? */
+  discharged: boolean;
+  /** The `verification/*` code, for any row that is not decided. */
+  code: string | null;
+  /** Was this row's contribution to the exit code lowered by `--allow-inconclusive`? */
+  forgiven: boolean;
+  detail: string;
+  /** The assumptions, evaluated before the guarantee. */
+  premises: PremiseReading[];
+  /**
+   * The point, scope or bound the claim holds within.
+   *
+   * For a point evaluation its `si` slot carries the two magnitudes the
+   * comparison was actually made on. That is not decoration: a DERIVED feature
+   * stores whatever its own equation produced (uav.endurance stores 0.7877 —
+   * hours — beside a requirement written in `[min]`), so a witness read on its
+   * own reads as refuting the claim it stands under. The SI pair is the only
+   * place a reader can see 2835.7 s against 2700 s and agree with the verdict.
+   */
+  bound: EvidenceBound;
+  /** The model's own values for the features the relation reads. */
+  bindings: ValueBinding[];
+}
+
+/** What a run came to, with the arithmetic behind its exit code. */
+export interface VerifyReport {
+  /** What the caller asked for. */
+  engineAsked: VerifyEngineOption;
+  /** What it resolved to. `auto` resolves to `smt`, never to `literal`. */
+  engine: VerifyEngine;
+  /** True when the resolved engine could not run at all — every row is `tool-absent`. */
+  toolAbsent: boolean;
+  results: ObligationVerdict[];
+  /** Discharged non-vacuously by the engine that was asked for. */
+  discharged: number;
+  /** Refuted with every feature at its model value. Nothing else is exit 1. */
+  violated: number;
+  /** Everything undecided, including vacuous and tool-absent. */
+  inconclusive: number;
+  /** Refutations obtained under `--free`: a design the model admits, exit 2. */
+  designAdmitted: number;
+  /** How many inconclusive rows `--allow-inconclusive` lowered. */
+  forgiven: number;
+  /** How many rows were vacuous — the figure the deviation register is about. */
+  vacuous: number;
+  exitCode: 0 | 1 | 2;
+  allowInconclusive: boolean;
+  free: string[];
+  modelVersion: ModelVersion;
+  /** One record per obligation, ready to write with `--record`. */
+  records: EvidenceRecord[];
+  diagnostics: Diagnostic[];
+}
+
+/** The claim each engine accepts as a discharge. Nothing else counts. */
+const DISCHARGES: Record<VerifyEngine, ReadonlySet<EvidenceClaim>> = {
+  // A point evaluation is green only because the reader named it.
+  literal: new Set<EvidenceClaim>(['holds-at-values']),
+  smt: new Set<EvidenceClaim>(['proved']),
+};
+
+/** What the literal engine's outcome is called, and under which code. */
+const LITERAL_CLAIM: Record<LiteralOutcome, { claim: EvidenceClaim; code: string | null }> = {
+  'holds-at-values': { claim: 'holds-at-values', code: null },
+  refuted: { claim: 'refuted', code: null },
+  // Vacuity is its own claim, not a flavour of inconclusive: the exit contract
+  // treats it as undecided, and the register treats it as a declared deviation.
+  vacuous: { claim: 'vacuous', code: 'verification/vacuous-pass' },
+  // The values do not determine the answer. NOT forgivable — this is precisely
+  // the case §1's warning is about, where a constraint that quietly disappears
+  // reads as one that holds.
+  'not-evaluable': { claim: 'inconclusive', code: 'verification/not-evaluable' },
+  // The construct is outside the fragment this lane encodes at all. Forgivable,
+  // because it says nothing about whether the requirement holds.
+  unsupported: { claim: 'inconclusive', code: 'verification/unsupported-construct' },
+};
+
+/**
+ * Every `verification/*` code this lane can put in front of a reader.
+ *
+ * Derived rather than retyped, and exported so the catalogue guard can assert
+ * that each one has an entry in `docs/DIAGNOSTIC-CODES.md`. The lane states its
+ * contracts over code STRINGS — the scope of `--allow-inconclusive` above is a
+ * set of them, and `verify --help` tells the reader to look them up — so a code
+ * the catalogue cannot explain is a contract stated in a vocabulary the reader
+ * has no dictionary for. `verification/timeout` was exactly that for a while.
+ */
+export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
+  ...ALLOW_INCONCLUSIVE_CODES,
+  ...Object.values(LITERAL_CLAIM)
+    .map((v) => v.code)
+    .filter((c): c is string => c !== null),
+  'verification/tool-absent',
+  'verification/design-admitted',
+]);
+
+/**
+ * Is a z3 backend AND an engine to drive it present in this build?
+ *
+ * Two absences, one honest answer. `z3-solver` is not a dependency of this
+ * commit and the SMT engine is a later one, so this returns `null` today and
+ * `--engine auto` therefore reports `verification/tool-absent` — which is the
+ * truth, and is the path the plan's §5 CI job exercises on every push with
+ * `SYSPROSE_NO_Z3=1`. The probe is real rather than a hard-coded `null` so that
+ * the day the package lands, the reason this still refuses is the missing
+ * ENGINE and the message says so instead of blaming a solver that is installed.
+ *
+ * The specifier is held in a variable and marked `@vite-ignore` so the bundler
+ * does not try to resolve a package that is not there; the browser never gets
+ * this far in any case (§6 non-goal 9 — no in-browser solver in this plan).
+ */
+async function loadZ3(): Promise<{ backendPresent: boolean }> {
+  const off =
+    typeof process !== 'undefined' &&
+    process.env?.SYSPROSE_NO_Z3 !== undefined &&
+    process.env.SYSPROSE_NO_Z3 !== '' &&
+    process.env.SYSPROSE_NO_Z3 !== '0';
+  if (off) return { backendPresent: false };
+  if (typeof process === 'undefined') return { backendPresent: false };
+  try {
+    const spec = 'z3-solver';
+    await import(/* @vite-ignore */ spec);
+    return { backendPresent: true };
+  } catch {
+    return { backendPresent: false };
+  }
+}
+
+/** The sentence a `tool-absent` row prints, which names what is actually missing. */
+function toolAbsentDetail(backendPresent: boolean): string {
+  return backendPresent
+    ? 'solver absent — the z3 backend is installed but this build carries no SMT engine to drive it ' +
+        '(docs/04-formal-verification-plan.md, commit 4); run `--engine literal` for a point evaluation at the model’s values'
+    : 'solver absent — `z3-solver` is not installed, so nothing can decide this obligation; ' +
+        'run `--engine literal` for a point evaluation at the model’s values, which is not a proof';
+}
+
+/**
+ * Verify every obligation in the model, and say by what.
+ *
+ * Asynchronous because resolving `auto` means asking whether a solver can be
+ * loaded, and that is a dynamic import. Everything after that answer is pure.
+ */
+export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promise<VerifyReport> {
+  const engineAsked: VerifyEngineOption = opts.engine ?? 'auto';
+  const free = [...(opts.free ?? [])];
+  const allowInconclusive = opts.allowInconclusive === true;
+  if (engineAsked === 'literal' && free.length > 0) {
+    // A programming error, not a finding about the model: the literal engine
+    // evaluates AT the values, so a freed feature has no value to evaluate.
+    // Accepting the flag and ignoring it would print a verdict under a bound
+    // the record then claimed was in force.
+    throw new Error(
+      '`free` is an SMT-engine option: the literal engine evaluates at the model’s own values, ' +
+        'so there is nothing for it to release. Ask for `--engine smt`, or drop `--free`.',
+    );
+  }
+
+  const rows = obligationsOf(model, opts.scopeId !== undefined ? { scopeId: opts.scopeId } : {});
+  const modelVersion = modelVersionOf(model, opts.sourceText);
+  const probe = engineAsked === 'literal' ? { backendPresent: false } : await loadZ3();
+  const engine: VerifyEngine = engineAsked === 'literal' ? 'literal' : 'smt';
+  // `auto` resolves to `smt` and stops there. There is no third arm, and adding
+  // one that fell back to `literal` would make a green build mean "no solver".
+  const toolAbsent = engine === 'smt';
+
+  const results: ObligationVerdict[] = toolAbsent
+    ? rows
+        .filter((row) => row.role === 'obligation')
+        .map((row) =>
+          toVerdict(row, {
+            claim: 'inconclusive',
+            code: 'verification/tool-absent',
+            detail: toolAbsentDetail(probe.backendPresent),
+            premises: [],
+            bindings: [],
+            bound: { kind: 'none', detail: 'nothing was run, so nothing is claimed' },
+            engine,
+            allowInconclusive,
+          }),
+        )
+    : judgeLiterally(model, rows).map(({ row, judgement }) => {
+        const { claim, code } = LITERAL_CLAIM[judgement.outcome];
+        return toVerdict(row, {
+          claim,
+          code,
+          detail: judgement.detail,
+          premises: judgement.premises,
+          bindings: judgement.bindings,
+          bound: boundOf(judgement),
+          engine,
+          allowInconclusive,
+        });
+      });
+
+  const discharged = results.filter((r) => r.discharged).length;
+  const violated = results.filter((r) => r.claim === 'refuted').length;
+  const designAdmitted = results.filter((r) => r.claim === 'design-admitted').length;
+  const vacuous = results.filter((r) => r.claim === 'vacuous').length;
+  const inconclusive = results.length - discharged - violated;
+  const forgiven = results.filter((r) => r.forgiven).length;
+
+  return {
+    engineAsked,
+    engine,
+    toolAbsent,
+    results,
+    discharged,
+    violated,
+    inconclusive,
+    designAdmitted,
+    forgiven,
+    vacuous,
+    exitCode: exitCodeOf(results, toolAbsent),
+    allowInconclusive,
+    free,
+    modelVersion,
+    records: recordEvidence({
+      rows: results.map((r) => ({
+        obligation: {
+          requirement: r.requirement?.qualifiedName ?? null,
+          shortId: r.shortId,
+          clause: r.clause.qualifiedName,
+          obligationDigest: r.obligationDigest,
+          expression: r.expression,
+        },
+        claim: r.claim,
+        engine,
+        bound: r.bound,
+        ...(r.bindings.length > 0
+          ? { witness: { kind: 'model-values' as const, values: r.bindings } }
+          : {}),
+        ...(r.code !== null ? { code: r.code } : {}),
+        detail: r.detail,
+      })),
+      modelVersion,
+      producedBy: opts.producedBy ?? `sysprose verify --engine ${engineAsked}`,
+      flags: {
+        engine: engineAsked,
+        free,
+        allowInconclusive,
+      },
+    }),
+    diagnostics: numbered(results.filter((r) => r.code !== null).map(verdictFinding)),
+  };
+}
+
+/**
+ * The bound a point evaluation holds within, WITH the two SI magnitudes.
+ *
+ * The engine already computes them — they were reaching only the `refuted`
+ * sentence and were dead for every `holds-at-values` row, the report and the
+ * record. They belong here because a witness value alone can be read against
+ * the relation it supports: `uav.endurance` STORES 0.7877 (the hours its own
+ * equation produced, with no declared unit) beside a requirement written
+ * `>= 45.0 [min]`, and a record carrying only that number reads as a
+ * refutation. `2835.69 vs 2700 in T` is the pair the comparison was made on.
+ */
+function boundOf(judgement: {
+  bindings: readonly ValueBinding[];
+  lhsSI?: number;
+  rhsSI?: number;
+  dimension?: string;
+}): EvidenceBound {
+  const si =
+    judgement.lhsSI !== undefined && judgement.rhsSI !== undefined
+      ? {
+          lhs: judgement.lhsSI,
+          rhs: judgement.rhsSI,
+          ...(judgement.dimension !== undefined ? { dimension: judgement.dimension } : {}),
+        }
+      : undefined;
+  return {
+    kind: 'model-values',
+    detail:
+      `the model’s own feature values, ${judgement.bindings.length} of them; 0 free variables` +
+      (si !== undefined
+        ? `; compared as ${si.lhs} vs ${si.rhs}${si.dimension !== undefined ? ` in ${si.dimension}` : ''}, coherent SI`
+        : ''),
+    ...(si !== undefined ? { si } : {}),
+  };
+}
+
+/** One judged row, with the two derived answers the exit contract turns on. */
+function toVerdict(
+  row: Obligation,
+  input: {
+    claim: EvidenceClaim;
+    code: string | null;
+    detail: string;
+    premises: PremiseReading[];
+    bindings: ValueBinding[];
+    bound: EvidenceBound;
+    engine: VerifyEngine;
+    allowInconclusive: boolean;
+  },
+): ObligationVerdict {
+  const discharged = DISCHARGES[input.engine].has(input.claim);
+  return {
+    requirement: row.requirement,
+    shortId: row.shortId,
+    clause: row.element,
+    expression: row.expression,
+    obligationDigest: obligationDigest(row),
+    claim: input.claim,
+    verdict: verdictFor(input.claim),
+    discharged,
+    code: input.code,
+    forgiven:
+      input.allowInconclusive && input.code !== null && ALLOW_INCONCLUSIVE_CODES.has(input.code),
+    detail: input.detail,
+    premises: input.premises,
+    bound: input.bound,
+    bindings: input.bindings,
+  };
+}
+
+/**
+ * The exit code.
+ *
+ * TWO TESTS COME BEFORE THE ROWS, and both are about the shape of the run
+ * rather than about any obligation in it. They are first because `exitCodeOf`
+ * once read the rows alone, and a run with NO rows fell through to `return 0`:
+ * `--engine auto` with no solver over a model that states no requirement
+ * printed "no solver ran … this run is exit 2" and exited **0**. That is the
+ * exact sentence {@link VERIFY_EXIT_CODES} exists to make impossible — "no
+ * solver installed, nothing to report, exit 0" is indistinguishable from a
+ * proof — and every rule below it is an implication that holds vacuously over
+ * an empty row set.
+ *
+ *  1. **The engine never ran ⇒ 2.** Nothing was discharged *by the engine that
+ *     was asked for*, whatever the rows say, because there was no engine.
+ *  2. **Nothing to verify ⇒ 2.** Exit 0 means "every obligation discharged",
+ *     and a model that states none has not been shown anything. A build that
+ *     went green because every requirement was deleted is the failure this lane
+ *     exists to prevent; the report's own sentence says which of the two
+ *     happened.
+ *
+ * Then the order of the three row tests IS the contract: a violation outranks
+ * every forgiveness, a design the model admits is never a violation, and an
+ * inconclusive nobody forgave is 2. Reading it in any other order is how a
+ * refutation ends up forgiven by a flag scoped to undecided obligations.
+ */
+function exitCodeOf(results: readonly ObligationVerdict[], toolAbsent: boolean): 0 | 1 | 2 {
+  if (toolAbsent) return 2;
+  if (results.length === 0) return 2;
+  if (results.some((r) => r.claim === 'refuted')) return 1;
+  if (results.some((r) => r.claim === 'design-admitted')) return 2;
+  if (results.some((r) => !r.discharged && !r.forgiven)) return 2;
+  return 0;
+}
+
+/** One row's code, as a diagnostic the whole lane files under one source. */
+function verdictFinding(r: ObligationVerdict): Finding {
+  return {
+    severity: 'info',
+    message: `${r.requirement?.qualifiedName ?? r.clause.qualifiedName}: ${r.detail}`,
+    elementId: r.clause.id,
+    elementName: r.clause.qualifiedName,
+    code: r.code as string,
+    hint:
+      r.forgiven
+        ? 'This row was forgiven by `--allow-inconclusive`, which lowers exactly the undecided codes and nothing else; the claim itself is unchanged and the record still says `inconclusive`.'
+        : 'The obligation is not discharged. Run `npm run sysprose -- obligations <file>` to see what it stands on, and read `docs/DIAGNOSTIC-CODES.md` for what this code means.',
+  };
 }

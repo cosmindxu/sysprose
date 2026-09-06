@@ -84,6 +84,21 @@ function l7CaseCount(): number {
   );
 }
 
+/**
+ * The L8 case count, which is a directory count like the fixture corpus's.
+ *
+ * L8 is a SUITE level, so its cases are verdict fixtures rather than rows in
+ * `test/fixtures/agent-authoring` — but the Levels table quotes a figure for it
+ * all the same, and the paragraph under that table promises every figure in it
+ * is read off the tree. `models/` holds the shared `.sysml` files the cases
+ * name, not cases, so it is excluded.
+ */
+function l8CaseCount(): number {
+  return readdirSync(root('test/fixtures/verification'), { withFileTypes: true }).filter(
+    (e) => e.isDirectory() && e.name !== 'models',
+  ).length;
+}
+
 /** Every `*.test.ts` / `*.spec.ts` under `dir`, skipping the directories named. */
 function specFiles(dir: string, skip: string[] = []): string[] {
   const out: string[] = [];
@@ -142,6 +157,12 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     what: 'L7 case count in the Levels table',
     pattern: /\|\s*L7\s*\|[^|]*\|\s*(\d+)\s+tests\s*\|/,
     actual: l7CaseCount,
+  },
+  {
+    file: 'docs/AGENT-AUTHORING-CAMPAIGN.md',
+    what: 'L8 case count in the Levels table',
+    pattern: /\|\s*L8\s*\|[^|]*\|\s*(\d+)\s+cases\s*\|/,
+    actual: l8CaseCount,
   },
   {
     file: 'docs/FEATURE-PARITY.md',

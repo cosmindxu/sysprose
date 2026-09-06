@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "`--engine auto` with no solver reports every obligation tool-absent and exits 2",
+  "model": "examples/uav-isr.sysml",
+  "engine": "auto",
+  "noZ3": true,
+  "note": "The single most likely thing in this lane to rot into a silent green. `auto` resolves to `smt` or to nothing; it never falls back to `literal`, so the same model that is exit 0 under `--engine literal` is exit 2 here."
+}

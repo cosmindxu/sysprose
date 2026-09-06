@@ -1,0 +1,31 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "exitCode": 1,
+  "counts": {
+    "discharged": 0,
+    "violated": 1,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "OverMass::MassLimit",
+      "shortId": "",
+      "clause": "OverMass::MassLimit::«ConstraintUsage»",
+      "expression": "chassis.mass <= 2000.0 [kg]",
+      "obligationDigest": "sha256:fd7c9e0a85f5ccaa821e2de561301f6d9e01af53cab3daaee4733f5f0ced6c4f",
+      "claim": "refuted",
+      "verdict": "fail",
+      "discharged": false,
+      "code": null,
+      "forgiven": false,
+      "detail": "refuted with every feature at its model value: `chassis.mass <= 2000.0 [kg]` is false here (3000 vs 2000 in M, coherent SI)",
+      "premises": []
+    }
+  ]
+}

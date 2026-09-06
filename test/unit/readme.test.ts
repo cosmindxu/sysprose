@@ -129,6 +129,11 @@ const APP_DOORS: ReadonlyArray<{
   // no control and therefore — by the dagger rule below — no dagger.
   { command: 'contracts', controls: [] },
   { command: 'obligations', controls: [] },
+  // `verify` carries no control for a second reason on top of that one: there
+  // is no solver in the browser in this plan at all (`SharedArrayBuffer` needs
+  // COOP/COEP headers GitHub Pages cannot set), so the app's job is to read
+  // evidence and print the terminal command, never to reach a verdict.
+  { command: 'verify', controls: [] },
 ];
 
 interface Row {

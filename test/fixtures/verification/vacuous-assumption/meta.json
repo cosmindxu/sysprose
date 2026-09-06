@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A requirement whose `assume constraint { false }` is false at the values is vacuous, not passed",
+  "model": "test/fixtures/verification/models/false-assumption.sysml",
+  "engine": "literal",
+  "note": "The guarantee holds here (40 kg <= 50 kg) and the verdict is still undecided. Part 1 §9.2.14.2.8 reads `allTrue(assumptions) implies allTrue(constraints)`, which makes this requirement TRUE; this tool disagrees on purpose, and the disagreement is recorded in docs/CONFORMANCE.md."
+}

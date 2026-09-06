@@ -15,6 +15,7 @@ import {
   PRODUCT_NAME,
   PRODUCT_SHORT_NAME,
   PRODUCT_SLUG,
+  PRODUCT_VERSION,
   PRODUCT_DESCRIPTION,
   GENERATOR_ID,
   ELEMENT_GRAPH_SCHEMA_ID,
@@ -44,6 +45,14 @@ describe('branding constants', () => {
 describe('static assets stay in step with src/branding.ts', () => {
   it('package.json name matches the slug', () => {
     expect(JSON.parse(root('package.json')).name).toBe(PRODUCT_SLUG);
+  });
+
+  it('package.json version matches the version an evidence record names', () => {
+    // An evidence record states the tool version it was produced by
+    // (docs/04-formal-verification-plan.md §3.10). A constant that drifted from
+    // the package would put a version nobody can check out into a record whose
+    // whole purpose is to be checkable.
+    expect(JSON.parse(root('package.json')).version).toBe(PRODUCT_VERSION);
   });
 
   it('the PWA manifest matches the product name', () => {

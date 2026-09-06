@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "`not evaluable` is still exit 2 with --allow-inconclusive",
+  "model": "test/fixtures/verification/models/no-value-in-scope.sysml",
+  "engine": "literal",
+  "allowInconclusive": true,
+  "note": "The flag forgives constructs this lane cannot ENCODE, not obligations whose answer the values do not determine. The pair with `prose-only-allow-inconclusive` is what makes that split checkable."
+}

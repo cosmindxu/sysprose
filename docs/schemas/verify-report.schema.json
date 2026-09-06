@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:sysprose:verify-report",
+  "title": "Sysprose verify report",
+  "description": "What `npm run sysprose -- verify <file> --json` emits on stdout. The top-level `verdict` block is the exit-code arithmetic and is the ONLY thing an automation needs to read: `verdict.exitCode` is what the process exited with, including the degraded-model rule that lowers a clean sweep to 2. Read docs/CLI-REFERENCE.md's `verify` section for the contract in words — its 1 means REFUTED, which is not what the reporting subcommands' 1 means.",
+  "type": "object",
+  "required": ["ok", "file", "verdict", "verify"],
+  "properties": {
+    "ok": { "type": "boolean", "description": "Did the file load cleanly? False ⇒ `verdict.exitCode` is 2." },
+    "file": { "type": "string" },
+    "degraded": {
+      "type": "object",
+      "description": "Present only when the model did not load cleanly. A verdict over half a model is not a verdict, so its presence forces exit 2.",
+      "properties": {
+        "errors": { "type": "integer" },
+        "warnings": { "type": "integer" },
+        "diagnostics": { "type": "array" }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["discharged", "violated", "inconclusive", "designAdmitted", "exitCode"],
+      "properties": {
+        "discharged": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Obligations discharged non-vacuously BY THE ENGINE THAT WAS ASKED FOR. Under `--engine literal` a `holds-at-values` row counts; under `smt` and `auto` it does not."
+        },
+        "violated": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Refuted with every feature at its model value. Nothing else is exit 1."
+        },
+        "inconclusive": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Everything undecided, vacuous and tool-absent included. Any un-forgiven one is exit 2."
+        },
+        "designAdmitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Refutations obtained under `--free`: a design the model admits, exit 2, never 1."
+        },
+        "exitCode": { "enum": [0, 1, 2] }
+      }
+    },
+    "verify": { "$ref": "#/definitions/report" }
+  },
+  "definitions": {
+    "report": {
+      "type": "object",
+      "required": [
+        "engineAsked",
+        "engine",
+        "toolAbsent",
+        "results",
+        "discharged",
+        "violated",
+        "inconclusive",
+        "designAdmitted",
+        "forgiven",
+        "vacuous",
+        "exitCode",
+        "allowInconclusive",
+        "free",
+        "modelVersion",
+        "records",
+        "diagnostics"
+      ],
+      "properties": {
+        "engineAsked": { "enum": ["auto", "literal", "smt"] },
+        "engine": {
+          "enum": ["literal", "smt"],
+          "description": "What `auto` resolved to. It resolves to `smt` or reports `verification/tool-absent`; it NEVER falls back to `literal`."
+        },
+        "toolAbsent": { "type": "boolean" },
+        "results": { "type": "array", "items": { "$ref": "#/definitions/obligationVerdict" } },
+        "discharged": { "type": "integer", "minimum": 0 },
+        "violated": { "type": "integer", "minimum": 0 },
+        "inconclusive": { "type": "integer", "minimum": 0 },
+        "designAdmitted": { "type": "integer", "minimum": 0 },
+        "forgiven": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many inconclusive rows `--allow-inconclusive` lowered. It lowers `verification/timeout` and `verification/unsupported-construct` and nothing else."
+        },
+        "vacuous": { "type": "integer", "minimum": 0 },
+        "exitCode": {
+          "enum": [0, 1, 2],
+          "description": "From the obligations alone. The top-level `verdict.exitCode` is this one with the degraded-model rule applied, and it is the one the process exits with."
+        },
+        "allowInconclusive": { "type": "boolean" },
+        "free": { "type": "array", "items": { "type": "string" } },
+        "modelVersion": { "type": "object" },
+        "records": { "type": "array" },
+        "diagnostics": { "type": "array" }
+      }
+    },
+    "obligationVerdict": {
+      "type": "object",
+      "required": [
+        "requirement",
+        "shortId",
+        "clause",
+        "expression",
+        "obligationDigest",
+        "claim",
+        "verdict",
+        "discharged",
+        "code",
+        "forgiven",
+        "detail",
+        "premises",
+        "bound",
+        "bindings"
+      ],
+      "properties": {
+        "requirement": { "type": ["object", "null"] },
+        "shortId": { "type": "string" },
+        "clause": { "type": "object" },
+        "expression": { "type": "string" },
+        "obligationDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "claim": {
+          "enum": [
+            "proved",
+            "holds-at-values",
+            "holds-structurally",
+            "holds-within-bound",
+            "refuted",
+            "design-admitted",
+            "vacuous",
+            "inconclusive"
+          ]
+        },
+        "verdict": { "enum": ["pass", "fail", "inconclusive"] },
+        "discharged": { "type": "boolean" },
+        "code": { "type": ["string", "null"], "pattern": "^verification/[a-z-]+$" },
+        "forgiven": { "type": "boolean" },
+        "detail": { "type": "string" },
+        "premises": {
+          "type": "array",
+          "description": "The assumptions, evaluated BEFORE the guarantee. A pass that stands on three assumptions is a different claim from an unconditional one.",
+          "items": {
+            "type": "object",
+            "required": ["clause", "expression", "holds", "detail"],
+            "properties": {
+              "clause": { "type": "object" },
+              "expression": { "type": "string" },
+              "holds": { "enum": ["holds", "fails", "unknown"] },
+              "detail": { "type": "string" }
+            }
+          }
+        },
+        "bound": { "type": "object" },
+        "bindings": { "type": "array" }
+      }
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "exitCode": 0,
+  "counts": {
+    "discharged": 1,
+    "violated": 0,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "EvenSeating::EvenSeats",
+      "shortId": "",
+      "clause": "EvenSeating::EvenSeats::«ConstraintUsage»",
+      "expression": "bus.seats % 2 == 0",
+      "obligationDigest": "sha256:3fa4b40f612d51d00cba54a2f25e1f3b609737ae09b54455de613976a5bf8e9e",
+      "claim": "holds-at-values",
+      "verdict": "inconclusive",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "detail": "holds at the model's values (no assumptions — the pass is unconditional at these values) — a gate refuses this relation for the solver lane (unsupported-operator: the remainder operator `%` has no encoding in this fragment), so a point evaluation is all any engine will offer for it",
+      "premises": []
+    }
+  ]
+}

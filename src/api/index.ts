@@ -80,15 +80,48 @@ export type {
   SolvedValue,
 } from './analytics';
 
-// Verification lane (plan docs/04-formal-verification-plan.md §3.1, §3.2)
-export { contractReport, obligationsReport } from './verification';
+// Verification lane (plan docs/04-formal-verification-plan.md §3.1, §3.2, §3.4)
+export {
+  contractReport,
+  obligationsReport,
+  verifyModel,
+  ALLOW_INCONCLUSIVE_CODES,
+  VERIFICATION_CODES,
+} from './verification';
 export type {
   ContractReport,
   ContractReportOptions,
   KeywordOrigin,
   KeywordUse,
   ObligationReport,
+  ObligationVerdict,
+  VerifyEngine,
+  VerifyEngineOption,
+  VerifyOptions,
+  VerifyReport,
 } from './verification';
+// Evidence (plan §3.10). `recordEvidence` and the digests are exported because
+// a record is meant to be produced, stored and re-checked by a consumer, and
+// `modelVersionOf` is what tells them whether one has gone stale.
+export {
+  // Exported for the guard that pins WHICH elements enter the graph digest:
+  // library exclusion is invisible to any assertion over the hash itself.
+  canonicalElements,
+  modelVersionOf,
+  obligationDigest,
+  recordEvidence,
+  sha256Hex,
+  toolVersion,
+  verdictFor,
+} from './evidence';
+export type {
+  EvidenceBound,
+  EvidenceClaim,
+  EvidenceRecord,
+  EvidenceVerdict,
+  ModelVersion,
+  ToolVersion,
+} from './evidence';
 // The payload types both reports publish, and the options the second takes.
 // A consumer coming through this barrel — which the standing rule says is the
 // door — could otherwise not type either argument or walk either row without a

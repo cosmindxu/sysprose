@@ -445,6 +445,48 @@ The verification lane reporting what it will and will not undertake. Always INFO
 - **Fires when:** A `#keyword` resolves to no `metadata def` in scope — a misspelling, or a vocabulary the file never declares or imports.
 - **Hint given:** Declare or import the `metadata def` the keyword names — `import SysproseVerification::*;` for the one this tool ships — or correct the spelling. The keyword is kept in the file either way.
 
+### `verification/vacuous-pass`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A requirement is discharged by an antecedent that does not hold — its `assume` clause is false at the model’s values, or its premises are unsatisfiable. The standard reads `allTrue(assumptions) implies allTrue(constraints)`, which makes such a requirement true; this tool reports it as undecided instead. That is a declared deviation, recorded in docs/CONFORMANCE.md.
+- **Hint given:** Fix the assumption so it holds, or drop it: a requirement that only holds when something false is true says nothing about the design. The row exits 2 with and without `--allow-inconclusive`.
+
+### `verification/not-evaluable`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A relation this lane encodes could not be decided at the model’s own values — a feature it reads carries no value, a derived quantity cannot be compared as a bare number, or the expression did not evaluate to a boolean.
+- **Hint given:** Give the features it reads values, or compare against a unit literal of the right dimension. `--allow-inconclusive` deliberately does NOT forgive this: an obligation nobody could evaluate is not an obligation that holds.
+
+### `verification/unsupported-construct`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** An obligation is outside the fragment this lane encodes at all — a gate refused the relation, or the requirement carries prose and no constraint body, so there is nothing to decide.
+- **Hint given:** Run `npm run sysprose -- obligations <file> --missing` for the histogram of what was refused and why, then rewrite the relation inside quantifier-free arithmetic over single-valued scalar features. This is one of the two codes `--allow-inconclusive` may lower to exit 0.
+
+### `verification/tool-absent`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** The engine that was asked for could not run: `--engine smt`, or `--engine auto` with no solver backend to resolve to. Every obligation in the run is reported under this code.
+- **Hint given:** Install the solver, or ask for `--engine literal`, which evaluates at the model’s own values and says `holds-at-values` — a point evaluation, never a proof. `--allow-inconclusive` never lowers this: a missing solver must never be a green build.
+
+### `verification/design-admitted`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** An obligation was refuted only after `--free` released a feature value the model states. A `=` value is a binding, so the counterexample is a design the model admits, not a violation of it.
+- **Hint given:** Read it as "the requirement fails if this feature is allowed to move", not as "the requirement fails". Re-run without `--free` for the verdict at the model’s values. It exits 2, never 1, and `--allow-inconclusive` does not lower it.
+
+### `verification/timeout`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A solver was asked and did not answer inside the time it was given — it returned `unknown` after the timeout rather than sat or unsat. No engine in this build emits it; it is the SMT engine’s undecided code and the second of the two `--allow-inconclusive` may lower.
+- **Hint given:** Raise the timeout, narrow the obligation, or read the row as undecided — a solver that ran out of time has said nothing about whether the requirement holds. It exits 2 by default.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -504,4 +546,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*61 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*67 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

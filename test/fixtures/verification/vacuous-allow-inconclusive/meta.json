@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "Vacuity is still exit 2 with --allow-inconclusive",
+  "model": "test/fixtures/verification/models/false-assumption.sysml",
+  "engine": "literal",
+  "allowInconclusive": true,
+  "note": "Vacuity is the plan's one declared deviation, not an undecided obligation, and no flag launders it back to green."
+}

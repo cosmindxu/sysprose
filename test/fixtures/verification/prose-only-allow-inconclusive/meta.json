@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "--allow-inconclusive does forgive an unsupported construct, and lowers 2 to 0",
+  "model": "test/fixtures/verification/models/prose-only.sysml",
+  "engine": "literal",
+  "allowInconclusive": true,
+  "note": "The positive control for the flag. Without a case that goes green, the four cases above would pass just as happily against a flag that did nothing at all."
+}

@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "auto with no solver over a model that states nothing is exit 2, not a green build",
+  "model": "test/fixtures/verification/models/no-obligations.sysml",
+  "engine": "auto",
+  "noZ3": true,
+  "note": "The case that was missing, and the exact hole it left: exitCodeOf read the ROWS alone, so a run with no rows fell through to 0. The command printed `no solver ran ... this run is exit 2` and exited 0 — the sentence VERIFY_EXIT_CODES exists to make impossible, and every other rule in this file is an implication that holds vacuously over an empty row set."
+}

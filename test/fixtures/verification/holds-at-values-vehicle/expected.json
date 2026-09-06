@@ -1,0 +1,31 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "exitCode": 0,
+  "counts": {
+    "discharged": 1,
+    "violated": 0,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "VehicleModel::MassRequirement",
+      "shortId": "",
+      "clause": "VehicleModel::MassRequirement::«ConstraintUsage»",
+      "expression": "vehicle.mass <= 2000.0",
+      "obligationDigest": "sha256:80afaa65b65eba9657dff0ff55f97b943df8dcc4b55955bddae2f2030aa1e064",
+      "claim": "holds-at-values",
+      "verdict": "inconclusive",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "detail": "holds at the model's values (no assumptions — the pass is unconditional at these values)",
+      "premises": []
+    }
+  ]
+}

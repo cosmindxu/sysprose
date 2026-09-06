@@ -578,6 +578,107 @@ naming bundled library content is refused: every figure in both reports is about
 `src/api/verification.ts`, and the plan these implement,
 [`04-formal-verification-plan.md`](04-formal-verification-plan.md).
 
+### Whether it holds, and the two words that are not the same
+
+`verify` is the one subcommand that reaches a **verdict**, and it is the one
+whose exit code you should read before anything else. It has its own exit-code
+contract, and it is not the other two: **0** every obligation discharged **and
+there was at least one to discharge**, **1** at least one obligation
+**refuted**, **2** usage, I/O, a degraded model, a model that states no
+obligation at all, or **any** inconclusive.
+
+The summary line leads with the **inconclusive** count, on purpose: it is the
+figure that decides the exit code, and a line that opened with the green number
+read as a pass with a footnote.
+
+```console
+$ npm run sysprose -- verify examples/uav-isr.sysml --engine literal
+examples/uav-isr.sysml: 0 inconclusive, 2 discharged, 0 refuted — engine literal
+  a point evaluation at the model's own values — `holds-at-values`, never `proved`
+  UAVSurveillanceSystem::EnduranceRequirement  uav.endurance >= 45.0 [min]
+    holds-at-values: holds at the model's values (no assumptions — the pass is unconditional at these values)
+    bound: the model's own feature values, 1 of them; 0 free variables; compared as 2835.6923076923076 vs 2700 in T, coherent SI
+    digest sha256:e4618d6f...
+  ...
+$ echo $?
+0
+```
+
+That `compared as … coherent SI` clause is not decoration. `uav.endurance` is
+**derived** — the model computes it — so what it *stores* is `0.7877`, the hours
+its own equation produced, with no declared unit, beside a requirement written
+in `[min]`. Read on its own that number looks like a refutation of the verdict
+it supports. The SI pair is what the comparison was actually made on, it is in
+the evidence record's `bound.si`, and every witness value in a record carries
+its `role` so a computed value is never mistaken for one you could edit.
+
+**`holds-at-values` is not `proved`, and the tool will not let the two words
+blur.** The literal engine substitutes the values your file states and reads off
+the answer. That is worth having — it is what the **Analyze** button already
+computes, it needs nothing installed, and it is the first thing anyone wants —
+but it holds at *one point* of a design space that is infinite. `proved` is
+reserved for a solver showing that the negation of the obligation is
+unsatisfiable, and nothing in this build can say it.
+
+**Three engines, and the one that is missing never goes green.**
+
+| `--engine` | What it does |
+|---|---|
+| `literal` | Evaluates at your model's values. `holds-at-values` counts as discharged, **because you asked for a point evaluation by name**. |
+| `smt` | The solver. Not in this build yet — every obligation comes back `verification/tool-absent`, exit 2. |
+| `auto` (default) | Resolves to `smt` when a solver backend loads, and otherwise reports `tool-absent` for everything. **It never falls back to `literal`.** |
+
+That last line is the rule to remember: the same file that is exit 0 under
+`--engine literal` is exit **2** under the default `--engine auto` today,
+because no solver is installed. "No solver, nothing to report, exit 0" would be
+indistinguishable from a proof, so it does not happen.
+
+**What is inconclusive, and what a flag may forgive.**
+
+| The row says | What happened | `--allow-inconclusive`? |
+|---|---|---|
+| `verification/unsupported-construct` | The relation is well formed and its **shape** is outside the fragment this lane encodes — `%`, a variable exponent, a collection, arithmetic on °C — or the requirement is prose with no constraint body | **Yes** — lowered to exit 0 |
+| `verification/timeout` | The solver ran out of time (from the SMT engine) | **Yes** |
+| `verification/not-evaluable` | Your values do not determine the answer, **or nobody could read the relation at all** — it names a feature that does not exist, compares kilograms against metres, or does not parse | No |
+| `verification/vacuous-pass` | The `assume` clause is **false** here, so the requirement is discharged by something that does not hold | No |
+| `verification/tool-absent` | No engine ran | No |
+| `verification/design-admitted` | Refuted only after `--free` released a value your model states | No |
+| *refuted* | False with every feature at its model value | No — exit **1** beats the flag |
+
+**A vacuous requirement is reported as undecided, and that is a deliberate
+disagreement with the specification.** Part 1 §9.2.14.2.8 gives a requirement
+check as `allTrue(assumptions) implies allTrue(constraints)`, which makes a
+requirement with a false assumption **true**. A requirement discharged by an
+antecedent that does not hold tells you nothing, and it is the classic way a
+whole requirement set passes while meaning nothing — so this tool says
+`vacuous`, exits 2, and records the disagreement in
+[`CONFORMANCE.md`](CONFORMANCE.md).
+
+**`--record PATH` writes the evidence.** One record per obligation: the claim,
+the engine, the tool and its version, the bound the claim holds within, the
+witness (your own values), the flags that changed what was shown, and two
+digests — one for the obligation's normal form, one for your model. Records
+carry **no timestamp**, so two runs over an unchanged file produce byte-identical
+files and a `diff` answers "did anything change?". The model digest is taken
+over qualified names rather than element ids, which are fresh on every load, so
+it survives a reparse and moves when you edit a literal. The shape is documented
+in [`schemas/evidence-record.schema.json`](schemas/evidence-record.schema.json).
+
+`--record` **refuses a model that did not load cleanly.** A record is durable
+and diffable; one written over half a model would claim `holds-at-values` about
+a file the same run calls unreadable, bound to a digest taken over only what was
+salvaged. Fix the findings first, or read the verdict on stdout without
+`--record`.
+
+`--free F` releases a feature value so a solver may vary it; a refutation
+obtained that way is a design your model *admits*, not a violation of it, and it
+is reported as `design-admitted` and exit 2 — never exit 1. The literal engine
+refuses the flag outright rather than accepting and ignoring it.
+
+**Source of truth:** `src/semantics/engines/literal.ts`, `src/api/evidence.ts`,
+`src/api/verification.ts`, and the golden verdict corpus in
+`test/fixtures/verification/`.
+
 ### The keywords a file carries, including somebody else's
 
 A `#keyword` in front of a declaration is the notation's own extension point:

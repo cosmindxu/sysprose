@@ -1,0 +1,31 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "ProseOnly::ComfortRequirement",
+      "shortId": "",
+      "clause": "ProseOnly::ComfortRequirement",
+      "expression": "",
+      "obligationDigest": "sha256:3839ad9c2b080ed75d28a17e8497ce3426f3c22dcc9dd9ea6a7d3951bcca3c96",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/unsupported-construct",
+      "forgiven": false,
+      "detail": "nothing to evaluate: the requirement carries prose and no constraint body, so there is nothing to encode",
+      "premises": []
+    }
+  ]
+}

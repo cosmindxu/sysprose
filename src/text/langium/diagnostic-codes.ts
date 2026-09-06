@@ -481,6 +481,66 @@ const CODES = [
     hint: 'Declare or import the `metadata def` the keyword names — `import SysproseVerification::*;` for the one this tool ships — or correct the spelling. The keyword is kept in the file either way.',
   },
 
+  // The six `verify` codes. They are what an INCONCLUSIVE run says, and the
+  // exit contract is written over them rather than over prose: `verify` exits 2
+  // on every one, and `--allow-inconclusive` lowers exactly two of them —
+  // `verification/unsupported-construct` and (from the SMT engine)
+  // `verification/timeout`. It never lowers `tool-absent`, never lowers
+  // `vacuous-pass`, never lowers `design-admitted`, and never outranks a
+  // refutation, which is exit 1. All six are INFO: none of them is a defect in
+  // the model, and none of them is a verdict — they are the tool saying what it
+  // did not decide, which is the one thing a silence could never say.
+  {
+    code: 'verification/vacuous-pass',
+    source: 'verification',
+    severity: 'info',
+    when: 'A requirement is discharged by an antecedent that does not hold — its `assume` clause is false at the model’s values, or its premises are unsatisfiable. The standard reads `allTrue(assumptions) implies allTrue(constraints)`, which makes such a requirement true; this tool reports it as undecided instead. That is a declared deviation, recorded in docs/CONFORMANCE.md.',
+    hint: 'Fix the assumption so it holds, or drop it: a requirement that only holds when something false is true says nothing about the design. The row exits 2 with and without `--allow-inconclusive`.',
+  },
+  {
+    code: 'verification/not-evaluable',
+    source: 'verification',
+    severity: 'info',
+    when: 'A relation this lane encodes could not be decided at the model’s own values — a feature it reads carries no value, a derived quantity cannot be compared as a bare number, or the expression did not evaluate to a boolean.',
+    hint: 'Give the features it reads values, or compare against a unit literal of the right dimension. `--allow-inconclusive` deliberately does NOT forgive this: an obligation nobody could evaluate is not an obligation that holds.',
+  },
+  {
+    code: 'verification/unsupported-construct',
+    source: 'verification',
+    severity: 'info',
+    when: 'An obligation is outside the fragment this lane encodes at all — a gate refused the relation, or the requirement carries prose and no constraint body, so there is nothing to decide.',
+    hint: 'Run `npm run sysprose -- obligations <file> --missing` for the histogram of what was refused and why, then rewrite the relation inside quantifier-free arithmetic over single-valued scalar features. This is one of the two codes `--allow-inconclusive` may lower to exit 0.',
+  },
+  {
+    code: 'verification/tool-absent',
+    source: 'verification',
+    severity: 'info',
+    when: 'The engine that was asked for could not run: `--engine smt`, or `--engine auto` with no solver backend to resolve to. Every obligation in the run is reported under this code.',
+    hint: 'Install the solver, or ask for `--engine literal`, which evaluates at the model’s own values and says `holds-at-values` — a point evaluation, never a proof. `--allow-inconclusive` never lowers this: a missing solver must never be a green build.',
+  },
+  {
+    code: 'verification/design-admitted',
+    source: 'verification',
+    severity: 'info',
+    when: 'An obligation was refuted only after `--free` released a feature value the model states. A `=` value is a binding, so the counterexample is a design the model admits, not a violation of it.',
+    hint: 'Read it as "the requirement fails if this feature is allowed to move", not as "the requirement fails". Re-run without `--free` for the verdict at the model’s values. It exits 2, never 1, and `--allow-inconclusive` does not lower it.',
+  },
+  {
+    // Documented HERE, in the commit that names it, rather than in the commit
+    // that first emits it. `--allow-inconclusive`'s scope is stated over CODES
+    // and this is one of the two it lowers, so `verify --help`,
+    // docs/CLI-REFERENCE.md and docs/USER-GUIDE.md all print the string today
+    // and told the reader to look it up in a catalogue that did not have it.
+    // A code the tool names to a person is a code the catalogue must explain,
+    // whether or not an engine can reach it yet; the guard in
+    // test/unit/diagnostic-codes.test.ts now enforces exactly that.
+    code: 'verification/timeout',
+    source: 'verification',
+    severity: 'info',
+    when: 'A solver was asked and did not answer inside the time it was given — it returned `unknown` after the timeout rather than sat or unsat. No engine in this build emits it; it is the SMT engine’s undecided code and the second of the two `--allow-inconclusive` may lower.',
+    hint: 'Raise the timeout, narrow the obligation, or read the row as undecided — a solver that ran out of time has said nothing about whether the requirement holds. It exits 2 by default.',
+  },
+
   /* ── round-trip oracle ── */
   {
     code: 'roundtrip/unparseable-serialization',

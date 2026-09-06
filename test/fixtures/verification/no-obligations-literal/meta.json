@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "a model that states no obligation is exit 2 under a working engine too",
+  "model": "test/fixtures/verification/models/no-obligations.sysml",
+  "engine": "literal",
+  "note": "Exit 0 means every obligation was discharged, so a model that states none has been shown nothing. This pins the answer under an engine that DID run, so the fix for the tool-absent hole cannot be read as a special case about solvers: a build that went green because every requirement was deleted is the same silence."
+}

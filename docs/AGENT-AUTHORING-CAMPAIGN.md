@@ -125,14 +125,15 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: exit codes, JSON shape, stdin, strict and `--no-library` modes, and every reporting subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 53 tests |
+| L7 | The command-line contract: **both** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 59 tests |
+| L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`) | 17 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
 so where they appear. Measured 2026-09-06: **82 fixture directories** under
-`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **61
+`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **67
 catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
 rules** in `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -2780,6 +2781,86 @@ and a test pins the two copies to the same steps in the same order
 correctness bug, with the app and the command line disagreeing about what a
 model means. A later commit that gives the loader a text-side
 `bindStandardLibrary` owns removing it.
+
+**Nothing could say whether a requirement holds, and the honest ways of saying
+so are not the same sentence.** Commit 3 of the formal-verification plan adds
+`verify` — the first subcommand in this tool that reaches a verdict — over one
+engine (`src/semantics/engines/literal.ts`), an evidence record
+(`src/api/evidence.ts`) and a third exit-code contract (`VERIFY_EXIT_CODES`).
+The engine wraps `checkConstraints` rather than evaluating for itself, so the
+verdict a terminal prints and the verdict the app's **Analyze** button computes
+come from one surface; the new part is what it is allowed to SAY about the
+answer.
+
+Four rules carry the whole commit, and every one of them is a way the lane could
+have gone quietly green. **A point evaluation is not a proof**: the claim word
+is `holds-at-values` and the literal engine can never reach `proved`, which is
+reserved for UNSAT-of-negation under a satisfiable axiom set. **A missing solver
+is never exit 0**: `--engine auto` resolves to `smt` or reports
+`verification/tool-absent` for every obligation, and it does not fall back to
+the literal engine — the same shipped example is exit 0 under `--engine literal`
+and exit 2 under the default today. **`--allow-inconclusive` is scoped over
+codes, not prose**: it lowers `verification/timeout` and
+`verification/unsupported-construct` and nothing else, so an absent solver, a
+vacuous obligation and a refutation all survive it. **A requirement with a false
+assumption is `vacuous`, not passed** — Part 1 §9.2.14.2.8 reads
+`allTrue(assumptions) implies allTrue(constraints)` and makes it true, and this
+tool disagrees on purpose; the disagreement is recorded as the lane's one
+declared deviation in `docs/CONFORMANCE.md` §8 rather than glossed.
+
+The exit-code contract is the part that had to reach the documentation as data.
+`CommandSpec` gains `exitContract`, and both `--help` and the generated
+reference now render the exit paragraph **per subcommand**. Before that they
+printed one paragraph for the whole `sysprose` section, under which `verify`'s
+exit **1** would have been documented as "the model did not load cleanly" — the
+exact opposite of *refuted*. `test/unit/cli-reference.test.ts` slices the
+document by section and checks each against the contract its own row declares,
+both ways, so neither contract can drift into the other's sections.
+
+The evidence record is where element ids would have leaked, and the review
+target was exactly that: nothing in this lane keys a digest or a name on one.
+Ids are fresh UUIDs on every load (defect D3), so `modelVersionOf` canonicalises
+every id to a qualified name and sorts elements by it before hashing, and
+`obligationDigest` hashes the parsed `ExprNode` after unit lowering with
+references rewritten to qualified names. Both are pinned: two loads of one file
+share no user element id and produce the same digest, and editing `18.5` to
+`18.6` moves it. Records carry no timestamp, so two runs over an unchanged file
+are byte-identical.
+
+Level **L8** ships with it: seventeen known-answer cases in
+`test/fixtures/verification/`, whose golden is the verdict rather than a
+diagnostic list. Several are a pair — the same model with and without
+`--allow-inconclusive` — and one of those pairs is the positive control that
+goes green, without which the others would pass just as happily against a
+flag that did nothing at all. The corpus is asserted to exercise all three exit
+codes, an empty run, and both sides of the refusal split, so losing a case
+cannot leave the contract's rules holding vacuously.
+
+**Three ways this lane could still have gone quietly green, closed by review
+before the commit landed.** The exit code was computed from the obligation ROWS
+alone, so a run with *no* rows — `--engine auto` with no solver over a model
+that states no requirement — fell through to exit **0** while its own stdout
+said "this run is exit 2". Both halves are now shape tests taken before the
+rows: an engine that did not run is 2, and a model that states no obligation is
+2, because exit 0 says every obligation was discharged and none was. Second,
+every gate refusal mapped to `verification/unsupported-construct`, the code
+`--allow-inconclusive` may lower — so a requirement naming a feature that does
+not exist, or comparing kilograms against metres, exited 0 under the flag. The
+refusal reason now decides: a well-formed relation whose *shape* is outside the
+fragment (`%`, a collection, °C arithmetic) stays forgivable, and a relation
+nobody could read is `verification/not-evaluable`, which nothing forgives.
+Third, `--record` wrote an evidence record over a model that did not parse; it
+now refuses, per §3.10, because a record outlives the exit status that was the
+only honest signal.
+
+Two smaller repairs came from the same pass. A relation the gates refuse but the
+values decide — `bus.seats % 2 == 0` — reports its point evaluation *and* names
+the refusal, where before the refusal vanished from `verify` entirely. And a
+witness for a **derived** feature carried a bare magnitude in no declared unit:
+`uav.endurance` stores `0.7877` (hours, from its own equation) beside a
+requirement written in `[min]`, which read as refuting the verdict it supported.
+Every binding now carries its role, and the bound carries the SI pair the
+comparison was actually made on.
 
 ### Pinned behaviours (decisions, not defects)
 

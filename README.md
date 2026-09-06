@@ -120,6 +120,7 @@ with the function that control runs.
 | What guidance applies to this element? | — no view yet | `npm run sysprose -- prompts model.sysml --element X` | `promptsFor` — `src/api/analytics.ts` |
 | What does each requirement assume and guarantee, and on which subject? | — no view yet | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
 | What must be shown, over which axioms, and what do the gates refuse? | — no view yet | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
+| Does each obligation hold, by which engine, and under what bound? | — no view yet | `npm run sysprose -- verify model.sysml --engine literal` | `verifyModel` — `src/api/verification.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -132,9 +133,10 @@ everything that references the selection, library and re-derived copies included
 `src/api/analytics.ts`), where `where-used` drops the library, walks out to the `--depth` you ask
 for and says what it left out; the *Impact graph* draws one hop in each direction from its own
 walk (`neighboursOf`, `src/ui/panels/ImpactGraph.tsx`). `connectivity`, `orphans`, `prompts`,
-`contracts`, `obligations` and the depth-walking `impactClosure` have no control in the app at all
-— they are the terminal's and the SDK's alone. A Contracts view is the closing commit of the
-formal-verification plan; the command line ships first.
+`contracts`, `obligations`, `verify` and the depth-walking `impactClosure` have no control in the
+app at all — they are the terminal's and the SDK's alone. There is no solver in the browser in this
+plan (`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), and a Contracts view is
+the closing commit of the formal-verification plan; the command line ships first.
 
 **Somebody else's `#keyword` vocabulary is read, kept and never acted on by accident.** A prefix
 keyword is the notation's own extension point (SysML v2 §7.27.1, §7.27.4); Sysprose stores every
@@ -212,7 +214,7 @@ npm run check -- <file.sysml> [--json]   # check a file from the command line
 npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # stats · elements · requirements · trace
                        # connectivity · where-used · orphans · prompts
-                       # contracts · obligations
+                       # contracts · obligations · verify
                        # `npm run sysprose -- --help` lists them
 ```
 
