@@ -33,6 +33,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Model } from '@core/index';
+import { parseModel } from '@text/index';
 import { isUserElement } from '@api/index';
 import { contractReport, obligationsReport } from '@api/index';
 import {
@@ -40,7 +41,10 @@ import {
   contractOf,
   isUserModelElement,
   obligationsOf,
+  STATEMENT_KIND_LIBRARY,
+  SYSPROSE_VERIFICATION_LIBRARY,
 } from '@semantics/index';
+import { checkText } from '@text/check';
 import { loadModelText } from '@text/load';
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
@@ -824,5 +828,439 @@ describe('what the reports never say, and what they always exclude', () => {
       const theirs = model.all().filter((el) => isUserElement(model, el)).map((e) => e.id);
       expect(mine, `${path}: the two user-element filters disagree`).toEqual(theirs);
     }
+  }, 60_000);
+});
+
+/**
+ * The keyword inventory, and the two ways a vocabulary this tool did not define
+ * is allowed to touch a report.
+ *
+ * `contracts --keywords` is an INVENTORY: it says what the file carries and
+ * what each keyword resolves to, and it changes nothing. `obligations
+ * --from-keywords` is the one door through which a foreign spelling may file a
+ * row, it is shut by default, and every row it opens prints the spelling that
+ * opened it. The cases below are written against exactly those two claims,
+ * because between them they are the whole of "cannot silently let a vocabulary
+ * it did not define change a proof".
+ */
+describe('the keyword inventory', () => {
+  /**
+   * One file, five keywords, four fates: the shipped one (resolved through an
+   * import), a third-party spelling of it, a third-party clause word, a
+   * misspelling, and one that names a definition the model declares itself.
+   */
+  const VOCABULARY = `${SYSPROSE_VERIFICATION_LIBRARY}
+
+package P {
+  import SysproseVerification::*;
+  metadata def <safety> SafetyTag;
+  part def Sys { attribute m : Real = 3.0; }
+  #exceptional state failsafe;
+  #Exception state abort;
+  #precondtion action launch;
+  #safety part def Housing;
+  requirement def R { subject u : Sys; require constraint { u.m < 9.0 } }
+}`;
+
+  it('is not taken at all unless it was asked for', async () => {
+    const model = await load(VOCABULARY);
+    const quiet = contractReport(model);
+    expect(quiet.keywordsAsked).toBe(false);
+    expect(quiet.keywords).toEqual([]);
+    // And no keyword code is published on a report nobody asked a keyword
+    // question of: `contracts` on its own says exactly what it said before
+    // keywords existed.
+    expect(quiet.diagnostics.map((d) => d.code)).not.toContain('verification/foreign-keyword');
+    expect(quiet.diagnostics.map((d) => d.code)).not.toContain(
+      'verification/keyword-names-nothing',
+    );
+  }, 60_000);
+
+  it('classifies every use into exactly one origin, with what it resolves to', async () => {
+    const model = await load(VOCABULARY);
+    const r = contractReport(model, { keywords: true });
+    expect(r.keywordsAsked).toBe(true);
+    expect(r.keywords.map((k) => [k.keyword, k.origin])).toEqual([
+      ['exceptional', 'sysprose'],
+      ['Exception', 'foreign'],
+      ['precondtion', 'unresolved'],
+      ['safety', 'other'],
+    ]);
+    const [shipped, foreign, misspelt, own] = r.keywords;
+    expect(shipped.resolvedTo?.qualifiedName).toBe('SysproseVerification::ExceptionalOutcome');
+    expect(shipped.foreign).toBeNull();
+    expect(misspelt.resolvedTo).toBeNull();
+    // A model that declares its own vocabulary is reported as using its own,
+    // not as using ours: the origin is read off the RESOLVED definition.
+    expect(own.resolvedTo?.qualifiedName).toBe('P::SafetyTag');
+    // The third-party spelling names nothing in this file, and the row still
+    // says what this tool would make of it — which is the fact a reader needs,
+    // and the one "names nothing" would have hidden.
+    expect(foreign.resolvedTo).toBeNull();
+    expect(foreign.foreign?.readAs).toContain('SysproseVerification::exceptional');
+    expect(foreign.foreign?.note).toContain('not SysML v2, not a Sysprose keyword');
+    // Every row names the element it was written on, so the inventory is
+    // navigable rather than a list of spellings.
+    expect(r.keywords.map((k) => k.element.qualifiedName)).toEqual([
+      'P::failsafe',
+      'P::abort',
+      'P::launch',
+      'P::Housing',
+    ]);
+  }, 60_000);
+
+  /**
+   * A foreign spelling that the model ALSO declares is two facts, not one.
+   *
+   * The alias table decides the origin, because the spelling is what a later
+   * command acts on and a reader has to be told which spellings those are. The
+   * resolution is kept beside it, because the definition is the reader's own
+   * and a row that hid it would say their declaration had been ignored.
+   */
+  it('keeps both facts when a third-party spelling also names something', async () => {
+    const model = await load(`package P {
+  metadata def <Exception> MyException;
+  #Exception state abort;
+}`);
+    const [row] = contractReport(model, { keywords: true }).keywords;
+    expect(row.origin).toBe('foreign');
+    expect(row.resolvedTo?.qualifiedName).toBe('P::MyException');
+    expect(row.foreign?.readAs).toContain('SysproseVerification::exceptional');
+  }, 60_000);
+
+  it('publishes one info per foreign spelling and one per keyword that names nothing', async () => {
+    const model = await load(VOCABULARY);
+    const r = contractReport(model, { keywords: true });
+    const keywordCodes = r.diagnostics.filter((d) => d.code?.startsWith('verification/'));
+    expect(
+      keywordCodes.filter((d) => d.code === 'verification/foreign-keyword').map((d) => d.message),
+    ).toEqual([
+      '`#Exception` on P::abort is a third-party spelling read as `SysproseVerification::exceptional` — not SysML v2, not a Sysprose keyword.',
+    ]);
+    expect(
+      keywordCodes
+        .filter((d) => d.code === 'verification/keyword-names-nothing')
+        .map((d) => d.message),
+    ).toEqual(['`#precondtion` on P::launch resolves to no metadata definition in scope.']);
+    // Info, all of it: none of these is a defect in the model, and one of them
+    // is a file written for another tool being read correctly.
+    for (const d of keywordCodes) {
+      expect(d.severity).toBe('info');
+      expect(d.source).toBe('verification');
+    }
+    // One numbering for the whole lane, whichever half produced the row.
+    expect(new Set(r.diagnostics.map((d) => d.id)).size).toBe(r.diagnostics.length);
+  }, 60_000);
+
+  /**
+   * The promise that keeps the inventory free: a keyword is never a finding
+   * about a file. The 24 validation rules, `check`'s exit contract and the 81
+   * fixtures are untouched by anything in this commit, and the way to show it
+   * is to run the checker over the file the inventory has the most to say
+   * about.
+   */
+  it('says none of it through `npm run check`', async () => {
+    const report = await checkText(VOCABULARY, { library: 'full' });
+    expect(
+      report.summary,
+      report.diagnostics.map((d) => `${d.severity} ${d.code} ${d.message}`).join('\n'),
+    ).toMatchObject({ errors: 0, warnings: 0 });
+    expect(report.diagnostics.filter((d) => d.code?.startsWith('verification/'))).toEqual([]);
+  }, 60_000);
+
+  /**
+   * The tool's OWN statement keywords, in a file written the way the guide
+   * documents them.
+   *
+   * `#prose` / `#prompt` / `#'requirement'` are read from the SPELLING —
+   * `statement-kind.ts` says so in its header and every rule in the tool honours
+   * it — so a conformant file declares no `SysproseStatements` package and they
+   * resolve to nothing. Classifying that as `unresolved` put
+   * `verification/keyword-names-nothing` against `#prose` in the same report
+   * whose census line said one statement had been left out BECAUSE of it, and
+   * offered a hint naming the wrong package. A tag this tool acted on is not a
+   * tag it failed to find.
+   */
+  it('calls its own statement keywords its own, spelling alone', async () => {
+    const text = `package P {
+  part def Sys { attribute m : Real = 3.0; }
+  #prose requirement def R1 { subject u : Sys; doc /* narrative */ }
+  #prompt part guidance;
+  #'requirement' part def Q;
+  requirement def R2 { subject u : Sys; require constraint { u.m < 9.0 } }
+}`;
+    const model = await load(text);
+    const r = contractReport(model, { keywords: true });
+    expect(r.keywords.map((k) => [k.keyword, k.origin])).toEqual([
+      ['prose', 'sysprose'],
+      ['prompt', 'sysprose'],
+      ["'requirement'", 'sysprose'],
+    ]);
+    // Read from the spelling, and the row says so rather than pretending a
+    // resolution it does not have.
+    for (const use of r.keywords) {
+      expect(use.resolvedTo).toBeNull();
+      expect(use.readBySpelling).toEqual({ package: 'SysproseStatements' });
+    }
+    // The report acted on `#prose` — its own census line proves it — so it may
+    // not also report the tag as naming nothing.
+    expect(r.nonNormativeExcluded).toBe(1);
+    expect(r.diagnostics.map((d) => d.code)).not.toContain('verification/keyword-names-nothing');
+
+    // Declaring AND importing the package binds them — a sibling package that
+    // neither declares nor imports resolves nothing, which is the notation's
+    // answer and not a limitation — and then the row says what they NAME.
+    const bound = await load(
+      `${STATEMENT_KIND_LIBRARY}\n\n${text.replace('package P {', 'package P {\n  import SysproseStatements::*;')}`,
+    );
+    const boundUses = contractReport(bound, { keywords: true }).keywords;
+    expect(boundUses.map((k) => [k.origin, k.resolvedTo?.qualifiedName])).toEqual([
+      ['sysprose', 'SysproseStatements::ProseStatement'],
+      ['sysprose', 'SysproseStatements::PromptStatement'],
+      ['sysprose', 'SysproseStatements::RequirementStatement'],
+    ]);
+    for (const use of boundUses) expect(use.readBySpelling).toBeNull();
+  }, 60_000);
+
+  it('is narrowed by `--element` like every other figure in the report', async () => {
+    const model = await load(VOCABULARY);
+    const housing = model.all().find((el) => el.declaredName === 'Housing')!;
+    const scoped = contractReport(model, { scopeId: housing.id, keywords: true });
+    expect(scoped.keywords.map((k) => k.keyword)).toEqual(['safety']);
+  }, 60_000);
+});
+
+describe('a foreign clause keyword, and the door it has to come through', () => {
+  /**
+   * A file written for another tool: the two conditions are keywords on plain
+   * constraints, which is how a tool that has no `assume` / `require` says it.
+   */
+  const FOREIGN = `package P {
+  part def Sys { attribute m : Real = 3.0; attribute cap : Real = 9.0; }
+  action def Move {
+    #precondition constraint before { P::Sys::m > 0.0 }
+    #postcondition constraint after { P::Sys::m < P::Sys::cap }
+  }
+}`;
+
+  /** The same file with the keywords taken off — the pre-keyword worklist. */
+  const PLAIN = FOREIGN.replaceAll('#precondition ', '').replaceAll('#postcondition ', '');
+
+  /** A worklist with the ids stripped, since every load mints its own. */
+  const shape = (rows: ReturnType<typeof obligationsOf>) =>
+    rows.map((o) => ({
+      role: o.role,
+      source: o.source,
+      expression: o.expression,
+      status: o.status,
+      encodable: o.encodable,
+      element: o.element.qualifiedName,
+      provenance: o.provenance ?? null,
+    }));
+
+  /**
+   * The invariant the whole design hangs on: with the flag absent, a file
+   * carrying somebody else's vocabulary produces bit-for-bit the worklist the
+   * same file without it produces. The keyword is read, kept and listed; it
+   * files nothing.
+   */
+  it('changes nothing at all unless `--from-keywords` was passed', async () => {
+    const withKeywords = await load(FOREIGN, 'foreign.sysml');
+    const without = await load(PLAIN, 'plain.sysml');
+    expect(shape(obligationsOf(withKeywords))).toEqual(shape(obligationsOf(without)));
+    // Both plain constraints, both obligations — which is what a plain
+    // constraint is, keyword or no keyword.
+    expect(obligationsOf(withKeywords).filter((o) => o.source === 'constraint')).toHaveLength(2);
+    expect(obligationsOf(withKeywords).some((o) => o.provenance)).toBe(false);
+  }, 60_000);
+
+  it('files a premise and an obligation under the flag, each naming the keyword', async () => {
+    const model = await load(FOREIGN, 'foreign.sysml');
+    const rows = obligationsOf(model, { fromKeywords: true }).filter(
+      (o) => o.source === 'keyword',
+    );
+    expect(rows.map((o) => [o.element.declaredName, o.role])).toEqual([
+      ['before', 'premise'],
+      ['after', 'obligation'],
+    ]);
+    // `source` is `keyword`, never `assume`: the author did not write `assume`,
+    // and a row that said so would make the role map uncheckable.
+    for (const row of rows) {
+      expect(row.provenance?.keyword).toMatch(/^(pre|post)condition$/);
+      expect(row.provenance?.note).toContain('third-party spelling');
+    }
+    const report = obligationsReport(model, { fromKeywords: true });
+    expect(report.fromKeywords).toBe(true);
+    expect(report.byRole.premise).toBe(1);
+    // And the report says out loud which spelling moved which row.
+    const named = report.diagnostics.filter((d) => d.code === 'verification/foreign-keyword');
+    expect(named).toHaveLength(2);
+    expect(named[0].message).toContain('#precondition');
+    expect(named[0].message).toContain('filed this premise');
+  }, 60_000);
+
+  /**
+   * A keyword may not overrule the notation. SysML v2 expresses a precondition
+   * three ways, so a file that wrote one of them has already said what it
+   * meant; a foreign keyword on top of it is at best a duplicate and at worst
+   * another tool's opinion about somebody else's model.
+   *
+   * TWO HALVES, because the notation closes the door before the code does and
+   * a case that stopped at the first half would be vacuous. Measured: a clause
+   * has no prefix-metadata slot at all — `#precondition require constraint { … }`
+   * is a `parse/mismatched-token`, exactly as `#prompt satisfy r by p;` is — so
+   * no FILE can present this situation. A model built through the API can, and
+   * the guard is what answers it there.
+   */
+  it('never overrules a written clause role, even under the flag', async () => {
+    const notation = parseModel(`package P {
+  part def Sys { attribute m : Real = 3.0; }
+  requirement def R {
+    subject u : Sys;
+    #precondition require constraint { u.m < 9.0 }
+  }
+}`);
+    expect(
+      notation.diagnostics.filter((d) => d.severity === 'error').map((d) => d.code),
+      'a clause is expected to have no slot for a keyword — if it now has one, this case is stale',
+    ).toContain('parse/mismatched-token');
+
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 3.0; }
+  requirement def R {
+    subject u : Sys;
+    require constraint { u.m < 9.0 }
+  }
+}`);
+    // The tag written the only way it can be: through the API, onto the clause.
+    const clause = model
+      .all()
+      .find((el) => el.eClass === 'ConstraintUsage' && el.attrs.requirementRole === 'require')!;
+    model.setAttrs(clause.id, { metadata: ['precondition'] });
+
+    const rows = obligationsOf(model, { fromKeywords: true }).filter((o) => o.role !== 'axiom');
+    expect(rows.map((o) => [o.role, o.source])).toEqual([['obligation', 'require']]);
+    expect(rows[0].provenance).toBeUndefined();
+  }, 60_000);
+
+  /**
+   * And it may never make an AXIOM. A premise is something a proof may lean on
+   * while showing something else; an axiom is a fact put into the context
+   * unconditionally. A keyword that could add one would be a foreign vocabulary
+   * changing what every other obligation in the run is judged against.
+   */
+  it('can file a premise or an obligation, never an axiom', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 3.0; }
+  #precondition constraint c { P::Sys::m > 0.0 }
+  #Exception constraint d { P::Sys::m < 9.0 }
+}`);
+    const rows = obligationsOf(model, { fromKeywords: true });
+    // The length first, because `.every` over an empty array is true and a case
+    // whose promise can only be kept vacuously is not a case at all.
+    expect(rows.filter((o) => o.provenance)).toHaveLength(1);
+    expect(rows.filter((o) => o.provenance).every((o) => o.role !== 'axiom')).toBe(true);
+    // `#Exception` is a valence tag, not a clause role: it files nothing here
+    // whatever the flag says.
+    const exceptional = rows.find((o) => o.element.declaredName === 'd')!;
+    expect(exceptional.source).toBe('constraint');
+    expect(exceptional.provenance).toBeUndefined();
+  }, 60_000);
+
+  /**
+   * And it may never take an axiom AWAY, which is the direction the first draft
+   * of this guard missed and the worse of the two.
+   *
+   * A `CalculationUsage` with a bare body has no written clause role, so a
+   * guard that tested only `requirementRole` let `#postcondition` REPLACE
+   * `{axiom, calculation}`: the joining equality `total == a + b` vanished from
+   * the proof context and the bare term `a + b` — a real-valued expression, not
+   * a claim — was filed as something to show, `encodable: true`. Every
+   * obligation mentioning `total` was then standing on a free variable, and the
+   * only thing the report said out loud was that a row had been FILED.
+   */
+  it('leaves a calculation’s defining axiom exactly where it was', async () => {
+    const model = await load(`package P {
+  part def Sys {
+    attribute a : Real;
+    attribute b : Real;
+    #postcondition calc total { a + b }
+  }
+}`);
+    const before = obligationsOf(model);
+    const after = obligationsOf(model, { fromKeywords: true });
+    expect(before.map((o) => [o.role, o.source, o.expression])).toEqual([
+      ['axiom', 'calculation', 'total == a + b'],
+    ]);
+    expect(after.map((o) => [o.role, o.source, o.expression])).toEqual(
+      before.map((o) => [o.role, o.source, o.expression]),
+    );
+    // Nothing was filed, so nothing claims to have been.
+    expect(after.some((o) => o.provenance)).toBe(false);
+    const report = obligationsReport(model, { fromKeywords: true });
+    expect(report.byRole).toEqual(obligationsReport(model).byRole);
+    expect(report.filedByKeyword).toBe(0);
+    expect(report.diagnostics.filter((d) => d.code === 'verification/foreign-keyword')).toEqual(
+      [],
+    );
+  }, 60_000);
+
+  /**
+   * The count on the header is over the WHOLE worklist, like every other figure
+   * beside it.
+   *
+   * `--missing` narrows the LISTING and nothing else — the report says so in
+   * `obligationsReport` — so a keyword count taken off the narrowed listing
+   * printed "0 row(s) filed by a keyword" three lines above the diagnostic
+   * naming the keyword that filed one, in the same report whose own histogram
+   * counted that premise.
+   */
+  it('counts the rows a keyword filed over the whole worklist, not the narrowed one', async () => {
+    const model = await load(`package P {
+  part def Sys {
+    attribute m : Real = 3.0;
+    #precondition constraint before { m > 0.0 }
+  }
+  requirement def R { subject u : Sys; doc /* no formal clause */ }
+}`);
+    const whole = obligationsReport(model, { fromKeywords: true });
+    const narrowed = obligationsReport(model, { fromKeywords: true, missing: true });
+    expect(whole.filedByKeyword).toBe(1);
+    // The premise is encodable, so `--missing` drops it from the listing — and
+    // the figure has to survive that, exactly as `total` and `byRole` do.
+    expect(narrowed.obligations.some((o) => o.provenance)).toBe(false);
+    expect(narrowed.filedByKeyword).toBe(whole.filedByKeyword);
+    expect(narrowed.total).toBe(whole.total);
+  }, 60_000);
+
+  /**
+   * A spelling this table knows, over a definition the MODEL declares.
+   *
+   * The inventory was already fixed to keep both facts; the worklist row said
+   * only "a third-party spelling" and left the author's own
+   * `metadata def <precondition>` unmentioned on every row it filed. The two
+   * surfaces now say the same thing about the same keyword.
+   */
+  it('names the definition the model itself declared, on the row it filed', async () => {
+    const model = await load(`package MyTool {
+  metadata def <precondition> MyPrecondition;
+}
+
+package P {
+  import MyTool::*;
+  part def Sys {
+    attribute m : Real = 3.0;
+    #precondition constraint before { m > 0.0 }
+  }
+}`);
+    const [row] = obligationsOf(model, { fromKeywords: true }).filter(
+      (o) => o.source === 'keyword',
+    );
+    expect(row.role).toBe('premise');
+    expect(row.provenance?.note).toContain('read as an `assume` clause');
+    expect(row.provenance?.note).toContain('it names MyTool::MyPrecondition here');
+    // And the inventory's line for the same keyword agrees, which is the point.
+    const [use] = contractReport(model, { keywords: true }).keywords;
+    expect(use.resolvedTo?.qualifiedName).toBe('MyTool::MyPrecondition');
   }, 60_000);
 });

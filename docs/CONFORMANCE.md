@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2352 passed / 0 failed / 0 skipped** across **132 files** + **128 E2E** across **78 spec files** = **2480 green** (measured 2026-09-06) |
+| Full automated suite | **2408 passed / 0 failed / 0 skipped** across **133 files** + **128 E2E** across **78 spec files** = **2536 green** (measured 2026-09-06) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -241,6 +241,60 @@ same code path drives both the self round-trip and the live-pilot adapter below.
 
 ---
 
+## 7. User-defined keywords — the mechanism, and the one vocabulary Sysprose ships
+
+SysML v2 §7.27.1 says a metadata definition with no nested features "simply acts
+as a user-defined syntactic tag on the annotated element", and §7.27.4 makes the
+(short) name of such a definition writable as a `#keyword` in front of a
+declaration. That mechanism is what Sysprose borrows. The vocabulary carried over
+it is **not** part of the specification, and nothing in this tool describes it as
+if it were.
+
+A practitioner's four-keyword vocabulary was assessed against the published
+specification. Two of the four are things the notation already expresses, one
+names a real gap that is deliberately **not** shipped, and one is adopted:
+
+| Facet | Keyword proposed | Does SysML v2 express it? | The construct the specification supplies | Decision |
+|---|---|---|---|---|
+| **Before** | `#precondition` | **Yes, three ways** | `assume constraint` in a requirement body (`RequirementConstraintKind = assumption`, Part 1 §8.2.2.21.1); `objective { assume constraint { … } }` on any case, typed by `Cases::Case::obj : RequirementCheck[1]`; `guard` on a transition (`TransitionPerformances::TransitionPerformance::guard`) | **Rejected.** Read the standard construct; a keyword would be redundant syntax. |
+| **After** | `#postcondition` | **Yes** | `require constraint`; `objective { require constraint { … } }`, whose subject *defaults* to the case result per the shipped `Systems Library/Cases.sysml` (`subject subj default Case::result;`) and is *bound* to the case subject per `VerificationCases.sysml` | **Rejected**, for the same reason. |
+| **Valence** | `#Exception` | **No** | `exception*` occurs nowhere in Part 1. `VerificationCases::VerdictKind::fail` is a case *result*, not a model-authored classification of an outcome, and `RiskMetadata::Risk` is probability and impact. §7.27.4's own example is `#situation occurrence def Failure;` — the specification *demonstrates* a user-defined failure marker | **Adopted** as `#exceptional`, over the shipped `metadata def <exceptional> ExceptionalOutcome;` in `SysproseVerification` (`src/semantics/verification-vocabulary.ts`). A Sysprose extension, not standard vocabulary. |
+| **Visibility** | `#Observable` | **No** | "observable" occurs twice in Part 1, both inside one narrative use-case sentence — a sentence, not a construct. `out` direction and `flow` say what crosses an interface, not which step is published; `VerificationMethodKind` sits on the case | **Held, not shipped.** A `metadata def` written into a user's file is a compatibility commitment; this one would discharge no obligation. |
+
+**What is read, and what that reading may do.** `contracts --keywords` inventories
+every keyword in a file with what it resolves to — resolution is KerML full name
+resolution against the `MetadataDefinition`s in scope, with the bundled library as
+the namespace of last resort, which is why the library's own `#moe` resolves. A
+keyword naming nothing in scope is reported (`verification/keyword-names-nothing`,
+info); a third-party spelling this tool recognises is reported with its provenance
+(`verification/foreign-keyword`, info) and never described as standard.
+`verification/foreign-keyword` also comes from `obligations --from-keywords`, one
+row per obligation a keyword actually filed; `verification/keyword-names-nothing`
+comes from `contracts --keywords` alone, since a keyword naming nothing files
+nothing. Neither comes from anywhere else: `npm run check` does not judge a
+keyword.
+
+**What a keyword may move, and what it may never touch.** A third-party
+`#precondition` / `#postcondition` files a premise or something to show only
+under `obligations --from-keywords`, and only on a **plain `constraint`**. It
+never overrules a clause role the author wrote, it can never add an axiom, and —
+the direction that matters as much — it can never take one away: a keyword on a
+`calc` leaves the calculation's defining equality (`total == a + b`) exactly
+where it was, because a vocabulary that could silently drop a definition out of
+the proof context would leave every obligation over that calculation standing on
+a free variable.
+
+**Measured, and pinned by `test/unit/semantics.keywords.test.ts`:** `#exceptional`,
+`#Exception`, `#precondition`, `#postcondition`, `#Observable`, a qualified
+`#SysproseVerification::exceptional` and a misspelt `#precondtion` all parse with
+zero diagnostics on six host declarations, are stored exactly as written, and
+round-trip. The round trip is idempotent **from the second save** rather than
+byte-identical from arbitrary input. A keyword colliding with a hard keyword of
+the notation must be quoted — `#derive part def A;` does not parse, `#'derive'`
+does.
+
+---
+
 ## Mapping to OMG conformance statements — and the honest gaps
 
 | OMG conformance area | Addressed by | Honest gap |
@@ -248,6 +302,7 @@ same code path drives both the self round-trip and the live-pilot adapter below.
 | **Textual notation parsing** | Langium grammar; **100 % corpus parse**; full textual round-trip stability | Parse + full round-trip are closed; the residual is deep formal-semantics corners, not grammar coverage. |
 | **Model interchange** | element-graph `api-json` validates against the OMG JSON Schema; XMI library ingest (38.8k elements); **self round-trip over HTTP** via `PilotApiClient` | No XMI *export*; interchange identity is the element-set multiset, not byte-for-byte; no live OMG pilot-server round-trip exercised offline (see §6). |
 | **API PSM (REST + Query)** | 10 live endpoints validated against OpenAPI 3.1; versioning/Query engine; **concurrent-writer commit serialization** (`test/server/concurrency*`); **interop client** round-trips over HTTP (§6) | OpenAPI surface is representative (25 paths), not every endpoint/param. |
+| **Annotation vocabulary (§7.27 keywords)** | Prefix keywords are read, resolved against the `MetadataDefinition`s in scope and preserved verbatim through a save (`src/semantics/keywords.ts`); Sysprose's own `#exceptional` ships as text a user pastes, over the mechanism §7.27.1/§7.27.4 defines | **The vocabulary is Sysprose's, not the specification's**, and the tool says so on every line that prints one. A third-party spelling is read only through a declared alias table, contributes to no worklist unless `obligations --from-keywords` asks it to, and is never reported as standard; `hasKeyword` — what a later engine asks — answers only from real resolution, so an alias hit is never mistaken for the shipped keyword. `#observable` is designed and deliberately unshipped. |
 | **OSLC PSM** | OSLC Core catalog/provider/query + Turtle/RDF-XML/JSON-LD + **`oslc:ResourceShape` full-shape resources** (`test/server/oslc-shapes`) | A representative subset of the OSLC SysML PSM (no delegated dialogs). |
 | **Requirements — contracts and obligations** | `contracts` / `obligations` read `RequirementDefinition` / `RequirementUsage` clause roles and case `objective`s into an assumption/guarantee inventory and a proof worklist (`src/semantics/contracts.ts`, `src/semantics/obligations.ts`) | **These commands report structure only.** They evaluate nothing and decide nothing: no solver stands behind them, and neither prints a word about whether a requirement holds. A requirement USAGE is not read through its definition's clauses (the definition carries its own contract, and the usage's row names it rather than being counted as bodiless); an attribute declared in a `port def` is one element however many ports reach it, so the variables a clause reads are reported per PATH and their `in`/`out` direction is taken from the port the path names; `discharged` and `stale` are declared in the status vocabulary and never produced, because both are read back from an evidence record that does not ship yet. |
 
@@ -268,7 +323,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2352 pass / 0 skip, 132 files)
+# Full unit + integration + conformance suite (2408 pass / 0 skip, 133 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

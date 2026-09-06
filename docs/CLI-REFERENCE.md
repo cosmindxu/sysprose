@@ -194,6 +194,7 @@ npm run sysprose -- contracts <file.sysml|-> [options]
 | Flag | What it does | Default |
 |---|---|---|
 | `--element REF` | The element: an id, a qualified name, or a name unique in the model | every contract in the model |
+| `--keywords` | Also inventory every `#keyword` in the file with what it resolves to — an inventory, which changes no obligation | — |
 
 Computed by `contractReport (src/api/verification.ts)`. With `--json` the answer is published under `contracts`, beside `ok` and `file`.
 
@@ -209,6 +210,7 @@ npm run sysprose -- obligations <file.sysml|-> [options]
 |---|---|---|
 | `--element REF` | The element: an id, a qualified name, or a name unique in the model | the whole model |
 | `--missing` | Only the rows this lane would not decide: no formal clause, and not encodable | — |
+| `--from-keywords` | Let a third-party `#precondition` / `#postcondition` file a premise or an obligation; each such row prints the spelling that filed it | a keyword files nothing |
 
 Computed by `obligationsReport (src/api/verification.ts)`. With `--json` the answer is published under `obligations`, beside `ok` and `file`.
 

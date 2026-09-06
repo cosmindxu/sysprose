@@ -136,6 +136,20 @@ walk (`neighboursOf`, `src/ui/panels/ImpactGraph.tsx`). `connectivity`, `orphans
 — they are the terminal's and the SDK's alone. A Contracts view is the closing commit of the
 formal-verification plan; the command line ships first.
 
+**Somebody else's `#keyword` vocabulary is read, kept and never acted on by accident.** A prefix
+keyword is the notation's own extension point (SysML v2 §7.27.1, §7.27.4); Sysprose stores every
+one exactly as written and hands it back unchanged on save, whoever's tool it was written for.
+`contracts --keywords` inventories them with what each resolves to — its own vocabulary, a
+third-party spelling named as such, or a keyword that names no `metadata def` in scope — and
+changes nothing. The one door through which a foreign spelling may reach a worklist is
+`obligations --from-keywords`, which is off by default, reads a keyword only on a plain
+`constraint` — never over a clause role you wrote, and never over a `calc`, whose body is the
+definitional axiom the rest of the worklist stands on — and prints the keyword on every row it
+files. Sysprose ships exactly one keyword of its own, `#exceptional`, over a `metadata def` you
+paste into your file: it is a Sysprose extension, not standard vocabulary, and
+[`docs/CONFORMANCE.md`](docs/CONFORMANCE.md) §7 records why it is the only one of four candidates
+that ships.
+
 Every subcommand takes `-` for stdin and `--json` for `{ok, file, <report>}`, and every report is
 about *your* file: the bundled standard library and the tool's own re-derived elements are
 excluded, and each report says how many it left out — `stats` counts the library, `elements` the

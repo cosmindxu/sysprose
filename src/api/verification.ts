@@ -42,10 +42,21 @@ import {
   contractsOf,
   isUserModelElement,
   type Contract,
+  type ContractRef,
   type ContractSubject,
   type Refusal,
 } from '../semantics/contracts';
-import { isNonNormativeStatement } from '../semantics/statement-kind';
+import {
+  foreignKeyword,
+  isSysproseVocabulary,
+  keywordsOnRecord,
+  resolveKeyword,
+} from '../semantics/keywords';
+import {
+  isNonNormativeStatement,
+  statementKindOfKeyword,
+  STATEMENT_KIND_PACKAGE,
+} from '../semantics/statement-kind';
 import {
   obligationsOf,
   type Obligation,
@@ -59,6 +70,17 @@ import {
 export interface ContractReportOptions {
   /** Restrict to contracts at or under this element. */
   scopeId?: ElementId;
+  /**
+   * Also inventory the `#keyword` vocabulary the file carries.
+   *
+   * Off by default, and the two codes it produces —
+   * `verification/foreign-keyword` and `verification/keyword-names-nothing` —
+   * are produced HERE and nowhere else. `npm run check` does not judge a
+   * keyword: the 24 validation rules, the checker's exit contract and the
+   * fixture corpus are untouched by anything in this option, which is what
+   * makes reading somebody else's vocabulary free of consequence.
+   */
+  keywords?: boolean;
 }
 
 /**
@@ -96,8 +118,161 @@ export interface ContractReport {
   libraryExcluded: number;
   /** Re-derived (usage-scoped) copies left out. */
   implicitExcluded: number;
+  /**
+   * Every `#keyword` in scope with what it resolves to — empty unless
+   * {@link ContractReportOptions.keywords} asked for it.
+   *
+   * An INVENTORY. Nothing in it changes a contract, a clause or an obligation:
+   * a reader who sees `#Exception` here has been told what this tool would make
+   * of it, not what it made of it.
+   */
+  keywords: KeywordUse[];
+  /**
+   * Was the inventory asked for? A consumer needs to tell "no keyword in this
+   * model" from "nobody asked", and an empty array says both.
+   */
+  keywordsAsked: boolean;
   /** What this lane noticed on the way past — always `source: 'verification'`. */
   diagnostics: Diagnostic[];
+}
+
+/* ────────────────────────── the keyword inventory ────────────────────────── */
+
+/** Whose vocabulary a keyword belongs to. */
+export type KeywordOrigin =
+  /** A definition Sysprose ships: `SysproseVerification`, `SysproseStatements`. */
+  | 'sysprose'
+  /** A third-party spelling this tool recognises through the alias table. */
+  | 'foreign'
+  /** Something else that really resolves — the model's own, or the library's. */
+  | 'other'
+  /** It names no `metadata def` in scope. */
+  | 'unresolved';
+
+/** One use of one keyword, with what it resolves to. */
+export interface KeywordUse {
+  /** The keyword exactly as written after the `#`. */
+  keyword: string;
+  /** The element it is written on. */
+  element: ContractRef;
+  /** The `metadata def` it names, or `null` when it names none. */
+  resolvedTo: {
+    id: ElementId;
+    qualifiedName: string;
+    declaredName?: string;
+    /** The short name, which is the keyword spelling the definition declares. */
+    shortName?: string;
+  } | null;
+  origin: KeywordOrigin;
+  /**
+   * For a third-party spelling: what this tool would read it as, and the
+   * provenance sentence that must be printed wherever that reading is used.
+   * `null` for every other origin.
+   */
+  foreign: { readAs: string; note: string } | null;
+  /**
+   * For a Sysprose keyword recognised by its SPELLING rather than by
+   * resolution: the package whose `metadata def` would bind it. `null`
+   * otherwise, including for a Sysprose keyword that does resolve.
+   *
+   * `#prose` and `#prompt` are the reason this field exists. A statement kind
+   * is read from the spelling alone — `statement-kind.ts` says so in its own
+   * header, the guide tells authors the tag "works whether or not the
+   * definitions are in your file", and every rule in the tool honours that — so
+   * a file written exactly as documented declares no `SysproseStatements`
+   * package and the keyword resolves to nothing. Classifying that as
+   * `unresolved` put `verification/keyword-names-nothing` against `#prose` in
+   * the same report whose census line said one statement had been left out
+   * BECAUSE of it, and sent the reader hunting for a misspelling in a tag the
+   * tool had acted on.
+   */
+  readBySpelling: { package: string } | null;
+}
+
+/**
+ * Every keyword in scope, in the model's own order.
+ *
+ * Classified into exactly ONE origin per use, because a row that was both
+ * "third-party" and "names nothing" would ask the reader to decide which of the
+ * two this tool acted on. The alias table wins that tie: for `#Exception` the
+ * tool DOES know what the file meant, and saying only that it names nothing
+ * would hide the reading that `obligations --from-keywords` and (later)
+ * `check-behaviour --from-keywords` would act on.
+ *
+ * Resolution wins over the shipped vocabulary in the other direction: a model
+ * that declares its own `metadata def <exceptional>` in its own package is
+ * reported as using its own, because it is. A foreign SPELLING that also
+ * resolves keeps both facts — the origin says the spelling is one this tool
+ * acts on, `resolvedTo` says what the model itself named — and the renderer
+ * prints both, because dropping the second would tell a reader their own
+ * definition had been ignored.
+ *
+ * The last arm before `unresolved` is the statement-kind vocabulary, and it is
+ * there because this tool reads `#prose` / `#prompt` / `#'requirement'` from the
+ * SPELLING and always has: they classify a statement whether or not
+ * `SysproseStatements` is in the file, which is what keeps every model written
+ * before that package existed classified the way it was. A keyword the tool
+ * acts on is not a keyword that "names nothing", so it is `sysprose` with
+ * {@link KeywordUse.readBySpelling} saying how it was recognised — and it
+ * raises no `verification/keyword-names-nothing`.
+ */
+function keywordUses(model: Model, scoped: (id: ElementId) => boolean): KeywordUse[] {
+  const out: KeywordUse[] = [];
+  for (const el of model.all()) {
+    if (!isUserModelElement(model, el) || !scoped(el.id)) continue;
+    for (const keyword of keywordsOnRecord(el)) {
+      const def = resolveKeyword(model, keyword);
+      const alias = foreignKeyword(keyword);
+      // Only when nothing resolved: a model that declares its own
+      // `metadata def <prose>` is using its own vocabulary, and `resolvedTo`
+      // has to be free to say so.
+      const bySpelling =
+        !alias && !def && statementKindOfKeyword(keyword.written) !== undefined;
+      const origin: KeywordOrigin = alias
+        ? 'foreign'
+        : def
+          ? isSysproseVocabulary(model, def)
+            ? 'sysprose'
+            : 'other'
+          : bySpelling
+            ? 'sysprose'
+            : 'unresolved';
+      out.push({
+        keyword: keyword.written,
+        element: {
+          id: el.id,
+          eClass: el.eClass,
+          ...(el.declaredName !== undefined ? { declaredName: el.declaredName } : {}),
+          qualifiedName: model.qualifiedName(el.id),
+        },
+        resolvedTo: def
+          ? {
+              id: def.id,
+              qualifiedName: model.qualifiedName(def.id),
+              ...(def.declaredName !== undefined ? { declaredName: def.declaredName } : {}),
+              ...(def.declaredShortName !== undefined
+                ? { shortName: def.declaredShortName }
+                : {}),
+            }
+          : null,
+        origin,
+        foreign: alias
+          ? {
+              readAs:
+                alias.reads.as === 'keyword'
+                  ? `\`${alias.reads.keyword}\``
+                  : // `an assume clause`, but `a require clause`: the string is
+                    // read inside a sentence, and the article is chosen on the
+                    // word rather than on the backtick in front of it.
+                    `${alias.reads.role === 'assume' ? 'an' : 'a'} \`${alias.reads.role}\` clause`,
+              note: alias.note,
+            }
+          : null,
+        readBySpelling: bySpelling ? { package: STATEMENT_KIND_PACKAGE } : null,
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -111,6 +286,7 @@ export interface ContractReport {
  */
 export function contractReport(model: Model, opts: ContractReportOptions = {}): ContractReport {
   const scoped = inScope(model, opts.scopeId);
+  const keywords = opts.keywords === true ? keywordUses(model, scoped) : [];
   const contracts = contractsOf(model).filter((c) => scoped(c.id));
   const guarantees = contracts.flatMap((c) => c.guarantees);
   const subjects = new Set(
@@ -149,7 +325,12 @@ export function contractReport(model: Model, opts: ContractReportOptions = {}): 
     implicitExcluded: requirementShaped.filter(
       (el) => el.attrs.isLibrary !== true && !isUserModelElement(model, el),
     ).length,
-    diagnostics: verificationDiagnostics(model, contracts, scoped),
+    keywords,
+    keywordsAsked: opts.keywords === true,
+    diagnostics: numbered([
+      ...verificationFindings(model, contracts, scoped),
+      ...keywordFindings(keywords),
+    ]),
   };
 }
 
@@ -182,6 +363,24 @@ export interface ObligationReport {
   refusedByReason: Record<string, number>;
   /** Whether the worklist was narrowed to the `--missing` rows. */
   missingOnly: boolean;
+  /**
+   * Whether a third-party `#precondition` / `#postcondition` was allowed to
+   * file a row. Off by default, published so a consumer reading the worklist
+   * back can tell which of the two worklists it is holding.
+   */
+  fromKeywords: boolean;
+  /**
+   * How many rows a keyword actually filed — over the WHOLE worklist in scope,
+   * like `total`, `byRole` and `byStatus`, and unlike the possibly narrowed
+   * {@link obligations} listing.
+   *
+   * Published rather than left to the caller because the caller got it wrong:
+   * counting the listing under `--missing` printed "0 row(s) filed by a
+   * keyword" on a report whose own histogram counted the premise that keyword
+   * filed and whose own diagnostic named it. One report contradicting itself in
+   * three lines is worse than not printing the figure at all.
+   */
+  filedByKeyword: number;
   diagnostics: Diagnostic[];
 }
 
@@ -227,15 +426,100 @@ export function obligationsReport(model: Model, opts: ObligationOptions = {}): O
     missing: byStatus['no-formal-clause'] + byStatus['not-encodable'],
     refusedByReason,
     missingOnly: opts.missing === true,
-    diagnostics: verificationDiagnostics(
-      model,
-      contractsOf(model).filter((c) => scoped(c.id)),
-      scoped,
-    ),
+    fromKeywords: opts.fromKeywords === true,
+    filedByKeyword: all.filter((o) => o.provenance).length,
+    diagnostics: numbered([
+      ...verificationFindings(model, contractsOf(model).filter((c) => scoped(c.id)), scoped),
+      // Only the keywords that actually MOVED a row. `contracts --keywords` is
+      // the inventory; a worklist reports the vocabulary it acted on, and
+      // saying nothing here would be this lane letting a foreign spelling
+      // change what must be shown in silence.
+      ...contributingKeywordFindings(all),
+    ]),
   };
 }
 
 /* ─────────────────────────────── diagnostics ─────────────────────────────── */
+
+/** A finding before it is given its place in the lane's one numbering. */
+type Finding = Omit<Diagnostic, 'id' | 'ruleId' | 'source'>;
+
+/**
+ * One numbering and one source for whatever produced the findings.
+ *
+ * Two producers that each numbered from zero would publish two `verification#0`
+ * rows in one report, and a consumer keying on the id would silently keep one
+ * of them.
+ */
+function numbered(findings: readonly Finding[]): Diagnostic[] {
+  return findings.map((d, i) => ({
+    id: `verification#${i}`,
+    ruleId: 'verification',
+    source: 'verification',
+    ...d,
+  }));
+}
+
+/**
+ * What the inventory noticed: a third-party spelling, and a keyword that names
+ * nothing.
+ *
+ * Both INFO, and neither is a defect in the model. A foreign keyword is a file
+ * written for another tool, which is the case this reader exists for; a keyword
+ * that names nothing may be a misspelling, or a vocabulary the file simply
+ * never imports. Emitted only when the inventory was asked for, so a keyword
+ * can never change what `npm run check` says about a file.
+ */
+function keywordFindings(uses: readonly KeywordUse[]): Finding[] {
+  const out: Finding[] = [];
+  for (const use of uses) {
+    if (use.origin === 'foreign' && use.foreign) {
+      out.push({
+        severity: 'info',
+        message: `\`#${use.keyword}\` on ${use.element.qualifiedName} is ${use.foreign.note}.`,
+        elementId: use.element.id,
+        elementName: use.element.qualifiedName,
+        code: 'verification/foreign-keyword',
+        hint: `It is read as ${use.foreign.readAs} only where a command asks for it (\`obligations --from-keywords\`); this row is an inventory and changes no obligation.`,
+      });
+    } else if (use.origin === 'unresolved') {
+      out.push({
+        severity: 'info',
+        message: `\`#${use.keyword}\` on ${use.element.qualifiedName} resolves to no metadata definition in scope.`,
+        elementId: use.element.id,
+        elementName: use.element.qualifiedName,
+        code: 'verification/keyword-names-nothing',
+        hint: 'Declare or import the `metadata def` the keyword names — `import SysproseVerification::*;` for the one this tool ships — or correct the spelling. The keyword is kept in the file either way, and `npm run check` does not judge it.',
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The keywords that actually filed a row, for the worklist that let them.
+ *
+ * Keyed on the rows rather than on the model, because that is the claim being
+ * made: not "this file carries a foreign keyword" (the inventory's job) but
+ * "this foreign keyword moved this relation into the worklist". One finding per
+ * contributing row, so a reader can match each of them to a line above it.
+ */
+function contributingKeywordFindings(rows: readonly Obligation[]): Finding[] {
+  const out: Finding[] = [];
+  for (const row of rows) {
+    if (!row.provenance) continue;
+    out.push({
+      severity: 'info',
+      message: `\`#${row.provenance.keyword}\` on ${row.element.qualifiedName} filed this ${row.role} — it is ${row.provenance.note}.`,
+      elementId: row.element.id,
+      elementName: row.element.qualifiedName,
+      code: 'verification/foreign-keyword',
+      hint: 'Drop `--from-keywords` and the row goes back to what the notation says it is; write the standard construct (`assume constraint` / `require constraint`) and no keyword is needed at all.',
+    });
+  }
+  return out;
+}
+
 
 /** The metaclasses that own a body the standard admits `assume`/`require` in. */
 const CLAUSE_HOSTS = new Set([
@@ -264,20 +548,14 @@ const CLAUSE_HOSTS = new Set([
  * element outside `--element` is a finding about a model the reader did not
  * ask about, printed under a heading that says the report was narrowed.
  */
-function verificationDiagnostics(
+function verificationFindings(
   model: Model,
   contracts: readonly Contract[],
   scoped: (id: ElementId) => boolean,
-): Diagnostic[] {
-  const out: Diagnostic[] = [];
-  let n = 0;
-  const add = (d: Omit<Diagnostic, 'id' | 'ruleId' | 'source'>): void => {
-    out.push({
-      id: `verification#${n++}`,
-      ruleId: 'verification',
-      source: 'verification',
-      ...d,
-    });
+): Finding[] {
+  const out: Finding[] = [];
+  const add = (d: Finding): void => {
+    out.push(d);
   };
 
   for (const contract of contracts) {

@@ -189,6 +189,26 @@ export {
   type StatementKind,
 } from './statement-kind';
 export {
+  keywordsOf,
+  keywordsOnRecord,
+  resolveKeyword,
+  hasKeyword,
+  foreignKeyword,
+  isSysproseVocabulary,
+  FOREIGN_KEYWORD_ALIASES,
+  SYSPROSE_KEYWORD_PACKAGES,
+  type Keyword,
+  type ForeignKeywordAlias,
+  type ForeignReading,
+} from './keywords';
+export {
+  SYSPROSE_VERIFICATION_PACKAGE,
+  SYSPROSE_VERIFICATION_LIBRARY,
+  EXCEPTIONAL_KEYWORD,
+  EXCEPTIONAL_DEFINITION,
+  EXCEPTIONAL_QUALIFIED_KEYWORD,
+} from './verification-vocabulary';
+export {
   contractsOf,
   contractOf,
   claimedVerdictOf,

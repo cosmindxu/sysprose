@@ -85,6 +85,8 @@ export { contractReport, obligationsReport } from './verification';
 export type {
   ContractReport,
   ContractReportOptions,
+  KeywordOrigin,
+  KeywordUse,
   ObligationReport,
 } from './verification';
 // The payload types both reports publish, and the options the second takes.

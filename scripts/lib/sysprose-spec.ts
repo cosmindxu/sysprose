@@ -232,6 +232,11 @@ export const COMMANDS: readonly CommandSpec[] = [
         // that the second command wants something else.
         doc: 'The element: an id, a qualified name, or a name unique in the model',
       },
+      {
+        name: 'keywords',
+        kind: 'boolean',
+        doc: 'Also inventory every `#keyword` in the file with what it resolves to — an inventory, which changes no obligation',
+      },
     ],
   },
   {
@@ -251,6 +256,12 @@ export const COMMANDS: readonly CommandSpec[] = [
         name: 'missing',
         kind: 'boolean',
         doc: 'Only the rows this lane would not decide: no formal clause, and not encodable',
+      },
+      {
+        name: 'from-keywords',
+        kind: 'boolean',
+        fallback: 'a keyword files nothing',
+        doc: "Let a third-party `#precondition` / `#postcondition` file a premise or an obligation; each such row prints the spelling that filed it",
       },
     ],
   },

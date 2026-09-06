@@ -431,6 +431,20 @@ The verification lane reporting what it will and will not undertake. Always INFO
 - **Fires when:** An `assume` or `require` clause is written in a body the standard's `ActionBodyItem` does not admit — an action definition, for instance. Sysprose parses it; the specification does not offer it there.
 - **Hint given:** The standard writes a behaviour precondition as `assert constraint precondition { … }`, as a `guard` on the incoming transition, or as a requirement whose `subject` is the behaviour; `contracts` reads all three.
 
+### `verification/foreign-keyword`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A prefix keyword is a third-party spelling this tool recognises — `#Exception`, `#exception`, `#precondition`, `#postcondition` — read through the foreign-alias table rather than named by SysML v2 or shipped by Sysprose.
+- **Hint given:** The line names the spelling and what it was read as. It is neither standard vocabulary nor a Sysprose keyword, and it files nothing unless `obligations --from-keywords` asked it to; write `assume constraint` / `require constraint` and no keyword is needed at all.
+
+### `verification/keyword-names-nothing`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A `#keyword` resolves to no `metadata def` in scope — a misspelling, or a vocabulary the file never declares or imports.
+- **Hint given:** Declare or import the `metadata def` the keyword names — `import SysproseVerification::*;` for the one this tool ships — or correct the spelling. The keyword is kept in the file either way.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -490,4 +504,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*59 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*61 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

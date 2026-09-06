@@ -84,6 +84,7 @@ import {
   requirementSatisfaction,
   traceabilityMatrix,
   type ElementRef,
+  type KeywordUse,
 } from '../src/api/index';
 import {
   isStatementKind,
@@ -823,9 +824,70 @@ function edgeLines(contract: Contract): string[] {
   return shown.map(([kw, names]) => `    ${kw} ${names.join(', ')}`);
 }
 
+/**
+ * One keyword, said the way §3.12 of the plan says it may be said.
+ *
+ * Four sentences, one per origin, and none of them may be collapsed into
+ * another: "third-party spelling" and "names nothing" are different facts about
+ * a file, and a reader who is told only the second goes looking for a
+ * misspelling in a keyword this tool understood perfectly well. The word
+ * `standard` appears nowhere, because none of these keywords is: the shipped
+ * one is a Sysprose extension over a mechanism the specification defines, and
+ * the foreign ones are somebody else's.
+ */
+function keywordLine(use: KeywordUse): string {
+  const on = `on ${use.element.qualifiedName}`;
+  switch (use.origin) {
+    case 'sysprose':
+      // A statement kind is read from the spelling, so it is a Sysprose keyword
+      // in a file that declares no Sysprose package. Saying "→ " and nothing
+      // after it, or worse "names nothing", would send a reader looking for a
+      // misspelling in a tag this tool acted on.
+      return use.resolvedTo
+        ? `    sysprose vocabulary: #${use.keyword} ${on} → ${use.resolvedTo.qualifiedName}`
+        : `    sysprose vocabulary: #${use.keyword} ${on} — read from the spelling;` +
+            ` declare or import ${use.readBySpelling?.package ?? ''} to bind it`;
+    case 'foreign':
+      return (
+        `    third-party spelling: #${use.keyword} read as ${use.foreign?.readAs ?? ''} ${on}` +
+        ' — not SysML v2, not a Sysprose keyword' +
+        // A foreign SPELLING that also names something in this model is two
+        // facts, and printing one of them would tell a reader their own
+        // definition was ignored.
+        (use.resolvedTo ? `; it names ${use.resolvedTo.qualifiedName} here` : '')
+      );
+    case 'other':
+      return `    other vocabulary: #${use.keyword} ${on} → ${use.resolvedTo?.qualifiedName ?? ''}`;
+    default:
+      return `    names nothing: #${use.keyword} ${on} resolves to no metadata definition in scope`;
+  }
+}
+
+/**
+ * The inventory block, or the sentence that says the file carries no keyword.
+ *
+ * The heading counts USES and distinct SPELLINGS separately: one `#exceptional`
+ * on forty elements and forty different keywords are the same number under one
+ * count and nothing alike to a reader deciding whether they are looking at a
+ * vocabulary or at a typo.
+ */
+function keywordBlock(uses: readonly KeywordUse[]): string[] {
+  const distinct = new Set(uses.map((u) => u.keyword)).size;
+  return [
+    `  keywords: ${uses.length} use(s) of ${distinct} distinct keyword(s) — an inventory; nothing here changes an obligation`,
+    ...(uses.length === 0
+      ? ['    this model carries no #keyword at all']
+      : uses.map(keywordLine)),
+  ];
+}
+
 function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
   const scope = verificationScope(model, args);
-  const r = contractReport(model, scope ? { scopeId: scope.id } : {});
+  const keywords = flagGiven(args, 'keywords');
+  const r = contractReport(model, {
+    ...(scope ? { scopeId: scope.id } : {}),
+    ...(keywords ? { keywords: true } : {}),
+  });
   const guarantees = r.guaranteesQfLra + r.guaranteesQfNra + r.guaranteesUnsupported;
   // Counted inside the scope, like every other figure in this report: "no
   // contract was read, although this model declares 3 requirement-shaped
@@ -883,6 +945,7 @@ function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
     `  ${r.nonNormativeExcluded} statement(s) tagged prose or prompt left out; ` +
       `${r.libraryExcluded} bundled library requirement(s) and ` +
       `${r.implicitExcluded} re-derived copy/copies excluded`,
+    ...(r.keywordsAsked ? keywordBlock(r.keywords) : []),
     ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
   ].join('\n');
   return { json: r, text };
@@ -905,15 +968,24 @@ function obligationLines(o: Obligation): string[] {
   if (o.claimedVerdict !== undefined) {
     tail.push(`      claimed ${o.claimedVerdict}, no evidence`);
   }
+  // The rule, not a nicety: a row a keyword filed prints the keyword that filed
+  // it. A premise that appeared because somebody else's vocabulary said so, and
+  // does not say so, is this lane letting a vocabulary it did not define change
+  // what a proof stands on.
+  if (o.provenance) {
+    tail.push(`      from #${o.provenance.keyword} — ${o.provenance.note}`);
+  }
   return [head, ...tail];
 }
 
 function reportObligations(model: Model, name: string, args: ParsedArgs): Report {
   const scope = verificationScope(model, args);
   const missing = flagGiven(args, 'missing');
+  const fromKeywords = flagGiven(args, 'from-keywords');
   const r = obligationsReport(model, {
     ...(scope ? { scopeId: scope.id } : {}),
     ...(missing ? { missing: true } : {}),
+    ...(fromKeywords ? { fromKeywords: true } : {}),
   });
   // `no-formal-clause` is not a gate refusal: nothing refused the body, there
   // is no body. It is counted with the refusals in the payload because it IS a
@@ -930,6 +1002,17 @@ function reportObligations(model: Model, name: string, args: ParsedArgs): Report
     // Storage state, never truth: this is the sentence the whole command hangs
     // on, and the parenthesis is why nothing is ever discharged today.
     '  what is stored, never what is true — nothing is discharged here because no evidence record exists yet',
+    ...(r.fromKeywords
+      ? [
+          // `filedByKeyword`, never a count over `r.obligations`: under
+          // `--missing` that listing is narrowed while every other figure on
+          // this header is over the whole worklist, and the two together said
+          // "0 row(s) filed by a keyword" three lines above a diagnostic naming
+          // the keyword that filed one.
+          `  reading third-party #precondition / #postcondition as clause roles — ` +
+            `${r.filedByKeyword} row(s) filed by a keyword, each naming it`,
+        ]
+      : []),
     `  open ${r.byStatus.open} · no formal clause ${r.byStatus['no-formal-clause']} · ` +
       `not encodable ${r.byStatus['not-encodable']}`,
     ...(missing

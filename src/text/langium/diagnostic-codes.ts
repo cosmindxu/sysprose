@@ -458,6 +458,28 @@ const CODES = [
     when: 'An `assume` or `require` clause is written in a body the standard\'s `ActionBodyItem` does not admit — an action definition, for instance. Sysprose parses it; the specification does not offer it there.',
     hint: 'The standard writes a behaviour precondition as `assert constraint precondition { … }`, as a `guard` on the incoming transition, or as a requirement whose `subject` is the behaviour; `contracts` reads all three.',
   },
+  // `verification/foreign-keyword` is emitted by `contracts --keywords` and by
+  // `obligations --from-keywords` (one row per obligation a keyword actually
+  // filed); `verification/keyword-names-nothing` is emitted by
+  // `contracts --keywords` ALONE, because a worklist reports the vocabulary it
+  // acted on and a keyword naming nothing acts on nothing. Neither comes from
+  // anywhere else — `npm run check` does not judge a keyword, so reading
+  // somebody else's vocabulary cannot change what the checker says about their
+  // file.
+  {
+    code: 'verification/foreign-keyword',
+    source: 'verification',
+    severity: 'info',
+    when: 'A prefix keyword is a third-party spelling this tool recognises — `#Exception`, `#exception`, `#precondition`, `#postcondition` — read through the foreign-alias table rather than named by SysML v2 or shipped by Sysprose.',
+    hint: 'The line names the spelling and what it was read as. It is neither standard vocabulary nor a Sysprose keyword, and it files nothing unless `obligations --from-keywords` asked it to; write `assume constraint` / `require constraint` and no keyword is needed at all.',
+  },
+  {
+    code: 'verification/keyword-names-nothing',
+    source: 'verification',
+    severity: 'info',
+    when: 'A `#keyword` resolves to no `metadata def` in scope — a misspelling, or a vocabulary the file never declares or imports.',
+    hint: 'Declare or import the `metadata def` the keyword names — `import SysproseVerification::*;` for the one this tool ships — or correct the spelling. The keyword is kept in the file either way.',
+  },
 
   /* ── round-trip oracle ── */
   {

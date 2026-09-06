@@ -40,9 +40,15 @@
  *
  * WHAT THIS MODULE DOES NOT DO — three gaps, named rather than hidden.
  *
- *  1. Nothing binds a `#keyword` to the definition it names: metadata is
- *     unvalidated in this tool today, so a misspelt `#prosee` is silently no
- *     kind at all rather than an error.
+ *  1. A `#keyword` is not bound to the definition it names HERE. {@link
+ *     ./keywords} can resolve one — `resolveKeyword` answers against the
+ *     `MetadataDefinition`s in scope — but a statement kind is read from the
+ *     spelling alone, because a model that never declares or imports
+ *     `SysproseStatements` still means `#prose` when it writes it, and a kind
+ *     that stopped being read on such a file would change what every rule says
+ *     about models written before the package existed. Metadata is unvalidated
+ *     in this tool, so a misspelt `#prosee` is still silently no kind at all
+ *     rather than an error; `contracts --keywords` is where a reader is told.
  *  2. Only the `#keyword` prefix is read. The same metadata mechanism has a
  *     second, longer notation — the annotating usage `@prose about p1;`, which
  *     this tool parses and round-trips — and {@link statementKindOf} does NOT
@@ -56,6 +62,12 @@
  *
  * {@link statementKindOf} therefore answers from the keyword alone, then from
  * the metaclass, and reading never writes.
+ *
+ * WHERE THE KEYWORDS THEMSELVES COME FROM. {@link ./keywords} — one reader for
+ * the whole tool. This module used to hold three lines of its own over
+ * `attrs.metadata`, and so did `contracts.ts`; two readers of one attribute is
+ * how a qualified `#SysproseStatements::prose` gets read in one report and not
+ * in the next.
  */
 
 import {
@@ -68,6 +80,7 @@ import {
   type ElementRecord,
   type Model,
 } from '@core/index';
+import { keywordsOf, keywordsOnRecord } from './keywords';
 
 /* ──────────────────────────── The vocabulary ──────────────────────────── */
 
@@ -131,12 +144,6 @@ export function statementKindOfKeyword(keyword: string): StatementKind | undefin
   return isStatementKind(last) ? last : undefined;
 }
 
-/** The prefix-metadata keywords on an element, as written. */
-function keywordsOf(el: ElementRecord): string[] {
-  const meta = el.attrs.metadata;
-  return Array.isArray(meta) ? meta.map((m) => String(m)) : [];
-}
-
 /**
  * The kind of the statement `id` makes, or undefined when it makes none.
  *
@@ -177,8 +184,8 @@ export function statementKindOf(model: Model, id: ElementId): StatementKind | un
 export function writtenStatementKind(model: Model, id: ElementId): StatementKind | undefined {
   const el = model.get(id);
   if (!el) return undefined;
-  for (const keyword of keywordsOf(el)) {
-    const kind = statementKindOfKeyword(keyword);
+  for (const keyword of keywordsOnRecord(el)) {
+    const kind = statementKindOfKeyword(keyword.written);
     if (kind) return kind;
   }
   return undefined;
@@ -394,9 +401,9 @@ export function setStatementKind(
   const keyword = STATEMENT_KIND_KEYWORD[kind];
   const next: string[] = [];
   let written = false;
-  for (const existing of keywordsOf(el)) {
-    if (!statementKindOfKeyword(existing)) {
-      next.push(existing);
+  for (const existing of keywordsOf(model, id)) {
+    if (!statementKindOfKeyword(existing.written)) {
+      next.push(existing.written);
     } else if (!written) {
       next.push(keyword);
       written = true;
@@ -423,9 +430,11 @@ export function setStatementKind(
 export function clearStatementKind(model: Model, id: ElementId): ElementRecord | undefined {
   const el = model.get(id);
   if (!el) return undefined;
-  const meta = el.attrs.metadata;
-  if (!Array.isArray(meta)) return el;
-  const kept = meta.map((m) => String(m)).filter((m) => !statementKindOfKeyword(m));
-  if (kept.length === meta.length) return el;
+  // No keyword at all — a missing attribute, or one the shared reader does not
+  // recognise as a list — leaves `kept` and `written` the same length, so the
+  // no-op falls out of the comparison rather than needing a guard of its own.
+  const written = keywordsOnRecord(el);
+  const kept = written.map((k) => k.written).filter((m) => !statementKindOfKeyword(m));
+  if (kept.length === written.length) return el;
   return model.setAttrs(id, { metadata: kept.length > 0 ? kept : undefined });
 }

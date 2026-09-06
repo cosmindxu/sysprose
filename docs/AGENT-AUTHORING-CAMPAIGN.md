@@ -125,14 +125,14 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: exit codes, JSON shape, stdin, strict and `--no-library` modes, and every reporting subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 50 tests |
+| L7 | The command-line contract: exit codes, JSON shape, stdin, strict and `--no-library` modes, and every reporting subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 53 tests |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
 so where they appear. Measured 2026-09-06: **82 fixture directories** under
-`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **59
+`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **61
 catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
 rules** in `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -2358,6 +2358,98 @@ keyword list (`sysml.langium`:434) and the metamodel writes it back as
 `VerificationCaseUsage` followed by a `CaseDefinition X` — two declarations
 where the author wrote one. The spelling is pinned by a case so the next reader
 finds the answer rather than the surprise.
+
+**Somebody else's `#keyword` vocabulary was read and preserved, and nothing
+could say what any of it meant.** Commit 2d of the formal-verification plan adds
+the general reader (`src/semantics/keywords.ts`: `keywordsOf`, `resolveKeyword`,
+`hasKeyword`, `FOREIGN_KEYWORD_ALIASES`) that `statement-kind.ts` and
+`contracts.ts` now both consume — two readers of one `attrs.metadata` is how a
+qualified `#SysproseStatements::prose` gets read in one report and not in the
+next — plus `contracts --keywords`, which inventories every keyword in a file
+with what it resolves to.
+
+**One keyword ships, and the rule that decided which.** If SysML v2 already
+expresses a facet, this tool uses the standard construct and ships no keyword.
+`#precondition` is `assume constraint`, a case `objective`, or a transition
+`guard`; `#postcondition` is `require constraint`, whose subject on a case
+already resolves to the case result. Both are rejected as redundant syntax.
+`#Observable` names a real gap and is **held**: a `metadata def` written into a
+user's file is a compatibility commitment, withdrawing one turns their file into
+`verification/keyword-names-nothing`, and it would discharge no obligation.
+`#exceptional` is the one adopted — the specification has no way to say an
+outcome is a *failure* rather than an equally valid result, and its own §7.27.4
+example (`#situation occurrence def Failure;`) is a user-defined failure marker.
+It ships as `SYSPROSE_VERIFICATION_LIBRARY`, the plain
+`metadata def <exceptional> ExceptionalOutcome;` shape, because that one is
+measured parsing clean and round-tripping byte-identically; the `SemanticMetadata`
+shape the library uses for `<moe>`/`<mop>` costs **three
+`ref/unresolved-specialization` warnings** and a body the serializer rewrites,
+and a case pins that so nobody ships it by mistake.
+
+**The interoperability ratchet.** `#exceptional`, `#Exception`, `#precondition`,
+`#postcondition`, `#Observable`, the qualified `#SysproseVerification::exceptional`
+and the misspelt `#precondtion` each parse with **zero diagnostics** on an
+`action def`, an action usage, a `use case def`, a state usage, a port usage and
+an attribute usage, land in `attrs.metadata` exactly as written, and round-trip.
+The round trip is **idempotent from the second save**, not byte-identical from
+arbitrary input — measured, `#exceptional` on its own line comes back on the
+declaration's line — and every claim in the plan is written against that. One
+shape of somebody else's vocabulary this tool cannot read as written: a keyword
+colliding with a hard keyword of the notation, where `#derive part def A;` does
+not parse and `#'derive'` does, exactly as `#'requirement'` does for the
+statement kinds.
+
+**Reading is not acting, and that is the whole design.** `resolveKeyword`
+answers what a keyword names, through the same KerML full-name resolution every
+type reference goes through, with the bundled library as the namespace of last
+resort (which is what makes the library's own `#moe` resolve). `hasKeyword` —
+the predicate a later engine asks before acting on a tag — answers ONLY from
+that resolution and never consults the alias table, so a third-party `#Exception`
+is not `#exceptional` to anything that decides something. Resolution takes the
+token AS WRITTEN, quotes included, so a quoted `#'a.b'` is one name and stays
+one: rejoining its unquoted segments reported it as resolved to a definition
+that answers to neither half. The alias table exists
+so a foreign file can be *legible*: `contracts --keywords` prints "third-party
+spelling: `#Exception` read as `SysproseVerification::exceptional` … not SysML v2,
+not a Sysprose keyword", and `verification/foreign-keyword` (info) is raised
+beside it. A keyword naming no definition in scope gets
+`verification/keyword-names-nothing` (info) — with one carve-out that is not an
+exception to the rule but the rule applied honestly: `#prose`, `#prompt` and
+`#'requirement'` are read from the SPELLING and always have been, so a file
+written the way the guide documents them declares no `SysproseStatements`
+package and they resolve to nothing. The inventory reports them as
+`sysprose vocabulary … read from the spelling` and raises no code, because a
+report that said "names nothing" about a tag whose own census line said one
+statement had been left out because of it would send a reader hunting for a
+misspelling in a tag this tool acted on.
+`verification/foreign-keyword` is
+emitted by `contracts --keywords` and by `obligations --from-keywords` (there,
+one row per obligation a keyword actually filed);
+`verification/keyword-names-nothing` is emitted by `contracts --keywords`
+**alone**, because a keyword that names nothing files nothing. Neither is
+emitted anywhere **else** — `npm run check` does not judge a keyword, so the 24
+validation rules, the checker's exit contract and the fixture corpus are
+untouched.
+
+**The one door a foreign vocabulary may come through has a lock on it.** A
+third-party `#precondition` / `#postcondition` contributes a premise or an
+obligation only under `obligations --from-keywords`, which is off by default:
+with the flag absent, a file carrying the keywords produces bit-for-bit the
+worklist the same file without them produces, and a case asserts exactly that
+comparison. Under the flag, three rules hold — only a PLAIN `constraint` is open
+to the reading (a keyword may not reclassify the standard's own construct, and
+may not re-read a `calc`, whose bare body is the definitional axiom the rest of
+the worklist stands on: the first draft of this guard tested the written clause
+role alone, and a `#postcondition calc gain { m + 1.0 }` DELETED
+`gain == m + 1.0` from the proof context and filed the bare term as something to
+show), the row is filed as `source: 'keyword'` rather than `assume` (the author
+did not write `assume`, and the role map has to stay checkable), and it can
+never produce an AXIOM, only a premise or something to show. Every such row
+prints
+`from #precondition — a third-party spelling read as …` on its own line, and the
+report raises `verification/foreign-keyword` naming each one, because a
+keyword-derived premise that does not say where it came from is this lane
+letting a vocabulary it did not define change a proof in silence.
 
 ### Known limitations, recorded rather than hidden
 

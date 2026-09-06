@@ -31,8 +31,14 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+// The shipped package is imported rather than retyped: the whole point of the
+// inventory is that it resolves the text this tool ships, and a hand-copied
+// package in a test resolves whatever the copy says.
+import { SYSPROSE_VERIFICATION_LIBRARY } from '@semantics/index';
 
 const CLI = resolve(process.cwd(), 'scripts/sysprose.ts');
+/** The checker, spawned by the one case that has to prove it says nothing. */
+const CHECK_CLI = resolve(process.cwd(), 'scripts/sysml-check.ts');
 const UAV = resolve(process.cwd(), 'examples/uav-isr.sysml');
 const FIX = resolve(process.cwd(), 'test/fixtures/agent-authoring');
 
@@ -1100,6 +1106,213 @@ describe('L7 — sysprose reporting command', () => {
       const library = run(['contracts', file, '--element', 'Requirements::RequirementCheck']);
       expect(library.code).toBe(2);
       expect(library.stderr).toContain('bundled standard-library element');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  /* ── the keyword vocabulary: an inventory, and one door with a lock ────── */
+
+  /**
+   * `contracts --keywords` is the only place the two keyword codes are ever
+   * printed, and the case asserts both halves of that: the inventory says the
+   * four things §3.12 lets it say, and `npm run check` over the same file says
+   * none of them.
+   */
+  it('contracts --keywords inventories the vocabulary, and check says none of it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-kw-'));
+    const file = join(dir, 'vocabulary.sysml');
+    writeFileSync(
+      file,
+      `${SYSPROSE_VERIFICATION_LIBRARY}
+
+package P {
+    import SysproseVerification::*;
+    part def Sys { attribute m : Real = 3.0; }
+    #exceptional state failsafe;
+    #Exception state abort;
+    #precondtion action launch;
+    requirement def R { subject u : Sys; require constraint { u.m < 9.0 } }
+}
+`,
+    );
+    try {
+      const quiet = run(['contracts', file]);
+      expect(quiet.code).toBe(0);
+      expect(quiet.stdout).not.toContain('keywords:');
+      expect(quiet.stdout).not.toContain('verification/foreign-keyword');
+
+      const r = run(['contracts', file, '--keywords']);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('keywords: 3 use(s) of 3 distinct keyword(s)');
+      expect(r.stdout).toContain('nothing here changes an obligation');
+      expect(r.stdout).toContain(
+        'sysprose vocabulary: #exceptional on P::failsafe → SysproseVerification::ExceptionalOutcome',
+      );
+      expect(r.stdout).toContain(
+        'third-party spelling: #Exception read as `SysproseVerification::exceptional` on P::abort — not SysML v2, not a Sysprose keyword',
+      );
+      expect(r.stdout).toContain(
+        'names nothing: #precondtion on P::launch resolves to no metadata definition in scope',
+      );
+      expect(r.stdout).toContain('verification/foreign-keyword');
+      expect(r.stdout).toContain('verification/keyword-names-nothing');
+      // The words this row may never use about somebody else's vocabulary, or
+      // about its own.
+      expect(r.stdout).not.toMatch(/\bstandard vocabulary\b|\bproved\b|\bsatisfied\b/);
+
+      // The inventory is a report, not a finding: the checker's contract, its
+      // exit code and its diagnostics are untouched by any of it.
+      const checked = spawnSync('npx', ['tsx', CHECK_CLI, file], {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      expect(checked.status).toBe(0);
+      expect(checked.stdout).not.toContain('verification/');
+
+      const json = run(['contracts', file, '--keywords', '--json']);
+      const { body } = payload<{
+        contracts: {
+          keywordsAsked: boolean;
+          keywords: Array<{ keyword: string; origin: string }>;
+        };
+      }>(json);
+      expect(body.contracts.keywordsAsked).toBe(true);
+      expect(body.contracts.keywords.map((k) => [k.keyword, k.origin])).toEqual([
+        ['exceptional', 'sysprose'],
+        ['Exception', 'foreign'],
+        ['precondtion', 'unresolved'],
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  /**
+   * The tool's own statement keywords, in a file written the way the guide
+   * documents them: read from the spelling, so nothing binds them and nothing
+   * has to. The inventory says whose vocabulary it is; it does not report the
+   * tag it acted on as a tag that names nothing.
+   */
+  it('contracts --keywords calls #prose its own, in a file that declares no package', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-kw-'));
+    const file = join(dir, 'statements.sysml');
+    writeFileSync(
+      file,
+      `package P {
+    part def Sys { attribute m : Real = 3.0; }
+    #prose requirement def Why { subject u : Sys; doc /* narrative */ }
+    requirement def R { subject u : Sys; require constraint { u.m < 9.0 } }
+}
+`,
+    );
+    try {
+      const r = run(['contracts', file, '--keywords']);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('1 statement(s) tagged prose or prompt left out');
+      expect(r.stdout).toContain(
+        'sysprose vocabulary: #prose on P::Why — read from the spelling; declare or import SysproseStatements to bind it',
+      );
+      // The census line above says the tool acted on the tag. It may not also
+      // report it as naming nothing.
+      expect(r.stdout).not.toContain('verification/keyword-names-nothing');
+      expect(r.stdout).not.toContain('names nothing: #prose');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  /**
+   * The door and its lock. A foreign `#precondition` files a premise only
+   * because the command line asked it to, and the row it files says so on its
+   * own line — the rule §3.9 states as "never contribute a keyword-derived
+   * premise or guarantee without printing the keyword on that line".
+   */
+  it('obligations reads a foreign clause keyword only under --from-keywords', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-kw-'));
+    const file = join(dir, 'foreign.sysml');
+    writeFileSync(
+      file,
+      `package P {
+    part def Sys { attribute m : Real = 3.0; attribute cap : Real = 9.0; }
+    action def Move {
+        #precondition constraint before { P::Sys::m > 0.0 }
+        #postcondition constraint after { P::Sys::m < P::Sys::cap }
+    }
+}
+`,
+    );
+    try {
+      const off = run(['obligations', file, '--json']);
+      expect(off.code).toBe(0);
+      const shut = payload<{
+        obligations: {
+          fromKeywords: boolean;
+          byRole: { premise: number; obligation: number };
+          obligations: Array<{ source: string; provenance?: unknown }>;
+        };
+      }>(off);
+      expect(shut.body.obligations.fromKeywords).toBe(false);
+      expect(shut.body.obligations.byRole.premise).toBe(0);
+      expect(shut.body.obligations.obligations.some((o) => o.provenance !== undefined)).toBe(false);
+      expect(shut.body.obligations.obligations.filter((o) => o.source === 'keyword')).toEqual([]);
+
+      const on = run(['obligations', file, '--from-keywords']);
+      expect(on.code).toBe(0);
+      expect(on.stdout).toContain('reading third-party #precondition / #postcondition');
+      expect(on.stdout).toContain('2 row(s) filed by a keyword, each naming it');
+      expect(on.stdout).toContain('from #precondition — a third-party spelling read as an');
+      expect(on.stdout).toContain('from #postcondition — a third-party spelling read as a');
+      expect(on.stdout).toContain('verification/foreign-keyword');
+      // `verification/keyword-names-nothing` belongs to the inventory ALONE. A
+      // worklist reports the vocabulary it ACTED on, and a keyword naming
+      // nothing acted on nothing; four documents said both codes came from both
+      // commands, and only the code was right.
+      expect(on.stdout).not.toContain('verification/keyword-names-nothing');
+      // Still a worklist and still no verdict: the flag buys a role, not a
+      // claim about whether anything holds.
+      expect(on.stdout).toContain('what is stored, never what is true');
+      expect(on.stdout).not.toMatch(/\bproved\b|\bsatisfied\b|\bconsistent\b/);
+
+      const onJson = run(['obligations', file, '--from-keywords', '--json']);
+      const opened = payload<{
+        obligations: {
+          fromKeywords: boolean;
+          byRole: { premise: number; obligation: number };
+          obligations: Array<{ source: string; provenance?: { keyword: string; note: string } }>;
+        };
+      }>(onJson);
+      expect(opened.body.obligations.fromKeywords).toBe(true);
+      expect(opened.body.obligations.byRole.premise).toBe(1);
+      expect(
+        opened.body.obligations.obligations
+          .filter((o) => o.source === 'keyword')
+          .map((o) => o.provenance?.keyword),
+      ).toEqual(['precondition', 'postcondition']);
+
+      // `--missing` narrows the LISTING; every figure on the header is over the
+      // whole worklist, and the keyword count is one of them. Written on a
+      // second file whose keyword row IS encodable, so `--missing` really does
+      // drop it from the listing: counting the figure off that listing printed
+      // "0 row(s) filed by a keyword" three lines above a diagnostic naming the
+      // keyword that filed one, in a header whose own histogram counted it.
+      const encodable = join(dir, 'encodable.sysml');
+      writeFileSync(
+        encodable,
+        `package P {
+    part def Sys {
+        attribute m : Real = 3.0;
+        #precondition constraint before { m > 0.0 }
+    }
+    requirement def R { subject u : Sys; doc /* no formal clause */ }
+}
+`,
+      );
+      const narrowed = run(['obligations', encodable, '--missing', '--from-keywords']);
+      expect(narrowed.code).toBe(0);
+      expect(narrowed.stdout).toContain('showing the 1 row(s) this lane would not decide, of 3');
+      expect(narrowed.stdout).toContain('1 row(s) filed by a keyword, each naming it');
+      expect(narrowed.stdout).toContain('verification/foreign-keyword');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

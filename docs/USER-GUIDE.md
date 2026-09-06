@@ -578,6 +578,90 @@ naming bundled library content is refused: every figure in both reports is about
 `src/api/verification.ts`, and the plan these implement,
 [`04-formal-verification-plan.md`](04-formal-verification-plan.md).
 
+### The keywords a file carries, including somebody else's
+
+A `#keyword` in front of a declaration is the notation's own extension point:
+SysML v2 §7.27.4 makes the short name of a `metadata def` writable as a tag, and
+§7.27.1 says such a definition "simply acts as a user-defined syntactic tag on
+the annotated element". Sysprose reads those tags, keeps them exactly as you
+wrote them through a save, and — because a model annotated for another tool is a
+model you should still be able to open here — reads a handful of other people's
+spellings too.
+
+`contracts --keywords` is the inventory. It says one of four things per keyword,
+and it changes nothing:
+
+```console
+$ npm run sysprose -- contracts vocabulary.sysml --keywords
+  keywords: 3 use(s) of 3 distinct keyword(s) — an inventory; nothing here changes an obligation
+    sysprose vocabulary: #exceptional on P::failsafe → SysproseVerification::ExceptionalOutcome
+    third-party spelling: #Exception read as `SysproseVerification::exceptional` on P::abort — not SysML v2, not a Sysprose keyword
+    names nothing: #precondtion on P::launch resolves to no metadata definition in scope
+  verification/foreign-keyword  ...
+  verification/keyword-names-nothing  ...
+```
+
+Those two `verification/*` rows are **information** and they come from nowhere
+but this command — except `verification/foreign-keyword`, which
+`obligations --from-keywords` also raises, once per row a keyword filed.
+`npm run check` does not judge a keyword: a misspelt one costs you nothing but
+the tag you thought you had written.
+
+**"Names nothing" is not a bug — it is the notation.** A keyword names a
+`metadata def` *in scope*, so it resolves inside the package that declares the
+definition, inside one that imports it, or when you write it qualified. The one
+vocabulary Sysprose ships is a package you paste into your own file:
+
+```sysml
+package SysproseVerification {
+    doc /* One annotation SysML v2 does not express, carried as a user-defined keyword over a metadata definition (SysML v2 7.27.1, 7.27.4). #exceptional says an outcome is a failure rather than an equally valid result. It is a Sysprose extension, not standard vocabulary. */
+    metadata def <exceptional> ExceptionalOutcome;
+}
+```
+
+`#exceptional` says an outcome is a **failure** rather than an equally valid
+result — the one annotation in this whole lane that SysML v2 has no way to
+express, which is why it is shipped rather than borrowed. It is a Sysprose
+extension and this guide will not pretend otherwise. Two keywords you might
+expect are deliberately absent: `#precondition` and `#postcondition`, because
+`assume constraint`, `require constraint` and a case `objective { … }` already
+say both, three ways and two ways respectively.
+
+**The statement kinds are the exception, and the inventory says so.** `#prose`,
+`#prompt` and `#'requirement'` are read from the **spelling** — that is what lets
+a tag work whether or not `SysproseStatements` is in your file — so the inventory
+names them as this tool's own and never as a keyword that names nothing:
+
+```console
+    sysprose vocabulary: #prose on P::Why — read from the spelling; declare or import SysproseStatements to bind it
+```
+
+A tag this tool acted on is not a tag it failed to find.
+
+**Somebody else's spelling.** Four third-party spellings are recognised, and
+each of them prints where it came from wherever it is used:
+
+| Written in the file | Read as | When it has any effect |
+|---|---|---|
+| `#Exception`, `#exception` | `SysproseVerification::exceptional` | never on its own — an inventory row |
+| `#precondition` | an `assume` clause | only under `obligations --from-keywords` |
+| `#postcondition` | a `require` clause | only under `obligations --from-keywords` |
+
+That last column is the important one. Without `--from-keywords`, a file full of
+another tool's vocabulary produces exactly the worklist the same file without it
+produces: the keywords are read, listed and kept, and they file nothing. With
+the flag, a `#precondition` on a plain constraint files a **premise** and a
+`#postcondition` files something to **show** — and every such row prints
+`from #precondition — a third-party spelling read as …` on its own line, so no
+premise ever appears without the word that put it there. A clause role you wrote
+yourself always wins: a keyword never reclassifies `require constraint`, and no
+keyword can ever add an axiom.
+
+**Source of truth:** `src/semantics/keywords.ts` (the reader, the resolver and
+the alias table), `src/semantics/verification-vocabulary.ts` (the shipped
+package), and `docs/CONFORMANCE.md` §7 for the assessment behind which keyword
+ships.
+
 ### Scripting it
 
 Inside the browser, the SDK is on `window.sysml` (the API Console tab is a

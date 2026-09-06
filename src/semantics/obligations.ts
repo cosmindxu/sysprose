@@ -20,8 +20,17 @@
  *  - a feature value (`=`)    → **axiom**  — a binding in KerML, not a default
  *  - a `bind` / binding edge  → **axiom**
  *  - a plain `constraint c { … }`, with no role at all → **OBLIGATION**
+ *  - a third-party `#precondition` / `#postcondition` on a PLAIN `constraint`,
+ *    and **only** under `--from-keywords` → **premise** / **obligation**,
+ *    filed as `source: 'keyword'` with the spelling on the row
  *
- * That last row is the one worth stating twice. A plain constraint is what
+ * That last row is off by default, and is the only way anything outside this
+ * map can move a relation: with the flag absent the worklist is exactly what it
+ * was before any keyword was read. It can neither produce an axiom nor REMOVE
+ * one — a keyword on a calculation leaves the calculation's defining equality
+ * exactly where it was — see {@link keywordRole}.
+ *
+ * The plain-constraint row is the one worth stating twice. A plain constraint is what
  * `checkConstraints` JUDGES, so it must be what an SMT engine judges, or the
  * two surfaces cannot be compared at all. Filing it as an axiom would make one
  * false plain constraint turn the axiom check unsatisfiable and downgrade every
@@ -73,6 +82,7 @@ import {
   type VarSort,
 } from './contracts';
 import { type ExprNode } from './expr';
+import { foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
 import { NO_MARKERS, idScopeFor, parseRelationBody, storageScaleOf } from './relations';
 import { getRequirementAttr } from './requirements';
 import { isNonNormativeStatement } from './statement-kind';
@@ -80,6 +90,13 @@ import { type DerivationMemo } from './units-eval';
 
 /** Which side of a proof a relation stands on. */
 export type ObligationRole = 'axiom' | 'premise' | 'obligation';
+
+/** How one relation was filed: the side it stands on, how it was written, and why. */
+interface FiledRole {
+  role: ObligationRole;
+  source: ObligationSource;
+  provenance?: { keyword: string; note: string };
+}
 
 /**
  * How the relation was written, which is what makes the role map checkable.
@@ -98,6 +115,7 @@ export type ObligationSource =
   | 'calculation'
   | 'feature-value'
   | 'bind'
+  | 'keyword'
   | 'none';
 
 /**
@@ -167,6 +185,18 @@ export interface ObligationOptions {
    * mode, and it needs no solver.
    */
   missing?: boolean;
+  /**
+   * Read a third-party `#precondition` / `#postcondition` as a clause role.
+   *
+   * OFF BY DEFAULT, and that default is the point: a vocabulary this tool did
+   * not define may not change what a proof stands on unless somebody asked for
+   * it in so many words. With the flag off, {@link obligationsOf} returns
+   * exactly the worklist it returned before keywords existed — the keyword is
+   * still read, still listed by `contracts --keywords`, and contributes
+   * nothing. With it on, every row it moved carries
+   * {@link Obligation.provenance} and the spelling that moved it.
+   */
+  fromKeywords?: boolean;
 }
 
 /** The metaclasses whose `attrs.expression` carries a relation body. */
@@ -203,7 +233,7 @@ function ref(model: Model, el: ElementRecord): ContractRef {
 function roleOf(
   el: ElementRecord,
   isComparison: boolean,
-): { role: ObligationRole; source: ObligationSource } | undefined {
+): FiledRole | undefined {
   const written = el.attrs.requirementRole;
   switch (written) {
     case 'require':
@@ -230,6 +260,64 @@ function roleOf(
       }
       return { role: 'obligation', source: 'constraint' };
   }
+}
+
+/**
+ * The role a THIRD-PARTY keyword asks for, under `--from-keywords` only.
+ *
+ * Three rules make this safe to have at all, and all three are load-bearing:
+ *
+ *  1. **Only a plain `constraint` is open to a keyword reading**, which is what
+ *     `source === 'constraint'` says: the relation carries no written clause
+ *     role AND is not a calculation's defining body. The first half is the rule
+ *     SysML v2 forces — a precondition is expressible three ways and a
+ *     postcondition two, so a `#precondition require constraint { … }` is a file
+ *     that already said what it meant, and a keyword that could overrule it
+ *     would let somebody else's vocabulary reclassify the standard's own
+ *     construct. The second half is the direction a first draft of this
+ *     function missed, and it is the worse one: a `#postcondition calc gain { m
+ *     + 1.0 }` has no written role either, so the guard on `requirementRole`
+ *     alone let the keyword REPLACE `{axiom, calculation}` — deleting the
+ *     joining equality `gain == m + 1.0` from the proof context and re-filing
+ *     the bare term `m + 1.0`, a real-valued expression, as something to show.
+ *     Every obligation mentioning `gain` was then over a free variable. Rule 3
+ *     below forbids a keyword ADDING an axiom; this one forbids it REMOVING
+ *     one, and a keyword vocabulary that can silently drop a definition out of
+ *     the context is exactly the reading that cannot be undone by reading the
+ *     file.
+ *  2. **The row says where it came from.** `source` becomes `keyword` — not
+ *     `assume`, which would claim the author wrote `assume` — and
+ *     {@link Obligation.provenance} carries the spelling and the provenance
+ *     sentence, which every renderer prints on the line. A keyword-derived
+ *     premise or guarantee without the keyword on it is this lane passing off a
+ *     foreign vocabulary as its own. When the spelling also NAMES a definition
+ *     the model itself declares, the sentence says so, exactly as the inventory
+ *     does: telling an author that their own `metadata def <precondition>` is
+ *     "a third-party spelling" and nothing more would report their declaration
+ *     as ignored.
+ *  3. **Never an axiom.** `assume` is a premise, `require` is something to
+ *     show; neither arm can produce an axiom. A keyword that could put a fact
+ *     into the proof context without the author writing `assert` would change
+ *     what every other obligation in the run is judged against.
+ */
+function keywordRole(model: Model, el: ElementRecord, written: FiledRole): FiledRole {
+  if (written.source !== 'constraint') return written;
+  for (const keyword of keywordsOnRecord(el)) {
+    const alias = foreignKeyword(keyword);
+    if (!alias || alias.reads.as !== 'clause-role') continue;
+    const named = resolveKeyword(model, keyword);
+    return {
+      role: alias.reads.role === 'assume' ? 'premise' : 'obligation',
+      source: 'keyword',
+      provenance: {
+        keyword: keyword.written,
+        note: named
+          ? `${alias.note}; it names ${model.qualifiedName(named.id)} here`
+          : alias.note,
+      },
+    };
+  }
+  return written;
 }
 
 /**
@@ -326,8 +414,9 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
     if (isNonNormativeStatement(model, el.id) || underNonNormativeStatement(model, el)) continue;
     const raw = el.attrs.expression;
     if (typeof raw !== 'string' || raw.trim() === '') continue;
-    const filed = roleOf(el, topIsComparison(raw));
-    if (!filed) continue;
+    const asWritten = roleOf(el, topIsComparison(raw));
+    if (!asWritten) continue;
+    const filed = opts.fromKeywords ? keywordRole(model, el, asWritten) : asWritten;
     const reading = readRelation(
       model,
       el,
@@ -359,6 +448,7 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
       evidence: [],
       status: statusOf(reading.encodable),
       ...claimed(model, contract),
+      ...(filed.provenance ? { provenance: filed.provenance } : {}),
     });
   }
 

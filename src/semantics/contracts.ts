@@ -57,6 +57,7 @@ import {
   type ScaleMap,
 } from './relations';
 import { getRequirementAttr, requirementShortId } from './requirements';
+import { keywordsOnRecord } from './keywords';
 import { isNonNormativeStatement } from './statement-kind';
 import { dimensionalFacets, type DerivationMemo } from './units-eval';
 
@@ -283,10 +284,16 @@ function ref(model: Model, el: ElementRecord): ContractRef {
   };
 }
 
-/** The `#keyword`s written on a declaration, verbatim. */
+/**
+ * The `#keyword`s written on a declaration, verbatim.
+ *
+ * Through the shared reader of {@link ./keywords} rather than over
+ * `attrs.metadata` directly: the inventory and the statement-kind vocabulary
+ * have to agree about what a keyword IS, down to a qualified spelling, and two
+ * readers of one attribute is how they stop agreeing.
+ */
 function keywordsOnDeclaration(el: ElementRecord): string[] {
-  const meta = el.attrs.metadata;
-  return Array.isArray(meta) ? meta.map((m) => String(m)) : [];
+  return keywordsOnRecord(el).map((k) => k.written);
 }
 
 /** Does this multiplicity admit more than one value? */

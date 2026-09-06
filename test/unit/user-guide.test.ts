@@ -28,6 +28,7 @@ import {
   STATEMENT_KINDS,
   STATEMENT_KIND_KEYWORD,
   STATEMENT_KIND_LIBRARY,
+  SYSPROSE_VERIFICATION_LIBRARY,
   statementKindOf,
 } from '@semantics/index';
 // The scan lives in `test/support` because the README's capability table names
@@ -593,6 +594,65 @@ describe('§7 — the three kinds of statement', () => {
     ]);
     for (const id of ids) {
       expect(GUIDE, `§7 names the \`${id}\` rule it cites`).toContain(`\`${id}\``);
+    }
+  });
+});
+
+/**
+ * §"The keywords a file carries" — the second vocabulary this project invented,
+ * and the same rule as §7: the guide is the only place a person is told how to
+ * write one, so a stale definition costs more here than anywhere else.
+ *
+ * Three claims are checkable. The PACKAGE the reader is told to paste has to be
+ * the package the tool ships, byte for byte. The snippet has to check clean as
+ * printed. And the TRANSCRIPT has to be the output the command really produces
+ * — which cannot be re-run here (`scripts/sysprose.ts` calls `runMain` at module
+ * scope), so it is held against the L7 case that spawns the command and asserts
+ * those exact strings. A renderer change reddens the campaign case; this one
+ * then reddens until the guide is brought with it.
+ */
+describe('the keyword vocabulary section', () => {
+  const CAMPAIGN = read('test/campaign/cli.sysprose.test.ts');
+
+  it('quotes the shipped package exactly as the module ships it', () => {
+    expect(
+      GUIDE,
+      'the guide no longer quotes SYSPROSE_VERIFICATION_LIBRARY verbatim — paste the export, do not retype it',
+    ).toContain(SYSPROSE_VERIFICATION_LIBRARY);
+  });
+
+  it('the shipped package checks clean as printed', async () => {
+    const report = await checkText(SYSPROSE_VERIFICATION_LIBRARY, { library: 'full' });
+    expect(
+      report.summary,
+      report.diagnostics.map((d) => `${d.severity} ${d.code} ${d.message}`).join('\n'),
+    ).toMatchObject({ errors: 0, warnings: 0 });
+  });
+
+  it('shows the two flags the command reference documents', () => {
+    expect(GUIDE).toContain('contracts vocabulary.sysml --keywords');
+    expect(GUIDE).toContain('obligations --from-keywords');
+    for (const flag of ['keywords', 'from-keywords']) {
+      const owner = COMMANDS.find((c) => c.flags.some((f) => f.name === flag));
+      expect(owner, `no subcommand declares --${flag}`).toBeDefined();
+    }
+  });
+
+  it('prints the inventory lines the command really prints', () => {
+    const lines = [
+      'sysprose vocabulary: #exceptional on P::failsafe → SysproseVerification::ExceptionalOutcome',
+      'third-party spelling: #Exception read as `SysproseVerification::exceptional` on P::abort — not SysML v2, not a Sysprose keyword',
+      'names nothing: #precondtion on P::launch resolves to no metadata definition in scope',
+      // The tool's own statement keywords, in a file that declares no Sysprose
+      // package — which is how the guide tells people to write them.
+      'sysprose vocabulary: #prose on P::Why — read from the spelling; declare or import SysproseStatements to bind it',
+    ];
+    for (const line of lines) {
+      expect(GUIDE, `the guide no longer shows: ${line}`).toContain(line);
+      expect(
+        CAMPAIGN,
+        `nothing asserts the command prints: ${line} — the transcript is unbacked`,
+      ).toContain(line);
     }
   });
 });
