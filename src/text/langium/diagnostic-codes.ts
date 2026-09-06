@@ -358,7 +358,7 @@ const CODES = [
     code: 'validation/requirement-subject',
     source: 'validation',
     severity: 'warning',
-    when: 'A requirement declares no subject.',
+    when: 'A requirement has no subject: none declared, none inherited from its definition, and no `satisfy`/`verify` naming one.',
     hint: 'Add a `subject` to the requirement, or a `satisfy … by …` statement naming what satisfies it.',
   },
   {

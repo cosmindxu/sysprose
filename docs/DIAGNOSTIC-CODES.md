@@ -333,7 +333,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A requirement declares no subject.
+- **Fires when:** A requirement has no subject: none declared, none inherited from its definition, and no `satisfy`/`verify` naming one.
 - **Hint given:** Add a `subject` to the requirement, or a `satisfy … by …` statement naming what satisfies it.
 
 ### `validation/redefinition-target-missing`

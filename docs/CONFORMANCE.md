@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2291 passed / 0 failed / 0 skipped** across **131 files** + **128 E2E** across **78 spec files** = **2419 green** (measured 2026-09-06) |
+| Full automated suite | **2297 passed / 0 failed / 0 skipped** across **131 files** + **128 E2E** across **78 spec files** = **2425 green** (measured 2026-09-06) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -56,10 +56,14 @@ Four additional schema-guard tests assert the element-graph schema **rejects**
 malformed documents (missing `elements`, missing `@id`, missing `@type`) and
 **accepts** a minimal well-formed graph.
 
-**Corpus byte diff of the writer (measured 2026-09-06).** `serializeModel` was
-run over 236 files — `examples/`, the 140 `.sysml` files of the fixture corpus,
-and the 94 files of `~/.stdlib-src/sysml.library` — before and after the
-requirement-clause fix. Output moves on **29** of them (2 examples, 11 fixtures,
+**Corpus byte diff of the writer (measured 2026-09-06, across the
+requirement-clause commit `b16a457` and over the corpus as it stood there).**
+`serializeModel` was run over 236 files — `examples/`, the **140** `.sysml`
+files the fixture corpus held at that commit, and the 94 files of
+`~/.stdlib-src/sysml.library` — before and after the requirement-clause fix.
+The corpus has since grown (141 fixture files, 237 in all, after the
+`requirement-subject` commit added one); the figures below are the ones that
+experiment measured and are not re-derived by any later commit. Output moves on **29** of them (2 examples, 11 fixtures,
 16 standard-library files), **+2,817 bytes** in total: 46 clause lines gain the
 `constraint` keyword, 3 regain a `private`, and **9** of the 29 also gain
 clause-body content that was previously deleted on every save — doc notes and
@@ -74,8 +78,9 @@ so `require sat;` names an existing constraint and must not become
 `require constraint sat;`. Checked over the wider OMG release-model corpus as
 well (`~/.stdlib-src/sysml/src`, 251 files, 50 of which move): across all 487
 files, **no** reference-form clause line is rewritten into a declaration.
-Reproduce by serializing the same files across the commit; the round-trip and
-campaign suites cover the result.
+Reproduce by serializing the same 487 files across `b16a457` — the corpus at
+that commit, not today's — and the round-trip and campaign suites cover the
+result.
 
 ## 2. Interchange — OMG element-graph JSON
 
@@ -262,7 +267,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2291 pass / 0 skip, 131 files)
+# Full unit + integration + conformance suite (2297 pass / 0 skip, 131 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

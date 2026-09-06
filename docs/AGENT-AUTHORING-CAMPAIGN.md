@@ -122,7 +122,7 @@ one in this corpus was read and corrected by hand.
 | L1 | Lexical: illegal character, unterminated string, unterminated comment | 3 |
 | L2 | Syntactic: missing semicolon and brace, extra brace, unknown keyword (with and without a `def` after it), a grammar-legal keyword this tool models no metaclass for, reversed keywords, empty type, bad multiplicity, unfinished unit bracket, a non-ASCII unit symbol written bare, bad expressions, `=` vs `==`, bare `->`, two independent errors | 17 |
 | L3 | Referential: unresolved type, connection end, import, transition end, specialization and redefinition; forward references in a package; a type, a specialization or a connector end reached through an import, through inheritance, through a transitive supertype, through an implicit library base or through a library import written in text; an alias used as a type; a qualified path whose last segment collides with a library name; a name declared in both a supertype and an enclosing namespace, written both ways round; a multi-endpoint dependency naming the endpoint that is missing; plus a pinned behaviour | 24 |
-| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing and declared), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 23 |
+| L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
 | L7 | The command-line contract: exit codes, JSON shape, stdin, strict and `--no-library` modes | 12 tests |
@@ -131,7 +131,7 @@ one in this corpus was read and corrected by hand.
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
-so where they appear. Measured 2026-09-05: **81 fixture directories** under
+so where they appear. Measured 2026-09-06: **82 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **56
 catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
 rules** in `src/validation/rules.ts`. Reproduce them with
@@ -2145,6 +2145,73 @@ each of which fails when the body walk, the body's trailing expression, the
 value/multiplicity mapping, the visibility, the `declares` gate or the
 single-name refusal is removed.
 
+**A subject stated on the definition did not answer for the usage.**
+`requirement def MassLimit { subject v : Vehicle; }` followed by
+`requirement massLimit : MassLimit;` warned on the usage: `hasSubject` read the
+element's OWN children and nothing else, so a subject written once — the shape
+the OMG's own published models are written in (measured 2026-09-06: **34**
+occurrences of `requirement <name> : <Def>` across `~/.stdlib-src/sysml.library`
+and `~/.stdlib-src/sysml/src`, `requirement r : R;` verbatim among them), and
+the shape a contract reader has to be able to trust — was invisible one step
+down the specialization chain. Reproduce that count with
+`grep -rahoE 'requirement[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*[A-Za-z_]' ~/.stdlib-src/sysml.library ~/.stdlib-src/sysml/src | wc -l`
+— an earlier draft of this paragraph said 31 and quoted no recipe, which is the
+kind of figure nobody can check. The author was being asked to repeat the
+subject on every usage, and warned when they did not. The rule now asks
+`effectiveFeatures` (`src/semantics/inheritance.ts`) and applies the same role
+test to what comes back, so an inherited subject answers and so does one
+inherited through an intermediate definition.
+
+Which query it asks is a deliberate choice, and it is held by a test rather
+than by an argument. `effectiveFeatures` follows DECLARED generals;
+`effectiveFeaturesWithLibrary` also follows the implicit library base. The rule
+asks the first, because it asks what the AUTHOR said the requirement is about
+and an implicit base is not something the author said. Over the bundled library
+as it ships the two agree — no element of it carries a subject role, a
+`SubjectMembership` or the name `subject` (measured over the merged library, 0
+matches), and the implicit base's own subject reference is spelled `subj`. So
+the case that merges the whole standard library and asserts a bare
+`requirement Naked;` is still reported is a RATCHET: it goes red the day the
+library grows a subject-shaped feature, and it asserts the shape of that gap
+(the narrow walk returns nothing, the wide one returns nine features of
+`Requirements::RequirementCheck`, one of them named `subj`). The DISCRIMINATOR
+is the case beside it, which plants exactly that missing feature on the implicit
+base and asserts the rule STILL fires. Swapping the rule's query for the
+library-aware one turns that one case red and no other — measured, because the
+first draft of this commit shipped only the ratchet and the swap moved nothing
+at all. What the mutations separate besides is the role test — accepting any
+inherited feature silences a requirement whose definition merely has a body —
+and transitivity: reading only the direct generals loses a subject inherited
+through an intermediate definition. Inheriting a non-subject clause is not
+inheriting a subject: a requirement definition's assumptions and constraints are
+effective features of every usage too, and only the one tagged
+`requirementRole = 'subject'` answers.
+
+Two boundaries of the inherited path are recorded answers rather than
+invariants, and each has a case of its own so that neither is rediscovered.
+The inherited candidate set is USAGES only (`effectiveFeatures` → `ownFeatures`,
+`src/semantics/inheritance.ts`:49, which filters on `isUsage`), so a subject
+expressed as a `SubjectMembership` — the programmatic shape; the textual
+`subject v : V;` clause produces a tagged `ReferenceUsage`, which does inherit —
+answers for the element that owns it and never through inheritance. And
+`effectiveFeatures` masks an inherited feature by NAME (redefinition by name,
+`src/semantics/inheritance.ts`:71): a usage that declares a feature sharing the
+inherited subject's name hides it, and is reported as having no subject. That is
+the inheritance semantics the whole codebase shares, so it is pinned where a
+reader can see it rather than special-cased for one rule. Deleting the
+own-children line of `hasSubject` now fails exactly one case of
+`validation.rules.test.ts`, the `SubjectMembership` one; before that case
+existed it failed none of them, because `effectiveFeatures` returns own features
+first and subsumes the branch for every Usage shape. Swapping the query, by
+contrast, is measured over the whole suite: one test moves, and it is the
+discriminator.
+
+Fixture: `L4-requirement-subject-inherited`, beside `L4-requirement-no-subject`
+(a genuinely absent subject, still reported) and
+`L4-requirement-subject-declared` (a declared one). It is defect D4 of the
+formal-verification plan (`docs/04-formal-verification-plan.md` §1.1), paid off
+before anything reads a contract.
+
 ### Known limitations, recorded rather than hidden
 
 **Thirteen fixtures still re-parse clean after a save.** The save-and-recheck
@@ -2173,6 +2240,20 @@ that was inventing: the mapper no longer binds a traceability edge to the
 package `Deep`, and the writer refuses a target text that is not one `Name`.
 Making the residue reproduce its own fault needs the `markUnparsedResidue`
 machinery to cover a clause head, which is not attempted here.
+
+**A subject-grouped plan still reads own children only.** `buildPlan`'s
+`grouping: 'subject'` mode resolves the subject from `model.children(atomic.id)`
+(`src/diagram/planning.ts`:62) and not through `effectiveFeatures`, so a
+requirement whose subject is inherited groups under nothing: the new
+`L4-requirement-subject-inherited` fixture checks clean and still falls out of a
+subject-grouped plan entirely — measured, `groupCount` 0 with its one
+requirement listed as ungrouped. The mismatch predates this commit; what the
+commit removes is the warning that used to point at it. Two readers of the
+subject role now exist, `hasSubject` in `src/validation/rules.ts` and
+`groupIdOf` in `src/diagram/planning.ts`, and only the first was widened here,
+deliberately: the planner is a view rather than a contract reader, and widening
+it moves diagram goldens this commit has no business moving. Closing it means
+lifting the subject lookup into one query both ask.
 
 **`L0-json-as-sysml` is the one file in the corpus a save does not settle.**
 JSON offered as `.sysml` is refused by the loader before a model exists; parsed

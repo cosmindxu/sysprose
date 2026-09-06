@@ -1,0 +1,5 @@
+{
+  "level": "L4",
+  "title": "a requirement whose subject is INHERITED from its definition must not be flagged",
+  "note": "FOUND 2026-09-06 as defect D4 of the formal-verification plan, FIXED the same day. A subject stated once on the definition — `requirement def MassLimit { subject v : Vehicle; } requirement massLimit : MassLimit;` — did not answer for the usage: the rule read the usage's OWN children only, so the shape the OMG's own published models are written in bought a warning and the author was asked to repeat the subject on every usage. `hasSubject` now asks `effectiveFeatures`, which follows declared generals, and applies the same role test to what comes back. L4-requirement-no-subject pins that a genuinely absent subject is still reported and L4-requirement-subject-declared pins the declared one; this pins the inherited one."
+}

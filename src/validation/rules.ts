@@ -24,6 +24,7 @@ import { findLibraryType } from '../library/resolve';
 import {
   checkConstraints,
   conforms,
+  effectiveFeatures,
   generalizationsWithImplicit,
   isFeatureMetaclass,
   isKindOf,
@@ -534,7 +535,8 @@ const connectorEndpoints: ValidationRule = {
  */
 const requirementSubject: ValidationRule = {
   id: 'requirement-subject',
-  description: 'Requirement has no subject (attribute, subject feature, or satisfy/verify).',
+  description:
+    'Requirement has no subject (attribute, subject feature declared or inherited, or satisfy/verify).',
   severity: 'warning',
   run(model) {
     const mk = diagBuilder(this.id, this.severity);
@@ -569,29 +571,68 @@ function isNormative(model: Model, el: ElementRecord): boolean {
 }
 
 /**
- * True when a requirement element carries a subject by any supported means.
+ * True when a feature plays the SUBJECT role of the requirement that owns it.
  *
  * The textual `subject v : Vehicle;` clause maps to a child ReferenceUsage
  * tagged `attrs.requirementRole = 'subject'` (the grammar's `kind='subject'`,
  * sysml.langium:279). That form was not checked here, so a requirement with a
  * perfectly good subject was reported as having none — a false positive on the
- * most idiomatic way to write one.
+ * most idiomatic way to write one. `SubjectMembership` and the bare name cover
+ * models built programmatically, which carry no clause tag.
+ *
+ * The same predicate judges own and inherited candidates, but the two candidate
+ * SETS differ: only the first two forms can ever be inherited, because the
+ * inherited set is Usages only (see {@link hasSubject}). A `SubjectMembership`
+ * is not a Usage, so that disjunct answers for the element that owns it and for
+ * no other — measured, not assumed.
+ */
+function isSubjectFeature(c: ElementRecord): boolean {
+  return (
+    c.attrs.requirementRole === 'subject' ||
+    c.declaredName === 'subject' ||
+    c.eClass === 'SubjectMembership'
+  );
+}
+
+/**
+ * True when a requirement element carries a subject by any supported means.
+ *
+ * A subject may be stated once, on the definition, and inherited by every usage
+ * of it: `requirement r : MassLimit;` is the shape the OMG's own published
+ * models are written in, and reading only the usage's OWN children asked the
+ * author to repeat the subject on every usage and warned when they did not. So
+ * the inherited feature set is asked too, and the same role test is applied.
+ *
+ * The query is {@link effectiveFeatures}, which follows DECLARED generals only,
+ * and deliberately not `effectiveFeaturesWithLibrary`, which also follows the
+ * implicit library base. The rule asks what the AUTHOR said this requirement is
+ * about, and an implicit base is not something the author said. The wider walk
+ * is NOT equivalent: measured, `effectiveFeaturesWithLibrary` of a bare
+ * `requirement Naked;` already returns nine features of the implicit base
+ * `Requirements::RequirementCheck`, one of them a subject reference — it is
+ * spelled `subj`, so only its NAME keeps that walk harmless today. Two rule
+ * tests hold the line: one asserts the shape of that difference, the other
+ * plants a subject-shaped feature on the implicit base and asserts the rule
+ * still fires, which is the assertion that goes red the day this query is
+ * widened.
+ *
+ * Two boundaries of the inherited path, both pinned by tests rather than left
+ * to be rediscovered:
+ *  - The inherited candidates are USAGES only ({@link effectiveFeatures} →
+ *    `ownFeatures`, `src/semantics/inheritance.ts`:49). A `SubjectMembership`
+ *    or any other non-Usage child therefore answers on the own-children line
+ *    below and never through inheritance.
+ *  - `effectiveFeatures` masks an inherited feature by NAME (KerML
+ *    redefinition-by-name). An own feature of the usage that happens to share
+ *    the inherited subject's name hides it, and the requirement is reported as
+ *    having no subject. That is the inheritance semantics the whole codebase
+ *    shares, so it is recorded here rather than special-cased for one rule.
  */
 function hasSubject(model: Model, req: ElementRecord): boolean {
   const subj = req.attrs.subject;
   if (subj !== undefined && subj !== null && subj !== '') return true;
-  if (
-    model
-      .children(req.id)
-      .some(
-        (c) =>
-          c.attrs.requirementRole === 'subject' ||
-          c.declaredName === 'subject' ||
-          c.eClass === 'SubjectMembership',
-      )
-  ) {
-    return true;
-  }
+  if (model.children(req.id).some(isSubjectFeature)) return true;
+  if (effectiveFeatures(model, req.id).some(isSubjectFeature)) return true;
   // A `satisfy R by X;` / `verify R by X;` names the thing being checked against
   // the requirement, which is the subject in all but name. A SOURCE-LESS one
   // does not: the bare `verify R;` clause inside a case objective says only

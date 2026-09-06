@@ -1,9 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { Model, ModelFactory, buildSampleModel } from '@core/index';
-import type { SerializedModel } from '@core/index';
+import type { ElementRecord, SerializedModel } from '@core/index';
 import { validate, isValid, RULES, RULE_IDS, RULES_BY_ID } from '@validation/index';
 import { loadStandardLibrary } from '../../src/library/index';
-import { NOTE_BODY_TERMINATOR, setStatementKind, statementKindOf } from '@semantics/index';
+import {
+  NOTE_BODY_TERMINATOR,
+  effectiveFeatures,
+  effectiveFeaturesWithLibrary,
+  generalizationsWithImplicit,
+  setStatementKind,
+  statementKindOf,
+} from '@semantics/index';
 
 /** Run a single rule in isolation and return its diagnostics. */
 function runRule(model: Model, ruleId: string) {
@@ -183,6 +190,19 @@ describe('rule 7 — connector-endpoints', () => {
   });
 });
 
+/**
+ * The rule's own subject test, restated here so the query cases can ask which
+ * features are subject-shaped directly. Deliberately a copy: if `rules.ts`
+ * narrows its predicate, these cases must keep asking the whole question.
+ */
+function isSubjectShaped(c: ElementRecord): boolean {
+  return (
+    c.attrs.requirementRole === 'subject' ||
+    c.declaredName === 'subject' ||
+    c.eClass === 'SubjectMembership'
+  );
+}
+
 describe('rule 8 — requirement-subject', () => {
   it('positive: a requirement with an explicit subject attr is fine', () => {
     const m = new Model();
@@ -261,6 +281,226 @@ describe('rule 8 — requirement-subject', () => {
     const reqB = fb.requirement('R', pb.id);
     sourceless.create('Verify', { ownerId: pb.id, source: [], target: [reqB.id] });
     expect(runRule(sourceless, 'requirement-subject')).toHaveLength(1);
+  });
+
+  /**
+   * A subject stated once, on the definition, answers for every usage of it.
+   *
+   * `requirement r : MassLimit;` is the shape the OMG's own published models
+   * are written in — 34 occurrences across `sysml.library` and the release
+   * models, `requirement r : R;` verbatim among them (the ledger quotes the
+   * grep that counts them): the definition says what the requirement is about,
+   * the usage says where it applies. Reading only the usage's OWN children
+   * asked the author to repeat the subject on every usage, and warned when they
+   * did not — a false positive on the shape a contract reader has to be able to
+   * trust, which is why it is paid off before anything reads one.
+   */
+  it('positive: a subject inherited from the definition answers the rule', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const vehicle = f.partDef('Vehicle', p.id);
+    f.part('v', p.id, vehicle.id);
+    const def = f.requirementDef('MassLimit', p.id);
+    const subject = m.create('ReferenceUsage', {
+      declaredName: 'v',
+      ownerId: def.id,
+      attrs: { requirementRole: 'subject' },
+    });
+    f.featureTyping(subject.id, vehicle.id);
+    const use = f.requirement('r', p.id);
+    f.featureTyping(use.id, def.id);
+    expect(runRule(m, 'requirement-subject')).toHaveLength(0);
+  });
+
+  /**
+   * Inheritance is transitive, because `effectiveFeatures` is: a definition
+   * that specializes the one carrying the subject answers too, and so does a
+   * usage of that definition. Three elements, one subject, no warning.
+   */
+  it('positive: a subject inherited through an intermediate definition answers too', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const vehicle = f.partDef('Vehicle', p.id);
+    const base = f.requirementDef('Base', p.id);
+    const subject = m.create('ReferenceUsage', {
+      declaredName: 'v',
+      ownerId: base.id,
+      attrs: { requirementRole: 'subject' },
+    });
+    f.featureTyping(subject.id, vehicle.id);
+    const mid = f.requirementDef('Mid', p.id);
+    f.subclassification(mid.id, base.id);
+    const use = f.requirement('r', p.id);
+    f.featureTyping(use.id, mid.id);
+    expect(runRule(m, 'requirement-subject')).toHaveLength(0);
+  });
+
+  /**
+   * The other half of the same behaviour change: inheriting from a definition
+   * that has no subject inherits no subject. Both elements are still reported,
+   * because neither of them says what it is about.
+   */
+  it('negative: a usage of a subject-less definition is still flagged, twice', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const def = f.requirementDef('Bare', p.id);
+    const use = f.requirement('r', p.id);
+    f.featureTyping(use.id, def.id);
+    expect(runRule(m, 'requirement-subject')).toHaveLength(2);
+  });
+
+  /**
+   * An inherited feature is not an inherited SUBJECT.
+   *
+   * A requirement definition owns assumptions, constraints and subrequirements
+   * as well, and every one of them is an effective feature of every usage. Only
+   * the one tagged `requirementRole = 'subject'` answers the question the rule
+   * asks — accepting any inherited feature would silence the rule for every
+   * requirement definition that has a body.
+   */
+  it('negative: inheriting a non-subject clause is not inheriting a subject', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const def = f.requirementDef('Bounded', p.id);
+    m.create('ConstraintUsage', {
+      declaredName: 'bound',
+      ownerId: def.id,
+      attrs: { requirementRole: 'require', expression: 'mass < 10.0' },
+    });
+    const use = f.requirement('r', p.id);
+    f.featureTyping(use.id, def.id);
+    expect(runRule(m, 'requirement-subject')).toHaveLength(2);
+  });
+
+  /**
+   * A requirement is judged on what its author declared, library or no library.
+   *
+   * The rule asks `effectiveFeatures`, which follows DECLARED generals, rather
+   * than the library-aware walk that also follows the implicit base. The two
+   * are NOT equivalent, which is why the choice is worth a test: for the same
+   * bare requirement the narrow walk returns nothing at all, while the wide one
+   * already returns the nine features of `Requirements::RequirementCheck` — one
+   * of which IS a subject reference, spelled `subj`. Only that spelling keeps
+   * the wide walk harmless today, so both halves are asserted here: the day the
+   * library extraction renames `subj` to `subject`, this case says so before
+   * anyone widens the query.
+   */
+  it('negative: the merged standard library does not silence a subject-less requirement', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    loadStandardLibrary(m);
+    const p = f.pkg('P');
+    const naked = f.requirement('Naked', p.id);
+    const diags = runRule(m, 'requirement-subject');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('"P::Naked"');
+
+    // The two queries differ, and the difference is one rename away from
+    // mattering: the implicit base carries a subject reference named `subj`.
+    expect(effectiveFeatures(m, naked.id)).toHaveLength(0);
+    const wide = effectiveFeaturesWithLibrary(m, naked.id);
+    expect(wide.map((feat) => feat.declaredName)).toContain('subj');
+    expect(wide.some(isSubjectShaped)).toBe(false);
+  });
+
+  /**
+   * The discriminator the previous case cannot be: the query choice itself.
+   *
+   * `effectiveFeatures` (declared generals) and `effectiveFeaturesWithLibrary`
+   * (declared generals PLUS the implicit library base) answer the same for
+   * every model the corpus contains, so a swap between them is invisible to
+   * every other test. Here the bundled library is given exactly what it lacks —
+   * a subject-shaped feature on the implicit base of every RequirementUsage —
+   * and the rule must STILL fire, because a feature nobody declared is not the
+   * author saying what their requirement is about. Widen the query and this
+   * case goes red; it is the only one that does.
+   */
+  it('negative: a subject on the IMPLICIT library base answers for nobody', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    loadStandardLibrary(m);
+    const p = f.pkg('P');
+    const naked = f.requirement('Naked', p.id);
+
+    const base = generalizationsWithImplicit(m, naked.id)[0];
+    expect(base.declaredName).toBe('RequirementCheck');
+    m.create('ReferenceUsage', {
+      declaredName: 'subject',
+      ownerId: base.id,
+      attrs: { requirementRole: 'subject' },
+    });
+
+    expect(effectiveFeatures(m, naked.id).some(isSubjectShaped)).toBe(false);
+    expect(effectiveFeaturesWithLibrary(m, naked.id).some(isSubjectShaped)).toBe(true);
+    expect(runRule(m, 'requirement-subject')).toHaveLength(1);
+  });
+
+  /**
+   * A `SubjectMembership` answers for the element that owns it — and only for
+   * that element.
+   *
+   * The inherited candidate set is USAGES (`effectiveFeatures` → `ownFeatures`,
+   * which filters on `isUsage`), and `SubjectMembership` is not a Usage. So the
+   * programmatic membership shape reaches the rule on the own-children line and
+   * cannot reach it through inheritance. This records today's answer, not a
+   * desired invariant: a model built this way must state the subject on the
+   * usage too, or use the tagged ReferenceUsage the textual `subject v : V;`
+   * clause produces, which does inherit (see the cases above).
+   */
+  it('a SubjectMembership answers for its owner, and does not inherit', () => {
+    const own = new Model();
+    const fa = new ModelFactory(own);
+    const pa = fa.pkg('P');
+    const reqA = fa.requirement('R', pa.id);
+    own.create('SubjectMembership', { declaredName: 'v', ownerId: reqA.id });
+    expect(runRule(own, 'requirement-subject')).toHaveLength(0);
+
+    const inherited = new Model();
+    const fb = new ModelFactory(inherited);
+    const pb = fb.pkg('P');
+    const def = fb.requirementDef('MassLimit', pb.id);
+    inherited.create('SubjectMembership', { declaredName: 'v', ownerId: def.id });
+    const use = fb.requirement('r', pb.id);
+    fb.featureTyping(use.id, def.id);
+    const diags = runRule(inherited, 'requirement-subject');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('"P::r"');
+  });
+
+  /**
+   * An own feature that shares the inherited subject's NAME masks it.
+   *
+   * `effectiveFeatures` resolves redefinition by name: a feature the usage
+   * declares itself hides the same-named feature it would otherwise inherit
+   * (`src/semantics/inheritance.ts`:71). So a usage that re-uses the subject's
+   * name for something else loses the inherited subject and is reported as
+   * having none. That is the inheritance semantics the whole codebase shares —
+   * this case pins it so the behaviour is a recorded answer rather than a
+   * surprise, and so a future change to masking cannot pass unnoticed.
+   */
+  it("negative: an own feature with the subject's name masks the inherited subject", () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const vehicle = f.partDef('Vehicle', p.id);
+    const def = f.requirementDef('MassLimit', p.id);
+    const subject = m.create('ReferenceUsage', {
+      declaredName: 'v',
+      ownerId: def.id,
+      attrs: { requirementRole: 'subject' },
+    });
+    f.featureTyping(subject.id, vehicle.id);
+    const use = f.requirement('r', p.id);
+    f.featureTyping(use.id, def.id);
+    // Without this own `v`, the usage inherits the subject and is silent.
+    m.create('AttributeUsage', { declaredName: 'v', ownerId: use.id });
+    const diags = runRule(m, 'requirement-subject');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('"P::r"');
   });
 });
 
