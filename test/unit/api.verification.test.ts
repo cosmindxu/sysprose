@@ -1,0 +1,828 @@
+/**
+ * The verification lane's two reporting surfaces, before any solver exists.
+ *
+ * `contracts` says what each requirement assumes and guarantees, on which
+ * subject, honoured by which part. `obligations` says what would have to be
+ * shown, over which axioms, and which relations the unit gates refuse. Neither
+ * says anything about truth, and this file is where that line is held: every
+ * assertion below is about STRUCTURE — how many clauses, in which bucket, with
+ * which refusal reason — and none of them asks whether a requirement holds.
+ *
+ * Three things make the suite worth its runtime rather than a restatement of
+ * the implementation:
+ *
+ *  - The two shipped examples are measured, not described. `uav-isr` is the
+ *    flagship, and its two requirements are the ones the plan's first
+ *    deliverable quotes; if the inventory stops finding them the numbers here
+ *    move.
+ *  - The role map is enumerated. Five ways a relation enters a model —
+ *    `require`, `assume`, `assert constraint`, a plain `constraint`, a feature
+ *    value — land in exactly three buckets, and the one the first draft of the
+ *    plan got wrong (a plain `constraint` is an OBLIGATION, not an axiom) has a
+ *    case of its own with the consequence spelled out.
+ *  - Every gate that refuses a relation is exercised through the report rather
+ *    than through the gate, because "encodability is the same gate the numeric
+ *    surface applies" is a claim about what this module CALLS.
+ *
+ * The `Verify` / `Derive` / `Refine` orientations are measured on probe models
+ * written here: neither shipped example declares one (`examples/uav-isr.sysml`
+ * carries two `satisfy` statements and nothing else), so an assertion about
+ * their direction has nowhere else to come from.
+ */
+import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import type { Model } from '@core/index';
+import { isUserElement } from '@api/index';
+import { contractReport, obligationsReport } from '@api/index';
+import {
+  contractsOf,
+  contractOf,
+  isUserModelElement,
+  obligationsOf,
+} from '@semantics/index';
+import { loadModelText } from '@text/load';
+
+const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
+
+/** Load a snippet with the standard library bound, as every command does. */
+async function load(text: string, name = 'probe.sysml'): Promise<Model> {
+  const { model } = await loadModelText(text, { fileName: name });
+  if (!model) throw new Error(`${name} produced no model`);
+  return model;
+}
+
+/**
+ * Every dotted path an expression node names.
+ *
+ * Written here rather than imported so the assertion is independent of the
+ * walk under test: a bug in `contracts.ts`'s own path collection would
+ * otherwise agree with itself.
+ */
+function refPaths(node: unknown): string[] {
+  if (typeof node !== 'object' || node === null) return [];
+  const n = node as Record<string, unknown>;
+  if (n.kind === 'ref') return [(n.path as string[]).join('.')];
+  return ['operand', 'left', 'right', 'cond', 'then', 'else'].flatMap((k) => refPaths(n[k]));
+}
+
+describe('contracts — the inventory of examples/uav-isr.sysml', () => {
+  let model: Model;
+  beforeAll(async () => {
+    model = await load(read('examples/uav-isr.sysml'), 'examples/uav-isr.sysml');
+  }, 60_000);
+
+  it('finds two contracts, one per requirement, both on `uav : AirVehicle`', () => {
+    const r = contractReport(model);
+    expect(r.total).toBe(2);
+    expect(r.contracts.map((c) => c.qualifiedName)).toEqual([
+      'UAVSurveillanceSystem::EnduranceRequirement',
+      'UAVSurveillanceSystem::MassRequirement',
+    ]);
+    for (const c of r.contracts) {
+      expect(c.subject).toMatchObject({ name: 'uav', typeRef: 'AirVehicle', origin: 'declared' });
+    }
+    expect(r.subjects).toBe(1);
+  });
+
+  it('gives each one 0 assumptions, 1 guarantee and `satisfy … by uav`', () => {
+    const r = contractReport(model);
+    for (const c of r.contracts) {
+      expect(c.assumptions).toHaveLength(0);
+      expect(c.guarantees).toHaveLength(1);
+      expect(c.satisfiedBy.map((s) => s.declaredName)).toEqual(['uav']);
+      expect(c.verifiedBy).toEqual([]);
+      expect(c.derivedFrom).toEqual([]);
+      expect(c.refinedBy).toEqual([]);
+    }
+    expect(r.contracts.map((c) => c.guarantees[0].expression)).toEqual([
+      'uav.endurance >= 45.0 [min]',
+      'uav.mtow <= 25.0 [kg]',
+    ]);
+  });
+
+  it('reads both guarantees as linear real arithmetic, with nothing freed', () => {
+    const r = contractReport(model);
+    expect(r.contracts.map((c) => c.fragment)).toEqual(['qf-lra', 'qf-lra']);
+    expect(r.guaranteesQfLra).toBe(2);
+    expect(r.guaranteesQfNra).toBe(0);
+    expect(r.guaranteesUnsupported).toBe(0);
+    expect(r.contracts.flatMap((c) => c.unsupported)).toEqual([]);
+  });
+
+  it('names each guarantee’s variable with its unit and SI factor', () => {
+    const [endurance, mass] = contractsOf(model);
+    expect(endurance.variables).toEqual([
+      {
+        path: 'uav.endurance',
+        featureId: expect.any(String),
+        qualifiedName: 'UAVSurveillanceSystem::AirVehicle::endurance',
+        role: 'derived',
+        unit: null,
+        siFactor: 1,
+        siOffset: 0,
+      },
+    ]);
+    expect(mass.variables[0]).toMatchObject({
+      path: 'uav.mtow',
+      role: 'parameter',
+      unit: 'kg',
+      siFactor: 1,
+    });
+  });
+
+  it('`contractOf` answers for one requirement and nothing for a stranger', () => {
+    const req = model.all().find((e) => e.declaredName === 'MassRequirement');
+    expect(contractOf(model, req!.id)?.qualifiedName).toBe(
+      'UAVSurveillanceSystem::MassRequirement',
+    );
+    const part = model.all().find((e) => e.declaredName === 'uav');
+    expect(contractOf(model, part!.id)).toBeUndefined();
+  });
+
+  it('the obligations are two open guarantees over an axiom set of bindings', () => {
+    const r = obligationsReport(model);
+    const guarantees = r.obligations.filter((o) => o.role === 'obligation');
+    expect(guarantees).toHaveLength(2);
+    for (const o of guarantees) {
+      expect(o.status).toBe('open');
+      expect(o.encodable).toBe(true);
+      expect(o.nonlinear).toBe(false);
+      expect(o.evidence).toEqual([]);
+    }
+    expect(r.byRole.premise).toBe(0);
+    // Every axiom is a feature-value binding — the model states no `assert`
+    // and no `bind`, so the axiom set is exactly what the features say.
+    expect(new Set(r.obligations.filter((o) => o.role === 'axiom').map((o) => o.source))).toEqual(
+      new Set(['feature-value']),
+    );
+    // One of them is the derived endurance equation; the rest are literals.
+    const equations = r.obligations.filter(
+      (o) => o.role === 'axiom' && o.expression.includes('*'),
+    );
+    expect(equations.map((o) => o.expression)).toEqual([
+      'endurance == battery.capacity * usableEnergyFraction / cruisePower',
+    ]);
+    expect(r.byStatus['not-encodable']).toBe(0);
+    expect(r.byStatus['no-formal-clause']).toBe(0);
+  });
+
+  /**
+   * The fragment rule, on the one relation in the shipped examples that turns
+   * on it. `endurance = battery.capacity * usableEnergyFraction / cruisePower`
+   * is a product AND a quotient, so it is nonlinear in general — and linear as
+   * the model stands, because all three of its right-hand features carry
+   * literal values and fold to a constant. Freeing any of them (a later
+   * commit's `--free`) promotes the obligation to QF_NRA. The variable list is
+   * asserted with the verdict: a reading that lost the three literal-valued
+   * features would answer `false` for the wrong reason.
+   */
+  it('the derived-endurance axiom is linear once its own literals are substituted', () => {
+    const eq = obligationsOf(model).find(
+      (o) => o.source === 'feature-value' && o.expression.includes('*'),
+    );
+    expect(eq?.expression).toBe(
+      'endurance == battery.capacity * usableEnergyFraction / cruisePower',
+    );
+    expect(eq?.vars.map((v) => v.path).sort()).toEqual([
+      'battery.capacity',
+      'cruisePower',
+      'endurance',
+      'usableEnergyFraction',
+    ]);
+    expect(eq?.nonlinear).toBe(false);
+    expect(eq?.encodable).toBe(true);
+  });
+});
+
+describe('contracts — examples/vehicle.sysml', () => {
+  it('yields exactly one contract', async () => {
+    const model = await load(read('examples/vehicle.sysml'), 'examples/vehicle.sysml');
+    const r = contractReport(model);
+    expect(r.total).toBe(1);
+    expect(r.contracts[0].qualifiedName).toBe('VehicleModel::MassRequirement');
+    expect(r.contracts[0].guarantees).toHaveLength(1);
+    expect(r.contracts[0].satisfiedBy.map((s) => s.declaredName)).toEqual(['vehicle']);
+  }, 60_000);
+});
+
+describe('what is and is not a contract', () => {
+  it('a `#prose` requirement contributes none', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 3.0; }
+  part s : Sys;
+  #prose requirement def Explanation { subject u : Sys; require constraint { u.m > 1.0 } }
+  requirement def Real1 { subject u : Sys; require constraint { u.m < 9.0 } }
+}`);
+    expect(contractsOf(model).map((c) => c.qualifiedName)).toEqual(['P::Real1']);
+    // …and neither does its `require` body. The keyword is written on the
+    // REQUIREMENT, not on the clause, so a worklist that asked only the clause
+    // carried a row belonging to no contract in the inventory beside it — the
+    // two surfaces of one commit disagreeing about one model.
+    const obligations = obligationsOf(model).filter((o) => o.role === 'obligation');
+    expect(obligations.map((o) => o.expression)).toEqual(['u.m < 9.0']);
+    expect(obligations[0].requirement?.qualifiedName).toBe('P::Real1');
+  }, 60_000);
+
+  /**
+   * `requirement r : Def;` is the standard's ordinary way of APPLYING a
+   * requirement, and it is the shape commit 2b opened the subject for. It owns
+   * no clause, and the clause it inherits is filed once — on the definition, so
+   * one constraint does not enter the worklist twice. What it must not be is
+   * "prose only, nothing to encode": that is false about a requirement with a
+   * constraint body, it is the row a `satisfy` names, and it would inflate
+   * `--missing`, the figure that measures how much of a model this lane cannot
+   * reach.
+   */
+  it('a requirement usage inherits its definition’s clause and is not counted as bodiless', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 3.0; }
+  part s : Sys;
+  requirement def MassLimit { subject u : Sys; require constraint { u.m < 9.0 } }
+  requirement massOk : MassLimit;
+  satisfy massOk by s;
+}`);
+    const usage = contractsOf(model).find((c) => c.qualifiedName === 'P::massOk')!;
+    expect(usage.guarantees).toHaveLength(0);
+    expect(usage.clausesInheritedFrom.map((d) => d.qualifiedName)).toEqual(['P::MassLimit']);
+    expect(usage.subject).toMatchObject({ name: 'u', origin: 'inherited' });
+    expect(usage.satisfiedBy.map((s) => s.declaredName)).toEqual(['s']);
+    // The clause is filed exactly once, on the definition.
+    const shown = obligationsOf(model).filter((o) => o.role === 'obligation');
+    expect(shown.map((o) => [o.requirement?.qualifiedName, o.expression, o.status])).toEqual([
+      ['P::MassLimit', 'u.m < 9.0', 'open'],
+    ]);
+    expect(contractReport(model).noFormalClause).toBe(0);
+    expect(obligationsOf(model, { missing: true })).toEqual([]);
+    expect(obligationsReport(model).missing).toBe(0);
+  }, 60_000);
+
+  it('a use case def with an objective is a contract on a behaviour', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute armed : Real = 1.0; attribute alt : Real = 100.0; }
+  part s : Sys;
+  use case def Surveil {
+    subject sub : Sys;
+    objective {
+      assume constraint { sub.armed == 1.0 }
+      require constraint { sub.alt > 0.0 }
+    }
+  }
+}`);
+    const cs = contractsOf(model);
+    expect(cs).toHaveLength(1);
+    expect(cs[0].qualifiedName).toBe('P::Surveil');
+    expect(cs[0].assumptions).toHaveLength(1);
+    expect(cs[0].guarantees).toHaveLength(1);
+    expect(cs[0].assumptions[0].via).toBe('objective');
+    expect(cs[0].subject).toMatchObject({ name: 'sub', typeRef: 'Sys', origin: 'declared' });
+    // The objective's assumption is the CASE's, never a system requirement.
+    const obs = obligationsOf(model);
+    expect(obs.filter((o) => o.role === 'premise').map((o) => o.expression)).toEqual([
+      'sub.armed == 1.0',
+    ]);
+  }, 60_000);
+
+  it('a case with no subject of its own defaults to the case result', async () => {
+    const model = await load(`package P {
+  case def Measure {
+    objective { require constraint { 1.0 > 0.0 } }
+  }
+}`);
+    const cs = contractsOf(model);
+    expect(cs).toHaveLength(1);
+    expect(cs[0].subject).toEqual({
+      name: 'result',
+      typeRef: 'Cases::Case::result',
+      typeId: null,
+      origin: 'case-default',
+    });
+  }, 60_000);
+
+  /**
+   * The notation is `verification def`, not `verification case def`: the
+   * grammar's definition keyword list carries `verification` on its own
+   * (`sysml.langium`:434) and `VerificationCaseDefinition: 'verification def'`
+   * is what the metamodel writes back. Measured, `verification case def X`
+   * parses as a nameless `VerificationCaseUsage` followed by a
+   * `CaseDefinition X`, which is why the spelling is pinned here.
+   */
+  it('a verification case binds its subject rather than defaulting it', async () => {
+    const model = await load(`package P {
+  verification def CheckIt {
+    objective { require constraint { 1.0 > 0.0 } }
+  }
+}`);
+    expect(contractsOf(model)[0].subject).toEqual({
+      name: 'subj',
+      typeRef: 'VerificationCases::VerificationCase::subj',
+      typeId: null,
+      origin: 'case-bound',
+    });
+  }, 60_000);
+
+  it('a requirement with prose and no constraint body has no formal clause', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 3.0; }
+  requirement def Wordy { doc /* it shall be good */ subject u : Sys; }
+}`);
+    const r = contractReport(model);
+    expect(r.total).toBe(1);
+    expect(r.noFormalClause).toBe(1);
+    expect(r.contracts[0].fragment).toBe('unsupported');
+    const obs = obligationsOf(model);
+    expect(obs.filter((o) => o.status === 'no-formal-clause')).toHaveLength(1);
+    expect(obligationsOf(model, { missing: true })).toHaveLength(1);
+  }, 60_000);
+
+  it('an assumption with nothing to prove is reported, not silently kept', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 3.0; }
+  requirement def Empty { subject u : Sys; assume constraint { u.m > 0.0 } }
+}`);
+    const r = contractReport(model);
+    expect(r.contracts[0].guarantees).toHaveLength(0);
+    expect(r.diagnostics.map((d) => d.code)).toContain('verification/contract-no-guarantee');
+    for (const d of r.diagnostics) expect(d.source).toBe('verification');
+  }, 60_000);
+});
+
+describe('the role map — every relation lands in exactly one bucket', () => {
+  let model: Model;
+  beforeAll(async () => {
+    model = await load(`package P {
+  part def Sys {
+    attribute m : Real = 3.0;
+    attribute derivedM : Real = m * 2.0;
+  }
+  part s : Sys;
+  requirement def R {
+    subject u : Sys;
+    assume constraint { u.m > 0.0 }
+    require constraint { u.m < 9.0 }
+  }
+  constraint plain { s.m <= 5.0 }
+  assert constraint stated { s.m >= 1.0 }
+}`);
+  }, 60_000);
+
+  it('require is an obligation, assume a premise, assert an axiom', () => {
+    const by = (expr: string) => obligationsOf(model).find((o) => o.expression === expr);
+    expect(by('u.m < 9.0')).toMatchObject({ role: 'obligation', source: 'require' });
+    expect(by('u.m > 0.0')).toMatchObject({ role: 'premise', source: 'assume' });
+    expect(by('s.m >= 1.0')).toMatchObject({ role: 'axiom', source: 'assert' });
+  });
+
+  /**
+   * The row the plan's first draft was missing, and the reason it matters:
+   * `checkConstraints` JUDGES a plain constraint, so the SMT engine must judge
+   * it too. Filed as an axiom, one false plain constraint would make the axiom
+   * set unsatisfiable and downgrade every genuine violation in the run to
+   * inconclusive.
+   */
+  it('a plain `constraint` is an OBLIGATION, not an axiom', () => {
+    const plain = obligationsOf(model).find((o) => o.expression === 's.m <= 5.0');
+    expect(plain).toMatchObject({ role: 'obligation', source: 'constraint' });
+    expect(obligationsOf(model).filter((o) => o.role === 'axiom').map((o) => o.source)).not.toContain(
+      'constraint',
+    );
+  });
+
+  it('a feature value is a binding, so it is an axiom', () => {
+    const axioms = obligationsOf(model).filter((o) => o.role === 'axiom');
+    expect(axioms.map((o) => o.expression)).toContain('derivedM == m * 2.0');
+    expect(axioms.find((o) => o.expression === 'derivedM == m * 2.0')?.source).toBe(
+      'feature-value',
+    );
+  });
+
+  it('a `bind` equality is an axiom', async () => {
+    const bound = await load(`package B {
+  part def Sys { attribute a : Real = 2.0; attribute b : Real; }
+  part s : Sys;
+  bind s.a = s.b;
+}`);
+    const binds = obligationsOf(bound).filter((o) => o.source === 'bind');
+    expect(binds).toHaveLength(1);
+    expect(binds[0].role).toBe('axiom');
+  }, 60_000);
+
+  /**
+   * Set EQUALITY, not membership. A `for (const s of sources) expect([…])`
+   * passes vacuously on an empty axiom set — a role map that files nothing at
+   * all satisfies every allow-list — so the assertion has to name the buckets
+   * this model actually produces and fail on a missing one as well as an extra
+   * one. `bind` has its own case above; `calculation` has one below, and is a
+   * source the plan's §3.2 list does not mention.
+   */
+  it('the axiom set on this model is exactly its feature values and its `assert`', () => {
+    const sources = new Set(
+      obligationsOf(model)
+        .filter((o) => o.role === 'axiom')
+        .map((o) => o.source),
+    );
+    expect(sources).toEqual(new Set(['feature-value', 'assert']));
+  });
+
+  /**
+   * A calculation is a DEFINITION when its body is a value expression, and the
+   * question is asked of the parsed node rather than of the raw string. The
+   * first draft asked a regex, which found the `>` inside the condition of
+   * `if s.x > 0.0 then s.a else s.b` and filed a definition as a claim — while
+   * `relationEquation` of `./solver`, which switches on `node.kind`, read the
+   * same body as `self == expr`. Two surfaces disagreeing about which relations
+   * a model states is the divergence the shared relation layer exists to stop.
+   */
+  it('a calculation with a comparison nested inside its body is still a definition', async () => {
+    const calc = await load(`package C {
+  part def Sys { attribute a : Real = 1.0; attribute b : Real = 2.0; attribute x : Real = 3.0; }
+  part s : Sys;
+  calc c2 { if s.x > 0.0 then s.a else s.b }
+  calc c4 { s.a * (s.b - 1.0) }
+}`);
+    const rows = obligationsOf(calc).filter((o) => o.source === 'calculation');
+    expect(rows.map((o) => [o.role, o.expression])).toEqual([
+      ['axiom', 'c2 == if s.x > 0.0 then s.a else s.b'],
+      ['axiom', 'c4 == s.a * (s.b - 1.0)'],
+    ]);
+  }, 60_000);
+});
+
+describe('a clause the standard does not admit where it was written', () => {
+  it('`assume constraint` in an action def parses and is reported', async () => {
+    const model = await load(`package P {
+  action def Go {
+    attribute x : Real = 1.0;
+    assume constraint { x > 0.0 }
+  }
+}`);
+    const r = contractReport(model);
+    const d = r.diagnostics.filter((x) => x.code === 'verification/nonstandard-clause-location');
+    expect(d).toHaveLength(1);
+    expect(d[0].severity).toBe('info');
+    expect(d[0].source).toBe('verification');
+    expect(d[0].message).toContain('action def');
+  }, 60_000);
+
+  it('a named `assert constraint` in an action def is the standard idiom and is silent', async () => {
+    const model = await load(`package P {
+  action def Go {
+    attribute x : Real = 1.0;
+    assert constraint precondition { x > 0.0 }
+  }
+}`);
+    expect(
+      contractReport(model).diagnostics.map((d) => d.code),
+    ).not.toContain('verification/nonstandard-clause-location');
+  }, 60_000);
+});
+
+describe('the gates that refuse a relation, each listed with its reason', () => {
+  const SYS = `part def Sys {
+    attribute d : ISQ::LengthValue = 5.0 [km];
+    attribute dur : ISQ::DurationValue = 3000.0 [s];
+    attribute t1 : ISQ::ThermodynamicTemperatureValue = 20.0 ['°C'];
+    attribute t2 : ISQ::ThermodynamicTemperatureValue = 30.0 ['°C'];
+    attribute xs : Real[3];
+    attribute k : Real = 2.0;
+  }`;
+
+  async function refusalFor(body: string): Promise<{ reason: string; detail: string }> {
+    const model = await load(`package P {
+  ${SYS}
+  part s : Sys;
+  requirement def R { subject u : Sys; require constraint { ${body} } }
+}`);
+    const g = contractsOf(model)[0].guarantees[0];
+    expect(g.encodable, `\`${body}\` was expected to be refused`).not.toBe(true);
+    return g.encodable as { reason: string; detail: string };
+  }
+
+  /**
+   * The gate that has to be asked FIRST, because every gate below it is
+   * satisfied vacuously without it.
+   *
+   * `relationVarsOf` collects the ids the body's names map to, and a misspelt
+   * name maps to none — so a one-character typo produced a relation with an
+   * empty variable list, no dimension to clash, no scale to refuse, and a
+   * verdict of `encodable: true` in QF_LRA. The same run reported
+   * `validation/constraint-violation … a referenced value is unknown` about the
+   * identical clause, and `obligations --missing` said "every relation in this
+   * model is encodable". A worklist that is honest about what it cannot decide
+   * cannot also call an unreadable relation decidable.
+   */
+  it('refuses a name that resolves to nothing, rather than encoding an empty relation', async () => {
+    const model = await load(`package P {
+  ${SYS}
+  part s : Sys;
+  requirement def R { subject u : Sys; require constraint { u.enduranse >= 45.0 } }
+}`);
+    const g = contractsOf(model)[0].guarantees[0];
+    expect(g.encodable).not.toBe(true);
+    expect((g.encodable as { reason: string }).reason).toBe('unresolved-name');
+    expect((g.encodable as { detail: string }).detail).toContain('u.enduranse');
+    expect(g.fragment).toBe('unsupported');
+    const r = contractReport(model);
+    expect(r.guaranteesQfLra).toBe(0);
+    expect(r.guaranteesUnsupported).toBe(1);
+    expect(obligationsReport(model).missing).toBe(1);
+  }, 60_000);
+
+  /**
+   * The invariant behind that gate, asserted on the shipped example rather than
+   * on a probe: an ENCODABLE relation names no variable the report cannot also
+   * name. `sortPerVar` is keyed by path, so this says every reference in the
+   * body reached a feature with a sort.
+   */
+  it('every reference in an encodable relation appears in its own variable list', async () => {
+    const model = await load(read('examples/uav-isr.sysml'), 'examples/uav-isr.sysml');
+    for (const o of obligationsOf(model)) {
+      if (o.encodable !== true || o.node === null) continue;
+      const named = new Set(o.vars.map((v) => v.path));
+      for (const path of refPaths(o.node)) {
+        expect(named, `${o.expression} reads ${path}, which its variable list does not name`)
+          .toContain(path);
+        expect(o.sortPerVar[path]).toBeDefined();
+      }
+    }
+  }, 60_000);
+
+  it('refuses a dimension clash', async () => {
+    const r = await refusalFor('u.d >= u.dur');
+    expect(r.reason).toBe('dimension-clash');
+    expect(r.detail).toMatch(/dimension/i);
+  }, 60_000);
+
+  it('refuses arithmetic on an offset scale', async () => {
+    const r = await refusalFor('u.t2 - u.t1 <= 5.0');
+    expect(r.reason).toBe('offset-arithmetic');
+    expect(r.detail).toMatch(/offset/i);
+  }, 60_000);
+
+  it('refuses a collection-valued feature', async () => {
+    const r = await refusalFor('u.xs > 1.0');
+    expect(r.reason).toBe('collection-valued');
+    expect(r.detail).toContain('xs');
+  }, 60_000);
+
+  it('orders °C rather than refusing it — the affine map is monotone', async () => {
+    const model = await load(`package P {
+  ${SYS}
+  part s : Sys;
+  requirement def R { subject u : Sys; require constraint { u.t2 >= 300.0 [K] } }
+}`);
+    expect(contractsOf(model)[0].guarantees[0].encodable).toBe(true);
+  }, 60_000);
+
+  it('lists a refused relation rather than dropping it, and says so in the report', async () => {
+    const model = await load(`package P {
+  ${SYS}
+  part s : Sys;
+  requirement def R { subject u : Sys; require constraint { u.d >= u.dur } }
+}`);
+    const r = contractReport(model);
+    expect(r.guaranteesUnsupported).toBe(1);
+    expect(r.contracts[0].unsupported).toEqual([
+      {
+        expression: 'u.d >= u.dur',
+        reason: 'dimension-clash',
+        detail: expect.stringMatching(/dimension/i),
+      },
+    ]);
+    expect(r.diagnostics.map((d) => d.code)).toContain('verification/unsupported-expression');
+    const o = obligationsReport(model).obligations.find((x) => x.expression === 'u.d >= u.dur');
+    expect(o?.status).toBe('not-encodable');
+    expect(obligationsOf(model, { missing: true }).map((x) => x.expression)).toContain(
+      'u.d >= u.dur',
+    );
+  }, 60_000);
+
+  it('a nonlinear guarantee is encodable and marked NRA', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute a : Real; attribute b : Real; }
+  part s : Sys;
+  requirement def R { subject u : Sys; require constraint { u.a * u.b <= 10.0 } }
+}`);
+    const c = contractsOf(model)[0];
+    expect(c.guarantees[0].encodable).toBe(true);
+    expect(c.guarantees[0].nonlinear).toBe(true);
+    expect(c.fragment).toBe('qf-nra');
+  }, 60_000);
+});
+
+describe('the four orientations, measured on their own probe models', () => {
+  it('`satisfy R by X` puts X in satisfiedBy', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 1.0; }
+  part s : Sys;
+  requirement def R { subject u : Sys; require constraint { u.m > 0.0 } }
+  satisfy R by s;
+}`);
+    expect(contractsOf(model)[0].satisfiedBy.map((x) => x.declaredName)).toEqual(['s']);
+  }, 60_000);
+
+  it('`verify R by C` puts the CASE in verifiedBy', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 1.0; }
+  part s : Sys;
+  requirement def R { subject u : Sys; require constraint { u.m > 0.0 } }
+  verification def CheckR { objective { require constraint { 1.0 > 0.0 } } }
+  verify R by CheckR;
+}`);
+    const c = contractsOf(model).find((x) => x.qualifiedName === 'P::R')!;
+    expect(c.verifiedBy.map((x) => x.declaredName)).toEqual(['CheckR']);
+    expect(c.satisfiedBy).toEqual([]);
+  }, 60_000);
+
+  it('`derive D from O` reads O as the original and D as the derived', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 1.0; }
+  requirement def Original { subject u : Sys; require constraint { u.m > 0.0 } }
+  requirement def Derived { subject u : Sys; require constraint { u.m > 1.0 } }
+  derive Derived from Original;
+}`);
+    const derived = contractsOf(model).find((c) => c.qualifiedName === 'P::Derived')!;
+    const original = contractsOf(model).find((c) => c.qualifiedName === 'P::Original')!;
+    expect(derived.derivedFrom.map((x) => x.declaredName)).toEqual(['Original']);
+    expect(original.derivedFrom).toEqual([]);
+  }, 60_000);
+
+  it('`refine R by X` puts X in refinedBy', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 1.0; }
+  requirement def R { subject u : Sys; require constraint { u.m > 0.0 } }
+  requirement def Finer { subject u : Sys; require constraint { u.m > 2.0 } }
+  refine R by Finer;
+}`);
+    const c = contractsOf(model).find((x) => x.qualifiedName === 'P::R')!;
+    expect(c.refinedBy.map((x) => x.declaredName)).toEqual(['Finer']);
+  }, 60_000);
+});
+
+describe('`--element` narrows every figure, not only the listing', () => {
+  const SCOPED = `package P {
+  part def Sys { attribute m : Real = 3.0; }
+  package Scoped {
+    requirement def Inner { subject u : Sys; require constraint { u.m < 9.0 } }
+  }
+  package Elsewhere {
+    #prose requirement def Prosy { subject u : Sys; require constraint { u.m > 0.0 } }
+    action def Go { attribute x : Real = 1.0; assume constraint { x > 0.0 } }
+    requirement def NoGuar { subject u : Sys; assume constraint { u.m > 0.0 } }
+  }
+}`;
+
+  /**
+   * A report that narrows its listing and not its findings contradicts itself
+   * in one block: it prints `scoped to P::Scoped` and then a diagnostic about
+   * `P::Elsewhere::Go`, and a census of statements the reader did not ask
+   * about. Both reports are checked, because the second built its diagnostics
+   * from an unscoped inventory of its own.
+   */
+  it('a scoped report carries no diagnostic and no exclusion from outside the scope', async () => {
+    const model = await load(SCOPED);
+    const scope = model.all().find((e) => model.qualifiedName(e.id) === 'P::Scoped')!;
+    const whole = contractReport(model);
+    expect(whole.diagnostics.map((d) => d.code).sort()).toEqual([
+      'verification/contract-no-guarantee',
+      'verification/nonstandard-clause-location',
+    ]);
+    expect(whole.nonNormativeExcluded).toBe(1);
+
+    const scoped = contractReport(model, { scopeId: scope.id });
+    expect(scoped.contracts.map((c) => c.qualifiedName)).toEqual(['P::Scoped::Inner']);
+    expect(scoped.diagnostics).toEqual([]);
+    expect(scoped.nonNormativeExcluded).toBe(0);
+    expect(obligationsReport(model, { scopeId: scope.id }).diagnostics).toEqual([]);
+  }, 60_000);
+
+  it('the article of the clause-location message follows the word after it', async () => {
+    const model = await load(SCOPED);
+    const d = contractReport(model).diagnostics.find(
+      (x) => x.code === 'verification/nonstandard-clause-location',
+    );
+    expect(d?.message).toContain('in the body of an action def');
+  }, 60_000);
+});
+
+describe('the variables a clause reads, named one per path', () => {
+  const PORTS = `package P {
+  port def PowerPort { attribute voltage : Real = 12.0; }
+  part def Sys {
+    out port powerOut : PowerPort;
+    in port powerIn : PowerPort;
+    attribute plain : Real = 2.0;
+  }
+  part s : Sys;
+  requirement def R {
+    subject u : Sys;
+    require constraint { u.powerOut.voltage >= u.powerIn.voltage + u.plain }
+  }
+}`;
+
+  /**
+   * An attribute declared in a `port def` is owned by the DEFINITION, so
+   * `u.powerOut.voltage` and `u.powerIn.voltage` resolve to one element. A list
+   * built per resolved id therefore printed one row for two quantities and lost
+   * the other path entirely — in a report whose stated job is to name the
+   * variables a clause reads.
+   */
+  it('two ports of one definition are two variables, not one', async () => {
+    const model = await load(PORTS);
+    const g = contractsOf(model)[0].guarantees[0];
+    expect(g.variables.map((v) => v.path)).toEqual([
+      'u.powerOut.voltage',
+      'u.powerIn.voltage',
+      'u.plain',
+    ]);
+    // …and they really are the same element, which is why the paths matter.
+    expect(g.variables[0].featureId).toBe(g.variables[1].featureId);
+    expect(contractsOf(model)[0].variables.map((v) => v.path)).toEqual(g.variables.map((v) => v.path));
+  }, 60_000);
+
+  /**
+   * §3.1: "Port `attrs.direction` classifies variables as inputs vs outputs."
+   * The direction is on the port USAGE, never on the port definition's own
+   * attribute, so it is read off the path the relation names rather than off
+   * the resolved feature's owner chain — which stops at a `PortDefinition` and
+   * would report every port-borne quantity as a plain parameter.
+   */
+  it('a port-borne variable takes the direction of the port it is read through', async () => {
+    const model = await load(PORTS);
+    const g = contractsOf(model)[0].guarantees[0];
+    expect(g.variables.map((v) => [v.path, v.role])).toEqual([
+      ['u.powerOut.voltage', 'output'],
+      ['u.powerIn.voltage', 'input'],
+      ['u.plain', 'parameter'],
+    ]);
+  }, 60_000);
+
+  it('a direction written on the feature itself is read too', async () => {
+    const model = await load(`package P {
+  action def Go { in attribute x : Real = 1.0; out attribute y : Real = 2.0; }
+  requirement def R { subject a : Go; require constraint { a.y >= a.x } }
+}`);
+    expect(contractsOf(model)[0].guarantees[0].variables.map((v) => [v.path, v.role])).toEqual([
+      ['a.y', 'output'],
+      ['a.x', 'input'],
+    ]);
+  }, 60_000);
+
+  /**
+   * "N contract(s) on M subject(s)" is a census, and a census keyed on two
+   * display strings collapses two different `part def Sys` into one.
+   */
+  it('two same-named subjects of different types are two subjects', async () => {
+    const model = await load(`package A {
+  part def Sys { attribute m : Real = 1.0; }
+  requirement def R1 { subject u : Sys; require constraint { u.m > 0.0 } }
+}
+package B {
+  part def Sys { attribute m : Real = 1.0; }
+  requirement def R2 { subject u : Sys; require constraint { u.m > 0.0 } }
+}`);
+    const r = contractReport(model);
+    expect(r.total).toBe(2);
+    expect(r.subjects).toBe(2);
+  }, 60_000);
+});
+
+describe('what the reports never say, and what they always exclude', () => {
+  it('a claimed verdict with no evidence record is reported as claimed, not as a pass', async () => {
+    const model = await load(`package P {
+  part def Sys { attribute m : Real = 3.0; }
+  requirement def R {
+    subject u : Sys;
+    require constraint { u.m < 9.0 }
+    metadata RequirementMetadata { attribute verdict = "pass"; }
+  }
+}`);
+    const o = obligationsOf(model).find((x) => x.role === 'obligation')!;
+    expect(o.claimedVerdict).toBe('pass');
+    expect(o.status).toBe('open');
+    expect(o.evidence).toEqual([]);
+  }, 60_000);
+
+  it('the library is excluded and the figure is stated', async () => {
+    const model = await load(read('examples/uav-isr.sysml'), 'examples/uav-isr.sysml');
+    const r = contractReport(model);
+    expect(r.libraryExcluded).toBeGreaterThan(0);
+    expect(r.contracts.every((c) => !c.qualifiedName.startsWith('Requirements::'))).toBe(true);
+  }, 60_000);
+
+  /**
+   * `contractsOf` filters with a predicate of its own rather than importing
+   * `isUserElement` from `src/api/analytics.ts`, because the API layer imports
+   * the semantics layer and the reverse import would close a cycle. A copied
+   * predicate is a predicate that drifts, so the two are compared element by
+   * element over both shipped examples.
+   */
+  it('its user-element filter agrees with the one every other report uses', async () => {
+    for (const path of ['examples/uav-isr.sysml', 'examples/vehicle.sysml']) {
+      const model = await load(read(path), path);
+      const mine = model.all().filter((el) => isUserModelElement(model, el)).map((e) => e.id);
+      const theirs = model.all().filter((el) => isUserElement(model, el)).map((e) => e.id);
+      expect(mine, `${path}: the two user-element filters disagree`).toEqual(theirs);
+    }
+  }, 60_000);
+});

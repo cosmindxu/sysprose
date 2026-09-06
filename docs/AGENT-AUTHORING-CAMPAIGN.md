@@ -125,14 +125,14 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: exit codes, JSON shape, stdin, strict and `--no-library` modes | 12 tests |
+| L7 | The command-line contract: exit codes, JSON shape, stdin, strict and `--no-library` modes, and every reporting subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 50 tests |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
 so where they appear. Measured 2026-09-06: **82 fixture directories** under
-`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **56
+`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **59
 catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
 rules** in `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -2211,6 +2211,153 @@ Fixture: `L4-requirement-subject-inherited`, beside `L4-requirement-no-subject`
 `L4-requirement-subject-declared` (a declared one). It is defect D4 of the
 formal-verification plan (`docs/04-formal-verification-plan.md` §1.1), paid off
 before anything reads a contract.
+
+**A requirement's contract could not be read at all, so nothing downstream
+could be built on one.** Commit 2c of the formal-verification plan adds the two
+reporting surfaces the rest of that plan stands on:
+`contracts` (`src/semantics/contracts.ts` → `contractReport`) says what each
+requirement assumes and guarantees, on which subject, honoured by which part,
+and which arithmetic fragment each clause lands in; `obligations`
+(`src/semantics/obligations.ts` → `obligationsReport`) says what would have to
+be shown, over which axioms, and which relations the unit gates refuse. Both
+report STRUCTURE. Neither has a solver behind it, and neither may print a word
+about truth — the disclaimer line is asserted by the L7 case, together with the
+absence of `proved`, `satisfied` and `consistent` from the output.
+
+**The role map is the load-bearing part, and it is enumerated rather than
+described.** `require` → obligation, `assume` → premise, `assert constraint` →
+axiom, a `=` feature value → axiom (a binding in KerML, not a default), a
+`bind` edge → axiom, and — the row the plan's own first draft was missing — a
+plain `constraint c { … }` with no keyword at all → **obligation**. That last
+one is what `checkConstraints` judges, so it has to be what an SMT engine
+judges; filed as an axiom, one false plain constraint would make the axiom set
+unsatisfiable and downgrade every genuine violation in the run to inconclusive.
+Five cases in `test/unit/api.verification.test.ts` walk the map one row at a
+time, and the mutation that files a plain constraint as an axiom reddens two of
+them.
+
+**Encodability is the same gate the numeric surface applies, because it calls
+the same functions.** `readRelation` goes through `parseRelationBody`,
+`relationScope`, `relationVarsOf`, `relationRefused`, `scaleOfRelation` and
+`substituteLiterals` — the layer commit 1 lifted out of `solver.ts` for exactly
+this. The two halves of `relationRefused` are separated by calling it twice,
+once with its `identity` exemption, so a refusal names the gate that actually
+refused rather than guessing between a dimension clash and offset arithmetic.
+Three refusals are this layer's own, and they are refusals rather than silences
+because a quantifier-free encoding admits none of them where a point evaluation
+still can: a collection-valued feature, a remainder, and a variable exponent.
+Every refused relation is LISTED with its reason — a relation that disappears
+from a worklist reads as one that holds.
+
+**The gate that has to be asked first, found by review.** A name that resolves
+to nothing is refused (`unresolved-name`) before any other gate runs. Without
+it, a one-character typo produced the worst possible answer: `relationVarsOf`
+collects the ids a body's names map to and a misspelt name maps to none, so the
+relation had an empty variable list, nothing to clash dimensionally, no scale to
+refuse — and came out `encodable: true` in QF_LRA, on a clause the same run
+reported as `validation/constraint-violation … a referenced value is unknown`.
+`obligations --missing` then said "every relation in this model is encodable"
+about a model with an unreadable one. A worklist honest about what it cannot
+decide cannot also call an unreadable relation decidable, and the invariant is
+now asserted the other way round as well: every reference inside an ENCODABLE
+relation appears in that relation's own variable list.
+
+**Variables are reported per PATH, not per resolved element.** An attribute
+declared inside a `port def` is owned by that definition, so `u.powerIn.voltage`
+and `u.powerOut.voltage` resolve to one element: a list keyed on the id printed
+one row for two quantities and dropped the other path. The gates keep the per-id
+reading — a unit, a scale and a multiplicity belong to the feature — but a
+report whose stated job is to name the variables a clause reads names every one
+of them. The same path is what carries the `in`/`out` direction §3.1 asks for:
+the direction is on the port USAGE, never on the definition's attribute, so an
+owner walk from the resolved feature stops at a `PortDefinition` and would call
+every port-borne quantity a plain parameter.
+
+**The fragment is computed before any solver exists.** A guarantee is `qf-lra`
+only when every relation is linear after the model's own literals are
+substituted, which is why both guarantees of `examples/uav-isr.sysml` are
+linear as the model stands: `battery.capacity * usableEnergyFraction /
+cruisePower` is a product and a quotient of three literal-valued features, so it
+folds to a constant. Freeing any of them promotes it to `qf-nra`, and `--free`
+is a later commit's flag. Measured on the shipped examples: **2 contracts on 1
+subject, 2 guarantees in QF_LRA, 0 refused** for `uav-isr`, and **1 contract**
+for `vehicle`; the worklist is **2 obligations over 12 axioms** (one derived
+equation plus eleven literal bindings) and **5 rows** respectively. Reproduce
+with `npm run sysprose -- contracts examples/uav-isr.sysml` and
+`npm run sysprose -- obligations examples/uav-isr.sysml`.
+
+**One new diagnostic source for the whole lane, and the catalogue figure stops
+being a hand edit.** `DiagnosticSource` gains `'verification'` — one source and
+one `verification/` prefix, so `source === 'verification'` and
+`code.startsWith('verification/')` select the same rows and a consumer cannot
+filter three quarters of a lane by accident. Three codes land with it, all
+`info` because none of them is a defect in the model:
+`verification/unsupported-expression`, `verification/contract-no-guarantee` and
+`verification/nonstandard-clause-location`. That last one fires on the notation
+this tool accepts and the standard does not admit: `assume constraint { … }` in
+an `action def` body, where `ActionBodyItem` has no `RequirementConstraintMember`.
+The standard's own idiom for a behaviour precondition is a named
+`assert constraint precondition { … }`, a `guard` on the incoming transition, or
+a requirement whose `subject` is the behaviour — `contracts` reads all three,
+and the `assert` form is deliberately silent. And because fifteen commits of
+this plan add codes, `scripts/gen-diagnostic-codes.ts` now also rewrites the
+`**N catalogue codes**` figure in this document, so the count that
+`test/unit/docs-counts.test.ts` reads back can never be the thing that fails a
+gate; the fixture-directory and rule figures beside it stay hand edits, named in
+the commits that move them.
+
+**Three ways the two surfaces could have answered one model differently, closed
+by review.** (a) `--element` narrows every figure, not only the listing. The
+diagnostics, the prose/library/re-derived census and the "although this model
+declares N requirement-shaped statement(s)" fallback all run through the same
+containment predicate as the listing, because a block that prints `scoped to
+P::Scoped` over a finding about `P::Elsewhere` contradicts itself in six lines.
+(b) A `#prose requirement def` is dropped whole. The keyword is written on the
+requirement and not on its clause, so the worklist walks the owners: without
+that, `contracts` dropped the requirement while `obligations` carried its
+`require` body as a row belonging to no contract in the inventory beside it.
+(c) Whether a `calc` body is a definition or a claim is decided on the PARSED
+node, exactly where `relationEquation` decides it. A regex over the raw string
+read the `>` inside `if s.x > 0.0 then s.a else s.b` as a comparison and filed a
+definition as a claim, while the solver read the same body as `self == expr`.
+
+**One field, one shape.** A feature value's axiom prints the joining equality —
+`endurance == battery.capacity * usableEnergyFraction / cruisePower`, beside
+`mtow == 18.5` — rather than the right-hand side alone. `Obligation.expression`
+is documented as the relation as written, and a quotient on its own is not a
+relation and never names the feature it defines. For the same reason
+`Contract.unsupported[]` carries `reason` (the branchable word) *and* `detail`
+(the sentence), where it previously put the sentence under the name of the word.
+
+**Four things this commit does NOT do, recorded rather than left to be
+rediscovered.** (1) A requirement USAGE does not inherit its definition's
+`assume` / `require` clauses: `contractsOf` reads OWNED children, and the
+definition is a user element with a contract of its own, so reading the
+inherited copy too would file one clause twice. The SUBJECT *is* followed
+through `effectiveFeatures`, which is what commit 2b opened, because a subject
+is stated once and answers for every usage. What such a usage is NOT is a
+`no-formal-clause` row: `requirement massOk : MassLimit;` is the idiomatic way
+to apply a requirement and is what a `satisfy` names, so reporting it as "prose
+only, nothing to encode" would be false about a requirement with a constraint
+body and would inflate `--missing`, the one figure that measures how much of a
+model this lane cannot reach. `Contract.clausesInheritedFrom` names where the
+clause actually is, and the row reads "no clause of its own: the clauses are on
+its definition P::MassLimit". (2) `discharged` and `stale` are
+declared in the status vocabulary and never produced: both are read back from an
+attached evidence record, and the record is commit 3. (3) `temporal` is declared
+in the fragment vocabulary and never produced: no clause body can carry a timing
+field today, and one vocabulary is better than two. (4) There is deliberately no
+`vacuous` status. Vacuity is an SMT decision, and a verdict word this command's
+declared engine cannot decide is exactly the defect the plan exists to prevent.
+
+**One measurement worth keeping, because the notation is not what a reader would
+guess.** A verification case definition is written `verification def X`, not
+`verification case def X`: the grammar carries `verification` in its definition
+keyword list (`sysml.langium`:434) and the metamodel writes it back as
+`verification def`. Measured, `verification case def X` parses as a nameless
+`VerificationCaseUsage` followed by a `CaseDefinition X` — two declarations
+where the author wrote one. The spelling is pinned by a case so the next reader
+finds the answer rather than the surprise.
 
 ### Known limitations, recorded rather than hidden
 

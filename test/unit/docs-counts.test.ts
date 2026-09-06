@@ -66,6 +66,24 @@ const fixtureCount = readdirSync(root('test/fixtures/agent-authoring'), {
   withFileTypes: true,
 }).filter((e) => e.isDirectory()).length;
 
+/**
+ * The L7 case count the campaign ledger's Levels table quotes.
+ *
+ * That table's own paragraph says "Every count in this table is read off the
+ * tree, not remembered" — and the L7 figure was the one nothing read: it said
+ * 12 while its two suites held 48, because a fixture count can be derived with
+ * `ls` and a test count cannot. It can be derived HERE, though, at the same
+ * grain the row is written in: one `it(` per case, in the two files the row now
+ * names. A commit that adds an L7 case fails until the row is updated with it.
+ */
+function l7CaseCount(): number {
+  const files = ['test/campaign/cli.test.ts', 'test/campaign/cli.sysprose.test.ts'];
+  return files.reduce(
+    (n, f) => n + [...read(f).matchAll(/^[ \t]*it(?:\.\w+)?\(/gm)].length,
+    0,
+  );
+}
+
 /** Every `*.test.ts` / `*.spec.ts` under `dir`, skipping the directories named. */
 function specFiles(dir: string, skip: string[] = []): string[] {
   const out: string[] = [];
@@ -118,6 +136,12 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     what: 'validation rules',
     pattern: /\*\*(\d+)\s+validation\s+rules\*\*/,
     actual: () => RULES.length,
+  },
+  {
+    file: 'docs/AGENT-AUTHORING-CAMPAIGN.md',
+    what: 'L7 case count in the Levels table',
+    pattern: /\|\s*L7\s*\|[^|]*\|\s*(\d+)\s+tests\s*\|/,
+    actual: l7CaseCount,
   },
   {
     file: 'docs/FEATURE-PARITY.md',

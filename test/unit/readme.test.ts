@@ -124,6 +124,11 @@ const APP_DOORS: ReadonlyArray<{
   // not credit the selector with an answer it does not compute.
   { command: 'orphans', controls: [] },
   { command: 'prompts', controls: [] },
+  // The verification lane ships to the terminal first and to the app last: a
+  // Contracts table view is the closing commit of the plan, so both rows carry
+  // no control and therefore — by the dagger rule below — no dagger.
+  { command: 'contracts', controls: [] },
+  { command: 'obligations', controls: [] },
 ];
 
 interface Row {

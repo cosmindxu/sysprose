@@ -189,6 +189,35 @@ export {
   type StatementKind,
 } from './statement-kind';
 export {
+  contractsOf,
+  contractOf,
+  claimedVerdictOf,
+  isUserModelElement,
+  gateRelation,
+  readRelation,
+  type Contract,
+  type ContractClause,
+  type ContractRef,
+  type ContractSubject,
+  type ContractVariable,
+  type Encodable,
+  type Fragment,
+  type Refusal,
+  type RefusalReason,
+  type RelationReading,
+  type VariableRole,
+  type VarSort,
+} from './contracts';
+export {
+  obligationsOf,
+  type EvidenceRef,
+  type Obligation,
+  type ObligationOptions,
+  type ObligationRole,
+  type ObligationSource,
+  type ObligationStatus,
+} from './obligations';
+export {
   STATUS_KIND_VALUES,
   VERDICT_KIND_VALUES,
   RISK_LEVEL_VALUES,

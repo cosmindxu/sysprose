@@ -35,12 +35,21 @@ export interface TextRange {
  * Which stage produced a diagnostic. Lets a consumer filter (an agent fixing
  * syntax cares about `lexer`/`parser`; one fixing semantics cares about
  * `validation`) without parsing the `code` string.
+ *
+ * `verification` is the ONE source the formal-verification lane adds, and it
+ * covers all of it: the contract inventory, the obligation worklist and
+ * everything that comes after them. A lane split across four sources would let
+ * a consumer filter three of them and silently miss the fourth, which is the
+ * exact failure this type exists to prevent — and the prefix agrees with it,
+ * so `source === 'verification'` and `code.startsWith('verification/')` select
+ * the same rows.
  */
 export type DiagnosticSource =
   | 'lexer'
   | 'parser'
   | 'mapper'
   | 'validation'
+  | 'verification'
   | 'import'
   | 'simulate'
   | 'solve'

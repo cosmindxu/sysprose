@@ -1,15 +1,28 @@
 #!/usr/bin/env tsx
 /**
- * Generate `docs/DIAGNOSTIC-CODES.md` from `src/text/langium/diagnostic-codes.ts`.
+ * Generate `docs/DIAGNOSTIC-CODES.md` from `src/text/langium/diagnostic-codes.ts`,
+ * and rewrite the one figure another document quotes from the same table.
  *
  * The table in the source is the single source of truth; this script renders it
  * for humans and agents. `test/unit/diagnostic-codes.test.ts` fails if the
  * committed document drifts from the table, so regenerating is not optional
  * after adding a code.
  *
+ * WHY IT ALSO EDITS `docs/AGENT-AUTHORING-CAMPAIGN.md`. That document states the
+ * catalogue size in prose — "beside **56 catalogue codes**" — and
+ * `test/unit/docs-counts.test.ts` reads the figure back out and compares it with
+ * `DIAGNOSTIC_CODES.length`. So every commit that adds a code owed a hand edit
+ * to one sentence in a document it had no other business in, and the
+ * verification plan adds codes in fifteen of them. A blanket rule that fifteen
+ * file lists silently owe an edit to one prose figure is how a gate goes red on
+ * the third commit, so the figure is GENERATED: `npm run codes` runs first in
+ * the per-commit gate, and the count can never be the thing that fails. The
+ * fixture-directory and rule counts in the same paragraph stay hand edits —
+ * they are named explicitly in the commits that move them.
+ *
  * Run: npm run codes
  */
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DIAGNOSTIC_CODES } from '../src/text/langium/diagnostic-codes';
 
@@ -19,6 +32,7 @@ const FAMILIES: Array<{ prefix: string; title: string; blurb: string }> = [
   { prefix: 'mapper/', title: 'Mapping', blurb: 'The tokens form a legal declaration, but the model this tool builds has nowhere to put it. The source text is preserved verbatim and re-emitted on save, so nothing is silently lost.' },
   { prefix: 'ref/', title: 'Reference resolution', blurb: 'A name did not resolve. These are WARNINGS: the textual name is preserved in the model, so the file still loads, but nothing is bound to it.' },
   { prefix: 'validation/', title: 'Model validation', blurb: 'The file parsed, but the model it describes breaks a rule. Each code matches a rule id in `src/validation/rules.ts`.' },
+  { prefix: 'verification/', title: 'Formal verification', blurb: 'The verification lane reporting what it will and will not undertake. Always INFO: none of these is a defect in the model. They say that a relation is outside the fragment the lane encodes, that a contract has nothing to show, or that a clause sits somewhere the standard does not admit it — each stated rather than left to be inferred from a silence.' },
   { prefix: 'import/', title: 'Input handling', blurb: 'Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.' },
   { prefix: 'roundtrip/', title: 'Round-trip', blurb: 'Guards against the tool producing notation it cannot read back.' },
 ];
@@ -81,4 +95,30 @@ ${FAMILIES.map((f) => `## ${f.title}\n\n${f.blurb}\n\n${rows(f.prefix)}`).join('
 
 const out = resolve(process.cwd(), 'docs/DIAGNOSTIC-CODES.md');
 writeFileSync(out, doc);
-process.stdout.write(`Wrote ${out} — ${DIAGNOSTIC_CODES.length} codes.\n`);
+
+/**
+ * The `**N catalogue codes**` figure in the campaign ledger.
+ *
+ * The whitespace between the number and the words is CAPTURED and put back
+ * unchanged: the sentence sits inside hard-wrapped Markdown, so the figure and
+ * its noun are routinely on two different lines, and a rewrite that normalised
+ * the gap would re-wrap a paragraph nobody asked it to touch. It is an error,
+ * not a silent no-op, when the sentence is not found: a generator that quietly
+ * stops maintaining a figure leaves the figure stale with a green gate, which
+ * is the failure this edit exists to remove.
+ */
+const ledgerPath = resolve(process.cwd(), 'docs/AGENT-AUTHORING-CAMPAIGN.md');
+const ledger = readFileSync(ledgerPath, 'utf8');
+const FIGURE = /\*\*(\d+)(\s+catalogue\s+codes\*\*)/;
+if (!FIGURE.test(ledger)) {
+  process.stderr.write(
+    `${ledgerPath} no longer states a "**N catalogue codes**" figure — docs/AGENT-AUTHORING-CAMPAIGN.md and test/unit/docs-counts.test.ts disagree about what this generator maintains.\n`,
+  );
+  process.exit(2);
+}
+const updated = ledger.replace(FIGURE, `**${DIAGNOSTIC_CODES.length}$2`);
+if (updated !== ledger) writeFileSync(ledgerPath, updated);
+
+process.stdout.write(
+  `Wrote ${out} — ${DIAGNOSTIC_CODES.length} codes${updated !== ledger ? `, and the catalogue figure in ${ledgerPath}` : ''}.\n`,
+);

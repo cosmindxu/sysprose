@@ -52,6 +52,8 @@ rather than reporting on the first one.
 | [`where-used`](#where-used) | What breaks if I change this element? | `whereUsed` |
 | [`orphans`](#orphans) | What did I declare and never use? | `orphans` |
 | [`prompts`](#prompts) | What guidance applies to the element I am working on? | `prompts` |
+| [`contracts`](#contracts) | What does each requirement assume and guarantee, on which subject, honoured by which part? | `contracts` |
+| [`obligations`](#obligations) | What must be shown, over which axioms, and what do the unit gates refuse? | `obligations` |
 
 ### Options every subcommand takes
 
@@ -181,6 +183,35 @@ npm run sysprose -- prompts <file.sysml|-> [options]
 
 Computed by `promptsFor (src/api/analytics.ts)`. With `--json` the answer is published under `prompts`, beside `ok` and `file`.
 
+### `contracts`
+
+**What does each requirement assume and guarantee, on which subject, honoured by which part?**
+
+```bash
+npm run sysprose -- contracts <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The element: an id, a qualified name, or a name unique in the model | every contract in the model |
+
+Computed by `contractReport (src/api/verification.ts)`. With `--json` the answer is published under `contracts`, beside `ok` and `file`.
+
+### `obligations`
+
+**What must be shown, over which axioms, and what do the unit gates refuse?**
+
+```bash
+npm run sysprose -- obligations <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The element: an id, a qualified name, or a name unique in the model | the whole model |
+| `--missing` | Only the rows this lane would not decide: no formal clause, and not encodable | — |
+
+Computed by `obligationsReport (src/api/verification.ts)`. With `--json` the answer is published under `obligations`, beside `ok` and `file`.
+
 ### `trace` relationship presets
 
 A preset names the **relationship** kinds only. The row and column metaclasses
@@ -229,4 +260,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*8 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*10 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

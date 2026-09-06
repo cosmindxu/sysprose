@@ -783,6 +783,8 @@ describe('L7 — sysprose reporting command', () => {
       'where-used',
       'orphans',
       'prompts',
+      'contracts',
+      'obligations',
     ]) {
       expect(top.stdout, `${name} must be listed`).toContain(name);
     }
@@ -835,6 +837,273 @@ describe('L7 — sysprose reporting command', () => {
     expect(asAValue.code).toBe(2);
     expect(asAValue.stderr).toContain('missing value for --element');
   }, 120_000);
+
+  /* ── the verification lane: two report commands, no solver ────────────── */
+
+  it('contracts inventories the two requirements of the shipped example', () => {
+    const r = run(['contracts', UAV]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('2 contract(s) on 1 subject(s)');
+    expect(r.stdout).toContain('2 guarantee(s) in QF_LRA, 0 in QF_NRA, 0 unsupported');
+    expect(r.stdout).toContain('subject uav : AirVehicle (declared)');
+    expect(r.stdout).toContain('uav.endurance >= 45.0 [min]');
+    expect(r.stdout).toContain('uav.mtow <= 25.0 [kg]');
+    // The line that keeps the command inside its remit. A reader who takes an
+    // inventory row for a verdict is the failure this whole lane is built
+    // against, so the disclaimer is part of the contract, not decoration.
+    expect(r.stdout).toContain('says nothing about whether any of it holds');
+    // And the words it may never print, whatever the model says.
+    expect(r.stdout).not.toMatch(/\bproved\b|\bsatisfied\b|\bconsistent\b/);
+  }, 90_000);
+
+  it('contracts --json publishes under `contracts`, beside ok and file', () => {
+    const r = run(['contracts', UAV, '--json']);
+    expect(r.code).toBe(0);
+    const { keys, body } = payload<{
+      contracts: {
+        total: number;
+        subjects: number;
+        guaranteesQfLra: number;
+        guaranteesQfNra: number;
+        guaranteesUnsupported: number;
+        libraryExcluded: number;
+        contracts: Array<{
+          qualifiedName: string;
+          subject: { name: string; typeRef: string; typeId: string; origin: string };
+          guarantees: Array<{ expression: string; fragment: string; encodable: unknown }>;
+          satisfiedBy: Array<{ declaredName: string }>;
+        }>;
+      };
+    }>(r);
+    expect(keys).toEqual(['contracts', 'file', 'ok']);
+    expect(body.contracts.total).toBe(2);
+    expect(body.contracts.subjects).toBe(1);
+    expect(body.contracts.guaranteesQfLra).toBe(2);
+    expect(body.contracts.guaranteesQfNra).toBe(0);
+    expect(body.contracts.guaranteesUnsupported).toBe(0);
+    // The library's own requirements are excluded, and the figure says so.
+    expect(body.contracts.libraryExcluded).toBe(24);
+    const [endurance] = body.contracts.contracts;
+    expect(endurance.qualifiedName).toBe('UAVSurveillanceSystem::EnduranceRequirement');
+    expect(endurance.subject).toMatchObject({
+      name: 'uav',
+      typeRef: 'AirVehicle',
+      origin: 'declared',
+    });
+    // The census counts subjects by the element the type RESOLVES to, so two
+    // packages that each declare a `Sys` are two subjects and not one.
+    expect(typeof endurance.subject.typeId).toBe('string');
+    expect(endurance.guarantees[0].fragment).toBe('qf-lra');
+    expect(endurance.guarantees[0].encodable).toBe(true);
+    expect(endurance.satisfiedBy.map((x) => x.declaredName)).toEqual(['uav']);
+  }, 90_000);
+
+  it('obligations reports two things to show over an axiom set of bindings', () => {
+    const r = run(['obligations', UAV, '--json']);
+    expect(r.code).toBe(0);
+    const { keys, body } = payload<{
+      obligations: {
+        total: number;
+        byRole: { axiom: number; premise: number; obligation: number };
+        byStatus: Record<string, number>;
+        missing: number;
+        refusedByReason: Record<string, number>;
+      };
+    }>(r);
+    expect(keys).toEqual(['file', 'obligations', 'ok']);
+    // The plan's own first deliverable: the two `require` bodies over the
+    // derived-endurance equation plus the literal feature bindings, with
+    // nothing refused.
+    expect(body.obligations.byRole.obligation).toBe(2);
+    expect(body.obligations.byRole.premise).toBe(0);
+    expect(body.obligations.byRole.axiom).toBe(12);
+    expect(body.obligations.total).toBe(14);
+    expect(body.obligations.byStatus.open).toBe(14);
+    // Nothing may ever be discharged without an evidence record, and none
+    // exists — the record and its digest are a later commit.
+    expect(body.obligations.byStatus.discharged).toBe(0);
+    expect(body.obligations.byStatus.stale).toBe(0);
+    expect(body.obligations.missing).toBe(0);
+    expect(body.obligations.refusedByReason).toEqual({});
+  }, 90_000);
+
+  it('obligations --missing lists only what this lane would not decide', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    const file = join(dir, 'missing.sysml');
+    writeFileSync(
+      file,
+      `package P {
+    part def Sys {
+        attribute d : ISQ::LengthValue = 5.0 [km];
+        attribute dur : ISQ::DurationValue = 3000.0 [s];
+    }
+    part s : Sys;
+    requirement def Wordy { doc /* it shall be good */ subject u : Sys; }
+    requirement def Clashing { subject u : Sys; require constraint { u.d >= u.dur } }
+}
+`,
+    );
+    try {
+      const r = run(['obligations', file, '--missing']);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('showing the 2 row(s) this lane would not decide');
+      expect(r.stdout).toContain('(no constraint body)');
+      expect(r.stdout).toContain('u.d >= u.dur');
+      // The refused relation is LISTED with the gate that refused it, never
+      // dropped: a relation missing from a worklist reads as one that holds.
+      expect(r.stdout).toContain('dimension-clash');
+      const json = run(['obligations', file, '--missing', '--json']);
+      const { body } = payload<{
+        obligations: { missing: number; missingOnly: boolean; refusedByReason: Record<string, number> };
+      }>(json);
+      expect(body.obligations.missing).toBe(2);
+      expect(body.obligations.missingOnly).toBe(true);
+      expect(body.obligations.refusedByReason).toEqual({
+        'dimension-clash': 1,
+        'no-formal-clause': 1,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  /**
+   * A requirement USAGE applying a definition is the shape a real model is full
+   * of, and it owns no clause. Saying "prose only, nothing to encode" about it
+   * would be false — the constraint is on the definition, one line above — and
+   * it would inflate `--missing`, which is the figure that measures how much of
+   * a model this lane cannot reach. The prose-only row beside it is the case
+   * that sentence really belongs to.
+   */
+  it('contracts tells a usage that inherits its clauses from a requirement with none', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    const file = join(dir, 'usage.sysml');
+    writeFileSync(
+      file,
+      `package P {
+    part def Sys { attribute m : Real = 3.0; }
+    part s : Sys;
+    requirement def MassLimit { subject u : Sys; require constraint { u.m < 9.0 } }
+    requirement massOk : MassLimit;
+    satisfy massOk by s;
+    requirement def Wordy { doc /* it shall be good */ subject u : Sys; }
+}
+`,
+    );
+    try {
+      const r = run(['contracts', file]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('no clause of its own: the clauses are on its definition P::MassLimit');
+      expect(r.stdout).toContain('no formal clause: prose only, nothing to encode');
+      expect(r.stdout).toContain('1 contract(s) carry no formal clause');
+      const missing = run(['obligations', file, '--missing']);
+      expect(missing.stdout).toContain('showing the 1 row(s) this lane would not decide, of 3');
+      // `no-formal-clause` is not a gate refusal — nothing refused the body,
+      // there is no body — so it is not printed under a heading that says one
+      // did.
+      expect(missing.stdout).toContain('0 relation(s) refused by a gate');
+      expect(missing.stdout).toContain(
+        '1 requirement(s) carry no formal clause — no gate refused them',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  /**
+   * A report that narrows its listing and not its findings contradicts itself
+   * inside one block: `scoped to P::Scoped` over a diagnostic about
+   * `P::Elsewhere`, and an exclusion census counting statements the reader did
+   * not ask about.
+   */
+  it('--element narrows the diagnostics and the exclusion census too', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    const file = join(dir, 'scope.sysml');
+    writeFileSync(
+      file,
+      `package P {
+    part def Sys { attribute m : Real = 3.0; }
+    package Scoped {
+        requirement def Inner { subject u : Sys; require constraint { u.m < 9.0 } }
+    }
+    package Elsewhere {
+        #prose requirement def Prosy { subject u : Sys; require constraint { u.m > 0.0 } }
+        action def Go { attribute x : Real = 1.0; assume constraint { x > 0.0 } }
+    }
+}
+`,
+    );
+    try {
+      const whole = run(['contracts', file]);
+      expect(whole.stdout).toContain('verification/nonstandard-clause-location');
+      expect(whole.stdout).toContain('1 statement(s) tagged prose or prompt left out');
+
+      const scoped = run(['contracts', file, '--element', 'P::Scoped']);
+      expect(scoped.code).toBe(0);
+      expect(scoped.stdout).toContain('scoped to P::Scoped');
+      expect(scoped.stdout).toContain('P::Scoped::Inner');
+      expect(scoped.stdout).not.toContain('verification/');
+      expect(scoped.stdout).toContain('0 statement(s) tagged prose or prompt left out');
+
+      const obligations = run(['obligations', file, '--element', 'P::Scoped']);
+      expect(obligations.stdout).not.toContain('verification/');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  /**
+   * `--element` resolves the way every other `REF` in this command does, and
+   * six commands sharing an undefined convention is how two of them end up with
+   * different ones. Three shapes are pinned: a qualified name, a declared short
+   * id, and an ambiguous bare name — which exits 2 with the candidates rather
+   * than reporting on the first match.
+   */
+  it('--element resolves a qualified name, a short id, and refuses an ambiguous one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    const file = join(dir, 'refs.sysml');
+    writeFileSync(
+      file,
+      `package P {
+    part def Sys { attribute m : Real = 3.0; }
+    part def Other { attribute m : Real = 4.0; }
+    part s : Sys;
+    requirement def <R1> First { subject u : Sys; require constraint { u.m < 9.0 } }
+    requirement def <R2> Second { subject u : Sys; require constraint { u.m > 1.0 } }
+}
+`,
+    );
+    try {
+      const byQualified = run(['contracts', file, '--element', 'P::Second', '--json']);
+      expect(byQualified.code).toBe(0);
+      const q = payload<{ contracts: { total: number; contracts: Array<{ shortId: string }> } }>(
+        byQualified,
+      );
+      expect(q.body.contracts.total).toBe(1);
+      expect(q.body.contracts.contracts[0].shortId).toBe('R2');
+
+      const byShortId = run(['obligations', file, '--element', 'R1', '--json']);
+      expect(byShortId.code).toBe(0);
+      const sid = payload<{ obligations: { byRole: { obligation: number } } }>(byShortId);
+      expect(sid.body.obligations.byRole.obligation).toBe(1);
+
+      const ambiguous = run(['contracts', file, '--element', 'm']);
+      expect(ambiguous.code).toBe(2);
+      expect(ambiguous.stderr).toContain('is ambiguous');
+      expect(ambiguous.stderr).toContain('P::Sys::m');
+      expect(ambiguous.stderr).toContain('P::Other::m');
+
+      // A reference into the bundled library is refused: every figure in these
+      // reports is about the reader's model and excludes the library, so
+      // scoping to a library element would print an inventory of zero that
+      // reads exactly like a model with none.
+      const library = run(['contracts', file, '--element', 'Requirements::RequirementCheck']);
+      expect(library.code).toBe(2);
+      expect(library.stderr).toContain('bundled standard-library element');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
 
   it('--no-library skips binding and still reports the file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));

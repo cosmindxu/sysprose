@@ -432,6 +432,33 @@ const CODES = [
     hint: 'Use a unit of the declared quantity kind, e.g. a mass unit for a mass attribute.',
   },
 
+  /* ── formal verification (docs: docs/04-formal-verification-plan.md) ── */
+  // The whole lane files under ONE source and ONE prefix. These are INFO
+  // because none of them is a defect in the model: they are the tool saying
+  // what it will and will not undertake, and a reader who is never told infers
+  // silence as agreement.
+  {
+    code: 'verification/unsupported-expression',
+    source: 'verification',
+    severity: 'info',
+    when: 'A relation is outside the fragment the verification lane encodes — a name that resolves to nothing, a body that does not parse, a dimension clash, arithmetic on an offset scale, a collection-valued feature, a remainder, a variable exponent or a non-numeric operand.',
+    hint: 'The relation is listed with the gate that refused it and nothing is claimed about it. Check the names it reads, then rewrite it inside quantifier-free arithmetic over single-valued scalar features, or expect it in the `obligations --missing` histogram.',
+  },
+  {
+    code: 'verification/contract-no-guarantee',
+    source: 'verification',
+    severity: 'info',
+    when: 'A requirement states assumptions and guarantees nothing, so its contract has nothing to show.',
+    hint: 'Add a `require constraint { … }` stating what the requirement guarantees, or read the assumptions as context rather than as an obligation.',
+  },
+  {
+    code: 'verification/nonstandard-clause-location',
+    source: 'verification',
+    severity: 'info',
+    when: 'An `assume` or `require` clause is written in a body the standard\'s `ActionBodyItem` does not admit — an action definition, for instance. Sysprose parses it; the specification does not offer it there.',
+    hint: 'The standard writes a behaviour precondition as `assert constraint precondition { … }`, as a `guard` on the incoming transition, or as a requirement whose `subject` is the behaviour; `contracts` reads all three.',
+  },
+
   /* ── round-trip oracle ── */
   {
     code: 'roundtrip/unparseable-serialization',

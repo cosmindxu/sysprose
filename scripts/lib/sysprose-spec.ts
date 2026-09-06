@@ -216,6 +216,44 @@ export const COMMANDS: readonly CommandSpec[] = [
       },
     ],
   },
+  {
+    name: 'contracts',
+    question: 'What does each requirement assume and guarantee, on which subject, honoured by which part?',
+    backedBy: 'contractReport (src/api/verification.ts)',
+    payloadKey: 'contracts',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        fallback: 'every contract in the model',
+        // The same words as `where-used`'s and `prompts`': it is the same
+        // resolution, and two spellings of one grammar is how a reader learns
+        // that the second command wants something else.
+        doc: 'The element: an id, a qualified name, or a name unique in the model',
+      },
+    ],
+  },
+  {
+    name: 'obligations',
+    question: 'What must be shown, over which axioms, and what do the unit gates refuse?',
+    backedBy: 'obligationsReport (src/api/verification.ts)',
+    payloadKey: 'obligations',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        fallback: 'the whole model',
+        doc: 'The element: an id, a qualified name, or a name unique in the model',
+      },
+      {
+        name: 'missing',
+        kind: 'boolean',
+        doc: 'Only the rows this lane would not decide: no formal clause, and not encodable',
+      },
+    ],
+  },
 ];
 
 export function findCommand(name: string): CommandSpec | undefined {

@@ -73,10 +73,12 @@ import { dirname } from 'node:path';
 import type { ElementRecord, Model } from '../src/core/index';
 import {
   connectivityReport,
+  contractReport,
   countUnfollowedTypings,
   impactClosure,
   isUserElement,
   modelMetrics,
+  obligationsReport,
   orphanReport,
   promptsFor,
   requirementSatisfaction,
@@ -87,6 +89,11 @@ import {
   isStatementKind,
   resolveFullName,
   statementKindOf,
+  type Contract,
+  type ContractClause,
+  type ContractSubject,
+  type Obligation,
+  type Refusal,
   type StatementKind,
 } from '../src/semantics/index';
 // Deep imports rather than `../src/diagram/index`: the diagram barrel pulls the
@@ -737,6 +744,219 @@ function reportPrompts(model: Model, name: string, args: ParsedArgs): Report {
   return { json: report, text };
 }
 
+/* ─────────────────────── the verification lane ──────────────────────────── */
+
+/**
+ * The element a verification subcommand was scoped to, or `undefined`.
+ *
+ * `--element` is OPTIONAL on both rows — the default is the whole model — so a
+ * missing flag is an answer rather than a refusal. What is refused is a
+ * reference naming BUNDLED LIBRARY content: the library's own requirements are
+ * not the reader's, every figure in these reports excludes them by
+ * construction, and scoping to one would print an inventory of zero contracts
+ * that reads exactly like a model with none.
+ */
+function verificationScope(model: Model, args: ParsedArgs): ElementRecord | undefined {
+  const ref = flagValue(args, 'element');
+  if (ref === undefined) return undefined;
+  const el = resolveElementRef(model, ref);
+  if (el.attrs.isLibrary === true) {
+    throw new UsageError(
+      `\`${ref}\` is a bundled standard-library element — this report is of your model, and every figure in it excludes the library`,
+    );
+  }
+  return el;
+}
+
+/** How a fragment is written for a person. */
+const FRAGMENT_LABEL: Record<string, string> = {
+  'qf-lra': 'QF_LRA — linear real arithmetic',
+  'qf-nra': 'QF_NRA — nonlinear, may time out',
+  temporal: 'temporal — export only',
+  unsupported: 'not encodable',
+};
+
+/** `uav : AirVehicle (declared)`, or the sentence for a contract with no subject. */
+function subjectLine(subject: ContractSubject | null): string {
+  if (!subject) return 'no subject declared, inherited or bound';
+  const typed = subject.typeRef ? ` : ${subject.typeRef}` : '';
+  return `${subject.name || '(unnamed)'}${typed} (${subject.origin})`;
+}
+
+/** One clause, with the fragment it lands in or the gate that refused it. */
+function clauseLines(clause: ContractClause): string[] {
+  const head = `    ${clause.role.padEnd(7)} ${clause.expression}`;
+  if (clause.encodable === true) {
+    return [`${head}  [${FRAGMENT_LABEL[clause.fragment]}]`];
+  }
+  const refusal: Refusal = clause.encodable;
+  return [head, `      not encodable (${refusal.reason}): ${refusal.detail}`];
+}
+
+/**
+ * What a contract with no clause of its own is, which is two different things.
+ *
+ * `requirement massOk : MassLimit;` inherits a `require constraint` from its
+ * definition and owns none — it is not prose, and saying so would be false
+ * about a requirement that a `satisfy` names and that this tool can encode.
+ * A requirement that really carries only words is the other case, and it is the
+ * commonest row a real requirement set produces.
+ */
+function emptyClauseLine(contract: Contract): string {
+  if (contract.clausesInheritedFrom.length === 0) {
+    return '    no formal clause: prose only, nothing to encode';
+  }
+  const where = contract.clausesInheritedFrom.map((d) => d.qualifiedName || label(d)).join(', ');
+  return `    no clause of its own: the clauses are on its definition ${where}`;
+}
+
+/** The traceability edges a contract carries, each named by its own keyword. */
+function edgeLines(contract: Contract): string[] {
+  const rows: Array<[string, string[]]> = [
+    ['satisfy', contract.satisfiedBy.map(label)],
+    ['verify', contract.verifiedBy.map(label)],
+    ['derive from', contract.derivedFrom.map(label)],
+    ['refine by', contract.refinedBy.map(label)],
+  ];
+  const shown = rows.filter(([, names]) => names.length > 0);
+  if (shown.length === 0) return ['    no satisfy, verify, derive or refine statement names it'];
+  return shown.map(([kw, names]) => `    ${kw} ${names.join(', ')}`);
+}
+
+function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
+  const scope = verificationScope(model, args);
+  const r = contractReport(model, scope ? { scopeId: scope.id } : {});
+  const guarantees = r.guaranteesQfLra + r.guaranteesQfNra + r.guaranteesUnsupported;
+  // Counted inside the scope, like every other figure in this report: "no
+  // contract was read, although this model declares 3 requirement-shaped
+  // statement(s)" printed under `scoped to P::Sys` would be a sentence about a
+  // population the listing above it was never about.
+  const scopeIds = scope
+    ? new Set<string>([scope.id, ...model.descendants(scope.id).map((d) => d.id)])
+    : undefined;
+  const requirementsInModel = model
+    .all()
+    .filter(
+      (el) =>
+        isUserElement(model, el) &&
+        (el.eClass === 'RequirementDefinition' || el.eClass === 'RequirementUsage') &&
+        (scopeIds === undefined || scopeIds.has(el.id)),
+    ).length;
+  const text = [
+    `${name}: ${r.total} contract(s) on ${r.subjects} subject(s); ` +
+      `${r.guaranteesQfLra} guarantee(s) in QF_LRA, ${r.guaranteesQfNra} in QF_NRA, ` +
+      `${r.guaranteesUnsupported} unsupported`,
+    ...(scope ? [`  scoped to ${qname(model, scope.id)}`] : []),
+    // The line that keeps the command honest: it reports what is written, and
+    // a reader must never take a row here for a verdict.
+    '  an inventory of what is written — this command says nothing about whether any of it holds',
+    ...(r.total === 0
+      ? [
+          requirementsInModel > 0
+            ? `  no contract was read, although this model declares ${requirementsInModel} requirement-shaped statement(s) — see the exclusions below`
+            : '  this model declares no requirement and no case objective',
+        ]
+      : []),
+    ...r.contracts.flatMap((c) => [
+      `  ${c.qualifiedName}${c.shortId ? ` (${c.shortId})` : ''}  [${c.eClass}]`,
+      `    subject ${subjectLine(c.subject)}`,
+      ...(c.assumptions.length + c.guarantees.length === 0
+        ? [emptyClauseLine(c)]
+        : [...c.assumptions, ...c.guarantees].flatMap(clauseLines)),
+      ...edgeLines(c),
+      ...(c.variables.length > 0
+        ? [
+            `    variables ${c.variables
+              .map(
+                (v) =>
+                  `${v.path} (${v.role}${v.unit ? `, ${v.unit}` : ''}${
+                    v.siFactor === 1 && v.siOffset === 0 ? '' : `, SI ×${v.siFactor}`
+                  })`,
+              )
+              .join(', ')}`,
+          ]
+        : []),
+      ...(c.keywords.length > 0 ? [`    keywords ${c.keywords.map((k) => `#${k}`).join(' ')}`] : []),
+    ]),
+    `  ${guarantees} guarantee(s) and ${r.assumptions} assumption(s) in total; ` +
+      `${r.noFormalClause} contract(s) carry no formal clause`,
+    `  ${r.nonNormativeExcluded} statement(s) tagged prose or prompt left out; ` +
+      `${r.libraryExcluded} bundled library requirement(s) and ` +
+      `${r.implicitExcluded} re-derived copy/copies excluded`,
+    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text };
+}
+
+/** One worklist row: what it is, what it says, and whether it can be encoded. */
+function obligationLines(o: Obligation): string[] {
+  const id = o.shortId ? `${o.shortId}  ` : '';
+  const what = o.expression === '' ? '(no constraint body)' : o.expression;
+  const head = `  ${o.role.padEnd(10)} ${o.source.padEnd(13)} ${id}${what}`;
+  const tail: string[] = [];
+  if (o.encodable === true) {
+    tail.push(
+      `      encodable (${o.nonlinear ? 'nonlinear — NRA, may time out' : 'linear real arithmetic'})`,
+    );
+  } else {
+    const refusal: Refusal = o.encodable;
+    tail.push(`      not encodable: ${refusal.detail}`);
+  }
+  if (o.claimedVerdict !== undefined) {
+    tail.push(`      claimed ${o.claimedVerdict}, no evidence`);
+  }
+  return [head, ...tail];
+}
+
+function reportObligations(model: Model, name: string, args: ParsedArgs): Report {
+  const scope = verificationScope(model, args);
+  const missing = flagGiven(args, 'missing');
+  const r = obligationsReport(model, {
+    ...(scope ? { scopeId: scope.id } : {}),
+    ...(missing ? { missing: true } : {}),
+  });
+  // `no-formal-clause` is not a gate refusal: nothing refused the body, there
+  // is no body. It is counted with the refusals in the payload because it IS a
+  // `RefusalReason`, and printed on its own line because a reader who sees it
+  // under "refused by gate" goes looking for the gate.
+  const refusals = Object.entries(r.refusedByReason)
+    .filter(([reason]) => reason !== 'no-formal-clause')
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const noFormalClause = r.refusedByReason['no-formal-clause'] ?? 0;
+  const text = [
+    `${name}: ${r.byRole.obligation} to show, ${r.byRole.premise} premise(s), ` +
+      `${r.byRole.axiom} axiom(s) — ${r.total} row(s)`,
+    ...(scope ? [`  scoped to ${qname(model, scope.id)}`] : []),
+    // Storage state, never truth: this is the sentence the whole command hangs
+    // on, and the parenthesis is why nothing is ever discharged today.
+    '  what is stored, never what is true — nothing is discharged here because no evidence record exists yet',
+    `  open ${r.byStatus.open} · no formal clause ${r.byStatus['no-formal-clause']} · ` +
+      `not encodable ${r.byStatus['not-encodable']}`,
+    ...(missing
+      ? [
+          `  showing the ${r.missing} row(s) this lane would not decide, of ${r.total}`,
+          ...(r.missing === 0
+            ? ['  every relation in this model is encodable, and every requirement has a body']
+            : []),
+        ]
+      : []),
+    ...(r.obligations.length === 0 && !missing
+      ? ['  this model states no relation at all']
+      : r.obligations.flatMap(obligationLines)),
+    ...(refusals.length > 0
+      ? [
+          '  refused by gate:',
+          ...refusals.map(([reason, n]) => `    ${reason.padEnd(22)} ${n}`),
+        ]
+      : ['  0 relation(s) refused by a gate']),
+    ...(noFormalClause > 0
+      ? [`  ${noFormalClause} requirement(s) carry no formal clause — no gate refused them`]
+      : []),
+    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text };
+}
+
 function reportOrphans(model: Model, name: string): Report {
   const r = orphanReport(model);
   const text = [
@@ -771,6 +991,10 @@ function buildReport(cmd: CommandSpec, model: Model, name: string, args: ParsedA
       return reportOrphans(model, name);
     case 'prompts':
       return reportPrompts(model, name, args);
+    case 'contracts':
+      return reportContracts(model, name, args);
+    case 'obligations':
+      return reportObligations(model, name, args);
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.

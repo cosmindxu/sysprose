@@ -80,6 +80,39 @@ export type {
   SolvedValue,
 } from './analytics';
 
+// Verification lane (plan docs/04-formal-verification-plan.md §3.1, §3.2)
+export { contractReport, obligationsReport } from './verification';
+export type {
+  ContractReport,
+  ContractReportOptions,
+  ObligationReport,
+} from './verification';
+// The payload types both reports publish, and the options the second takes.
+// A consumer coming through this barrel — which the standing rule says is the
+// door — could otherwise not type either argument or walk either row without a
+// deep import into the semantics layer.
+export type {
+  Contract,
+  ContractClause,
+  ContractRef,
+  ContractSubject,
+  ContractVariable,
+  Encodable,
+  Fragment,
+  Refusal,
+  RefusalReason,
+  VariableRole,
+  VarSort,
+} from '../semantics/contracts';
+export type {
+  EvidenceRef,
+  Obligation,
+  ObligationOptions,
+  ObligationRole,
+  ObligationSource,
+  ObligationStatus,
+} from '../semantics/obligations';
+
 // REST facade
 export { SysmlApiServer } from './rest';
 export type { ApiResponse, ProjectResource } from './rest';

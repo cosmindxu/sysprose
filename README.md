@@ -118,6 +118,8 @@ with the function that control runs.
 | What breaks if I change this element? | Properties → *Used by* (`prop-used-by` → `whereUsed`), *Impact graph* (`prop-impact` → `neighboursOf`) † | `npm run sysprose -- where-used model.sysml --element X` | `impactClosure` — `src/api/analytics.ts` |
 | What did I declare and never use? | — no view yet | `npm run sysprose -- orphans model.sysml` | `orphanReport` — `src/api/analytics.ts` |
 | What guidance applies to this element? | — no view yet | `npm run sysprose -- prompts model.sysml --element X` | `promptsFor` — `src/api/analytics.ts` |
+| What does each requirement assume and guarantee, and on which subject? | — no view yet | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
+| What must be shown, over which axioms, and what do the gates refuse? | — no view yet | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -129,9 +131,10 @@ The **Interconnection** view *draws* ports and connections (`buildInterconnectio
 everything that references the selection, library and re-derived copies included (`whereUsed`,
 `src/api/analytics.ts`), where `where-used` drops the library, walks out to the `--depth` you ask
 for and says what it left out; the *Impact graph* draws one hop in each direction from its own
-walk (`neighboursOf`, `src/ui/panels/ImpactGraph.tsx`). `connectivity`, `orphans`, `prompts` and
-the depth-walking `impactClosure` have no control in the app at all — they are the terminal's and
-the SDK's alone.
+walk (`neighboursOf`, `src/ui/panels/ImpactGraph.tsx`). `connectivity`, `orphans`, `prompts`,
+`contracts`, `obligations` and the depth-walking `impactClosure` have no control in the app at all
+— they are the terminal's and the SDK's alone. A Contracts view is the closing commit of the
+formal-verification plan; the command line ships first.
 
 Every subcommand takes `-` for stdin and `--json` for `{ok, file, <report>}`, and every report is
 about *your* file: the bundled standard library and the tool's own re-derived elements are
@@ -195,6 +198,7 @@ npm run check -- <file.sysml> [--json]   # check a file from the command line
 npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # stats · elements · requirements · trace
                        # connectivity · where-used · orphans · prompts
+                       # contracts · obligations
                        # `npm run sysprose -- --help` lists them
 ```
 

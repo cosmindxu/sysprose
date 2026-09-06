@@ -439,6 +439,8 @@ may legitimately differ, and the difference is spelled out under the table.
 | What breaks if I change this? | Properties → *Used by* † | `npm run sysprose -- where-used model.sysml --element X` |
 | What did I declare and never use? | — | `npm run sysprose -- orphans model.sysml` |
 | What guidance applies to this element? | — | `npm run sysprose -- prompts model.sysml --element X` |
+| What does each requirement assume and guarantee? | — | `npm run sysprose -- contracts model.sysml` |
+| What must be shown, and what do the gates refuse? | — | `npm run sysprose -- obligations model.sysml` |
 
 † **Validate** re-runs the rule engine over the model already in the editor;
 `check` parses the file first and then applies those same rules. The
@@ -446,8 +448,8 @@ may legitimately differ, and the difference is spelled out under the table.
 `trace` tabulates every element of the row and column kinds and so also shows
 what links to nothing. The **Interconnection** view *draws* the ports and
 connections; it computes no connectivity report — `connectivity` exists only in
-the terminal and the SDK, as do `orphans`, `prompts` and the depth walk behind
-`where-used`. Properties → *Used by* lists everything referencing the
+the terminal and the SDK, as do `orphans`, `prompts`, `contracts`, `obligations` and
+the depth walk behind `where-used`. Properties → *Used by* lists everything referencing the
 selection, library and re-derived copies included, where `where-used` drops the
 library, walks to the `--depth` you ask for and tells you what it left out.
 
@@ -502,6 +504,79 @@ stderr) and **2** you asked for something impossible; `check` *judges*, so its
 **1** means the file has findings — a file that parsed perfectly and broke one
 validation rule exits 1. Full flag list:
 [`CLI-REFERENCE.md`](CLI-REFERENCE.md).
+
+### What a requirement promises, and what would have to be shown
+
+Two subcommands read a requirement the way a proof engineer does, and both of
+them ship **before** any solver exists. They report structure. Neither of them
+ever says a requirement holds.
+
+`contracts` is the inventory. For each requirement it prints the subject it is
+about, what it **assumes**, what it **guarantees**, which `satisfy`, `verify`,
+`derive` and `refine` statements name it, the variables its clauses read with
+their units, and the arithmetic **fragment** each clause lands in — linear
+(`QF_LRA`), nonlinear (`QF_NRA`) or not encodable at all. A case with an
+`objective { assume … require … }` is a contract too: that is the standard's own
+home for a behaviour's precondition and postcondition, and it is why Sysprose
+ships no `#precondition` keyword for something the notation already expresses.
+
+```console
+$ npm run sysprose -- contracts examples/uav-isr.sysml
+examples/uav-isr.sysml: 2 contract(s) on 1 subject(s); 2 guarantee(s) in QF_LRA, 0 in QF_NRA, 0 unsupported
+  an inventory of what is written — this command says nothing about whether any of it holds
+  UAVSurveillanceSystem::EnduranceRequirement  [RequirementDefinition]
+    subject uav : AirVehicle (declared)
+    require uav.endurance >= 45.0 [min]  [QF_LRA — linear real arithmetic]
+    satisfy uav
+    variables uav.endurance (derived)
+  ...
+```
+
+`obligations` is the worklist: what would have to be **shown**, what may be
+**assumed** while showing it, and which facts the model simply **states**. The
+three buckets are fixed, and the one worth knowing is the last:
+
+| What you wrote | What it becomes |
+|---|---|
+| `require constraint { … }` | an **obligation** — something to show |
+| `assume constraint { … }` | a **premise** — something you may lean on |
+| `assert constraint { … }` | an **axiom** |
+| `attribute m = 18.5 [kg];` | an **axiom** — a `=` value is a binding, not a default |
+| `bind a = b;` | an **axiom** |
+| `constraint c { … }` — no keyword | an **obligation**, not an axiom |
+
+That last row is deliberate. A plain constraint is what the **Analyze** button
+judges, so it has to be what a solver judges as well; filing it as an axiom
+would let one false constraint make the whole axiom set unsatisfiable and turn
+every real violation in the run into "cannot tell".
+
+The status column says what is **stored**, never what is true. `open` means
+nothing has been shown yet; `no formal clause` means the requirement is prose
+with no constraint body; `not encodable` means a gate refused the relation and
+names which. `discharged` and `stale` are read back from an evidence record, so
+nothing is ever discharged here today.
+
+A `requirement massOk : MassLimit;` usage owns no clause of its own — the
+`require constraint` is on the definition it applies. `contracts` says so on the
+usage's row and files the clause once, on the definition; it is not counted as
+prose-only, and it does not appear under `--missing`.
+
+`obligations --missing` is the one to run first on a real requirement set. It
+narrows the listing to exactly the rows this lane would **not** decide even with
+every solver installed, and prints the histogram of the gates that refused them.
+Expect a substantial fraction of a real programme's requirements to land there:
+prose-only requirements, temporal ones, `°C` arithmetic, collection-valued
+features. That is information about your model as much as about the tool, and it
+arrives before anyone waits for a proof.
+
+Both take `--element REF` — an id, a qualified name, or a name unique in the
+model — to scope the report to one requirement or one package. A reference
+naming bundled library content is refused: every figure in both reports is about
+*your* model and excludes the library by construction.
+
+**Source of truth:** `src/semantics/contracts.ts`, `src/semantics/obligations.ts`,
+`src/api/verification.ts`, and the plan these implement,
+[`04-formal-verification-plan.md`](04-formal-verification-plan.md).
 
 ### Scripting it
 

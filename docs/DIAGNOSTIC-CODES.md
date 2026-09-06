@@ -406,6 +406,31 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A value’s unit has a different physical dimension than its quantity kind.
 - **Hint given:** Use a unit of the declared quantity kind, e.g. a mass unit for a mass attribute.
 
+## Formal verification
+
+The verification lane reporting what it will and will not undertake. Always INFO: none of these is a defect in the model. They say that a relation is outside the fragment the lane encodes, that a contract has nothing to show, or that a clause sits somewhere the standard does not admit it — each stated rather than left to be inferred from a silence.
+
+### `verification/unsupported-expression`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A relation is outside the fragment the verification lane encodes — a name that resolves to nothing, a body that does not parse, a dimension clash, arithmetic on an offset scale, a collection-valued feature, a remainder, a variable exponent or a non-numeric operand.
+- **Hint given:** The relation is listed with the gate that refused it and nothing is claimed about it. Check the names it reads, then rewrite it inside quantifier-free arithmetic over single-valued scalar features, or expect it in the `obligations --missing` histogram.
+
+### `verification/contract-no-guarantee`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A requirement states assumptions and guarantees nothing, so its contract has nothing to show.
+- **Hint given:** Add a `require constraint { … }` stating what the requirement guarantees, or read the assumptions as context rather than as an obligation.
+
+### `verification/nonstandard-clause-location`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** An `assume` or `require` clause is written in a body the standard's `ActionBodyItem` does not admit — an action definition, for instance. Sysprose parses it; the specification does not offer it there.
+- **Hint given:** The standard writes a behaviour precondition as `assert constraint precondition { … }`, as a `guard` on the incoming transition, or as a requirement whose `subject` is the behaviour; `contracts` reads all three.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -465,4 +490,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*56 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*59 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
