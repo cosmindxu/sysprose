@@ -1,0 +1,35 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 2,
+  "counts": {
+    "discharged": 0,
+    "violated": 0,
+    "inconclusive": 1,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "VerificationCaseNoProperty::Appearance",
+      "shortId": "",
+      "clause": "VerificationCaseNoProperty::Appearance",
+      "expression": "",
+      "obligationDigest": "sha256:eb42cfb4e6d056e4b46cc55bd7d19ceb06e0155fc47e62e5702a39bb33ecbbab",
+      "claim": "inconclusive",
+      "verdict": "inconclusive",
+      "discharged": false,
+      "code": "verification/unsupported-construct",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "nothing to evaluate: the requirement carries prose and no constraint body, so there is nothing to encode",
+      "premises": []
+    }
+  ]
+}

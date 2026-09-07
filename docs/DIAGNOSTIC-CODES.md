@@ -550,6 +550,27 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** A requirement states `verdict = "pass"` over an evidence record whose claim is not `proved` — `holds-at-values`, `holds-within-bound`, `vacuous`, `inconclusive` or anything else the engines can reach.
 - **Hint given:** `pass` is written for one claim only, and a point evaluation is not a proof. Run `evidence-attach --from` again with the same records: it rewrites the facet from the claim even when every record is already present, which puts the file back where this tool would have left it. `evidence-detach` is the other repair, and takes the record off with the facet. `evidence-attach` cannot produce this state — every verdict it writes is derived from the claim, and a record file that says otherwise is refused — so a file in it was written by hand or by something that did not go through this tool.
 
+### `verification/method-not-performed`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A verification case declares a `@VerificationCases::VerificationMethod { kind = …; }` whose list contains no `analyze` — `test`, `demo`, `inspect`, or a spelling that names no `VerificationMethodKind` at all. This tool performs analysis only, so the case is not judged.
+- **Hint given:** Read it as "not judged", never as "does not hold": an unjudged case is not a refutation, and the run exits 2 rather than 1. `--allow-inconclusive` does NOT lower it — the flag is scoped to `verification/timeout` and `verification/unsupported-construct`, and an unperformed method is neither, so there is no flag that forgives one. A case that says `kind = (analyze, test)` IS judged, on the analyze part, and reports the rest as not performed.
+
+### `verification/no-property`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A verification case has nothing to check: it names no requirement at all, or its `verify` statement points at something that is not a requirement — including an `objective { verify X; }` whose `X` names a part, an action or nothing, which never becomes a verification relationship at all and is read off containment instead. Prose splits two ways here. An UNTAGGED requirement that carries prose and no constraint body does NOT land here: it still raises an obligation row of its own (`verification/unsupported-construct`) and the case is judged inconclusive on that row, because there was a property to look for and looking for it is what failed. A requirement tagged `#prose` (or `#prompt`) contributes no row at all — the tag says it is deliberately informal — so a case that verifies nothing else DOES land here.
+- **Hint given:** Point the case at a requirement with a formal clause — `verify R by <case>;` at member level, or `objective { verify R; }` inside the case. Both forms are read. A case with no property is inconclusive and exits 2: a case that checked nothing has not passed.
+
+### `verification/verdict-changed`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A requirement carries a `verdict` facet saying something other than what this run computed for the verification case that verifies it — for example `pass` in the file over a run that refuted the requirement, or `inconclusive` in the file over one that proved it.
+- **Hint given:** This is a disagreement rather than a defect: a `verdict` facet is ordinary requirements management and may record a verdict reached by inspection with no tool involved. Nothing is rewritten by reporting it. `verify --record` then `evidence-attach` puts the facet back in step with the claim, and `evidence-detach` takes both off; a `pass` over a run that did not prove it is named as overstating on the row.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -609,4 +630,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*76 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*79 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

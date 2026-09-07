@@ -196,6 +196,34 @@ export type {
   ObligationSource,
   ObligationStatus,
 } from '../semantics/obligations';
+// Verification cases (plan §3.4). `runVerificationCases` is what `verify` runs
+// over its own judged rows, and `writeVerdict` is the only thing in this lane
+// that puts a CASE verdict into a file — so both come through the barrel, which
+// the standing rule calls the door: a report nobody can import is not an API.
+export {
+  METHOD_NOT_PERFORMED_CODE,
+  NO_PROPERTY_CODE,
+  PERFORMED_METHOD,
+  VERDICT_CHANGED_CODE,
+  VERIFICATION_CASE_CODES,
+  methodOf,
+  runVerificationCases,
+  verificationCasesOf,
+  verifiedRequirementsOf,
+  writeVerdict,
+} from '../semantics/verify';
+export type {
+  DanglingVerification,
+  JudgedObligation,
+  MethodReading,
+  RequirementFacet,
+  VerdictDisagreement,
+  VerificationCaseOptions,
+  VerificationCaseReport,
+  VerificationCaseVerdict,
+  VerifiedRequirement,
+  WriteVerdictReport,
+} from '../semantics/verify';
 
 // REST facade
 export { SysmlApiServer } from './rest';

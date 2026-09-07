@@ -629,6 +629,35 @@ const CODES = [
     hint: '`pass` is written for one claim only, and a point evaluation is not a proof. Run `evidence-attach --from` again with the same records: it rewrites the facet from the claim even when every record is already present, which puts the file back where this tool would have left it. `evidence-detach` is the other repair, and takes the record off with the facet. `evidence-attach` cannot produce this state \u2014 every verdict it writes is derived from the claim, and a record file that says otherwise is refused \u2014 so a file in it was written by hand or by something that did not go through this tool.',
   },
 
+  // The three the VERIFICATION CASE layer raises. They are about the case
+  // rather than about one obligation, and the first of them is the honesty rule
+  // this whole lane's §2 exit table names: a verdict is never claimed for a
+  // method the tool did not perform. All three are info, and for the split
+  // stated above: none of them is a defect in the model. Two say what this tool
+  // did NOT do, and the third says two artefacts in the file disagree — which a
+  // reader resolves by re-running or re-attaching, not by repairing a fault.
+  {
+    code: 'verification/method-not-performed',
+    source: 'verification',
+    severity: 'info',
+    when: 'A verification case declares a `@VerificationCases::VerificationMethod { kind = …; }` whose list contains no `analyze` — `test`, `demo`, `inspect`, or a spelling that names no `VerificationMethodKind` at all. This tool performs analysis only, so the case is not judged.',
+    hint: 'Read it as "not judged", never as "does not hold": an unjudged case is not a refutation, and the run exits 2 rather than 1. `--allow-inconclusive` does NOT lower it — the flag is scoped to `verification/timeout` and `verification/unsupported-construct`, and an unperformed method is neither, so there is no flag that forgives one. A case that says `kind = (analyze, test)` IS judged, on the analyze part, and reports the rest as not performed.',
+  },
+  {
+    code: 'verification/no-property',
+    source: 'verification',
+    severity: 'info',
+    when: 'A verification case has nothing to check: it names no requirement at all, or its `verify` statement points at something that is not a requirement — including an `objective { verify X; }` whose `X` names a part, an action or nothing, which never becomes a verification relationship at all and is read off containment instead. Prose splits two ways here. An UNTAGGED requirement that carries prose and no constraint body does NOT land here: it still raises an obligation row of its own (`verification/unsupported-construct`) and the case is judged inconclusive on that row, because there was a property to look for and looking for it is what failed. A requirement tagged `#prose` (or `#prompt`) contributes no row at all — the tag says it is deliberately informal — so a case that verifies nothing else DOES land here.',
+    hint: 'Point the case at a requirement with a formal clause — `verify R by <case>;` at member level, or `objective { verify R; }` inside the case. Both forms are read. A case with no property is inconclusive and exits 2: a case that checked nothing has not passed.',
+  },
+  {
+    code: 'verification/verdict-changed',
+    source: 'verification',
+    severity: 'info',
+    when: 'A requirement carries a `verdict` facet saying something other than what this run computed for the verification case that verifies it — for example `pass` in the file over a run that refuted the requirement, or `inconclusive` in the file over one that proved it.',
+    hint: 'This is a disagreement rather than a defect: a `verdict` facet is ordinary requirements management and may record a verdict reached by inspection with no tool involved. Nothing is rewritten by reporting it. `verify --record` then `evidence-attach` puts the facet back in step with the claim, and `evidence-detach` takes both off; a `pass` over a run that did not prove it is named as overstating on the row.',
+  },
+
   /* ── round-trip oracle ── */
   {
     code: 'roundtrip/unparseable-serialization',

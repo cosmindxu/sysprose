@@ -259,6 +259,7 @@ npm run sysprose -- verify <file.sysml|-> [options]
 
 | Flag | What it does | Default |
 |---|---|---|
+| `--case REF` | Judge ONE verification case: the report is narrowed to the obligations of the requirements it verifies, and its verdict decides the run. The model is still judged whole, so the axioms those obligations stand on are all still in force. A case whose `@VerificationMethod { kind = …; }` has no `analyze` in it is NOT judged — `verification/method-not-performed`, exit 2, never exit 1 | every obligation in the model, with every verification case reported beside them |
 | `--engine NAME` | Which engine decides: auto \| literal \| smt. `auto` resolves to `smt` when a solver backend loads and otherwise reports every obligation as `verification/tool-absent` — it never falls back to `literal`, because a point evaluation is green only when asked for by name | `auto` |
 | `--free F` | Release a feature value (qualified name) so the engine may vary it; a refutation obtained this way is `design-admitted`, not a violation. An SMT-engine option: the literal engine evaluates AT the values and refuses it | none — every feature value is a binding the proof carries |
 | `--record PATH` | Write the evidence records to PATH: one per obligation, each naming the claim, the engine, the tool version, the bound and the canonical model digest | — |

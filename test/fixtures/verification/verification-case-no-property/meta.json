@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A case that checked nothing has not passed",
+  "model": "test/fixtures/verification/models/verification-case-no-property.sysml",
+  "engine": "literal",
+  "note": "Two shapes of `verification/no-property` in one model — `partWatch`, whose `verify` points at a part rather than at a requirement, and `emptyCase`, which names no requirement at all. `proseWatch` is the near miss and is deliberately NOT one: it verifies an untagged prose requirement, which still raises an obligation row of its own (`verification/unsupported-construct`), so that case is judged and inconclusive rather than propertyless. All three declare `analyze`, so nothing here is a method problem, and none of them is exit 0: a case with no property to check has not passed."
+}

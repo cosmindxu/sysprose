@@ -2131,6 +2131,333 @@ package P {
     }
   }, 300_000);
 
+  it('verify --case judges one verification case, and the method gate decides the run', () => {
+    // The L7 case §3.0 promises per new REF flag, at the process boundary where
+    // a reader meets it. The example ships three cases on purpose: one
+    // `analyze`, one `test`, one `kind = (analyze, test)`.
+    const VER = resolve(process.cwd(), 'examples/uav-isr-verification.sysml');
+
+    // THE WHOLE FILE. Every obligation in it is discharged — the header says so
+    // — and the run is still 2, because a case in it was never judged.
+    const all = run(['verify', VER, '--engine', 'literal']);
+    expect(all.code, 'an unjudged case did not reach the exit code').toBe(2);
+    expect(all.stdout).toContain('0 inconclusive, 3 discharged, 0 refuted');
+    expect(all.stdout).toContain('3 verification case(s): 2 pass, 0 fail, 1 inconclusive');
+    expect(all.stdout).toContain('1 not judged at all — this tool performs analysis only');
+
+    // ONE CASE, JUDGED. The report is narrowed to the obligations of the
+    // requirement it verifies; the other two requirements are still in the
+    // model, and the axioms they stand on are still in force.
+    const one = run(['verify', VER, '--engine', 'literal', '--case', 'enduranceAnalysis']);
+    expect(one.code).toBe(0);
+    expect(one.stdout).toContain('uav.endurance >= 45.0 [min]');
+    expect(one.stdout, 'a narrowed report showed another case’s obligation').not.toContain(
+      'uav.mtow <= 25.0 [kg]',
+    );
+    expect(one.stdout).toContain('verifies UAVSurveillanceVerification::EnduranceRequirement');
+    // The two verdict words, in the terminal: green run, and a file that may
+    // still not say `pass` about a point evaluation.
+    expect(one.stdout).toContain('the file may record `inconclusive`, not `pass`');
+
+    // THE METHOD GATE, and the flag that does not reach it. Exit 2 both ways,
+    // and 1 is not among them: an unjudged case is not a refutation.
+    for (const extra of [[], ['--allow-inconclusive']]) {
+      const bench = run(['verify', VER, '--engine', 'literal', '--case', 'massBench', ...extra]);
+      expect(bench.code, `--case massBench ${extra.join(' ')}`).toBe(2);
+      expect(bench.stdout).toContain('verification/method-not-performed');
+      expect(bench.stdout).toContain(
+        'inconclusive: method is test — this tool performs analysis only',
+      );
+    }
+
+    // THE MIXED CASE, judged on the analyze part and saying so.
+    const mixed = run(['verify', VER, '--engine', 'literal', '--case', 'linkQualification']);
+    expect(mixed.code).toBe(0);
+    expect(mixed.stdout).toContain('test not performed by this tool');
+
+    // A REF THAT IS NOT A CASE is refused BY NAME rather than answered as a run
+    // over the whole model, and the refusal lists what the file does have.
+    const notACase = run(['verify', VER, '--engine', 'literal', '--case', 'MassRequirement']);
+    expect(notACase.code).toBe(2);
+    expect(notACase.stderr).toContain('which is not a verification case');
+    expect(notACase.stderr).toContain('UAVSurveillanceVerification::massBench');
+    const missing = run(['verify', VER, '--engine', 'literal', '--case', 'NoSuchCase']);
+    expect(missing.code).toBe(2);
+
+    // AND IT IS IN THE REPRODUCIBLE COMMAND, for the same reason `--free` is:
+    // it changes which obligations the records are about.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const records = join(dir, 'endurance.json');
+      expect(
+        run(['verify', VER, '--engine', 'literal', '--case', 'enduranceAnalysis', '--record', records]).code,
+      ).toBe(0);
+      const parsed = JSON.parse(readFileSync(records, 'utf8')) as Array<{
+        producedBy: string;
+        flags: Record<string, unknown>;
+        obligation: { requirement: string };
+      }>;
+      expect(parsed.length).toBe(1);
+      expect(parsed[0].obligation.requirement).toBe(
+        'UAVSurveillanceVerification::EnduranceRequirement',
+      );
+      expect(parsed[0].producedBy).toContain(
+        '--case UAVSurveillanceVerification::enduranceAnalysis',
+      );
+      expect(parsed[0].flags.case).toBe('UAVSurveillanceVerification::enduranceAnalysis');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it('record then attach writes the verdict facet and the standard method annotation', () => {
+    // The pipeline of §3.4 at the process boundary. The case here states NO
+    // method, so the attach writes `@VerificationCases::VerificationMethod
+    // { kind = analyze; }` onto it — the one standard slot this lane writes,
+    // so the file says which method the verdict was reached under instead of
+    // leaving a reader to assume it.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'case.sysml');
+      writeFileSync(
+        model,
+        [
+          'package RecordThenAttach {',
+          '    part def Chassis {',
+          '        attribute mass : ISQ::MassValue = 18.5 [kg];',
+          '    }',
+          '    part chassis : Chassis;',
+          '    requirement def MassLimit {',
+          '        attribute id = "R-1";',
+          '        subject chassis : Chassis;',
+          '        require constraint { chassis.mass <= 25.0 [kg] }',
+          '    }',
+          '    verification massAnalysis {',
+          '        subject chassis : Chassis;',
+          '        objective { verify MassLimit; }',
+          '    }',
+          '    satisfy MassLimit by chassis;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const records = join(dir, 'evidence.json');
+      expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(0);
+
+      const attached = run(['evidence-attach', model, '--from', records, '--out', model]);
+      expect(attached.code).toBe(0);
+      // Nothing is written silently: the annotation is announced on stderr,
+      // beside every record and every verdict the attach placed.
+      expect(attached.stderr).toContain('declared no method — wrote the standard');
+      const text = readFileSync(model, 'utf8');
+      expect(text).toContain('@VerificationCases::VerificationMethod');
+      expect(text).toContain('attribute kind = analyze');
+      // A POINT EVALUATION NEVER WRITES `pass`, whichever writer put the facet
+      // there — the record's rule and the case's rule are the same rule.
+      expect(text).toContain('attribute verdict = "inconclusive"');
+      expect(text, 'a literal run laundered into a proof').not.toContain(
+        'attribute verdict = "pass"',
+      );
+
+      // THE FILE IT WROTE IS CLEAN, and this is the assertion with the teeth.
+      // The annotation goes INTO the model the records were taken over, so
+      // unless it is excluded from the canonical graph exactly as the carriers
+      // are, `evidence-attach` invalidates inside one command the evidence it
+      // has just attached: the saved file is born `validation/stale-evidence`.
+      // Greping the bytes cannot see that; only asking the tool can.
+      const status = run(['evidence-status', model]);
+      expect(status.code).toBe(0);
+      expect(status.stdout, 'the attach wrote a file its own status calls stale').toContain(
+        '0 stale, 1 current, 0 unrecorded',
+      );
+      // Every subcommand runs the checker over the file it was handed and
+      // prints its findings on stderr, so a clean stderr IS the checker's
+      // verdict on the artefact. Before the annotation was taken out of the
+      // canonical graph this said `1 stale, 0 current` above and printed
+      // `warning validation/stale-evidence` here, on the file the same command
+      // had just written.
+      expect(status.stderr, 'the attach wrote a file the checker calls stale').not.toContain(
+        'validation/stale-evidence',
+      );
+      expect(status.stderr).not.toContain('warning(s)');
+
+      // AND THE PAYLOAD SAYS WHAT THE FILE SAYS. The case layer runs after
+      // `attachEvidence`, whose own report knows nothing about cases — so a
+      // `--json` body carrying that report alone would state a verdict the
+      // artefact beside it does not contain.
+      const asJson = run(['evidence-attach', model, '--from', records, '--json']);
+      expect(asJson.code).toBe(0);
+      const { body } = payload<{
+        evidenceAttach: {
+          caseVerdicts: Array<{
+            case: string;
+            verdict: string;
+            written: Array<{ requirement: string; verdict: string }>;
+            methodWritten: boolean;
+          }>;
+        };
+      }>(asJson);
+      const written = body.evidenceAttach.caseVerdicts;
+      expect(written.length).toBe(1);
+      expect(written[0].case).toBe('RecordThenAttach::massAnalysis');
+      expect(written[0].verdict).toBe('inconclusive');
+      expect(written[0].written).toEqual([
+        { requirement: 'RecordThenAttach::MassLimit', verdict: 'inconclusive' },
+      ]);
+
+      // Idempotent from the second save: the case now DECLARES a method, so a
+      // second attach does not stack a second annotation on it.
+      const again = run(['evidence-attach', model, '--from', records, '--out', model]);
+      expect(again.code).toBe(0);
+      expect(again.stderr).not.toContain('declared no method');
+      expect(
+        readFileSync(model, 'utf8').match(/@VerificationCases::VerificationMethod/g)?.length,
+      ).toBe(1);
+      expect(run(['evidence-status', model]).stdout).toContain('0 stale, 1 current');
+
+      // ATTACH THEN DETACH IS AN INVERSE, annotation included: a tool-authored
+      // sentence about the METHOD that no command removed would outlive every
+      // claim it was written beside.
+      const detached = run(['evidence-detach', model, '--out', model]);
+      expect(detached.code).toBe(0);
+      expect(detached.stderr).toContain('RecordThenAttach::massAnalysis');
+      expect(readFileSync(model, 'utf8')).not.toContain('VerificationMethod');
+      expect(readFileSync(model, 'utf8')).not.toContain('attribute verdict');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it('the method gate reads every spelling of `kind`, including an inherited one', () => {
+    // FOUR PARSE-CLEAN SPELLINGS OF ONE SENTENCE, and the gate has to read all
+    // of them, because the arm that JUDGES is the one a case falls into when no
+    // method is found. Measured on this file before the reader was widened:
+    // `metadata VerificationMethod { … }` (the definition name in
+    // `declaredName`), `metadata vm : …VerificationMethod { … }` (the name on a
+    // `FeatureTyping` child), `attribute :>> kind` (a redefinition cell with no
+    // declared name) and a method declared on the `verification def` a usage
+    // specializes ALL read as "none declared" — so a `test` case passed, exit 0.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'spellings.sysml');
+      writeFileSync(
+        model,
+        [
+          'package Spellings {',
+          '    part def Chassis {',
+          '        attribute mass : ISQ::MassValue = 18.5 [kg];',
+          '    }',
+          '    part chassis : Chassis;',
+          '    requirement def MassLimit {',
+          '        subject chassis : Chassis;',
+          '        require constraint { chassis.mass <= 25.0 [kg] }',
+          '    }',
+          '    verification bareMetadata {',
+          '        subject chassis : Chassis;',
+          '        metadata VerificationMethod { attribute kind = test; }',
+          '        objective { verify MassLimit; }',
+          '    }',
+          '    verification typedMetadata {',
+          '        subject chassis : Chassis;',
+          '        metadata vm : VerificationCases::VerificationMethod { attribute kind = test; }',
+          '        objective { verify MassLimit; }',
+          '    }',
+          '    verification def BenchDef {',
+          '        @VerificationCases::VerificationMethod { attribute kind = test; }',
+          '    }',
+          '    verification inheritedMethod : BenchDef {',
+          '        subject chassis : Chassis;',
+          '        objective { verify MassLimit; }',
+          '    }',
+          '    satisfy MassLimit by chassis;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      // The file itself is well formed — this is a gate defect, not a parse one.
+      const parsed = run(['stats', model]);
+      expect(parsed.code).toBe(0);
+      expect(parsed.stderr).not.toContain('error(s)');
+
+      for (const name of ['bareMetadata', 'typedMetadata', 'inheritedMethod']) {
+        const r = run(['verify', model, '--engine', 'literal', '--case', name]);
+        expect(r.code, `${name} was judged over a method this tool does not perform`).toBe(2);
+        expect(r.stdout).toContain('verification/method-not-performed');
+        expect(r.stdout).toContain('inconclusive: method is test');
+        expect(r.stdout, `${name} read its own method as absent`).not.toContain(
+          'method: none declared',
+        );
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it('a case over two requirements writes each one its own verdict facet', () => {
+    // THE FACET IS ABOUT ONE REQUIREMENT; THE CASE VERDICT IS A ROLL-UP OVER A
+    // SET. Writing the case's word onto each member made the file contradict
+    // itself: `WidthLimit` carried `@Evidence { claim = "holds-at-values";
+    // verdict = "inconclusive"; }` and, two lines below, `verdict = "fail"`
+    // taken from the case that another requirement had refuted.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'tworeqs.sysml');
+      writeFileSync(
+        model,
+        [
+          'package TwoReqs {',
+          '    part def Chassis {',
+          '        attribute mass : ISQ::MassValue = 3000.0 [kg];',
+          '        attribute width : ISQ::LengthValue = 1.5 [m];',
+          '    }',
+          '    part chassis : Chassis;',
+          '    requirement def MassLimit {',
+          '        subject chassis : Chassis;',
+          '        require constraint { chassis.mass <= 2000.0 [kg] }',
+          '    }',
+          '    requirement def WidthLimit {',
+          '        subject chassis : Chassis;',
+          '        require constraint { chassis.width <= 2.0 [m] }',
+          '    }',
+          '    verification bothAnalysis {',
+          '        subject chassis : Chassis;',
+          '        @VerificationCases::VerificationMethod { attribute kind = analyze; }',
+          '        objective { verify MassLimit; verify WidthLimit; }',
+          '    }',
+          '    satisfy MassLimit by chassis;',
+          '    satisfy WidthLimit by chassis;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const records = join(dir, 'evidence.json');
+      // The case is `fail` — one of its two requirements is refuted at the
+      // model's values — and that is exit 1.
+      expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(1);
+      expect(run(['evidence-attach', model, '--from', records, '--out', model]).code).toBe(0);
+
+      const text = readFileSync(model, 'utf8');
+      const block = (name: string): string => {
+        const at = text.indexOf(`requirement def ${name}`);
+        expect(at, `${name} is missing from the written file`).toBeGreaterThan(-1);
+        const next = text.indexOf('requirement def ', at + 1);
+        return text.slice(at, next === -1 ? text.length : next);
+      };
+      expect(block('MassLimit')).toContain('attribute claim = "refuted"');
+      expect(block('MassLimit')).toContain('attribute verdict = "fail"');
+      // The one the same run showed holding keeps its own word, beside its own
+      // carrier, rather than the case's.
+      expect(block('WidthLimit')).toContain('attribute claim = "holds-at-values"');
+      expect(block('WidthLimit')).toContain('attribute verdict = "inconclusive"');
+      expect(
+        block('WidthLimit'),
+        'the case’s `fail` was stamped onto a requirement this run did not refute',
+      ).not.toContain('attribute verdict = "fail"');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
   it('--no-library skips binding and still reports the file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'nolib.sysml');

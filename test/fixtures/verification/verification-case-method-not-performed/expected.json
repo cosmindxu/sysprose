@@ -1,0 +1,67 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 2,
+  "counts": {
+    "discharged": 3,
+    "violated": 0,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "UAVSurveillanceVerification::EnduranceRequirement",
+      "shortId": "",
+      "clause": "UAVSurveillanceVerification::EnduranceRequirement::«ConstraintUsage»",
+      "expression": "uav.endurance >= 45.0 [min]",
+      "obligationDigest": "sha256:72c7cf2e60f8b47dc5693a449661ba81c77f346e57af9d36a3365e2f837ccb3f",
+      "claim": "holds-at-values",
+      "verdict": "inconclusive",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "holds at the model's values (no assumptions — the pass is unconditional at these values)",
+      "premises": []
+    },
+    {
+      "requirement": "UAVSurveillanceVerification::MassRequirement",
+      "shortId": "",
+      "clause": "UAVSurveillanceVerification::MassRequirement::«ConstraintUsage»",
+      "expression": "uav.mtow <= 25.0 [kg]",
+      "obligationDigest": "sha256:c57d9ca0c6e3658fbc549a08311c76c972fda4ddd34b0659e2391cbe45e7438c",
+      "claim": "holds-at-values",
+      "verdict": "inconclusive",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "holds at the model's values (no assumptions — the pass is unconditional at these values)",
+      "premises": []
+    },
+    {
+      "requirement": "UAVSurveillanceVerification::RangeRequirement",
+      "shortId": "",
+      "clause": "UAVSurveillanceVerification::RangeRequirement::«ConstraintUsage»",
+      "expression": "uav.radio.range >= 20.0 [km]",
+      "obligationDigest": "sha256:6bbda79af238aec2dbaf43fc350175a12c875b75b7ced01625a7175b255d102e",
+      "claim": "holds-at-values",
+      "verdict": "inconclusive",
+      "discharged": true,
+      "code": null,
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "holds at the model's values (no assumptions — the pass is unconditional at these values)",
+      "premises": []
+    }
+  ]
+}

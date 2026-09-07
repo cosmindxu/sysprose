@@ -40,6 +40,7 @@ import { PRODUCT_SLUG, PRODUCT_VERSION } from '../branding';
 import { FULL_LIBRARY_MANIFEST_COUNT } from '../library/full-library';
 import { type ExprNode } from '../semantics/expr';
 import { type ContractRef, type ContractVariable } from '../semantics/contracts';
+import { PERFORMED_METHOD, VERIFICATION_METHOD_DEF } from '../semantics/verify';
 import {
   FAULTED_DECLARATION_REFUSAL,
   RM_METADATA_NAME,
@@ -296,14 +297,35 @@ export function canonicalElements(model: Model): string[] {
  * would still move when a literal moved. The count of what goes in is the only
  * thing that reddens.
  *
- * Four shapes, and the fourth is the fiddly one. The Evidence CARRIER; anything
+ * FIVE shapes, and the last two are one fact in two elements. The Evidence CARRIER; anything
  * OWNED by one (its cells, and whatever a future record shape nests under
  * them); the `verdict` CELL on the requirement-metadata carrier, which
  * {@link attachEvidence} writes from the record; and the requirement-metadata
  * CARRIER itself when that cell is all it holds — because attaching evidence to
  * a requirement that had no facets at all creates the carrier as well as the
  * cell, and leaving the empty shell in the hash would move the digest for the
- * same reason the cell would.
+ * same reason the cell would. And the standard
+ * `@VerificationCases::VerificationMethod { attribute kind = analyze; }`
+ * annotation `writeVerdict` puts on a case that declared no method, with its
+ * one cell.
+ *
+ * WHY THAT FIFTH SHAPE IS SAFE TO EXCLUDE, WHICH IS NOT OBVIOUS. The method IS
+ * load-bearing — it is the gate that decides whether a case is judged at all —
+ * so excluding "a method annotation" wholesale would let an author change
+ * `analyze` to `test` without moving the digest, and every record on the file
+ * would go on reading as current over a case the tool would no longer judge.
+ * The exclusion is therefore drawn at exactly the shape this tool writes and
+ * nothing wider: annotating, typed `VerificationMethod`, and holding one `kind`
+ * cell whose only value is `analyze`. A model carrying it and the same model
+ * without it are GATE-EQUIVALENT — a case that declares no method is judged on
+ * the analyze part, which is what the annotation says — so the annotation adds
+ * no fact the gate reads, and its presence cannot change a verdict. Edit it to
+ * any other kind, add a second kind, or add a second cell, and the shape stops
+ * matching and the digest moves again, which is the direction that matters.
+ * Without this, `evidence-attach` would invalidate the records it had just
+ * written: the annotation is written into the model the records were taken
+ * over, so every attach onto a case with no stated method produced a file that
+ * was born `validation/stale-evidence`.
  *
  * THE LINE IS DRAWN BY SHAPE, NOT BY PROVENANCE, and the two consequences are
  * stated here rather than left to be discovered. Nothing in the file marks WHO
@@ -321,6 +343,8 @@ export function isEvidenceArtefact(model: Model, el: ElementRecord): boolean {
   if (isEvidenceCarrier(el)) return true;
   if (isVerdictCell(model, el)) return true;
   if (isVerdictOnlyMetadata(model, el)) return true;
+  if (isToolWrittenMethodAnnotation(model, el)) return true;
+  if (isToolWrittenMethodCell(model, el)) return true;
   // Owned by a carrier, at any depth. Walked upwards rather than downwards so
   // one element can answer for itself without the caller holding a set.
   let owner = el.ownerId === null ? undefined : model.get(el.ownerId);
@@ -345,6 +369,36 @@ function isVerdictOnlyMetadata(model: Model, el: ElementRecord): boolean {
   if (!isRequirementMetadata(el)) return false;
   const children = model.children(el.id);
   return children.length > 0 && children.every((c) => isVerdictCell(model, c));
+}
+
+/**
+ * The single-`analyze` method annotation this tool writes onto a case.
+ *
+ * Matched on the last `::` segment because a file may import or qualify the
+ * definition, and on the CONTENT as well as the type: one cell, named `kind`,
+ * valued exactly `analyze`. Anything else an author wrote there is theirs and
+ * stays in the digest — see {@link isEvidenceArtefact} for why the line is
+ * drawn this tightly.
+ */
+function isToolWrittenMethodAnnotation(model: Model, el: ElementRecord): boolean {
+  if (el.eClass !== 'MetadataUsage' || el.attrs.annotation !== true) return false;
+  const type = el.attrs.type;
+  if (typeof type !== 'string') return false;
+  if ((type.split('::').pop() ?? type) !== VERIFICATION_METHOD_DEF) return false;
+  const children = model.children(el.id);
+  return (
+    children.length === 1 &&
+    children[0].eClass === 'AttributeUsage' &&
+    children[0].declaredName === 'kind' &&
+    children[0].attrs.value === PERFORMED_METHOD
+  );
+}
+
+/** The `kind = analyze;` cell inside one of those, which travels with it. */
+function isToolWrittenMethodCell(model: Model, el: ElementRecord): boolean {
+  if (el.eClass !== 'AttributeUsage' || el.declaredName !== 'kind') return false;
+  const owner = el.ownerId === null ? undefined : model.get(el.ownerId);
+  return owner !== undefined && isToolWrittenMethodAnnotation(model, owner);
 }
 
 /** The `metadata RequirementMetadata { … }` carrier, in both read spellings. */
@@ -1116,7 +1170,20 @@ export interface DetachReport {
   elements: string[];
   /** Verdict facets cleared with them. */
   verdictsCleared: string[];
+  /**
+   * Verification cases the tool-written method annotation came off, by name.
+   *
+   * `evidence-attach` writes `@VerificationCases::VerificationMethod
+   * { kind = analyze; }` onto a case that stated no method, so the file says
+   * which method the verdict was reached under. A detach that left it behind
+   * would make attach→detach non-inverse: the file would keep a tool-authored
+   * claim about the METHOD that its author never wrote and no command removes.
+   */
+  methodAnnotationsRemoved: string[];
 }
+
+/** The two metaclasses a verification case is written as. */
+const VERIFICATION_CASE_KINDS = new Set(['VerificationCaseDefinition', 'VerificationCaseUsage']);
 
 /**
  * Take every evidence carrier off the model, and the verdict facets with them.
@@ -1129,10 +1196,27 @@ export interface DetachReport {
  * against. A facet a person wrote by hand on a requirement that never carried
  * evidence is left alone: this only clears what it can see it wrote.
  *
+ * THE METHOD ANNOTATION GOES WITH IT, for the same reason and with the same
+ * limit. `evidence-attach` writes exactly one standard annotation —
+ * `@VerificationCases::VerificationMethod { kind = analyze; }` on a case that
+ * declared no method — and nothing in a file records who wrote it, so this
+ * removes the exact shape it writes and nothing wider: annotating, typed
+ * `VerificationMethod`, one `kind` cell, valued `analyze`. An author who wrote
+ * that exact annotation by hand loses it here, which is the same trade the
+ * `verdict` facet already makes; a case saying anything else about its method
+ * — a second kind, `test`, an extra cell — is not this shape and is untouched.
+ * And it happens only when the detach actually removed evidence, so a command
+ * that found nothing to take off never edits a case.
+ *
  * @param scopeId when given, only evidence under that element (and itself).
  */
 export function detachEvidence(model: Model, scopeId?: ElementId): DetachReport {
-  const report: DetachReport = { removed: 0, elements: [], verdictsCleared: [] };
+  const report: DetachReport = {
+    removed: 0,
+    elements: [],
+    verdictsCleared: [],
+    methodAnnotationsRemoved: [],
+  };
   const inScope = (id: ElementId): boolean => {
     if (scopeId === undefined) return true;
     if (id === scopeId) return true;
@@ -1150,6 +1234,16 @@ export function detachEvidence(model: Model, scopeId?: ElementId): DetachReport 
       if (el && isRequirement(el.eClass) && getRequirementAttr(model, holder.id, 'verdict') !== undefined) {
         setRequirementAttr(model, holder.id, 'verdict', null);
         report.verdictsCleared.push(holder.qualifiedName);
+      }
+    }
+    if (report.removed === 0) return;
+    for (const el of model.all()) {
+      if (!VERIFICATION_CASE_KINDS.has(el.eClass)) continue;
+      if (!isUserElement(model, el) || !inScope(el.id)) continue;
+      for (const child of model.children(el.id)) {
+        if (!isToolWrittenMethodAnnotation(model, child)) continue;
+        model.remove(child.id);
+        report.methodAnnotationsRemoved.push(model.qualifiedName(el.id));
       }
     }
   });

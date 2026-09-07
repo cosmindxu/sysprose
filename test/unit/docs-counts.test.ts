@@ -26,6 +26,11 @@ import {
 import { DIAGNOSTIC_CODES } from '@text/index';
 import { loadModelText } from '@text/load';
 import { RULES } from '@validation/index';
+// The command table itself, for the same reason `RULES` is imported rather than
+// counted in prose: the number of subcommands is a fact about the table, and a
+// document that quotes it has to be checked against the table and not against
+// the last person who remembered.
+import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 
 const root = (p: string) => resolve(process.cwd(), p);
 const read = (p: string) => readFileSync(root(p), 'utf8');
@@ -78,6 +83,21 @@ const libraryManifest = JSON.parse(read('src/library/std/manifest.json')) as {
 const fixtureCount = readdirSync(root('test/fixtures/agent-authoring'), {
   withFileTypes: true,
 }).filter((e) => e.isDirectory()).length;
+
+/**
+ * The shipped example models, counted off `examples/`.
+ *
+ * A guard that arrives after the count it guards has already moved guards
+ * nothing, so it lands with the FIRST commit that adds an example rather than
+ * with the last one: `examples/` held two models from the first release until
+ * `uav-isr-verification.sysml`, and every later commit of the verification plan
+ * that ships one now has a real entry to update instead of a no-op edit.
+ * Directories are excluded because `examples/` is a flat list of models today
+ * and a subdirectory of assets would otherwise read as a third example.
+ */
+const exampleCount = readdirSync(root('examples'), { withFileTypes: true }).filter(
+  (e) => e.isFile() && e.name.endsWith('.sysml'),
+).length;
 
 /**
  * The L7 case count the campaign ledger's Levels table quotes.
@@ -254,6 +274,24 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     what: 'E2E spec-file count in the reproduce command',
     pattern: /End-to-end\s+\(\d+\s+tests\s+across\s+(\d+)\s+spec\s+files\)/,
     actual: () => e2eSpecCount,
+  },
+  // ── the command-line surface ──────────────────────────────────────────────
+  // Two figures a reader takes at face value and nothing measured: how many
+  // subcommands this tool has, and how many models it ships to run them on.
+  // Both moved with almost every commit of the verification plan, and both are
+  // derivable — the first from the table the dispatcher, `--help` and
+  // `docs/CLI-REFERENCE.md` are all rendered from, the second with `readdirSync`.
+  {
+    file: 'docs/CONFORMANCE.md',
+    what: 'subcommand count in the command-line surface row',
+    pattern: /\*\*(\d+)\s+subcommands\*\*/,
+    actual: () => COMMANDS.length,
+  },
+  {
+    file: 'docs/CONFORMANCE.md',
+    what: 'example-model count in the command-line surface row',
+    pattern: /\*\*(\d+)\s+shipped\s+example\s+models\*\*/,
+    actual: () => exampleCount,
   },
   // ── docs/USER-GUIDE.md ────────────────────────────────────────────────────
   // The guide is written for a person deciding whether to trust the tool, so a

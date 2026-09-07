@@ -1,0 +1,35 @@
+{
+  "engineAsked": "literal",
+  "engine": "literal",
+  "toolAbsent": false,
+  "allowInconclusive": false,
+  "strictVacuity": false,
+  "free": [],
+  "exitCode": 1,
+  "counts": {
+    "discharged": 0,
+    "violated": 1,
+    "inconclusive": 0,
+    "designAdmitted": 0,
+    "vacuous": 0,
+    "forgiven": 0
+  },
+  "obligations": [
+    {
+      "requirement": "VerificationCaseRefuted::MassLimit",
+      "shortId": "",
+      "clause": "VerificationCaseRefuted::MassLimit::«ConstraintUsage»",
+      "expression": "chassis.mass <= 2000.0 [kg]",
+      "obligationDigest": "sha256:6f58cde06779ce00caeec5c9dc31354d5946fc948686d622afd753e9c6be27f4",
+      "claim": "refuted",
+      "verdict": "fail",
+      "discharged": false,
+      "code": "verification/refuted",
+      "forgiven": false,
+      "tautology": false,
+      "witnessSymbols": [],
+      "detail": "refuted with every feature at its model value: `chassis.mass <= 2000.0 [kg]` is false here (3000 vs 2000 in M, coherent SI)",
+      "premises": []
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "level": "L8",
+  "title": "`--allow-inconclusive` does not reach an unperformed method",
+  "model": "examples/uav-isr-verification.sysml",
+  "engine": "literal",
+  "allowInconclusive": true,
+  "note": "The twin of the case above, and the one that makes it mean something. §2 scopes the flag to `verification/timeout` and `verification/unsupported-construct`; an unperformed method is neither, so the exit code is 2 with the flag exactly as it is without it, and there is no `--allow-unperformed`."
+}

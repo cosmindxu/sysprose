@@ -114,6 +114,7 @@ import {
   type EvidenceStatusReport,
   type KeywordUse,
   type ObligationVerdict,
+  type VerificationCaseVerdict,
   type VerifyEngineOption,
   VerifyOptionError,
   type VerifyReport,
@@ -121,13 +122,18 @@ import {
 import {
   isStatementKind,
   resolveFullName,
+  runVerificationCases,
   statementKindOf,
+  verificationCasesOf,
+  writeVerdict,
   type Contract,
   type ContractClause,
   type ContractSubject,
+  type JudgedObligation,
   type Obligation,
   type Refusal,
   type StatementKind,
+  type WriteVerdictReport,
 } from '../src/semantics/index';
 // Deep imports rather than `../src/diagram/index`: the diagram barrel pulls the
 // layout engine in with it, and neither of these two builders needs it.
@@ -1211,6 +1217,79 @@ function verifyTimeout(args: ParsedArgs): number | undefined {
   return ms;
 }
 
+/**
+ * `--case REF`, resolved through the resolver every other `REF` flag uses.
+ *
+ * TWO REFUSALS, both exit 2, and both replacing an answer that would read as
+ * true. A `REF` naming something that is not a verification case is refused BY
+ * NAME rather than reported as a run with no case — the reader named an element
+ * and this tool would otherwise judge the whole model and print a header that
+ * never mentioned the word `case`. And a model with no verification case at all
+ * says so, rather than reporting the requirements as though the case had been
+ * checked. `resolveElementRef` supplies the third refusal — an ambiguous name
+ * prints every match and picks none.
+ */
+function verifyCase(model: Model, args: ParsedArgs): ElementRecord | undefined {
+  const ref = flagValue(args, 'case');
+  if (ref === undefined || ref.trim() === '') return undefined;
+  const el = resolveElementRef(model, ref.trim());
+  if (!VERIFICATION_CASE_ECLASSES.has(el.eClass)) {
+    const cases = verificationCasesOf(model);
+    throw new UsageError(
+      `--case \`${ref.trim()}\` resolves to ${qname(model, el.id)}, a ${el.eClass}, which is not a ` +
+        'verification case: only a `verification def` or a `verification` usage carries a method ' +
+        'and a verdict. ' +
+        (cases.length === 0
+          ? 'This model declares no verification case at all.'
+          : `Cases in this model: ${cases.map((c) => qname(model, c.id)).join(', ')}.`),
+    );
+  }
+  return el;
+}
+
+/** The two metaclasses `--case` accepts, spelled where the refusal is written. */
+const VERIFICATION_CASE_ECLASSES: ReadonlySet<string> = new Set([
+  'VerificationCaseDefinition',
+  'VerificationCaseUsage',
+]);
+
+/** One verification case, as a person reads it. */
+function caseLines(c: VerificationCaseVerdict): string[] {
+  const id = c.shortId ? ` (${c.shortId})` : '';
+  const method =
+    c.method.declared.length > 0 || c.method.unrecognised.length > 0
+      ? [...c.method.declared, ...c.method.unrecognised].join(', ')
+      : 'none declared — judged on the analyze part';
+  return [
+    `  ${c.case.qualifiedName}${id}  verdict ${c.verdict}`,
+    `    method: ${method}`,
+    `    ${c.detail}`,
+    ...(c.code !== null ? [`    ${c.code}`] : []),
+    // WHICH SPELLING FOUND IT, on every row. `verify R by V;` declares an edge a
+    // traceability matrix can see and `objective { verify R; }` declares none,
+    // so a reader comparing this report with `trace --relation verify` has to be
+    // told which rows that matrix could have shown them.
+    ...c.verifies.map(
+      (v) =>
+        `    verifies ${v.requirement.qualifiedName} — via ${v.via === 'relationship' ? '`verify … by`' : '`objective { verify … }`'}`,
+    ),
+    ...c.dangling.map((d) => `    verifies nothing: ${d.reason}`),
+    // The facet word is NOT the verdict word, and the difference is worth a
+    // line: a point evaluation is a green run and may not be written into the
+    // file as `pass`.
+    ...(c.facet !== c.verdict
+      ? [
+          `    the file may record \`${c.facet}\`, not \`${c.verdict}\`: a verdict facet says \`pass\` only for a proof`,
+        ]
+      : []),
+    ...c.changed.map(
+      (ch) =>
+        `    ${ch.requirement}: the file says \`${ch.claimed}\`, this run computes \`${ch.computed}\`` +
+        (ch.overstates ? ' — the file claims more than this run showed' : ''),
+    ),
+  ];
+}
+
 /** One judged obligation, as a person reads it. */
 function verdictLines(v: ObligationVerdict): string[] {
   const id = v.shortId ? ` (${v.shortId})` : '';
@@ -1277,6 +1356,7 @@ async function reportVerify(
   }
   const timeoutMs = verifyTimeout(args);
   const strictVacuity = flagGiven(args, 'strict-vacuity');
+  const only = verifyCase(model, args);
   // A `--free` spelling this model cannot honour is a problem with what was
   // ASKED, and it is re-raised as one. `verifyModel` refuses it from the API's
   // side (an in-process caller needs the refusal too), and without this arm it
@@ -1291,6 +1371,7 @@ async function reportVerify(
       allowInconclusive: flagGiven(args, 'allow-inconclusive'),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(strictVacuity ? { strictVacuity: true } : {}),
+      ...(only !== undefined ? { caseId: only.id } : {}),
       sourceText: text,
       // The command a reader can re-run to get this record — INCLUDING the
       // flags that changed what was shown. `--free` above all: a proof under a
@@ -1299,6 +1380,11 @@ async function reportVerify(
       // it.
       producedBy:
         `npm run sysprose -- verify ${name} --engine ${engine}` +
+        // `--case` belongs in the reproducible command for the same reason
+        // `--free` does: it changes WHICH obligations the records are about, so
+        // a `producedBy` that dropped it would print a command whose output is
+        // a different set of records from the ones beside it.
+        (only !== undefined ? ` --case ${qname(model, only.id)}` : '') +
         free.map((f) => ` --free ${f}`).join('') +
         (timeoutMs !== undefined ? ` --timeout ${timeoutMs}` : '') +
         (strictVacuity ? ' --strict-vacuity' : ''),
@@ -1362,10 +1448,28 @@ async function reportVerify(
       : []),
     ...(r.results.length === 0
       ? [
-          '  this model states no obligation at all — there was nothing to verify, ' +
-            'which is exit 2: exit 0 means every obligation was discharged, and none was',
+          only !== undefined
+            ? `  ${qname(model, only.id)} judged no obligation — a case that checked nothing has not ` +
+              'passed, which is exit 2'
+            : '  this model states no obligation at all — there was nothing to verify, ' +
+              'which is exit 2: exit 0 means every obligation was discharged, and none was',
         ]
       : r.results.flatMap(verdictLines)),
+    // The cases LAST, under the obligations they stand on, because a case
+    // verdict is a roll-up of rows the reader has just read. A model that
+    // declares none prints nothing here rather than a zero: "0 verification
+    // cases" and "the cases all passed" are different facts and the second is
+    // the one a blank line must not be read as.
+    ...(r.cases.cases.length > 0
+      ? [
+          `  ${r.cases.cases.length} verification case(s): ${r.cases.passed} pass, ${r.cases.failed} fail, ` +
+            `${r.cases.inconclusive} inconclusive` +
+            (r.cases.notPerformed > 0
+              ? `, of which ${r.cases.notPerformed} not judged at all — this tool performs analysis only`
+              : ''),
+          ...r.cases.cases.flatMap(caseLines),
+        ]
+      : []),
     `  model ${r.modelVersion.graph}`,
     `  ${r.modelVersion.sysprose.name} ${r.modelVersion.sysprose.version}` +
       `${r.modelVersion.sysprose.git ? ` (git ${r.modelVersion.sysprose.git.slice(0, 12)})` : ' (no git commit — none was found, and none is invented)'}` +
@@ -1732,13 +1836,147 @@ function reportEvidenceStatus(model: Model, name: string): Report {
 }
 
 /**
+ * One case's contribution to an attach, in the payload as well as on stderr.
+ *
+ * `attachEvidence` reports what the RECORDS did; this reports what the CASE
+ * layer did on top of them, and the two together are what the written file
+ * says. Published rather than left on stderr because a machine consumer reads
+ * stdout: a payload whose `changes` were empty for a facet the case layer had
+ * just moved would be a report of a file that does not exist.
+ */
+interface CaseVerdictWrite {
+  case: string;
+  verdict: 'pass' | 'fail' | 'inconclusive';
+  written: WriteVerdictReport['written'];
+  changes: WriteVerdictReport['changes'];
+  skipped: WriteVerdictReport['skipped'];
+  methodWritten: boolean;
+}
+
+/**
+ * The rows a record file states, in the shape the case layer reads.
+ *
+ * A record carries QUALIFIED NAMES and never element ids (D3 — ids are fresh on
+ * every load), so the elements are looked up by name in the model that was just
+ * written; a record naming something this file does not have is dropped here
+ * exactly as `attachEvidence` skipped it. `discharged` is reconstructed from the
+ * claim AND the engine that made it, because the two disagree on one word:
+ * `holds-at-values` is a discharge under `--engine literal`, which was asked for
+ * by name, and is not one under `--engine smt`.
+ */
+function judgedFromRecords(model: Model, records: readonly EvidenceRecord[]): JudgedObligation[] {
+  const byName = new Map<string, ElementRecord>();
+  for (const el of model.all()) {
+    const qn = qname(model, el.id);
+    if (qn !== '' && !byName.has(qn)) byName.set(qn, el);
+  }
+  const rows: JudgedObligation[] = [];
+  for (const record of records) {
+    const requirement = record.obligation.requirement;
+    if (requirement === null || requirement === '') continue;
+    const req = byName.get(requirement);
+    const clause = byName.get(record.obligation.clause);
+    if (!req || !clause) continue;
+    rows.push({
+      requirement: { id: req.id, qualifiedName: requirement },
+      shortId: record.obligation.shortId,
+      clause: { id: clause.id, qualifiedName: record.obligation.clause },
+      expression: record.obligation.expression,
+      claim: record.claim,
+      discharged:
+        record.claim === 'proved' ||
+        (record.engine === 'literal' && record.claim === 'holds-at-values'),
+      code: record.code ?? null,
+      detail: record.detail,
+    });
+  }
+  return rows;
+}
+
+/**
+ * The CASE half of an attach: the verdict facet a case reaches, and the one
+ * standard annotation this lane writes.
+ *
+ * WHY IT LIVES HERE AND NOT IN `attachEvidence`. A record is about one
+ * OBLIGATION; a case verdict is about a set of them, and the set is stated in
+ * the model rather than in the record file. So the records are re-read as the
+ * rows they are, the case layer rolls them up exactly as `verify` did, and
+ * {@link writeVerdict} writes what follows — the facet on each requirement the
+ * case verifies, and `@VerificationCases::VerificationMethod { kind = analyze; }`
+ * on a case that declared no method, so the file says which method the verdict
+ * was reached under rather than leaving a reader to assume it.
+ *
+ * TWO CASES ARE SKIPPED, and both refusals are the plan's. A case the method
+ * gate did not judge gets nothing written for it at all — that is what the gate
+ * is for. And a case carrying `verification/no-property` gets nothing either: it
+ * verifies requirements this run said nothing about, and writing `inconclusive`
+ * over them would replace evidence with the absence of it.
+ *
+ * Every facet this MOVES is printed, on stderr, beside the ones the record
+ * attach moved: a verdict that changes silently is the one thing this lane may
+ * never do.
+ */
+function writeCaseVerdicts(model: Model, records: readonly EvidenceRecord[]): CaseVerdictWrite[] {
+  const out: CaseVerdictWrite[] = [];
+  const judged = judgedFromRecords(model, records);
+  if (judged.length === 0) return out;
+  for (const c of runVerificationCases(model, { judged }).cases) {
+    if (!c.judged || c.code !== null) continue;
+    const w = writeVerdict(model, c);
+    out.push({
+      case: c.case.qualifiedName,
+      verdict: c.facet,
+      written: w.written,
+      changes: w.changes,
+      skipped: w.skipped,
+      methodWritten: w.methodWritten,
+    });
+    // EVERY REQUIREMENT WRITTEN IS NAMED, not only the ones whose facet moved.
+    // A facet written onto a requirement that carried none is still this tool
+    // putting a verdict in somebody's file, and the count alone does not say
+    // which requirement it landed on.
+    for (const written of w.written) {
+      process.stderr.write(
+        `sysprose evidence-attach: ${written.requirement} — verdict ${written.verdict} ` +
+          `written from ${c.case.qualifiedName}\n`,
+      );
+    }
+    for (const change of w.changes) {
+      process.stderr.write(
+        `sysprose evidence-attach: ${change.requirement} — verdict ${change.claimed} → ` +
+          `${change.computed} from ${c.case.qualifiedName}` +
+          `${change.overstates ? ' — the file claimed more than this run showed' : ''}\n`,
+      );
+    }
+    for (const s of w.skipped) {
+      process.stderr.write(
+        `sysprose evidence-attach: ${c.case.qualifiedName} — no verdict written on ${s.requirement}: ${s.reason}\n`,
+      );
+    }
+    if (w.methodWritten) {
+      process.stderr.write(
+        `sysprose evidence-attach: ${c.case.qualifiedName} declared no method — wrote the standard ` +
+          '`@VerificationCases::VerificationMethod { kind = analyze; }`, which is the method this verdict was reached under\n',
+      );
+    }
+    if (w.written.length > 0) {
+      process.stderr.write(
+        `sysprose evidence-attach: ${c.case.qualifiedName} verdict ${c.facet} — ` +
+          `${w.written.length} requirement facet(s) written from the case\n`,
+      );
+    }
+  }
+  return out;
+}
+
+/**
  * Write the records into the model and hand back the model as text.
  *
  * THE REPORT OF AN ATTACH IS THE FILE IT PRODUCED, which is why `text` is the
  * serialized model rather than a summary: `--out model.sysml` then does the one
  * thing a reader wants, and the summary — what was attached, what was already
  * there, and every verdict that MOVED — goes to stderr beside it. The verdict
- * changes are on stderr rather than in the payload for the reason the plan
+ * changes are on stderr AS WELL AS in the payload for the reason the plan
  * states: a `fail` replaced by a `pass` may never happen quietly, and stderr is
  * the stream a person sees even when stdout is being piped into a file.
  */
@@ -1777,7 +2015,16 @@ function reportEvidenceAttach(
       `${r.unchanged} already present, ${r.skipped.length} skipped; ` +
       `${r.verdicts.length} verdict facet(s) written\n`,
   );
-  return { json: r, text: modelText(model) };
+  // AFTER the records are in, because the case verdict is a roll-up of the rows
+  // they state and a model that declares no verification case is left exactly
+  // as `attachEvidence` left it.
+  const caseVerdicts = writeCaseVerdicts(model, records);
+  // THE PAYLOAD SAYS WHAT THE FILE SAYS. `attachEvidence`'s own report knows
+  // nothing about cases, so a `--json` body carrying it alone would state a
+  // verdict the artefact beside it does not contain — and would report an empty
+  // `changes` array for a facet the case layer had just moved. A machine
+  // consumer reads stdout and never sees stderr.
+  return { json: { ...r, caseVerdicts }, text: modelText(model) };
 }
 
 function reportEvidenceDetach(
@@ -1789,7 +2036,12 @@ function reportEvidenceDetach(
   const r: DetachReport = detachEvidence(model);
   process.stderr.write(
     `sysprose evidence-detach: ${r.removed} carrier(s) removed from ${r.elements.length} element(s), ` +
-      `${r.verdictsCleared.length} verdict facet(s) cleared with them\n`,
+      `${r.verdictsCleared.length} verdict facet(s) cleared with them` +
+      (r.methodAnnotationsRemoved.length > 0
+        ? `, and the tool-written \`@VerificationCases::VerificationMethod { kind = analyze; }\` off ` +
+          `${r.methodAnnotationsRemoved.join(', ')}`
+        : '') +
+      '\n',
   );
   return { json: r, text: modelText(model) };
 }

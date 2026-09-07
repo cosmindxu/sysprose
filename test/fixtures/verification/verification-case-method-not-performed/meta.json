@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A case whose method is `test` is not judged, and that is exit 2 over three discharged obligations",
+  "model": "examples/uav-isr-verification.sysml",
+  "engine": "literal",
+  "note": "The method gate, at the level the exit contract is read at. Every obligation in the file is discharged — the counts below say so — and the run is still exit 2, because `massBench` says `kind = test` and this tool performs analysis only. An unjudged case is not a refutation, so it is never exit 1."
+}

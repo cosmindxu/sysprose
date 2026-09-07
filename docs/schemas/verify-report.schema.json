@@ -67,6 +67,7 @@
         "free",
         "modelVersion",
         "records",
+        "cases",
         "diagnostics"
       ],
       "properties": {
@@ -89,7 +90,7 @@
         "vacuous": { "type": "integer", "minimum": 0 },
         "exitCode": {
           "enum": [0, 1, 2],
-          "description": "From the obligations alone. The top-level `verdict.exitCode` is this one with the degraded-model rule applied, and it is the one the process exits with."
+          "description": "The obligations and the verification cases together, under the ordering the contract states — 1 beats 2 beats 0, which is not the numeric order. The top-level `verdict.exitCode` is this one with the degraded-model rule applied, and it is the one the process exits with. A model that declares no verification case is decided by its obligations alone, because `cases.exitCode` is 0 over an empty list."
         },
         "allowInconclusive": { "type": "boolean" },
         "free": { "type": "array", "items": { "type": "string" } },
@@ -104,7 +105,102 @@
         },
         "modelVersion": { "type": "object" },
         "records": { "type": "array" },
+        "cases": { "$ref": "#/definitions/caseReport" },
         "diagnostics": { "type": "array" }
+      }
+    },
+    "caseReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The verification cases the model declares, each with a computed verdict. ALWAYS PRESENT, and empty for a model that declares none.",
+      "required": ["cases", "passed", "failed", "inconclusive", "notPerformed", "exitCode"],
+      "properties": {
+        "cases": { "type": "array", "items": { "$ref": "#/definitions/caseVerdict" } },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "inconclusive": { "type": "integer", "minimum": 0 },
+        "notPerformed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cases the method gate refused to judge because this tool performs analysis only. Always inconclusive, always exit 2, and `--allow-inconclusive` never lowers one: an unjudged case is not a refutation, and it is not a forgivable undecidedness either."
+        },
+        "exitCode": {
+          "enum": [0, 1, 2],
+          "description": "What the cases contribute to the run: 1 for a case the model refutes, 2 for one this tool would not or could not judge, 0 when every case passed AND when there is no case at all."
+        },
+        "caseId": {
+          "type": "string",
+          "description": "Present only under `--case REF`: the element id the report was narrowed to. Element ids are fresh on every load (D3), so key on `case` instead — this is here to join the report to the rest of one run, never to identify a case across runs."
+        },
+        "case": {
+          "type": "string",
+          "description": "Present only under `--case REF`: the QUALIFIED NAME the report was narrowed to, the same value a record's `flags.case` carries. This is the field a consumer can key on."
+        }
+      }
+    },
+    "caseVerdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case",
+        "shortId",
+        "method",
+        "judged",
+        "verdict",
+        "facet",
+        "code",
+        "detail",
+        "verifies",
+        "facets",
+        "dangling",
+        "obligations",
+        "changed"
+      ],
+      "properties": {
+        "case": { "type": "object" },
+        "shortId": { "type": "string" },
+        "method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["declared", "performed", "notPerformed", "unrecognised", "declaresMethod"],
+          "description": "What the case's `@VerificationCases::VerificationMethod { kind = …; }` says, READ rather than judged. `analyze` is the only method this tool performs.",
+          "properties": {
+            "declared": { "type": "array", "items": { "type": "string" } },
+            "performed": { "type": "array", "items": { "type": "string" } },
+            "notPerformed": { "type": "array", "items": { "type": "string" } },
+            "unrecognised": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Spellings that name no `VerificationMethodKind` this tool knows. They are reported, never read as `analyze`: an unrecognised kind fails towards not-performed."
+            },
+            "declaresMethod": { "type": "boolean" }
+          }
+        },
+        "judged": {
+          "type": "boolean",
+          "description": "False only for a method gate — a different fact from an inconclusive verdict. One says the tool did not look; the other says it looked and could not tell."
+        },
+        "verdict": {
+          "enum": ["pass", "fail", "inconclusive", "error"],
+          "description": "The library `PassIf` reading, over the engine that was asked for. This is the word the exit code is computed from."
+        },
+        "facet": {
+          "enum": ["pass", "fail", "inconclusive"],
+          "description": "The word that may be WRITTEN INTO THE FILE, which is the stricter question: `pass` only when every obligation was `proved`. Under `--engine literal` a case is legitimately `verdict: pass` and `facet: inconclusive`."
+        },
+        "code": { "type": ["string", "null"] },
+        "detail": { "type": "string" },
+        "verifies": { "type": "array" },
+        "facets": {
+          "type": "array",
+          "description": "The PER-REQUIREMENT roll-up the verdict facet is written from: one entry per verified requirement, with the facet ITS own rows reach. `facet: null` means this run produced no obligation row for that requirement, and nothing is written onto it — a case's word is a summary over a set, and stamping it onto a member the run never looked at would put a `pass` on a requirement nobody checked."
+        },
+        "dangling": { "type": "array" },
+        "obligations": { "type": "array" },
+        "changed": {
+          "type": "array",
+          "description": "`verdict` facets already in the file that say something other than what this run computed. Reported, never rewritten here."
+        }
       }
     },
     "obligationVerdict": {

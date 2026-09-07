@@ -86,6 +86,14 @@ import {
   type ConsistencyResult,
 } from '../semantics/consistency';
 import {
+  METHOD_NOT_PERFORMED_CODE,
+  VERDICT_CHANGED_CODE,
+  VERIFICATION_CASE_CODES,
+  runVerificationCases,
+  type VerificationCaseReport,
+  type VerificationCaseVerdict,
+} from '../semantics/verify';
+import {
   CLAIMED_WITHOUT_EVIDENCE_CODE,
   VERDICT_OVERSTATES_EVIDENCE_CODE,
   modelVersionOf,
@@ -750,6 +758,18 @@ export interface VerifyOptions {
   sourceText?: string;
   /** The command a reader could re-run, recorded in every record. */
   producedBy?: string;
+  /**
+   * Judge ONE verification case: report only its obligations, and let its
+   * verdict decide the run.
+   *
+   * The model is still judged WHOLE — every axiom the file states stays in the
+   * proof context — and only the REPORT is narrowed, to the obligations of the
+   * requirements this case verifies. Narrowing the worklist instead would drop
+   * the feature values and `assert constraint` bodies the case's own obligation
+   * stands on, and a proof under a context the reader did not remove is a proof
+   * about a different model.
+   */
+  caseId?: ElementId;
 }
 
 /**
@@ -849,6 +869,18 @@ export interface VerifyReport {
   modelVersion: ModelVersion;
   /** One record per obligation, ready to write with `--record`. */
   records: EvidenceRecord[];
+  /**
+   * The verification cases this model declares, each with a computed verdict.
+   *
+   * ALWAYS PRESENT, and empty for a model that declares none — which is why
+   * adding it moved no verdict in the corpus: `cases.exitCode` is 0 over an
+   * empty list, so a file with no verification case is decided by its
+   * obligations exactly as it was before. What it CAN move is a file that has
+   * one: a case whose method this tool does not perform is exit 2 however
+   * cleanly every obligation under it was discharged, because a verdict was
+   * never given for it.
+   */
+  cases: VerificationCaseReport;
   diagnostics: Diagnostic[];
 }
 
@@ -1011,6 +1043,10 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   // must explain, whichever module raises it.
   CLAIMED_WITHOUT_EVIDENCE_CODE,
   VERDICT_OVERSTATES_EVIDENCE_CODE,
+  // The three the case layer raises. Gathered from `src/semantics/verify.ts`
+  // rather than retyped, for the same reason as the two above: the catalogue
+  // guard reads this set, and a code spelled twice is a code that drifts.
+  ...VERIFICATION_CASE_CODES,
 ]);
 
 /**
@@ -1144,7 +1180,7 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
     }
   }
 
-  const results: ObligationVerdict[] = await judge({
+  const judged: ObligationVerdict[] = await judge({
     model,
     rows,
     engine,
@@ -1154,6 +1190,25 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
     strictVacuity,
     allowInconclusive,
   });
+
+  // THE CASES ARE JUDGED FROM THE WHOLE RUN, and the report is narrowed after.
+  // A case's verdict stands on obligations that stand on the model's own
+  // axioms, so filtering the worklist before judging would decide `--case` under
+  // a context the reader never removed.
+  const cases = runVerificationCases(model, {
+    judged,
+    ...(opts.caseId !== undefined ? { caseId: opts.caseId } : {}),
+    toolAbsent,
+  });
+  const results =
+    opts.caseId === undefined
+      ? judged
+      : (() => {
+          const kept = new Set<ElementId>(
+            cases.cases.flatMap((c) => c.obligations.map((o) => o.clause.id)),
+          );
+          return judged.filter((r) => kept.has(r.clause.id));
+        })();
 
   const discharged = results.filter((r) => r.discharged).length;
   const violated = results.filter((r) => r.claim === 'refuted').length;
@@ -1173,7 +1228,7 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
     designAdmitted,
     forgiven,
     vacuous,
-    exitCode: exitCodeOf(results, toolAbsent),
+    exitCode: worseOf(exitCodeOf(results, toolAbsent), cases.exitCode),
     allowInconclusive,
     free,
     timeoutMs: engine === 'smt' && !toolAbsent ? timeoutMs : null,
@@ -1209,10 +1264,83 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
         // stronger of the two.
         ...(engine === 'smt' ? { timeoutMs } : {}),
         ...(strictVacuity ? { strictVacuity } : {}),
+        // WHICH CASE, when one was named. `--case` changes which obligations
+        // the record set is about, so a record file that did not carry it
+        // would replay as a run over the whole model — a strictly larger claim
+        // than the one that was made. It is the qualified name rather than the
+        // element id for the reason every other name in a record is (D3): ids
+        // are fresh on every load and a record keyed on one is unreplayable.
+        ...(opts.caseId !== undefined ? { case: model.qualifiedName(opts.caseId) } : {}),
       },
     }),
-    diagnostics: numbered(results.filter((r) => r.code !== null).map(verdictFinding)),
+    cases,
+    diagnostics: numbered([
+      ...results.filter((r) => r.code !== null).map(verdictFinding),
+      ...cases.cases.flatMap(caseFindings),
+    ]),
   };
+}
+
+/**
+ * The worse of two exit codes, under the ordering the contract states.
+ *
+ * **1 beats 2 beats 0**, which is not the numeric order and is exactly why this
+ * is a named function rather than a `Math.max`. A refutation is the loudest
+ * thing this lane can say and nothing outranks it; an inconclusive outranks a
+ * clean sweep; and a run is green only when both halves are.
+ */
+function worseOf(a: 0 | 1 | 2, b: 0 | 1 | 2): 0 | 1 | 2 {
+  if (a === 1 || b === 1) return 1;
+  if (a === 2 || b === 2) return 2;
+  return 0;
+}
+
+/**
+ * One case's findings, as diagnostics under the lane's single source.
+ *
+ * TWO KINDS OF ROW, and they say different things. The case's own `code` — an
+ * unperformed method, no property to check — is why the case has no verdict.
+ * `verification/verdict-changed` is about the FILE: a `verdict` facet already in
+ * it that says something other than what this run computed. Neither is an
+ * error: the first says what the tool did not do, and the second says two
+ * artefacts disagree, which a reader resolves by re-attaching or re-running
+ * rather than by fixing a defect. A `pass` in the file over a run that did not
+ * prove it is called out by name on the row all the same.
+ */
+function caseFindings(c: VerificationCaseVerdict): Finding[] {
+  const out: Finding[] = [];
+  if (c.code !== null) {
+    out.push({
+      // READ FROM THE CODE, exactly as `verdictFinding` does and for the reason
+      // its docstring gives: a second copy of a severity that nothing compares
+      // is a copy that drifts, and promoting a case code to `error` in the
+      // catalogue would otherwise leave this line at `info` while
+      // docs/DIAGNOSTIC-CODES.md printed `error`.
+      severity: VERIFICATION_ERROR_CODES.has(c.code) ? 'error' : 'info',
+      message: `${c.case.qualifiedName}: ${c.detail}`,
+      elementId: c.case.id,
+      elementName: c.case.qualifiedName,
+      code: c.code,
+      hint:
+        c.code === METHOD_NOT_PERFORMED_CODE
+          ? 'This tool performs analysis only. Add `analyze` to the case’s `@VerificationCases::VerificationMethod { kind = …; }` if analysis is what you want it to do, or read the row as what it says: the case was not judged. It exits 2 with and without `--allow-inconclusive`, and it is never exit 1.'
+          : 'Point the case at a requirement that states a formal clause — `verify R by <case>;` or `objective { verify R; }` — or read the row as what it says: there was no property for this case to check. Run `npm run sysprose -- obligations <file> --missing` for what the model states and what it does not.',
+    });
+  }
+  for (const change of c.changed) {
+    out.push({
+      severity: VERIFICATION_ERROR_CODES.has(VERDICT_CHANGED_CODE) ? 'error' : 'info',
+      message:
+        `${change.requirement}: the file says \`verdict = "${change.claimed}"\`; this run computes ` +
+        `\`${change.computed}\` from ${c.case.qualifiedName}` +
+        (change.overstates ? ' — the file claims more than this run showed' : ''),
+      elementId: c.case.id,
+      elementName: c.case.qualifiedName,
+      code: VERDICT_CHANGED_CODE,
+      hint: 'A `verdict` facet is ordinary requirements management and may have been reached by inspection, so this is a disagreement rather than a defect. `verify --record` then `evidence-attach` rewrites the facet from the claim; `evidence-detach` takes it off. Nothing here changes the file.',
+    });
+  }
+  return out;
 }
 
 /**

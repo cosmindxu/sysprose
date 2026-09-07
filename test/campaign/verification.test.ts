@@ -59,19 +59,25 @@ import { resolve } from 'node:path';
 import type { Model } from '@core/index';
 import {
   ALLOW_INCONCLUSIVE_CODES,
+  attachEvidence,
   canonicalElements,
   consistencyReport,
+  detachEvidence,
+  evidenceStatus,
   isUserElement,
   modelVersionOf,
   sha256Hex,
   toolVersion,
+  traceabilityMatrix,
+  VERIFICATION_ERROR_CODES,
   verifyModel,
   type VerifyEngineOption,
   type VerifyReport,
 } from '@api/index';
-import { checkConsistency, READING } from '@semantics/index';
+import { checkConsistency, READING, runVerificationCases, writeVerdict } from '@semantics/index';
 import { loadZ3, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
+import { serializeModel } from '@text/serializer';
 
 const root = (p: string) => resolve(process.cwd(), p);
 const read = (p: string) => readFileSync(root(p), 'utf8');
@@ -1651,6 +1657,721 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
       'README.md',
     ]) {
       expect(speech(file), `${file} says the reserved word to a reader`).not.toMatch(/realiz|realis/i);
+    }
+  });
+});
+
+/**
+ * L8 — verification cases: the method gate, and the two verdict words.
+ *
+ * These cases sit beside the golden-verdict corpus rather than inside it. A
+ * golden pins the OBLIGATION rows of a run and the exit code they add up to,
+ * which is exactly what the four new corpus directories here pin — that the
+ * shipped example is exit 2 with every obligation in it discharged, and exit 2
+ * again with `--allow-inconclusive`. What a golden cannot pin is the sentence
+ * the gate prints and the difference between the two verdict words, because the
+ * projection a golden is taken over does not carry a case at all. So the
+ * corpus holds the exit contract and this block holds the reasoning behind it.
+ */
+describe('L8 — the verification-case method gate', () => {
+  const EXAMPLE = 'examples/uav-isr-verification.sysml';
+
+  async function casesOf(
+    path: string,
+    opts: { engine?: VerifyEngineOption; allowInconclusive?: boolean } = {},
+  ): Promise<VerifyReport> {
+    const model = await modelFor(path);
+    return verifyModel(model, {
+      engine: opts.engine ?? 'literal',
+      allowInconclusive: opts.allowInconclusive === true,
+      sourceText: read(path),
+    });
+  }
+
+  const named = (r: VerifyReport, name: string) => {
+    const c = r.cases.cases.find((x) => x.case.qualifiedName.endsWith(`::${name}`));
+    if (!c) throw new Error(`${name} is not among ${r.cases.cases.map((x) => x.case.qualifiedName).join(', ')}`);
+    return c;
+  };
+
+  it('judges the analyze case, and attaches the obligation rows the verdict stands on', async () => {
+    const r = await casesOf(EXAMPLE);
+    const c = named(r, 'enduranceAnalysis');
+    expect(c.judged, 'a case declaring `analyze` is judged').toBe(true);
+    expect(c.method.declared).toEqual(['analyze']);
+    expect(c.method.notPerformed).toEqual([]);
+    expect(c.verdict).toBe('pass');
+    expect(c.code).toBeNull();
+    // The rows are ON the case, not merely counted by it: a verdict a reader
+    // cannot expand into the obligations it was computed from is a verdict they
+    // have to take on trust.
+    expect(c.obligations.map((o) => o.expression)).toEqual(['uav.endurance >= 45.0 [min]']);
+    expect(c.obligations[0].claim).toBe('holds-at-values');
+    // THE TWO WORDS DIVERGE HERE, and that is the point of having two. The run
+    // is green because `--engine literal` was asked for by name; the file may
+    // still not say `pass` about a point evaluation.
+    expect(c.facet).toBe('inconclusive');
+  });
+
+  it('does not judge a `test` case at all, and says which method it was', async () => {
+    const c = named(await casesOf(EXAMPLE), 'massBench');
+    expect(c.judged, 'this tool performs analysis only').toBe(false);
+    expect(c.method.declared).toEqual(['test']);
+    expect(c.method.performed).toEqual([]);
+    expect(c.code).toBe('verification/method-not-performed');
+    expect(c.detail).toContain('inconclusive: method is test — this tool performs analysis only');
+    expect(c.verdict).toBe('inconclusive');
+    expect(c.facet).toBe('inconclusive');
+    // NOT JUDGED IS NOT NOT-HOLDING. The case reads a requirement that is
+    // perfectly true at the model's values, and none of that reaches the verdict.
+    expect(c.verifies.map((v) => v.requirement.qualifiedName)).toEqual([
+      'UAVSurveillanceVerification::MassRequirement',
+    ]);
+    expect(c.obligations, 'an unjudged case computes no rows').toEqual([]);
+  });
+
+  it('is exit 2 with and without --allow-inconclusive, and never exit 1', async () => {
+    // The flag's scope is stated over CODES (§2): `verification/timeout` and
+    // `verification/unsupported-construct`. An unperformed method is neither,
+    // and there is no `--allow-unperformed` to add it.
+    expect(ALLOW_INCONCLUSIVE_CODES).not.toContain('verification/method-not-performed');
+    const plain = await casesOf(EXAMPLE);
+    const forgiven = await casesOf(EXAMPLE, { allowInconclusive: true });
+    for (const r of [plain, forgiven]) {
+      // Every obligation in the file holds at its values — the exit code is 2
+      // for the CASE, not for anything the engine could not decide.
+      expect(r.violated).toBe(0);
+      expect(r.inconclusive).toBe(0);
+      expect(r.discharged).toBe(3);
+      expect(r.exitCode).toBe(2);
+    }
+    expect(forgiven.forgiven, 'nothing was forgiven, because nothing was forgivable').toBe(0);
+    expect(
+      plain.diagnostics.some((d) => d.code === 'verification/method-not-performed'),
+      'the gate reaches the report as a code, not only as prose',
+    ).toBe(true);
+    // AND THE SEVERITY IS READ FROM THE CODE, never fixed at `info`. A second
+    // copy of a severity nothing compares is a copy that drifts: promote a case
+    // code to `error` in the catalogue and a hardcoded line would keep emitting
+    // `info` while docs/DIAGNOSTIC-CODES.md printed `error`, which is the exact
+    // drift `verdictFinding`'s own docstring was written against.
+    for (const d of plain.diagnostics) {
+      if (!d.code?.startsWith('verification/')) continue;
+      expect(d.severity, `${d.code} disagrees with VERIFICATION_ERROR_CODES`).toBe(
+        VERIFICATION_ERROR_CODES.has(d.code) ? 'error' : 'info',
+      );
+    }
+  });
+
+  it('judges a mixed `kind = (analyze, test)` case on the analyze part and reports the rest', async () => {
+    const c = named(await casesOf(EXAMPLE), 'linkQualification');
+    expect(c.method.declared).toEqual(['analyze', 'test']);
+    expect(c.method.performed).toEqual(['analyze']);
+    expect(c.method.notPerformed).toEqual(['test']);
+    expect(c.judged).toBe(true);
+    expect(c.verdict).toBe('pass');
+    expect(c.detail).toContain('test not performed by this tool');
+    expect(c.obligations.map((o) => o.expression)).toEqual(['uav.radio.range >= 20.0 [km]']);
+  });
+
+  it('fails a case over a refuted requirement, with the witness on the row beneath it', async () => {
+    const path = 'test/fixtures/verification/models/verification-case-refuted.sysml';
+    const r = await casesOf(path);
+    const c = named(r, 'massAnalysis');
+    expect(c.judged).toBe(true);
+    expect(c.verdict).toBe('fail');
+    expect(c.facet).toBe('fail');
+    expect(c.detail).toContain('refuted with every feature at its model value');
+    expect(r.exitCode, 'a refuted case is the one thing that is exit 1').toBe(1);
+    // The witness is the engine's, read off the row the case stands on — the
+    // case layer never re-argues a verdict and never invents a counterexample.
+    const row = r.results.find((v) => v.claim === 'refuted');
+    expect(row?.bindings.map((b) => b.path)).toContain('chassis.mass');
+    expect(row?.bindings.find((b) => b.path === 'chassis.mass')?.value).toBe(3000);
+  });
+
+  it('reports a case with no property to check, and the near miss that is not one', async () => {
+    const r = await casesOf('test/fixtures/verification/models/verification-case-no-property.sysml');
+
+    // NAMES NOTHING AT ALL — the plainest shape.
+    const empty = named(r, 'emptyCase');
+    expect(empty.judged, 'the method is fine; it is the property that is missing').toBe(true);
+    expect(empty.code).toBe('verification/no-property');
+    expect(empty.detail).toContain('names no requirement at all');
+
+    // NAMES SOMETHING THAT IS NOT A REQUIREMENT. `objective { verify chassis; }`
+    // never becomes a `Verify` edge at all — the mapper keeps the CLAUSE
+    // reading for a name that does not resolve to a requirement — so a report
+    // that walked only the edges would say this case names nothing, over a file
+    // that plainly states a `verify`. It is read off containment and listed as
+    // dangling, with the name as written.
+    const part = named(r, 'partWatch');
+    expect(part.code).toBe('verification/no-property');
+    expect(part.verifies).toEqual([]);
+    expect(part.dangling.map((d) => d.named)).toEqual(['chassis']);
+    expect(part.detail).toContain('`chassis` is not a requirement in this model');
+
+    // THE NEAR MISS, and it is deliberately NOT `no-property`: the case names a
+    // real requirement, and that requirement's own row is the one that could
+    // not be decided. There was a property to look for, and looking for it is
+    // what failed — a distinction a reader acts on differently.
+    const prose = named(r, 'proseWatch');
+    expect(prose.judged).toBe(true);
+    expect(prose.code).toBeNull();
+    expect(prose.verdict).toBe('inconclusive');
+    expect(prose.obligations.map((o) => o.code)).toEqual(['verification/unsupported-construct']);
+
+    expect(r.exitCode, 'a case that checked nothing has not passed').toBe(2);
+
+    // AND NO FLAG LOWERS THE CASE-LEVEL CODE, even where it legitimately
+    // forgives the row beneath it: `verification/unsupported-construct` IS in
+    // the flag's scope and is forgiven here, and the run is still exit 2
+    // because two cases in the file have no property to check.
+    const forgiven = await casesOf(
+      'test/fixtures/verification/models/verification-case-no-property.sysml',
+      { allowInconclusive: true },
+    );
+    expect(forgiven.forgiven, 'the unsupported-construct row is forgivable').toBe(1);
+    expect(forgiven.exitCode, '`verification/no-property` is not').toBe(2);
+  });
+
+  it('finds both spellings, and says which one a traceability matrix could have seen', async () => {
+    const model = await modelFor(EXAMPLE);
+    const r = await casesOf(EXAMPLE);
+    const found = r.cases.cases.flatMap((c) =>
+      c.verifies.map((v) => `${c.case.qualifiedName} -${v.via}-> ${v.requirement.qualifiedName}`),
+    );
+    expect(found.sort()).toEqual([
+      'UAVSurveillanceVerification::enduranceAnalysis -objective-> UAVSurveillanceVerification::EnduranceRequirement',
+      'UAVSurveillanceVerification::linkQualification -objective-> UAVSurveillanceVerification::RangeRequirement',
+      'UAVSurveillanceVerification::massBench -relationship-> UAVSurveillanceVerification::MassRequirement',
+    ]);
+    // THE CROSS-CHECK, and the reason it is not an equality. `trace --relation
+    // verify` walks source→target pairs; `objective { verify R; }` builds a
+    // `Verify` whose source is EMPTY, because the case OWNS it rather than
+    // being one of its endpoints. So the matrix sees exactly the
+    // `verify R by V;` rows and no others — one link where the file states
+    // three — and that is a property of the matrix, not a defect in it.
+    const matrix = traceabilityMatrix(
+      model,
+      'VerificationCaseUsage',
+      'RequirementDefinition',
+      'Verify',
+    );
+    expect(matrix.links.length).toBe(1);
+    const relationshipRows = found.filter((f) => f.includes('-relationship->'));
+    expect(
+      relationshipRows.length,
+      'every row the matrix can see must be a row this report found',
+    ).toBe(matrix.links.length);
+    const linked = matrix.links.map(
+      (l) =>
+        `${model.qualifiedName(l.from)} -relationship-> ${model.qualifiedName(l.to)}`,
+    );
+    expect(relationshipRows.sort()).toEqual(linked.sort());
+  });
+
+  it('refuses to write a verdict for a case the method gate did not judge', async () => {
+    // The one throw in this module, and the charter it enforces: a verdict
+    // written for a method this tool did not perform is what the gate exists to
+    // prevent, so the write path may not quietly write `inconclusive` instead.
+    const { model } = await loadModelText(read(EXAMPLE), { fileName: EXAMPLE });
+    if (!model) throw new Error('the example produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: read(EXAMPLE) });
+    const bench = r.cases.cases.find((c) => c.case.qualifiedName.endsWith('::massBench'));
+    expect(bench).toBeDefined();
+    expect(() => writeVerdict(model, bench!)).toThrow(/was not judged/);
+  });
+
+  it('record then attach puts the facet and the standard method annotation in the file', async () => {
+    // The pipeline of §3.4, in process: the record carries the CLAIM, the facet
+    // is derived from it, and `@VerificationCases::VerificationMethod` is
+    // written onto a case that stated no method — the one standard slot this
+    // lane writes, so the file says which method the verdict was reached under.
+    const source = `package RecordThenAttach {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        attribute id = "R-1";
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    verification massAnalysis {
+        subject chassis : Chassis;
+        objective { verify MassLimit; }
+    }
+    satisfy MassLimit by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'record-then-attach.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    const c = r.cases.cases[0];
+    expect(c.method.declaresMethod, 'the case states no method at all').toBe(false);
+    expect(c.judged, 'a case that states no method is judged on the analyze part').toBe(true);
+    attachEvidence(model, r.records);
+    const written = writeVerdict(model, c);
+    expect(written.written).toEqual([
+      { requirement: 'RecordThenAttach::MassLimit', verdict: 'inconclusive' },
+    ]);
+    expect(written.methodWritten).toBe(true);
+    const text = serializeModel(model);
+    expect(text).toContain('attribute verdict = "inconclusive"');
+    expect(text).toContain('@VerificationCases::VerificationMethod');
+    expect(text).toContain('attribute kind = analyze');
+    // Idempotent from here: the case now DECLARES a method, so a second write
+    // does not stack a second annotation on it.
+    const second = await verifyModel(model, { engine: 'literal', sourceText: text });
+    expect(writeVerdict(model, second.cases.cases[0]).methodWritten).toBe(false);
+  });
+
+  it('never writes `pass` into a file over a point evaluation', async () => {
+    // The laundering the plan forbids, checked at the two places it could
+    // happen: the facet the case computes, and the bytes a write produces.
+    const { model } = await loadModelText(read(EXAMPLE), { fileName: EXAMPLE });
+    if (!model) throw new Error('the example produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: read(EXAMPLE) });
+    for (const c of r.cases.cases) {
+      expect(c.facet, `${c.case.qualifiedName} wrote a pass over a literal run`).not.toBe('pass');
+      if (c.judged && c.code === null) writeVerdict(model, c);
+    }
+    expect(serializeModel(model)).not.toContain('attribute verdict = "pass"');
+  });
+
+  it('an unrecognised method spelling fails towards not-performed, never towards a verdict', async () => {
+    const source = `package MisspeltMethod {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    verification massAnalyse {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute kind = analyse; }
+        objective { verify MassLimit; }
+    }
+    satisfy MassLimit by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'misspelt-method.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    const c = r.cases.cases[0];
+    expect(c.method.declared, 'a spelling this tool cannot read is not `analyze`').toEqual([]);
+    expect(c.method.unrecognised).toEqual(['analyse']);
+    expect(c.judged).toBe(false);
+    expect(c.code).toBe('verification/method-not-performed');
+    // The word is NAMED, so a reader can see which spelling was not understood.
+    expect(c.detail).toContain('analyse');
+    expect(r.exitCode).toBe(2);
+  });
+
+  it('reports a `verdict` facet the file states and this run does not compute', async () => {
+    const source = `package VerdictChanged {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+        metadata RequirementMetadata { attribute verdict = "pass"; }
+    }
+    verification massAnalysis {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute kind = analyze; }
+        objective { verify MassLimit; }
+    }
+    satisfy MassLimit by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'verdict-changed.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    const c = r.cases.cases[0];
+    expect(c.changed).toEqual([
+      {
+        requirement: 'VerdictChanged::MassLimit',
+        claimed: 'pass',
+        computed: 'inconclusive',
+        overstates: true,
+      },
+    ]);
+    const finding = r.diagnostics.find((d) => d.code === 'verification/verdict-changed');
+    expect(finding, 'the disagreement reaches the report').toBeDefined();
+    expect(finding?.severity, 'a facet reached by inspection is not a defect').toBe('info');
+    expect(finding?.message).toContain('the file claims more than this run showed');
+    // NOTHING IS REWRITTEN BY REPORTING IT.
+    expect(serializeModel(model)).toContain('attribute verdict = "pass"');
+  });
+
+  it('reads the method in every spelling the notation has, including an inherited one', async () => {
+    // THE GATE'S FAIL DIRECTION, MEASURED. `declaresMethod: false` is the arm
+    // that JUDGES, so a spelling this reader cannot see is a `test` case that
+    // passes. Four of them parse clean and were invisible: the bare `metadata
+    // VerificationMethod` form (the DEFINITION name lands in `declaredName`,
+    // the same fact `getRequirementMetadata` reads), the typed `metadata vm :
+    // …` form (the name lands on a `FeatureTyping` child and the usage's own
+    // `attrs` are empty), the `attribute :>> kind` redefinition cell (no
+    // declared name at all), and a method declared once on a `verification def`
+    // and inherited by its usages, which is the standard factoring.
+    const source = `package Spellings {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    verification bareMetadata {
+        subject chassis : Chassis;
+        metadata VerificationMethod { attribute kind = test; }
+        objective { verify MassLimit; }
+    }
+    verification typedMetadata {
+        subject chassis : Chassis;
+        metadata vm : VerificationCases::VerificationMethod { attribute kind = test; }
+        objective { verify MassLimit; }
+    }
+    verification redefinedCell {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute :>> kind = test; }
+        objective { verify MassLimit; }
+    }
+    verification def BenchDef {
+        @VerificationCases::VerificationMethod { attribute kind = test; }
+    }
+    verification inheritedMethod : BenchDef {
+        subject chassis : Chassis;
+        objective { verify MassLimit; }
+    }
+    satisfy MassLimit by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'spellings.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    for (const name of ['bareMetadata', 'typedMetadata', 'redefinedCell', 'inheritedMethod']) {
+      const c = named(r, name);
+      expect(c.method.declared, `${name}: the method was not read`).toEqual(['test']);
+      expect(c.judged, `${name} was judged over a method this tool does not perform`).toBe(false);
+      expect(c.code).toBe('verification/method-not-performed');
+    }
+    expect(r.exitCode).toBe(2);
+    // AND AN ANNOTATION THIS TOOL DOES NOT UNDERSTAND IS NOT A METHOD. A case
+    // may carry any metadata at all, and a gate that shut on every unread
+    // annotation would refuse to judge models that say nothing about a method.
+    const quiet = `package QuietAnnotation {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    verification massAnalysis {
+        subject chassis : Chassis;
+        @Nonsense { attribute note = "not a method"; }
+        objective { verify MassLimit; }
+    }
+    satisfy MassLimit by chassis;
+}
+`;
+    const quietModel = (await loadModelText(quiet, { fileName: 'quiet.sysml' })).model;
+    if (!quietModel) throw new Error('the probe produced no model');
+    const q = await verifyModel(quietModel, { engine: 'literal', sourceText: quiet });
+    expect(q.cases.cases[0].method.declaresMethod).toBe(false);
+    expect(q.cases.cases[0].judged).toBe(true);
+  });
+
+  it('reads a case usage’s `verify` targets through the definition it specializes', async () => {
+    // THE MIRROR OF THE GATE BUG, and it is a FALSE diagnostic rather than a
+    // false pass: a def/usage model whose objective lives on the definition
+    // reported `verification/no-property` — "it names no requirement at all" —
+    // over a file that plainly states one, and forced the run to exit 2.
+    const source = `package DefUsageAnalyze {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    verification def MassCase {
+        @VerificationCases::VerificationMethod { attribute kind = analyze; }
+        objective { verify MassLimit; }
+    }
+    verification massAnalysis : MassCase { subject chassis : Chassis; }
+    satisfy MassLimit by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'def-usage.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    const usage = named(r, 'massAnalysis');
+    expect(usage.code, 'the usage inherits the objective its definition states').toBeNull();
+    expect(usage.method.declared).toEqual(['analyze']);
+    expect(usage.verifies.map((v) => v.requirement.qualifiedName)).toEqual([
+      'DefUsageAnalyze::MassLimit',
+    ]);
+    expect(usage.verdict).toBe('pass');
+    expect(r.exitCode).toBe(0);
+  });
+
+  it('judges a case that states its property directly, rather than calling it propertyless', async () => {
+    // `objective { require constraint { … } }` is the spelling `contractsOf`
+    // reads as a contract whose subject is the CASE, so the obligation row it
+    // produces is filed under the case rather than under a requirement.
+    // Ignoring those rows printed two rows about one element that contradicted
+    // each other: the case's own obligation, and, two lines below it, "it names
+    // no requirement at all".
+    const source = `package ObjConstraint {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    verification massCheck {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute kind = analyze; }
+        objective { require constraint { chassis.mass <= 25.0 [kg] } }
+    }
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'obj-constraint.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    const c = named(r, 'massCheck');
+    expect(r.results.length, 'the case owns an obligation row').toBe(1);
+    expect(c.code, 'a case with its own obligation row is not propertyless').toBeNull();
+    expect(c.obligations.length).toBe(1);
+    expect(c.obligations[0].expression).toBe('chassis.mass <= 25.0 [kg]');
+    // Nothing to write a facet onto: the property is the case's own, and the
+    // facet lives on a requirement.
+    expect(writeVerdict(model, c).written).toEqual([]);
+  });
+
+  it('a `#prose` requirement leaves its case propertyless, and the catalogue says so', async () => {
+    // The OTHER half of the `no-property` sentence, and the reachable one. An
+    // UNTAGGED prose requirement raises a row of its own
+    // (`verification/unsupported-construct`), so its case is judged; a `#prose`
+    // tag says the requirement is deliberately informal and it contributes no
+    // row at all, so a case that verifies nothing else has nothing to check.
+    const source = `package ProseTagged {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    #prose requirement def Appearance {
+        doc /* The chassis shall present a finished appearance. */
+        subject chassis : Chassis;
+    }
+    verification proseWatch {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute kind = analyze; }
+        objective { verify Appearance; }
+    }
+    satisfy Appearance by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'prose-tagged.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    const c = named(r, 'proseWatch');
+    expect(r.results, 'a `#prose` requirement states no obligation').toEqual([]);
+    expect(c.judged).toBe(true);
+    expect(c.code).toBe('verification/no-property');
+    expect(c.detail).toContain('state no formal clause this lane could gather');
+    expect(r.exitCode).toBe(2);
+    // Nothing is written onto a requirement this run said nothing about.
+    expect(writeVerdict(model, c).written).toEqual([]);
+  });
+
+  it('rolls the verdict facet up per requirement, never per case', async () => {
+    // THE FACET IS ABOUT ONE REQUIREMENT. Stamping the case's word onto each of
+    // the requirements it verifies made the file contradict itself: `fail` on a
+    // requirement this same run showed holding, right beside an `@Evidence`
+    // carrier saying `holds-at-values`.
+    const source = `package TwoReqs {
+    part def Chassis {
+        attribute mass : ISQ::MassValue = 3000.0 [kg];
+        attribute width : ISQ::LengthValue = 1.5 [m];
+    }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 2000.0 [kg] }
+    }
+    requirement def WidthLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.width <= 2.0 [m] }
+    }
+    verification bothAnalysis {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute kind = analyze; }
+        objective { verify MassLimit; verify WidthLimit; }
+    }
+    satisfy MassLimit by chassis;
+    satisfy WidthLimit by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'two-reqs.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    const c = named(r, 'bothAnalysis');
+    expect(c.verdict, 'one refuted obligation fails the case').toBe('fail');
+    expect(c.facet).toBe('fail');
+    // …and the per-requirement roll-up disagrees with it, correctly.
+    expect(c.facets).toEqual([
+      { requirementId: expect.any(String), requirement: 'TwoReqs::MassLimit', facet: 'fail', rows: 1 },
+      {
+        requirementId: expect.any(String),
+        requirement: 'TwoReqs::WidthLimit',
+        facet: 'inconclusive',
+        rows: 1,
+      },
+    ]);
+    expect(writeVerdict(model, c).written).toEqual([
+      { requirement: 'TwoReqs::MassLimit', verdict: 'fail' },
+      { requirement: 'TwoReqs::WidthLimit', verdict: 'inconclusive' },
+    ]);
+  });
+
+  it('writes nothing onto a verified requirement this run produced no row for', async () => {
+    // A record set narrowed by `--case` covers one case's requirements and not
+    // another's; rolling every case up from whatever rows are present then
+    // wrote `pass` into the file for a requirement the model REFUTES. A
+    // requirement with no row of its own is skipped, by name, with the reason.
+    const source = `package CrossCase {
+    part def Chassis {
+        attribute mass : ISQ::MassValue = 18.5 [kg];
+        attribute width : ISQ::LengthValue = 5.0 [m];
+    }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    requirement def WidthLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.width <= 2.0 [m] }
+    }
+    verification massOnly {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute kind = analyze; }
+        objective { verify MassLimit; }
+    }
+    verification wholeVehicle {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute kind = analyze; }
+        objective { verify MassLimit; verify WidthLimit; }
+    }
+    satisfy MassLimit by chassis;
+    satisfy WidthLimit by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'cross-case.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const mass = model
+      .all()
+      .find((el) => model.qualifiedName(el.id) === 'CrossCase::massOnly');
+    expect(mass).toBeDefined();
+    // The narrowed run: only `MassLimit` is judged, and `wholeVehicle` is rolled
+    // up from those rows alone.
+    const narrowed = await verifyModel(model, {
+      engine: 'literal',
+      sourceText: source,
+      caseId: mass!.id,
+    });
+    expect(narrowed.results.length).toBe(1);
+    const whole = runVerificationCases(model, { judged: narrowed.results }).cases.find((c) =>
+      c.case.qualifiedName.endsWith('::wholeVehicle'),
+    );
+    expect(whole).toBeDefined();
+    expect(whole!.facets.map((f) => [f.requirement, f.facet])).toEqual([
+      ['CrossCase::MassLimit', 'inconclusive'],
+      ['CrossCase::WidthLimit', null],
+    ]);
+    const w = writeVerdict(model, whole!);
+    expect(w.written.map((x) => x.requirement)).toEqual(['CrossCase::MassLimit']);
+    expect(w.skipped.map((x) => x.requirement)).toEqual(['CrossCase::WidthLimit']);
+    expect(w.skipped[0].reason).toContain('produced no obligation row for it');
+    expect(serializeModel(model), 'a facet reached a requirement nothing checked').not.toContain(
+      'attribute verdict = "pass"',
+    );
+  });
+
+  it('the method annotation this lane writes is out of the model digest, and comes off again', async () => {
+    // WHY IT MUST BE OUT: the annotation goes INTO the model the records were
+    // taken over, so `evidence-attach` invalidated inside one command the
+    // evidence it had just attached — the saved file was born
+    // `validation/stale-evidence`. WHY THE EXCLUSION IS SAFE: a case that
+    // declares no method is judged on the analyze part, so the annotation and
+    // its absence are gate-equivalent and it can change no verdict. WHY IT IS
+    // DRAWN THIS TIGHTLY: change the kind and the shape stops matching, so an
+    // author's own edit of a load-bearing method moves the digest again.
+    const source = `package DigestProbe {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    verification massAnalysis {
+        subject chassis : Chassis;
+        objective { verify MassLimit; }
+    }
+    satisfy MassLimit by chassis;
+}
+`;
+    const { model } = await loadModelText(source, { fileName: 'digest-probe.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    const before = modelVersionOf(model).graph;
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    attachEvidence(model, r.records);
+    writeVerdict(model, r.cases.cases[0]);
+    expect(modelVersionOf(model).graph, 'the attach moved the model it was recorded over').toBe(
+      before,
+    );
+    expect(evidenceStatus(model).stale, 'the attach wrote a file it calls stale').toBe(0);
+    expect(evidenceStatus(model).current).toBe(1);
+
+    // A METHOD THAT SAYS SOMETHING ELSE IS THE AUTHOR'S, and it is in the hash.
+    const other = `package DigestProbe {
+    part def Chassis { attribute mass : ISQ::MassValue = 18.5 [kg]; }
+    part chassis : Chassis;
+    requirement def MassLimit {
+        subject chassis : Chassis;
+        require constraint { chassis.mass <= 25.0 [kg] }
+    }
+    verification massAnalysis {
+        subject chassis : Chassis;
+        @VerificationCases::VerificationMethod { attribute kind = test; }
+        objective { verify MassLimit; }
+    }
+    satisfy MassLimit by chassis;
+}
+`;
+    const edited = (await loadModelText(other, { fileName: 'digest-probe.sysml' })).model;
+    if (!edited) throw new Error('the probe produced no model');
+    expect(
+      modelVersionOf(edited).graph,
+      'a method the gate reads was excluded from the digest',
+    ).not.toBe(before);
+
+    // AND DETACH IS AN INVERSE. A tool-authored sentence about the METHOD that
+    // no command removes would outlive every claim it was written beside.
+    const detached = detachEvidence(model);
+    expect(detached.methodAnnotationsRemoved).toEqual(['DigestProbe::massAnalysis']);
+    // Asserted on the graph rather than on the text: the bundled library
+    // DEFINES `VerificationMethod`, so a serialization of the whole model
+    // contains the word whatever the reader's own file says.
+    const caseEl = model.all().find((el) => model.qualifiedName(el.id) === 'DigestProbe::massAnalysis');
+    expect(caseEl).toBeDefined();
+    expect(model.children(caseEl!.id).filter((c) => c.eClass === 'MetadataUsage')).toEqual([]);
+    expect(serializeModel(model)).not.toContain('attribute verdict = ');
+  });
+
+  it('leaves a model with no verification case exactly as it decided it before', async () => {
+    // The regression this whole layer could have been: `cases.exitCode` is 0
+    // over an empty list, so the two shipped examples are decided by their
+    // obligations and by nothing else.
+    for (const path of ['examples/uav-isr.sysml', 'examples/vehicle.sysml']) {
+      const r = await casesOf(path);
+      expect(r.cases.cases, `${path} declares no verification case`).toEqual([]);
+      expect(r.cases.exitCode).toBe(0);
+      expect(r.exitCode).toBe(0);
     }
   });
 });

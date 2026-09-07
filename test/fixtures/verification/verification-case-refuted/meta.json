@@ -1,0 +1,7 @@
+{
+  "level": "L8",
+  "title": "A case verifying a requirement the model refutes fails, with the witness on the row",
+  "model": "test/fixtures/verification/models/verification-case-refuted.sysml",
+  "engine": "literal",
+  "note": "The other end of the gate: `massAnalysis` declares `analyze`, so it IS judged, and what it is judged to be is `fail`. Exit 1 — the case verdict agrees with the obligation row beneath it because it is computed from that row and never re-argued."
+}

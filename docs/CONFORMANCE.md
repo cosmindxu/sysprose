@@ -25,7 +25,8 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2632 passed / 0 failed / 0 skipped** across **138 files** + **128 E2E** across **78 spec files** = **2760 green** (measured 2026-09-07) |
+| Full automated suite | **2684 passed / 0 failed / 0 skipped** across **138 files** + **128 E2E** across **78 spec files** = **2812 green** (measured 2026-09-07) |
+| Command-line surface | **15 subcommands** in one spec table, over **4 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -335,6 +336,54 @@ the library's `VerdictKind` literals; it is not a `VerdictKind` reference.
 That facet is written for **two claims only** — `proved` ⇒ `pass`, `refuted` ⇒
 `fail` — and everything else, `holds-at-values` included, writes `inconclusive`.
 
+### 8.2b The one standard slot this lane writes, and the gate in front of it
+
+`@VerificationCases::VerificationMethod { attribute kind = analyze; }` on a
+verification case **is** standard, and it is the only standard element this lane
+writes. `evidence-attach` puts it on a case that stated no method, so the file
+records which method the computed verdict was reached under instead of leaving a
+reader to assume one; a case that already states a method is left exactly as
+written.
+
+**The gate that annotation exists for.** `VerificationMethod` carries
+`kind : VerificationMethodKind [1..*]`, so a case may legitimately say
+`kind = (analyze, test)`. Sysprose performs **analysis and nothing else**. A case
+whose list contains `analyze`, or which states no method at all, is judged on the
+analyze part and reports every other kind as not performed. A case with no
+`analyze` in its list is **not judged at all**:
+`verification/method-not-performed`, inconclusive, **exit 2** — never exit 1,
+because an unjudged case is not a refutation — and `--allow-inconclusive` does
+not reach it, because §2 scopes that flag to `verification/timeout` and
+`verification/unsupported-construct`. A `kind` spelling this tool does not
+recognise is reported by name and treated as **not** `analyze`. The shipped
+`examples/uav-isr-verification.sysml` carries all three shapes and is exit 2 with
+every obligation in it discharged, and a job on every push
+(`.github/workflows/verify-examples.yml`, `method-gate`) asserts that exit code
+with and without `--allow-inconclusive`, against the control of the same file
+narrowed to its `analyze` case, which is exit 0.
+
+**Every spelling of the method is read, because the arm that judges is the arm a
+case falls into when none is found.** The definition may be named in
+`declaredName` (`metadata VerificationMethod { … }`), in `attrs.type` (the
+annotating form), in `attrs.typeRef`, or on a `FeatureTyping` child
+(`metadata vm : VerificationCases::VerificationMethod { … }`); the `kind` cell
+may be named or may redefine (`attribute :>> kind`); and the method may be
+declared once on a `verification def` and inherited by its usages. All of those
+are read, through the generalization chain, and so is a `kind` cell that names a
+`VerificationMethodKind` under a definition name this tool cannot resolve.
+
+**The facet is rolled up per REQUIREMENT.** A case verdict is a summary over the
+set of requirements a case verifies; a `verdict` facet is a sentence about one of
+them. Each requirement's facet is computed from that requirement's own obligation
+rows, and a requirement this run produced no row for is written nothing at all
+and is named in the report's `skipped` list.
+
+**And the case verdict is not the file's verdict.** A case's `verdict` is the
+library `PassIf` reading over the engine that was asked for; the `facet` that may
+be written into the file is `pass` only where every obligation was `proved`. So a
+green `--engine literal` run over a passing case writes `inconclusive`, and the
+report prints the difference on its own line.
+
 ### 8.3 What the engines may and may not claim
 
 `--engine literal` evaluates the model's own feature values through the same
@@ -619,7 +668,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2595 pass / 0 skip, 138 files)
+# Full unit + integration + conformance suite (2684 pass / 0 skip, 138 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

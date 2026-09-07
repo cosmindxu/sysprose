@@ -288,3 +288,30 @@ export {
   UnwritableNoteBodyError,
   isWritableNoteBody,
 } from './notes';
+// Verification cases (plan §3.4): the case-level verdict and the method gate.
+// The obligations arrive already judged, so nothing here reaches an engine —
+// see the module header for why that is what keeps a case verdict and the
+// obligation rows printed under it from ever disagreeing.
+export {
+  METHOD_NOT_PERFORMED_CODE,
+  NO_PROPERTY_CODE,
+  PERFORMED_METHOD,
+  VERDICT_CHANGED_CODE,
+  VERIFICATION_CASE_CODES,
+  VERIFICATION_METHOD_DEF,
+  methodOf,
+  runVerificationCases,
+  verificationCasesOf,
+  verifiedRequirementsOf,
+  writeVerdict,
+  type DanglingVerification,
+  type JudgedObligation,
+  type MethodReading,
+  type RequirementFacet,
+  type VerdictDisagreement,
+  type VerificationCaseOptions,
+  type VerificationCaseReport,
+  type VerificationCaseVerdict,
+  type VerifiedRequirement,
+  type WriteVerdictReport,
+} from './verify';

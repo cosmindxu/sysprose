@@ -125,8 +125,8 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 72 tests |
-| L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 33 cases |
+| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 76 tests |
+| L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
 Every count in this table is read off the tree, not remembered — the figures
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-07: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **76 catalogue codes** in
+`npm run check` is what raises it — beside **79 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3230,6 +3230,142 @@ carrier this tool writes names `@SysproseVerification::Evidence`, and the
 model that carries evidence and does not import or declare that package has an
 annotation whose type resolves nowhere, and nothing diagnoses it. The package's
 text is in the user guide for anyone who wants the file to stand alone.
+
+**A verification case had no verdict at all, and the method it is answered by
+decides whether it may have one.** `verification def` / `verification` usages
+were parsed, traced and displayed, and nothing ever computed what they came to
+(§1 *Lacks* item 6). `src/semantics/verify.ts` computes it — and the FIRST thing
+it reads is not an obligation but the method. `VerificationCases::
+VerificationMethod` carries `kind : VerificationMethodKind [1..*]`, so a case
+says how it is answered, and this tool performs analysis and nothing else. A
+case whose list contains `analyze`, or which states no method at all, is judged
+on the analyze part and reports every other kind as not performed; a case with
+no `analyze` in its list is **not judged** — `verification/method-not-performed`,
+inconclusive, exit **2**, never exit 1, because an unjudged case is not a
+refutation. `--allow-inconclusive` does not reach it: §2 scopes that flag to
+`verification/timeout` and `verification/unsupported-construct`, an unperformed
+method is neither, and there is no `--allow-unperformed` to add it. A kind this
+tool cannot READ fails the same way: a misspelt `analyse` is reported by name as
+unrecognised and leaves the case unjudged, rather than being read as the word it
+nearly is. The shipped `examples/uav-isr-verification.sysml` carries all three
+shapes — `analyze`, `test`, and `kind = (analyze, test)` — and is exit 2 with
+every obligation in it discharged, which is the whole point: the exit code is
+about the case, not about anything the engine could not decide. Pinned by four
+L8 corpus cases (two of them the `--allow-inconclusive` twin that makes the
+other mean something), an L8 block of direct assertions and an L7 case at the
+process boundary.
+
+**Two verdict words, and they are deliberately not the same question.** A case
+carries `verdict` — the library's `PassIf` reading over the ENGINE THAT WAS
+ASKED FOR, which is what the exit code is computed from — and `facet`, the word
+that may be written into the FILE, which is `pass` only when every obligation
+was `proved`. Under `--engine literal` a case is legitimately `verdict: pass`
+and `facet: inconclusive`: the run is green because a point evaluation was asked
+for by name, and the file may not say `pass` about one. It is the same rule
+`attachEvidence` applies to a record, so the two writers cannot put different
+words on one requirement, and the terminal prints the divergence on its own line
+rather than leaving a reader to infer it. `writeVerdict` REFUSES an unjudged
+case outright — writing `inconclusive` for it would still be a tool-authored
+verdict on a case nobody analysed — and, on a case that stated no method, writes
+`@VerificationCases::VerificationMethod { attribute kind = analyze; }`. That
+annotation is the one STANDARD slot this lane writes; the standard's own
+`VerificationCase::verdict : VerdictKind {redefines result}` stays unbound, as
+`docs/CONFORMANCE.md` §8.2 records. `evidence-attach` runs the case layer over
+the records it just placed, so `verify --record` then `evidence-attach` leaves
+the facet and the method annotation in the file together, and every facet the
+write MOVED is printed on stderr beside the ones the records moved.
+
+**Both spellings of "this case verifies that requirement" are read, and a
+traceability matrix can only ever see one of them.** `verify R by V;` builds a
+`Verify` with the case as its SOURCE; `objective { verify R; }` builds one whose
+source is EMPTY, because the case OWNS it rather than being an endpoint of it.
+So `traceabilityMatrix(model, 'VerificationCaseUsage', 'RequirementDefinition',
+'Verify')` — the metaclasses behind the `verify` preset in `TRACE_PRESETS` —
+reports **one** link over the shipped example where the file states three. That
+is a property of a matrix, which reports edges, and not a defect in it; the case
+layer walks containment as well, each row says which spelling it came from, and
+the suite cross-checks the two rather than trusting either alone. Note the axis
+metaclasses are the preset's: a model that declares its requirements as USAGES
+needs `RequirementUsage` on the second axis or the matrix is empty. One shape is
+invisible to both walks and is read off containment instead: a bare
+`objective { verify X; }` whose `X` does not resolve to a requirement never
+becomes a `Verify` element at all — the mapper keeps the CLAUSE reading
+(`isBareVerifyReference`) — so the case would otherwise report "names no
+requirement at all" over a file that plainly states a `verify`. It is listed as
+dangling with the name as written, and the case is
+`verification/no-property`.
+
+**What `--case` narrows, and what it deliberately does not.** `verify --case
+REF` narrows the REPORT to the obligations of the requirements that case
+verifies; the model is still judged whole, so every axiom those obligations
+stand on is still in force. Narrowing the worklist instead would drop the
+feature values and `assert constraint` bodies the case's own obligation stands
+on, and a proof under a context the reader never removed is a proof about a
+different model. The flag is carried into the record's `producedBy` and `flags`
+for the same reason `--free` is: it changes which obligations the records are
+about, and a record file that dropped it would replay as the strictly larger
+claim. A `REF` that resolves to something which is not a verification case is
+refused by name, listing the cases the file does have, rather than answered as a
+run over the whole model. The two exit codes combine under the ordering the
+contract states — **1 beats 2 beats 0**, which is not the numeric order — so a
+file with no verification case is decided by its obligations exactly as before.
+
+**The verdict facet is rolled up PER REQUIREMENT, not per case, and every
+spelling of the method is read.** Four things a review found before this commit
+shipped, each of which had made the gate or the write say something false about
+a file, and each now pinned by a case of its own. *The gate read one spelling of
+four.* `methodOf` looked only at the annotating `@…VerificationMethod` form, so
+`metadata VerificationMethod { kind = test; }`, `metadata vm : …VerificationMethod
+{ … }`, `attribute :>> kind = test;` and a method declared once on a
+`verification def` and inherited by its usages all read as "no method declared" —
+which is the arm that JUDGES, so a `test` case passed and the run was exit 0. All
+four spellings are read now (`declaredName`, `attrs.type`, `attrs.typeRef` and a
+`FeatureTyping` child, each on the last `::` segment, through the generalization
+chain), and so is any annotation whose `kind` cell names a `VerificationMethodKind`
+under a definition name this tool cannot resolve — an alias, or a misspelling.
+*The write stamped one word onto a set.* `writeVerdict` put the CASE's facet onto
+every requirement the case verifies, so a case that was `fail` because one
+requirement was refuted wrote `fail` onto the one beside it that the same run had
+shown holding, contradicting the `@Evidence` carrier written two lines above; and
+a requirement the run produced no row for got a facet at all. Each requirement is
+rolled up from its OWN rows now, a requirement with no row is skipped by name with
+the reason, and every requirement written is named on stderr rather than counted.
+*A case that stated its property directly was called propertyless.* `objective {
+require constraint { … } }` files its obligation under the CASE, so the report
+printed that row and then said "it names no requirement at all" about the same
+element; those rows are folded in. *And the method annotation this lane writes
+made its own evidence stale.* `evidence-attach` writes
+`@VerificationCases::VerificationMethod { kind = analyze; }` into the model the
+records were taken over, so every attach onto a case with no stated method
+produced a file that was born `validation/stale-evidence`. The exact shape this
+tool writes — annotating, typed `VerificationMethod`, one `kind` cell valued
+`analyze` — is excluded from the canonical graph, on the argument that a case
+declaring no method is judged on the analyze part and the annotation is therefore
+GATE-EQUIVALENT to its own absence; any other kind, a second kind or a second cell
+is the author's and moves the digest as before. `evidence-detach` removes that
+shape again, so attach → detach is an inverse rather than leaving a tool-authored
+sentence about the method behind.
+
+**Three things this commit leaves open, recorded rather than implied.** First,
+`verification/verdict-changed` is **info** and nothing exits non-zero on it: a
+`verdict` facet is ordinary requirements management and may record a verdict
+reached by inspection with no tool involved, so a disagreement is reported and
+never repaired in place. It is also the one code in this commit pinned by direct
+assertion rather than by an L8 corpus directory — the standing rule asks for a
+fixture, and a corpus case would pin nothing here, because the golden projection
+carries the exit code and this code does not change one; the same is true of
+commit 7's `verification/verdict-overstates-evidence`. Second, prose splits two
+ways under `verification/no-property`, and the catalogue now says which:
+an UNTAGGED requirement carrying prose and no constraint body raises its own row
+(`verification/unsupported-construct`) and its case is judged inconclusive on
+that row — there was a property to look for and looking for it is what failed —
+while a `#prose`-tagged requirement contributes no row at all, so a case that
+verifies nothing else IS propertyless. It means `--allow-inconclusive` can
+forgive the untagged row while the case-level code, where the case has one, still
+holds the run at 2. Third, `docs/USER-GUIDE.md` carries no `--case` or
+method-gate prose yet: the plan schedules that file at commit 9, and until then
+the flag is documented in the generated `docs/CLI-REFERENCE.md` and in
+`docs/CONFORMANCE.md` §8.2b.
 
 ### Pinned behaviours (decisions, not defects)
 

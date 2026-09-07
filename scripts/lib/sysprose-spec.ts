@@ -377,6 +377,13 @@ export const COMMANDS: readonly CommandSpec[] = [
     exitContract: 'verify',
     flags: [
       {
+        name: 'case',
+        kind: 'value',
+        metavar: 'REF',
+        fallback: 'every obligation in the model, with every verification case reported beside them',
+        doc: 'Judge ONE verification case: the report is narrowed to the obligations of the requirements it verifies, and its verdict decides the run. The model is still judged whole, so the axioms those obligations stand on are all still in force. A case whose `@VerificationMethod { kind = …; }` has no `analyze` in it is NOT judged — `verification/method-not-performed`, exit 2, never exit 1',
+      },
+      {
         name: 'engine',
         kind: 'value',
         metavar: 'NAME',
