@@ -16,6 +16,19 @@
 
 import { renderFlag, type FlagSpec } from './args';
 
+/**
+ * The `--max-core` default, spelled here rather than imported.
+ *
+ * This module is imported by the documentation generator and by three doc
+ * guards, and it is deliberately free of model imports so none of them pulls
+ * the core graph in to render a help line — the same reason
+ * {@link STATEMENT_KIND_FLAG_VALUES} is a copy. The price of the copy is
+ * drift, so it is not left to good intentions: `test/unit/cli-reference.test.ts`
+ * compares this against `DEFAULT_MAX_CORE` in `src/semantics/consistency.ts`
+ * and fails if the two move apart.
+ */
+export const DEFAULT_MAX_CORE = 8;
+
 /** The exit-code contract, stated once and quoted into every help text. */
 export const EXIT_CODES = `Exit codes: 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error`;
 
@@ -44,6 +57,15 @@ export const CHECK_EXIT_CODES = `Exit codes: 0 clean · 1 at least one file has 
  * reporting contract would read that as a parse failure and a `check` reader
  * would read it as a validation finding; it is neither.
  *
+ * TWO SUBCOMMANDS OBEY IT, and they judge different things. `verify` asks
+ * whether each obligation HOLDS of the design the file describes;
+ * `consistency` asks whether the requirements could be met by any design at
+ * all. Both reach a decided negative — a refuted obligation, a requirement set
+ * nothing can satisfy — and both report it as **1**, because it is a finding
+ * about the model rather than a limit of the tool. A contract that named only
+ * one of the two would leave the other's loudest verdict documented as
+ * something else.
+ *
  * The other half a reader must not have to infer: **every inconclusive is 2**,
  * and that includes an absent solver. A missing tool can never produce a green
  * build, because the alternative — "no solver installed, nothing to report,
@@ -64,7 +86,7 @@ export const CHECK_EXIT_CODES = `Exit codes: 0 clean · 1 at least one file has 
  * in `test/unit/cli-reference.test.ts` asserts that every `exitContract:
  * 'verify'` command quotes this string and that no `'report'` command does.
  */
-export const VERIFY_EXIT_CODES = `Exit codes: 0 every obligation discharged non-vacuously by the engine that was asked for, and there was at least one to discharge · 1 at least one obligation refuted with every feature at its model value · 2 usage/IO error, a degraded model, a model that states no obligation at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it`;
+export const VERIFY_EXIT_CODES = `Exit codes: 0 every obligation discharged non-vacuously by the engine that was asked for — or every requirement set shown satisfiable — and there was at least one of them to decide · 1 at least one obligation refuted with every feature at its model value, or one requirement set nothing can satisfy · 2 usage/IO error, a degraded model, a model that states nothing to decide at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it`;
 
 /** Flags every subcommand accepts. */
 export const COMMON_FLAGS: readonly FlagSpec[] = [
@@ -377,6 +399,50 @@ export const COMMANDS: readonly CommandSpec[] = [
       },
     ],
   },
+  // The second subcommand that judges, and it judges a DIFFERENT question:
+  // `verify` asks whether the requirements hold of the design in the file,
+  // this asks whether they could be met by any design at all. The two disagree
+  // by construction on a file whose values break a requirement — that one is
+  // refuted and its requirement set is perfectly satisfiable — so they are two
+  // commands rather than a flag on one.
+  {
+    name: 'consistency',
+    question: 'Can all the requirements on this subject hold at once — and if not, which conflict?',
+    backedBy: 'consistencyReport (src/api/verification.ts)',
+    payloadKey: 'consistency',
+    exitContract: 'verify',
+    flags: [
+      {
+        name: 'subject',
+        kind: 'value',
+        metavar: 'REF',
+        fallback: 'every subject the model states a requirement about',
+        doc: 'The subject: an id, a qualified name, or a name unique in the model — a type, or the part usage the file writes after `subject`, which is narrowed through its declared type. A type answers for its subtypes, because a requirement on a `Vehicle` is a requirement on every air vehicle. A REF that is the subject of nothing is refused by name rather than reported as a file with no requirements',
+      },
+      {
+        name: 'with-values',
+        kind: 'boolean',
+        doc: 'Ask the weaker question: can the requirements hold together AT THE VALUES THE FILE STATES? By default every feature carrying a literal value is released and only the structural axioms are kept, because a consistency question about a requirement set must not be answered by the values that happen to be in the file. Every verdict line names the mode it was computed in',
+      },
+      {
+        name: 'minimize',
+        kind: 'boolean',
+        doc: 'Reduce the conflicting subset by deletion, one member per check, until every member is needed. Only a loop that RAN TO COMPLETION earns the word "minimal"; without it, and after any timeout, the report says "a conflicting subset"',
+      },
+      {
+        name: 'max-core',
+        kind: 'value',
+        metavar: 'N',
+        fallback: `${DEFAULT_MAX_CORE} members`,
+        doc: 'The deletion loop\u2019s budget, in core members — minimising costs one solver check per member. A core larger than N is reported in full and left unreduced, and the line says the budget was why',
+      },
+      {
+        name: 'allow-inconclusive',
+        kind: 'boolean',
+        doc: 'Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, never over an inconsistency, and never over a run in which nothing at all was decided',
+      },
+    ],
+  },
 ];
 
 export function findCommand(name: string): CommandSpec | undefined {
@@ -415,11 +481,30 @@ export function renderTopUsage(): string {
     EXIT_CODES,
     ...(judging.length > 0
       ? [
-          `  …for every subcommand that REPORTS. ${judging.map((c) => `\`${c.name}\``).join(', ')} ` +
-            'judges and has its own contract: run its `--help`.',
+          // Written as a sentence rather than as a joined list, because there
+          // is more than one judging subcommand now and "`verify`,
+          // `consistency` judges" is not English. A reader who cannot parse the
+          // line cannot act on the one thing it says.
+          `  …for every subcommand that REPORTS. ${listOf(judging.map((c) => `\`${c.name}\``))} ` +
+            (judging.length === 1
+              ? 'judges and has its own contract: run its `--help`.'
+              : 'judge and have their own contract: run their `--help`.'),
         ]
       : []),
   ].join('\n');
+}
+
+/**
+ * `a`, `a and b`, `a, b and c` — a list a person reads inside a sentence.
+ *
+ * EXPORTED so `scripts/gen-cli-reference.ts` renders the same sentence the
+ * same way. It had its own comma-joined copy, which read "`verify`,
+ * `consistency` judges" the day a second judging subcommand shipped — the one
+ * place a reader who has not run the tool yet meets the exit contract.
+ */
+export function listOf(items: readonly string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 /** `--help` for one subcommand. */

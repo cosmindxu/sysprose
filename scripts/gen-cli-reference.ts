@@ -29,6 +29,7 @@ import {
   EXIT_CODES,
   TRACE_PRESETS,
   exitCodesFor,
+  listOf,
   type CommandSpec,
 } from './lib/sysprose-spec';
 
@@ -142,9 +143,11 @@ npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 
 **The exit-code contract is per subcommand, and there are two of them.** Most
 subcommands *report*: ${reporting.map((c) => `\`${c.name}\``).join(', ')} — for those,
-${EXIT_CODES.replace('Exit codes: ', '')}. ${judging.map((c) => `\`${c.name}\``).join(', ')}
-*judges*, and its 1 means **refuted**; its section below states its own contract
-in full, and every section states which of the two it obeys.
+${EXIT_CODES.replace('Exit codes: ', '')}. ${listOf(judging.map((c) => `\`${c.name}\``))}
+${judging.length === 1 ? '*judges*' : '*judge*'}, and ${judging.length === 1 ? 'its' : 'their'} 1 means a **decided negative** — an
+obligation refuted with every feature at its model value, or one requirement set
+nothing can satisfy. ${judging.length === 1 ? 'Its' : 'Each'} section below states ${judging.length === 1 ? 'its' : 'its'} own
+contract in full, and every section states which of the two it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is

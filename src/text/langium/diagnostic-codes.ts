@@ -582,6 +582,15 @@ const CODES = [
     hint: 'Read the unsat core named on the row: it is the smallest set of the model’s own facts the solver found colliding. Nothing in the run was decided until they are reconciled. `--allow-inconclusive` never lowers this — proving everything is not the same as proving anything.',
   },
   {
+    // The one code `consistency` writes back, and the one code in this lane
+    // that is about a requirement SET rather than about one obligation.
+    code: 'verification/inconsistent-requirements',
+    source: 'verification',
+    severity: 'error',
+    when: 'No design point satisfies all the requirements on one subject at once: `consistency` asserted each of them under a tracking literal — as `assume ⇒ require`, the reading the shipped library states — and the solver answered unsat. The row names the conflicting subset the unsat core produced, by requirement and by the qualified name of each relation in it.',
+    hint: 'Removing or weakening any one member of the named subset is where a fix starts; `--minimize` reduces the subset by deletion until every member is needed, and only a loop that ran to completion may call it minimal. By default the question is asked with every feature value the file STATES released — a value expression that reads no other feature — so this is a conflict between the requirements themselves and not between a requirement and a value; `--with-values` re-pins them and asks the weaker question, and every line names the mode it was computed in. Requirements guarded by `assume` clauses that cannot both hold are NOT reported here: each requirement is read as an implication, so mode- and phase-conditional requirements never contradict each other. It is a decided finding about the model and the run exits 1; no flag forgives one.',
+  },
+  {
     code: 'verification/free-variable-unbounded',
     source: 'verification',
     severity: 'info',

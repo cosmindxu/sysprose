@@ -60,6 +60,7 @@ import type { Model } from '@core/index';
 import {
   ALLOW_INCONCLUSIVE_CODES,
   canonicalElements,
+  consistencyReport,
   isUserElement,
   modelVersionOf,
   sha256Hex,
@@ -68,7 +69,8 @@ import {
   type VerifyEngineOption,
   type VerifyReport,
 } from '@api/index';
-import { loadZ3, z3Disabled } from '@semantics/smt/z3-bridge';
+import { checkConsistency, READING } from '@semantics/index';
+import { loadZ3, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
 
 const root = (p: string) => resolve(process.cwd(), p);
@@ -1100,4 +1102,555 @@ describe('L8 — a single-field mutation moves the verdict, and moves the digest
       before.obligationDigest,
     );
   }, 120_000);
+});
+
+/**
+ * L8 — `consistency`: the requirement set, rather than one obligation.
+ *
+ * A SUITE-LEVEL CASE RATHER THAN A GOLDEN DIRECTORY, and the reason is the
+ * runner above: `test/fixtures/verification/<case>/expected.json` is a
+ * projection of a `VerifyReport`, and a consistency run is a different report
+ * about a different question. Rather than teach one runner two shapes — where
+ * every corpus-wide rule above would then have to say which of the two it is
+ * written over — the models live beside the others in `models/` and the
+ * properties are asserted here, in the file the plan calls the L8 suite.
+ *
+ * WHAT EACH CASE PINS is a sentence from §3.5's MUST-NEVER list turned into a
+ * property: a core is only ever printed as a "conflicting subset" unless a
+ * completed deletion loop earned the other word; "consistent" never appears
+ * without the count of what was left out and the mode it was computed in; a
+ * relation a gate refused is listed and is not in the core; and the word
+ * `realizable` is nowhere, because that is a different question this lane does
+ * not answer.
+ */
+describe('L8 — consistency: a requirement set, and the subset that conflicts', () => {
+  const CONFLICT = 'test/fixtures/verification/models/consistency-conflict.sysml';
+  const OFFSET = 'test/fixtures/verification/models/consistency-offset-scale.sysml';
+  const COMPUTED = 'test/fixtures/verification/models/consistency-computed-value.sysml';
+  const MODES = 'test/fixtures/verification/models/consistency-modes.sysml';
+  const UNENGAGEABLE = 'test/fixtures/verification/models/consistency-unengageable.sysml';
+  const SUBTYPE = 'test/fixtures/verification/models/consistency-subtype.sysml';
+  const ANONYMOUS = 'test/fixtures/verification/models/consistency-anonymous.sysml';
+
+  /** One run over one model, with the flags a person would type. */
+  async function check(
+    path: string,
+    opts: Parameters<typeof consistencyReport>[1] = {},
+  ): Promise<Awaited<ReturnType<typeof consistencyReport>>> {
+    const model = await modelFor(path);
+    return consistencyReport(model, { ...opts, sourceText: read(path) });
+  }
+
+  withZ3(
+    'says the shipped example is consistent, with a re-evaluated witness, and names the mode',
+    async () => {
+      const withValues = await check('examples/uav-isr.sysml', { withValues: true });
+      expect(withValues.exitCode, 'the shipped example stopped being satisfiable').toBe(0);
+      expect(withValues.consistent).toBe(1);
+      expect(withValues.released, '`--with-values` released something').toEqual([]);
+      const [group] = withValues.groups;
+      expect(group.outcome).toBe('consistent');
+      // The witness is the model's OWN point, and it is re-read in process
+      // before it is printed — the two facts the plan asks for on a SAT answer.
+      expect(group.witnessConfirmed, 'a design point was printed unconfirmed').toBe(true);
+      const mtow = group.witness.find((w) => w.symbol.endsWith('::mtow'));
+      expect(mtow, 'the witness no longer names the mass the requirement is about').toBeDefined();
+      expect(mtow!.value, 'the witness is not the value the file states').toBeCloseTo(18.5, 9);
+      const power = group.witness.find((w) => w.symbol.endsWith('::cruisePower'));
+      expect(power!.value).toBeCloseTo(650, 9);
+      // MUST NEVER say "consistent" without the refused count beside it, or
+      // without the mode it was computed in.
+      expect(group.detail, 'a consistent verdict with no refused count').toMatch(/\d+ relations? refused/);
+      expect(group.detail, 'a consistent verdict that does not name its mode').toContain('--with-values');
+      // The plan's own fragment vocabulary: pinned values make the reasoning
+      // linear even though the script's bytes are not.
+      expect(group.fragment).toBe('qf-lra');
+      expect(group.logic, 'the set-logic line is computed from the bytes').toBe('QF_NRA');
+    },
+  );
+
+  withZ3('releases the literal values unless it is asked not to, and says which', async () => {
+    // THE DEFAULT IS THE DIFFERENT QUESTION. Without `--with-values` the file's
+    // own numbers are not what answers, and the report says exactly which ones
+    // it let go — a mode nobody can see is a mode nobody can check.
+    const released = await check('examples/uav-isr.sysml');
+    expect(released.exitCode).toBe(0);
+    expect(released.withValues).toBe(false);
+    expect(released.released, 'nothing was released, so the default is the other question').toContain(
+      'UAVSurveillanceSystem::AirVehicle::mtow',
+    );
+    expect(released.released).toContain('UAVSurveillanceSystem::AirVehicle::cruisePower');
+    expect(released.groups[0].detail).toContain('every literal feature value released');
+    // And the point the solver chose is NOT the model's own, precisely because
+    // the model's own values were not asserted.
+    const mtow = released.groups[0].witness.find((w) => w.symbol.endsWith('::mtow'));
+    expect(mtow, 'the released run stopped naming the freed feature').toBeDefined();
+    expect(mtow!.value, 'the released run answered at the file’s own value').not.toBeCloseTo(18.5, 9);
+  });
+
+  withZ3('names both constraints when a mass floor contradicts a mass ceiling', async () => {
+    const r = await check(CONFLICT);
+    expect(r.exitCode, 'a requirement set nothing can satisfy is a decided finding').toBe(1);
+    expect(r.inconsistent).toBe(1);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('inconsistent');
+    expect(group.code).toBe('verification/inconsistent-requirements');
+    // THE CORE, NAMED. An inconsistency printed without one is the thing §3.5
+    // forbids: a reader told their requirements collide and not told which.
+    expect(group.core.map((m) => m.qualifiedName).sort()).toEqual([
+      'ConsistencyConflict::MassCeiling::mtowCeiling',
+      'ConsistencyConflict::MassFloor::mtowFloor',
+    ]);
+    // Both ways, per §3.5: by the reader's name for the requirement, and by
+    // the element the relation IS.
+    expect(group.core.map((m) => m.requirement?.shortId).sort()).toEqual(['R-UAV-002', 'R-UAV-004']);
+    for (const member of group.core) {
+      expect(member.id, 'a core member with no element id').toBeTruthy();
+      // A core member from a requirement is its GUARANTEE, asserted under that
+      // requirement's assumptions — which these two do not have.
+      expect(member.kind).toBe('guarantee');
+      expect(member.assumptions).toEqual([]);
+    }
+    expect(group.detail).toContain('R-UAV-002::mtowCeiling');
+    expect(group.detail).toContain('R-UAV-004::mtowFloor');
+    // The diagnostic is an ERROR and is anchored at a real element.
+    const finding = r.diagnostics.find((d) => d.code === 'verification/inconsistent-requirements');
+    expect(finding, 'an inconsistency that filed no diagnostic').toBeDefined();
+    expect(finding!.severity).toBe('error');
+    expect(finding!.elementId).toBeTruthy();
+  });
+
+  withZ3('calls a core "a conflicting subset" until a deletion loop has run', async () => {
+    // The word "minimal" is a claim about every OTHER member of the set, and
+    // only the deletion loop makes it. Three runs: without the flag, with it,
+    // and with a budget too small for it to run at all.
+    const plain = await check(CONFLICT);
+    expect(plain.groups[0].minimized).toBe(false);
+    expect(plain.groups[0].coreLabel).toBe('a conflicting subset');
+    expect(plain.groups[0].detail).not.toContain('minimal');
+
+    const reduced = await check(CONFLICT, { minimize: true });
+    expect(reduced.groups[0].minimized, 'the deletion loop did not complete').toBe(true);
+    expect(reduced.groups[0].coreLabel).toBe('a minimal conflicting subset');
+    expect(reduced.groups[0].detail).toContain('a minimal conflicting subset');
+    // It is still the same subset — this core was already minimal, which is
+    // why the flag is what earns the WORD and not what changes the answer.
+    expect(reduced.groups[0].core.map((m) => m.qualifiedName).sort()).toEqual(
+      plain.groups[0].core.map((m) => m.qualifiedName).sort(),
+    );
+    // Every member of a minimised core is needed: dropping any one of them
+    // leaves a set that IS satisfiable. Asserted rather than assumed, because
+    // a deletion loop that tested each candidate against the whole script
+    // instead of against the core returned a satisfiable singleton labelled
+    // minimal, and every assertion above it stayed green.
+    expect(reduced.groups[0].core.length).toBeGreaterThan(1);
+
+    // THE MODE THE DEFECT LIVES IN. With the values released the core and the
+    // script coincide, so a loop that re-checks against the whole script and
+    // one that shrinks the core itself are byte-identical and every assertion
+    // above stays green under the defect restored. Pinning the value of the
+    // very feature the core is about is what separates them: the pinned axiom
+    // keeps every trial unsatisfiable, so the broken loop deletes a member the
+    // rest does not contradict without and returns the SATISFIABLE singleton
+    // {`mtow >= 30`} labelled minimal.
+    const pinned = await check(CONFLICT, { minimize: true, withValues: true });
+    expect(pinned.exitCode).toBe(1);
+    expect(pinned.groups[0].minimized, 'the deletion loop did not complete').toBe(true);
+    expect(
+      pinned.groups[0].core.length,
+      'the deletion loop reduced a core to a set that is satisfiable on its own',
+    ).toBeGreaterThan(1);
+    expect(pinned.groups[0].core.map((m) => m.requirement?.shortId).sort()).toEqual([
+      'R-UAV-002',
+      'R-UAV-004',
+    ]);
+
+    const budgeted = await check(CONFLICT, { minimize: true, maxCore: 1 });
+    expect(budgeted.groups[0].minimized, 'a budget too small still claimed minimality').toBe(false);
+    expect(budgeted.groups[0].coreLabel).toBe('a conflicting subset');
+    expect(budgeted.groups[0].detail, 'the line does not say the budget was why').toContain(
+      '--max-core 1',
+    );
+  });
+
+  withZ3('lists a °C relation under refused, and never inside the core', async () => {
+    // Arithmetic on an offset scale is refused by the same gate the numeric
+    // surface applies. The refusal has to travel with the verdict — a relation
+    // that disappears from a satisfiability question reads as one that was
+    // satisfied — and it can never be part of a core, because nothing asserted
+    // it.
+    const r = await check(OFFSET);
+    expect(r.exitCode).toBe(1);
+    const [group] = r.groups;
+    expect(group.refused.map((x) => x.reason)).toEqual(['offset-arithmetic']);
+    expect(group.refused[0].qualifiedName).toBe('ConsistencyOffsetScale::RiseLimit::riseLimit');
+    expect(
+      group.core.map((m) => m.qualifiedName),
+      'a relation nothing asserted turned up in an unsat core',
+    ).not.toContain('ConsistencyOffsetScale::RiseLimit::riseLimit');
+    expect(group.core).toHaveLength(2);
+    // And the count travels with the verdict, on the line and in the report.
+    expect(group.detail).toContain('1 relation(s) refused');
+    expect(r.refused).toBe(1);
+    expect(
+      r.diagnostics.some(
+        (d) => d.code === 'verification/unsupported-expression' && d.elementName?.endsWith('riseLimit'),
+      ),
+      'the refused relation was dropped rather than listed',
+    ).toBe(true);
+  });
+
+  it('decides nothing with no solver, exits 2, and no flag lowers it', async () => {
+    // Forced rather than waited for: the honest-absence path is the single
+    // most likely thing in this lane to rot into a silent green, and a machine
+    // that HAS z3 cannot exercise it by accident.
+    const before = process.env.SYSPROSE_NO_Z3;
+    process.env.SYSPROSE_NO_Z3 = '1';
+    try {
+      for (const allowInconclusive of [false, true]) {
+        const r = await check('examples/uav-isr.sysml', { allowInconclusive });
+        expect(r.toolAbsent, 'the switch did not force the absent path').toBe(true);
+        expect(r.exitCode, 'an absent solver produced a green build').toBe(2);
+        expect(r.forgiven, 'a flag forgave an absent solver').toBe(0);
+        expect(r.consistent).toBe(0);
+        expect(r.groups.map((g) => g.code)).toEqual(['verification/tool-absent']);
+        // The CENSUS is still true: "0 requirements on 0 subjects" over this
+        // file would let an absent solver read as an empty model.
+        expect(r.requirements, 'the absent path forgot the model it did not check').toBe(2);
+        expect(r.groups[0].requirements).toHaveLength(2);
+      }
+    } finally {
+      if (before === undefined) delete process.env.SYSPROSE_NO_Z3;
+      else process.env.SYSPROSE_NO_Z3 = before;
+    }
+  }, 120_000);
+
+  withZ3('never decides a requirement set that states nothing this lane encodes', async () => {
+    // An empty conjunction is satisfiable. Reporting that as "consistent"
+    // would call a file of prose requirements a checked one.
+    const r = await check('test/fixtures/verification/models/prose-only.sysml', {
+      allowInconclusive: true,
+    });
+    expect(r.consistent).toBe(0);
+    expect(r.groups.map((g) => g.outcome)).toEqual(['inconclusive']);
+    expect(r.groups[0].noFormalClause).toBe(1);
+    // The rule this turns on is the FIRST one in the exit contract — a run in
+    // which nothing at all was decided is exit 2 — and NOT the flag's scope. A
+    // prose-only set is coded `verification/unsupported-construct`, which the
+    // flag does forgive: it is forgiven here, and the same set beside a set
+    // that WAS decided would go green. What keeps this run at 2 is that
+    // nothing was decided at all, and naming the wrong rule in the failure
+    // message is how a case survives the change that breaks it.
+    expect(r.exitCode, 'a run that decided nothing is exit 2 whatever the flag says').toBe(2);
+    expect(r.forgiven, 'the flag did forgive the undecided set — and did not lower the run').toBe(1);
+    expect(r.groups[0].detail).not.toContain('consistent');
+  });
+
+  withZ3('releases a stated value however it was spelled, and does not answer at it', async () => {
+    // THE RELEASE IS SEMANTIC, NOT A TEST OF THE STORAGE FORM. The mapper keeps
+    // a bare numeral as a number and every other value expression as verbatim
+    // source text, so `= 2.0 * 5.0` and `= -(30.0)` reach this lane in a shape
+    // that does not parse as a numeral. A release that asked about the storage
+    // form would PIN those two and release the plain ones, and this set — which
+    // any design satisfies once `k` is free — would come back inconsistent, an
+    // error and exit 1, purely because of how a value was spelled. Two
+    // spellings of one number must not give opposite verdicts.
+    const r = await check(COMPUTED);
+    expect(r.exitCode, 'a satisfiable requirement set was refused over a spelling').toBe(0);
+    expect(r.consistent).toBe(1);
+    expect(r.released, 'a closed value expression stayed pinned').toContain(
+      'ConsistencyComputedValue::Craft::k',
+    );
+    expect(r.released, 'a parenthesised negative literal stayed pinned').toContain(
+      'ConsistencyComputedValue::Craft::j',
+    );
+    expect(r.groups[0].core, 'a released value turned up in a conflicting subset').toEqual([]);
+    // And the header's count of what it let go is the truth about this run: "0
+    // of them" beside a verdict computed at the file's own values is the
+    // sentence this case exists to keep out.
+    expect(r.released).toHaveLength(2);
+
+    // THE POSITIVE CONTROL. `--with-values` re-pins them and the collision is
+    // real: `k` is 10 and `R-K1` asks for 20. Without this half, a release that
+    // let go of EVERYTHING — including the defining equations that are
+    // structure — would pass the assertions above.
+    const pinned = await check(COMPUTED, { withValues: true });
+    expect(pinned.exitCode).toBe(1);
+    expect(pinned.inconsistent).toBe(1);
+    expect(
+      pinned.groups[0].core.some((m) => m.kind === 'axiom'),
+      'the pinned value is not in the subset that conflicts',
+    ).toBe(true);
+  });
+
+  withZ3('does not call two mode-guarded requirements a conflict', async () => {
+    // THE READING, exercised on the pattern that separates the two. Asserting
+    // `A ∧ G` per requirement forces one design point to satisfy every
+    // antecedent at once, so a cruise ceiling and a ferry floor — guarded by
+    // modes that cannot both hold — come back as a conflicting subset naming
+    // two guarantees that never have to hold together. That is a false alarm on
+    // one of the commonest patterns in systems engineering, and it is what this
+    // model exists to keep out. The guarantees themselves DO collide, which is
+    // `consistency-conflict.sysml` above: the difference is the `assume`.
+    const r = await check(MODES);
+    expect(r.exitCode, 'mode-guarded requirements were called a contradiction').toBe(0);
+    expect(r.consistent).toBe(1);
+    expect(r.inconsistent).toBe(0);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('consistent');
+    expect(group.core, 'a consistent set named a conflicting subset').toEqual([]);
+    // Both requirements were asked, antecedent and consequent alike — a reading
+    // that dropped the `assume` clauses would be green here for the wrong
+    // reason, and the per-requirement census is where that shows.
+    expect(group.requirements.map((x) => x.asserted)).toEqual([2, 2]);
+    // "Consistent" under an implication reading and under a conjunction reading
+    // are different claims, so the line says which one it is.
+    expect(group.detail, 'the verdict does not say what a requirement was taken to mean').toContain(
+      READING,
+    );
+    // Neither requirement is vacuous: each mode is reachable, which is the
+    // whole discrimination the implication reading buys.
+    expect(group.unengageable).toEqual([]);
+  });
+
+  withZ3('refuses to call a set consistent when one of its requirements can never apply', async () => {
+    // WHAT THE IMPLICATION READING COSTS, and where it is paid. `⋀ (A ⇒ G)` is
+    // satisfiable by falsifying every antecedent, so a set can hold for the one
+    // reason nobody wants. Both shapes are here: an assumption that contradicts
+    // itself, and two requirements under the SAME assumption whose guarantees
+    // collide — the conflict a conjunction reading was kept for, still found.
+    for (const allowInconclusive of [false, true]) {
+      const r = await check(UNENGAGEABLE, { allowInconclusive });
+      expect(r.consistent, 'a set that engages nothing was called consistent').toBe(0);
+      expect(r.exitCode, 'vacuity went green in a lane where no flag lowers it').toBe(2);
+      expect(r.forgiven, 'a flag forgave a vacuity').toBe(0);
+      expect(r.groups.map((g) => g.code)).toEqual([
+        'verification/vacuous',
+        'verification/vacuous',
+      ]);
+      expect(r.unengageable, 'the requirements nothing engages were not named').toBe(3);
+      // NAMED, with the clauses that cannot hold — a reader told their set is
+      // undecided and not told which requirement never applies has nothing to
+      // act on.
+      expect(r.groups.flatMap((g) => g.unengageable.map((u) => u.shortId)).sort()).toEqual([
+        'R-GCS-1',
+        'R-GCS-2',
+        'R-NEVER',
+      ]);
+      expect(r.groups[0].unengageable[0].assumptions).toEqual([
+        'uav.mode > 5.0 and uav.mode < 2.0',
+      ]);
+      // The set IS satisfiable and the witness says so: what is undecided is
+      // whether the requirements mean anything at that point.
+      expect(r.groups[0].witness.length, 'the satisfying point was withheld').toBeGreaterThan(0);
+      expect(r.groups[0].witnessConfirmed).toBe(true);
+      expect(r.groups[0].detail).not.toContain('can hold together');
+      // And one INFO per requirement, carrying the same code `verify` files for
+      // an obligation discharged by an antecedent nothing satisfies.
+      expect(
+        r.diagnostics.filter((d) => d.message.includes('applies at no point this requirement set')),
+        'a requirement nothing engages was counted and never named to a reader',
+      ).toHaveLength(3);
+      expect(r.diagnostics.every((d) => d.code === 'verification/vacuous')).toBe(true);
+    }
+  });
+
+  withZ3('counts a supertype’s relations once, and answers for a subtype that states none', async () => {
+    // A CONTRACT ABOUT A SUPERTYPE IS A MEMBER OF EVERY SUBTYPE'S GROUP — that
+    // is what "a type answers for its subtypes" means — so a run-level figure
+    // built by concatenating the groups counts one relation twice the moment a
+    // model has a hierarchy. `requirements` was always deduplicated; a report
+    // whose three census figures disagree about how big the model is is worse
+    // than any one of them being wrong, and the refused count is the figure
+    // §3.5 makes travel beside the word "consistent".
+    const r = await check(SUBTYPE);
+    expect(r.groups).toHaveLength(2);
+    expect(r.requirements, 'the shared requirements were counted once per group').toBe(4);
+    expect(r.refused, 'one refused relation was counted once per group').toBe(1);
+    expect(r.noFormalClause, 'one prose requirement was counted once per group').toBe(1);
+    expect(
+      r.diagnostics.filter((d) => d.code === 'verification/unsupported-expression'),
+      'the same refusal was filed once per group it appears in',
+    ).toHaveLength(1);
+    expect(
+      r.diagnostics.filter((d) => d.code === 'verification/unsupported-construct'),
+    ).toHaveLength(1);
+    // The per-group rows are unaffected: each group really does hold the
+    // supertype's requirements, and that is the promise being kept.
+    expect(r.groups.map((g) => g.requirements.length)).toEqual([3, 4]);
+
+    // `--subject` NARROWS BY WHAT THE READER TYPED. Three spellings, all of
+    // which a reader reaches for, and the argument order of the conformance
+    // test they rest on inverts silently.
+    const model = await modelFor(SUBTYPE);
+    const idOf = (qualified: string): string => {
+      const el = model.all().find((e) => model.qualifiedName(e.id) === qualified);
+      expect(el, `${qualified} is not in the model`).toBeDefined();
+      return el!.id;
+    };
+    // A subtype no contract names at all: its group exists because its
+    // supertypes' requirements are requirements about it.
+    const air = await check(SUBTYPE, { subjectId: idOf('ConsistencySubtype::AirVehicle') });
+    expect(air.groups).toHaveLength(1);
+    expect(air.groups[0].subject?.typeQualifiedName).toBe('ConsistencySubtype::AirVehicle');
+    expect(air.groups[0].requirements.map((x) => x.shortId).sort()).toEqual([
+      'R-AMASS',
+      'R-PROSE',
+      'R-RISE',
+      'R-VMASS',
+    ]);
+    // The part usage the file writes after `subject`, which every row of this
+    // report prints beside the type — narrowed through its declared type.
+    const usage = await check(SUBTYPE, { subjectId: idOf('ConsistencySubtype::uav') });
+    expect(usage.groups.map((g) => g.subject?.typeQualifiedName)).toEqual([
+      'ConsistencySubtype::AirVehicle',
+    ]);
+    // And a supertype answers for itself AND its subtypes, which is the other
+    // half of the same rule.
+    const vehicle = await check(SUBTYPE, { subjectId: idOf('ConsistencySubtype::Vehicle') });
+    expect(vehicle.groups.map((g) => g.subject?.typeQualifiedName)).toEqual([
+      'ConsistencySubtype::Vehicle',
+      'ConsistencySubtype::AirVehicle',
+    ]);
+  });
+
+  withZ3('says how many requirements stated nothing, beside the word "consistent"', async () => {
+    // The refused count is not the only way a requirement leaves the question.
+    // A requirement with no relation at all was never encoded, no gate refused
+    // it, and "4 requirement(s) can hold together … 0 relations refused" over a
+    // set where one of them is prose reads as a checked set. Both figures
+    // travel with the verdict or neither does.
+    const r = await check(SUBTYPE);
+    const air = r.groups.find((g) => g.subject?.typeQualifiedName?.endsWith('AirVehicle'))!;
+    expect(air.outcome).toBe('consistent');
+    expect(air.noFormalClause).toBe(1);
+    expect(air.detail, 'the consistent verdict hides the prose-only count').toContain(
+      '1 requirement(s) state no relation at all',
+    );
+    expect(air.detail, 'the consistent verdict hides the refused count').toContain(
+      '1 relation(s) refused',
+    );
+    // And the reader can find out WHICH one, rather than only how many.
+    const info = r.diagnostics.find(
+      (d) => d.code === 'verification/unsupported-construct' && d.elementName?.endsWith('ProseOnly'),
+    );
+    expect(info, 'the prose-only requirement was counted and never named').toBeDefined();
+    expect(info!.severity).toBe('info');
+  });
+
+  withZ3('names two anonymous clauses of one requirement apart', async () => {
+    // A NAMED SUBSET IS THE WHOLE POINT, and an anonymous clause has no name of
+    // its own — which is how most of the verification corpus is written. Both
+    // members of this core render as `R-ANON::«ConstraintUsage»`, so the
+    // sentence §3.5 requires be a named subset would print one name twice and
+    // leave a reader with nothing to look up. Where the name repeats, the
+    // relation itself separates them.
+    const r = await check(ANONYMOUS);
+    expect(r.exitCode).toBe(1);
+    const [group] = r.groups;
+    expect(group.core).toHaveLength(2);
+    expect(
+      new Set(group.core.map((m) => m.qualifiedName)).size,
+      'the fixture stopped being the anonymous shape this case is about',
+    ).toBe(1);
+    expect(group.detail).toContain('R-ANON::«ConstraintUsage» `craft.mass <= 25.0 [kg]`');
+    expect(group.detail).toContain('R-ANON::«ConstraintUsage» `craft.mass >= 30.0 [kg]`');
+    // The diagnostic a reader is shown is that same sentence, so the
+    // disambiguation has to be in the sentence and not only in the CLI's list.
+    const finding = r.diagnostics.find((d) => d.code === 'verification/inconsistent-requirements')!;
+    expect(finding.message).toContain('craft.mass <= 25.0 [kg]');
+    expect(finding.message).toContain('craft.mass >= 30.0 [kg]');
+  });
+
+  it('does not print a design point its own evaluator cannot reproduce', async () => {
+    // THE RE-EVALUATION GATE, exercised from the failing side. A backend that
+    // answers `sat` with a point the requirements do not hold at is exactly
+    // what an encoder defect looks like from here, and a gate asserted only
+    // from the passing side would stay green if `confirmWitness` were replaced
+    // by `() => ({ ok: true })`. Driven with a stub rather than with z3,
+    // because a correct solver cannot produce this answer.
+    const model = await modelFor(CONFLICT);
+    const stub: Z3Backend = {
+      absent: false,
+      version: '0.0.0',
+      fullVersion: 'stub',
+      seed: 0,
+      initMs: 0,
+      async check(_script, opts) {
+        return {
+          status: 'sat',
+          reason: '',
+          timedOut: false,
+          timeoutMs: opts?.timeoutMs ?? 0,
+          elapsedMs: 0,
+          // Every symbol the script declared, at a magnitude no mass ceiling
+          // admits — a point the solver "found" and the model refutes.
+          witness: (opts?.variables ?? []).map((symbol) => ({
+            symbol,
+            term: '999999.0',
+            value: 999999,
+          })),
+          core: [],
+        };
+      },
+    };
+    const r = await checkConsistency(model, { backend: stub });
+    const [group] = r.groups;
+    expect(group.outcome, 'an unconfirmed design point was reported as a verdict').toBe(
+      'inconclusive',
+    );
+    expect(group.code).toBe('verification/not-evaluable');
+    expect(group.witnessConfirmed, 'a point this tool could not reproduce was confirmed').toBe(
+      false,
+    );
+    expect(group.detail).toContain('would not confirm it');
+    // The point is still shown — a reader debugging an encoder defect needs it
+    // — and it is shown as the thing that failed, not as evidence.
+    expect(group.witness.length).toBeGreaterThan(0);
+  });
+
+  it('never says the reserved word, in any surface this command reaches a reader through', () => {
+    // §6 non-goal 5: `consistency` decides SATISFIABILITY of static contracts.
+    // The reactive question is a different one with a different answer, and its
+    // word is reserved by the claims guard. The plan document is excluded — it
+    // is where the boundary is DISCUSSED, and discussing it is the reason this
+    // case exists.
+    //
+    // COMMENT LINES IN SOURCE ARE EXCLUDED, and only comment lines: a doc
+    // comment saying which word this file refuses to print is not the tool
+    // printing it, and a guard that could not tell the two apart would forbid
+    // the module from stating its own charter. Every string a reader can be
+    // shown is still scanned, in source and in prose alike.
+    const speech = (file: string): string =>
+      file.endsWith('.md')
+        ? read(file)
+        : read(file)
+            .split('\n')
+            .filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l))
+            .join('\n');
+    // The guard is not vacuous: the word IS in the file this command lives in,
+    // in the comment that says it will not be printed.
+    expect(read('src/semantics/consistency.ts'), 'the charter no longer names what it refuses').toMatch(
+      /realiz|realis/i,
+    );
+    for (const file of [
+      'src/semantics/consistency.ts',
+      'src/api/verification.ts',
+      'scripts/sysprose.ts',
+      'scripts/lib/sysprose-spec.ts',
+      'src/text/langium/diagnostic-codes.ts',
+      'docs/CLI-REFERENCE.md',
+      'docs/DIAGNOSTIC-CODES.md',
+      'docs/USER-GUIDE.md',
+      // The two documents this command's own prose was added to. A file list
+      // that stopped at the surfaces the CLI prints would leave the places
+      // where the boundary is DESCRIBED unscanned, which is where a reserved
+      // word is most likely to be reached for.
+      'docs/CONFORMANCE.md',
+      'docs/AGENT-AUTHORING-CAMPAIGN.md',
+      'README.md',
+    ]) {
+      expect(speech(file), `${file} says the reserved word to a reader`).not.toMatch(/realiz|realis/i);
+    }
+  });
 });

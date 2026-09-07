@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2571 passed / 0 failed / 0 skipped** across **138 files** + **128 E2E** across **78 spec files** = **2699 green** (measured 2026-09-06) |
+| Full automated suite | **2595 passed / 0 failed / 0 skipped** across **138 files** + **128 E2E** across **78 spec files** = **2723 green** (measured 2026-09-06) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -379,6 +379,54 @@ the counts equal the element census; a relation that leaves the pipeline without
 a word said about it fails there. Neither mechanism is a claim that the gatherer
 reads every construct the standard defines.
 
+**`consistency` answers a different question, and may say `consistent` only
+with the count of what it left out.** `verify` asks whether each requirement
+holds of the design the file describes; `consistency` asks whether the
+requirements on a subject could be met by any design at all, and the two
+disagree by construction on a file whose values break a requirement. By default
+every feature carrying a literal value is RELEASED and only the structural
+axioms are asserted — `assert constraint` bodies, `bind` equalities, the
+defining equations of derived features — because a requirement set is
+inconsistent when nothing satisfies it, and answering that with the values that
+happen to be in the file is a question about one design point;
+`--with-values` re-pins them and asks the weaker question, and every verdict
+line names the mode. Each requirement is asserted as `A ⇒ G`, one
+implication per guarantee under that requirement's assumptions — the reading
+`Requirements::RequirementCheck` states and the one `verify` uses on the same
+file, named on every verdict line. Read as `A ∧ G` instead, two requirements
+guarded by mutually exclusive `assume` clauses (a mode- or phase-conditional
+pair) would be reported as contradictory, which they are not: no single design
+point is ever required to meet both. A set of implications is satisfiable by
+making every antecedent false, so each requirement that carries assumptions is
+also asked whether it can be ENGAGED at a point the whole set admits. A set that
+holds only because a requirement in it never applies is reported `inconclusive`
+under `verification/vacuous` — exit 2, forgiven by no flag — which is §2's rule
+that vacuity is inconclusive always, applied one level up; the witness is still
+published, because the set is satisfiable and only its meaning is in doubt.
+Mutually exclusive modes pass that check and two requirements under the same
+assumption with colliding guarantees do not, which is the discrimination the
+implication reading buys. An `assume` clause a gate refused stands the
+whole requirement down rather than being dropped from the antecedent, since
+`G` alone is the stronger claim and the model does not make it. On `unsat` the tool reports the conflicting subset z3's
+core produced, named by requirement and by the qualified name and element id of
+each relation, under `verification/inconsistent-requirements` — an error, exit
+1, forgiven by nothing. That subset is called **a conflicting subset**: only
+`--minimize`, having run its deletion loop to completion, may call it minimal.
+On `sat` the design point is substituted back through the tool's own evaluator
+before it is printed. A relation a gate refused is listed and not asserted,
+which is sound in one direction only — an inconsistency found without it stands,
+a set called consistent without it may not — so the refused count is printed
+beside every verdict. A subject whose requirements state no relation this lane
+encodes is `inconclusive`, never consistent, and a run in which nothing at all
+was decided is exit 2 with `--allow-inconclusive` and without it. There is no
+point-evaluation counterpart for this question, so an absent backend decides
+nothing and exits 2.
+
+**What `consistency` is not.** It decides the satisfiability of static
+contracts. Whether a reactive implementation can be built to meet a
+specification over time is a different question, is a declared non-goal of the
+verification plan (§6), and no surface of this tool claims it.
+
 Evidence records bind a claim to a canonical model digest taken over **qualified
 names, never element ids** (ids are fresh UUIDs on every load), to the tool
 version, and to the flags that changed what was shown. They carry no timestamp,
@@ -491,6 +539,14 @@ plan set was 241 s and this build does not meet it: the overrun predates the
 engine — 296 s was already registered at commit 4 — and it is recorded rather
 than rounded away.
 
+**Re-registered again at commit 6**, same command, same machine: **374 s** over
+the same 138 files, a **+23 s** delta on a run that went from 2 581 tests to
+2 595. Almost all of it is the process boundary rather than the solver: the four
+new L7 cases each spawn `tsx` and bind the standard library (~6 s apiece), while
+the eight new L8 consistency cases run in process and cost **~2.4 s** between
+them. The budget is still 241 s and this build still does not meet it, for the
+same reason and by the same accounting.
+
 ---
 
 ## Mapping to OMG conformance statements — and the honest gaps
@@ -522,7 +578,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2571 pass / 0 skip, 138 files)
+# Full unit + integration + conformance suite (2595 pass / 0 skip, 138 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

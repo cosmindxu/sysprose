@@ -804,6 +804,7 @@ describe('L7 — sysprose reporting command', () => {
       'contracts',
       'obligations',
       'verify',
+      'consistency',
     ]) {
       expect(top.stdout, `${name} must be listed`).toContain(name);
     }
@@ -812,7 +813,11 @@ describe('L7 — sysprose reporting command', () => {
     // contracts would tell a `verify` reader that exit 1 means the model did
     // not load cleanly, when it means the requirement was refuted.
     expect(top.stdout).toContain('for every subcommand that REPORTS');
-    expect(top.stdout).toContain('`verify` judges');
+    // BOTH judging subcommands, and a sentence that survives there being two of
+    // them: a list joined with commas rendered "`verify`, `consistency` judges",
+    // which is not English and is the one line telling a reader that the
+    // contract above does not apply to these two.
+    expect(top.stdout).toContain('`verify` and `consistency` judge and have their own contract');
 
     const sub = run(['where-used', '--help']);
     expect(sub.code).toBe(0);
@@ -1697,6 +1702,130 @@ package P {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 240_000);
+
+  it('consistency exits 1 on a requirement set nothing can satisfy, and names the subset', () => {
+    // 1 means the same KIND of thing here as it does for `verify` — a decided
+    // finding about the model — and it is the reason both subcommands share the
+    // third exit contract. What differs is the subject of the finding: `verify`
+    // refutes one obligation, this one says no design at all could meet the set.
+    const conflict = `${FIXV}/models/consistency-conflict.sysml`;
+    const r = run(['consistency', conflict]);
+    expect(r.code, 'a requirement set nothing can satisfy went green').toBe(1);
+    expect(r.stdout).toContain('1 inconsistent, 0 inconclusive, 0 consistent');
+    expect(r.stdout).toContain('verification/inconsistent-requirements');
+    // NAMED, both ways: by the short id a reader knows the requirement by, and
+    // by the qualified name of the relation itself.
+    expect(r.stdout).toContain('R-UAV-002');
+    expect(r.stdout).toContain('R-UAV-004');
+    expect(r.stdout).toContain('ConsistencyConflict::MassCeiling::mtowCeiling');
+    expect(r.stdout).toContain('ConsistencyConflict::MassFloor::mtowFloor');
+    // And the word "minimal" is not available without the loop that earns it.
+    expect(r.stdout).toContain('a conflicting subset');
+    expect(r.stdout, 'a core was called minimal with no deletion loop').not.toContain('minimal');
+
+    const reduced = run(['consistency', conflict, '--minimize']);
+    expect(reduced.code).toBe(1);
+    expect(reduced.stdout).toContain('a minimal conflicting subset');
+  }, 180_000);
+
+  it('consistency --json publishes a top-level verdict block that agrees with the process', () => {
+    const r = run(['consistency', UAV, '--with-values', '--json']);
+    expect(r.code).toBe(0);
+    const { keys, body } = payload<{
+      verdict: { consistent: number; inconsistent: number; inconclusive: number; exitCode: number };
+      consistency: {
+        withValues: boolean;
+        released: string[];
+        groups: Array<{ outcome: string; detail: string; witnessConfirmed: boolean }>;
+      };
+    }>(r);
+    // The same envelope every judging subcommand publishes, so an automation
+    // reads the verdict without knowing which payload key this one uses.
+    expect(keys).toEqual(['consistency', 'file', 'ok', 'verdict']);
+    expect(body.verdict).toEqual({
+      consistent: 1,
+      inconsistent: 0,
+      inconclusive: 0,
+      exitCode: 0,
+    });
+    expect(body.verdict.exitCode, 'the payload and the process must agree').toBe(r.code);
+    expect(body.consistency.withValues).toBe(true);
+    expect(body.consistency.released, '`--with-values` released something').toEqual([]);
+    const [group] = body.consistency.groups;
+    expect(group.outcome).toBe('consistent');
+    expect(group.witnessConfirmed, 'a design point was printed unconfirmed').toBe(true);
+    // MUST NEVER say "consistent" without the refused count and the mode.
+    expect(group.detail).toMatch(/\d+ relations? refused/);
+    expect(group.detail).toContain('--with-values');
+
+    // And without the flag the file's own numbers are released, which the
+    // report states rather than leaving a reader to infer.
+    const released = run(['consistency', UAV, '--json']);
+    expect(released.code).toBe(0);
+    const other = payload<{ consistency: { released: string[] } }>(released).body;
+    expect(other.consistency.released).toContain('UAVSurveillanceSystem::AirVehicle::mtow');
+  }, 240_000);
+
+  it('consistency decides nothing with no solver, and --allow-inconclusive does not lower it', () => {
+    // The honest-absence path, forced with the switch the §5 CI job uses.
+    // There is no second engine to fall back to here: whether a requirement set
+    // is satisfiable is not a question the model's own values can answer.
+    for (const extra of [[], ['--allow-inconclusive']]) {
+      const r = run(['consistency', UAV, ...extra], undefined, NO_Z3);
+      expect(r.code, `--allow-inconclusive lowered an absent solver (${extra.join(' ') || 'no flag'})`).toBe(2);
+      expect(r.stdout).toContain('verification/tool-absent');
+      expect(r.stdout).toContain('no solver ran');
+      // The census is still true — an absent solver must not read as an empty
+      // model — and nothing was called consistent.
+      expect(r.stdout).toContain('2 requirement(s) on 1 subject(s)');
+      expect(r.stdout, 'a verdict was printed with no solver').not.toContain('— consistent');
+    }
+  }, 240_000);
+
+  it('consistency --subject narrows by what the reader typed, and refuses a REF that selects nothing', () => {
+    // THREE SPELLINGS A READER REACHES FOR, and the promise they rest on: "a
+    // type answers for its subtypes". The type no contract names, and the part
+    // usage the file writes after `subject` — which every row of this report
+    // prints beside the type — both have to select the set the guide says they
+    // select, and the conformance test underneath them inverts silently.
+    const model = `${FIXV}/models/consistency-subtype.sysml`;
+    const air = run(['consistency', model, '--subject', 'ConsistencySubtype::AirVehicle']);
+    expect(air.code).toBe(0);
+    expect(air.stdout).toContain('4 requirement(s) on 1 subject(s)');
+    expect(air.stdout).toContain('subject ConsistencySubtype::AirVehicle');
+    expect(air.stdout, 'narrowing to a subtype pulled in its sibling set').not.toContain(
+      'subject ConsistencySubtype::Vehicle',
+    );
+
+    const usage = run(['consistency', model, '--subject', 'ConsistencySubtype::uav']);
+    expect(usage.code).toBe(0);
+    expect(usage.stdout).toContain('subject ConsistencySubtype::AirVehicle');
+
+    // AND A REF THAT RESOLVES AND SELECTS NOTHING IS A USAGE ERROR. The
+    // run-wide sentence says the file states no requirement set at all, and
+    // printing that because a `--subject` matched none of them would be a false
+    // statement about the reader's model in the one place they came for a true
+    // one.
+    const empty = run(['consistency', model, '--subject', 'ConsistencySubtype::Vehicle::mass']);
+    expect(empty.code).toBe(2);
+    expect(empty.stderr).toContain('is not the subject of any requirement in this file');
+    expect(
+      empty.stdout,
+      'a subject that selected nothing was reported as a model that states nothing',
+    ).not.toContain('this model states no requirement set at all');
+  }, 180_000);
+
+  it('consistency refuses a budget that is not one and a subject that names nothing', () => {
+    const badCore = run(['consistency', UAV, '--max-core', '0']);
+    expect(badCore.code).toBe(2);
+    expect(badCore.stderr).toContain('--max-core must be a positive whole number');
+    expect(badCore.stderr, 'a usage error was reported as a tool defect').not.toContain(
+      'internal error',
+    );
+    const badSubject = run(['consistency', UAV, '--subject', 'NoSuchThing']);
+    expect(badSubject.code).toBe(2);
+    expect(badSubject.stderr).toContain('no element matches `NoSuchThing`');
+  }, 180_000);
 
   it('--no-library skips binding and still reports the file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));

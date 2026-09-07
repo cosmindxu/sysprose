@@ -134,6 +134,9 @@ const APP_DOORS: ReadonlyArray<{
   // COOP/COEP headers GitHub Pages cannot set), so the app's job is to read
   // evidence and print the terminal command, never to reach a verdict.
   { command: 'verify', controls: [] },
+  // And `consistency` for the first reason and one of its own: satisfiability
+  // is a solver question, and there is no solver in the browser at all.
+  { command: 'consistency', controls: [] },
 ];
 
 interface Row {

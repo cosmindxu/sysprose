@@ -121,6 +121,7 @@ with the function that control runs.
 | What does each requirement assume and guarantee, and on which subject? | — no view yet | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
 | What must be shown, over which axioms, and what do the gates refuse? | — no view yet | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
 | Does each obligation hold, by which engine, and under what bound? | — no view yet | `npm run sysprose -- verify model.sysml --engine literal` | `verifyModel` — `src/api/verification.ts` |
+| Can all the requirements on this subject hold at once, and if not, which conflict? | — no view yet | `npm run sysprose -- consistency model.sysml` | `consistencyReport` — `src/api/verification.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -214,7 +215,7 @@ npm run check -- <file.sysml> [--json]   # check a file from the command line
 npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # stats · elements · requirements · trace
                        # connectivity · where-used · orphans · prompts
-                       # contracts · obligations · verify
+                       # contracts · obligations · verify · consistency
                        # `npm run sysprose -- --help` lists them
 ```
 

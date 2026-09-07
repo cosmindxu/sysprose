@@ -229,6 +229,22 @@ export {
   type VarSort,
 } from './contracts';
 export {
+  checkConsistency,
+  DEFAULT_MAX_CORE,
+  READING,
+  witnessNumber,
+  type ConsistencyGroup,
+  type ConsistencyOptions,
+  type ConsistencyOutcome,
+  type ConsistencyRequirement,
+  type ConsistencyResult,
+  type ConsistencySubject,
+  type CoreMember,
+  type CoreMemberKind,
+  type RefusedRelation,
+  type UnengageableRequirement,
+} from './consistency';
+export {
   obligationsOf,
   type EvidenceRef,
   type Obligation,

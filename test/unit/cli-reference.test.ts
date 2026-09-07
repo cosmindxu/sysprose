@@ -16,12 +16,13 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { STATEMENT_KINDS } from '@semantics/index';
+import { DEFAULT_MAX_CORE as SEMANTICS_MAX_CORE, STATEMENT_KINDS } from '@semantics/index';
 import { renderCliReference } from '../../scripts/gen-cli-reference';
 import {
   CHECK_EXIT_CODES,
   COMMANDS,
   COMMON_FLAGS,
+  DEFAULT_MAX_CORE,
   EXIT_CODES,
   STATEMENT_KIND_FLAG_VALUES,
   VERIFY_EXIT_CODES,
@@ -166,6 +167,31 @@ describe('the `--kind` flag and the statement-kind vocabulary', () => {
       expect(kindFlag!.doc, `--kind's doc line offers ${kind}`).toContain(kind);
       expect(row!, `the reference's --kind row names ${kind}`).toContain(kind);
     }
+  });
+});
+
+/**
+ * The other value the command table copies rather than imports.
+ *
+ * Same reason as `--kind`'s vocabulary above, same failure if it drifts:
+ * `--max-core`'s help line and the generated reference would promise a budget
+ * the engine does not use, and a reader who trusted the printed default would
+ * mis-read every core that came back unreduced.
+ */
+describe('the `--max-core` default and the engine that honours it', () => {
+  it('is the number `src/semantics/consistency.ts` actually defaults to', () => {
+    expect(
+      DEFAULT_MAX_CORE,
+      '`--max-core`\u2019s documented default and `DEFAULT_MAX_CORE` disagree',
+    ).toBe(SEMANTICS_MAX_CORE);
+  });
+
+  it('names it in the reference', () => {
+    const row = DOC.split('\n').find((l) => l.startsWith('| `--max-core N` |'));
+    expect(row, 'the reference no longer renders a `--max-core` row').toBeDefined();
+    expect(row!, 'the --max-core row no longer prints its default').toContain(
+      `${DEFAULT_MAX_CORE} members`,
+    );
   });
 });
 

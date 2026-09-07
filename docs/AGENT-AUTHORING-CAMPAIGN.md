@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **both** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 61 tests |
+| L7 | The command-line contract: **both** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 66 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`) | 33 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -133,7 +133,7 @@ Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
 so where they appear. Measured 2026-09-06: **82 fixture directories** under
-`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **72
+`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **73
 catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
 rules** in `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3042,6 +3042,88 @@ verdict MEANS rather than of how it was reached; the witness VALUES stay out,
 since pinning z3's exact rationals would make every golden a pin on a solver's
 model-construction order.
 
+
+**A requirement set can be unsatisfiable, and nothing could say so.** Commit 6
+of the formal-verification plan adds `consistency` (`src/semantics/consistency.ts`,
+`consistencyReport` in `src/api/verification.ts`), the second subcommand in this
+repository that judges. It asks a question `verify` cannot: not "does each
+requirement hold of the design in this file" but "could these requirements be met
+by any design at all". The two disagree by construction on a file whose values
+break a requirement — that one is `refuted`, and its requirement set is
+perfectly satisfiable — which is why it is a subcommand and not a flag.
+
+**The values in the file do not get to answer it.** Every feature carrying a
+literal value is released and only the structural axioms are kept: `assert`
+bodies, `bind` equalities and the defining equations of derived features. A
+requirement set is inconsistent when NOTHING satisfies it, and answering that
+with whatever `mtow` happens to be today would be a question about one design
+point. `--with-values` re-pins them and asks the weaker question, and every
+verdict line names which of the two it was computed in.
+
+**A requirement is read as `assume ⇒ require`, and the line says so.** That is
+what `Requirements::RequirementCheck` states and what `verify` reads on the same
+file, and two judging subcommands that disagreed about the meaning of the word
+"requirement" would be two tools. The conjunction reading was shipped first and
+withdrawn under an orchestrator probe: mode- and phase-conditional requirements
+— `assume { mode == cruise }` against `assume { mode == ferry }` — came back as
+a conflicting subset naming two guarantees that never have to hold at the same
+point, a false alarm on one of the commonest patterns in systems engineering.
+The vacuity trap the conjunction reading was chosen to avoid is closed
+explicitly instead: a set of implications is satisfiable by falsifying every
+antecedent, so each requirement that carries assumptions is asked a SECOND
+question — can it be engaged at a point the whole set admits? A set that holds
+only because a requirement in it never applies comes back `inconclusive` under
+`verification/vacuous`, exit 2 and forgiven by nothing, which is §2's standing
+rule that vacuity is inconclusive always. Mutually exclusive modes pass that
+check; two requirements under the SAME assumption whose guarantees collide do
+not, so the conflicts the conjunction reading was kept for are still found. An `assume` clause a gate refused stands its whole requirement
+down rather than being dropped from the antecedent, because `G` without its `A`
+is the stronger claim and the file does not make it.
+
+**An inconsistency is only ever printed with a NAMED subset**, which is the
+whole point of the code `verification/inconsistent-requirements` — an error,
+exit 1, forgiven by nothing. Each requirement is asserted under its own tracking
+literal, so z3's unsat core comes back as labels this tool maps to the relations
+that produced them, named both ways: by the short id a reader knows the
+requirement by, and by the qualified name and element id of the relation itself.
+A core is called **a conflicting subset**; only `--minimize`, having run its
+deletion loop to completion, upgrades the phrase to *minimal*, and a core larger
+than `--max-core` (default 8) is reported in full, unreduced, with the budget
+named as the reason.
+
+That deletion loop is where the one real defect of this commit was: it tested
+each candidate against the WHOLE script rather than against the core. Whenever
+the script carries an assertion the core does not — a reachable axiom, or under
+`--with-values` the pinned value of the feature the core is about — that
+assertion keeps every trial unsatisfiable, so the loop deletes a member the rest
+does not contradict without and returns a **satisfiable singleton** labelled
+*minimal*. An unsat core is by definition a subset that is unsatisfiable on its
+own, so that is the set a deletion loop has to shrink. The first regression case
+written for it ran in the default mode, where the core and the script coincide
+and the two loops are byte-identical — it stayed green under the restored
+defect. The case now runs `--minimize --with-values`, which is the shape that
+reproduces it, and asserts the reduced core still has more than one member.
+
+**Two asymmetries are stated on every line rather than left to a reader.** A
+relation a gate refused — °C arithmetic, `%`, a collection — is listed with its
+reason and not asserted, so an inconsistency found without it is still an
+inconsistency (an added assertion can only make a set harder to satisfy) while a
+set called *consistent* without it may be excluded by the very relation that was
+refused: the refused COUNT therefore travels with the word "consistent", which
+§3.5's MUST-NEVER list requires. And a requirement set that states no relation
+this lane encodes is `inconclusive`, never consistent — an empty conjunction is
+satisfiable and says nothing — with a run that decided nothing at all exiting 2
+under `--allow-inconclusive` and without it, the same rule that stops `verify`
+going green over a model with no obligations.
+
+The absent-solver path keeps the CENSUS: with `SYSPROSE_NO_Z3=1` the command
+still reports how many requirements on how many subjects it did not decide,
+because "0 requirement(s) on 0 subject(s)" over a file full of requirements is
+how an absent solver reads as an empty model. `VERIFY_EXIT_CODES` gained the
+second decided negative in the same commit — one requirement set nothing can
+satisfy, beside one obligation refuted — because the contract is quoted verbatim
+into both subcommands' help and the reference, and a contract naming only one of
+the two would document the other's loudest verdict as something else.
 
 ### Pinned behaviours (decisions, not defects)
 

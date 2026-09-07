@@ -27,9 +27,11 @@ npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 
 **The exit-code contract is per subcommand, and there are two of them.** Most
 subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations` — for those,
-0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify`
-*judges*, and its 1 means **refuted**; its section below states its own contract
-in full, and every section states which of the two it obeys.
+0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
+*judge*, and their 1 means a **decided negative** — an
+obligation refuted with every feature at its model value, or one requirement set
+nothing can satisfy. Each section below states its own
+contract in full, and every section states which of the two it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is
@@ -61,6 +63,7 @@ rather than reporting on the first one.
 | [`contracts`](#contracts) | What does each requirement assume and guarantee, on which subject, honoured by which part? | `contracts` | reports |
 | [`obligations`](#obligations) | What must be shown, over which axioms, and what do the unit gates refuse? | `obligations` | reports |
 | [`verify`](#verify) | Does each obligation hold, by which engine, and under what bound? | `verify` | judges |
+| [`consistency`](#consistency) | Can all the requirements on this subject hold at once — and if not, which conflict? | `consistency` | judges |
 
 ### Options every subcommand takes
 
@@ -260,7 +263,27 @@ npm run sysprose -- verify <file.sysml|-> [options]
 
 Computed by `verifyModel (src/api/verification.ts)`. With `--json` the answer is published under `verify`, beside `ok` and `file`.
 
-**Exit codes.** 0 every obligation discharged non-vacuously by the engine that was asked for, and there was at least one to discharge · 1 at least one obligation refuted with every feature at its model value · 2 usage/IO error, a degraded model, a model that states no obligation at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it.
+**Exit codes.** 0 every obligation discharged non-vacuously by the engine that was asked for — or every requirement set shown satisfiable — and there was at least one of them to decide · 1 at least one obligation refuted with every feature at its model value, or one requirement set nothing can satisfy · 2 usage/IO error, a degraded model, a model that states nothing to decide at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it.
+
+### `consistency`
+
+**Can all the requirements on this subject hold at once — and if not, which conflict?**
+
+```bash
+npm run sysprose -- consistency <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--subject REF` | The subject: an id, a qualified name, or a name unique in the model — a type, or the part usage the file writes after `subject`, which is narrowed through its declared type. A type answers for its subtypes, because a requirement on a `Vehicle` is a requirement on every air vehicle. A REF that is the subject of nothing is refused by name rather than reported as a file with no requirements | every subject the model states a requirement about |
+| `--with-values` | Ask the weaker question: can the requirements hold together AT THE VALUES THE FILE STATES? By default every feature carrying a literal value is released and only the structural axioms are kept, because a consistency question about a requirement set must not be answered by the values that happen to be in the file. Every verdict line names the mode it was computed in | — |
+| `--minimize` | Reduce the conflicting subset by deletion, one member per check, until every member is needed. Only a loop that RAN TO COMPLETION earns the word "minimal"; without it, and after any timeout, the report says "a conflicting subset" | — |
+| `--max-core N` | The deletion loop’s budget, in core members — minimising costs one solver check per member. A core larger than N is reported in full and left unreduced, and the line says the budget was why | 8 members |
+| `--allow-inconclusive` | Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, never over an inconsistency, and never over a run in which nothing at all was decided | — |
+
+Computed by `consistencyReport (src/api/verification.ts)`. With `--json` the answer is published under `consistency`, beside `ok` and `file`.
+
+**Exit codes.** 0 every obligation discharged non-vacuously by the engine that was asked for — or every requirement set shown satisfiable — and there was at least one of them to decide · 1 at least one obligation refuted with every feature at its model value, or one requirement set nothing can satisfy · 2 usage/IO error, a degraded model, a model that states nothing to decide at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it.
 
 ### `trace` relationship presets
 
@@ -310,4 +333,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*11 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*12 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

@@ -83,14 +83,18 @@ export type {
 // Verification lane (plan docs/04-formal-verification-plan.md §3.1, §3.2, §3.4)
 export {
   contractReport,
+  consistencyReport,
   obligationsReport,
   verifyModel,
   ALLOW_INCONCLUSIVE_CODES,
+  INCONSISTENT_REQUIREMENTS_CODE,
   VERIFICATION_CODES,
   VERIFICATION_ERROR_CODES,
   VerifyOptionError,
 } from './verification';
 export type {
+  ConsistencyReport,
+  ConsistencyReportOptions,
   ContractReport,
   ContractReportOptions,
   KeywordOrigin,
@@ -102,6 +106,23 @@ export type {
   VerifyOptions,
   VerifyReport,
 } from './verification';
+// The consistency engine's own payload types, so a consumer coming through
+// this barrel can walk a group, a core member and a refusal without a deep
+// import into the semantics layer — the same reason the contract and
+// obligation types are re-exported below.
+export { DEFAULT_MAX_CORE, READING, witnessNumber } from '../semantics/consistency';
+export type {
+  ConsistencyGroup,
+  ConsistencyOptions,
+  ConsistencyOutcome,
+  ConsistencyRequirement,
+  ConsistencyResult,
+  ConsistencySubject,
+  CoreMember,
+  CoreMemberKind,
+  RefusedRelation,
+  UnengageableRequirement,
+} from '../semantics/consistency';
 // Evidence (plan §3.10). `recordEvidence` and the digests are exported because
 // a record is meant to be produced, stored and re-checked by a consumer, and
 // `modelVersionOf` is what tells them whether one has gone stale.

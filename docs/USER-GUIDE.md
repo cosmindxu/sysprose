@@ -714,6 +714,7 @@ about rather than something to scroll past.
 | `verification/tool-absent` | No engine ran | No |
 | `verification/design-admitted` | Refuted only after `--free` released a value your model states | No |
 | `verification/refuted` | False with every feature at its model value | No — exit **1** beats the flag |
+| `verification/inconsistent-requirements` | No design point satisfies every requirement on one subject — `consistency` names the conflicting subset | No — exit **1** beats the flag |
 
 **A vacuous requirement is reported as undecided, and that is a deliberate
 disagreement with the specification.** Part 1 §9.2.14.2.8 gives a requirement
@@ -762,6 +763,133 @@ accepting and ignoring it.
 `src/semantics/engines/smt.ts`, `src/api/evidence.ts`,
 `src/api/verification.ts`, and the golden verdict corpus in
 `test/fixtures/verification/`.
+
+### Whether the requirements can all hold at once
+
+`verify` asks whether each requirement holds **of the design your file
+describes**. `consistency` asks the other question: could these requirements be
+met by **any** design at all? The two are different, and they disagree by
+construction — a file whose values break a requirement is `refuted` by the first
+and has a perfectly satisfiable requirement set according to the second. That is
+why they are two subcommands and not a flag.
+
+```console
+$ npm run sysprose -- consistency examples/uav-isr.sysml --with-values
+examples/uav-isr.sysml: 0 inconsistent, 0 inconclusive, 1 consistent — 2 requirement(s) on 1 subject(s)
+  asked at the model's own values (`--with-values`): …
+  subject UAVSurveillanceSystem::AirVehicle (as `uav`) — consistent
+    2 requirement(s) can hold together at the model's own values (`--with-values`): QF_LRA,
+    witness …::mtow = 18.5, …::cruisePower = 650 (stored magnitudes), re-read in
+    process. 0 relations refused. …
+$ echo $?
+0
+```
+
+**By default the numbers in your file do not get to answer.** Every feature that
+carries a literal value is **released**, and only the structural axioms —
+`assert constraint` bodies, `bind` equalities and the defining equations of
+derived features — are kept. A requirement set is inconsistent when *nothing* can
+satisfy it, and answering that with whatever `mtow` happens to be today would be
+a question about one design point rather than about the requirements. The report
+says which values it let go and how many. `--with-values` re-pins them and asks
+the weaker question — "can these requirements hold together *at the point this
+file states*" — and every verdict line names which of the two it was computed
+in.
+
+**Each requirement is read as `assume ⇒ require`, and every verdict line says
+so.** That is the reading the shipped library states
+(`Requirements::RequirementCheck` is `allTrue(assumptions()) implies
+allTrue(constraints())`) and the one `verify` uses on the same file. It matters
+most for mode- and phase-conditional requirements: `assume { mode == cruise }`
+against `assume { mode == ferry }` is **not** a conflict, because no single
+design point is ever required to meet both guarantees. Read as a conjunction
+they would be reported as contradictory, which is a false alarm on one of the
+commonest patterns in systems engineering.
+
+The price of that reading is paid rather than hidden. A set of implications is
+satisfiable by falsifying every antecedent, so each requirement that carries
+assumptions is asked a second question — can it be **engaged** at a point the
+whole set admits? A set that holds only because one of its requirements never
+applies is **not** reported consistent: the row comes back `inconclusive` under
+`verification/vacuous` with the requirement and its assumptions named, exit 2,
+and no flag lowers it — the same rule `verify` applies to an obligation
+discharged by an antecedent nothing can satisfy. The witness is still printed,
+because the set *is* satisfiable; what is undecided is whether the requirements
+mean anything at that point.
+
+Mutually exclusive modes pass that check — each is engaged at its own point —
+while two requirements under the **same** assumption whose guarantees collide
+fail it. So a conditional requirement is neither exempt from scrutiny nor
+falsely accused.
+
+**An inconsistency is only ever printed with a named subset.** The engine
+asserts each requirement under its own tracking literal, so an `unsat` comes back
+with the labels that collided:
+
+```console
+$ npm run sysprose -- consistency conflict.sysml --minimize
+conflict.sysml: 1 inconsistent, 0 inconclusive, 0 consistent — 2 requirement(s) on 1 subject(s)
+  subject ConsistencyConflict::AirVehicle (as `uav`) — inconsistent
+    …a minimal conflicting subset is {R-UAV-002::mtowCeiling, R-UAV-004::mtowFloor}. 0 relations refused
+    verification/inconsistent-requirements
+    a minimal conflicting subset, 2 member(s):
+      R-UAV-002  uav.mtow <= 25.0 [kg]  [guarantee: ConsistencyConflict::MassCeiling::mtowCeiling]
+      R-UAV-004  uav.mtow >= 30.0 [kg]  [guarantee: ConsistencyConflict::MassFloor::mtowFloor]
+$ echo $?
+1
+```
+
+**Exit 1 means the same kind of thing here as it does for `verify`:** a decided
+finding about your model. `verification/inconsistent-requirements` is an
+**error**, and no flag forgives one.
+
+**"Minimal" is a word only `--minimize` can earn.** A solver's unsat core is not
+minimal — it is *a* subset that collides — so the report calls it *a conflicting
+subset*. `--minimize` runs a deletion loop, one solver check per member, removing
+each in turn and keeping it only if the rest become satisfiable without it. Only
+a loop that ran **to completion** upgrades the phrase to *a minimal conflicting
+subset*; a timeout, or a core larger than `--max-core` (default 8), leaves the
+weaker phrase and says the budget was why.
+
+**"Consistent" always comes with the count of what was left out.** A relation a
+gate refused — arithmetic on a °C scale, a `%`, a collection — is listed with its
+reason and is *not* asserted. That cuts both ways, and the asymmetry is why the
+count is printed every time: an inconsistency found without those relations is
+still an inconsistency (adding an assertion can only make a set harder to
+satisfy), but a set called *consistent* without them might be excluded by the
+very relation that was refused. A requirement that states no relation **at all**
+is counted apart, on the same line: no gate refused it, and folding the two
+together would report a file of prose requirements as one whose relations this
+tool turned down.
+
+**A requirement set with nothing to check is never green.** A subject whose
+requirements are all prose, or all outside the encodable fragment, comes back
+`inconclusive` — an empty conjunction is satisfiable and says nothing — and a
+run in which *nothing* was decided is exit 2 with `--allow-inconclusive` and
+without it. With no solver installed there is nothing to fall back to at all:
+satisfiability is not a question your model's own values can answer, so
+`--engine literal` has no counterpart here and an absent backend is
+`verification/tool-absent`, exit 2.
+
+**`--subject REF` narrows it**, and a type answers for its subtypes: a
+requirement written about a `Vehicle` is a requirement about every air vehicle,
+so the air-vehicle set holds both — even when no requirement is written about
+the air vehicle itself. The REF may name the part usage your file writes after
+`subject` (`--subject uav`), which is narrowed through its declared type. A REF
+that resolves but is the subject of nothing, and conforms to nothing that is,
+is refused by name and exits 2 — not reported as a file that states no
+requirements. Requirements with no subject are grouped and answered together
+rather than dropped.
+
+**What this is not.** It decides the satisfiability of *static* contracts —
+numbers, and the relations between them. Whether a reactive implementation could
+be built to meet a specification over time is a different question with a
+different answer, and this command does not answer it. Nothing here is about
+ordering, timing or behaviour.
+
+**Source of truth:** `src/semantics/consistency.ts`, `consistencyReport` in
+`src/api/verification.ts`, and the L8 cases in
+`test/campaign/verification.test.ts`.
 
 ### The keywords a file carries, including somebody else's
 

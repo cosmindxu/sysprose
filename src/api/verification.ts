@@ -79,6 +79,13 @@ import {
 import { DEFAULT_TIMEOUT_MS, loadZ3, type Z3Load } from '../semantics/smt/z3-bridge';
 import type { WitnessValue } from '../semantics/smt/z3-bridge';
 import {
+  checkConsistency,
+  consistencyCensus,
+  DEFAULT_MAX_CORE,
+  type ConsistencyGroup,
+  type ConsistencyResult,
+} from '../semantics/consistency';
+import {
   modelVersionOf,
   obligationDigest,
   recordEvidence,
@@ -933,6 +940,19 @@ const SMT_CLAIM: Record<SmtOutcome, { claim: EvidenceClaim; code: string | null 
 const STRICT_VACUITY_CODE = 'verification/vacuous-property';
 
 /**
+ * The one code `consistency` writes back, declared beside the lane's other
+ * verdict codes rather than inside the engine that emits it.
+ *
+ * It is an ERROR, and the two sets below are why it is spelled once: the
+ * catalogue guard compares {@link VERIFICATION_ERROR_CODES} against the
+ * `verification/*` entries `src/text/langium/diagnostic-codes.ts` marks
+ * `error`, and {@link VERIFICATION_CODES} against every entry the catalogue
+ * carries at all. A code named in one place and not the other is a code a
+ * reader is shown and cannot look up.
+ */
+export const INCONSISTENT_REQUIREMENTS_CODE = 'verification/inconsistent-requirements';
+
+/**
  * The codes this lane raises as errors rather than as info lines.
  *
  * EXPORTED SO IT CAN BE BOUND TO THE CATALOGUE. It is a second statement of a
@@ -949,6 +969,11 @@ export const VERIFICATION_ERROR_CODES: ReadonlySet<string> = new Set([
   'verification/refuted',
   // Only ever present because `--strict-vacuity` asked for it.
   STRICT_VACUITY_CODE,
+  // A requirement set nothing can satisfy is the same KIND of finding as a
+  // refutation: decided, about the model, and never a limit of the tool. It is
+  // an error for that reason and for one more — it is the only row `consistency`
+  // exits 1 on, and a consumer filtering on severity has to see it.
+  INCONSISTENT_REQUIREMENTS_CODE,
 ]);
 
 /**
@@ -970,6 +995,7 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
     .map((v) => v.code)
     .filter((c): c is string => c !== null),
   STRICT_VACUITY_CODE,
+  INCONSISTENT_REQUIREMENTS_CODE,
   'verification/tool-absent',
   'verification/design-admitted',
 ]);
@@ -1406,4 +1432,345 @@ function verdictFinding(r: ObligationVerdict): Finding {
         ? 'The requirement does not hold with every feature at the value the model binds it to. Read the witness on the row, fix the design or the requirement, and re-run; `--allow-inconclusive` does not forgive a violation and exit 1 outranks it.'
         : 'The obligation is not discharged. Run `npm run sysprose -- obligations <file>` to see what it stands on, and read `docs/DIAGNOSTIC-CODES.md` for what this code means.',
   };
+}
+
+/* ═════════════════════════════ consistency ══════════════════════════════ */
+
+/**
+ * `consistency` — the second command in this lane that JUDGES, and the second
+ * one whose exit code is a verdict.
+ *
+ * IT ASKS A DIFFERENT QUESTION FROM `verify`, and the difference is the whole
+ * reason it is a separate command rather than a flag. `verify` asks whether
+ * each requirement HOLDS of the design the file describes; this asks whether
+ * the requirements could be met by ANY design at all. So the two disagree by
+ * construction on a file whose values violate a requirement — `verify` refutes
+ * it, and this reports the requirement set as perfectly consistent — and a
+ * reader who took one for the other would read a satisfiable requirement set as
+ * a passing design.
+ *
+ * WHAT THEY DO NOT DISAGREE ABOUT is what a requirement MEANS: both read
+ * `assume ⇒ require`, the reading the shipped library states in
+ * `Requirements::RequirementCheck`. Two judging commands that disagreed about
+ * that would be two definitions of the word "requirement" in one tool.
+ *
+ * THREE RULES THIS FUNCTION EXISTS TO ENFORCE, on top of the engine's own:
+ *
+ *  1. **An absent solver is never a green build.** There is no second engine
+ *     here — a point evaluation cannot answer a satisfiability question — so an
+ *     absent backend is `verification/tool-absent` over the whole run,
+ *     inconclusive, exit 2, and `--allow-inconclusive` does not lower it.
+ *  2. **Nothing decided is never a green build.** Exit 0 says every requirement
+ *     set on every subject was shown satisfiable. A model that states no
+ *     requirement, or one whose requirements state no relation this lane
+ *     encodes, has been shown nothing — and that stays exit 2 with the flag and
+ *     without it, exactly as it does for `verify`.
+ *  3. **An inconsistency is exit 1.** It is a DECIDED finding about the model,
+ *     of the same kind as a refutation and of the same loudness: an error in
+ *     the report, and the one thing here that outranks every forgiveness.
+ */
+
+/** How a consistency run is narrowed and what it is allowed to forgive. */
+export interface ConsistencyReportOptions {
+  /** Only the subject types conforming to this element. */
+  subjectId?: ElementId;
+  /** Re-pin the literal feature values as axioms — a different, weaker question. */
+  withValues?: boolean;
+  /** Run the deletion loop, and earn the word "minimal". */
+  minimize?: boolean;
+  /** The deletion loop's budget, in core members. */
+  maxCore?: number;
+  /** The per-check budget in ms. */
+  timeoutMs?: number;
+  /** Lower 2 → 0 for {@link ALLOW_INCONCLUSIVE_CODES} only. Never over rules 1–3 above. */
+  allowInconclusive?: boolean;
+  /** The file's bytes, so the report binds the text as well as the graph. */
+  sourceText?: string;
+}
+
+/** What a consistency run came to, with the arithmetic behind its exit code. */
+export interface ConsistencyReport {
+  /** True when no solver loaded: every group is `verification/tool-absent`. */
+  toolAbsent: boolean;
+  /** Was the question asked at the model's own values? */
+  withValues: boolean;
+  minimize: boolean;
+  maxCore: number;
+  /** The feature values released because they are literals. Empty under `--with-values`. */
+  released: string[];
+  groups: ConsistencyGroup[];
+  /** Requirement sets shown satisfiable, with the refused count on each row. */
+  consistent: number;
+  /** Requirement sets nothing can satisfy. Each names a conflicting subset. */
+  inconsistent: number;
+  inconclusive: number;
+  /** How many inconclusive groups `--allow-inconclusive` lowered. */
+  forgiven: number;
+  allowInconclusive: boolean;
+  /** How many requirements were considered at all. */
+  requirements: number;
+  /** How many relations a gate or the encoder refused, over the whole run. */
+  refused: number;
+  /** How many requirements carry prose and no relation. */
+  noFormalClause: number;
+  /**
+   * How many requirements apply at NO point their own set admits.
+   *
+   * The price of the implication reading, published as a figure: a set of
+   * implications is satisfiable by falsifying every antecedent, so a
+   * requirement nothing can engage is named rather than left inside the word
+   * "consistent". `0` when no solver ran — nothing was asked.
+   */
+  unengageable: number;
+  /** Total solver checks. */
+  checks: number;
+  exitCode: 0 | 1 | 2;
+  /** The per-check budget the run used, or `null` when no solver ran. */
+  timeoutMs: number | null;
+  modelVersion: ModelVersion;
+  diagnostics: Diagnostic[];
+}
+
+/**
+ * Decide whether the requirements on each subject can hold at once.
+ *
+ * Asynchronous because resolving the backend is a dynamic import — the same
+ * one `verifyModel` makes, through the same `loadZ3()`, so the two commands
+ * cannot disagree about whether a solver exists.
+ */
+export async function consistencyReport(
+  model: Model,
+  opts: ConsistencyReportOptions = {},
+): Promise<ConsistencyReport> {
+  const allowInconclusive = opts.allowInconclusive === true;
+  const withValues = opts.withValues === true;
+  const minimize = opts.minimize === true;
+  const maxCore = opts.maxCore ?? DEFAULT_MAX_CORE;
+  const modelVersion = modelVersionOf(model, opts.sourceText);
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const load = await loadZ3();
+
+  if (load.absent) {
+    // No fallback, and no partial answer: a satisfiability question has no
+    // point-evaluation counterpart, so there is nothing to degrade to. The
+    // CENSUS is still taken, because "0 requirement(s) on 0 subject(s)" over a
+    // file full of requirements would let an absent solver read as an empty
+    // model — the same trap `verify` closes by reporting every obligation as
+    // `tool-absent` rather than reporting none.
+    const census = consistencyCensus(
+      model,
+      {
+        ...(opts.subjectId !== undefined ? { subjectId: opts.subjectId } : {}),
+        withValues,
+        minimize,
+        maxCore,
+      },
+      {
+        code: 'verification/tool-absent',
+        detail: `no solver ran, so nothing was decided about this requirement set: solver absent — ${load.reason}`,
+      },
+    );
+    return {
+      toolAbsent: true,
+      withValues,
+      minimize,
+      maxCore,
+      released: census.released,
+      groups: census.groups,
+      consistent: 0,
+      inconsistent: 0,
+      inconclusive: census.groups.length,
+      // Never forgiven, whatever the flag says: `verification/tool-absent` is
+      // not in the flag's scope, and a run that decided nothing is exit 2 in
+      // any case.
+      forgiven: 0,
+      allowInconclusive,
+      requirements: census.requirements,
+      refused: census.refused.length,
+      // Both figures come from the census's own deduplicated totals rather than
+      // from a sum over the groups: a contract about a supertype is a member of
+      // every subtype's group, and a sum would report one relation as two.
+      noFormalClause: census.noFormalClause,
+      unengageable: 0,
+      checks: 0,
+      exitCode: 2,
+      timeoutMs: null,
+      modelVersion,
+      diagnostics: numbered([
+        {
+          severity: 'info',
+          message: `no requirement set was checked: solver absent — ${load.reason}`,
+          code: 'verification/tool-absent',
+          hint: 'Install the solver and re-run. There is no point-evaluation engine for this question — whether a requirement set is satisfiable is not something the model’s own values can answer — so an absent solver decides nothing here, exits 2, and `--allow-inconclusive` does not lower it.',
+        },
+      ]),
+    };
+  }
+
+  const result = await checkConsistency(model, {
+    backend: load,
+    ...(opts.subjectId !== undefined ? { subjectId: opts.subjectId } : {}),
+    withValues,
+    minimize,
+    maxCore,
+    timeoutMs,
+  });
+
+  const forgiven = allowInconclusive
+    ? result.groups.filter(
+        (g) => g.outcome === 'inconclusive' && g.code !== null && ALLOW_INCONCLUSIVE_CODES.has(g.code),
+      ).length
+    : 0;
+  const consistent = result.groups.filter((g) => g.outcome === 'consistent').length;
+  const inconsistent = result.groups.filter((g) => g.outcome === 'inconsistent').length;
+  const inconclusive = result.groups.filter((g) => g.outcome === 'inconclusive').length;
+
+  return {
+    toolAbsent: false,
+    withValues,
+    minimize,
+    maxCore,
+    released: result.released,
+    groups: result.groups,
+    consistent,
+    inconsistent,
+    inconclusive,
+    forgiven,
+    allowInconclusive,
+    requirements: result.requirements,
+    refused: result.refused.length,
+    noFormalClause: result.noFormalClause,
+    unengageable: result.unengageable.length,
+    checks: result.checks,
+    exitCode: consistencyExitCode({ consistent, inconsistent, inconclusive, forgiven }),
+    timeoutMs: result.timeoutMs ?? null,
+    modelVersion,
+    diagnostics: numbered(consistencyFindings(result, allowInconclusive)),
+  };
+}
+
+/**
+ * The exit code of a consistency run.
+ *
+ * The order IS the contract, and the first test comes before the rows for the
+ * same reason it does in `exitCodeOf`: a run that decided nothing must never be
+ * green. "No requirement in this file states a relation I can encode, so
+ * everything is fine" is indistinguishable from "every requirement set is
+ * satisfiable", and only one of them is worth exit 0.
+ *
+ *  1. **Nothing decided ⇒ 2**, whatever `--allow-inconclusive` says.
+ *  2. **An inconsistency ⇒ 1.** Decided, about the model, and it outranks
+ *     every forgiveness.
+ *  3. **An inconclusive nobody forgave ⇒ 2.**
+ */
+function consistencyExitCode(counts: {
+  consistent: number;
+  inconsistent: number;
+  inconclusive: number;
+  forgiven: number;
+}): 0 | 1 | 2 {
+  if (counts.consistent + counts.inconsistent === 0) return 2;
+  if (counts.inconsistent > 0) return 1;
+  if (counts.inconclusive - counts.forgiven > 0) return 2;
+  return 0;
+}
+
+/**
+ * What a consistency run files, under the lane's one source and one prefix.
+ *
+ * One ERROR per inconsistent requirement set, naming its conflicting subset —
+ * anchored at the first member so an editor has somewhere to point, with every
+ * member named in the sentence and every member's element id and qualified name
+ * in the report's own `core` array. One INFO per refused relation, because a
+ * relation that disappears from a satisfiability question reads as one that was
+ * satisfied. One INFO per requirement that states nothing formally, for the
+ * same reason. One INFO per requirement the set can never engage, which is what
+ * the implication reading costs. One INFO per undecided set, carrying the code
+ * the exit contract is written over.
+ *
+ * EVERY LIST IT WALKS IS ALREADY DEDUPLICATED, and that is load-bearing rather
+ * than tidy: a contract about a supertype is a member of every subtype's group,
+ * so a findings loop over the groups would file the same refusal twice about
+ * the same element the moment a model has a type hierarchy.
+ */
+function consistencyFindings(
+  result: ConsistencyResult,
+  allowInconclusive: boolean,
+): Finding[] {
+  const out: Finding[] = [];
+  for (const group of result.groups) {
+    const where = group.subject?.typeQualifiedName ?? group.subject?.typeRef ?? 'no declared subject';
+    if (group.outcome === 'inconsistent') {
+      const anchor = group.core[0];
+      out.push({
+        severity: 'error',
+        message:
+          `the requirement set on ${where} cannot be satisfied: ${group.detail}`,
+        ...(anchor ? { elementId: anchor.id, elementName: anchor.qualifiedName } : {}),
+        code: INCONSISTENT_REQUIREMENTS_CODE,
+        hint:
+          'Every member of the subset is named on the row and in the report’s `core`, by element id and qualified name; removing or weakening any one of them is where a fix starts. ' +
+          (group.minimized
+            ? 'The deletion loop ran to completion, so no member of this subset is redundant.'
+            : 'Re-run with `--minimize` to reduce the subset to one where every member is needed; until it has run, this is a conflicting subset and not a minimal one.'),
+      });
+    } else if (group.outcome === 'inconclusive' && group.code !== null) {
+      const forgiven = allowInconclusive && ALLOW_INCONCLUSIVE_CODES.has(group.code);
+      out.push({
+        severity: 'info',
+        message: `the requirement set on ${where} was not decided: ${group.detail}`,
+        code: group.code,
+        hint: forgiven
+          ? 'This row was forgiven by `--allow-inconclusive`, which lowers exactly the undecided codes and nothing else; nothing was shown about this requirement set, and a run in which NOTHING was decided is exit 2 with the flag and without it.'
+          : 'Nothing is claimed about this requirement set. Read `docs/DIAGNOSTIC-CODES.md` for what this code means, and `npm run sysprose -- obligations <file> --missing` for what this lane would not decide.',
+      });
+    }
+  }
+  // One INFO per requirement that states nothing formally, each filed ONCE.
+  // The verdict sentence carries the count; this is where a reader finds out
+  // WHICH requirements it counted, and it is filed beside the refusals for the
+  // same reason: a requirement that vanishes from a satisfiability question
+  // reads as one that was satisfied.
+  const prose = new Set<string>();
+  for (const group of result.groups) {
+    for (const requirement of group.requirements) {
+      if (requirement.asserted + requirement.refused > 0) continue;
+      if (prose.has(requirement.id)) continue;
+      prose.add(requirement.id);
+      out.push({
+        severity: 'info',
+        message: `"${requirement.declaredName ?? requirement.qualifiedName}" carries prose and no relation, so it was not part of the question.`,
+        elementId: requirement.id,
+        elementName: requirement.qualifiedName,
+        code: 'verification/unsupported-construct',
+        hint: 'No gate refused it — the file simply does not say, formally, what it requires. Add a `require constraint { … }` clause, or read the count beside the verdict as how many of the requirements on this subject the answer is not about.',
+      });
+    }
+  }
+  // One INFO per requirement the set can never engage — the same fact `verify`
+  // files as `verification/vacuous`, one level up: an antecedent nothing
+  // satisfies discharges its requirement for free.
+  for (const requirement of result.unengageable) {
+    out.push({
+      severity: 'info',
+      message:
+        `"${requirement.shortId || requirement.qualifiedName}" applies at no point this requirement set admits: ` +
+        `its assumptions (${requirement.assumptions.map((a) => `\`${a}\``).join(', ')}) cannot hold here.`,
+      elementId: requirement.id,
+      elementName: requirement.qualifiedName,
+      code: 'verification/vacuous',
+      hint: 'Each requirement is read as `assume ⇒ require`, so a requirement whose assumptions cannot hold beside the rest of the set is met for free and says nothing about the design. Read the assumptions named on the row: either they contradict themselves, or another requirement in the set rules them out. The set is satisfiable and the witness is printed, but a set that holds only because a requirement in it never applies is not reported consistent — vacuity is inconclusive in this lane, exits 2, and no flag lowers it.',
+    });
+  }
+  for (const refusal of result.refused) {
+    out.push({
+      severity: 'info',
+      message: `\`${refusal.expression}\` was not asserted: ${refusal.detail}.`,
+      elementId: refusal.id,
+      elementName: refusal.qualifiedName,
+      code: 'verification/unsupported-expression',
+      hint: `The relation is listed with its reason rather than dropped, and the count travels with every verdict: an inconsistency found without it is still an inconsistency, but a requirement set called consistent without it may be excluded by the very relation that was refused (\`${refusal.reason}\`).`,
+    });
+  }
+  return out;
 }

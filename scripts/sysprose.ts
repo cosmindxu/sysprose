@@ -85,6 +85,7 @@ import { dirname } from 'node:path';
 import type { ElementRecord, Model } from '../src/core/index';
 import {
   connectivityReport,
+  consistencyReport,
   contractReport,
   countUnfollowedTypings,
   impactClosure,
@@ -93,9 +94,13 @@ import {
   obligationsReport,
   orphanReport,
   promptsFor,
+  READING,
   requirementSatisfaction,
   traceabilityMatrix,
   verifyModel,
+  witnessNumber,
+  type ConsistencyGroup,
+  type ConsistencyReport,
   type ElementRef,
   type KeywordUse,
   type ObligationVerdict,
@@ -163,6 +168,16 @@ interface Report {
    * beside it can be certain nothing was judged.
    */
   verify?: VerifyReport;
+  /**
+   * The run of the OTHER subcommand that judges.
+   *
+   * A second field rather than a widened first one: the two answer different
+   * questions and publish different figures, and a `verdict` block that had to
+   * be read differently depending on which command produced it would be a
+   * block nobody could parse without knowing. What they share — and all an
+   * automation needs — is `verdict.exitCode`.
+   */
+  consistency?: ConsistencyReport;
 }
 
 /** The four figures the verify exit contract is computed from, and the answer. */
@@ -171,6 +186,14 @@ interface Verdict {
   violated: number;
   inconclusive: number;
   designAdmitted: number;
+  exitCode: number;
+}
+
+/** The same block for `consistency`, whose figures are requirement SETS. */
+interface ConsistencyVerdict {
+  consistent: number;
+  inconsistent: number;
+  inconclusive: number;
   exitCode: number;
 }
 
@@ -192,6 +215,23 @@ function judge(report: VerifyReport, degraded: boolean): Verdict {
     violated: report.violated,
     inconclusive: report.inconclusive,
     designAdmitted: report.designAdmitted,
+    exitCode: degraded ? 2 : report.exitCode,
+  };
+}
+
+/**
+ * The exit code of a consistency run, degradation included.
+ *
+ * The same rule and the same reason as {@link judge}: whether the model under
+ * the answer was the whole model is a fact about the FILE, it lives here beside
+ * the `degraded` banner, and it outranks everything — a requirement set called
+ * satisfiable over half a model is not an answer about that model.
+ */
+function judgeConsistency(report: ConsistencyReport, degraded: boolean): ConsistencyVerdict {
+  return {
+    consistent: report.consistent,
+    inconsistent: report.inconsistent,
+    inconclusive: report.inconclusive,
     exitCode: degraded ? 2 : report.exitCode,
   };
 }
@@ -1325,6 +1365,206 @@ async function reportVerify(
   return { json: r, text: rendered, verify: r };
 }
 
+/* ────────────────────────────── consistency ─────────────────────────────── */
+
+/**
+ * `--max-core N`, refused rather than repaired when it is not a budget.
+ *
+ * The same shape as `--timeout`: a bound the tool did not honour would let a
+ * reader believe a deletion loop ran when it did not, and "a conflicting
+ * subset" and "a minimal conflicting subset" are different claims about a
+ * model. A budget of zero is a spelling for "never minimise", which is what
+ * omitting `--minimize` already says, so it is a usage error rather than a
+ * silent no-op.
+ */
+function consistencyMaxCore(args: ParsedArgs): number | undefined {
+  const raw = flagValue(args, 'max-core');
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new UsageError(
+      `--max-core must be a positive whole number of core members; got ${raw}. It is the deletion ` +
+        'loop’s budget — one solver check per member — and a budget the tool did not honour would ' +
+        'let a core read as minimal when nothing reduced it.',
+    );
+  }
+  return n;
+}
+
+/**
+ * The subject a run was narrowed to, or `undefined`.
+ *
+ * A library element is refused for the same reason `--element` refuses one:
+ * the bundled library's requirements are not the reader's, this report is of
+ * their model, and narrowing to one would answer about a requirement set they
+ * cannot edit.
+ */
+function consistencySubject(model: Model, args: ParsedArgs): ElementRecord | undefined {
+  const ref = flagValue(args, 'subject');
+  if (ref === undefined) return undefined;
+  const el = resolveElementRef(model, ref);
+  if (el.attrs.isLibrary === true) {
+    throw new UsageError(
+      `\`${ref}\` is a bundled standard-library element — this report is of your model, and every figure in it excludes the library`,
+    );
+  }
+  return el;
+}
+
+/** One requirement set, as a person reads it. */
+function consistencyLines(group: ConsistencyGroup): string[] {
+  const where =
+    group.subject?.typeQualifiedName ?? group.subject?.typeRef ?? 'no declared subject';
+  return [
+    `  subject ${where}${group.subject ? ` (as \`${group.subject.name}\`)` : ''} — ${group.outcome}`,
+    `    ${group.detail}`,
+    ...(group.code !== null ? [`    ${group.code}`] : []),
+    // The subset, one member per line, each named the two ways the report
+    // names it: by the requirement a reader knows it by, and by the qualified
+    // name of the relation itself. A core printed as one comma-joined string
+    // is a core nobody reads past the third member.
+    ...(group.core.length > 0
+      ? [
+          `    ${group.coreLabel}, ${group.core.length} member(s):`,
+          ...group.core.map(
+            (m) =>
+              `      ${m.requirement?.shortId || m.requirement?.qualifiedName || m.qualifiedName}  ` +
+              `${m.expression || '(no relation body)'}  [${m.kind}: ${m.qualifiedName}]`,
+          ),
+        ]
+      : []),
+    // The design point as a NUMBER: z3 answers in exact rationals and prints
+    // them as `(/ 37.0 2.0)`, and a witness a reader has to divide by hand is
+    // a witness they do not read. The exact term is on the payload.
+    ...(group.witness.length > 0
+      ? [
+          `    witness: ${group.witness.map((w) => `${w.symbol} = ${witnessNumber(w)}`).join(', ')} (stored magnitudes)`,
+        ]
+      : []),
+    ...group.unengageable.map(
+      (u) =>
+        `    ${u.shortId || u.qualifiedName}  applies at no point this set admits — ` +
+        `assume ${u.assumptions.map((a) => `\`${a}\``).join(' and ')}`,
+    ),
+    ...group.requirements.map(
+      (r) =>
+        `    ${r.shortId || r.qualifiedName}  ${r.asserted} relation(s) asserted, ${r.refused} refused` +
+        (r.asserted + r.refused === 0 ? ' — prose only, nothing to encode' : ''),
+    ),
+  ];
+}
+
+/**
+ * `consistency` — the second subcommand that judges, and the one whose exit 1
+ * is about a requirement SET rather than about one obligation.
+ *
+ * The header states the MODE first, because every figure under it means
+ * something different in the other one: with the file's literal values released
+ * the answer is about the requirement set, and under `--with-values` it is
+ * about the requirement set together with the design point the file states.
+ * A reader who cannot see which of the two they are holding has been given a
+ * verdict they cannot use.
+ */
+async function reportConsistency(
+  model: Model,
+  name: string,
+  text: string,
+  args: ParsedArgs,
+): Promise<Report> {
+  const subject = consistencySubject(model, args);
+  const maxCore = consistencyMaxCore(args);
+  const withValues = flagGiven(args, 'with-values');
+  const minimize = flagGiven(args, 'minimize');
+  const r = await consistencyReport(model, {
+    ...(subject ? { subjectId: subject.id } : {}),
+    ...(withValues ? { withValues: true } : {}),
+    ...(minimize ? { minimize: true } : {}),
+    ...(maxCore !== undefined ? { maxCore } : {}),
+    allowInconclusive: flagGiven(args, 'allow-inconclusive'),
+    sourceText: text,
+  });
+
+  // A SUBJECT THAT SELECTED NOTHING IS A USAGE ERROR, not a statement about the
+  // model. The run-wide sentence below says the file states no requirement set
+  // at all, and printing that because a `--subject` matched none of them would
+  // be a false claim about the reader's file in the one place they went looking
+  // for a true one.
+  if (subject !== undefined && r.groups.length === 0) {
+    throw new UsageError(
+      `\`${qname(model, subject.id)}\` is not the subject of any requirement in this file, and no ` +
+        'requirement is written about a type it conforms to — so there is no requirement set to ' +
+        'answer about. Name the subject’s TYPE (a type answers for its subtypes), or run without ' +
+        '`--subject` to see every set this file states.',
+    );
+  }
+
+  const rendered = [
+    // The two undecided-or-failing figures lead, for the reason §2 gives for
+    // `verify`: a line that opened with the green number reads as a pass with a
+    // footnote, and the footnote is what decides the exit code.
+    `${name}: ${r.inconsistent} inconsistent, ${r.inconclusive} inconclusive, ${r.consistent} consistent` +
+      ` — ${r.requirements} requirement(s) on ${r.groups.length} subject(s)`,
+    r.toolAbsent
+      ? `  no solver ran: satisfiability is not a question the model’s own values can answer, so there is ` +
+        `no point-evaluation engine to fall back to and this run is exit ${r.exitCode}`
+      : withValues
+        ? '  asked at the model’s own values (`--with-values`): the answer is about this requirement set ' +
+          'TOGETHER WITH the design point the file states, which is the weaker of the two questions'
+        : `  asked with every literal feature value released (${r.released.length} of them): a consistency ` +
+          'question about a requirement set is not answered by the values that happen to be in the file — ' +
+          '`--with-values` asks the other one',
+    // THE READING, on the run as well as on every verdict line. "Consistent"
+    // under `assume ⇒ require` and under `assume ∧ require` are different
+    // claims about a model, and this is the one the shipped library states —
+    // the same one `verify` reads the same file under.
+    `  ${READING}, as \`Requirements::RequirementCheck\` states it — mode- and phase-conditional ` +
+      'requirements are not in conflict merely because their assumptions cannot both hold',
+    ...(r.unengageable > 0
+      ? [
+          `  ${r.unengageable} requirement(s) apply at no point their own set admits — satisfied for ` +
+            'free by an assumption the rest of the set rules out. A set that holds only because a ' +
+            'requirement in it never applies is undecided, not consistent: vacuity is inconclusive ' +
+            'here as it is under `verify`, and no flag lowers it',
+        ]
+      : []),
+    ...(r.refused > 0
+      ? [
+          `  ${r.refused} relation(s) refused by a gate and not asserted — an inconsistency found without ` +
+            'them is still an inconsistency, and a set called consistent without them may be excluded by ' +
+            'the very relation that was refused',
+        ]
+      : []),
+    ...(r.noFormalClause > 0
+      ? [`  ${r.noFormalClause} requirement(s) carry prose and no relation — no gate refused them`]
+      : []),
+    ...(r.allowInconclusive
+      ? [
+          `  --allow-inconclusive forgave ${r.forgiven} of ${r.inconclusive} undecided set(s) — it lowers ` +
+            'the undecided codes only, never an absent solver, never an inconsistency, and never a run in ' +
+            'which nothing at all was decided',
+        ]
+      : []),
+    ...(r.groups.length === 0
+      ? [
+          '  this model states no requirement set at all — there was nothing to answer, which is ' +
+            'exit 2: exit 0 means every requirement set was shown satisfiable, and none was',
+        ]
+      : r.groups.flatMap(consistencyLines)),
+    ...(r.groups.length > 0 && r.consistent + r.inconsistent === 0
+      ? [
+          '  nothing was decided: exit 0 says every requirement set was shown satisfiable, and none ' +
+            'of these was, so this run is exit 2 with `--allow-inconclusive` and without it',
+        ]
+      : []),
+    ...(r.toolAbsent
+      ? []
+      : [`  ${r.checks} solver check(s) at ${r.timeoutMs ?? 0} ms each`]),
+    `  model ${r.modelVersion.graph}`,
+    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text: rendered, consistency: r };
+}
+
 function reportOrphans(model: Model, name: string): Report {
   const r = orphanReport(model);
   const text = [
@@ -1378,6 +1618,8 @@ async function buildReport(
       return reportObligations(model, name, args);
     case 'verify':
       return reportVerify(model, name, text, args, degraded);
+    case 'consistency':
+      return reportConsistency(model, name, text, args);
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.
@@ -1412,6 +1654,11 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
       // Both before the file is read: a mistyped engine name, and `--free` on
       // the engine that cannot honour it, are answers about the command line.
       verifyFree(args, verifyEngine(args));
+      return;
+    case 'consistency':
+      // A budget that is not one is an answer about the command line, and
+      // loading a model to say so costs a second of parsing and binding.
+      consistencyMaxCore(args);
       return;
     default:
       return;
@@ -1572,7 +1819,11 @@ async function main(): Promise<number> {
   // Computed once, here, because it is what the process exits with AND what the
   // `--json` body publishes: a payload whose `verdict.exitCode` disagreed with
   // the process's own status is the one thing an automation cannot recover from.
-  const verdict = built.verify ? judge(built.verify, degraded) : undefined;
+  const verdict: Verdict | ConsistencyVerdict | undefined = built.verify
+    ? judge(built.verify, degraded)
+    : built.consistency
+      ? judgeConsistency(built.consistency, degraded)
+      : undefined;
 
   const body = flagGiven(parsed, 'json')
     ? JSON.stringify(
