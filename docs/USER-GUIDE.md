@@ -262,6 +262,18 @@ Row 2 of the toolbar groups the views the way this section does. All of them
 show the same model; none of them is a separate document you have to keep in
 sync. Switching views never changes the model.
 
+**`examples/views-tour.sysml` populates every view in this section**, one
+labelled block per view, so you can open it and switch through the toolbar to
+see what each one draws and what text produced it. Measured on that file:
+general 30 nodes / 26 edges, tree 47, interconnection 8, requirement 8 / 3,
+case 5 / 3, parametric 5, action 2 / 1, state 2 / 2, sequence 2 lifelines and
+1 message, grid 47 rows, requirements 2 rows.
+
+The two questions that file answers which nothing else here does: a **sequence**
+view is derived from `flow from a to b` (falling back to `succession` control
+edges), and an **allocation** view needs `allocate x to y` — a `satisfy` will
+not populate it.
+
 A graph view can be narrowed to one subtree — right-click a node → **Scope
 diagram to this**. That is what makes an interconnection diagram of one assembly readable.
 **There is no on-screen indicator that a scope is active**; the breadcrumb above
