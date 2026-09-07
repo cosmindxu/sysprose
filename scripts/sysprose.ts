@@ -81,13 +81,18 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ElementRecord, Model } from '../src/core/index';
+import Ajv from 'ajv';
 import {
+  attachEvidence,
   connectivityReport,
   consistencyReport,
   contractReport,
   countUnfollowedTypings,
+  detachEvidence,
+  evidenceStatus,
   impactClosure,
   isUserElement,
   modelMetrics,
@@ -97,11 +102,16 @@ import {
   READING,
   requirementSatisfaction,
   traceabilityMatrix,
+  verdictFor,
   verifyModel,
   witnessNumber,
+  type AttachReport,
   type ConsistencyGroup,
   type ConsistencyReport,
+  type DetachReport,
   type ElementRef,
+  type EvidenceRecord,
+  type EvidenceStatusReport,
   type KeywordUse,
   type ObligationVerdict,
   type VerifyEngineOption,
@@ -124,6 +134,7 @@ import {
 import { buildGrid } from '../src/diagram/grid';
 import { buildRequirementsTable } from '../src/diagram/requirements-table';
 import { loadModelText, type CheckReport } from '../src/text/load';
+import { serializeElement } from '../src/text/serializer';
 import { flagGiven, flagValue, isArgError, parseArgs, type ParsedArgs } from './lib/args';
 import { runMain } from './lib/exit';
 import {
@@ -1565,6 +1576,224 @@ async function reportConsistency(
   return { json: r, text: rendered, consistency: r };
 }
 
+/* ─────────────────────────────── evidence ───────────────────────────────── */
+
+/**
+ * The model as text — the reader's own roots, never the bundled library.
+ *
+ * `serializeModel` writes every root, and after a `--library full` load that is
+ * 38 000 library elements ahead of the reader's twelve. The app's Text view has
+ * had the same filter since it shipped (`userRootIds` in `src/ui/store.ts`);
+ * this is the terminal's copy of it, and it is the reason `evidence-attach`
+ * can write its output back over the file it read.
+ */
+function modelText(model: Model): string {
+  return model
+    .rootIds()
+    .filter((id) => model.get(id)?.attrs.isLibrary !== true)
+    .map((id) => serializeElement(model, id, 0))
+    .join('\n\n');
+}
+
+/**
+ * The records named by `--from`, validated before anything is written.
+ *
+ * VALIDATED, NOT TRUSTED. The file is JSON somebody can edit, and a record is
+ * about to become a durable claim inside a model — so it is checked against
+ * `docs/schemas/evidence-record.schema.json`, the same schema the L8 corpus
+ * checks `verify --record` output against, and the whole attach is refused if
+ * any record fails. Half an attach is worse than none: the file would then
+ * carry evidence for some obligations and not others, with nothing saying which.
+ */
+function loadRecords(path: string): EvidenceRecord[] {
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch (err) {
+    throw new UsageError(
+      `cannot read ${path}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new UsageError(
+      `${path} is not JSON: ${err instanceof Error ? err.message : String(err)}. ` +
+        'It should be the array `verify --record PATH` wrote.',
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new UsageError(
+      `${path} holds ${parsed === null ? 'null' : typeof parsed}, not an array of records — ` +
+        '`verify --record PATH` writes one record per obligation, as a JSON array.',
+    );
+  }
+  // Resolved from THIS FILE, not from `process.cwd()`. The schema is a repo
+  // asset rather than something the caller named, and a bare relative path
+  // would make `evidence-attach` work only when the process happened to start
+  // at the package root — which `npm run sysprose --` always does and a direct
+  // `tsx scripts/sysprose.ts` from anywhere else does not. The short spelling
+  // is kept for the message, because that is the path a reader would look up.
+  const schemaPath = 'docs/schemas/evidence-record.schema.json';
+  const schemaFile = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', schemaPath);
+  let validate: ReturnType<Ajv['compile']>;
+  try {
+    validate = new Ajv({ allErrors: true, strict: false }).compile(
+      JSON.parse(readFileSync(schemaFile, 'utf8')) as object,
+    );
+  } catch (err) {
+    throw new UsageError(
+      `cannot read ${schemaPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const problems: string[] = [];
+  parsed.forEach((record, i) => {
+    if (!validate(record)) {
+      for (const e of validate.errors ?? []) {
+        problems.push(`  record ${i}${e.instancePath}: ${e.message ?? 'is invalid'}`);
+      }
+      return;
+    }
+    // THE ONE RULE THE SCHEMA CANNOT STATE. `verdict` and `claim` are two
+    // enumerations the schema checks independently, so a record reading
+    // `{"claim":"holds-at-values","verdict":"pass"}` is valid JSON against it
+    // and is nonetheless a laundered claim: `pass` is written for `proved`
+    // alone. `attachEvidence` derives the verdict it writes and would silently
+    // correct this one, but silence is the wrong answer to a file that says
+    // something untrue — the reader has a record file to fix, and is told so.
+    const r = record as EvidenceRecord;
+    const derived = verdictFor(r.claim);
+    if (r.verdict !== derived) {
+      problems.push(
+        `  record ${i}/verdict: says \`${r.verdict}\` over the claim \`${r.claim}\`, which is ` +
+          `\`${derived}\` — \`pass\` is written for \`proved\` alone and \`fail\` for \`refuted\``,
+      );
+    }
+  });
+  if (problems.length > 0) {
+    throw new UsageError(
+      `${path} does not hold evidence records this tool wrote:\n${problems.slice(0, 10).join('\n')}` +
+        (problems.length > 10 ? `\n  … ${problems.length - 10} more` : '') +
+        `\nEvery record is checked against ${schemaPath}, and nothing is written unless all of them pass.`,
+    );
+  }
+  return parsed as EvidenceRecord[];
+}
+
+/** `--from`, which `evidence-attach` cannot do without. */
+function attachFrom(args: ParsedArgs): string {
+  const from = flagValue(args, 'from');
+  if (from === undefined || from === '') {
+    throw new UsageError(
+      '--from PATH is required: it names the JSON array `verify --record PATH` wrote. ' +
+        'There is no default, because a run that attached nothing would report a file it had not changed.',
+      true,
+    );
+  }
+  return from;
+}
+
+/**
+ * A model that did not load cleanly is never written back.
+ *
+ * The same refusal `verify --record` makes and for a stronger reason: `--record`
+ * writes a claim BESIDE the file, and this writes the FILE. A degraded load
+ * salvaged what it could parse, so serializing it back is a lossy rewrite of
+ * somebody's source with the unreadable parts re-emitted verbatim and
+ * everything the mapper dropped simply gone.
+ */
+function refuseDegradedWrite(cmd: string, name: string, degraded: boolean): void {
+  if (!degraded) return;
+  throw new UsageError(
+    `${cmd} refuses a model that did not load cleanly: ${name} is degraded, and writing it back ` +
+      'would replace your source with what this tool managed to salvage. Fix the findings above first.',
+  );
+}
+
+function reportEvidenceStatus(model: Model, name: string): Report {
+  const r: EvidenceStatusReport = evidenceStatus(model);
+  const text = [
+    `${name}: ${r.stale} stale, ${r.current} current, ${r.unrecorded} unrecorded` +
+      `${r.overstated > 0 ? `, ${r.overstated} overstated` : ''} — model ${r.graph}`,
+    // The sentence that keeps this command honest. A record says what an engine
+    // claimed; it never says more than that, and the display may not either.
+    '  a record is shown with the claim it was made under — `holds-at-values` is never shown as `proved`',
+    ...(r.rows.length === 0
+      ? ['  nothing in this file states a verdict or carries a record']
+      : r.rows.map(
+          (row) =>
+            `  ${row.shortId !== '' ? `<${row.shortId}> ` : ''}${row.qualifiedName}  ${row.status}` +
+            `${row.code !== undefined ? `  ${row.code}` : ''}\n      ${row.detail}` +
+            (row.slice.length > 0 ? `\n      slice: ${row.slice.join(', ')}` : ''),
+        )),
+  ].join('\n');
+  return { json: r, text };
+}
+
+/**
+ * Write the records into the model and hand back the model as text.
+ *
+ * THE REPORT OF AN ATTACH IS THE FILE IT PRODUCED, which is why `text` is the
+ * serialized model rather than a summary: `--out model.sysml` then does the one
+ * thing a reader wants, and the summary — what was attached, what was already
+ * there, and every verdict that MOVED — goes to stderr beside it. The verdict
+ * changes are on stderr rather than in the payload for the reason the plan
+ * states: a `fail` replaced by a `pass` may never happen quietly, and stderr is
+ * the stream a person sees even when stdout is being piped into a file.
+ */
+function reportEvidenceAttach(
+  model: Model,
+  name: string,
+  args: ParsedArgs,
+  degraded: boolean,
+): Report {
+  refuseDegradedWrite('evidence-attach', name, degraded);
+  const from = attachFrom(args);
+  const records = loadRecords(from);
+  let r: AttachReport;
+  try {
+    r = attachEvidence(model, records);
+  } catch (err) {
+    // A library element, or a faulted declaration. Both are answers about what
+    // was ASKED — the record names an element evidence cannot live on — and
+    // reaching the top-level handler would print `internal error` over a stack
+    // trace, which tells the reader the tool is broken when their record is
+    // aimed at the wrong file.
+    throw new UsageError(err instanceof Error ? err.message : String(err));
+  }
+  for (const c of r.changes) {
+    process.stderr.write(
+      `sysprose evidence-attach: ${c.element} ${c.clause} — verdict ${c.from} → ${c.to} ` +
+        `(claim ${c.fromClaim} → ${c.toClaim})` +
+        `${c.launders ? ' — a refutation is being replaced by a pass' : ''}\n`,
+    );
+  }
+  for (const s of r.skipped) {
+    process.stderr.write(`sysprose evidence-attach: skipped ${s.clause} — ${s.reason}\n`);
+  }
+  process.stderr.write(
+    `sysprose evidence-attach: ${r.attached} record(s) attached to ${r.elements.length} element(s), ` +
+      `${r.unchanged} already present, ${r.skipped.length} skipped; ` +
+      `${r.verdicts.length} verdict facet(s) written\n`,
+  );
+  return { json: r, text: modelText(model) };
+}
+
+function reportEvidenceDetach(
+  model: Model,
+  name: string,
+  degraded: boolean,
+): Report {
+  refuseDegradedWrite('evidence-detach', name, degraded);
+  const r: DetachReport = detachEvidence(model);
+  process.stderr.write(
+    `sysprose evidence-detach: ${r.removed} carrier(s) removed from ${r.elements.length} element(s), ` +
+      `${r.verdictsCleared.length} verdict facet(s) cleared with them\n`,
+  );
+  return { json: r, text: modelText(model) };
+}
+
 function reportOrphans(model: Model, name: string): Report {
   const r = orphanReport(model);
   const text = [
@@ -1620,6 +1849,12 @@ async function buildReport(
       return reportVerify(model, name, text, args, degraded);
     case 'consistency':
       return reportConsistency(model, name, text, args);
+    case 'evidence-status':
+      return reportEvidenceStatus(model, name);
+    case 'evidence-attach':
+      return reportEvidenceAttach(model, name, args, degraded);
+    case 'evidence-detach':
+      return reportEvidenceDetach(model, name, degraded);
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.
@@ -1660,6 +1895,11 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
       // loading a model to say so costs a second of parsing and binding.
       consistencyMaxCore(args);
       return;
+    case 'evidence-attach':
+      // `--from` is the whole command; a run without it would parse a model,
+      // bind the library and then say it had nothing to attach.
+      attachFrom(args);
+      return;
     default:
       return;
   }
@@ -1670,6 +1910,16 @@ function diagnosticLine(name: string, d: CheckReport['diagnostics'][number]): st
   const at = d.range ? `${d.range.start.line}:${d.range.start.column}` : '-';
   return `${name}:${at}: ${d.severity} ${d.code ?? d.ruleId}  ${d.message}`;
 }
+
+/**
+ * The subcommands whose report is a MODEL rather than a reading of one.
+ *
+ * Named as a set rather than tested inline because two places depend on it and
+ * a third will: the in-place-write refusal below, and the `--out` note beside
+ * it. Everything else here answers a question about a file and leaves the file
+ * exactly as it found it.
+ */
+const WRITES_A_MODEL: ReadonlySet<string> = new Set(['evidence-attach', 'evidence-detach']);
 
 /** How many diagnostics are printed before the rest are counted instead. */
 const MAX_DIAGNOSTICS = 20;
@@ -1868,6 +2118,19 @@ async function main(): Promise<number> {
     process.stdout.write(`Wrote ${out}\n`);
   } else {
     process.stdout.write(`${body}\n`);
+    // THE INPUT PATH IS NEVER WRITTEN UNLESS IT WAS NAMED. `evidence-attach`
+    // and `evidence-detach` are the only subcommands whose report IS a new
+    // version of the model, so they are the only ones a reader could expect to
+    // edit the file in place — and in place is exactly what a tool must not do
+    // by default with somebody's source. The updated model went to stdout; the
+    // way to write it back is to say so, and `--out <the same path>` is
+    // accepted for precisely that.
+    if (WRITES_A_MODEL.has(cmd.name)) {
+      process.stderr.write(
+        `sysprose ${cmd.name}: ${name} was NOT changed — the updated model is on stdout. ` +
+          `Pass \`--out ${name === '<stdin>' ? 'PATH' : name}\` to write it.\n`,
+      );
+    }
   }
 
   if (degraded) {

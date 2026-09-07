@@ -397,7 +397,7 @@ refresh); `src/ui/panels/TextEditor.tsx`;
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (24 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (25 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, violations, unknowns, and a feasibility verdict |
@@ -441,6 +441,9 @@ may legitimately differ, and the difference is spelled out under the table.
 | What guidance applies to this element? | — | `npm run sysprose -- prompts model.sysml --element X` |
 | What does each requirement assume and guarantee? | — | `npm run sysprose -- contracts model.sysml` |
 | What must be shown, and what do the gates refuse? | — | `npm run sysprose -- obligations model.sysml` |
+| Does the verdict in the file still hold? | **Requirements** view → *Evidence* column † | `npm run sysprose -- evidence-status model.sysml` |
+| Write a run's verdicts into the file | — | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` |
+| Take them back off | — | `npm run sysprose -- evidence-detach model.sysml` |
 
 † **Validate** re-runs the rule engine over the model already in the editor;
 `check` parses the file first and then applies those same rules. The
@@ -448,8 +451,13 @@ may legitimately differ, and the difference is spelled out under the table.
 `trace` tabulates every element of the row and column kinds and so also shows
 what links to nothing. The **Interconnection** view *draws* the ports and
 connections; it computes no connectivity report — `connectivity` exists only in
-the terminal and the SDK, as do `orphans`, `prompts`, `contracts`, `obligations` and
-the depth walk behind `where-used`. Properties → *Used by* lists everything referencing the
+the terminal and the SDK, as do `orphans`, `prompts`, `contracts`, `obligations`,
+`evidence-attach`, `evidence-detach` and
+the depth walk behind `where-used`. The **Requirements** view's *Evidence* column
+*reads* what a run left in the file — `current`, `stale` or `unrecorded`, with
+the record's claim word beside it — where `evidence-status` prints every row
+with its digest, its slice and its `verification/*` code; nothing in the app
+writes a verdict. Properties → *Used by* lists everything referencing the
 selection, library and re-derived copies included, where `where-used` drops the
 library, walks to the `--depth` you ask for and tells you what it left out.
 
@@ -891,6 +899,150 @@ ordering, timing or behaviour.
 `src/api/verification.ts`, and the L8 cases in
 `test/campaign/verification.test.ts`.
 
+### The verdict in the file, and whether it still holds
+
+A verdict that lives only in a terminal scrollback is a verdict nobody can
+review. `evidence-attach` writes the records of a `verify` run **into the model**
+as annotations on the requirements they are about, `evidence-status` says whether
+they still hold, and `evidence-detach` takes them back off. All three report;
+none of them judges. The judging was done once, by `verify`, and a verdict is not
+re-decided by being written down.
+
+```console
+$ npm run sysprose -- verify examples/uav-isr.sysml --engine literal --record evidence.json
+  …
+  2 evidence record(s) written to evidence.json
+$ npm run sysprose -- evidence-attach examples/uav-isr.sysml --from evidence.json --out examples/uav-isr.sysml
+sysprose evidence-attach: 2 record(s) attached to 2 element(s), 0 already present, 0 skipped; 2 verdict facet(s) written
+Wrote examples/uav-isr.sysml
+```
+
+**The input file is never written unless you name it.** The updated model goes
+to stdout; `--out <path>` writes it, and `--out` pointing back at the file you
+read is how you edit in place. Without it the command says, on stderr, that your
+file was **not** changed and prints the flag that would change it. A tool that
+rewrote somebody's source by default would be a tool you could not run to see
+what it would do.
+
+**What a record is, in the file.** Each one is a
+`@SysproseVerification::Evidence { … }` annotation — the notation's §7.27
+annotating form over the metadata definition the `SysproseVerification` package
+ships. That package is **not** written into your file: `evidence-attach` adds
+carriers and nothing else, so a model that carries evidence and neither declares
+nor imports `SysproseVerification` has an annotation whose type resolves nowhere,
+and no check in this tool objects to it. Paste the package (it is quoted in full
+above) into the file, or import it, if you want the file to stand on its own. Five readable scalars come first (`claim`, `verdict`, `engine`, `tool`,
+`modelGraph`) and the whole record follows as JSON in `record`. The scalars are a
+**rendering**; `record` is the datum, and it is the only half this tool reads
+back, because two readable copies of one number can disagree and the one that
+must win is the one a consumer parses.
+
+**The verdict facet is derived, never accepted.** Beside the carrier,
+`evidence-attach` writes `metadata RequirementMetadata { attribute verdict = …; }`
+— and it writes it **from the record's claim**, by one rule: `pass` for `proved`,
+`fail` for `refuted`, `inconclusive` for everything else. A `--engine literal`
+record claims `holds-at-values`, so it writes `inconclusive`. There is no path
+through this command by which a point evaluation writes `pass`. A record file is
+JSON somebody can edit, and a record states a `verdict` of its own beside its
+claim; that field is **never copied through**. If the two disagree —
+`"claim": "holds-at-values"` beside `"verdict": "pass"` — the whole file is
+refused, naming the record and what its claim actually implies, rather than
+half-trusted.
+
+**A requirement with several obligations carries the worst of them.** One run
+produces one record per clause, and the file holds one verdict facet: it is
+`fail` if any live obligation is refuted, `inconclusive` if any is undecided, and
+`pass` only when every one of them was proved. Re-recording one obligation
+supersedes that obligation and nothing else — the pair `clause` +
+`obligationDigest` is what identifies one — so a requirement whose second clause
+was just discharged still reads `fail` while its first clause stands refuted, and
+the answer does not change if you swap the two clauses in the source.
+
+**Evidence accumulates.** A second run **appends** a carrier; nothing is
+overwritten and no earlier verdict is deleted, so the file keeps the history of
+what was claimed and when it changed. A record that is already there byte for
+byte is counted as `already present` rather than written twice, which is what
+makes the command safe to run again. Every verdict the run **moved** is printed
+on stderr with both claims — and a `fail` replaced by a `pass` is named as what
+it is.
+
+**Two refusals, and a third.** A model that did not load cleanly is refused
+outright: writing a degraded model back would replace your source with what the
+tool managed to salvage. (That refusal is why `evidence-attach` and
+`evidence-detach` have **no exit 1**: the reporting contract's 1 means "the
+report is of what parsed", and these two never report over half a model. They
+exit 0 or 2.) A record naming an element under a declaration the parser could not
+read is refused with the same sentence the facet editors show, because the
+serializer re-emits that declaration verbatim and anything written underneath it
+is gone on the next save — at the command line you will meet the degraded refusal
+first, since a faulted declaration only exists after a parse error. And a record
+aimed at the bundled standard library is refused: a carrier written there is
+never saved with your file. Every one of these is raised **before** the first
+carrier is written, so a refused run leaves your model exactly as it found it.
+
+**Then edit one literal.**
+
+```console
+$ npm run sysprose -- evidence-status examples/uav-isr.sysml
+examples/uav-isr.sysml: 2 stale, 0 current, 0 unrecorded — model sha256:196f8a85…
+  a record is shown with the claim it was made under — `holds-at-values` is never shown as `proved`
+  UAVSurveillanceSystem::MassRequirement  stale
+      stale — recorded at sha256:4b48f0ed…, the model is now sha256:196f8a85…; 3 element(s)
+      in this requirement's slice must be re-read, and the digest is over the whole model so
+      this tool cannot say which of them moved. Re-run `verify --record`.
+      slice: UAVSurveillanceSystem::uav, UAVSurveillanceSystem::EnduranceRequirement, UAVSurveillanceSystem::AirVehicle
+```
+
+You do not have to run `evidence-status` to be told: `npm run check` raises
+`validation/stale-evidence` as a **warning** on the ordinary path, because the
+next person to open the file runs the checker, not the verifier. A stale verdict
+only the verification lane could see would be a verdict that survived every edit
+made by anyone who did not know the lane existed.
+
+**What the digest can and cannot say.** It is taken over the whole user model —
+every element you wrote, canonicalised so that reformatting, reordering and
+reparsing leave it alone, and so that what a verification run itself wrote is
+excluded (or every record would be stale the instant it was attached). So the
+comparison knows **that** something moved and can never know **what**: it never
+saw the earlier model, only its hash. Naming the requirement's slice is the
+honest half of the answer — these are the declarations to re-read — and every
+stale line says the other half out loud rather than implying an attribution it
+cannot make. It catches model edits; it does not catch a **hand-edited record**,
+and nothing here pretends otherwise.
+
+**Two things this command calls out by name.** A `verdict` facet with no record
+behind it is `verification/claimed-without-evidence` — **info**, not a defect: a
+verdict reached by inspection is ordinary requirements management, and the row
+says only that *this tool* has nothing standing behind it. A `verdict = "pass"`
+over a record whose claim is not `proved` is
+`verification/verdict-overstates-evidence`, and that one is an **error**: both
+artefacts are the tool's own, they contradict each other, and the contradiction
+is in the direction that overstates. `evidence-attach` cannot produce that
+state; a file in it was written by hand.
+
+**A claim is never upgraded on display.** A record claiming `holds-at-values` is
+shown as `holds-at-values` in the terminal and in the Requirements table's
+*Evidence* column, never as *proved*; a stale record is never counted as
+discharged. The *Verdict* column beside it shows the facet, whose three values
+cannot tell a point evaluation from a proof — which is exactly why the claim
+word is on the row.
+
+**`evidence-detach` takes the facets with the carriers.** A `verdict` left
+behind by a detach is a claim with nothing behind it, which is the very state
+`verification/claimed-without-evidence` exists to report — so the command that
+removes the evidence removes the verdict it wrote, and leaves a facet you wrote
+by hand alone.
+
+**What another tool makes of this is not something this page will claim.** The
+verdict facet is an unbound tag holding a quoted string, where the standard has
+an enumeration on a different metaclass; a conforming SysML v2 reader is entitled
+to treat that line as an untyped annotation and ignore it. The round trip that
+matters is Sysprose → someone else's tool, and it has not been measured. Until it
+has, no claim is made about it.
+
+**Source of truth:** `src/api/evidence.ts`, the `stale-evidence` rule in
+`src/validation/rules.ts`, and `test/fixtures/agent-authoring/L8-evidence-stale`.
+
 ### The keywords a file carries, including somebody else's
 
 A `#keyword` in front of a declaration is the notation's own extension point:
@@ -927,8 +1079,9 @@ vocabulary Sysprose ships is a package you paste into your own file:
 
 ```sysml
 package SysproseVerification {
-    doc /* One annotation SysML v2 does not express, carried as a user-defined keyword over a metadata definition (SysML v2 7.27.1, 7.27.4). #exceptional says an outcome is a failure rather than an equally valid result. It is a Sysprose extension, not standard vocabulary. */
+    doc /* Two definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #exceptional says an outcome is a failure rather than an equally valid result. Evidence carries what a verification run showed, as an annotation on the requirement it is about. Both are Sysprose extensions, not standard vocabulary. */
     metadata def <exceptional> ExceptionalOutcome;
+    metadata def Evidence;
 }
 ```
 
@@ -939,6 +1092,14 @@ extension and this guide will not pretend otherwise. Two keywords you might
 expect are deliberately absent: `#precondition` and `#postcondition`, because
 `assume constraint`, `require constraint` and a case `objective { … }` already
 say both, three ways and two ways respectively.
+
+**`Evidence` in that same package is deliberately not a keyword.** It ships with
+no short name, so there is nothing to write after a `#`. A keyword is a tag — it
+says one thing by being present — and an evidence record has a body: a claim, an
+engine, a tool version and a model digest. So it is written in §7.27's
+*annotating* form, `@SysproseVerification::Evidence { attribute … = "…"; }`, by
+`evidence-attach`, and a bare `#Evidence` that carried no record and claimed to
+be one is a spelling this package does not allow.
 
 **The statement kinds are the exception, and the inventory says so.** `#prose`,
 `#prompt` and `#'requirement'` are read from the **spelling** — that is what lets
@@ -1224,7 +1385,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:536-553`, `948-969` (the two rules that ask),
+`src/validation/rules.ts:551-568`, `963-984` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

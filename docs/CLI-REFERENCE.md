@@ -25,13 +25,15 @@ npm run sysprose -- --help                 # the subcommand list
 npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
-**The exit-code contract is per subcommand, and there are two of them.** Most
-subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations` — for those,
+**The exit-code contract is per subcommand, and there are three of them.** Most
+subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `evidence-status` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
 obligation refuted with every feature at its model value, or one requirement set
-nothing can satisfy. Each section below states its own
-contract in full, and every section states which of the two it obeys.
+nothing can satisfy. `evidence-attach` and `evidence-detach` *write* the
+file back, and they have no exit 1 at all:
+0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1. Each section below states its own
+contract in full, and every section states which of the three it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is
@@ -64,6 +66,9 @@ rather than reporting on the first one.
 | [`obligations`](#obligations) | What must be shown, over which axioms, and what do the unit gates refuse? | `obligations` | reports |
 | [`verify`](#verify) | Does each obligation hold, by which engine, and under what bound? | `verify` | judges |
 | [`consistency`](#consistency) | Can all the requirements on this subject hold at once — and if not, which conflict? | `consistency` | judges |
+| [`evidence-status`](#evidence-status) | What was shown, by which tool, over which model — and is it still valid? | `evidenceStatus` | reports |
+| [`evidence-attach`](#evidence-attach) | Write the records of a verify run into the file, as annotations on what they are about | `evidenceAttach` | writes |
+| [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
 
 ### Options every subcommand takes
 
@@ -285,6 +290,50 @@ Computed by `consistencyReport (src/api/verification.ts)`. With `--json` the ans
 
 **Exit codes.** 0 every obligation discharged non-vacuously by the engine that was asked for — or every requirement set shown satisfiable — and there was at least one of them to decide · 1 at least one obligation refuted with every feature at its model value, or one requirement set nothing can satisfy · 2 usage/IO error, a degraded model, a model that states nothing to decide at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it.
 
+### `evidence-status`
+
+**What was shown, by which tool, over which model — and is it still valid?**
+
+```bash
+npm run sysprose -- evidence-status <file.sysml|-> [options]
+```
+
+_No flags of its own._
+
+Computed by `evidenceStatus (src/api/evidence.ts)`. With `--json` the answer is published under `evidenceStatus`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
+### `evidence-attach`
+
+**Write the records of a verify run into the file, as annotations on what they are about**
+
+```bash
+npm run sysprose -- evidence-attach <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--from PATH` | The records to attach: the JSON array `verify --record PATH` wrote. Each is validated against docs/schemas/evidence-record.schema.json before anything is written, so a hand-edited file is refused rather than half-attached | — |
+
+Computed by `attachEvidence (src/api/evidence.ts)`. With `--json` the answer is published under `evidenceAttach`, beside `ok` and `file`.
+
+**Exit codes.** 0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1.
+
+### `evidence-detach`
+
+**Take every evidence record back off the file, and the verdict facets with them**
+
+```bash
+npm run sysprose -- evidence-detach <file.sysml|-> [options]
+```
+
+_No flags of its own._
+
+Computed by `detachEvidence (src/api/evidence.ts)`. With `--json` the answer is published under `evidenceDetach`, beside `ok` and `file`.
+
+**Exit codes.** 0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1.
+
 ### `trace` relationship presets
 
 A preset names the **relationship** kinds only. The row and column metaclasses
@@ -333,4 +382,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*12 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*15 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

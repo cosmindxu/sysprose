@@ -364,6 +364,21 @@
 .req-attr-locked:hover {
   outline: none;
 }
+.req-evidence {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.req-evidence-current {
+  color: var(--ok, #2e7d32);
+}
+.req-evidence-stale,
+.req-evidence-unrecorded {
+  color: var(--warn, #b26a00);
+}
+.req-evidence-claim {
+  color: var(--text-muted);
+}
 .req-kw {
   color: var(--text-muted);
   font-size: 10px;

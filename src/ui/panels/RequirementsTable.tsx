@@ -312,6 +312,47 @@ export function RequirementsTable(): JSX.Element {
     );
   }
 
+  /**
+   * The Evidence cell — read-only, and it never upgrades a claim.
+   *
+   * WHAT IT SHOWS AND WHY IN THAT ORDER. The status first, because the reader's
+   * question is "can I still believe this"; the claim word second and verbatim,
+   * because `holds-at-values` is not `proved` and the Verdict column beside
+   * this one cannot tell them apart — its three values are the FACET. A cell
+   * that printed the facet twice would render a point evaluation and a proof
+   * identically, which is the display defect the plan names by hand.
+   *
+   * WHY THERE IS NO CONTROL HERE. There is no solver in the browser in this
+   * plan at all: z3 WASM needs `SharedArrayBuffer`, which needs COOP/COEP
+   * headers GitHub Pages cannot set. So the app reads evidence and tells the
+   * reader the terminal command, and the tooltip on a row with nothing recorded
+   * is that command.
+   *
+   * A STALE CHIP NAMES ITS SLICE. Not a link, because the slice is a SET of
+   * elements and a table cell has one click: the tooltip lists the elements
+   * whose change could have invalidated the record, which is what a reader has
+   * to re-read. The digest is over the whole model, so nothing here can say
+   * which of them actually moved, and the sentence says so rather than
+   * implying an attribution the tool cannot make.
+   */
+  function evidenceCell(row: ReqRow): JSX.Element {
+    const cell = row.evidence;
+    const slice =
+      cell.slice.length > 0 ? `\n\nIn this requirement’s slice: ${cell.slice.join(', ')}` : '';
+    return (
+      <span
+        className={`req-evidence req-evidence-${cell.status}`}
+        data-testid="req-evidence-chip"
+        data-status={cell.status}
+        data-claim={cell.claim ?? ''}
+        title={`${cell.detail}${slice}`}
+      >
+        {cell.status === 'none' ? EMPTY_FACET : cell.status}
+        {cell.claim !== null && <span className="req-evidence-claim"> · {cell.claim}</span>}
+      </span>
+    );
+  }
+
   function referenceCell(row: ReqRow, column: ReqRefColumn): JSX.Element {
     const refs: ReqReference[] = row.refs[column.key] ?? [];
     const isPicking = picking?.id === row.id && picking.col === column.key;
@@ -428,6 +469,9 @@ export function RequirementsTable(): JSX.Element {
                 {table.attrColumns.map((c) => (
                   <th key={c.key}>{c.label}</th>
                 ))}
+                {table.evidenceColumns.map((c) => (
+                  <th key={c.key}>{c.label}</th>
+                ))}
                 <th></th>
               </tr>
             </thead>
@@ -489,6 +533,11 @@ export function RequirementsTable(): JSX.Element {
                   {table.attrColumns.map((c) => (
                     <td key={c.key} data-testid="req-attr-cell" data-col-key={c.key}>
                       {attrCell(row, c)}
+                    </td>
+                  ))}
+                  {table.evidenceColumns.map((c) => (
+                    <td key={c.key} data-testid="req-evidence-cell" data-col-key={c.key}>
+                      {evidenceCell(row)}
                     </td>
                   ))}
                   <td className="req-row-actions">

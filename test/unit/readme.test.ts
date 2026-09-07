@@ -137,6 +137,30 @@ const APP_DOORS: ReadonlyArray<{
   // And `consistency` for the first reason and one of its own: satisfiability
   // is a solver question, and there is no solver in the browser at all.
   { command: 'consistency', controls: [] },
+  // `evidence-status` is the ONE row of this lane that has a control, and it is
+  // here rather than under a `controls: []` because the Requirements table now
+  // carries a read-only Evidence column. It is DAGGERED for the ordinary
+  // reason: the app renders the column out of `buildRequirementsTable` (which
+  // asks `evidenceStatus` once per revision and keeps three of its fields),
+  // where the subcommand prints every row `evidenceStatus` returns — the digest,
+  // the slice and the `verification/*` code included. Writing `— no view yet`
+  // here would have been the easier row and a false one.
+  {
+    command: 'evidence-status',
+    controls: [
+      {
+        id: 'tb-view-requirements',
+        fn: 'buildRequirementsTable',
+        file: 'src/ui/panels/RequirementsTable.tsx',
+      },
+    ],
+  },
+  // The two that WRITE have no control and will not get one: the app's job in
+  // this lane is to read evidence and name the terminal command, and a button
+  // that rewrote somebody's source from a JSON file it had not shown them is
+  // not an affordance this plan ships.
+  { command: 'evidence-attach', controls: [] },
+  { command: 'evidence-detach', controls: [] },
 ];
 
 interface Row {

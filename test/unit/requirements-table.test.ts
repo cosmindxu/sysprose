@@ -8,9 +8,11 @@ import { Model, ModelFactory } from '@core/index';
 import {
   buildRequirementsTable,
   REQUIREMENT_ATTR_COLUMNS,
+  REQUIREMENT_EVIDENCE_COLUMNS,
   REQUIREMENT_REF_COLUMNS,
   REQUIREMENT_SCALAR_COLUMNS,
 } from '@diagram/index';
+import { attachEvidence, modelVersionOf, recordEvidence } from '@api/index';
 import { parseModel, serializeModel } from '@text/index';
 import { setRequirementAttr } from '@semantics/index';
 
@@ -276,5 +278,95 @@ describe('buildRequirementsTable — the requirement facets', () => {
     const before = m.size;
     buildRequirementsTable(m);
     expect(m.size).toBe(before);
+  });
+});
+
+describe('buildRequirementsTable — the evidence column', () => {
+  /**
+   * One record over `MassReq`, made the way a `--engine literal` run makes it.
+   *
+   * `recordEvidence` is used rather than a literal object because the whole
+   * assertion below is about a value it DERIVES: the caller cannot choose the
+   * verdict, and `holds-at-values` is not `proved`.
+   */
+  function attachLiteralRun(m: Model, requirementId: string, claim: 'holds-at-values' | 'proved') {
+    const records = recordEvidence({
+      rows: [
+        {
+          obligation: {
+            requirement: m.qualifiedName(requirementId),
+            shortId: 'R-1',
+            clause: `${m.qualifiedName(requirementId)}::«ConstraintUsage»`,
+            obligationDigest: `sha256:${'a'.repeat(64)}`,
+            expression: 'vehicle.mass <= 2000.0',
+          },
+          claim,
+          engine: claim === 'proved' ? 'smt' : 'literal',
+          bound: { kind: 'model-values', detail: 'the model’s own feature values' },
+          detail: 'holds at the model’s values',
+        },
+      ],
+      modelVersion: modelVersionOf(m),
+      producedBy: 'test',
+      flags: {},
+    });
+    attachEvidence(m, records);
+    return records[0];
+  }
+
+  it('gives every row a cell, on a model that has never been verified', () => {
+    const t = buildRequirementsTable(seed().m);
+    expect(t.evidenceColumns).toEqual(REQUIREMENT_EVIDENCE_COLUMNS);
+    // Never undefined: a consumer reading `row.evidence.status` must not have
+    // to know whether this model has been near the verification lane.
+    for (const row of t.rows) {
+      expect(row.evidence.status).toBe('none');
+      expect(row.evidence.claim).toBeNull();
+      expect(row.evidence.records).toBe(0);
+    }
+  });
+
+  it('shows a literal-engine record as `holds-at-values`, and the facet as `inconclusive`', () => {
+    const { m, r1 } = seed();
+    const record = attachLiteralRun(m, r1.id, 'holds-at-values');
+    // The rule this whole column exists for, at its source: the facet is the
+    // three-valued summary and cannot tell a point evaluation from a proof.
+    expect(record.verdict).toBe('inconclusive');
+
+    const t = buildRequirementsTable(m);
+    const row = t.rows.find((r) => r.id === r1.id)!;
+    expect(row.evidence.status).toBe('current');
+    expect(row.evidence.claim, 'the claim is carried verbatim').toBe('holds-at-values');
+    expect(row.evidence.records).toBe(1);
+    expect(row.attrs.verdict).toBe('inconclusive');
+    // And the word that is not this record's, anywhere on the row.
+    expect(JSON.stringify(row)).not.toContain('proved');
+    expect(row.attrs.verdict).not.toBe('pass');
+  });
+
+  it('goes stale when the design moves, and names the slice in the cell', () => {
+    const { m, r1, part } = seed();
+    attachLiteralRun(m, r1.id, 'holds-at-values');
+    expect(buildRequirementsTable(m).rows.find((r) => r.id === r1.id)!.evidence.status).toBe(
+      'current',
+    );
+    // An edit to the author's own model — not to what the run wrote.
+    m.setAttrs(part.id, { text: 'a heavier vehicle' });
+    const row = buildRequirementsTable(m).rows.find((r) => r.id === r1.id)!;
+    expect(row.evidence.status).toBe('stale');
+    expect(row.evidence.slice.length, 'a stale cell names what to re-read').toBeGreaterThan(0);
+    expect(row.evidence.detail).toContain('cannot say which of them moved');
+  });
+
+  it('calls a hand-written verdict with no record `unrecorded`', () => {
+    const { m, r2 } = seed();
+    setRequirementAttr(m, r2.id, 'verdict', 'pass');
+    const t = buildRequirementsTable(m);
+    const row = t.rows.find((r) => r.id === r2.id)!;
+    expect(row.evidence.status).toBe('unrecorded');
+    expect(row.evidence.code).toBe('verification/claimed-without-evidence');
+    // Every other row is untouched: one facet does not make the whole table a
+    // verification report.
+    expect(t.rows.filter((r) => r.evidence.status !== 'none')).toHaveLength(1);
   });
 });

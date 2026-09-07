@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2595 passed / 0 failed / 0 skipped** across **138 files** + **128 E2E** across **78 spec files** = **2723 green** (measured 2026-09-06) |
+| Full automated suite | **2632 passed / 0 failed / 0 skipped** across **138 files** + **128 E2E** across **78 spec files** = **2760 green** (measured 2026-09-07) |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -434,10 +434,51 @@ so they are byte-stable across runs. Their shape is
 [`schemas/evidence-record.schema.json`](schemas/evidence-record.schema.json),
 and every record the corpus produces is validated against it.
 
+**A record can now be written into the model**, as a
+`@SysproseVerification::Evidence { … }` annotation on the requirement it is
+about — §7.27's annotating form over a metadata definition, which is the
+notation's own extension point and not invented syntax. Three properties of that
+write path are asserted rather than asserted about. The model digest **excludes
+what a verification run itself wrote** — the `Evidence` carrier, everything under
+it, and the `verdict` cell beside it — so a freshly attached record is `current`
+while an edit to any part of the author's own model — a literal, a `status`
+facet, a new part — still moves it. That exclusion is drawn by **shape, not by
+provenance**: every `verdict` cell on a requirement's facet carrier is out of the
+hash, including one a person typed on a requirement that never carried evidence,
+because nothing in the file marks which of the two wrote it. The consequence is
+stated rather than hidden — a hand-raised verdict is caught by
+`verification/verdict-overstates-evidence`, which compares the facet against the
+record's claim, and not by the digest. Every other facet a requirement carries —
+`status`, `risk`, `owner`, `rationale` — stays in the hash. The `verdict` facet
+is **derived** from the record's claim on every path, and is never copied from
+the `verdict` field a record states: a `--engine literal` record, whose claim is
+`holds-at-values`, writes `inconclusive` however its own JSON is spelled, and
+`evidence-attach` refuses a `--from` file whose stated verdict does not follow
+from its claim rather than half-trusting it. `pass` is written for `proved`
+alone. A requirement that states several obligations carries **the worst of
+them**, so one clause's `pass` can never overwrite another clause's `fail` and
+the verdict does not depend on the order the clauses were written in. And
+evidence **accumulates**: a second run appends, a `fail` is never overwritten by
+a `pass`, and every verdict a run moved is printed with both claims.
+
+**A verdict that outlived its model is a warning on the ordinary path.**
+`validation/stale-evidence` fires from `npm run check`, not only from the
+verification lane, because the next person to open the file runs the checker. It
+names the requirement's slice — the declarations to re-read — and states on every
+finding that a whole-model digest cannot say WHICH element moved. Two further
+states are reported by name and never silently: a `verdict` facet with no record
+behind it (`verification/claimed-without-evidence`, info — a verdict reached by
+inspection is ordinary requirements management) and a `verdict = "pass"` over a
+claim that is not `proved` (`verification/verdict-overstates-evidence`, error).
+
 **Untested, and stated as such:** what another tool makes of a Sysprose evidence
-record or verdict facet. The write path is tested only inside Sysprose. The
-interop probe that would answer it is a later commit of the plan; until it runs,
-no claim is made about what an external reader does with either.
+record or verdict facet. The write path is tested only inside Sysprose, and the
+verdict facet is an unbound tag holding a quoted string where the standard has an
+enumeration on a different metaclass — a conforming SysML v2 reader is entitled
+to ignore that line. The digest also catches model edits, **not a hand-edited
+record**. The interop probe that would answer the first question is a later
+commit of the plan; until it runs, no claim is made about what an external reader
+does with either.
 
 ### 8.4 The SMT seam: the solver backend and the encoder the engine stands on
 

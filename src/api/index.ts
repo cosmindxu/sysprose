@@ -128,22 +128,48 @@ export type {
 // `modelVersionOf` is what tells them whether one has gone stale.
 export {
   // Exported for the guard that pins WHICH elements enter the graph digest:
-  // library exclusion is invisible to any assertion over the hash itself.
+  // library exclusion — and, since commit 7, the exclusion of what a
+  // verification run itself wrote — is invisible to any assertion over the hash.
   canonicalElements,
+  isEvidenceArtefact,
   modelVersionOf,
   obligationDigest,
   recordEvidence,
   sha256Hex,
   toolVersion,
   verdictFor,
+  // The file half of the lane: what is written into a model, what is read back
+  // out of it, and whether it still holds (plan §3.10).
+  CLAIMED_WITHOUT_EVIDENCE_CODE,
+  EVIDENCE_RECORD_ATTR,
+  EVIDENCE_SUMMARY_ATTRS,
+  VERDICT_OVERSTATES_EVIDENCE_CODE,
+  attachEvidence,
+  detachEvidence,
+  evidenceCarriers,
+  evidenceHolders,
+  evidenceOf,
+  evidenceStatus,
+  isEvidenceCarrier,
+  liveEvidence,
+  recordOfCarrier,
+  summariseEvidence,
 } from './evidence';
 export type {
+  AttachReport,
+  DetachReport,
   EvidenceBound,
   EvidenceClaim,
+  EvidenceHolder,
   EvidenceRecord,
+  EvidenceSkip,
+  EvidenceStatusReport,
+  EvidenceStatusRow,
+  EvidenceSummary,
   EvidenceVerdict,
   ModelVersion,
   ToolVersion,
+  VerdictChange,
 } from './evidence';
 // The payload types both reports publish, and the options the second takes.
 // A consumer coming through this barrel — which the standing rule says is the

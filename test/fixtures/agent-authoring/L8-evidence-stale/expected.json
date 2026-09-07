@@ -1,0 +1,24 @@
+{
+  "level": "L8",
+  "title": "an evidence record whose model digest no longer matches is reported stale, with the slice named",
+  "note": "The only L8 case that lives in the FIXTURE corpus rather than in test/fixtures/verification, because `stale-evidence` is a `validation/*` rule and `npm run check` is what raises it — a reader who never runs `verify` still has to be told that the verdict in their file was reached over a different model. Built, not hand-written: the model was loaded, `verify --engine literal` produced the record, `evidence-attach` wrote the carrier and the derived `verdict` facet, and then ONE literal was edited (`mass = 18.5 [kg]` became `19.5`) — which is the whole point. Note what the record says and what the facet says: the claim is `holds-at-values`, so the facet is `inconclusive`, never `pass`. The repair shipped as fixed.sysml is `evidence-detach`: the carrier goes and the facet goes with it, because a verdict left behind by a detach is a claim with nothing behind it. Re-recording is the other repair and the hint names it first; it is not the one shown here, because a fixture carrying a freshly computed digest would go red on any future change to the canonicalisation rather than on a change to this rule.",
+  "ok": true,
+  "diagnostics": [
+    {
+      "code": "validation/stale-evidence",
+      "severity": "warning",
+      "line": 6,
+      "column": 5,
+      "message": "/Re-read this requirement.s slice — EvidenceStale::airframe, EvidenceStale::Airframe —/",
+      "hintIncludes": "or take the stale record off with `evidence-detach`"
+    }
+  ],
+  "invariants": {
+    "maxErrors": 0,
+    "rootsSurvive": [
+      "EvidenceStale"
+    ],
+    "minElements": 19,
+    "strictWarnings": true
+  }
+}

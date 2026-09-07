@@ -86,6 +86,8 @@ import {
   type ConsistencyResult,
 } from '../semantics/consistency';
 import {
+  CLAIMED_WITHOUT_EVIDENCE_CODE,
+  VERDICT_OVERSTATES_EVIDENCE_CODE,
   modelVersionOf,
   obligationDigest,
   recordEvidence,
@@ -974,6 +976,11 @@ export const VERIFICATION_ERROR_CODES: ReadonlySet<string> = new Set([
   // an error for that reason and for one more — it is the only row `consistency`
   // exits 1 on, and a consumer filtering on severity has to see it.
   INCONSISTENT_REQUIREMENTS_CODE,
+  // A `verdict = "pass"` facet over a record that did not prove anything. Both
+  // artefacts are the tool's own, they contradict each other, and the
+  // contradiction overstates — so it is a defect in the FILE, not a limit of
+  // the tool, and it is the loudest thing `evidence-status` can find.
+  VERDICT_OVERSTATES_EVIDENCE_CODE,
 ]);
 
 /**
@@ -998,6 +1005,12 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   INCONSISTENT_REQUIREMENTS_CODE,
   'verification/tool-absent',
   'verification/design-admitted',
+  // The two `evidence-status` names. They are declared in `./evidence`, beside
+  // the function that emits them, and gathered here because this set is what
+  // the catalogue guard reads: a code a reader is shown is a code the catalogue
+  // must explain, whichever module raises it.
+  CLAIMED_WITHOUT_EVIDENCE_CODE,
+  VERDICT_OVERSTATES_EVIDENCE_CODE,
 ]);
 
 /**

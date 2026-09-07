@@ -406,6 +406,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A value’s unit has a different physical dimension than its quantity kind.
 - **Hint given:** Use a unit of the declared quantity kind, e.g. a mass unit for a mass attribute.
 
+### `validation/stale-evidence`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** An attached evidence record names a model digest that is no longer this model’s: the file was edited after the verdict was recorded. The digest is over the whole user model, so the edit may be anywhere — the message names the requirement’s own slice, which is what has to be re-read.
+- **Hint given:** Re-run `npm run sysprose -- verify <file> --record evidence.json` and `evidence-attach`, or take the stale record off with `evidence-detach`. A stale record is never counted as discharged, and the verdict facet beside it stands on nothing until it is re-recorded.
+
 ## Formal verification
 
 The verification lane, and the severity splits it in two. Almost all of these are INFO because none of them is a defect in the model: they say that a relation is outside the fragment the lane encodes, that a contract has nothing to show, that a clause sits somewhere the standard does not admit it, or that a proof would be void rather than absent — each stated rather than left to be inferred from a silence. Exactly two are ERRORS, because they say something about the MODEL: `verification/refuted`, the violation this lane exists to find, and `verification/vacuous-property`, which exists only because `--strict-vacuity` asked for a vacuity to be loud.
@@ -529,6 +536,20 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** A feature released by `--free` is not confined on both sides by the axioms and premises the obligation stands on, so the solver may place a witness outside the physical domain. Reported instead of a refutation, never beside one.
 - **Hint given:** Add a two-sided premise — `assume constraint { x >= lo and x <= hi }` — before freeing the feature. This tool derives no domain axiom from a quantity kind: it does not know that a power or a mass is non-negative, so a witness at a negative power is arithmetically confirmable and physically meaningless. It exits 2 and no flag lowers it.
 
+### `verification/claimed-without-evidence`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A requirement carries a `verdict` facet and no evidence record this tool can read — either none was ever attached, or the carriers present could not be parsed back.
+- **Hint given:** This is not a defect: a `verdict` facet is ordinary requirements management, and a verdict reached by inspection is recorded there with no tool involved. The row says only that THIS tool has nothing standing behind it. Run `verify --record` then `evidence-attach` if you want one.
+
+### `verification/verdict-overstates-evidence`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A requirement states `verdict = "pass"` over an evidence record whose claim is not `proved` — `holds-at-values`, `holds-within-bound`, `vacuous`, `inconclusive` or anything else the engines can reach.
+- **Hint given:** `pass` is written for one claim only, and a point evaluation is not a proof. Run `evidence-attach --from` again with the same records: it rewrites the facet from the claim even when every record is already present, which puts the file back where this tool would have left it. `evidence-detach` is the other repair, and takes the record off with the facet. `evidence-attach` cannot produce this state — every verdict it writes is derived from the claim, and a record file that says otherwise is refused — so a file in it was written by hand or by something that did not go through this tool.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -588,4 +609,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*73 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*76 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

@@ -35,12 +35,24 @@
  * known-answer test beside it is the smaller price.
  */
 
-import { type ElementId, type ElementRecord, type Model } from '@core/index';
+import { isRequirement, type ElementId, type ElementRecord, type Model } from '@core/index';
 import { PRODUCT_SLUG, PRODUCT_VERSION } from '../branding';
 import { FULL_LIBRARY_MANIFEST_COUNT } from '../library/full-library';
 import { type ExprNode } from '../semantics/expr';
 import { type ContractRef, type ContractVariable } from '../semantics/contracts';
-import { isUserElement } from './analytics';
+import {
+  FAULTED_DECLARATION_REFUSAL,
+  RM_METADATA_NAME,
+  carriesItsOwnText,
+  getRequirementAttr,
+  requirementShortId,
+  setRequirementAttr,
+} from '../semantics/requirements';
+import {
+  EVIDENCE_DEFINITION,
+  EVIDENCE_QUALIFIED_NAME,
+} from '../semantics/verification-vocabulary';
+import { impactClosure, isUserElement } from './analytics';
 
 /* ────────────────────────────── SHA-256 ─────────────────────────────────── */
 
@@ -251,13 +263,97 @@ export function modelVersionOf(model: Model, sourceText?: string): ModelVersion 
  * canonical serialisation is the tiebreak, because two elements can share a
  * qualified name (an unnamed member's is `''`) and a sort that stopped at the
  * name would then be unstable between loads.
+ *
+ * AND EVIDENCE ITSELF IS NOT PART OF THE DESIGN IT IS ABOUT. This is the
+ * fourth exclusion and it arrives with {@link attachEvidence}, because without
+ * it the feature is impossible rather than merely wrong: a record names the
+ * digest of the model it was taken over, attaching it writes elements into that
+ * model, and the record would therefore be stale the instant it was written —
+ * every run reporting every record it had just produced as out of date. So the
+ * carriers this module writes, everything under them, and the `verdict` facet
+ * cell that goes with them are all left out. The line the exclusion draws is
+ * exactly "what a verification run wrote", not "metadata": every other facet a
+ * requirement carries — status, risk, owner, rationale — is in the hash, and a
+ * change to any of them still moves it, because those are the author's.
  */
 export function canonicalElements(model: Model): string[] {
-  const snapshot = model.toJSONWhere((el) => isUserElement(model, el));
+  const snapshot = model.toJSONWhere(
+    (el) => isUserElement(model, el) && !isEvidenceArtefact(model, el),
+  );
   return snapshot.elements
     .map((el) => [model.qualifiedName(el.id), canonicalJson(canonicalElement(model, el))] as const)
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0))
     .map(([, json]) => json);
+}
+
+/**
+ * Was this element written by a verification run rather than by the author?
+ *
+ * EXPORTED FOR THE GUARD, for the same reason {@link canonicalElements} is:
+ * "the digest ignores what verification wrote" is a property of WHICH elements
+ * enter the hash, and no assertion over a hash alone can see it — a digest that
+ * wrongly swept the carriers in would still be stable across a reparse and
+ * would still move when a literal moved. The count of what goes in is the only
+ * thing that reddens.
+ *
+ * Four shapes, and the fourth is the fiddly one. The Evidence CARRIER; anything
+ * OWNED by one (its cells, and whatever a future record shape nests under
+ * them); the `verdict` CELL on the requirement-metadata carrier, which
+ * {@link attachEvidence} writes from the record; and the requirement-metadata
+ * CARRIER itself when that cell is all it holds — because attaching evidence to
+ * a requirement that had no facets at all creates the carrier as well as the
+ * cell, and leaving the empty shell in the hash would move the digest for the
+ * same reason the cell would.
+ *
+ * THE LINE IS DRAWN BY SHAPE, NOT BY PROVENANCE, and the two consequences are
+ * stated here rather than left to be discovered. Nothing in the file marks WHO
+ * wrote a `verdict` cell, so one a person typed on a requirement that never
+ * carried evidence is out of the hash too: editing it does not move the digest,
+ * and the state it can reach is caught by
+ * {@link VERDICT_OVERSTATES_EVIDENCE_CODE} — which compares the facet against
+ * the record's claim — rather than by staleness. And the owner walk below is at
+ * ANY depth, so whatever an author nests under an `@Evidence` carrier of their
+ * own is out of the hash as well; the carrier is this lane's own vocabulary,
+ * what a future record shape may nest under it is not fixed, and a hash that had
+ * to be told the exact shape of a record would break every time one grew.
+ */
+export function isEvidenceArtefact(model: Model, el: ElementRecord): boolean {
+  if (isEvidenceCarrier(el)) return true;
+  if (isVerdictCell(model, el)) return true;
+  if (isVerdictOnlyMetadata(model, el)) return true;
+  // Owned by a carrier, at any depth. Walked upwards rather than downwards so
+  // one element can answer for itself without the caller holding a set.
+  let owner = el.ownerId === null ? undefined : model.get(el.ownerId);
+  const seen = new Set<ElementId>([el.id]);
+  while (owner && !seen.has(owner.id)) {
+    seen.add(owner.id);
+    if (isEvidenceCarrier(owner)) return true;
+    owner = owner.ownerId === null ? undefined : model.get(owner.ownerId);
+  }
+  return false;
+}
+
+/** The `verdict` cell on a requirement's facet carrier — what an attach writes. */
+function isVerdictCell(model: Model, el: ElementRecord): boolean {
+  if (el.eClass !== 'AttributeUsage' || el.declaredName !== 'verdict') return false;
+  const owner = el.ownerId === null ? undefined : model.get(el.ownerId);
+  return owner !== undefined && isRequirementMetadata(owner);
+}
+
+/** A facet carrier holding nothing but a verdict — created by the attach itself. */
+function isVerdictOnlyMetadata(model: Model, el: ElementRecord): boolean {
+  if (!isRequirementMetadata(el)) return false;
+  const children = model.children(el.id);
+  return children.length > 0 && children.every((c) => isVerdictCell(model, c));
+}
+
+/** The `metadata RequirementMetadata { … }` carrier, in both read spellings. */
+function isRequirementMetadata(el: ElementRecord): boolean {
+  return (
+    el.eClass === 'MetadataUsage' &&
+    el.attrs.annotation !== true &&
+    (el.declaredName === RM_METADATA_NAME || el.attrs.typeRef === RM_METADATA_NAME)
+  );
 }
 
 /** One element with every id it carries replaced by the name a person would write. */
@@ -500,4 +596,785 @@ export function verdictFor(claim: EvidenceClaim): EvidenceVerdict {
   if (claim === 'proved') return 'pass';
   if (claim === 'refuted') return 'fail';
   return 'inconclusive';
+}
+
+/* ─────────────────── the carrier: evidence written into the file ─────────── */
+
+/**
+ * The attribute a whole record lives in, and the five beside it a person reads.
+ *
+ * WHY ONE JSON ATTRIBUTE AND NOT TWENTY. A record is nested — `bound.si.lhs`,
+ * `witness.values[3].role`, `flags.free[0]` — and the notation's attribute
+ * names are identifiers, so a field-per-attribute carrier would have to invent
+ * a flattening (`boundSiLhs`) and an un-flattening, and every future field of
+ * the schema would need both. Measured instead: a quoted string value survives
+ * the round trip with its escapes intact — `attribute record = "{\"a\":\"x\\\"y\"}"`
+ * comes back byte-identical — so the canonical JSON of the record IS the
+ * carrier, and {@link evidenceOf} is a `JSON.parse` rather than a
+ * reconstruction that could lose a field nobody tested.
+ *
+ * WHY THE FIVE OTHERS EXIST ANYWAY. The gate this commit is written against
+ * says a verdict in the file always NAMES its tool, its version and its model
+ * digest. It does that inside the JSON too, but a person opening the `.sysml`
+ * reads lines, not a 2 kB string, and the claim word is the whole point of the
+ * carrier. So five scalars are written above `record` as a RENDERING of it:
+ * `claim`, `verdict`, `engine`, `tool`, `modelGraph`. They are derived on
+ * write and ignored on read — {@link evidenceOf} answers from `record` alone —
+ * because two readable copies of one datum can disagree, and the one that must
+ * win is the one a consumer parses.
+ *
+ * Hand-editing either half is out of scope by declaration, not by oversight:
+ * the plan's own trap register says the digest catches model edits, not edited
+ * evidence, and nothing here pretends otherwise.
+ */
+export const EVIDENCE_RECORD_ATTR = 'record';
+
+/** The scalars written above {@link EVIDENCE_RECORD_ATTR}, in written order. */
+export const EVIDENCE_SUMMARY_ATTRS = ['claim', 'verdict', 'engine', 'tool', 'modelGraph'] as const;
+
+/** `sysprose 0.4.0` — or with the commit, when the record names one. */
+function toolLabel(tool: ToolVersion): string {
+  return `${tool.name} ${tool.version}${tool.git !== undefined ? ` (${tool.git})` : ''}`;
+}
+
+/**
+ * Is this element a `@SysproseVerification::Evidence { … }` carrier?
+ *
+ * Both spellings of the annotation's type are accepted — the qualified one this
+ * module writes and a bare `@Evidence` a person may write after importing the
+ * package — because the parser stores whatever was written and refusing the
+ * short form would mean the tool could not read a carrier it told the reader
+ * how to write. What is NOT accepted is a non-annotating `metadata Evidence`:
+ * that owns facets FOR its owner in the requirement-metadata sense, and reading
+ * it as a record would let the two carriers collide.
+ */
+export function isEvidenceCarrier(el: ElementRecord): boolean {
+  if (el.eClass !== 'MetadataUsage' || el.attrs.annotation !== true) return false;
+  const type = el.attrs.type;
+  return type === EVIDENCE_QUALIFIED_NAME || type === EVIDENCE_DEFINITION;
+}
+
+/** The evidence carriers owned by one element, in file order. */
+export function evidenceCarriers(model: Model, id: ElementId): ElementRecord[] {
+  return model.children(id).filter(isEvidenceCarrier);
+}
+
+/** The text a carrier cell holds, unquoted — the same lexeme shape facets use. */
+function cellText(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed === 'string') return parsed;
+    } catch {
+      // A malformed literal is still text somebody wrote; hand it back unquoted
+      // rather than dropping the carrier it is on.
+    }
+    return raw.slice(1, -1);
+  }
+  return raw;
+}
+
+/**
+ * The record one carrier holds, or `undefined` when it holds nothing readable.
+ *
+ * `undefined` rather than a throw: a carrier a person hand-wrote, or one from a
+ * future schema, is a fact about the file and not a reason for the checker to
+ * stop. {@link evidenceStatus} counts them separately so they are visible
+ * rather than silently absent.
+ */
+export function recordOfCarrier(model: Model, carrier: ElementRecord): EvidenceRecord | undefined {
+  const cell = model
+    .children(carrier.id)
+    .find((c) => c.eClass === 'AttributeUsage' && c.declaredName === EVIDENCE_RECORD_ATTR);
+  const text = cellText(cell?.attrs.value);
+  if (text === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    const rec = parsed as EvidenceRecord;
+    return rec.schema === 'sysprose-evidence/1' ? rec : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Every evidence record attached under one element, in the order the file
+ * carries them — which is the order they were attached, so the LAST one is the
+ * most recent claim and the ones before it are what it replaced.
+ */
+export function evidenceOf(model: Model, id: ElementId): EvidenceRecord[] {
+  const out: EvidenceRecord[] = [];
+  for (const carrier of evidenceCarriers(model, id)) {
+    const rec = recordOfCarrier(model, carrier);
+    if (rec) out.push(rec);
+  }
+  return out;
+}
+
+/** One element carrying evidence, with what it carries. */
+export interface EvidenceHolder {
+  id: ElementId;
+  qualifiedName: string;
+  eClass: string;
+  records: EvidenceRecord[];
+  /** Carriers whose `record` could not be read — hand-written, or a future schema. */
+  unreadable: number;
+}
+
+/** Every element in the user model that carries evidence, in model order. */
+export function evidenceHolders(model: Model): EvidenceHolder[] {
+  const out: EvidenceHolder[] = [];
+  for (const el of model.all()) {
+    if (!isUserElement(model, el)) continue;
+    const carriers = evidenceCarriers(model, el.id);
+    if (carriers.length === 0) continue;
+    const records: EvidenceRecord[] = [];
+    let unreadable = 0;
+    for (const c of carriers) {
+      const rec = recordOfCarrier(model, c);
+      if (rec) records.push(rec);
+      else unreadable++;
+    }
+    out.push({
+      id: el.id,
+      qualifiedName: model.qualifiedName(el.id),
+      eClass: el.eClass,
+      records,
+      unreadable,
+    });
+  }
+  return out;
+}
+
+/* ──────────────── one requirement, several obligations, one verdict ──────── */
+
+/**
+ * The identity of one obligation ACROSS runs: the clause and its normal form.
+ *
+ * The pair, never half of it. A clause name alone does not identify an
+ * obligation — `require constraint { … }` twice under one requirement gives
+ * both clauses the same qualified name `R::«ConstraintUsage»`, so keying on the
+ * name would fuse two unrelated obligations and read the second one's verdict
+ * as having REPLACED the first one's. A digest alone does not identify one
+ * either: the same normal form can appear under two clauses, and re-recording
+ * one of them is not a change to the other.
+ *
+ * DEFENSIVE ON BOTH HALVES, because {@link recordOfCarrier} admits any payload
+ * that names the schema — a hand-written carrier, or one from a build that
+ * spelled the obligation differently — and a checker rule that threw on one
+ * would take `npm run check` down over a line somebody typed. A record with no
+ * readable obligation gets a key of its own, so it supersedes nothing and
+ * nothing supersedes it.
+ */
+function obligationKey(record: EvidenceRecord, index = 0): string {
+  const ob: Partial<EvidenceRecord['obligation']> | undefined = record.obligation;
+  if (typeof ob?.clause !== 'string' || typeof ob.obligationDigest !== 'string') {
+    return `unkeyed record ${index}`;
+  }
+  return `${ob.clause} :: ${ob.obligationDigest}`;
+}
+
+/**
+ * The records that still speak for an element: the LAST one per obligation.
+ *
+ * Evidence accumulates — `attachEvidence` appends and never deletes — so the
+ * carriers on one requirement are a HISTORY, and the history of an obligation
+ * is not the same thing as its current claim. Everything that summarises a
+ * requirement (the verdict facet, the status row, the table cell, the
+ * stale-evidence rule) reads the live set rather than the raw list, because a
+ * superseded record is a fact about the past and must not be counted twice.
+ *
+ * Insertion order is preserved on the FIRST appearance of each obligation, so
+ * a requirement's obligations keep the order the file carries them in.
+ */
+export function liveEvidence(records: readonly EvidenceRecord[]): EvidenceRecord[] {
+  const byObligation = new Map<string, EvidenceRecord>();
+  records.forEach((record, i) => byObligation.set(obligationKey(record, i), record));
+  return [...byObligation.values()];
+}
+
+/**
+ * How bad a verdict is. `fail` outranks `inconclusive` outranks `pass`.
+ *
+ * The order is the whole point of {@link summariseEvidence}: a requirement is
+ * discharged only when EVERY obligation under it is, so the one verdict the
+ * file carries has to be the worst of them.
+ */
+const VERDICT_RANK: Record<EvidenceVerdict, number> = { fail: 2, inconclusive: 1, pass: 0 };
+
+/** One requirement's evidence, reduced to the one thing a facet can hold. */
+export interface EvidenceSummary {
+  /** The worst live verdict — derived from a claim, never read off a record. */
+  verdict: EvidenceVerdict;
+  /** The claim of the record that governs, so the claim word is never upgraded. */
+  claim: EvidenceClaim;
+  /** The governing record itself. */
+  record: EvidenceRecord;
+  /** Every live record, one per obligation, in file order. */
+  live: EvidenceRecord[];
+}
+
+/**
+ * The one verdict a requirement with several obligations carries: the WORST.
+ *
+ * WHY THIS IS NOT "THE LAST RECORD". A requirement may state several
+ * obligations, and one run produces one record for each of them. Taking the
+ * last record in file order would make the verdict depend on the ORDER THE
+ * CLAUSES ARE WRITTEN IN: swap two lines in the source and the same evidence
+ * writes `pass` where it wrote `fail`. Worse, it launders — a requirement whose
+ * first clause is refuted and whose second is proved would record
+ * `verdict = "pass"` on a file that carries a refutation, and every consumer
+ * downstream (the status row, the table cell, the stale rule) would repeat it.
+ *
+ * AND THE VERDICT IS DERIVED FROM THE CLAIM, never read off the record's own
+ * `verdict` field: {@link verdictFor} is the only place the `proved ⇒ pass` rule
+ * lives, and a record file somebody edited is exactly the input this must not
+ * trust.
+ *
+ * The tie-break among equally-bad obligations is the last one in file order, so
+ * a requirement with ONE obligation still reports its most recent claim.
+ */
+export function summariseEvidence(
+  records: readonly EvidenceRecord[],
+): EvidenceSummary | undefined {
+  const live = liveEvidence(records);
+  if (live.length === 0) return undefined;
+  let governing = live[0];
+  for (const record of live.slice(1)) {
+    if (VERDICT_RANK[verdictFor(record.claim)] >= VERDICT_RANK[verdictFor(governing.claim)]) {
+      governing = record;
+    }
+  }
+  return { verdict: verdictFor(governing.claim), claim: governing.claim, record: governing, live };
+}
+
+/* ────────────────────────────── attach / detach ──────────────────────────── */
+
+/** Why one record could not be attached, in the reader's words. */
+export interface EvidenceSkip {
+  /** The record's clause, so the reader can find it in the `--record` file. */
+  clause: string;
+  reason: string;
+}
+
+/**
+ * A verdict that CHANGED on this attach, which is the one thing that may never
+ * happen quietly.
+ *
+ * `fail` → `pass` is the direction the plan names, and it is the direction a
+ * laundered claim travels; every other change is reported too, because a reader
+ * who is told about one direction and not the other learns to trust the silence.
+ */
+export interface VerdictChange {
+  element: string;
+  clause: string;
+  from: EvidenceVerdict;
+  to: EvidenceVerdict;
+  fromClaim: EvidenceClaim;
+  toClaim: EvidenceClaim;
+  /** `fail` replaced by `pass` — the laundering direction, flagged by name. */
+  launders: boolean;
+}
+
+/** What an attach did, in the terms the command prints. */
+export interface AttachReport {
+  /** Records written as a new carrier. */
+  attached: number;
+  /** Records already present, byte for byte, and therefore not written twice. */
+  unchanged: number;
+  /** Records that named nothing this model could carry them on. */
+  skipped: EvidenceSkip[];
+  /** Elements that gained a carrier, by qualified name. */
+  elements: string[];
+  /** Verdict facets written, by qualified name and value. */
+  verdicts: Array<{ element: string; verdict: EvidenceVerdict; claim: EvidenceClaim }>;
+  /** Every verdict this attach moved — printed, never swallowed. */
+  changes: VerdictChange[];
+}
+
+/**
+ * Write evidence records into the model, as annotations on what they are about.
+ *
+ * THREE REFUSALS, each replacing a write that would be lost or meaningless.
+ * A LIBRARY element is refused: the bundled standard library is not the
+ * reader's file, a carrier written onto it is never saved, and a caller aiming
+ * evidence at `ISQ::MassValue` has the wrong element. A FAULTED declaration is
+ * refused with {@link FAULTED_DECLARATION_REFUSAL} — the same sentence the
+ * facet editors show — because the serializer re-emits that declaration's
+ * source verbatim and everything written underneath it is gone on the next
+ * save. And a record naming no requirement is SKIPPED rather than attached
+ * somewhere plausible: evidence belongs on the thing it is evidence about.
+ *
+ * EVIDENCE ACCUMULATES. A second run APPENDS a carrier; nothing is overwritten
+ * and no earlier verdict is deleted, so the file keeps the history of what was
+ * claimed and when it changed. The one exception is a record that is already
+ * there byte for byte, which is counted as `unchanged` — otherwise writing the
+ * same run back into the same file twice would grow it without saying anything
+ * new, and `evidence-attach` could not be run twice safely.
+ *
+ * THE VERDICT FACET IS DERIVED, NEVER ACCEPTED. Every verdict this function
+ * writes — the facet on the requirement, the `verdict` summary cell on the
+ * carrier, and the `verdict` field of the record it stores — comes out of
+ * {@link verdictFor} applied to the CLAIM. The record's own `verdict` field is
+ * never copied through, because a `--from` file is JSON somebody can edit and a
+ * record that said `{"claim":"holds-at-values","verdict":"pass"}` would
+ * otherwise launder a point evaluation into a proof on the way into the file.
+ * So a `holds-at-values` record writes `inconclusive` however it is spelled,
+ * and there is no path through this function by which a claim that is not
+ * `proved` writes `pass`.
+ *
+ * AND A REQUIREMENT WITH SEVERAL OBLIGATIONS CARRIES THE WORST OF THEM
+ * ({@link summariseEvidence}), not the last one written: a facet taken from the
+ * last record would depend on the order the clauses happen to be written in,
+ * and would let one clause's `pass` overwrite another clause's `fail`.
+ *
+ * NOTHING IS WRITTEN UNTIL EVERY TARGET HAS BEEN CHECKED. The two refusals
+ * below are raised in a pass of their own, before the first carrier goes in,
+ * because a throw from the middle of the write loop would leave the model
+ * half-attached — carriers on the records it reached, no facets, and no report
+ * saying which — and half an attach is worse than none.
+ *
+ * @throws when a record names a library element, or one whose declaration (or
+ *   an enclosing one) could not be parsed.
+ */
+export function attachEvidence(
+  model: Model,
+  records: readonly EvidenceRecord[],
+): AttachReport {
+  const report: AttachReport = {
+    attached: 0,
+    unchanged: 0,
+    skipped: [],
+    elements: [],
+    verdicts: [],
+    changes: [],
+  };
+
+  // PASS ONE — resolve every target and raise every refusal, writing nothing.
+  // An array of pairs rather than a Map keyed on the record: the same record
+  // may legitimately appear twice in one `--from` file, and a Map would silently
+  // collapse the duplicate instead of counting it as `unchanged`.
+  const targets: Array<[EvidenceRecord, ElementRecord]> = [];
+  for (const record of records) {
+    const qn = record.obligation.requirement;
+    if (qn === null || qn === '') {
+      report.skipped.push({
+        clause: record.obligation.clause,
+        reason:
+          'the record is about a model-level relation, not a requirement — there is no requirement ' +
+          'to annotate, and evidence written anywhere else would be evidence about something else',
+      });
+      continue;
+    }
+    const target = resolveByQualifiedName(model, qn);
+    if (!target) {
+      report.skipped.push({
+        clause: record.obligation.clause,
+        reason: `no element of this model is called \`${qn}\` — the record was produced against a different file`,
+      });
+      continue;
+    }
+    if (!isUserElement(model, target)) {
+      throw new Error(
+        `attachEvidence: ${qn} is a bundled standard-library element. A carrier written onto the ` +
+          'library is never saved with the reader’s file, so it would read back in memory and be ' +
+          'gone the moment the model was reloaded.',
+      );
+    }
+    if (!carriesItsOwnText(model, target.id)) {
+      throw new Error(`attachEvidence: ${qn} — ${FAULTED_DECLARATION_REFUSAL}`);
+    }
+    targets.push([record, target]);
+  }
+
+  // Elements whose facet has to be recomputed. WIDER than the set that gained a
+  // carrier: a record already present byte for byte writes nothing, but the
+  // facet beside it may have drifted since — hand-edited, or written by an
+  // older build — and `verification/verdict-overstates-evidence` names
+  // re-attaching as its first remedy. A remedy that did nothing would be worse
+  // than no remedy at all, so an `unchanged` record still repairs the facet.
+  const facetTargets = new Set<ElementId>();
+  const gained = new Set<ElementId>();
+
+  // PASS TWO — write.
+  for (const [record, target] of targets) {
+    const qn = record.obligation.requirement as string;
+    // Stored with its verdict DERIVED, so the carrier's payload can never
+    // disagree with its own claim whatever the `--from` file said.
+    const stored: EvidenceRecord = { ...record, verdict: verdictFor(record.claim) };
+    const canonical = canonicalJson(stored);
+    const existing = evidenceOf(model, target.id);
+    facetTargets.add(target.id);
+    if (existing.some((r) => canonicalJson(r) === canonical)) {
+      report.unchanged++;
+      continue;
+    }
+    // The verdict this record MOVES, if any. Compared against the most recent
+    // record about the SAME OBLIGATION — the pair `clause` + `obligationDigest`,
+    // which is the key the schema itself names. The clause alone would fuse two
+    // anonymous obligations of one requirement (both are called
+    // `R::«ConstraintUsage»`) and report a change between two claims that were
+    // never about the same thing.
+    const key = obligationKey(stored);
+    const prior = [...existing].reverse().find((r) => obligationKey(r) === key);
+    if (prior && verdictFor(prior.claim) !== stored.verdict) {
+      report.changes.push({
+        element: qn,
+        clause: record.obligation.clause,
+        from: verdictFor(prior.claim),
+        to: stored.verdict,
+        fromClaim: prior.claim,
+        toClaim: stored.claim,
+        launders: verdictFor(prior.claim) === 'fail' && stored.verdict === 'pass',
+      });
+    }
+
+    writeCarrier(model, target.id, stored, canonical);
+    report.attached++;
+    if (!gained.has(target.id)) {
+      gained.add(target.id);
+      report.elements.push(qn);
+    }
+  }
+
+  // The facet last, once per element, from the WORST live obligation under it —
+  // so a requirement whose obligations disagree carries the verdict of the one
+  // that is not discharged, whichever order the clauses were written in.
+  for (const id of facetTargets) {
+    const summary = summariseEvidence(evidenceOf(model, id));
+    if (!summary) continue;
+    const el = model.get(id);
+    if (!el || !isRequirement(el.eClass)) continue;
+    setRequirementAttr(model, id, 'verdict', summary.verdict);
+    report.verdicts.push({
+      element: model.qualifiedName(id),
+      verdict: summary.verdict,
+      claim: summary.claim,
+    });
+  }
+  return report;
+}
+
+/** One carrier, written in the shape the notation reads back unchanged. */
+function writeCarrier(
+  model: Model,
+  ownerId: ElementId,
+  record: EvidenceRecord,
+  canonical: string,
+): void {
+  model.transaction(() => {
+    const carrier = model.create('MetadataUsage', {
+      ownerId,
+      attrs: { annotation: true, type: EVIDENCE_QUALIFIED_NAME },
+    });
+    const summary: Record<(typeof EVIDENCE_SUMMARY_ATTRS)[number], string> = {
+      claim: record.claim,
+      verdict: record.verdict,
+      engine: record.engine,
+      tool: toolLabel(record.tool),
+      modelGraph: record.modelVersion.graph,
+    };
+    for (const key of EVIDENCE_SUMMARY_ATTRS) {
+      model.create('AttributeUsage', {
+        declaredName: key,
+        ownerId: carrier.id,
+        attrs: { value: JSON.stringify(summary[key]) },
+      });
+    }
+    model.create('AttributeUsage', {
+      declaredName: EVIDENCE_RECORD_ATTR,
+      ownerId: carrier.id,
+      attrs: { value: JSON.stringify(canonical) },
+    });
+  });
+}
+
+/**
+ * An element by qualified name, falling back to a unique suffix match.
+ *
+ * `Model.resolveQualifiedName` walks the name segment by segment from the
+ * roots, which is exactly right for the name a record carries — records write
+ * qualified names precisely so this is possible. The suffix fallback is for the
+ * one shape it cannot walk: an element whose owner chain includes an anonymous
+ * member, whose qualified name contains a `«MetaClass»` segment nothing is
+ * declared under.
+ */
+function resolveByQualifiedName(model: Model, qn: string): ElementRecord | undefined {
+  const direct = model.resolveQualifiedName(qn);
+  if (direct) return direct;
+  const matches = model.all().filter((el) => model.qualifiedName(el.id) === qn);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+/** What a detach removed. */
+export interface DetachReport {
+  /** Carriers removed. */
+  removed: number;
+  /** Elements they came off, by qualified name. */
+  elements: string[];
+  /** Verdict facets cleared with them. */
+  verdictsCleared: string[];
+}
+
+/**
+ * Take every evidence carrier off the model, and the verdict facets with them.
+ *
+ * THE FACET GOES WITH THE EVIDENCE, and that is the whole reason this is one
+ * command rather than two. A `verdict = "pass"` left behind by a detach is a
+ * claim with nothing behind it — exactly the state
+ * `verification/claimed-without-evidence` exists to report — so a detach that
+ * removed only the carriers would MANUFACTURE the defect this lane is written
+ * against. A facet a person wrote by hand on a requirement that never carried
+ * evidence is left alone: this only clears what it can see it wrote.
+ *
+ * @param scopeId when given, only evidence under that element (and itself).
+ */
+export function detachEvidence(model: Model, scopeId?: ElementId): DetachReport {
+  const report: DetachReport = { removed: 0, elements: [], verdictsCleared: [] };
+  const inScope = (id: ElementId): boolean => {
+    if (scopeId === undefined) return true;
+    if (id === scopeId) return true;
+    return model.descendants(scopeId).some((d) => d.id === id);
+  };
+  model.transaction(() => {
+    for (const holder of evidenceHolders(model)) {
+      if (!inScope(holder.id)) continue;
+      const carriers = evidenceCarriers(model, holder.id);
+      if (carriers.length === 0) continue;
+      for (const c of carriers) model.remove(c.id);
+      report.removed += carriers.length;
+      report.elements.push(holder.qualifiedName);
+      const el = model.get(holder.id);
+      if (el && isRequirement(el.eClass) && getRequirementAttr(model, holder.id, 'verdict') !== undefined) {
+        setRequirementAttr(model, holder.id, 'verdict', null);
+        report.verdictsCleared.push(holder.qualifiedName);
+      }
+    }
+  });
+  return report;
+}
+
+/* ─────────────────────────────── the status ──────────────────────────────── */
+
+/**
+ * A verdict facet with no evidence behind it.
+ *
+ * INFO, not an error, and the severity is a judgement rather than a default: a
+ * `verdict` facet is standard requirements management, and a programme whose
+ * `verificationMethod` is `inspect` records a human's verdict there with no
+ * tool involved at all. Reporting that as a defect would tell an engineer their
+ * own process is a fault. What the row says is narrower and true: THIS tool has
+ * no evidence for that verdict, so nothing here stands behind it.
+ */
+export const CLAIMED_WITHOUT_EVIDENCE_CODE = 'verification/claimed-without-evidence';
+
+/**
+ * A `verdict = "pass"` facet over a carrier whose claim is not `proved`.
+ *
+ * ERROR, and this one is not a judgement call: the two artefacts are both the
+ * tool's own, they contradict each other, and the contradiction is in the
+ * direction that overstates. `pass` is written for exactly one claim
+ * ({@link verdictFor}), so a file in this state was either hand-edited or
+ * written by something that did not go through this module — and either way the
+ * file now claims more than the evidence beside it supports.
+ */
+export const VERDICT_OVERSTATES_EVIDENCE_CODE = 'verification/verdict-overstates-evidence';
+
+/** What one requirement's evidence says about itself. */
+export interface EvidenceStatusRow {
+  id: ElementId;
+  qualifiedName: string;
+  shortId: string;
+  /**
+   * `current` — a record whose model digest still matches. `stale` — one taken
+   * over a different model. `unrecorded` — a verdict facet with no carrier at
+   * all. `none` — neither, which is most of a model and is not a finding.
+   */
+  status: 'current' | 'stale' | 'unrecorded' | 'none';
+  /** The verdict facet the file states, if it states one. */
+  claimedVerdict?: string;
+  /** The most recent record's claim, if there is a record. */
+  claim?: EvidenceClaim;
+  /** The most recent record's verdict. */
+  verdict?: EvidenceVerdict;
+  /** The digest the record was taken against. */
+  recordedGraph?: string;
+  /** Records attached here. */
+  records: number;
+  /** Carriers whose payload could not be read back. */
+  unreadable: number;
+  /**
+   * The requirement's slice — what a reader must re-check before believing a
+   * stale record. Qualified names, nearest hop first, from
+   * `impactClosure(model, id, 2)`.
+   */
+  slice: string[];
+  /** The sentence the report prints for this row. */
+  detail: string;
+  /** The `verification/*` code, when the row is one. */
+  code?: string;
+}
+
+/** Every row, plus the digest they were all compared against. */
+export interface EvidenceStatusReport {
+  /** The model's digest right now — what every `current` row matched. */
+  graph: string;
+  rows: EvidenceStatusRow[];
+  current: number;
+  stale: number;
+  unrecorded: number;
+  overstated: number;
+}
+
+/**
+ * How much of the model a stale row names — two hops, per the plan's §3.10.
+ *
+ * Two rather than one because a requirement's clause reads FEATURES, and a
+ * feature's value is one hop further out than the feature: at depth 1 a stale
+ * row named the clause and the subject and nothing a reader could have edited.
+ */
+export const EVIDENCE_SLICE_DEPTH = 2;
+
+/**
+ * What was shown, over which model, and whether it still holds.
+ *
+ * THE COMPARISON IS A DIGEST AND NOTHING ELSE, and the limit that follows is
+ * stated on every stale row rather than hidden: the digest is taken over the
+ * WHOLE user model, so any edit anywhere moves it, and this function cannot say
+ * WHICH element changed — it never saw the earlier model, only its hash. What
+ * it can do is name the slice a reader has to re-read before believing the
+ * record again, which is what `impactClosure(model, id, 2)` is for.
+ *
+ * MUST NEVER UPGRADE A CLAIM. A `holds-at-values` row is never shown as
+ * *proved*, a stale row is never counted as discharged, and a `pass` facet over
+ * a claim that is not `proved` is a finding rather than a verdict.
+ *
+ * AND A ROW SUMMARISES OBLIGATIONS, NOT CARRIERS. A requirement may state
+ * several, each with its own record and its own history; the row reads the LIVE
+ * set ({@link liveEvidence}) and reports the WORST of them
+ * ({@link summariseEvidence}), so a refuted clause cannot be hidden behind a
+ * discharged one that happened to be written after it, and a superseded record
+ * cannot keep a row stale after the obligation was re-recorded.
+ */
+export function evidenceStatus(model: Model): EvidenceStatusReport {
+  const graph = modelVersionOf(model).graph;
+  const holders = new Map(evidenceHolders(model).map((h) => [h.id, h]));
+  const rows: EvidenceStatusRow[] = [];
+
+  for (const el of model.all()) {
+    if (!isUserElement(model, el)) continue;
+    const holder = holders.get(el.id);
+    const isReq = isRequirement(el.eClass);
+    const claimed = isReq ? getRequirementAttr(model, el.id, 'verdict') : undefined;
+    if (!holder && claimed === undefined) continue;
+
+    const qualifiedName = model.qualifiedName(el.id);
+    const shortId = isReq ? requirementShortId(model, el.id) : '';
+    const records = holder?.records ?? [];
+    const summary = summariseEvidence(records);
+    // STALE IF ANY LIVE OBLIGATION IS. One re-recorded clause does not make the
+    // requirement current again while another clause's record still names an
+    // older model.
+    const staleRecord = summary?.live.find((r) => r.modelVersion.graph !== graph);
+    const slice =
+      staleRecord !== undefined
+        ? impactClosure(model, el.id, EVIDENCE_SLICE_DEPTH).impacted.map(
+            (i) => i.element.qualifiedName || i.element.id,
+          )
+        : [];
+
+    const base = {
+      id: el.id,
+      qualifiedName,
+      shortId,
+      records: records.length,
+      unreadable: holder?.unreadable ?? 0,
+      slice,
+      ...(claimed !== undefined ? { claimedVerdict: claimed } : {}),
+      ...(summary !== undefined
+        ? {
+            claim: summary.claim,
+            verdict: summary.verdict,
+            // The digest a reader has to act on: the stale one when there is
+            // one, because that is the record that no longer stands.
+            recordedGraph: (staleRecord ?? summary.record).modelVersion.graph,
+          }
+        : {}),
+    };
+
+    if (!summary) {
+      const unreadable = holder?.unreadable ?? 0;
+      if (claimed === undefined) {
+        // A carrier this tool cannot read on something that states no verdict.
+        // NOT `claimed-without-evidence`: that code's precondition is a verdict
+        // facet, and reporting a code whose `when` sentence is false of the row
+        // teaches a reader to distrust the catalogue. Reported anyway, because
+        // a carrier nothing can parse is a fact about the file — but as what it
+        // is, and without inflating the `unrecorded` count.
+        rows.push({
+          ...base,
+          status: 'none',
+          detail:
+            `${unreadable} evidence carrier(s) here could not be read back — this element states ` +
+            'no verdict, so nothing is being claimed, but nothing this tool wrote is readable ' +
+            'either. Re-run `verify --record` and `evidence-attach`, or remove the carrier.',
+        });
+        continue;
+      }
+      // A verdict facet and no readable record. An unreadable carrier is named
+      // rather than counted as evidence: a payload nothing can parse supports
+      // nothing, and calling that row `current` would be the exact upgrade this
+      // function is written to refuse.
+      rows.push({
+        ...base,
+        status: 'unrecorded',
+        code: CLAIMED_WITHOUT_EVIDENCE_CODE,
+        detail:
+          `unrecorded — the file states verdict = "${claimed}" and this tool has no evidence ` +
+          `behind it${unreadable > 0 ? ` (${unreadable} carrier(s) here could not be read back)` : ''}. ` +
+          'Run `verify --record` and `evidence-attach`, or read it as a verdict somebody reached another way.',
+      });
+      continue;
+    }
+
+    const stale = staleRecord !== undefined;
+    // The overstatement test is over the FACET against the CLAIM the evidence
+    // summarises to. `pass` is written for `proved` alone, and a requirement
+    // with several obligations is proved only when every one of them is — so
+    // the governing claim is the one the facet has to match.
+    const overstates = claimed === 'pass' && summary.claim !== 'proved';
+    rows.push({
+      ...base,
+      status: stale ? 'stale' : 'current',
+      ...(overstates
+        ? {
+            code: VERDICT_OVERSTATES_EVIDENCE_CODE,
+            detail:
+              `the file states verdict = "pass" over a record whose claim is \`${summary.claim}\` — ` +
+              '`pass` is written for `proved` alone, and nothing here proved anything. ' +
+              `The record is ${stale ? 'stale' : 'current'} (${(staleRecord ?? summary.record).modelVersion.graph}).`,
+          }
+        : {
+            detail: stale
+              ? `stale — recorded at ${staleRecord.modelVersion.graph}, the model is now ${graph}; ` +
+                `${slice.length} element(s) in this requirement’s slice must be re-read, and the ` +
+                'digest is over the whole model so this tool cannot say which of them moved. ' +
+                'Re-run `verify --record`.'
+              : `current — the model still hashes to ${graph}; claim \`${summary.claim}\`, ` +
+                `verdict \`${summary.verdict}\`, by ${toolLabel(summary.record.tool)}` +
+                `${summary.live.length > 1 ? ` (the weakest of ${summary.live.length} obligations)` : ''}.`,
+          }),
+    });
+  }
+
+  return {
+    graph,
+    rows,
+    current: rows.filter((r) => r.status === 'current').length,
+    stale: rows.filter((r) => r.status === 'stale').length,
+    unrecorded: rows.filter((r) => r.status === 'unrecorded').length,
+    overstated: rows.filter((r) => r.code === VERDICT_OVERSTATES_EVIDENCE_CODE).length,
+  };
 }

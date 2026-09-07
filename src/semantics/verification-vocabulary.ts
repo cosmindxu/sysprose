@@ -48,6 +48,8 @@
  * their own definitions (an evidence carrier, a fault hypothesis, a property
  * pattern) rather than declaring a package each, so a model carrying a keyword
  * and an evidence record declares one Sysprose package with one doc string.
+ * {@link EVIDENCE_DEFINITION} is the first of those extensions and it is
+ * written into the SAME declaration above, not into a second package beside it.
  */
 
 /** The package the shipped verification definitions live in. */
@@ -63,6 +65,32 @@ export const EXCEPTIONAL_DEFINITION = 'ExceptionalOutcome';
 export const EXCEPTIONAL_QUALIFIED_KEYWORD = `${SYSPROSE_VERIFICATION_PACKAGE}::${EXCEPTIONAL_KEYWORD}`;
 
 /**
+ * The metadata definition an evidence record is carried under.
+ *
+ * NOT A KEYWORD, and that is the whole difference between it and
+ * {@link EXCEPTIONAL_DEFINITION}. `#exceptional` is a TAG — §7.27.1's
+ * "metadata definition with no nested features … simply acts as a user-defined
+ * syntactic tag" — so it is written after a `#` and says one thing by being
+ * present. An evidence record has a body: it names a claim, an engine, a tool
+ * version and a model digest, and §7.27's annotating form
+ * `@Def { attribute … = "…"; }` is what carries a body onto an element that is
+ * already declared. So this definition ships with no short name: there is
+ * nothing to spell after a `#`, and giving it one would invite a bare
+ * `#Evidence` that carries no record and claims to be one.
+ *
+ * Measured, and this is the reason the shape is this one: a
+ * `@SysproseVerification::Evidence { attribute record = "…"; }` written into a
+ * requirement body parses with zero diagnostics, lands as a `MetadataUsage`
+ * with `attrs.annotation === true` and `attrs.type` naming the definition, and
+ * round-trips byte-identically — quoted string values included, escapes and
+ * all. That last part is what lets a whole record live in one attribute.
+ */
+export const EVIDENCE_DEFINITION = 'Evidence';
+
+/** `SysproseVerification::Evidence` — the spelling a carrier line is written with. */
+export const EVIDENCE_QUALIFIED_NAME = `${SYSPROSE_VERIFICATION_PACKAGE}::${EVIDENCE_DEFINITION}`;
+
+/**
  * The shipped definition, as text.
  *
  * A model that wants `#exceptional` to name something declares this package (or
@@ -72,6 +100,7 @@ export const EXCEPTIONAL_QUALIFIED_KEYWORD = `${SYSPROSE_VERIFICATION_PACKAGE}::
  * `test/unit/semantics.keywords.test.ts`.
  */
 export const SYSPROSE_VERIFICATION_LIBRARY = `package ${SYSPROSE_VERIFICATION_PACKAGE} {
-    doc /* One annotation SysML v2 does not express, carried as a user-defined keyword over a metadata definition (SysML v2 7.27.1, 7.27.4). #${EXCEPTIONAL_KEYWORD} says an outcome is a failure rather than an equally valid result. It is a Sysprose extension, not standard vocabulary. */
+    doc /* Two definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #${EXCEPTIONAL_KEYWORD} says an outcome is a failure rather than an equally valid result. ${EVIDENCE_DEFINITION} carries what a verification run showed, as an annotation on the requirement it is about. Both are Sysprose extensions, not standard vocabulary. */
     metadata def <${EXCEPTIONAL_KEYWORD}> ${EXCEPTIONAL_DEFINITION};
+    metadata def ${EVIDENCE_DEFINITION};
 }`;

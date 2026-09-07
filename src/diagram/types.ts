@@ -571,6 +571,48 @@ export interface ReqRow {
    * `requirement`).
    */
   attrs: Partial<Record<RmAttrKey, string>>;
+  /** What a verification run left on this requirement, and whether it still holds. */
+  evidence: ReqEvidenceCell;
+}
+
+/**
+ * The Evidence cell: what was shown, by what, and whether the model has moved
+ * since.
+ *
+ * READ-ONLY, and the reason is in the plan's non-goals: there is no solver in
+ * the browser (z3 WASM needs `SharedArrayBuffer`, which needs COOP/COEP headers
+ * GitHub Pages cannot set), so the app's job here is to READ evidence and tell
+ * the reader which terminal command produces it. Nothing in the table writes a
+ * verdict.
+ *
+ * `claim` IS THE POINT OF THE CELL. The Verdict column beside it shows the
+ * FACET — `pass` / `fail` / `inconclusive` — and a facet is a three-valued
+ * summary that cannot tell a proof from a point evaluation. The claim can:
+ * `holds-at-values` and `proved` are different things, and a table that showed
+ * only the facet would render them identically. The rule the plan states twice
+ * — never upgrade a claim on display — is enforceable only if the claim is on
+ * the row, so it is.
+ */
+export interface ReqEvidenceCell {
+  /**
+   * `current` — a record whose model digest still matches this model.
+   * `stale` — one recorded over a different version. `unrecorded` — a verdict
+   * facet with no record behind it. `none` — neither, which is most rows.
+   */
+  status: 'current' | 'stale' | 'unrecorded' | 'none';
+  /** The most recent record's claim word, verbatim. Never upgraded, never `pass`. */
+  claim: string | null;
+  /** How many records are attached here — evidence accumulates. */
+  records: number;
+  /** The sentence the cell's tooltip shows, and the terminal prints. */
+  detail: string;
+  /**
+   * The requirement's slice, for a stale row: what a reader has to re-read
+   * before believing the record. Empty on every other status.
+   */
+  slice: string[];
+  /** The `verification/*` code, when the row is a finding. */
+  code?: string;
 }
 
 export interface RequirementsTableModel {
@@ -580,5 +622,7 @@ export interface RequirementsTableModel {
   refColumns: ReqRefColumn[];
   /** Facet columns (Kind, Status, Verdict, …), shown right of the references. */
   attrColumns: ReqAttrColumn[];
+  /** The read-only evidence column, right of the facets. */
+  evidenceColumns: { key: string; label: string }[];
   rows: ReqRow[];
 }

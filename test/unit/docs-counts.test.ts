@@ -49,6 +49,19 @@ function viewKindCount(): number {
  * source that says 30 is the drift this file exists to catch, and the
  * declaration is a stable enough thing to read.
  */
+/**
+ * How many cases a test file states, counted the way a reader would.
+ *
+ * A CASE COUNT quoted in prose is exactly as perishable as a rule count and was
+ * not guarded: `docs/FEATURE-PARITY.md` and `docs/TEST-REPORT.md` both carried
+ * "60 cases" for `U validation.rules` while the file ran seventy-odd, and
+ * nothing went red. Counted off the tree here for the same reason the rule
+ * count is.
+ */
+function caseCount(file: string): number {
+  return [...read(file).matchAll(/^ *it\(/gm)].length;
+}
+
 function sourceNumber(file: string, pattern: RegExp): number {
   const m = pattern.exec(read(file));
   if (!m) throw new Error(`${file} no longer declares ${pattern}`);
@@ -276,6 +289,18 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     what: 'standard-library download size in MB',
     pattern: /(\d+\.\d)\s+MB\s+download/,
     actual: () => Math.round(statSync(root('src/library/std/stdlib.json')).size / 1e5) / 10,
+  },
+  {
+    file: 'docs/FEATURE-PARITY.md',
+    what: 'the validation.rules case count',
+    pattern: /`U validation\.rules` \(25 rules, (\d+) cases\)/,
+    actual: () => caseCount('test/unit/validation.rules.test.ts'),
+  },
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'the validation.rules case count',
+    pattern: /`U validation\.rules` \((\d+) cases\)/,
+    actual: () => caseCount('test/unit/validation.rules.test.ts'),
   },
   {
     file: 'docs/USER-GUIDE.md',

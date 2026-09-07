@@ -47,6 +47,21 @@ import {
 } from '../semantics/units-eval';
 import type { Diagnostic, Severity, ValidationRule } from './types';
 import { connectionCompatibility } from './rules-connection';
+// The one import this layer makes of `src/api`, and it is deliberate rather
+// than accidental. The evidence carrier and the canonical model digest are
+// declared once, in `src/api/evidence.ts`, because that is where the RECORD is
+// defined and a second reading of either would be a second answer to "is this
+// verdict still about this model". Nothing cycles: `src/api` reaches back into
+// `src/validation` for `@validation/types` alone, which is types-only and
+// erased at build time, so this edge exists in one direction at runtime.
+import {
+  EVIDENCE_SLICE_DEPTH,
+  evidenceHolders,
+  liveEvidence,
+  modelVersionOf,
+  type EvidenceRecord,
+} from '../api/evidence';
+import { impactClosure } from '../api/analytics';
 
 /* ───────────────────────────── small helpers ───────────────────────────── */
 
@@ -1203,6 +1218,85 @@ const unwritableNoteBody: ValidationRule = {
   },
 };
 
+/**
+ * A verdict in the file that was reached over a different model.
+ *
+ * WHY THIS IS A CHECKER RULE AND NOT A VERIFICATION ROW. The whole point of
+ * writing evidence into a `.sysml` file is that the next person to open the
+ * file sees it — and the next person to open the file runs `npm run check`,
+ * not `verify`. A stale verdict that only `evidence-status` could report would
+ * be a verdict that silently survived every edit made by anyone who did not
+ * know the verification lane existed. So it is a warning on the ordinary path,
+ * and the finding is about the FILE rather than about a requirement's truth,
+ * which is why it files under `validation/` and not `verification/`.
+ *
+ * WHAT IT CAN AND CANNOT SAY, stated on every finding rather than assumed. The
+ * comparison is a digest over the whole user model, so the rule knows THAT
+ * something moved and can never know WHAT: it never saw the earlier model, only
+ * its hash. Naming a slice is the honest half of the answer — these are the
+ * elements a reader has to re-read before believing the record again — and the
+ * message says the other half out loud instead of implying an attribution it
+ * cannot make.
+ *
+ * The digest is not computed unless a carrier exists. It costs a canonical
+ * serialisation of the user model, and every check of every file that has never
+ * heard of evidence must not pay for it.
+ */
+/** How many slice members one finding names before it starts counting them. */
+const SLICE_NAMES = 8;
+
+const staleEvidence: ValidationRule = {
+  id: 'stale-evidence',
+  description: 'An attached evidence record was recorded over a different version of this model.',
+  severity: 'warning',
+  run(model) {
+    const holders = evidenceHolders(model).filter((h) => h.records.length > 0);
+    if (holders.length === 0) return [];
+    const diag = diagBuilder(this.id, this.severity);
+    const current = modelVersionOf(model).graph;
+    const out: Diagnostic[] = [];
+    for (const holder of holders) {
+      // ONE RECORD PER OBLIGATION, and only the live one. A requirement may
+      // state several obligations, and `attachEvidence` appends rather than
+      // overwrites, so the carriers under it are a history: the last record for
+      // each obligation is the live claim and the ones before it are what the
+      // file keeps on purpose. Reporting the history would turn one stale
+      // verdict into five; reporting only the last carrier in file order would
+      // miss a stale obligation whose clause happened to be written first.
+      const live = liveEvidence(holder.records);
+      const stale: EvidenceRecord | undefined = live.find(
+        (r) => r.modelVersion.graph !== current,
+      );
+      if (stale === undefined) continue;
+      const last = stale;
+      const slice = impactClosure(model, holder.id, EVIDENCE_SLICE_DEPTH).impacted.map(
+        (i) => i.element.qualifiedName || i.element.id,
+      );
+      // NAMED, not counted. A reader told "3 elements changed" has been told
+      // nothing they can act on; the point of the slice is that it is the list
+      // of declarations to re-read, so the message carries the list. Long ones
+      // are truncated rather than dropped, because a diagnostic that wraps for
+      // forty lines is a diagnostic nobody finishes.
+      const named =
+        slice.length === 0
+          ? 'nothing else in this model reaches it'
+          : slice.slice(0, SLICE_NAMES).join(', ') +
+            (slice.length > SLICE_NAMES ? `, \u2026 and ${slice.length - SLICE_NAMES} more` : '');
+      out.push(
+        diag(
+          `Evidence on ${holder.qualifiedName} was recorded over ${last.modelVersion.graph}; ` +
+            `this model is ${current}. The claim \`${last.claim}\` no longer stands on the model ` +
+            `it was reached over. Re-read this requirement\u2019s slice \u2014 ${named} \u2014 then re-run ` +
+            '`verify --record` and `evidence-attach`; the digest is over the whole model, so this ' +
+            'tool cannot say which of them moved.',
+          holder.id,
+        ),
+      );
+    }
+    return out;
+  },
+};
+
 export const RULES: ValidationRule[] = [
   duplicateName,
   unresolvedImport,
@@ -1228,6 +1322,7 @@ export const RULES: ValidationRule[] = [
   unknownUnit,
   derivedDimensionMismatch,
   unwritableNoteBody,
+  staleEvidence,
 ];
 
 /** Rule lookup by id. */

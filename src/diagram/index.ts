@@ -92,6 +92,7 @@ export {
   REQUIREMENT_REF_COLUMNS,
   REQUIREMENT_SCALAR_COLUMNS,
   REQUIREMENT_ATTR_COLUMNS,
+  REQUIREMENT_EVIDENCE_COLUMNS,
 } from './requirements-table';
 export {
   buildGraphAnalysis,

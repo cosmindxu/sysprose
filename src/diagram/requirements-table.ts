@@ -37,9 +37,11 @@ import {
   getRequirementAttrs,
   requirementShortId,
 } from '@semantics/requirements';
+import { evidenceHolders, evidenceStatus, type EvidenceStatusRow } from '@api/evidence';
 import type {
   RequirementsTableModel,
   ReqAttrColumn,
+  ReqEvidenceCell,
   ReqRefColumn,
   ReqReference,
   ReqRow,
@@ -113,6 +115,45 @@ export const REQUIREMENT_SCALAR_COLUMNS = SCALAR_COLUMNS;
 export const REQUIREMENT_ATTR_COLUMNS = ATTR_COLUMNS;
 
 /**
+ * The evidence column, which is one column and not two.
+ *
+ * The Verdict facet already has a column of its own, in {@link ATTR_COLUMNS} —
+ * it is one of the ten a requirement carries and it is EDITABLE, because a
+ * verdict reached by inspection is a verdict a person types. What was missing
+ * beside it is the read-only half: whether anything stands behind that verdict,
+ * and whether what stands behind it is still about this model. That is this
+ * column, and its cell carries the claim word so the pair can never render a
+ * point evaluation and a proof the same way.
+ */
+const EVIDENCE_COLUMNS: { key: string; label: string }[] = [{ key: 'evidence', label: 'Evidence' }];
+export const REQUIREMENT_EVIDENCE_COLUMNS = EVIDENCE_COLUMNS;
+
+/** The cell for a row nothing was ever recorded about — most of a model. */
+const NO_EVIDENCE: ReqEvidenceCell = {
+  status: 'none',
+  claim: null,
+  records: 0,
+  detail: 'no evidence recorded — run `npm run sysprose -- verify <file> --record evidence.json`',
+  slice: [],
+};
+
+/** One status row projected onto the cell the table renders. */
+function evidenceCell(row: EvidenceStatusRow): ReqEvidenceCell {
+  return {
+    status: row.status,
+    // The CLAIM, verbatim from the record. Never `row.verdict`, which is the
+    // three-valued facet: `holds-at-values` and `proved` both summarise to
+    // something else there, and collapsing them is the one display defect this
+    // whole column exists to make impossible.
+    claim: row.claim ?? null,
+    records: row.records,
+    detail: row.detail,
+    slice: row.slice,
+    ...(row.code !== undefined ? { code: row.code } : {}),
+  };
+}
+
+/**
  * Best human label for a related element. The native short name comes before
  * the legacy `attrs.reqId`, the same preference every reader of a requirement
  * id has, so an edited id is the one a chip shows.
@@ -180,6 +221,10 @@ export function buildRequirementsTable(model: Model): RequirementsTableModel {
       // is one and reports the kind from the keyword or the metaclass. It never
       // creates the carrier, so opening the table on a model does not change it.
       attrs: getRequirementAttrs(model, el.id),
+      // Filled by the pass below, when the model carries anything to fill it
+      // with. Never undefined: a consumer reading `row.evidence.status` must
+      // not have to know whether this model has been verified.
+      evidence: NO_EVIDENCE,
     });
     // Nested requirements (containment children that are themselves requirements).
     const children = model.children(el.id).filter(isUserRequirement);
@@ -191,5 +236,28 @@ export function buildRequirementsTable(model: Model): RequirementsTableModel {
   const topLevel = allReqs.filter((r) => !(r.ownerId != null && reqIds.has(r.ownerId)));
   topLevel.forEach((r, i) => emit(r, String(i + 1), 0));
 
-  return { scalarColumns: SCALAR_COLUMNS, refColumns: REF_COLUMNS, attrColumns: ATTR_COLUMNS, rows };
+  // The evidence pass runs LAST and only when there is something to say.
+  // `evidenceStatus` takes the canonical digest of the whole user model, and
+  // this function is called on every store revision — so a model that has never
+  // heard of the verification lane must not pay for a hash on every keystroke.
+  // Two things make a model worth asking about: a carrier, or a verdict facet
+  // somebody wrote by hand (which is the `unrecorded` row, and is exactly the
+  // one a cheap "are there carriers?" test would miss).
+  const worthAsking =
+    evidenceHolders(model).length > 0 || rows.some((r) => r.attrs.verdict !== undefined);
+  if (worthAsking) {
+    const status = new Map(evidenceStatus(model).rows.map((r) => [r.id, r]));
+    for (const row of rows) {
+      const found = status.get(row.id);
+      if (found) row.evidence = evidenceCell(found);
+    }
+  }
+
+  return {
+    scalarColumns: SCALAR_COLUMNS,
+    refColumns: REF_COLUMNS,
+    attrColumns: ATTR_COLUMNS,
+    evidenceColumns: EVIDENCE_COLUMNS,
+    rows,
+  };
 }

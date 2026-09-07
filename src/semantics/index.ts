@@ -207,6 +207,8 @@ export {
   EXCEPTIONAL_KEYWORD,
   EXCEPTIONAL_DEFINITION,
   EXCEPTIONAL_QUALIFIED_KEYWORD,
+  EVIDENCE_DEFINITION,
+  EVIDENCE_QUALIFIED_NAME,
 } from './verification-vocabulary';
 export {
   contractsOf,

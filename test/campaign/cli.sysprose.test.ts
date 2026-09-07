@@ -1827,6 +1827,310 @@ package P {
     expect(badSubject.stderr).toContain('no element matches `NoSuchThing`');
   }, 180_000);
 
+  it('the evidence round trip at the process boundary: record, attach, go stale, detach', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'uav.sysml');
+      writeFileSync(model, readFileSync(UAV, 'utf8'));
+      const records = join(dir, 'evidence.json');
+
+      const recorded = run(['verify', model, '--engine', 'literal', '--record', records]);
+      expect(recorded.code).toBe(0);
+      expect(existsSync(records)).toBe(true);
+
+      // ATTACHING DOES NOT WRITE THE INPUT. The updated model is on stdout and
+      // the file is untouched until `--out` says otherwise — the one property
+      // that lets a reader run this command to see what it would do.
+      const dry = run(['evidence-attach', model, '--from', records]);
+      expect(dry.code).toBe(0);
+      expect(dry.stdout).toContain('@SysproseVerification::Evidence');
+      expect(dry.stderr).toContain('was NOT changed');
+      expect(readFileSync(model, 'utf8'), 'the input file was rewritten without --out').toBe(
+        readFileSync(UAV, 'utf8'),
+      );
+
+      const attached = run(['evidence-attach', model, '--from', records, '--out', model]);
+      expect(attached.code).toBe(0);
+      expect(attached.stderr).toContain('2 record(s) attached to 2 element(s)');
+      expect(attached.stderr).toContain('2 verdict facet(s) written');
+      const written = readFileSync(model, 'utf8');
+      // A `--engine literal` record claims `holds-at-values`, so the facet it
+      // derives is `inconclusive`. `pass` is written for `proved` alone.
+      expect(written).toContain('attribute claim = "holds-at-values"');
+      expect(written).toContain('attribute verdict = "inconclusive"');
+      expect(written, 'a point evaluation wrote a pass').not.toContain(
+        'attribute verdict = "pass"',
+      );
+
+      const fresh = run(['evidence-status', model]);
+      expect(fresh.code).toBe(0);
+      expect(fresh.stdout).toContain('0 stale, 2 current, 0 unrecorded');
+      expect(fresh.stdout).toContain('`holds-at-values` is never shown as `proved`');
+
+      // Re-attaching the same records says nothing new and writes nothing.
+      const again = run(['evidence-attach', model, '--from', records]);
+      expect(again.stderr).toContain('0 record(s) attached');
+      expect(again.stderr).toContain('2 already present');
+
+      // ONE LITERAL, and the verdict in the file stops standing on the model it
+      // was reached over — reported by `evidence-status` AND by the ordinary
+      // checker, which is what the next person to open the file runs.
+      writeFileSync(model, written.replace('18.5 [kg]', '19.5 [kg]'));
+      const stale = run(['evidence-status', model]);
+      expect(stale.code).toBe(0);
+      expect(stale.stdout).toContain('2 stale, 0 current');
+      expect(stale.stdout).toMatch(/slice: UAVSurveillanceSystem::/);
+      const checked = spawnSync('npx', ['tsx', CHECK_CLI, model], { encoding: 'utf8' });
+      expect(checked.stdout).toContain('validation/stale-evidence');
+      expect(checked.stdout, 'the warning must name the slice, not just count it').toContain(
+        'Re-read this requirement’s slice — UAVSurveillanceSystem::',
+      );
+
+      // And the facet goes off with the carrier, or the detach would leave a
+      // verdict with nothing behind it.
+      const detached = run(['evidence-detach', model, '--out', model]);
+      expect(detached.code).toBe(0);
+      expect(detached.stderr).toContain('2 verdict facet(s) cleared');
+      const bare = readFileSync(model, 'utf8');
+      expect(bare).not.toContain('SysproseVerification::Evidence');
+      expect(bare).not.toContain('attribute verdict =');
+      expect(run(['evidence-status', model]).stdout).toContain(
+        'nothing in this file states a verdict or carries a record',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it('evidence-attach refuses a missing --from, a file that is not records, and a degraded model', () => {
+    const noFrom = run(['evidence-attach', UAV]);
+    expect(noFrom.code).toBe(2);
+    expect(noFrom.stderr).toContain('--from PATH is required');
+    // Refused BEFORE the library is bound: a run that parsed 38 761 elements to
+    // discover it had nothing to attach is a run that wasted the reader's time.
+    expect(noFrom.stdout, 'the model was loaded before the flag was checked').toBe('');
+
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const notRecords = join(dir, 'notes.json');
+      writeFileSync(notRecords, JSON.stringify([{ verdict: 'pass' }]));
+      const bad = run(['evidence-attach', UAV, '--from', notRecords]);
+      expect(bad.code).toBe(2);
+      expect(bad.stderr).toContain('does not hold evidence records this tool wrote');
+      expect(bad.stderr).toContain('docs/schemas/evidence-record.schema.json');
+      expect(bad.stderr, 'a bad input file was reported as a tool defect').not.toContain(
+        'internal error',
+      );
+
+      const notJson = join(dir, 'notes.txt');
+      writeFileSync(notJson, 'these are my notes');
+      expect(run(['evidence-attach', UAV, '--from', notJson]).stderr).toContain('is not JSON');
+
+      // A model that did not load cleanly is never written back: serializing a
+      // salvaged model over somebody's source is a lossy rewrite of it.
+      const broken = join(dir, 'broken.sysml');
+      writeFileSync(broken, 'package P {\n    part def A;\n    part a : A;\n    part def ?? ;\n}\n');
+      const records = join(dir, 'ev.json');
+      writeFileSync(records, '[]');
+      const degraded = run(['evidence-attach', broken, '--from', records]);
+      expect(degraded.code).toBe(2);
+      expect(degraded.stderr).toContain('refuses a model that did not load cleanly');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it('evidence-status names a verdict with nothing behind it, and one that overstates', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      // A verdict somebody typed. INFO, not a defect: a verdict reached by
+      // inspection is ordinary requirements management, and the row says only
+      // that this tool has nothing standing behind it.
+      const claimed = join(dir, 'claimed.sysml');
+      writeFileSync(
+        claimed,
+        'package P {\n    part vehicle;\n    requirement <R1> massLimit {\n' +
+          '        subject vehicle;\n' +
+          '        metadata RequirementMetadata {\n            attribute verdict = "pass";\n        }\n' +
+          '    }\n}\n',
+      );
+      const unrecorded = run(['evidence-status', claimed, '--json']);
+      expect(unrecorded.code).toBe(0);
+      const { body } = payload<{
+        evidenceStatus: { unrecorded: number; overstated: number; rows: Array<{ code?: string }> };
+      }>(unrecorded);
+      expect(body.evidenceStatus.unrecorded).toBe(1);
+      expect(body.evidenceStatus.rows[0].code).toBe('verification/claimed-without-evidence');
+
+      // The same file with a real record beside it, and the facet raised to
+      // `pass` by hand over a claim that is `holds-at-values`. `evidence-attach`
+      // cannot produce this state; a file in it was written by hand.
+      const model = join(dir, 'uav.sysml');
+      writeFileSync(model, readFileSync(UAV, 'utf8'));
+      const records = join(dir, 'ev.json');
+      expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(0);
+      expect(run(['evidence-attach', model, '--from', records, '--out', model]).code).toBe(0);
+      // The FACET, not the carrier's own summary cell of the same name — the
+      // record has to keep saying `inconclusive` or this case would be a file
+      // that agrees with itself.
+      writeFileSync(
+        model,
+        readFileSync(model, 'utf8').replace(
+          /(metadata RequirementMetadata \{\s*attribute verdict = )"inconclusive"/g,
+          '$1"pass"',
+        ),
+      );
+      const overstated = run(['evidence-status', model]);
+      expect(overstated.stdout).toContain('overstated');
+      expect(overstated.stdout).toContain('verification/verdict-overstates-evidence');
+      expect(overstated.stdout).toContain('`pass` is written for `proved` alone');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it('evidence-attach PRINTS every verdict it moves, and every record it could not place', () => {
+    // THE SENTENCE THE SECTION IS WRITTEN AROUND: a `fail` is never replaced by
+    // a `pass` WITHOUT THE DIFF BEING PRINTED. The in-memory `AttachReport`
+    // carries the change; nothing asserted that the command renders it, so both
+    // stderr loops could be deleted and the suite stayed green.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'refuted.sysml');
+      writeFileSync(
+        model,
+        'package L {\n    part def Vehicle {\n        attribute topSpeed : Real = 260.0;\n    }\n' +
+          '    part vehicle : Vehicle;\n    requirement <R1> speedLimit {\n' +
+          '        subject vehicle : Vehicle;\n' +
+          '        require constraint { vehicle.topSpeed <= 200.0 }\n    }\n}\n',
+      );
+      const refuted = join(dir, 'refuted.json');
+      // A refuted obligation exits 1 under the judging contract — a decided
+      // negative, which is exactly what this case needs.
+      expect(run(['verify', model, '--engine', 'literal', '--record', refuted]).code).toBe(1);
+      const first = JSON.parse(readFileSync(refuted, 'utf8')) as Array<{
+        claim: string;
+        verdict: string;
+        obligation: { requirement: string | null; clause: string };
+      }>;
+      expect(first[0].claim).toBe('refuted');
+
+      const attached = run(['evidence-attach', model, '--from', refuted, '--out', model]);
+      expect(attached.code).toBe(0);
+      expect(readFileSync(model, 'utf8')).toContain('attribute verdict = "fail"');
+
+      // The SAME obligation, re-recorded as a proof. Nothing in the model
+      // changed, so this is the laundering direction the plan names by hand.
+      const proved = join(dir, 'proved.json');
+      writeFileSync(
+        proved,
+        JSON.stringify([{ ...first[0], claim: 'proved', verdict: 'pass', engine: 'smt' }]),
+      );
+      const moved = run(['evidence-attach', model, '--from', proved, '--out', model]);
+      expect(moved.code).toBe(0);
+      expect(moved.stderr).toContain('verdict fail → pass');
+      expect(moved.stderr).toContain('(claim refuted → proved)');
+      expect(
+        moved.stderr,
+        'a refutation was replaced by a pass and the command said nothing about it',
+      ).toContain('a refutation is being replaced by a pass');
+      // The refutation is still in the file: evidence accumulates.
+      expect(run(['evidence-status', model, '--json']).stdout).toContain('"records": 2');
+
+      // AND A RECORD THIS MODEL CANNOT CARRY IS NAMED, not silently dropped.
+      const elsewhere = join(dir, 'elsewhere.json');
+      writeFileSync(
+        elsewhere,
+        JSON.stringify([
+          { ...first[0], obligation: { ...first[0].obligation, requirement: 'Other::notHere' } },
+        ]),
+      );
+      const skipped = run(['evidence-attach', model, '--from', elsewhere]);
+      expect(skipped.code).toBe(0);
+      expect(skipped.stderr).toContain(`skipped ${first[0].obligation.clause}`);
+      expect(skipped.stderr).toContain('no element of this model is called `Other::notHere`');
+      expect(skipped.stderr).toContain('0 record(s) attached');
+      expect(skipped.stderr).toContain('1 skipped');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it('a requirement with two obligations carries the worst of them, whichever order they are written in', () => {
+    // The facet used to come from the LAST record in file order, so the same
+    // evidence over the same design wrote `fail` one way round and something
+    // weaker the other — a verdict that was a function of the source layout.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const speed = '        require constraint speedOk { vehicle.topSpeed <= 200.0 }\n';
+      const mass = '        require constraint massOk { vehicle.mass <= 2000.0 }\n';
+      const head =
+        'package W {\n    part def Vehicle {\n        attribute mass : Real = 1500.0;\n' +
+        '        attribute topSpeed : Real = 260.0;\n    }\n    part vehicle : Vehicle;\n' +
+        '    requirement <R1> massAndSpeed {\n        subject vehicle : Vehicle;\n';
+      const tail = '    }\n}\n';
+
+      for (const [name, clauses] of [
+        ['refuted-first', speed + mass],
+        ['refuted-last', mass + speed],
+      ] as const) {
+        const model = join(dir, `${name}.sysml`);
+        writeFileSync(model, head + clauses + tail);
+        const records = join(dir, `${name}.json`);
+        expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(1);
+        const attached = run(['evidence-attach', model, '--from', records, '--out', model]);
+        expect(attached.code).toBe(0);
+        expect(attached.stderr).toContain('2 record(s) attached to 1 element(s)');
+        expect(attached.stderr).toContain('1 verdict facet(s) written');
+        const written = readFileSync(model, 'utf8');
+        // The FACET the requirement carries, read past the two carriers'
+        // own summary cells: the requirement is not discharged, because one of
+        // its two obligations is refuted.
+        expect(
+          /metadata RequirementMetadata \{\s*attribute verdict = "fail"/.test(written),
+          `${name}: the requirement's facet is not the worst of its obligations`,
+        ).toBe(true);
+        const status = run(['evidence-status', model]);
+        expect(status.stdout, name).toContain('claim `refuted`, verdict `fail`');
+        expect(status.stdout, name).toContain('the weakest of 2 obligations');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it('evidence-attach refuses a record whose stated verdict does not follow from its claim', () => {
+    // `verdict` and `claim` are two independent enumerations in the schema, so
+    // `{"claim":"holds-at-values","verdict":"pass"}` is valid against it and is
+    // still a laundered claim. Copying the record's own verdict through wrote
+    // `attribute verdict = "pass"` over a point evaluation.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'uav.sysml');
+      writeFileSync(model, readFileSync(UAV, 'utf8'));
+      const records = join(dir, 'ev.json');
+      expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(0);
+      const parsed = JSON.parse(readFileSync(records, 'utf8')) as Array<{
+        claim: string;
+        verdict: string;
+      }>;
+      expect(parsed[0].claim).toBe('holds-at-values');
+      const laundered = join(dir, 'laundered.json');
+      writeFileSync(laundered, JSON.stringify([{ ...parsed[0], verdict: 'pass' }]));
+
+      const refused = run(['evidence-attach', model, '--from', laundered, '--out', model]);
+      expect(refused.code).toBe(2);
+      expect(refused.stderr).toContain('says `pass` over the claim `holds-at-values`');
+      expect(refused.stderr).toContain('`pass` is written for `proved` alone');
+      expect(
+        readFileSync(model, 'utf8'),
+        'a refused record file still rewrote the model',
+      ).toBe(readFileSync(UAV, 'utf8'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
   it('--no-library skips binding and still reports the file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'nolib.sysml');

@@ -431,6 +431,18 @@ const CODES = [
     when: 'A value’s unit has a different physical dimension than its quantity kind.',
     hint: 'Use a unit of the declared quantity kind, e.g. a mass unit for a mass attribute.',
   },
+  {
+    // The one VALIDATION rule the verification lane adds, and it is here rather
+    // than under `verification/*` because `npm run check` is what raises it: a
+    // reader who never runs `verify` still has to be told that the verdict in
+    // their file was reached over a different model. The lane's own prefix is
+    // for what the ENGINES say; this is what the checker says about the file.
+    code: 'validation/stale-evidence',
+    source: 'validation',
+    severity: 'warning',
+    when: 'An attached evidence record names a model digest that is no longer this model\u2019s: the file was edited after the verdict was recorded. The digest is over the whole user model, so the edit may be anywhere \u2014 the message names the requirement\u2019s own slice, which is what has to be re-read.',
+    hint: 'Re-run `npm run sysprose -- verify <file> --record evidence.json` and `evidence-attach`, or take the stale record off with `evidence-detach`. A stale record is never counted as discharged, and the verdict facet beside it stands on nothing until it is re-recorded.',
+  },
 
   /* ── formal verification (docs: docs/04-formal-verification-plan.md) ── */
   // The whole lane files under ONE source and ONE prefix. These are INFO
@@ -596,6 +608,25 @@ const CODES = [
     severity: 'info',
     when: 'A feature released by `--free` is not confined on both sides by the axioms and premises the obligation stands on, so the solver may place a witness outside the physical domain. Reported instead of a refutation, never beside one.',
     hint: 'Add a two-sided premise — `assume constraint { x >= lo and x <= hi }` — before freeing the feature. This tool derives no domain axiom from a quantity kind: it does not know that a power or a mass is non-negative, so a witness at a negative power is arithmetically confirmable and physically meaningless. It exits 2 and no flag lowers it.',
+  },
+
+  // The two codes `evidence-status` raises about what is IN the file, as
+  // opposed to what an engine decided. They split the way the rest of this
+  // block splits: the one that says the tool knows nothing is an info line, and
+  // the one that says the file claims more than it can support is an error.
+  {
+    code: 'verification/claimed-without-evidence',
+    source: 'verification',
+    severity: 'info',
+    when: 'A requirement carries a `verdict` facet and no evidence record this tool can read \u2014 either none was ever attached, or the carriers present could not be parsed back.',
+    hint: 'This is not a defect: a `verdict` facet is ordinary requirements management, and a verdict reached by inspection is recorded there with no tool involved. The row says only that THIS tool has nothing standing behind it. Run `verify --record` then `evidence-attach` if you want one.',
+  },
+  {
+    code: 'verification/verdict-overstates-evidence',
+    source: 'verification',
+    severity: 'error',
+    when: 'A requirement states `verdict = "pass"` over an evidence record whose claim is not `proved` \u2014 `holds-at-values`, `holds-within-bound`, `vacuous`, `inconclusive` or anything else the engines can reach.',
+    hint: '`pass` is written for one claim only, and a point evaluation is not a proof. Run `evidence-attach --from` again with the same records: it rewrites the facet from the claim even when every record is already present, which puts the file back where this tool would have left it. `evidence-detach` is the other repair, and takes the record off with the facet. `evidence-attach` cannot produce this state \u2014 every verdict it writes is derived from the claim, and a record file that says otherwise is refused \u2014 so a file in it was written by hand or by something that did not go through this tool.',
   },
 
   /* ── round-trip oracle ── */

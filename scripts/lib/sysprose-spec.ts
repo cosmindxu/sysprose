@@ -47,6 +47,20 @@ export const EXIT_CODES = `Exit codes: 0 clean · 1 the model did not load clean
 export const CHECK_EXIT_CODES = `Exit codes: 0 clean · 1 at least one file has findings (errors, or warnings with --strict) · 2 usage/IO error`;
 
 /**
+ * The contract of the two subcommands that WRITE the model back, which has no 1.
+ *
+ * Under {@link EXIT_CODES} a 1 says "the model did not load cleanly — the
+ * report is of what parsed", and that sentence is unreachable for a subcommand
+ * that refuses a degraded model outright: `evidence-attach` and
+ * `evidence-detach` both open with `refuseDegradedWrite`, which raises a usage
+ * error, which is a **2**. Documenting them under the reporting contract
+ * promised a partial answer they will never give — the whole point of the
+ * refusal is that a lossy rewrite of somebody's source is worse than no answer
+ * — so they declare their own contract and it says what actually happens.
+ */
+export const WRITE_EXIT_CODES = `Exit codes: 0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1`;
+
+/**
  * `verify`'s exit-code contract, which is a THIRD contract, and the one most
  * likely to be misread.
  *
@@ -153,7 +167,7 @@ export const STATEMENT_KIND_FLAG_VALUES: readonly string[] = ['requirement', 'pr
  * section — and under it `verify` would have been documented with 1 meaning the
  * exact opposite of what it means.
  */
-export type ExitContract = 'report' | 'verify';
+export type ExitContract = 'report' | 'verify' | 'write';
 
 /** One subcommand. */
 export interface CommandSpec {
@@ -172,7 +186,9 @@ export interface CommandSpec {
 
 /** The exit-code sentence a subcommand's own help and reference must quote. */
 export function exitCodesFor(cmd: CommandSpec): string {
-  return cmd.exitContract === 'verify' ? VERIFY_EXIT_CODES : EXIT_CODES;
+  if (cmd.exitContract === 'verify') return VERIFY_EXIT_CODES;
+  if (cmd.exitContract === 'write') return WRITE_EXIT_CODES;
+  return EXIT_CODES;
 }
 
 export const COMMANDS: readonly CommandSpec[] = [
@@ -442,6 +458,42 @@ export const COMMANDS: readonly CommandSpec[] = [
         doc: 'Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, never over an inconsistency, and never over a run in which nothing at all was decided',
       },
     ],
+  },
+  // The three that read and write the FILE rather than reporting on it. None of
+  // them JUDGES — the judging was done by `verify`, once, and a verdict is not
+  // re-decided by being written down — but the two that write the file back
+  // obey a contract of their own: they refuse a degraded model outright, so
+  // their exit 1 ("the report is of what parsed") does not exist.
+  {
+    name: 'evidence-status',
+    question: 'What was shown, by which tool, over which model — and is it still valid?',
+    backedBy: 'evidenceStatus (src/api/evidence.ts)',
+    payloadKey: 'evidenceStatus',
+    exitContract: 'report',
+    flags: [],
+  },
+  {
+    name: 'evidence-attach',
+    question: 'Write the records of a verify run into the file, as annotations on what they are about',
+    backedBy: 'attachEvidence (src/api/evidence.ts)',
+    payloadKey: 'evidenceAttach',
+    exitContract: 'write',
+    flags: [
+      {
+        name: 'from',
+        kind: 'value',
+        metavar: 'PATH',
+        doc: 'The records to attach: the JSON array `verify --record PATH` wrote. Each is validated against docs/schemas/evidence-record.schema.json before anything is written, so a hand-edited file is refused rather than half-attached',
+      },
+    ],
+  },
+  {
+    name: 'evidence-detach',
+    question: 'Take every evidence record back off the file, and the verdict facets with them',
+    backedBy: 'detachEvidence (src/api/evidence.ts)',
+    payloadKey: 'evidenceDetach',
+    exitContract: 'write',
+    flags: [],
   },
 ];
 

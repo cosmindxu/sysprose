@@ -125,17 +125,20 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **both** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 66 tests |
-| L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`) | 33 cases |
+| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 72 tests |
+| L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 33 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
-so where they appear. Measured 2026-09-06: **82 fixture directories** under
-`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to it — beside **73
-catalogue codes** in `src/text/langium/diagnostic-codes.ts` and **24 validation
-rules** in `src/validation/rules.ts`. Reproduce them with
+so where they appear. Measured 2026-09-07: **83 fixture directories** under
+`test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
+eighty-third is `L8-evidence-stale`, the one case of the verification lane that
+belongs in this corpus because `stale-evidence` is a `validation/*` rule and
+`npm run check` is what raises it — beside **76 catalogue codes** in
+`src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
+`src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
 `RULES.length`.
 
@@ -3124,6 +3127,109 @@ second decided negative in the same commit — one requirement set nothing can
 satisfy, beside one obligation refuted — because the contract is quoted verbatim
 into both subcommands' help and the reference, and a contract naming only one of
 the two would document the other's loudest verdict as something else.
+
+**A verdict that lives only in a terminal is a verdict nobody can review.**
+Commit 7 of the formal-verification plan writes the records of a `verify` run
+into the model — `evidence-attach`, `evidence-status`, `evidence-detach`, all
+three in `src/api/evidence.ts` — as `@SysproseVerification::Evidence { … }`
+annotations on the requirements they are about, in §7.27's annotating form over
+the same `SysproseVerification` package commit 2d shipped. One package, extended;
+not a second one beside it. The definition ships with **no short name**: a
+keyword is a tag that says one thing by being present, and a record has a body,
+so there is nothing to write after a `#` and a bare `#Evidence` carrying no
+record is a spelling this vocabulary does not allow.
+
+**The digest had to learn to ignore what verification itself wrote, or no record
+could ever be current.** `modelVersionOf` hashes the user model; attaching a
+record adds elements to that model; so a record naming the digest of the model it
+was taken over would be stale the instant it was written, and every run would
+report every record it had just produced as out of date. `isEvidenceArtefact`
+draws the line at "what a verification run wrote" and not at "metadata": the
+Evidence carrier, everything under it, the `verdict` cell on a requirement's
+facet carrier, and that carrier when the cell is all it holds. Every other facet
+a requirement carries — status, risk, owner, rationale — is the author's and
+stays in the hash, so editing one still moves it. The line is drawn by SHAPE, and
+the two consequences are stated rather than left to be discovered: a `verdict`
+cell a person typed is out of the hash too, because nothing in the file marks
+which of the two wrote it — a hand-raised verdict is caught by
+`verification/verdict-overstates-evidence` instead — and content nested under an
+`@Evidence` carrier at any depth is out of it as well, because the carrier is
+this lane's own vocabulary and what a run may nest under it is not fixed. That exclusion is invisible to any assertion over
+the hash alone, which is why `canonicalElements` and `isEvidenceArtefact` are
+both exported and both asserted by name.
+
+**`stale-evidence` is a CHECKER rule (rules 24 → 25), and that is the whole
+point of it.** The next person to open the file runs `npm run check`, not
+`verify`. A stale verdict only `evidence-status` could report would be a verdict
+that silently survived every edit made by anyone who did not know the
+verification lane existed. It is a warning on the ordinary path, it costs nothing
+on a file that carries no evidence (the digest is not computed unless a carrier
+exists), and it names the requirement's slice — `impactClosure(model, id, 2)` —
+rather than counting it, because a reader told "3 elements changed" has been told
+nothing they can act on. It also says what it CANNOT say: the digest is over the
+whole model, so the rule knows THAT something moved and never WHAT — it never saw
+the earlier model, only its hash — and every finding states that instead of
+implying an attribution the tool cannot make. `L8-evidence-stale` is the case,
+and it is the one member of the L8 level that lives in the fixture corpus for
+exactly this reason.
+
+**Four ways a claim could have been laundered, closed by construction.** The
+`verdict` facet is DERIVED from the record's claim by `verdictFor` — `pass` for
+`proved`, `fail` for `refuted`, `inconclusive` for everything else — on every
+path that writes one. The input type `recordEvidence` takes has no `verdict`
+field at all; `attachEvidence` derives the facet, the carrier's summary cell and
+the record it stores from the CLAIM rather than copying the `verdict` a record
+states, because a `--from` file is JSON somebody can edit and the schema checks
+the two enumerations independently; and `evidence-attach` refuses a records file
+whose stated verdict does not follow from its claim rather than silently
+correcting it, so the reader is told their file says something untrue. A
+requirement that states several obligations carries the WORST of them —
+`fail` over `inconclusive` over `pass`, keyed on the pair `clause` +
+`obligationDigest` so only the latest record per obligation counts — because a
+facet taken from the last record in file order made the verdict a function of the
+order the clauses happened to be written in, and let one clause's `pass`
+overwrite another clause's `fail`. A `--engine literal` record therefore attaches
+`inconclusive`, and the Requirements table's new read-only Evidence column shows
+`holds-at-values`, never `proved` and never `pass`: the Verdict column beside it
+holds the three-valued facet, which cannot tell a point evaluation from a proof,
+which is why the claim word is on the row. Evidence ACCUMULATES — a second run
+appends a carrier, a `fail` is never overwritten by a `pass`, and every verdict a
+run moved is printed with both claims and the laundering direction named. And the
+two states a file can still reach by hand are reported by name:
+`verification/claimed-without-evidence` (info — a verdict reached by inspection
+is ordinary requirements management, and the row says only that this tool has
+nothing behind it) and `verification/verdict-overstates-evidence` (error — two
+artefacts of this tool contradicting each other in the direction that
+overstates).
+
+**Two refusals on the write path, and one exposure that stays open.**
+`evidence-attach` refuses a degraded model outright, because serializing a
+salvaged model back over somebody's source is a lossy rewrite of it, and refuses
+a faulted declaration with `FAULTED_DECLARATION_REFUSAL`, because that
+declaration is re-emitted verbatim on save and anything written underneath it is
+gone. Neither `evidence-attach` nor `evidence-detach` writes the input path
+unless `--out` names it: the updated model goes to stdout and stderr says the
+file was not changed. The faulted-declaration
+refusal is an API-level guard: at the command line it is subsumed by the degraded
+refusal, because a faulted declaration only exists after a parse error and a
+parse error already degrades the load — so both writing subcommands carry an exit
+contract of their own, with no exit **1** in it, rather than the reporting
+contract's "the report is of what parsed". Nothing is written until every record
+has been checked, so a refusal never leaves a half-attached model behind. What is
+NOT closed, and is recorded rather than implied: the digest catches model edits,
+**not a hand-edited record**; `verification/verdict-overstates-evidence` is
+catalogued as an error and is reported loudly by `evidence-status`, but nothing
+in the tree exits non-zero on it — `evidence-status` reports and does not judge,
+and `npm run check` never sees a `verification/*` code — so a hand-raised verdict
+fails no gate and the remedy (`evidence-attach --from` again, which rewrites the
+facet from the claim, or `evidence-detach`) has to be run by a person; and the
+verdict facet is an unbound tag holding a quoted string, so what another tool
+makes of it is untested by this commit and no claim is made about it here. The
+carrier this tool writes names `@SysproseVerification::Evidence`, and the
+`SysproseVerification` package is **not** injected into the reader's file: a
+model that carries evidence and does not import or declare that package has an
+annotation whose type resolves nowhere, and nothing diagnoses it. The package's
+text is in the user guide for anyone who wants the file to stand alone.
 
 ### Pinned behaviours (decisions, not defects)
 

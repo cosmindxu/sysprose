@@ -29,6 +29,7 @@ vi.mock('../../src/library/standard-library', () => ({
 import { useAppStore } from '../../src/ui/store';
 import { RequirementsTable } from '../../src/ui/panels/RequirementsTable';
 import { parseModel, serializeModel } from '@text/index';
+import { attachEvidence, modelVersionOf, recordEvidence } from '@api/index';
 import {
   NOTE_BODY_TERMINATOR,
   getRequirementAttr,
@@ -385,5 +386,122 @@ describe('Requirements panel — a statement that could not be written back', ()
     });
 
     expect(view.queryByTestId('req-note-refusal'), 'the attempt was withdrawn').toBeNull();
+  });
+});
+
+/**
+ * The Evidence column, rendered.
+ *
+ * `test/unit/requirements-table.test.ts` covers the projection — what
+ * `buildRequirementsTable` puts in the cell. Nothing covered the ~15 lines that
+ * turn that cell into DOM, and the display rule this whole column exists for is
+ * a property of the DOM: the chip shows the CLAIM, never the facet, because
+ * `holds-at-values` and `proved` are different things and the three-valued
+ * Verdict column beside it cannot tell them apart. Replacing `{cell.claim}`
+ * with `{row.attrs.verdict}` in the chip is the exact display defect the plan
+ * names by hand, and until this block existed it left the whole suite green.
+ */
+describe('RequirementsTable — the Evidence chip', () => {
+  const EVIDENCE_SRC = `package P {
+    part def Vehicle {
+        attribute mass : Real = 1500.0;
+    }
+    part vehicle : Vehicle;
+    requirement <R1> massLimit {
+        subject vehicle : Vehicle;
+        require constraint { vehicle.mass <= 2000.0 }
+    }
+    satisfy massLimit by vehicle;
+}
+`;
+
+  /** Load `src`, attach one `holds-at-values` record over `graph`, render. */
+  function mountWithEvidence(graph?: string) {
+    const { model } = parseModel(EVIDENCE_SRC);
+    const req = model.all().find((e) => e.declaredName === 'massLimit')!;
+    const version = modelVersionOf(model);
+    const [record] = recordEvidence({
+      rows: [
+        {
+          obligation: {
+            requirement: model.qualifiedName(req.id),
+            shortId: 'R1',
+            clause: 'P::massLimit::«ConstraintUsage»',
+            obligationDigest: `sha256:${'1'.repeat(64)}`,
+            expression: 'vehicle.mass <= 2000.0',
+          },
+          // A POINT EVALUATION. The literal engine cannot reach `proved`, and
+          // the chip must never round it up to one.
+          claim: 'holds-at-values',
+          engine: 'literal',
+          bound: { kind: 'model-values', detail: 'the model’s own values' },
+          detail: 'holds at the model’s values',
+        },
+      ],
+      modelVersion: graph === undefined ? version : { ...version, graph },
+      producedBy: 'test',
+      flags: {},
+    });
+    attachEvidence(model, [record]);
+    useAppStore.setState({
+      model,
+      undoStack: [],
+      redoStack: [],
+      rev: 0,
+      selectionId: null,
+      selectionIds: [],
+    });
+    return render(React.createElement(RequirementsTable));
+  }
+
+  it('shows the claim word on a current record, and never the facet’s `pass`', () => {
+    const view = mountWithEvidence();
+    const chip = view.getAllByTestId('req-evidence-chip')[0];
+    expect(chip.getAttribute('data-status')).toBe('current');
+    expect(chip.getAttribute('data-claim')).toBe('holds-at-values');
+    expect(chip.textContent).toContain('current');
+    expect(chip.textContent).toContain('holds-at-values');
+    // The two words this column exists to keep apart. A chip rendering the
+    // Verdict facet instead of the claim would say `inconclusive` here and a
+    // chip that upgraded the claim would say `proved`; neither may appear.
+    expect(chip.textContent, 'a point evaluation was displayed as a proof').not.toContain('proved');
+    expect(chip.textContent, 'the chip rendered the facet instead of the claim').not.toContain(
+      'inconclusive',
+    );
+    // And the cell as a whole never says `pass` — the facet derived from
+    // `holds-at-values` is `inconclusive`, and the claim is not a verdict.
+    const cellEl = view.getAllByTestId('req-evidence-cell')[0];
+    expect(cellEl.textContent).not.toContain('pass');
+  });
+
+  it('goes stale on a record over another model, and names the slice in the tooltip', () => {
+    const view = mountWithEvidence(`sha256:${'0'.repeat(64)}`);
+    const chip = view.getAllByTestId('req-evidence-chip')[0];
+    expect(chip.getAttribute('data-status')).toBe('stale');
+    expect(chip.getAttribute('data-claim')).toBe('holds-at-values');
+    const tip = chip.getAttribute('title') ?? '';
+    expect(tip).toContain('stale — recorded at sha256:0000');
+    // NOT A LINK. The slice is a SET of elements and a table cell has one
+    // click, so the chip NAMES its slice in the tooltip rather than selecting
+    // one arbitrary member of it — the deviation from §3.10's "links to the
+    // changed slice" is deliberate and pinned here so it cannot drift back into
+    // an untested choice.
+    expect(tip).toContain('In this requirement’s slice: P::vehicle');
+    expect(chip.tagName).toBe('SPAN');
+    expect(chip.getAttribute('href'), 'the chip became a link without the plan being revisited').toBeNull();
+  });
+
+  it('gives every row a cell, including one nothing was recorded about', () => {
+    const view = mount(`package P {
+    part vehicle;
+    requirement <R9> untouched { subject vehicle; }
+}
+`);
+    const cells = view.getAllByTestId('req-evidence-cell');
+    expect(cells).toHaveLength(1);
+    const chip = view.getAllByTestId('req-evidence-chip')[0];
+    expect(chip.getAttribute('data-status')).toBe('none');
+    expect(chip.getAttribute('data-claim')).toBe('');
+    expect(chip.getAttribute('title')).toContain('no evidence recorded');
   });
 });

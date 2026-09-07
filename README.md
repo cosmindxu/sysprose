@@ -122,6 +122,9 @@ with the function that control runs.
 | What must be shown, over which axioms, and what do the gates refuse? | — no view yet | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
 | Does each obligation hold, by which engine, and under what bound? | — no view yet | `npm run sysprose -- verify model.sysml --engine literal` | `verifyModel` — `src/api/verification.ts` |
 | Can all the requirements on this subject hold at once, and if not, which conflict? | — no view yet | `npm run sysprose -- consistency model.sysml` | `consistencyReport` — `src/api/verification.ts` |
+| What was shown, by which tool, over which model — and does it still hold? | **Requirements** view → *Evidence* column (`tb-view-requirements` → `buildRequirementsTable`) † | `npm run sysprose -- evidence-status model.sysml` | `evidenceStatus` — `src/api/evidence.ts` |
+| Write the verdicts of a run into the file, as annotations on what they are about | — no view yet | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` | `attachEvidence` — `src/api/evidence.ts` |
+| Take every record back off the file, and the verdict facets with them | — no view yet | `npm run sysprose -- evidence-detach model.sysml` | `detachEvidence` — `src/api/evidence.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -133,8 +136,15 @@ The **Interconnection** view *draws* ports and connections (`buildInterconnectio
 everything that references the selection, library and re-derived copies included (`whereUsed`,
 `src/api/analytics.ts`), where `where-used` drops the library, walks out to the `--depth` you ask
 for and says what it left out; the *Impact graph* draws one hop in each direction from its own
-walk (`neighboursOf`, `src/ui/panels/ImpactGraph.tsx`). `connectivity`, `orphans`, `prompts`,
-`contracts`, `obligations`, `verify` and the depth-walking `impactClosure` have no control in the
+walk (`neighboursOf`, `src/ui/panels/ImpactGraph.tsx`). The **Requirements** view *reads* the
+evidence a run left behind and shows it as one read-only column
+(`buildRequirementsTable`, `src/diagram/requirements-table.ts`, which asks `evidenceStatus` once
+per revision): `current` / `stale` / `unrecorded`, with the record's claim word beside it and the
+requirement's slice in the tooltip, where `evidence-status` prints every row with its digest, its
+slice and its `verification/*` code. Nothing in the app writes a verdict.
+`connectivity`, `orphans`, `prompts`,
+`contracts`, `obligations`, `verify`, `evidence-attach`, `evidence-detach` and the depth-walking
+`impactClosure` have no control in the
 app at all — they are the terminal's and the SDK's alone. There is no solver in the browser in this
 plan (`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), and a Contracts view is
 the closing commit of the formal-verification plan; the command line ships first.
@@ -216,6 +226,7 @@ npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # stats · elements · requirements · trace
                        # connectivity · where-used · orphans · prompts
                        # contracts · obligations · verify · consistency
+                       # evidence-status · evidence-attach · evidence-detach
                        # `npm run sysprose -- --help` lists them
 ```
 

@@ -3,6 +3,7 @@ import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import type { ElementRecord, SerializedModel } from '@core/index';
 import { validate, isValid, RULES, RULE_IDS, RULES_BY_ID } from '@validation/index';
 import { loadStandardLibrary } from '../../src/library/index';
+import { modelVersionOf } from '@api/index';
 import {
   NOTE_BODY_TERMINATOR,
   effectiveFeatures,
@@ -20,8 +21,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 24 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(24);
+  it('exposes all 25 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(25);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -1014,6 +1015,171 @@ describe('rule 18 — unwritable-note-body', () => {
     const a = f.partDef('A', p.id);
     m.setAttrs(a.id, { text: `a ${NOTE_BODY_TERMINATOR} b` });
     expect(runRule(m, 'unwritable-note-body')).toHaveLength(0);
+  });
+});
+
+describe('rule 19 — stale-evidence', () => {
+  /**
+   * A requirement carrying one evidence carrier whose record names `graph`.
+   *
+   * Built rather than parsed, in the style of the rest of this file: the rule
+   * reads the model graph, and a carrier is four `create` calls. The record is
+   * the minimum a reader of it needs — `schema` is what tells the reader this
+   * is one at all, and `modelVersion.graph` is the whole comparison.
+   */
+  function withEvidence(graph: string) {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const v = f.part('vehicle', p.id);
+    const r = f.requirement('massLimit', p.id);
+    m.create('SubjectMembership', { ownerId: r.id, source: [r.id], target: [v.id] });
+    const carrier = m.create('MetadataUsage', {
+      ownerId: r.id,
+      attrs: { annotation: true, type: 'SysproseVerification::Evidence' },
+    });
+    m.create('AttributeUsage', {
+      declaredName: 'record',
+      ownerId: carrier.id,
+      attrs: {
+        value: JSON.stringify(
+          JSON.stringify({
+            schema: 'sysprose-evidence/1',
+            claim: 'holds-at-values',
+            verdict: 'inconclusive',
+            modelVersion: { graph },
+          }),
+        ),
+      },
+    });
+    return { m, requirementId: r.id };
+  }
+
+  it('positive: a model with no evidence at all is not asked about', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const p = f.pkg('P');
+    const v = f.part('vehicle', p.id);
+    const r = f.requirement('massLimit', p.id);
+    m.create('SubjectMembership', { ownerId: r.id, source: [r.id], target: [v.id] });
+    expect(runRule(m, 'stale-evidence')).toHaveLength(0);
+  });
+
+  it('positive: a record naming THIS model’s digest is current', () => {
+    // The digest has to be taken from the model the carrier is already on: the
+    // exclusion of what a verification run wrote is what makes that possible,
+    // and a rule that computed it before the carrier existed would report every
+    // freshly attached record as stale.
+    const { m } = withEvidence('placeholder');
+    const current = modelVersionOf(m).graph;
+    const cell = m.all().find((el) => el.declaredName === 'record');
+    m.setAttrs(cell!.id, {
+      value: JSON.stringify(
+        JSON.stringify({
+          schema: 'sysprose-evidence/1',
+          claim: 'holds-at-values',
+          verdict: 'inconclusive',
+          modelVersion: { graph: current },
+        }),
+      ),
+    });
+    expect(runRule(m, 'stale-evidence')).toHaveLength(0);
+  });
+
+  it('negative: a record over another model is a warning that NAMES the slice', () => {
+    const { m, requirementId } = withEvidence(`sha256:${'0'.repeat(64)}`);
+    const diags = runRule(m, 'stale-evidence');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe('warning');
+    expect(diags[0].elementId).toBe(requirementId);
+    // The two halves of an honest finding: what to re-read, and what the tool
+    // cannot tell you. A message that named neither would be a warning a reader
+    // can do nothing with.
+    expect(diags[0].message).toContain('P::vehicle');
+    expect(diags[0].message).toContain('cannot say which of them moved');
+  });
+
+  it('negative: a stale obligation written BEFORE a current one still fires', () => {
+    // A requirement may state several obligations, each with its own carrier.
+    // Reading only the last carrier in file order missed a stale record whose
+    // clause happened to be written first — and the file then passed `npm run
+    // check` with a verdict reached over a model nobody has.
+    const { m, requirementId } = withEvidence(`sha256:${'0'.repeat(64)}`);
+    const first = m.all().find((el) => el.declaredName === 'record')!;
+    // Distinguish the two obligations, or the second record supersedes the
+    // first and there is nothing stale left to find.
+    m.setAttrs(first.id, {
+      value: JSON.stringify(
+        JSON.stringify({
+          schema: 'sysprose-evidence/1',
+          claim: 'holds-at-values',
+          verdict: 'inconclusive',
+          obligation: { clause: 'P::massLimit::speedOk', obligationDigest: 'sha256:aa' },
+          modelVersion: { graph: `sha256:${'0'.repeat(64)}` },
+        }),
+      ),
+    });
+    const second = m.create('MetadataUsage', {
+      ownerId: requirementId,
+      attrs: { annotation: true, type: 'SysproseVerification::Evidence' },
+    });
+    m.create('AttributeUsage', {
+      declaredName: 'record',
+      ownerId: second.id,
+      attrs: {
+        value: JSON.stringify(
+          JSON.stringify({
+            schema: 'sysprose-evidence/1',
+            claim: 'holds-at-values',
+            verdict: 'inconclusive',
+            obligation: { clause: 'P::massLimit::massOk', obligationDigest: 'sha256:bb' },
+            modelVersion: { graph: modelVersionOf(m).graph },
+          }),
+        ),
+      },
+    });
+    const diags = runRule(m, 'stale-evidence');
+    expect(diags, 'a stale obligation was hidden behind a current one').toHaveLength(1);
+    expect(diags[0].message).toContain(`sha256:${'0'.repeat(64)}`);
+  });
+
+  it('says nothing when the SAME obligation was re-recorded over this model', () => {
+    // Evidence accumulates, so a superseded record stays in the file. It is
+    // history, not a live claim: reporting it would make re-recording an
+    // obligation impossible to do without leaving a permanent warning behind.
+    const { m, requirementId } = withEvidence(`sha256:${'0'.repeat(64)}`);
+    const stale = m.all().find((el) => el.declaredName === 'record')!;
+    const payload = (graph: string) =>
+      JSON.stringify(
+        JSON.stringify({
+          schema: 'sysprose-evidence/1',
+          claim: 'holds-at-values',
+          verdict: 'inconclusive',
+          obligation: { clause: 'P::massLimit::only', obligationDigest: 'sha256:aa' },
+          modelVersion: { graph },
+        }),
+      );
+    m.setAttrs(stale.id, { value: payload(`sha256:${'0'.repeat(64)}`) });
+    const fresh = m.create('MetadataUsage', {
+      ownerId: requirementId,
+      attrs: { annotation: true, type: 'SysproseVerification::Evidence' },
+    });
+    m.create('AttributeUsage', {
+      declaredName: 'record',
+      ownerId: fresh.id,
+      attrs: { value: payload(modelVersionOf(m).graph) },
+    });
+    expect(runRule(m, 'stale-evidence')).toHaveLength(0);
+  });
+
+  it('says nothing about a carrier whose payload it cannot read', () => {
+    // A hand-written carrier, or one from a future schema, is a fact about the
+    // file and not a reason to claim a verdict went stale — the rule has no
+    // digest to compare and must not invent one.
+    const { m } = withEvidence('placeholder');
+    const cell = m.all().find((el) => el.declaredName === 'record');
+    m.setAttrs(cell!.id, { value: '"not json at all"' });
+    expect(runRule(m, 'stale-evidence')).toHaveLength(0);
   });
 });
 

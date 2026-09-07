@@ -26,6 +26,7 @@ import {
   EXIT_CODES,
   STATEMENT_KIND_FLAG_VALUES,
   VERIFY_EXIT_CODES,
+  WRITE_EXIT_CODES,
   flagsFor,
 } from '../../scripts/lib/sysprose-spec';
 
@@ -100,28 +101,43 @@ describe('the generated command reference', () => {
       const end = i + 1 < heads.length ? heads[i + 1].index! : DOC.length;
       sections.set(m[1], DOC.slice(start, end));
     }
-    // Both contracts must actually be in play, or every assertion below holds
-    // trivially over a table that lost one of them.
+    // All three contracts must actually be in play, or every assertion below
+    // holds trivially over a table that lost one of them.
+    const CONTRACTS = { report: EXIT_CODES, verify: VERIFY_EXIT_CODES, write: WRITE_EXIT_CODES };
     expect(
       COMMANDS.map((c) => c.exitContract).filter((v, i, a) => a.indexOf(v) === i).sort(),
-      'the command table no longer declares both exit contracts',
-    ).toEqual(['report', 'verify']);
+      'the command table no longer declares all three exit contracts',
+    ).toEqual(['report', 'verify', 'write']);
 
     for (const cmd of COMMANDS) {
       const section = sections.get(cmd.name);
       expect(section, `no section for \`${cmd.name}\``).toBeDefined();
-      const own = cmd.exitContract === 'verify' ? VERIFY_EXIT_CODES : EXIT_CODES;
-      const other = cmd.exitContract === 'verify' ? EXIT_CODES : VERIFY_EXIT_CODES;
       const body = (s: string) => s.replace('Exit codes: ', '');
-      expect(
-        section!.includes(body(own)),
-        `\`${cmd.name}\` declares exitContract '${cmd.exitContract}' but its section does not quote that contract — run \`npm run commands\``,
-      ).toBe(true);
-      expect(
-        section!.includes(body(other)),
-        `\`${cmd.name}\`'s section quotes the WRONG exit contract`,
-      ).toBe(false);
+      for (const [name, contract] of Object.entries(CONTRACTS)) {
+        const isOwn = name === cmd.exitContract;
+        expect(
+          section!.includes(body(contract)),
+          isOwn
+            ? `\`${cmd.name}\` declares exitContract '${cmd.exitContract}' but its section does not quote that contract — run \`npm run commands\``
+            : `\`${cmd.name}\`'s section quotes the '${name}' exit contract, which is not its own`,
+        ).toBe(isOwn);
+      }
     }
+  });
+
+  it('gives the two writing subcommands a contract with no exit 1 in it', () => {
+    // `evidence-attach` and `evidence-detach` refuse a degraded model outright
+    // — `refuseDegradedWrite` is the opening statement of both — so the
+    // reporting contract's 1, "the model did not load cleanly (the report is of
+    // what parsed)", names a state they cannot reach. Documenting them under it
+    // promised a partial answer that will never come.
+    expect(WRITE_EXIT_CODES).not.toContain('· 1 ');
+    expect(WRITE_EXIT_CODES).toContain('a degraded model is refused');
+    expect(WRITE_EXIT_CODES).not.toBe(EXIT_CODES);
+    expect(
+      COMMANDS.filter((c) => c.exitContract === 'write').map((c) => c.name).sort(),
+      'the writing contract is declared by exactly the two subcommands that write the file back',
+    ).toEqual(['evidence-attach', 'evidence-detach']);
   });
 
   it('states in words that `verify`’s 1 means refuted, not a load failure', () => {
