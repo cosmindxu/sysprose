@@ -66,6 +66,7 @@ import {
   evidenceStatus,
   isUserElement,
   modelVersionOf,
+  refinementReport,
   sha256Hex,
   toolVersion,
   traceabilityMatrix,
@@ -74,7 +75,18 @@ import {
   type VerifyEngineOption,
   type VerifyReport,
 } from '@api/index';
-import { checkConsistency, READING, runVerificationCases, writeVerdict } from '@semantics/index';
+import {
+  checkConsistency,
+  CONNECTION_HINT,
+  CONNECTIONS_AS_EQUALITIES_NOTE,
+  CONTRACT_SET_VACUOUS_CODE,
+  READING,
+  REFINEMENT_FAILED_CODE,
+  REFINEMENT_UNDECIDED_CODE,
+  UNCONNECTED_ASSUMPTION_CODE,
+  runVerificationCases,
+  writeVerdict,
+} from '@semantics/index';
 import { loadZ3, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
 import { serializeModel } from '@text/serializer';
@@ -2373,5 +2385,436 @@ describe('L8 — the verification-case method gate', () => {
       expect(r.cases.exitCode).toBe(0);
       expect(r.exitCode).toBe(0);
     }
+  });
+});
+
+/**
+ * L8 — `refine --via composition`: an architecture, rather than a requirement.
+ *
+ * A SUITE-LEVEL CASE for the same reason the consistency block above is one:
+ * `test/fixtures/verification/<case>/expected.json` is a projection of a
+ * `VerifyReport`, and a refinement run is a different report about a different
+ * question. The known-answer models live beside the others in `models/` and the
+ * properties are asserted here.
+ *
+ * WHAT EACH CASE PINS is a sentence from §3.6's MUST-NEVER list turned into a
+ * property. Two of them are the plan's own named counter-examples and are the
+ * reason the checker is shaped the way it is:
+ *
+ *  - **the soundness case** — A₁ = G₂ = p, A₂ = G₁ = p against ⟨true, p⟩. The
+ *    bare-guarantee obligation is `p ∧ p ⊨ p`, provable by inspection; the
+ *    normal-form one is `⊤ ⊨ p` and must be REFUTED, or mutual support buys a
+ *    verdict an implementation with `p` false would break.
+ *  - **the vacuity case** — ⟨true, x > 10⟩ and ⟨true, x < 5⟩ over one bind
+ *    class against ⟨true, x > 1000000⟩. The antecedent of (3) is unsatisfiable,
+ *    so (3) holds vacuously; without step (0) the tool prints "obligation (3)
+ *    proved" over an architecture whose components cannot coexist.
+ *
+ * The rest pin γ: a `flow` discharges a downstream assumption on its own, and a
+ * bare `connect` encodes NOTHING and is listed rather than silently folded in.
+ */
+describe('L8 — refine: Cimatti’s obligations, in normal form, over the equalities the model states', () => {
+  const BUDGET = 'examples/uav-power-budget.sysml';
+  const MUTUAL = 'test/fixtures/verification/models/refinement-mutual-support.sysml';
+  const SIBLINGS = 'test/fixtures/verification/models/refinement-contradictory-siblings.sysml';
+  const BARE = 'test/fixtures/verification/models/refinement-bare-connection.sysml';
+  const MIXED = 'test/fixtures/verification/models/refinement-mixed-vacuity.sysml';
+  const REFUSED = 'test/fixtures/verification/models/refinement-refused-clause.sysml';
+  const LEVELS = 'test/fixtures/verification/models/refinement-three-level.sysml';
+  const SHORTFALL = 'test/fixtures/verification/models/refinement-sibling-shortfall.sysml';
+  const ALLOCATED = 'test/fixtures/verification/models/refinement-allocation.sysml';
+
+  /** One run over one model, with the flags a person would type. */
+  async function refine(
+    path: string,
+    opts: Parameters<typeof refinementReport>[1] = {},
+    text?: string,
+  ): Promise<Awaited<ReturnType<typeof refinementReport>>> {
+    const source = text ?? read(path);
+    const { model } = await loadModelText(source, { fileName: path });
+    if (!model) throw new Error(`${path} produced no model`);
+    return refinementReport(model, { ...opts, sourceText: source });
+  }
+
+  withZ3('proves obligation (3) on the power-budget example, over bind and flow', async () => {
+    const r = await refine(BUDGET);
+    expect(r.exitCode, 'the shipped decomposition stopped refining').toBe(0);
+    expect(r.refined).toBe(1);
+    expect(r.notRefined + r.vacuous + r.inconclusive).toBe(0);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('refined');
+    expect(group.code).toBeNull();
+    // γ IS WHAT THE MODEL STATES: two bindings and one item flow, and the one
+    // bare connection listed rather than folded in.
+    expect(r.bindEqualities).toBe(2);
+    expect(r.itemFlows).toBe(1);
+    expect(r.connectionEqualities, 'a bare connect was read as an equality without the flag').toBe(0);
+    expect(r.notEncoded).toBe(1);
+    expect(group.notEncoded[0].hint).toBe(CONNECTION_HINT);
+    // Obligation (3), plus one (4) per component. The battery assumes nothing,
+    // so its (4) is empty rather than proved — an empty obligation is not a
+    // discharged one.
+    const three = group.obligations.find((o) => o.kind === 'composition')!;
+    expect(three.outcome).toBe('proved');
+    expect(three.detail).toContain('negation unsat');
+    expect(three.detail).toContain('nf(C) = ¬A ∨ G');
+    const four = group.obligations.filter((o) => o.kind === 'assumption');
+    expect(four.map((o) => o.outcome).sort()).toEqual([
+      'no-assumption',
+      'proved',
+      'proved',
+      'proved',
+    ]);
+    // MUST NEVER claim anything temporal.
+    expect(group.detail).toContain('Nothing here is about ordering or time');
+    for (const o of group.obligations) {
+      expect(o.detail, 'a verdict line mentioned time').not.toMatch(/\b(before|after|eventually|until)\b/);
+    }
+  });
+
+  withZ3('refutes obligation (3) when a component guarantee is removed, and names that part', async () => {
+    // The propulsion unit stops promising anything, so `nf(C_prop)` is ⊤ and
+    // its draw is unbounded — the sum can exceed what the pack delivers.
+    const text = read(BUDGET).replace('        require constraint { p.draw <= 600.0 [W] }\n', '');
+    expect(text, 'the mutation matched nothing').not.toBe(read(BUDGET));
+    const r = await refine(BUDGET, {}, text);
+    expect(r.exitCode, 'a broken decomposition went green').toBe(1);
+    expect(r.notRefined).toBe(1);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('not-refined');
+    expect(group.code).toBe(REFINEMENT_FAILED_CODE);
+    const three = group.obligations.find((o) => o.kind === 'composition')!;
+    expect(three.outcome).toBe('refuted');
+    // A WITNESS THAT NAMES THE PART. A refutation with no counterexample is an
+    // assertion, and one whose counterexample names nothing is not actionable.
+    expect(three.witnessConfirmed, 'a counterexample was printed unconfirmed').toBe(true);
+    expect(three.witness.map((w) => w.symbol)).toContain('UAVPowerBudget::PropulsionUnit::draw');
+    expect(three.detail).toContain('witness');
+  });
+
+  withZ3('refutes a component’s own (4) when its assumption outruns what its siblings promise', async () => {
+    // The flight controller now needs 30 V; the battery promises 22.
+    const text = read(BUDGET).replace(
+      'assume constraint { fc.supplyVoltage >= 20.0 [V] }',
+      'assume constraint { fc.supplyVoltage >= 30.0 [V] }',
+    );
+    expect(text, 'the mutation matched nothing').not.toBe(read(BUDGET));
+    const r = await refine(BUDGET, {}, text);
+    expect(r.exitCode).toBe(1);
+    const [group] = r.groups;
+    const four = group.obligations.find(
+      (o) => o.kind === 'assumption' && o.component?.qualifiedName === 'UAVPowerBudget::ComputerDraw',
+    )!;
+    expect(four.outcome).toBe('refuted');
+    // NOT the unconnected code: the quantity IS connected — two bind edges
+    // reach it — so this is a design problem and not a wiring one, and the two
+    // have different fixes.
+    expect(four.code).toBe(REFINEMENT_FAILED_CODE);
+    expect(four.detail).toContain('its siblings do not guarantee what it assumes');
+    expect(four.witnessConfirmed).toBe(true);
+    // The siblings' own assumptions are still discharged: 22 V clears 20 V.
+    const radio = group.obligations.find(
+      (o) => o.component?.qualifiedName === 'UAVPowerBudget::RadioDraw',
+    )!;
+    expect(radio.outcome).toBe('proved');
+  });
+
+  withZ3('the soundness case: mutual support passes bare guarantees and fails normal form', async () => {
+    const r = await refine(MUTUAL);
+    const [group] = r.groups;
+    // The bare-guarantee obligation here is `G₁ ∧ G₂ ⊨ G`, i.e. `p ∧ p ⊨ p`,
+    // where every conjunct IS the goal — provable by inspection, and provable
+    // by any checker that asserts guarantees rather than normal forms. This one
+    // asserts `nf(Cᵢ) = ¬p ∨ p = ⊤`, so the obligation is `⊤ ⊨ p`.
+    expect(group.outcome, 'mutual support bought a refinement verdict').toBe('not-refined');
+    const three = group.obligations.find((o) => o.kind === 'composition')!;
+    expect(three.outcome).toBe('refuted');
+    expect(three.witnessConfirmed).toBe(true);
+    // The counterexample is exactly the implementation the plan names: `p`
+    // false, both component contracts satisfied, the system guarantee broken.
+    const signal = three.witness.find((w) => w.symbol === 'RefinementMutualSupport::Alpha::signal')!;
+    expect(signal, 'the witness no longer names the quantity p is about').toBeDefined();
+    expect(Number(signal.value), 'the witness satisfies the system guarantee it is meant to break').toBeLessThan(1);
+    expect(r.exitCode).toBe(1);
+    // Step (0) still answered SAT — this is a refutation, not a vacuity, and
+    // the two must not be reported as each other.
+    expect(group.code).toBe(REFINEMENT_FAILED_CODE);
+    expect(r.vacuous).toBe(0);
+  });
+
+  withZ3('the vacuity case: contradictory siblings are vacuous, never refined', async () => {
+    const r = await refine(SIBLINGS);
+    expect(r.vacuous).toBe(1);
+    expect(r.refined, 'a contradiction proved an architecture').toBe(0);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('vacuous');
+    expect(group.code).toBe(CONTRACT_SET_VACUOUS_CODE);
+    expect(group.detail).toContain('cannot hold together');
+    expect(group.detail, 'a vacuity was printed as a refinement').not.toContain('refines:');
+    // The core names the statements that collide, so the row is actionable.
+    expect(group.vacuityCore.length, 'a vacuity with no core names nothing').toBeGreaterThan(1);
+    // NOT ONE OBLIGATION IS CLAIMED. Step (0) stops before (3) and (4), which
+    // is the whole point: `⊤` entails both of them under a contradiction.
+    expect(group.obligations, 'an obligation was judged under an unsatisfiable antecedent').toEqual([]);
+    // Vacuity is inconclusive in this lane, exits 2, and no flag lowers it.
+    expect(r.exitCode).toBe(2);
+    const forgiven = await refine(SIBLINGS, { allowInconclusive: true });
+    expect(forgiven.exitCode, '--allow-inconclusive laundered a vacuity').toBe(2);
+    expect(forgiven.forgiven).toBe(0);
+  });
+
+  withZ3('a vacuity beside a proof is still exit 2, and no flag lowers it', async () => {
+    // THE ARITHMETIC THIS CASE EXISTS FOR. A vacuous decomposition has its own
+    // count and is NOT one of the `inconclusive` ones, so an exit rule that
+    // only subtracted the forgiven inconclusives from the undecided total would
+    // return 0 here — laundering the vacuity behind the refinement beside it.
+    // With one group of each, the first rule ("nothing decided") no longer
+    // fires, which is what makes this the shape that catches it.
+    const r = await refine(MIXED);
+    expect(r.refined).toBe(1);
+    expect(r.vacuous).toBe(1);
+    expect(r.inconclusive).toBe(0);
+    expect(r.exitCode, 'a vacuity went green behind a proof beside it').toBe(2);
+    const forgiven = await refine(MIXED, { allowInconclusive: true });
+    expect(forgiven.exitCode, '--allow-inconclusive laundered a vacuity').toBe(2);
+    expect(forgiven.forgiven).toBe(0);
+  });
+
+  withZ3('a `flow` discharges the downstream assumption with no opt-in at all', async () => {
+    // The radio's bus voltage arrives over the item flow and over nothing else:
+    // no bind edge touches `DataLink::supplyVoltage`. If γ dropped item flows,
+    // this row would read "not discharged: witness supplyVoltage = 0" — the
+    // false negative §3.6's worked example is about.
+    const r = await refine(BUDGET);
+    expect(r.connectionsAsEqualities, 'the opt-in was on and the case proves nothing').toBe(false);
+    const [group] = r.groups;
+    const flows = group.gamma.filter((g) => g.kind === 'flow');
+    expect(flows).toHaveLength(1);
+    expect(flows[0].expression).toContain('UAVPowerBudget::DataLink::supplyVoltage');
+    const radio = group.obligations.find(
+      (o) => o.component?.qualifiedName === 'UAVPowerBudget::RadioDraw',
+    )!;
+    expect(radio.outcome, 'the item flow was not encoded').toBe('proved');
+  });
+
+  withZ3('a bare `connect` encodes nothing, lists the connection, and never passes silently', async () => {
+    const r = await refine(BARE);
+    expect(r.bindEqualities + r.itemFlows + r.connectionEqualities, 'a bare connect became γ').toBe(0);
+    expect(r.notEncoded).toBe(1);
+    expect(r.exitCode, 'a model with no encoded equality went green').toBe(1);
+    const [group] = r.groups;
+    expect(group.gamma).toEqual([]);
+    expect(group.notEncoded[0].hint).toBe(CONNECTION_HINT);
+    const load = group.obligations.find(
+      (o) => o.component?.qualifiedName === 'RefinementBareConnection::LoadDraw',
+    )!;
+    // The STRUCTURAL code, not the design one: nothing connects the quantity.
+    expect(load.outcome).toBe('refuted');
+    expect(load.code).toBe(UNCONNECTED_ASSUMPTION_CODE);
+    expect(load.detail).toContain('RefinementBareConnection::Load::supplyVoltage');
+
+    // And under the opt-in the same model refines — with the fact printed on
+    // every verdict line, because it changes what the verdict claims.
+    const opted = await refine(BARE, { connectionsAsEqualities: true });
+    expect(opted.exitCode).toBe(0);
+    expect(opted.connectionEqualities).toBe(1);
+    expect(opted.notEncoded).toBe(0);
+    const [optedGroup] = opted.groups;
+    expect(optedGroup.outcome).toBe('refined');
+    expect(optedGroup.detail).toContain(CONNECTIONS_AS_EQUALITIES_NOTE);
+    for (const o of optedGroup.obligations) {
+      expect(o.detail, 'a verdict line hid the opt-in').toContain(CONNECTIONS_AS_EQUALITIES_NOTE);
+    }
+  });
+
+  it('decides nothing with no solver, and still counts the model', async () => {
+    // The honest-absence path. There is no point-evaluation counterpart here at
+    // all: a refinement obligation is a claim about every implementation the
+    // contracts admit, not about the values in the file.
+    const before = process.env.SYSPROSE_NO_Z3;
+    process.env.SYSPROSE_NO_Z3 = '1';
+    try {
+      const r = await refine(BUDGET);
+      expect(r.toolAbsent).toBe(true);
+      expect(r.exitCode).toBe(2);
+      expect(r.refined + r.notRefined).toBe(0);
+      expect(r.inconclusive).toBe(1);
+      // THE CENSUS IS STILL TRUE — an absent solver must not read as a model
+      // with no architecture in it.
+      expect(r.contracts).toBe(5);
+      expect(r.groups[0].components).toHaveLength(4);
+      expect(r.bindEqualities).toBe(2);
+      expect(r.groups[0].code).toBe('verification/tool-absent');
+      const forgiven = await refine(BUDGET, { allowInconclusive: true });
+      expect(forgiven.exitCode, '--allow-inconclusive lowered an absent solver').toBe(2);
+    } finally {
+      if (before === undefined) delete process.env.SYSPROSE_NO_Z3;
+      else process.env.SYSPROSE_NO_Z3 = before;
+    }
+  }, 120_000);
+
+
+  withZ3('a refused clause on the SYSTEM contract stands the whole decomposition down', async () => {
+    // THE GOAL DIRECTION. `nf(C)` with a conjunct missing is WEAKER, and a
+    // weaker goal is easier to entail — the one direction in which a relation
+    // the tool could not read buys the verdict rather than costing it. So
+    // nothing at all is claimed: not one obligation row, and the code says why.
+    const r = await refine(REFUSED);
+    const group = r.groups.find(
+      (g) => g.system.qualifiedName === 'RefinementRefusedClause::SystemSideTop',
+    )!;
+    expect(group.outcome).toBe('inconclusive');
+    expect(group.code).toBe(REFINEMENT_UNDECIDED_CODE);
+    expect(group.obligations, 'an obligation was judged against a goal the file did not state').toEqual([]);
+    expect(group.detail).toContain('refused 1 clause(s) of the system contract');
+    expect(group.refused.map((x) => x.reason)).toContain('unsupported-operator');
+    expect(r.exitCode).toBe(2);
+    const forgiven = await refine(REFUSED, { allowInconclusive: true });
+    expect(forgiven.exitCode, '--allow-inconclusive lowered a refused clause').toBe(2);
+    expect(forgiven.forgiven).toBe(0);
+  });
+
+  withZ3('a refused `assume` on a COMPONENT is never read as "promises unconditionally"', async () => {
+    // THE PREMISE DIRECTION, and the one that used to go green. Dropping a
+    // conjunct of `A` STRENGTHENS `nf(C′) = ¬A ∨ G` — `¬(a₁ ∧ a₂)` is
+    // `¬a₁ ∨ ¬a₂` — and with the only `assume` refused the normal form
+    // collapses to a bare `G`. Here `ComponentSideTop` is provable from the bus
+    // contract alone, so a build that asserted that collapsed form would report
+    // every row proved or empty, say `refined`, and exit 0 on an axiom this
+    // file does not contain.
+    const r = await refine(REFUSED);
+    const group = r.groups.find(
+      (g) => g.system.qualifiedName === 'RefinementRefusedClause::ComponentSideTop',
+    )!;
+    expect(group.outcome, 'a refused assumption bought a refinement verdict').toBe('inconclusive');
+    expect(group.code).toBe(REFINEMENT_UNDECIDED_CODE);
+    const motor = group.obligations.find(
+      (o) => o.component?.qualifiedName === 'RefinementRefusedClause::ComponentSideMotor',
+    )!;
+    expect(motor.outcome).toBe('undecided');
+    expect(motor.code).toBe(REFINEMENT_UNDECIDED_CODE);
+    // The sentence that must never be printed over a contract that DOES state
+    // an assumption, because it is the axiom the collapse would have asserted.
+    expect(motor.detail, 'a refused assumption was published as no assumption').not.toContain(
+      'promises its guarantee unconditionally',
+    );
+    // Its normal form was not asserted either: obligation (3) is proved over
+    // the ONE sub-contract that contributed a premise, not over two.
+    const three = group.obligations.find((o) => o.kind === 'composition')!;
+    expect(three.outcome).toBe('proved');
+    expect(three.detail).toContain('over 1 sub-contract(s)');
+    expect(r.exitCode).toBe(2);
+  });
+
+  withZ3('decomposes a three-level tree level by level, across the part TYPE', async () => {
+    // `satisfy CellCharge by Pack::cell` names a usage whose OWNER is the part
+    // DEFINITION `Pack`, and no contract is satisfied by `Pack`. Under a walk
+    // that climbed `ownerId` alone the two leaf contracts joined no group at
+    // all — silently, with the run still exiting 0 over the level above them.
+    const r = await refine(LEVELS);
+    expect(r.groups).toHaveLength(2);
+    expect(r.refined).toBe(2);
+    expect(r.exitCode).toBe(0);
+    const inner = r.groups.find(
+      (g) => g.system.qualifiedName === 'RefinementThreeLevel::PackBudget',
+    )!;
+    expect(
+      inner.components.map((c) => c.contract.qualifiedName).sort(),
+      'the leaf contracts joined no decomposition',
+    ).toEqual(['RefinementThreeLevel::CellCharge', 'RefinementThreeLevel::HeaterCharge']);
+    // Every contract with a satisfier is in some group: nothing vanished.
+    const judged = new Set(
+      r.groups.flatMap((g) => [g.system.qualifiedName, ...g.components.map((c) => c.contract.qualifiedName)]),
+    );
+    expect(judged.size).toBe(4);
+  });
+
+  withZ3('counts and names the connections of ITS OWN level, not the file’s', async () => {
+    // γ is trimmed per decomposition and so is its refused half. `mount` is
+    // wiring of the vehicle level and `cellTie` of the pack level; a group that
+    // printed the file's total would state a figure about the file dressed as a
+    // figure about the answer, and point a reader at another group's connector.
+    const r = await refine(LEVELS);
+    expect(r.notEncoded, 'the run-level census is still the whole file').toBe(2);
+    const outer = r.groups.find(
+      (g) => g.system.qualifiedName === 'RefinementThreeLevel::VehicleBudget',
+    )!;
+    const inner = r.groups.find(
+      (g) => g.system.qualifiedName === 'RefinementThreeLevel::PackBudget',
+    )!;
+    expect(outer.notEncoded.map((c) => c.qualifiedName)).toEqual(['RefinementThreeLevel::Vehicle::mount']);
+    expect(inner.notEncoded.map((c) => c.qualifiedName)).toEqual(['RefinementThreeLevel::Pack::cellTie']);
+    for (const g of [outer, inner]) {
+      expect(g.detail).toContain('1 connection(s) not encoded as equalities');
+    }
+  });
+
+  withZ3('separates a sibling shortfall from a missing wire, and confirms both witnesses', async () => {
+    const r = await refine(SHORTFALL);
+    const [group] = r.groups;
+    const node = group.obligations.find(
+      (o) => o.component?.qualifiedName === 'RefinementSiblingShortfall::NodeAssumes',
+    )!;
+    // A DESIGN shortfall: the sibling constrains the very same quantity, just
+    // not enough, so no `bind` can repair it and the wiring hint would be
+    // advice a reader cannot act on.
+    expect(node.outcome).toBe('refuted');
+    expect(node.code, 'a design shortfall was filed as a wiring problem').toBe(REFINEMENT_FAILED_CODE);
+    expect(node.detail).toContain('its siblings do not guarantee what it assumes');
+    // THE WITNESS GATE, on the shape that used to defeat it: the solver
+    // satisfies `LoneAssumes`'s premise `¬A ∨ G` through `¬A`, so the symbols
+    // of that `G` are absent from the model it returns. Reading the guarantee
+    // first and calling the point unreadable degraded this genuine refutation
+    // to `verification/not-evaluable`, which `--allow-inconclusive` does not
+    // lower.
+    expect(node.witnessConfirmed, 'a genuine counterexample was rejected by the witness gate').toBe(true);
+    expect(node.witness.map((w) => w.symbol)).not.toContain('RefinementSiblingShortfall::Isolated::delivered');
+    // And the converse: a quantity nothing in the group and no equality
+    // mentions IS the wiring problem.
+    const lone = group.obligations.find(
+      (o) => o.component?.qualifiedName === 'RefinementSiblingShortfall::LoneAssumes',
+    )!;
+    expect(lone.outcome).toBe('refuted');
+    expect(lone.code).toBe(UNCONNECTED_ASSUMPTION_CODE);
+    expect(lone.detail).toContain('RefinementSiblingShortfall::Isolated::spare');
+    expect(r.exitCode).toBe(1);
+  });
+
+  withZ3('an `allocate` is not a `connect`, and the opt-in does not read it', async () => {
+    // The connector walk this lane shares with value propagation holds
+    // `Allocation` too. The opt-in does not: its own sentence, printed on every
+    // verdict line, is about bare `connect` edges, and reading an allocation as
+    // `target == source` would assert an equality nobody wrote and then say
+    // `connect` about a file that contains none.
+    for (const connectionsAsEqualities of [false, true]) {
+      const r = await refine(ALLOCATED, { connectionsAsEqualities });
+      expect(r.connectionEqualities, 'an allocation became a value equality').toBe(0);
+      expect(r.notEncoded).toBe(1);
+      expect(r.exitCode, 'an allocation bought a refinement verdict').toBe(1);
+      const [group] = r.groups;
+      expect(group.notEncoded[0].eClass).toBe('Allocation');
+      expect(group.notEncoded[0].hint).toContain('an allocation maps one element onto another');
+      const load = group.obligations.find(
+        (o) => o.component?.qualifiedName === 'RefinementAllocation::LoadDraw',
+      )!;
+      expect(load.outcome).toBe('refuted');
+      if (connectionsAsEqualities) {
+        // The opt-in does not empty the list, so the verdict line must not read
+        // as though the whole wiring had been taken in.
+        expect(group.detail).toContain(CONNECTIONS_AS_EQUALITIES_NOTE);
+        expect(group.detail).toContain('still not encoded as equalities');
+      }
+    }
+  });
+
+  withZ3('states no decomposition where the model states none, and is not green for it', async () => {
+    // `examples/uav-isr.sysml` has two requirements, both satisfied by the same
+    // part, so there is no decomposition to check — and exit 0 would say every
+    // architecture in the file was shown to refine.
+    const r = await refine('examples/uav-isr.sysml');
+    expect(r.groups).toEqual([]);
+    expect(r.exitCode).toBe(2);
+    // Its nine bare connections are listed rather than counted away.
+    expect(r.notEncoded).toBe(9);
   });
 });

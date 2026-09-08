@@ -1033,6 +1033,154 @@ ordering, timing or behaviour.
 `src/api/verification.ts`, and the L8 cases in
 `test/campaign/verification.test.ts`.
 
+### Whether the parts add up to the whole
+
+`verify` and `consistency` are about requirements. `refine` is about an
+**architecture**: given a contract on a system and a contract on each of its
+parts, do the parts — together with the equalities your model actually states —
+entail the whole? It is Cimatti's Theorem 1, and the two obligations it checks
+are the ones that theorem names.
+
+```console
+$ npm run sysprose -- refine examples/uav-power-budget.sysml --via composition
+examples/uav-power-budget.sysml: 0 not refined, 0 vacuous, 0 inconclusive, 1 refined — 1 decomposition(s) over 5 contract(s)
+  obligations are Cimatti's Theorem 1 in normal form (`nf(C) = ¬A ∨ G`), preceded by the satisfiability precondition step (0): …
+  γ, the connection assertion: 2 bind equalities, 1 item flow(s); 1 connection(s) NOT encoded — a connection is not an equality; bind the attributes if they are one quantity
+  UAVPowerBudget::PowerBudget on `UAVPowerBudget::PowerSystem` — refined
+    refines: 4 obligation(s) proved over 4 sub-contract(s), 2 bind equalities and 1 item flow(s); 1 connection(s) not encoded as equalities. 0 relations refused. …
+      obligation (3)  proved
+      obligation (4) UAVPowerBudget::ComputerDraw  proved
+      …
+$ echo $?
+0
+```
+
+**A decomposition is read off `satisfy`, not guessed.** A contract belongs to a
+part because your file says `satisfy R by sys.part;`. A contract whose part
+*encloses* the parts other contracts are satisfied by is a **system** contract,
+and those others are its **components** — with the nearest such enclosing part
+winning, so a three-level tree decomposes level by level rather than flattening.
+A file that states no such pair states no decomposition, and the run says so and
+exits 2 rather than reporting that everything is fine.
+
+*Encloses* means containment **and the part's own type**, because that is how a
+SysML v2 file writes a tree. `satisfy CellCharge by Pack::cell` names a usage
+whose owner is the part *definition* `Pack`, and no contract is satisfied by
+`Pack` itself; `part pack : Pack` is what says where `cell` lives. Reading only
+containment would drop those leaf contracts from every decomposition — silently,
+with the run still exiting 0 over the level above them.
+`test/fixtures/verification/models/refinement-three-level.sysml` pins both
+levels.
+
+**The two obligations, in normal form.** With `nf(C) = ¬A ∨ G`:
+
+- **(3)** `⋀ nf(C′) ∧ γ ⊨ nf(C)` — the components, plus the connections, entail
+  the system contract.
+- **(4)** for each component *U*: `A ∧ ⋀_{S′≠U} nf(C′) ∧ γ ⊨ A_U` — every
+  component assumption is discharged by its siblings and the wiring.
+
+**Normal form is not a flourish.** With bare guarantees the check is *unsound*
+under mutual support: take two components where each assumes exactly what the
+other guarantees, against a system contract that promises the same thing. The
+bare obligation `G₁ ∧ G₂ ⊨ G` is `p ∧ p ⊨ p` and passes — yet an implementation
+in which `p` is false satisfies both component contracts and breaks the system
+guarantee. In normal form each `nf(Cᵢ)` is `¬p ∨ p`, which is `⊤`, so the
+obligation becomes `⊤ ⊨ p` and is **refuted**, with a witness. That is the case
+`test/fixtures/verification/models/refinement-mutual-support.sysml` pins.
+
+**Step (0) runs before every obligation.** `check(A ∧ ⋀ nf(C′) ∧ γ)`. Two sibling
+contracts of `⟨true, x > 10⟩` and `⟨true, x < 5⟩` over one bind class make the
+antecedent of obligation (3) unsatisfiable, so (3) holds *vacuously* — and
+without step (0) the tool would print "obligation (3) proved" over an
+architecture whose components cannot coexist and whose system guarantee is
+absurd. It comes back `verification/contract-set-vacuous`, **never** `refined`,
+exit 2, and no flag lowers it.
+
+**γ is what your model states, and what this tool already computes with.** The
+connection assertion is built from **`bind` / `BindingConnector` equalities** and
+from the **item flows** value propagation already carries (`target = source`).
+Those are exactly the edges `checkConstraints`, the app and every existing report
+honour, so a proof here cannot rest on an equality the rest of the tool does not
+believe — and an item flow that *does* carry a voltage is not left out, which is
+how a downstream assumption ends up "not discharged" for no reason.
+
+**A bare `connection` is not an equality.** It joins two features and states
+nothing about their values, so it is listed under `notEncoded` with the hint
+*bind the attributes if they are one quantity*, and it is counted on every
+verdict line — counted per decomposition, so a group reports the wiring *it*
+carries rather than the file's total. `--connections-as-equalities` opts into
+the OCRA reading in which it *is* an equality, and it opts into that for
+`connect` and nothing else: an `allocate` is a traceability mapping and an
+interface joins ports through connections of its own, so both stay listed under
+the flag, each with a hint naming what it is. When you use it, that fact is
+printed on every verdict line, because it changes what the verdict claims.
+Counter-evidence, recorded rather
+than buried: the one published SysML v2 → OCRA translation maps `connect` and
+`bind` alike, so the default here is a **stricter** reading than that path takes,
+not a consensus.
+
+```console
+$ npm run sysprose -- refine rig.sysml
+rig.sysml: 1 not refined, 0 vacuous, 0 inconclusive, 0 refined — 1 decomposition(s) over 3 contract(s)
+  γ, the connection assertion: 0 bind equalities, 0 item flow(s); 1 connection(s) NOT encoded — …
+      obligation (4) RefinementBareConnection::LoadDraw  refuted [verification/unconnected-assumption]
+      witness: …::Load::supplyVoltage = 0, … (stored magnitudes)
+$ echo $?
+1
+```
+
+**Exit 1 means the same kind of thing here as everywhere else in this lane:** a
+decided finding about your model. A refuted obligation is
+`verification/refinement-failed`, or `verification/unconnected-assumption` when
+the quantity the assumption is about is reached by no connection at all — the
+second is a *wiring* problem and the first is a design one, which is why they are
+two codes. Both are errors and no flag forgives one.
+
+**`refine` publishes its own exit-code contract, not `verify`'s.** The two look
+alike at 1 — both mean a decided negative about the model — but `verify`'s
+paragraph is written in terms of *values*: "with every feature at its model
+value", "a relation not evaluable at the model's values", "a refutation obtained
+under `--free`". A refinement obligation reads no value and there is no `--free`
+here, so quoting that paragraph under `refine` would publish three promises it
+cannot keep. `refine --help` and the [command reference](CLI-REFERENCE.md) print
+the contract this command actually implements: **0** every decomposition shown to
+refine, **1** an obligation refuted with a confirmed counterexample, **2**
+anything undecided — including a vacuity and a clause a gate refused.
+
+**A clause the tool could not encode does not quietly shrink the question.** It
+is listed with the gate that refused it, and where it sat decides what happens.
+On the **system** contract any refused clause stands the whole decomposition down
+as `verification/refinement-undecided`: `nf(C)` with a conjunct missing is a
+weaker goal, and a weaker goal is easier to entail. On a **component** the two
+halves of `nf(C′) = ¬A ∨ G` go opposite ways — a refused `require` conjunct only
+weakens that component's normal form, which a proof survives, while a refused
+`assume` conjunct *strengthens* it, and with every `assume` gone it collapses to
+a bare `G`, the axiom "this component promises its guarantee unconditionally"
+that your file never stated. So such a component is left out of the premise set
+and its own obligation (4) is undecided. Neither direction is ever reported as a
+refinement.
+
+**Nothing here is about ordering or time.** This is the propositional and
+numeric shape of contract refinement, not OCRA's temporal one, and every verdict
+line says so. The tool never says "the architecture satisfies its requirements",
+never says `refined` while an obligation is undecided, and never says `refined`
+when the antecedent of (3) or (4) is unsatisfiable.
+
+**A refinement obligation does not read the values in your file.** It is a claim
+about *every* implementation the contracts admit, so `examples/uav-power-budget.sysml`
+refines whether its design point draws 607 W or 6 W. That is the difference
+between `refine` and `verify`, and it is why `--free` has no meaning here.
+
+**`--via` names the family of edges.** This build answers `composition`. The
+plan also names `derive`, `refine` and `all` — derivation chains read as contract
+refinement — and asking for one of those is a usage error rather than an empty
+report, because reporting nothing over them would read as a model that states
+none.
+
+**Source of truth:** `src/semantics/refinement.ts`, `refinementReport` in
+`src/api/verification.ts`, and the L8 cases in
+`test/campaign/verification.test.ts`.
+
 ### The verdict in the file, and whether it still holds
 
 A verdict that lives only in a terminal scrollback is a verdict nobody can

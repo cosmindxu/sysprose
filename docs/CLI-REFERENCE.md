@@ -25,15 +25,18 @@ npm run sysprose -- --help                 # the subcommand list
 npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
-**The exit-code contract is per subcommand, and there are three of them.** Most
+**The exit-code contract is per subcommand, and there are four of them.** Most
 subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
 obligation refuted with every feature at its model value, or one requirement set
-nothing can satisfy. `evidence-attach` and `evidence-detach` *write* the
+nothing can satisfy. `refine` judges an *architecture* and carries a contract of
+its own, because a refinement obligation reads no feature value and there is
+no `--free` for it: 0 every decomposition the model states was shown to refine — obligation (3) proved and every component assumption discharged, over a satisfiable contract set — and there was at least one decomposition to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract · 2 usage/IO error, a degraded model, a model that states no decomposition at all, or ANY undecided decomposition — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here.
+`evidence-attach` and `evidence-detach` *write* the
 file back, and they have no exit 1 at all:
 0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1. Each section below states its own
-contract in full, and every section states which of the three it obeys.
+contract in full, and every section states which of the four it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is
@@ -68,6 +71,7 @@ rather than reporting on the first one.
 | [`property-check`](#property-check) | Would this clause pass the gates, and what does it actually say? | `propertyCheck` | reports |
 | [`verify`](#verify) | Does each obligation hold, by which engine, and under what bound? | `verify` | judges |
 | [`consistency`](#consistency) | Can all the requirements on this subject hold at once — and if not, which conflict? | `consistency` | judges |
+| [`refine`](#refine) | Do the component contracts entail the system contract, and is every component assumption discharged? | `refinement` | judges |
 | [`evidence-status`](#evidence-status) | What was shown, by which tool, over which model — and is it still valid? | `evidenceStatus` | reports |
 | [`evidence-attach`](#evidence-attach) | Write the records of a verify run into the file, as annotations on what they are about | `evidenceAttach` | writes |
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
@@ -326,6 +330,25 @@ Computed by `consistencyReport (src/api/verification.ts)`. With `--json` the ans
 
 **Exit codes.** 0 every obligation discharged non-vacuously by the engine that was asked for — or every requirement set shown satisfiable — and there was at least one of them to decide · 1 at least one obligation refuted with every feature at its model value, or one requirement set nothing can satisfy · 2 usage/IO error, a degraded model, a model that states nothing to decide at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it.
 
+### `refine`
+
+**Do the component contracts entail the system contract, and is every component assumption discharged?**
+
+```bash
+npm run sysprose -- refine <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The decomposition: an id, a qualified name, or a name unique in the model, naming a system contract, the part that satisfies it, or any contract or part under it. A REF that names no decomposition is refused by name rather than reported as a file with no architecture in it | every decomposition the model states |
+| `--via KIND` | Which family of edges to read: `composition` — the contracts on the parts a `satisfy` attaches under the part the system contract is satisfied by. `derive`, `refine` and `all` are named by the plan and NOT answered by this build; asking for one is a usage error rather than an empty report | `composition` |
+| `--connections-as-equalities` | Read a bare `connect` as a value equality — the OCRA reading. OFF by default: a connection joins two features and states nothing about their values, so it is listed under `notEncoded` with the hint "bind the attributes if they are one quantity". It reads `connect` and nothing else: an `allocate` is a traceability mapping and an interface joins ports through connections of its own, so both stay listed under the flag with a hint naming what they are. When the flag is used the fact is printed on EVERY verdict line, because it changes what the verdict claims. Counter-evidence, recorded rather than buried: the one published SysML v2 → OCRA path translates `connect` and `bind` alike, so the default here is a stricter reading than that path takes | — |
+| `--allow-inconclusive` | Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, never for a vacuous contract set, never for verification/refinement-undecided, never over a refuted obligation, and never over a run in which nothing at all was decided | — |
+
+Computed by `refinementReport (src/api/verification.ts)`. With `--json` the answer is published under `refinement`, beside `ok` and `file`.
+
+**Exit codes.** 0 every decomposition the model states was shown to refine — obligation (3) proved and every component assumption discharged, over a satisfiable contract set — and there was at least one decomposition to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract · 2 usage/IO error, a degraded model, a model that states no decomposition at all, or ANY undecided decomposition — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here.
+
 ### `evidence-status`
 
 **What was shown, by which tool, over which model — and is it still valid?**
@@ -418,4 +441,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*17 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*18 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

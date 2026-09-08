@@ -78,7 +78,8 @@ export const WRITE_EXIT_CODES = `Exit codes: 0 written · 2 usage/IO error, or a
  * nothing can satisfy — and both report it as **1**, because it is a finding
  * about the model rather than a limit of the tool. A contract that named only
  * one of the two would leave the other's loudest verdict documented as
- * something else.
+ * something else. The third judging subcommand, `refine`, does NOT obey it —
+ * see {@link REFINE_EXIT_CODES} for why.
  *
  * The other half a reader must not have to infer: **every inconclusive is 2**,
  * and that includes an absent solver. A missing tool can never produce a green
@@ -101,6 +102,31 @@ export const WRITE_EXIT_CODES = `Exit codes: 0 written · 2 usage/IO error, or a
  * 'verify'` command quotes this string and that no `'report'` command does.
  */
 export const VERIFY_EXIT_CODES = `Exit codes: 0 every obligation discharged non-vacuously by the engine that was asked for — or every requirement set shown satisfiable — and there was at least one of them to decide · 1 at least one obligation refuted with every feature at its model value, or one requirement set nothing can satisfy · 2 usage/IO error, a degraded model, a model that states nothing to decide at all, or ANY inconclusive — a timeout, an unsupported construct, a relation not evaluable at the model's values, a vacuous obligation, an absent solver, or a refutation obtained under --free, which is a design the model admits rather than a violation of it`;
+
+/**
+ * `refine`'s exit-code contract — a FOURTH one, because three of the sentences
+ * in {@link VERIFY_EXIT_CODES} name things this subcommand cannot do.
+ *
+ * `verify` and `consistency` both read the file's VALUES: `verify`'s 1 is "with
+ * every feature at its model value", its 2 lists "a relation not evaluable at
+ * the model's values", and its `--free` clause is about the flag that releases
+ * a feature from the value it holds. A refinement obligation reads none of
+ * them. It is a claim about EVERY implementation the contracts admit, `refine`
+ * has no `--free` flag, and it has no requirement sets — so quoting that
+ * paragraph under `refine` would publish, in its own `--help` and in the
+ * generated reference, three promises the command cannot keep.
+ *
+ * Its own contract is the one the code actually implements, in
+ * `refinementExitCode`: **1** is a decided negative about the architecture — an
+ * obligation refuted with a confirmed counterexample — and **2** is everything
+ * undecided, which here includes a VACUOUS contract set and a decomposition
+ * stood down because a gate refused a clause of it. `--allow-inconclusive`
+ * lowers 2 → 0 for the two merely-undecided codes and never for a vacuity, an
+ * absent solver or `verification/refinement-undecided`; a run in which nothing
+ * at all was decided is 2 whatever the flag says, because exit 0 asserts that
+ * every decomposition the model states was SHOWN to refine.
+ */
+export const REFINE_EXIT_CODES = `Exit codes: 0 every decomposition the model states was shown to refine — obligation (3) proved and every component assumption discharged, over a satisfiable contract set — and there was at least one decomposition to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract · 2 usage/IO error, a degraded model, a model that states no decomposition at all, or ANY undecided decomposition — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here`;
 
 /** Flags every subcommand accepts. */
 export const COMMON_FLAGS: readonly FlagSpec[] = [
@@ -167,7 +193,7 @@ export const STATEMENT_KIND_FLAG_VALUES: readonly string[] = ['requirement', 'pr
  * section — and under it `verify` would have been documented with 1 meaning the
  * exact opposite of what it means.
  */
-export type ExitContract = 'report' | 'verify' | 'write';
+export type ExitContract = 'report' | 'verify' | 'refine' | 'write';
 
 /** One subcommand. */
 export interface CommandSpec {
@@ -187,6 +213,7 @@ export interface CommandSpec {
 /** The exit-code sentence a subcommand's own help and reference must quote. */
 export function exitCodesFor(cmd: CommandSpec): string {
   if (cmd.exitContract === 'verify') return VERIFY_EXIT_CODES;
+  if (cmd.exitContract === 'refine') return REFINE_EXIT_CODES;
   if (cmd.exitContract === 'write') return WRITE_EXIT_CODES;
   return EXIT_CODES;
 }
@@ -513,6 +540,47 @@ export const COMMANDS: readonly CommandSpec[] = [
       },
     ],
   },
+  // The third subcommand that judges, and the one whose question is about an
+  // ARCHITECTURE. `verify` asks whether a requirement holds of the design in
+  // the file and `consistency` whether the requirements could be met at all;
+  // this asks whether the contracts on the parts, together with the equalities
+  // the model states, entail the contract on the whole. The three cannot be
+  // flags on one command because their exit 1 is a finding about three
+  // different things.
+  {
+    name: 'refine',
+    question:
+      'Do the component contracts entail the system contract, and is every component assumption discharged?',
+    backedBy: 'refinementReport (src/api/verification.ts)',
+    payloadKey: 'refinement',
+    exitContract: 'refine',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        fallback: 'every decomposition the model states',
+        doc: 'The decomposition: an id, a qualified name, or a name unique in the model, naming a system contract, the part that satisfies it, or any contract or part under it. A REF that names no decomposition is refused by name rather than reported as a file with no architecture in it',
+      },
+      {
+        name: 'via',
+        kind: 'value',
+        metavar: 'KIND',
+        fallback: 'composition',
+        doc: 'Which family of edges to read: `composition` — the contracts on the parts a `satisfy` attaches under the part the system contract is satisfied by. `derive`, `refine` and `all` are named by the plan and NOT answered by this build; asking for one is a usage error rather than an empty report',
+      },
+      {
+        name: 'connections-as-equalities',
+        kind: 'boolean',
+        doc: 'Read a bare `connect` as a value equality — the OCRA reading. OFF by default: a connection joins two features and states nothing about their values, so it is listed under `notEncoded` with the hint "bind the attributes if they are one quantity". It reads `connect` and nothing else: an `allocate` is a traceability mapping and an interface joins ports through connections of its own, so both stay listed under the flag with a hint naming what they are. When the flag is used the fact is printed on EVERY verdict line, because it changes what the verdict claims. Counter-evidence, recorded rather than buried: the one published SysML v2 → OCRA path translates `connect` and `bind` alike, so the default here is a stricter reading than that path takes',
+      },
+      {
+        name: 'allow-inconclusive',
+        kind: 'boolean',
+        doc: 'Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, never for a vacuous contract set, never for verification/refinement-undecided, never over a refuted obligation, and never over a run in which nothing at all was decided',
+      },
+    ],
+  },
   // The three that read and write the FILE rather than reporting on it. None of
   // them JUDGES — the judging was done by `verify`, once, and a verdict is not
   // re-decided by being written down — but the two that write the file back
@@ -563,7 +631,13 @@ export function flagsFor(cmd: CommandSpec): FlagSpec[] {
 /** `--help` with no subcommand: what the tool is and what it can be asked. */
 export function renderTopUsage(): string {
   const width = Math.max(...COMMANDS.map((c) => c.name.length));
-  const judging = COMMANDS.filter((c) => c.exitContract === 'verify');
+  // Both judging contracts, in one list: `refine` carries its own text (a
+  // refinement obligation reads no feature value, so `verify`'s wording does
+  // not fit it) but it judges just the same, and a reader told only about
+  // `verify`'s two would take `refine`'s exit 1 for a load failure.
+  const judging = COMMANDS.filter(
+    (c) => c.exitContract === 'verify' || c.exitContract === 'refine',
+  );
   return [
     'sysprose — report on a SysML v2–style model from the command line',
     '',

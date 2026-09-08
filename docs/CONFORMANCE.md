@@ -25,8 +25,8 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2707 passed / 0 failed / 0 skipped** across **139 files** + **128 E2E** across **78 spec files** = **2835 green** (measured 2026-09-08) |
-| Command-line surface | **17 subcommands** in one spec table, over **5 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
+| Full automated suite | **2740 passed / 0 failed / 0 skipped** across **139 files** + **128 E2E** across **78 spec files** = **2868 green** (measured 2026-09-08) |
+| Command-line surface | **18 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -567,6 +567,76 @@ and reading it is the author's job. `scripts/agent-repair-bench.ts --suite
 verification` measures how much of the gate surface a model clears from the draft
 alone; it deliberately does not score meaning.
 
+### 8.3c `refine` — whose obligations these are, and what γ is allowed to assert
+
+`refine --via composition` decides Cimatti's Theorem 1, **in normal form**, over
+a decomposition the model states with `satisfy`. With `nf(C) = ¬A ∨ G` the two
+obligations are **(3)** `⋀ nf(C′) ∧ γ ⊨ nf(C)` and **(4)**, for each component
+*U*, `A ∧ ⋀_{S′≠U} nf(C′) ∧ γ ⊨ A_U`; both are preceded by a satisfiability
+precondition, **step (0)** `check(A ∧ ⋀ nf(C′) ∧ γ)`.
+
+**Normal form is a soundness requirement, not a presentation choice.** With bare
+guarantees the static check admits mutual support: A₁ = G₂ = p and A₂ = G₁ = p
+against a system contract ⟨true, p⟩ makes `G₁ ∧ G₂ ⊨ G` provable while an
+implementation with `p` false satisfies both component contracts and breaks the
+system guarantee. `cofer-2012`'s soundness argument for the bare form rests on a
+temporal order a static check does not have; this tool does not borrow it, and
+the case is pinned as a known-answer model.
+
+**Step (0) is what stops a contradiction proving an architecture.** Sub-contracts
+⟨true, x > 10⟩ and ⟨true, x < 5⟩ over one bind class make the antecedent of (3)
+unsatisfiable, so (3) holds vacuously; the run reports
+`verification/contract-set-vacuous`, exit 2, and never `refined`. Vacuity is one
+claim word and one exit code across this whole lane (§2), and no flag lowers it.
+
+**γ is `bind` ∪ the item flows, and that is a deliberate reading with recorded
+counter-evidence.** The connection assertion is built from the
+`bind`/`BindingConnector` equalities and from the directional item flows
+`propagateValues` already carries, encoded as `target = source` — the same edges
+`checkConstraints`, the app and every other report honour, so a proof here cannot
+rest on an equality the rest of the tool does not believe. A bare `connection` is
+**refused**: it is listed under `notEncoded` with the hint *bind the attributes if
+they are one quantity*, and the count travels with every verdict.
+`--connections-as-equalities` opts into the OCRA reading and prints the fact on
+every verdict line. **`cristoforetti-2026` §4.1 — the one published SysML v2 →
+OCRA path — translates `connect` and `bind` alike**, and Cimatti's γ is by
+definition the connection-and-delegation assertion, so the default here is a
+*stricter* reading than the published path takes rather than a consensus. It is
+recorded as a choice, not as a fact about the standard.
+
+**What it never claims.** Nothing about ordering or time: this is the
+propositional and numeric shape of contract refinement, not OCRA's temporal one,
+and every verdict line says so. No report says "the architecture satisfies its
+requirements"; none says `refined` while an obligation is undecided; none says
+`refined` when the antecedent of (3) or (4) is unsatisfiable.
+
+**A refused clause, and which half of the contract it came from.** Any refused
+clause on a **system** contract stands its whole decomposition down as
+`verification/refinement-undecided`, because dropping a conjunct of `nf(C)` would
+weaken the goal being proved. On a **component** contract the two halves of
+`nf(C′) = ¬A ∨ G` move in opposite directions, and the tool treats them so: a
+refused `require` conjunct only weakens that component's normal form, which a
+proof survives, while a refused `assume` conjunct *strengthens* it — dropping
+`a₂` turns `¬a₁ ∨ ¬a₂ ∨ G` into `¬a₁ ∨ G`, and with every `assume` refused the
+normal form collapses to a bare `G`, which is the axiom "this component promises
+its guarantee unconditionally" that the file never stated. So a component with a
+refused `assume` is kept **out of the premise set** — the only sound premise for
+a normal form with an unknown conjunct of `A` is `⊤` — and its own obligation (4)
+is `verification/refinement-undecided`, which stands the group down. Both facts
+are reported either way. `test/fixtures/verification/models/refinement-refused-clause.sysml`
+pins both directions.
+
+**What the delegation half costs, stated rather than hidden.** A constraint body
+reaches a nested quantity through the *type* of each part, while a connector
+endpoint written as `a.p` resolves to a usage-scoped implicit copy that keeps
+`connect a.p to b.p` from collapsing into a self-edge. The two spellings denote
+different elements, so an equality over the second joins nothing the contracts
+talk about, and a decomposition wired that way reports its assumptions as
+undischarged rather than proving them. `examples/uav-power-budget.sysml` names the
+definitions' features in its bindings for exactly that reason, and says so in its
+own doc comment. Closing the gap would need a delegation term in γ that the plan
+does not specify; until it does, the failure direction is the conservative one.
+
 ### 8.4 The SMT seam: the solver backend and the encoder the engine stands on
 
 `z3-solver` ^5.2.0 is an **optional** dependency. `src/semantics/smt/z3-bridge.ts`
@@ -706,7 +776,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2707 pass / 0 skip, 139 files)
+# Full unit + integration + conformance suite (2740 pass / 0 skip, 139 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

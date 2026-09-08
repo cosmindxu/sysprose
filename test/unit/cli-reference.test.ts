@@ -24,6 +24,7 @@ import {
   COMMON_FLAGS,
   DEFAULT_MAX_CORE,
   EXIT_CODES,
+  REFINE_EXIT_CODES,
   STATEMENT_KIND_FLAG_VALUES,
   VERIFY_EXIT_CODES,
   WRITE_EXIT_CODES,
@@ -103,11 +104,16 @@ describe('the generated command reference', () => {
     }
     // All three contracts must actually be in play, or every assertion below
     // holds trivially over a table that lost one of them.
-    const CONTRACTS = { report: EXIT_CODES, verify: VERIFY_EXIT_CODES, write: WRITE_EXIT_CODES };
+    const CONTRACTS = {
+      report: EXIT_CODES,
+      verify: VERIFY_EXIT_CODES,
+      refine: REFINE_EXIT_CODES,
+      write: WRITE_EXIT_CODES,
+    };
     expect(
       COMMANDS.map((c) => c.exitContract).filter((v, i, a) => a.indexOf(v) === i).sort(),
-      'the command table no longer declares all three exit contracts',
-    ).toEqual(['report', 'verify', 'write']);
+      'the command table no longer declares all four exit contracts',
+    ).toEqual(['refine', 'report', 'verify', 'write']);
 
     for (const cmd of COMMANDS) {
       const section = sections.get(cmd.name);
@@ -138,6 +144,27 @@ describe('the generated command reference', () => {
       COMMANDS.filter((c) => c.exitContract === 'write').map((c) => c.name).sort(),
       'the writing contract is declared by exactly the two subcommands that write the file back',
     ).toEqual(['evidence-attach', 'evidence-detach']);
+  });
+
+  it('gives `refine` a contract with no feature values and no --free in it', () => {
+    // `verify` and `consistency` judge the file's VALUES; `refine` judges an
+    // ARCHITECTURE. Under `verify`'s paragraph the `refine` section published
+    // three promises the command cannot keep — "with every feature at its model
+    // value", "a relation not evaluable at the model's values", and a `--free`
+    // clause for a flag it does not have — in its own `--help` and in this
+    // document. The two contracts still agree about what 1 MEANS.
+    expect(REFINE_EXIT_CODES).toContain('1 at least one obligation refuted');
+    expect(REFINE_EXIT_CODES).not.toContain('at its model value');
+    expect(REFINE_EXIT_CODES).not.toContain('--free,');
+    expect(REFINE_EXIT_CODES).toContain('there is no --free here');
+    // The two undecided states this lane must never launder are named in it.
+    expect(REFINE_EXIT_CODES).toContain('vacuous');
+    expect(REFINE_EXIT_CODES).toContain('absent solver');
+    expect(REFINE_EXIT_CODES).not.toBe(VERIFY_EXIT_CODES);
+    const refining = COMMANDS.filter((c) => c.exitContract === 'refine').map((c) => c.name);
+    expect(refining, 'the refinement contract is declared by exactly `refine`').toEqual(['refine']);
+    // And no `--free` flag exists on the row that publishes that sentence.
+    expect(flagsFor(COMMANDS.find((c) => c.name === 'refine')!).map((f) => f.name)).not.toContain('free');
   });
 
   it('states in words that `verify`’s 1 means refuted, not a load failure', () => {

@@ -805,6 +805,7 @@ describe('L7 — sysprose reporting command', () => {
       'obligations',
       'verify',
       'consistency',
+      'refine',
     ]) {
       expect(top.stdout, `${name} must be listed`).toContain(name);
     }
@@ -813,11 +814,13 @@ describe('L7 — sysprose reporting command', () => {
     // contracts would tell a `verify` reader that exit 1 means the model did
     // not load cleanly, when it means the requirement was refuted.
     expect(top.stdout).toContain('for every subcommand that REPORTS');
-    // BOTH judging subcommands, and a sentence that survives there being two of
-    // them: a list joined with commas rendered "`verify`, `consistency` judges",
-    // which is not English and is the one line telling a reader that the
-    // contract above does not apply to these two.
-    expect(top.stdout).toContain('`verify` and `consistency` judge and have their own contract');
+    // EVERY judging subcommand, and a sentence that survives there being more
+    // than two of them: a list joined with commas rendered "`verify`,
+    // `consistency` judges", which is not English and is the one line telling a
+    // reader that the contract above does not apply to these.
+    expect(top.stdout).toContain(
+      '`verify`, `consistency` and `refine` judge and have their own contract',
+    );
 
     const sub = run(['where-used', '--help']);
     expect(sub.code).toBe(0);
@@ -1954,6 +1957,133 @@ package P {
       // model — and nothing was called consistent.
       expect(r.stdout).toContain('2 requirement(s) on 1 subject(s)');
       expect(r.stdout, 'a verdict was printed with no solver').not.toContain('— consistent');
+    }
+  }, 240_000);
+
+  it('refine proves the power-budget decomposition and prints the γ census', () => {
+    const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
+    const r = run(['refine', budget, '--via', 'composition']);
+    expect(r.code, 'the shipped decomposition stopped refining').toBe(0);
+    expect(r.stdout).toContain('0 not refined, 0 vacuous, 0 inconclusive, 1 refined');
+    // γ IS PRINTED, AND SO IS WHAT IT REFUSED. A verdict without the census is a
+    // verdict a reader cannot act on: the same contracts wired with bare
+    // `connect` give a different answer.
+    expect(r.stdout).toContain('2 bind equalities, 1 item flow(s)');
+    expect(r.stdout).toContain('1 connection(s) NOT encoded');
+    expect(r.stdout).toContain('a connection is not an equality; bind the attributes');
+    // Cimatti's two obligations, named as such and shown one per line.
+    expect(r.stdout).toContain('obligation (3)  proved');
+    expect(r.stdout).toContain('obligation (4) UAVPowerBudget::RadioDraw  proved');
+    // MUST NEVER claim anything temporal, and must never claim the architecture
+    // satisfies its requirements.
+    expect(r.stdout).toContain('nothing here is claimed about ordering or time');
+    expect(
+      r.stdout,
+      'a report claimed the architecture satisfies its requirements',
+    ).not.toContain('satisfies its requirements');
+  }, 240_000);
+
+  it('refine --json publishes a top-level verdict block that agrees with the process', () => {
+    const bare = `${FIXV}/models/refinement-bare-connection.sysml`;
+    const r = run(['refine', bare, '--json']);
+    expect(r.code, 'a decomposition with no encoded equality went green').toBe(1);
+    const { keys, body } = payload<{
+      verdict: {
+        refined: number;
+        notRefined: number;
+        vacuous: number;
+        inconclusive: number;
+        exitCode: number;
+      };
+      refinement: {
+        bindEqualities: number;
+        itemFlows: number;
+        connectionEqualities: number;
+        notEncoded: number;
+        groups: Array<{ outcome: string; obligations: Array<{ code: string | null }> }>;
+      };
+    }>(r);
+    expect(keys).toEqual(['file', 'ok', 'refinement', 'verdict']);
+    expect(body.verdict).toEqual({
+      refined: 0,
+      notRefined: 1,
+      vacuous: 0,
+      inconclusive: 0,
+      exitCode: 1,
+    });
+    expect(body.verdict.exitCode, 'the payload and the process must agree').toBe(r.code);
+    expect(body.refinement.bindEqualities + body.refinement.itemFlows).toBe(0);
+    expect(body.refinement.notEncoded).toBe(1);
+    expect(body.refinement.groups[0].outcome).toBe('not-refined');
+    expect(
+      body.refinement.groups[0].obligations.map((o) => o.code),
+    ).toContain('verification/unconnected-assumption');
+
+    // The opt-in changes the answer, so the flag says so on the process too.
+    const opted = run(['refine', bare, '--connections-as-equalities']);
+    expect(opted.code).toBe(0);
+    expect(opted.stdout).toContain('`--connections-as-equalities` read bare `connect` edges');
+  }, 240_000);
+
+  it('refine reports a vacuous contract set as inconclusive, and no flag lowers it', () => {
+    const siblings = `${FIXV}/models/refinement-contradictory-siblings.sysml`;
+    for (const extra of [[], ['--allow-inconclusive']]) {
+      const r = run(['refine', siblings, ...extra]);
+      expect(r.code, `--allow-inconclusive laundered a vacuity (${extra.join(' ') || 'no flag'})`).toBe(2);
+      expect(r.stdout).toContain('verification/contract-set-vacuous');
+      expect(r.stdout).toContain('cannot hold together');
+      expect(r.stdout, 'a contradiction was printed as a refinement').not.toContain('— refined');
+    }
+  }, 240_000);
+
+  it('refine refuses a --via this build does not answer, and a --element that names nothing', () => {
+    const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
+    // A FAMILY THE PLAN NAMES AND THIS BUILD DOES NOT ANSWER is a usage error,
+    // not an empty report: reporting nothing over the derivation edges would
+    // read as a model that states none.
+    const derive = run(['refine', budget, '--via', 'derive']);
+    expect(derive.code).toBe(2);
+    expect(derive.stderr).toContain('is not answered by this build');
+    const nonsense = run(['refine', budget, '--via', 'sideways']);
+    expect(nonsense.code).toBe(2);
+    expect(nonsense.stderr).toContain('--via must be one of');
+
+    // And a REF that resolves but names no decomposition is refused BY NAME
+    // rather than reported as a file that states no architecture.
+    const empty = run(['refine', budget, '--element', 'UAVPowerBudget::BatteryPack::outputVoltage']);
+    expect(empty.code).toBe(2);
+    expect(empty.stderr).toContain('names no decomposition in this file');
+    expect(
+      empty.stdout,
+      'a REF that selected nothing was reported as a model that states nothing',
+    ).not.toContain('this model states no decomposition at all');
+
+    // AND ITS `--help` PUBLISHES ITS OWN CONTRACT, at the process boundary
+    // where a reader actually meets it. `verify`'s paragraph is written in
+    // terms of the file's VALUES — "with every feature at its model value", "a
+    // relation not evaluable at the model's values", a `--free` clause — and a
+    // refinement obligation reads none of them.
+    const help = run(['refine', '--help']);
+    expect(help.code).toBe(0);
+    expect(help.stdout).toContain('every decomposition the model states was shown to refine');
+    expect(help.stdout, 'refine published verify’s value-based exit contract').not.toContain(
+      'at its model value',
+    );
+    expect(help.stdout).not.toContain('a refutation obtained under --free');
+    expect(help.stdout).toContain('there is no --free here');
+  }, 240_000);
+
+  it('refine decides nothing with no solver, and --allow-inconclusive does not lower it', () => {
+    const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
+    for (const extra of [[], ['--allow-inconclusive']]) {
+      const r = run(['refine', budget, ...extra], undefined, NO_Z3);
+      expect(r.code, `--allow-inconclusive lowered an absent solver (${extra.join(' ') || 'no flag'})`).toBe(2);
+      expect(r.stdout).toContain('verification/tool-absent');
+      expect(r.stdout).toContain('no solver ran');
+      // The census is still true — an absent solver must not read as a model
+      // with no architecture in it.
+      expect(r.stdout).toContain('1 decomposition(s) over 5 contract(s)');
+      expect(r.stdout, 'a verdict was printed with no solver').not.toContain('— refined');
     }
   }, 240_000);
 

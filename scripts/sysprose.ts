@@ -98,6 +98,7 @@ import {
   modelMetrics,
   obligationsReport,
   orphanReport,
+  refinementReport,
   promptsFor,
   propertyCheck,
   propertyDraft,
@@ -120,6 +121,7 @@ import {
   type GateResult,
   type ObligationVerdict,
   type PropertyCheckReport,
+  type RefinementReport,
   type PropertyDraftReport,
   type VerificationCaseVerdict,
   type VerifyEngineOption,
@@ -139,6 +141,8 @@ import {
   type JudgedObligation,
   type Obligation,
   type Refusal,
+  type RefinementGroup,
+  type RefinementVia,
   type StatementKind,
   type WriteVerdictReport,
 } from '../src/semantics/index';
@@ -203,6 +207,16 @@ interface Report {
    * automation needs — is `verdict.exitCode`.
    */
   consistency?: ConsistencyReport;
+  /**
+   * The run of the THIRD subcommand that judges.
+   *
+   * A third field for the same reason `consistency` is a second one: the three
+   * publish different figures — obligations, requirement sets, decompositions —
+   * and one `verdict` block that had to be read differently depending on which
+   * command produced it would be a block nobody could parse without knowing.
+   * What they share, and all an automation needs, is `verdict.exitCode`.
+   */
+  refinement?: RefinementReport;
 }
 
 /** The four figures the verify exit contract is computed from, and the answer. */
@@ -218,6 +232,15 @@ interface Verdict {
 interface ConsistencyVerdict {
   consistent: number;
   inconsistent: number;
+  inconclusive: number;
+  exitCode: number;
+}
+
+/** The same block for `refine`, whose figures are DECOMPOSITIONS. */
+interface RefinementVerdict {
+  refined: number;
+  notRefined: number;
+  vacuous: number;
   inconclusive: number;
   exitCode: number;
 }
@@ -256,6 +279,23 @@ function judgeConsistency(report: ConsistencyReport, degraded: boolean): Consist
   return {
     consistent: report.consistent,
     inconsistent: report.inconsistent,
+    inconclusive: report.inconclusive,
+    exitCode: degraded ? 2 : report.exitCode,
+  };
+}
+
+/**
+ * The exit code of a refinement run, degradation included.
+ *
+ * The same rule and the same reason as {@link judge}: whether the model under
+ * the answer was the whole model is a fact about the FILE, and an architecture
+ * called refined over half a model is not an answer about that model.
+ */
+function judgeRefinement(report: RefinementReport, degraded: boolean): RefinementVerdict {
+  return {
+    refined: report.refined,
+    notRefined: report.notRefined,
+    vacuous: report.vacuous,
     inconclusive: report.inconclusive,
     exitCode: degraded ? 2 : report.exitCode,
   };
@@ -1870,6 +1910,191 @@ async function reportConsistency(
   return { json: r, text: rendered, consistency: r };
 }
 
+/* ──────────────────────────────── refine ────────────────────────────────── */
+
+/** The `--via` families this build actually answers. */
+const VIA_ANSWERED: readonly RefinementVia[] = ['composition'];
+
+/** Every `--via` family the plan names, answered or not. */
+const VIA_VALUES: readonly RefinementVia[] = ['composition', 'derive', 'refine', 'all'];
+
+/**
+ * `--via KIND`, refused rather than silently answered as something else.
+ *
+ * `derive`, `refine` and `all` are named by the plan and are a later commit's
+ * work. A run that accepted one and reported over the composition edges anyway
+ * would answer a question nobody asked, and one that accepted it and reported
+ * nothing would say the model states no derivation — a false claim about the
+ * reader's file. Both are worse than a usage error, so this is a usage error.
+ */
+function refineVia(args: ParsedArgs): RefinementVia | undefined {
+  const raw = flagValue(args, 'via');
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = raw.trim();
+  if ((VIA_ANSWERED as readonly string[]).includes(value)) return value as RefinementVia;
+  if ((VIA_VALUES as readonly string[]).includes(value)) {
+    throw new UsageError(
+      `\`--via ${value}\` is not answered by this build: only \`composition\` is. Derivation and ` +
+        'refinement edges are a later commit of the verification plan, and reporting nothing over ' +
+        'them would read as a model that states none.',
+    );
+  }
+  throw new UsageError(
+    `--via must be one of ${VIA_VALUES.join(', ')}; got \`${raw}\`. This build answers ` +
+      `${VIA_ANSWERED.join(', ')}.`,
+  );
+}
+
+/**
+ * The decomposition a run was narrowed to, or `undefined`.
+ *
+ * A library element is refused for the same reason `--element` refuses one
+ * everywhere else in this command: the bundled library's contracts are not the
+ * reader's, and narrowing to one would answer about an architecture they cannot
+ * edit.
+ */
+function refineElement(model: Model, args: ParsedArgs): ElementRecord | undefined {
+  return verificationScope(model, args);
+}
+
+/** One decomposition, as a person reads it. */
+function refinementLines(group: RefinementGroup): string[] {
+  return [
+    `  ${group.shortId || group.system.qualifiedName} on \`${group.part.qualifiedName}\` — ${group.outcome}`,
+    `    ${group.detail}`,
+    ...(group.code !== null ? [`    ${group.code}`] : []),
+    `    ${group.components.length} sub-contract(s): ${group.components
+      .map((c) => `${c.shortId || c.contract.qualifiedName} on \`${c.part.qualifiedName}\``)
+      .join(', ')}`,
+    // Each obligation on its own line, named by which of Cimatti's two it is
+    // and by the component it is about: a decomposition whose rows were folded
+    // into one sentence is a decomposition a reader cannot act on.
+    ...group.obligations.map(
+      (o) =>
+        `      ${o.kind === 'composition' ? 'obligation (3)' : `obligation (4) ${o.component?.qualifiedName ?? ''}`}` +
+        `  ${o.outcome}${o.code !== null ? ` [${o.code}]` : ''}`,
+    ),
+    ...group.obligations
+      .filter((o) => o.witness.length > 0)
+      .map(
+        (o) =>
+          `      witness: ${o.witness.map((w) => `${w.symbol} = ${witnessNumber(w)}`).join(', ')} (stored magnitudes)`,
+      ),
+    // The equalities γ actually asserted, so a reader can see WHICH statements
+    // of their model joined the quantities the obligations turned on.
+    ...(group.gamma.length > 0
+      ? [
+          `    γ, ${group.gamma.length} equalit${group.gamma.length === 1 ? 'y' : 'ies'}:`,
+          ...group.gamma.map((g) => `      ${g.kind}  ${g.expression}`),
+        ]
+      : ['    γ asserted no equality at all']),
+    ...(group.notEncoded.length > 0
+      ? [
+          `    ${group.notEncoded.length} connection(s) not encoded as equalities:`,
+          ...group.notEncoded.map((c) => `      ${c.qualifiedName}  ${c.hint}`),
+        ]
+      : []),
+  ];
+}
+
+/**
+ * `refine` — the third subcommand that judges, and the one whose exit 1 is
+ * about an ARCHITECTURE rather than about one obligation or one requirement set.
+ *
+ * The header states what γ was built from first, because every verdict under it
+ * means something different otherwise: the same model wired with `bind` and
+ * wired with bare `connect` produces the same contracts and different answers,
+ * and a reader who cannot see which equalities were asserted has been given a
+ * verdict they cannot use.
+ */
+async function reportRefinement(
+  model: Model,
+  name: string,
+  text: string,
+  args: ParsedArgs,
+): Promise<Report> {
+  const element = refineElement(model, args);
+  const via = refineVia(args);
+  const connectionsAsEqualities = flagGiven(args, 'connections-as-equalities');
+  const r = await refinementReport(model, {
+    ...(element ? { elementId: element.id } : {}),
+    ...(via !== undefined ? { via } : {}),
+    ...(connectionsAsEqualities ? { connectionsAsEqualities: true } : {}),
+    allowInconclusive: flagGiven(args, 'allow-inconclusive'),
+    sourceText: text,
+  });
+
+  // AN `--element` THAT SELECTED NOTHING IS A USAGE ERROR, not a statement
+  // about the model — the same rule `consistency --subject` obeys, for the same
+  // reason: the run-wide sentence below says the file states no decomposition
+  // at all, and printing that because a REF matched none of them would be a
+  // false claim about the reader's file.
+  if (element !== undefined && r.groups.length === 0) {
+    throw new UsageError(
+      `\`${qname(model, element.id)}\` names no decomposition in this file: no requirement is ` +
+        'satisfied by a part that owns another contract-bearing part here. A decomposition needs ' +
+        'both halves — `satisfy R by sys;` on the whole and `satisfy R2 by sys.part;` on a part — ' +
+        'so name one of those, or run without `--element` to see every decomposition this file states.',
+    );
+  }
+
+  const rendered = [
+    // The two undecided-or-failing figures lead, for the reason §2 gives for
+    // `verify`: a line that opened with the green number reads as a pass with a
+    // footnote, and the footnote is what decides the exit code.
+    `${name}: ${r.notRefined} not refined, ${r.vacuous} vacuous, ${r.inconclusive} inconclusive, ` +
+      `${r.refined} refined — ${r.groups.length} decomposition(s) over ${r.contracts} contract(s)`,
+    r.toolAbsent
+      ? `  no solver ran: a refinement obligation is a claim about every implementation the contracts ` +
+        `admit, so the model’s own values cannot answer it and there is nothing to fall back to — ` +
+        `this run is exit ${r.exitCode}`
+      : `  obligations are Cimatti’s Theorem 1 in normal form (\`nf(C) = ¬A ∨ G\`), preceded by the ` +
+        'satisfiability precondition step (0): bare guarantees are unsound under mutual support, and ' +
+        'an unsatisfiable antecedent entails everything',
+    `  γ, the connection assertion: ${r.bindEqualities} bind equalit${r.bindEqualities === 1 ? 'y' : 'ies'}, ` +
+      `${r.itemFlows} item flow(s)` +
+      (r.connectionsAsEqualities
+        ? `, ${r.connectionEqualities} connection equalit${r.connectionEqualities === 1 ? 'y' : 'ies'} — ` +
+          '`--connections-as-equalities` read bare `connect` edges as value equalities, which is the ' +
+          'OCRA reading and not this tool’s default'
+        : `; ${r.notEncoded} connection(s) NOT encoded — a connection is not an equality; bind the ` +
+          'attributes if they are one quantity'),
+    ...(r.refused > 0
+      ? [
+          `  ${r.refused} relation(s) refused by a gate and not asserted — a refused conjunct of a ` +
+            'system contract stands its whole decomposition down as undecided, and a refused `assume` ' +
+            'conjunct keeps a component out of the premise set, because dropping either one would ' +
+            'buy the verdict rather than cost it',
+        ]
+      : []),
+    ...(r.allowInconclusive
+      ? [
+          `  --allow-inconclusive forgave ${r.forgiven} of ${r.inconclusive} undecided decomposition(s) — ` +
+            'it lowers the undecided codes only, never an absent solver, never a vacuous contract set, ' +
+            'and never a refuted obligation',
+        ]
+      : []),
+    ...(r.groups.length === 0
+      ? [
+          '  this model states no decomposition at all — no requirement is satisfied by a part that ' +
+            'owns another contract-bearing part, so there was nothing to answer, which is exit 2',
+        ]
+      : r.groups.flatMap(refinementLines)),
+    ...(r.groups.length > 0 && r.refined + r.notRefined === 0
+      ? [
+          '  nothing was decided: exit 0 says every decomposition was shown to refine, and none of ' +
+            'these was, so this run is exit 2 with `--allow-inconclusive` and without it',
+        ]
+      : []),
+    ...(r.toolAbsent ? [] : [`  ${r.checks} solver check(s) at ${r.timeoutMs ?? 0} ms each`]),
+    '  this is the propositional and numeric shape of refinement, not a temporal one: nothing here ' +
+      'is claimed about ordering or time',
+    `  model ${r.modelVersion.graph}`,
+    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text: rendered, refinement: r };
+}
+
 /* ─────────────────────────────── evidence ───────────────────────────────── */
 
 /**
@@ -2253,10 +2478,10 @@ function reportOrphans(model: Model, name: string): Report {
 /* ──────────────────────────────── dispatch ──────────────────────────────── */
 
 /**
- * Async because THREE subcommands are: `verify` and `consistency` resolve their
- * engine by asking whether a solver backend can be imported, which is a dynamic
- * import, and `property-check`'s gate 4 asks the same question. Every other arm
- * stays synchronous and is awaited for free.
+ * Async because FOUR subcommands are: `verify`, `consistency` and `refine`
+ * resolve their engine by asking whether a solver backend can be imported,
+ * which is a dynamic import, and `property-check`'s gate 4 asks the same
+ * question. Every other arm stays synchronous and is awaited for free.
  */
 async function buildReport(
   cmd: CommandSpec,
@@ -2298,6 +2523,8 @@ async function buildReport(
       return reportVerify(model, name, text, args, degraded);
     case 'consistency':
       return reportConsistency(model, name, text, args);
+    case 'refine':
+      return reportRefinement(model, name, text, args);
     case 'evidence-status':
       return reportEvidenceStatus(model, name);
     case 'evidence-attach':
@@ -2353,6 +2580,12 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
       // A budget that is not one is an answer about the command line, and
       // loading a model to say so costs a second of parsing and binding.
       consistencyMaxCore(args);
+      return;
+    case 'refine':
+      // A `--via` this build does not answer is an answer about the command
+      // line too, and it is the one a reader is most likely to type: the plan
+      // names four families and this build answers one.
+      refineVia(args);
       return;
     case 'evidence-attach':
       // `--from` is the whole command; a run without it would parse a model,
@@ -2528,11 +2761,13 @@ async function main(): Promise<number> {
   // Computed once, here, because it is what the process exits with AND what the
   // `--json` body publishes: a payload whose `verdict.exitCode` disagreed with
   // the process's own status is the one thing an automation cannot recover from.
-  const verdict: Verdict | ConsistencyVerdict | undefined = built.verify
+  const verdict: Verdict | ConsistencyVerdict | RefinementVerdict | undefined = built.verify
     ? judge(built.verify, degraded)
     : built.consistency
       ? judgeConsistency(built.consistency, degraded)
-      : undefined;
+      : built.refinement
+        ? judgeRefinement(built.refinement, degraded)
+        : undefined;
 
   const body = flagGiven(parsed, 'json')
     ? JSON.stringify(

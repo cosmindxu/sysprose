@@ -29,6 +29,7 @@ import type { TextRange } from '@validation/types';
 import { DIAGNOSTIC_CODES } from '@text/index';
 import { loadModelText } from '@text/load';
 import { RULES } from '@validation/index';
+import { contractsOf } from '@semantics/index';
 // The command table itself, for the same reason `RULES` is imported rather than
 // counted in prose: the number of subcommands is a fact about the table, and a
 // document that quotes it has to be checked against the table and not against
@@ -640,6 +641,34 @@ describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
    * opposite of what it says. The guide now explains that, and this is the
    * assertion that keeps the explanation true.
    */
+  /**
+   * The `refine` transcript, pinned against the same behaviour §3 is about.
+   *
+   * The guide's transcript first read `R-PWR-000 on \`…::PowerSystem\` — refined`,
+   * and the tool prints `UAVPowerBudget::PowerBudget` there: `attribute id =
+   * "R-PWR-000";` is an ordinary child attribute and not a declared short name,
+   * so `shortId` is empty for every contract in that example. It is the SAME
+   * pinned behaviour as the empty ID column above, met in a second place, and
+   * nothing guarded the transcript — so this does.
+   */
+  it('the refine transcript names the contract the way the tool does', async () => {
+    const source = read('examples/uav-power-budget.sysml');
+    const loaded = await loadModelText(source, { fileName: 'examples/uav-power-budget.sysml' });
+    expect(loaded.model, 'the power-budget example no longer loads').toBeDefined();
+    const budget = contractsOf(loaded.model!).find(
+      (c) => c.qualifiedName === 'UAVPowerBudget::PowerBudget',
+    );
+    expect(budget, 'the example no longer states the contract the transcript is about').toBeDefined();
+    expect(
+      budget!.shortId,
+      '`attribute id` is not a declared short name — if that changed, the transcript may quote it',
+    ).toBe('');
+    expect(
+      read(GUIDE),
+      'the guide transcript quotes a short id the report does not print',
+    ).toContain('UAVPowerBudget::PowerBudget on `UAVPowerBudget::PowerSystem` — refined');
+  });
+
   it('the requirement rows have the empty ID column step 3 describes', () => {
     const rows = buildRequirementsTable(model).rows;
     expect(rows.length, 'the example has requirement rows').toBeGreaterThan(0);

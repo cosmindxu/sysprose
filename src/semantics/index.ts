@@ -247,6 +247,33 @@ export {
   type RefusedRelation,
   type UnengageableRequirement,
 } from './consistency';
+// Contract refinement (plan §3.6): Cimatti's Theorem 1 in normal form, over the
+// equalities the model states. The checker takes its backend as an argument —
+// whether a solver exists is decided once, in `src/api/verification.ts` — so
+// what is exported here is a pure function of the model and the options.
+export {
+  checkRefinement,
+  refinementCensus,
+  CONNECTION_HINT,
+  CONNECTIONS_AS_EQUALITIES_NOTE,
+  CONTRACT_SET_VACUOUS_CODE,
+  REFINEMENT_CODES,
+  REFINEMENT_FAILED_CODE,
+  REFINEMENT_UNDECIDED_CODE,
+  UNCONNECTED_ASSUMPTION_CODE,
+  type GammaEdge,
+  type GammaKind,
+  type ObligationOutcome,
+  type RefinementGroup,
+  type RefinementObligation,
+  type RefinementObligationKind,
+  type RefinementOptions,
+  type RefinementOutcome,
+  type RefinementResult,
+  type RefinementVia,
+  type RefusedClause,
+  type UnencodedConnection,
+} from './refinement';
 export {
   obligationsOf,
   type EvidenceRef,

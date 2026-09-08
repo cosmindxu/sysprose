@@ -421,8 +421,8 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** info
 - **Source:** verification
-- **Fires when:** A relation is outside the fragment the verification lane encodes — a name that resolves to nothing, a body that does not parse, a dimension clash, arithmetic on an offset scale, a collection-valued feature, a remainder, a variable exponent or a non-numeric operand.
-- **Hint given:** The relation is listed with the gate that refused it and nothing is claimed about it. Check the names it reads, then rewrite it inside quantifier-free arithmetic over single-valued scalar features, or expect it in the `obligations --missing` histogram.
+- **Fires when:** A relation is outside the fragment the verification lane encodes — a name that resolves to nothing, a body that does not parse, a dimension clash, arithmetic on an offset scale, a collection-valued feature, a remainder, a variable exponent or a non-numeric operand. `refine` also files a CONNECTOR here when it declines to read one as a value equality: a bare `connection` states that two features are joined and nothing about their values, and an `allocate` or an interface is not a `connect` at all, so neither enters the connection assertion γ.
+- **Hint given:** The relation is listed with the gate that refused it and nothing is claimed about it. Check the names it reads, then rewrite it inside quantifier-free arithmetic over single-valued scalar features, or expect it in the `obligations --missing` histogram. For a connector the refusal is a modelling one rather than a fragment one: `bind` the attributes if they are one quantity, or add the item flow that carries the value — `--connections-as-equalities` opts into reading a bare `connect` as an equality, and reads only `connect`.
 
 ### `verification/contract-no-guarantee`
 
@@ -528,6 +528,34 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Source:** verification
 - **Fires when:** No design point satisfies all the requirements on one subject at once: `consistency` asserted each of them under a tracking literal — as `assume ⇒ require`, the reading the shipped library states — and the solver answered unsat. The row names the conflicting subset the unsat core produced, by requirement and by the qualified name of each relation in it.
 - **Hint given:** Removing or weakening any one member of the named subset is where a fix starts; `--minimize` reduces the subset by deletion until every member is needed, and only a loop that ran to completion may call it minimal. By default the question is asked with every feature value the file STATES released — a value expression that reads no other feature — so this is a conflict between the requirements themselves and not between a requirement and a value; `--with-values` re-pins them and asks the weaker question, and every line names the mode it was computed in. Requirements guarded by `assume` clauses that cannot both hold are NOT reported here: each requirement is read as an implication, so mode- and phase-conditional requirements never contradict each other. It is a decided finding about the model and the run exits 1; no flag forgives one.
+
+### `verification/refinement-failed`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A refinement obligation was refuted: the component contracts, together with the equalities the model states, admit an implementation that breaks the system contract (obligation (3)) or that fails a component’s own assumption (obligation (4)). The row carries a witness, re-read through this tool’s own evaluator before it was printed.
+- **Hint given:** Read the witness: it is an implementation every component contract admits and the system contract forbids. The obligations are Cimatti’s Theorem 1 in NORMAL FORM (`nf(C) = ¬A ∨ G`), so a component whose assumption is false contributes nothing to the entailment — which is exactly why mutual support (A₁ = G₂, A₂ = G₁) cannot buy a verdict here. Strengthen a sibling’s guarantee, weaken the system guarantee, or state the connection that makes the two quantities one. It is a decided finding about the model and the run exits 1; no flag forgives one. Nothing in this verdict is about ordering or time.
+
+### `verification/unconnected-assumption`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A component assumption was not discharged, and NOTHING in the decomposition reaches the quantity it is about: no `bind` edge, no item flow, and no sibling contract mentions it. The structural half of a refuted obligation (4), separated from `verification/refinement-failed` because the fix is different — an assumption a sibling DOES constrain, just not strongly enough, is a design shortfall and is filed under that other code, since no `bind` can repair it.
+- **Hint given:** A bare `connection` is not a value equality — it joins two features and says nothing about their values — so an assumption over a feature only a `connect` reaches is discharged by nothing. Bind the attributes if they are one quantity (`bind a.v = b.v;`), or state the item flow that carries the value. `--connections-as-equalities` opts into the OCRA reading in which a bare `connect` IS an equality, and the fact is then printed on every verdict line. It exits 1 like any other refuted obligation.
+
+### `verification/refinement-undecided`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A decomposition was not decided: a gate refused a clause of the system contract (dropping a conjunct of `nf(C)` would weaken the very goal being proved), a component’s `assume` clause was refused, the system contract states no guarantee this lane encodes, or no sub-contract states one.
+- **Hint given:** Nothing is claimed about this decomposition — never read it as "refines". Run `npm run sysprose -- contracts <file>` to see what each contract states and `obligations <file> --missing` for what this lane cannot reach. `--allow-inconclusive` does NOT lower it: the flag is scoped to `verification/timeout` and `verification/unsupported-construct`, and this is neither.
+
+### `verification/contract-set-vacuous`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** Step (0) of the refinement check found the antecedent unsatisfiable: the sub-contracts, the connection assertion and the system assumption cannot hold together. Every refinement obligation over them is entailed by a contradiction, so none of them is claimed.
+- **Hint given:** Read the unsat core named on the row for the statements that collide — two sibling contracts over one bind class whose guarantees exclude each other are the usual cause. Without this step the tool would print "obligation (3) proved" over an architecture whose components cannot coexist. It is inconclusive, exits 2, and no flag lowers it; `--strict-vacuity` is a `verify` flag and does not change this code.
 
 ### `verification/free-variable-unbounded`
 
@@ -665,4 +693,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*84 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*88 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

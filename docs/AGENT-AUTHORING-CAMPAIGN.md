@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 82 tests |
+| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 87 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-07: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **84 catalogue codes** in
+`npm run check` is what raises it — beside **88 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3622,6 +3622,102 @@ declared unit resolves to nothing, say — refuse a scale the numeric surface
 grants, and the relation would then be reported not-encodable by one engine and
 encoded by the other. A shared gate with a privately built argument is not a
 shared gate.
+
+**γ is what the model states, and a bare `connect` is refused on purpose.**
+`refine --via composition` builds its connection assertion from the
+`bind`/`BindingConnector` equalities and from the item flows `propagateValues`
+already carries (`target = source`), and from nothing else. A bare `connection`
+is listed under `notEncoded` with the hint *bind the attributes if they are one
+quantity* and contributes no equality; `--connections-as-equalities` opts into
+the OCRA reading and the fact is then printed on every verdict line. **The
+opt-in reads `connect` and nothing else.** The connector walk this lane shares
+with value propagation is deliberately wider — it is every metaclass that
+carries two connected features, `Allocation` and `InterfaceUsage` included — but
+an allocation is a traceability mapping and an interface joins ports through
+connections of its own, so reading either as `target == source` would assert an
+equality nobody wrote *and* print the flag's own sentence about `connect` edges
+over a file that contains none. Both stay under `notEncoded` with a hint naming
+what they are, flag or no flag
+(`test/fixtures/verification/models/refinement-allocation.sysml`). **And the
+`notEncoded` list is trimmed per decomposition, exactly as γ is**: a group
+reports the wiring it carries rather than the file's total, or it prints a
+figure about the file dressed as a figure about the answer and points the reader
+at another decomposition's connector. The
+counter-evidence is recorded rather than buried: `cristoforetti-2026` §4.1 — the
+one published SysML v2 → OCRA path — translates `connect` and `bind` alike, so
+the default here is a **stricter** reading than that path takes, not a
+consensus. The reason for the strictness is the one this campaign keeps meeting:
+a γ that diverged from `propagateValues` would let a proof rest on an equality
+the rest of the tool does not believe, and every other surface — `checkConstraints`,
+the app, every existing report — honours exactly those two edge kinds.
+
+**A refinement obligation reads no feature value, and a decomposition is read
+off `satisfy`.** Cimatti's (3) and (4) quantify over the component behaviours,
+not over one design point, so `refine` asserts no feature-value axiom and
+`--free` has no meaning for it: `examples/uav-power-budget.sysml` refines whether
+its design point draws 607 W or 6 W. Which contracts are components of which
+system is likewise not guessed — a contract belongs to a part because the file
+says `satisfy R by sys.part;`, and the NEAREST contract-bearing enclosing part
+decides the level, so a three-level tree decomposes level by level rather than
+flattening. A file that states no such pair states no decomposition, and the run
+says so and exits 2 rather than reporting that everything is fine.
+**"Enclosing" is containment AND the part's own type**, because that is how a
+SysML v2 file writes a tree: `satisfy CellCharge by Pack::cell` names a usage
+whose owner is the part DEFINITION `Pack`, which is never a satisfier, and
+`part pack : Pack` is what says where `cell` lives. A walk that climbed
+`ownerId` alone dropped every such leaf contract out of every decomposition —
+silently, with the run still exiting 0 over the level above it, which is the
+same failure mode as a connection that disappears from a refinement question.
+`test/fixtures/verification/models/refinement-three-level.sysml` pins both
+levels and the per-level connection census.
+
+**A refused clause, and which half of the contract it came from.** Any refused
+clause on a SYSTEM contract stands its whole decomposition down as
+`verification/refinement-undecided`: `nf(C)` with a conjunct missing is a weaker
+goal and a weaker goal is easier to entail. On a COMPONENT the two halves of
+`nf(C′) = ¬A ∨ G` move opposite ways, and reading them as if they did not is the
+one direction in which a relation the tool could not encode BUYS the verdict. A
+refused `require` conjunct only weakens that component's normal form, which a
+proof survives. A refused `assume` conjunct STRENGTHENS it — `¬(a₁ ∧ a₂)` is
+`¬a₁ ∨ ¬a₂`, so dropping `a₂` leaves `¬a₁`, which entails it rather than
+following from it — and with every `assume` refused the normal form collapses to
+a bare `G`, i.e. the axiom "this component promises its guarantee
+unconditionally", which the file never stated. So such a contract is kept out of
+the premise set entirely (the only sound premise for a normal form with an
+unknown conjunct of `A` is `⊤`) and its own obligation (4) is undecided, which
+stands the group down; `no-assumption` is published only for a contract that
+states no assumption at all.
+`test/fixtures/verification/models/refinement-refused-clause.sysml` pins both
+directions in one file.
+
+**The two undischarged-assumption codes are told apart by the whole group, not
+by γ alone.** `verification/unconnected-assumption` says the model never stated
+that two quantities are one — a wiring problem a `bind` fixes —
+and `verification/refinement-failed` says the siblings simply do not guarantee
+what this component assumes, which no `bind` can repair. Deciding between them
+from the encoded γ edges alone filed a pure design shortfall under a wiring
+hint, with a witness printed beside it showing the quantity constrained, so a
+symbol any sibling's normal form READS counts as reached.
+`test/fixtures/verification/models/refinement-sibling-shortfall.sysml` states
+both shapes side by side, and pins the witness gate on the same run: a solver
+that satisfies a sibling's `¬A ∨ G` through `¬A` assigns nothing to the symbols
+of that `G`, and a gate that read the guarantee first called the point
+unreadable and degraded a genuine refutation to `verification/not-evaluable` — a
+code `--allow-inconclusive` does not lower.
+
+**A constraint body and a connector endpoint do not name the same element, and
+the shipped example says so.** `sys.battery.outputVoltage` in a clause resolves
+through the part's TYPE to `BatteryPack::outputVoltage`; `battery.outputVoltage`
+written as a connector end resolves to a usage-scoped implicit copy, which is
+what keeps `connect a.p to b.p` from collapsing into a self-edge on the
+definition. So an equality written the second way joins nothing the contracts
+talk about, and a decomposition wired that way reports its assumptions as
+undischarged rather than proving them — the conservative direction, and a real
+false negative. `examples/uav-power-budget.sysml` binds the definitions' features
+(`bind BatteryPack::outputVoltage = FlightController::supplyVoltage;`) for
+exactly that reason and records it in its own doc comment; it is sound there
+because each definition is instantiated once in that system. Closing the gap in
+general needs a delegation term in γ, which §3.6 does not specify.
 
 ## 5. Phase status
 

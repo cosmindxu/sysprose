@@ -80,11 +80,12 @@ export type {
   SolvedValue,
 } from './analytics';
 
-// Verification lane (plan docs/04-formal-verification-plan.md §3.1, §3.2, §3.4)
+// Verification lane (plan docs/04-formal-verification-plan.md §3.1, §3.2, §3.4, §3.6)
 export {
   contractReport,
   consistencyReport,
   obligationsReport,
+  refinementReport,
   verifyModel,
   ALLOW_INCONCLUSIVE_CODES,
   INCONSISTENT_REQUIREMENTS_CODE,
@@ -101,6 +102,8 @@ export type {
   KeywordUse,
   ObligationReport,
   ObligationVerdict,
+  RefinementReport,
+  RefinementReportOptions,
   VerifyEngine,
   VerifyEngineOption,
   VerifyOptions,

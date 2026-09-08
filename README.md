@@ -124,6 +124,7 @@ with the function that control runs.
 | Would this clause pass the gates, and what does it actually say? | — no view yet | `npm run sysprose -- property-check model.sysml --element X --clause 'u.mass <= 25.0 [kg]'` | `propertyCheck` — `src/api/property.ts` |
 | Does each obligation hold, by which engine, and under what bound? | — no view yet | `npm run sysprose -- verify model.sysml --engine literal` | `verifyModel` — `src/api/verification.ts` |
 | Can all the requirements on this subject hold at once, and if not, which conflict? | — no view yet | `npm run sysprose -- consistency model.sysml` | `consistencyReport` — `src/api/verification.ts` |
+| Do the component contracts entail the system contract, and is every component assumption discharged? | — no view yet | `npm run sysprose -- refine model.sysml --via composition` | `refinementReport` — `src/api/verification.ts` |
 | What was shown, by which tool, over which model — and does it still hold? | **Requirements** view → *Evidence* column (`tb-view-requirements` → `buildRequirementsTable`) † | `npm run sysprose -- evidence-status model.sysml` | `evidenceStatus` — `src/api/evidence.ts` |
 | Write the verdicts of a run into the file, as annotations on what they are about | — no view yet | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` | `attachEvidence` — `src/api/evidence.ts` |
 | Take every record back off the file, and the verdict facets with them | — no view yet | `npm run sysprose -- evidence-detach model.sysml` | `detachEvidence` — `src/api/evidence.ts` |
@@ -228,7 +229,7 @@ npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # stats · elements · requirements · trace
                        # connectivity · where-used · orphans · prompts
                        # contracts · obligations · property-draft
-                       # property-check · verify · consistency
+                       # property-check · verify · consistency · refine
                        # evidence-status · evidence-attach · evidence-detach
                        # `npm run sysprose -- --help` lists them
 ```

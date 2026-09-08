@@ -143,6 +143,10 @@ const APP_DOORS: ReadonlyArray<{
   // And `consistency` for the first reason and one of its own: satisfiability
   // is a solver question, and there is no solver in the browser at all.
   { command: 'consistency', controls: [] },
+  // And `refine` for both of those reasons again. There is no architecture view
+  // in this plan either: a contract decomposition is a terminal answer with a
+  // witness in it, and the app's job in this lane stays reading evidence.
+  { command: 'refine', controls: [] },
   // `evidence-status` is the ONE row of this lane that has a control, and it is
   // here rather than under a `controls: []` because the Requirements table now
   // carries a read-only Evidence column. It is DAGGERED for the ordinary

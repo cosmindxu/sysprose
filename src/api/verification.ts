@@ -86,6 +86,17 @@ import {
   type ConsistencyResult,
 } from '../semantics/consistency';
 import {
+  checkRefinement,
+  refinementCensus,
+  CONTRACT_SET_VACUOUS_CODE,
+  REFINEMENT_CODES,
+  REFINEMENT_FAILED_CODE,
+  UNCONNECTED_ASSUMPTION_CODE,
+  type RefinementGroup,
+  type RefinementResult,
+  type RefinementVia,
+} from '../semantics/refinement';
+import {
   METHOD_NOT_PERFORMED_CODE,
   VERDICT_CHANGED_CODE,
   VERIFICATION_CASE_CODES,
@@ -1011,6 +1022,15 @@ export const VERIFICATION_ERROR_CODES: ReadonlySet<string> = new Set([
   // an error for that reason and for one more — it is the only row `consistency`
   // exits 1 on, and a consumer filtering on severity has to see it.
   INCONSISTENT_REQUIREMENTS_CODE,
+  // The two rows `refine` exits 1 on. A refinement obligation the solver
+  // REFUTED is a decided finding about the architecture — the components admit
+  // an implementation that breaks the system contract — and so is a component
+  // assumption nothing connects: both are defects in the model rather than
+  // limits of the tool, and both have to be visible to a consumer filtering on
+  // severity. The other two codes of that command say what was NOT decided and
+  // are info lines.
+  REFINEMENT_FAILED_CODE,
+  UNCONNECTED_ASSUMPTION_CODE,
   // A `verdict = "pass"` facet over a record that did not prove anything. Both
   // artefacts are the tool's own, they contradict each other, and the
   // contradiction overstates — so it is a defect in the FILE, not a limit of
@@ -1050,6 +1070,11 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   // rather than retyped, for the same reason as the two above: the catalogue
   // guard reads this set, and a code spelled twice is a code that drifts.
   ...VERIFICATION_CASE_CODES,
+  // The four `refine` raises, from `../semantics/refinement`. Two of them are
+  // decided findings and two say what was not decided; all four are printed,
+  // and a printed code the catalogue cannot explain is a contract stated in a
+  // vocabulary the reader has no dictionary for.
+  ...REFINEMENT_CODES,
   // And the five `property-check`'s gates raise, from `./property`. A clause the
   // gates refuse is the FIRST `verification/*` code most agents will ever be
   // shown, since drafting comes before proving, so it had better be one the
@@ -1919,6 +1944,302 @@ function consistencyFindings(
       elementName: refusal.qualifiedName,
       code: 'verification/unsupported-expression',
       hint: `The relation is listed with its reason rather than dropped, and the count travels with every verdict: an inconsistency found without it is still an inconsistency, but a requirement set called consistent without it may be excluded by the very relation that was refused (\`${refusal.reason}\`).`,
+    });
+  }
+  return out;
+}
+
+/* ────────────────────────────── refine ──────────────────────────────────── */
+
+/**
+ * `refine` — the THIRD subcommand that judges, and the one whose question is
+ * about an architecture rather than about a requirement.
+ *
+ * The exit contract is the lane's, read the same three ways it is read for
+ * `consistency`:
+ *
+ *  1. **Nothing decided ⇒ 2.** A file that states no decomposition — no
+ *     contract satisfied by a part that owns another contract-bearing part —
+ *     has been shown nothing, and exit 0 would say every architecture in it was
+ *     shown to refine. That stays 2 with `--allow-inconclusive` and without it.
+ *  2. **A refuted obligation ⇒ 1.** It is a DECIDED finding about the model, of
+ *     the same kind as a refutation under `verify`: the component contracts
+ *     admit an implementation that breaks the system contract, and the witness
+ *     names it.
+ *  3. **A vacuity ⇒ 2, always.** §2's rule for this lane is one claim word and
+ *     one exit code: a decomposition whose sub-contracts, connections and
+ *     system assumption cannot hold together entails every obligation for
+ *     free, and no flag launders that into a pass.
+ *
+ * `--allow-inconclusive` is scoped exactly as it is everywhere else — the two
+ * UNDECIDED codes and nothing more — so `verification/contract-set-vacuous` and
+ * `verification/refinement-undecided` are never lowered by it.
+ */
+
+/** How a refinement run is narrowed and what it is allowed to forgive. */
+export interface RefinementReportOptions {
+  /** Only the decomposition at this element: a system contract, or a part in it. */
+  elementId?: ElementId;
+  /** Which family of edges to read. Only `composition` is answered today. */
+  via?: RefinementVia;
+  /** Read a bare `connect` as a value equality — the OCRA reading, opt-in. */
+  connectionsAsEqualities?: boolean;
+  /** The per-check budget in ms. */
+  timeoutMs?: number;
+  /** Lower 2 → 0 for {@link ALLOW_INCONCLUSIVE_CODES} only. Never over rules 1–3 above. */
+  allowInconclusive?: boolean;
+  /** The file's bytes, so the report binds the text as well as the graph. */
+  sourceText?: string;
+}
+
+/** What a refinement run came to, with the arithmetic behind its exit code. */
+export interface RefinementReport {
+  /** True when no solver loaded: every group is `verification/tool-absent`. */
+  toolAbsent: boolean;
+  via: RefinementVia;
+  /** Was the OCRA reading of a bare `connect` opted into? */
+  connectionsAsEqualities: boolean;
+  groups: RefinementGroup[];
+  /** Decompositions whose obligations were all discharged non-vacuously. */
+  refined: number;
+  /** Decompositions with at least one refuted obligation. Each names a witness. */
+  notRefined: number;
+  /** Decompositions whose contract set cannot hold together at all. */
+  vacuous: number;
+  inconclusive: number;
+  /** How many inconclusive groups `--allow-inconclusive` lowered. */
+  forgiven: number;
+  allowInconclusive: boolean;
+  /** How many contracts the model states at all. */
+  contracts: number;
+  /** The γ census, over the whole run. */
+  bindEqualities: number;
+  itemFlows: number;
+  connectionEqualities: number;
+  /** How many connectors nothing read as an equality. */
+  notEncoded: number;
+  /** How many relations a gate or the encoder refused. */
+  refused: number;
+  /** Total solver checks. */
+  checks: number;
+  exitCode: 0 | 1 | 2;
+  /** The per-check budget the run used, or `null` when no solver ran. */
+  timeoutMs: number | null;
+  modelVersion: ModelVersion;
+  diagnostics: Diagnostic[];
+}
+
+/**
+ * Decide whether each decomposition's component contracts entail its system
+ * contract.
+ *
+ * Asynchronous because resolving the backend is a dynamic import — the same one
+ * `verifyModel` and `consistencyReport` make, through the same `loadZ3()`, so
+ * the three commands cannot disagree about whether a solver exists.
+ */
+export async function refinementReport(
+  model: Model,
+  opts: RefinementReportOptions = {},
+): Promise<RefinementReport> {
+  const allowInconclusive = opts.allowInconclusive === true;
+  const via = opts.via ?? 'composition';
+  const connectionsAsEqualities = opts.connectionsAsEqualities === true;
+  const modelVersion = modelVersionOf(model, opts.sourceText);
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const load = await loadZ3();
+
+  if (load.absent) {
+    // No fallback and no partial answer: a refinement obligation is a claim
+    // about every implementation the contracts admit, and the model's own
+    // values cannot answer it — there is no point evaluation to degrade to.
+    // The CENSUS is still taken, so an absent solver cannot read as a file with
+    // no architecture in it.
+    const census = refinementCensus(
+      model,
+      {
+        ...(opts.elementId !== undefined ? { elementId: opts.elementId } : {}),
+        via,
+        connectionsAsEqualities,
+      },
+      {
+        code: 'verification/tool-absent',
+        detail: `no solver ran, so nothing was decided about this decomposition: solver absent — ${load.reason}`,
+      },
+    );
+    return {
+      toolAbsent: true,
+      via,
+      connectionsAsEqualities,
+      groups: census.groups,
+      refined: 0,
+      notRefined: 0,
+      vacuous: 0,
+      inconclusive: census.groups.length,
+      // Never forgiven, whatever the flag says: `verification/tool-absent` is
+      // not in the flag's scope, and a run that decided nothing is exit 2 in
+      // any case.
+      forgiven: 0,
+      allowInconclusive,
+      contracts: census.contracts,
+      bindEqualities: census.bindEqualities,
+      itemFlows: census.itemFlows,
+      connectionEqualities: census.connectionEqualities,
+      notEncoded: census.notEncoded.length,
+      refused: census.refused.length,
+      checks: 0,
+      exitCode: 2,
+      timeoutMs: null,
+      modelVersion,
+      diagnostics: numbered([
+        {
+          severity: 'info',
+          message: `no decomposition was checked: solver absent — ${load.reason}`,
+          code: 'verification/tool-absent',
+          hint: 'Install the solver and re-run. There is no point-evaluation engine for this question — a refinement obligation is a claim about every implementation the contracts admit, not about the values in the file — so an absent solver decides nothing here, exits 2, and `--allow-inconclusive` does not lower it.',
+        },
+      ]),
+    };
+  }
+
+  const result = await checkRefinement(model, {
+    backend: load,
+    ...(opts.elementId !== undefined ? { elementId: opts.elementId } : {}),
+    via,
+    connectionsAsEqualities,
+    timeoutMs,
+  });
+
+  const refined = result.groups.filter((g) => g.outcome === 'refined').length;
+  const notRefined = result.groups.filter((g) => g.outcome === 'not-refined').length;
+  const vacuous = result.groups.filter((g) => g.outcome === 'vacuous').length;
+  const inconclusive = result.groups.filter((g) => g.outcome === 'inconclusive').length;
+  const forgiven = allowInconclusive
+    ? result.groups.filter(
+        (g) =>
+          g.outcome === 'inconclusive' && g.code !== null && ALLOW_INCONCLUSIVE_CODES.has(g.code),
+      ).length
+    : 0;
+
+  return {
+    toolAbsent: false,
+    via,
+    connectionsAsEqualities,
+    groups: result.groups,
+    refined,
+    notRefined,
+    vacuous,
+    inconclusive,
+    forgiven,
+    allowInconclusive,
+    contracts: result.contracts,
+    bindEqualities: result.bindEqualities,
+    itemFlows: result.itemFlows,
+    connectionEqualities: result.connectionEqualities,
+    notEncoded: result.notEncoded.length,
+    refused: result.refused.length,
+    checks: result.checks,
+    exitCode: refinementExitCode({ refined, notRefined, vacuous, inconclusive, forgiven }),
+    timeoutMs: result.timeoutMs ?? null,
+    modelVersion,
+    diagnostics: numbered(refinementFindings(result, allowInconclusive)),
+  };
+}
+
+/**
+ * The exit code of a refinement run.
+ *
+ * The order IS the contract, and the first test comes before the rows for the
+ * same reason it does in {@link consistencyExitCode}: a run that decided
+ * nothing must never be green. "This file states no decomposition I can read,
+ * so everything is fine" is indistinguishable from "every architecture in it
+ * refines", and only one of them is worth exit 0.
+ */
+function refinementExitCode(counts: {
+  refined: number;
+  notRefined: number;
+  vacuous: number;
+  inconclusive: number;
+  forgiven: number;
+}): 0 | 1 | 2 {
+  if (counts.refined + counts.notRefined === 0) return 2;
+  if (counts.notRefined > 0) return 1;
+  // A vacuity is inconclusive under every command of this lane and no flag
+  // lowers it, so it is tested BEFORE the forgiveness arithmetic rather than
+  // inside it.
+  if (counts.vacuous > 0) return 2;
+  if (counts.inconclusive - counts.forgiven > 0) return 2;
+  return 0;
+}
+
+/**
+ * What a refinement run files, under the lane's one source and one prefix.
+ *
+ * One ERROR per decomposition that does not refine, anchored at the system
+ * contract with the failing obligation named. One INFO per vacuous set, per
+ * undecided set, per refused relation, and per connector nothing read as an
+ * equality — that last one because a connection that disappears from a
+ * refinement question reads as one that carried a value it does not carry, and
+ * §3.6 requires it to be listed with the `bind` hint rather than counted.
+ */
+function refinementFindings(
+  result: RefinementResult,
+  allowInconclusive: boolean,
+): Finding[] {
+  const out: Finding[] = [];
+  for (const group of result.groups) {
+    const where = group.shortId || group.system.qualifiedName;
+    if (group.outcome === 'not-refined') {
+      const failing = group.obligations.find((o) => o.outcome === 'refuted');
+      out.push({
+        severity: 'error',
+        message: `the components of \`${group.part.qualifiedName}\` do not refine ${where}: ${group.detail}`,
+        elementId: failing?.component?.id ?? group.system.id,
+        elementName: failing?.component?.qualifiedName ?? group.system.qualifiedName,
+        code: group.code ?? REFINEMENT_FAILED_CODE,
+        hint:
+          'Read the witness on the failing row: it is an implementation every component contract admits and the system contract forbids. The obligations are Cimatti’s Theorem 1 in normal form (`nf(C) = ¬A ∨ G`), so a component whose assumption is false contributes nothing — strengthening a sibling’s guarantee, or connecting the quantity the assumption is about, is where a fix starts. Nothing here is about ordering or time.',
+      });
+    } else if (group.outcome === 'vacuous') {
+      out.push({
+        severity: 'info',
+        message: `the decomposition under \`${group.part.qualifiedName}\` was not decided — ${group.detail}`,
+        elementId: group.system.id,
+        elementName: group.system.qualifiedName,
+        code: CONTRACT_SET_VACUOUS_CODE,
+        hint: 'The sub-contracts, the connections and the system assumption cannot hold together, so every refinement obligation over them is entailed by a contradiction and none of them says anything about the architecture. Read the core named on the row for the statements that collide. It is inconclusive, exits 2, and no flag lowers it.',
+      });
+    } else if (group.outcome === 'inconclusive' && group.code !== null) {
+      const forgiven = allowInconclusive && ALLOW_INCONCLUSIVE_CODES.has(group.code);
+      out.push({
+        severity: 'info',
+        message: `the decomposition under \`${group.part.qualifiedName}\` was not decided: ${group.detail}`,
+        elementId: group.system.id,
+        elementName: group.system.qualifiedName,
+        code: group.code,
+        hint: forgiven
+          ? 'This row was forgiven by `--allow-inconclusive`, which lowers exactly the undecided codes and nothing else; nothing was shown about this decomposition, and a run in which NOTHING was decided is exit 2 with the flag and without it.'
+          : 'Nothing is claimed about this decomposition. Read `docs/DIAGNOSTIC-CODES.md` for what this code means, and `npm run sysprose -- contracts <file>` for what each contract states.',
+      });
+    }
+  }
+  for (const connection of result.notEncoded) {
+    out.push({
+      severity: 'info',
+      message: `\`${connection.qualifiedName}\` was not read as an equality: ${connection.hint}`,
+      elementId: connection.id,
+      elementName: connection.qualifiedName,
+      code: 'verification/unsupported-expression',
+      hint: `A connection joins ${connection.ends.length} feature(s) and states nothing about their values, so γ — the connection assertion — does not assert one. \`--connections-as-equalities\` opts into the OCRA reading, in which it does, and the fact is then printed on every verdict line. Counter-evidence, recorded rather than buried: the one published SysML v2 → OCRA path translates \`connect\` and \`bind\` alike, so this refusal is a stricter reading than that path takes.`,
+    });
+  }
+  for (const refusal of result.refused) {
+    out.push({
+      severity: 'info',
+      message: `\`${refusal.expression}\` was not asserted: ${refusal.detail}.`,
+      elementId: refusal.id,
+      elementName: refusal.qualifiedName,
+      code: 'verification/unsupported-expression',
+      hint: `The relation is listed with its reason rather than dropped, and the count travels with every verdict (\`${refusal.reason}\`). Any refused conjunct of a system contract stands the whole decomposition down as undecided, because dropping it would weaken the very goal being proved. On a component contract the half it came from decides: a refused \`require\` conjunct only weakens that component's normal form, which a proof survives, while a refused \`assume\` conjunct STRENGTHENS it — dropping \`a₂\` turns \`¬a₁ ∨ ¬a₂ ∨ G\` into \`¬a₁ ∨ G\` — so that contract is left out of the premise set entirely and its own obligation (4) is undecided.`,
     });
   }
   return out;
