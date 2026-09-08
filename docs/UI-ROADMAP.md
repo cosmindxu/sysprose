@@ -87,6 +87,62 @@ commit**, and refreshes `docs/TEST-REPORT.md` counts.
 
 ---
 
+## ⚡ Performance — measured, and the Rust question answered
+
+A profiling round (2026-09-08, six subsystems) asked what should be reimplemented in
+Rust/WebAssembly to improve the user's experience and memory use. **The answer is: nothing yet.**
+Four of six subsystems returned *do-not-port*, and the two largest user-visible costs are
+JavaScript defects a port would have inherited unchanged. Ordered by measured value.
+
+### P1 — `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` is applied to every view (`src/diagram/layout.ts`:83)
+
+The single worst measured defect in the tool. The option makes ELK route edges across the node
+hierarchy, and it is set unconditionally for all fourteen view kinds. Measured with `elkjs` in this
+repo, one nested graph, everything else identical:
+
+| Graph | With the option | Without | Ratio |
+|---|---:|---:|---:|
+| 300 leaf nodes in 30 parents, degree 2 | **13 781 ms** | 165 ms | **83x** |
+| 950 flat nodes, degree 1 (no nesting) | 569 ms | 342 ms | 1.7x |
+
+The cost appears **only when nodes actually have children** — which is every structural view of a
+SysML model, because parts contain parts. A flat graph barely notices, which is why this has gone
+unseen. **Fix:** set the option only when the projected graph has at least one nested node. Guard it
+with a test that builds both shapes and asserts the option's presence, not its timing.
+
+### P2 — the solver clones its whole value map per probe (`src/semantics/solver.ts`:1062)
+
+`const trial = new Map(values)` sits inside the finite-difference closure, so a solve clones the
+entire map once per probe — measured at ~50 000 clones for one solve of the shipped example. Set the
+one key, read the residual, restore it. No behaviour change; the map is not retained.
+
+### P3 — the first "Apply text → model" click blocks the main thread for ~1.28 s
+
+Not parsing — **parser construction**. Chevrotain's ALL(\*) lookahead analysis
+(`performSelfAnalysis`) costs 1 387 ms in the browser and 1 102 ms of it is one function,
+`containsPath`. Subsequent applies are 4–9 ms. A profiler tested whether configuration fixes it:
+`maxLookahead: 3` fails the grammar outright with an ambiguity, and 5 and 8 do not finish in 150 s —
+so ALL(\*) is the cheapest option Chevrotain offers this grammar, not a misconfiguration. **Fix:**
+build the parser in a Web Worker. Measured boundary cost to move a parse result across: 1.2 ms.
+
+### What the profiling ruled OUT, with the arithmetic
+
+- **The model graph** — crossing 38 902 elements to WebAssembly costs ~100 ms against ~127 ms for
+  the *entire* traversal API. There is no break-even.
+- **Binding the standard library** — 1.6 s of a cold load, but 99.6 % of the elements are the
+  bundled library and a warm load is 267 ms. This is a caching and indexing problem, and a Rust
+  rewrite would cache exactly as well as an index does.
+- **Parsing throughput** — already 150 000 tokens/s parsing and 830 000 tokens/s lexing in the
+  browser. Faulted input parses *faster* than clean input, because the parser bails early.
+- **The solver encoder** — most of a `verify --engine smt` run is z3, which is already native
+  WebAssembly.
+- **Threads** — GitHub Pages cannot set COOP/COEP, so `crossOriginIsolated` is false and threaded
+  WebAssembly is unavailable. Any "Rust for parallelism" argument does not apply to the shipped app.
+
+**One Rust candidate stays open**, unmerged and unscheduled: a layered layout engine behind
+`layoutDiagram`, where the boundary cost is 0.05 % of the work. Its bar is ≥3x against the
+**post-P1** baseline, not the 13 s one — a 3x win over a defect is not a win.
+
 ## 🔜 Next — diagram editing (near-term)
 
 | Item | Size | Notes |
