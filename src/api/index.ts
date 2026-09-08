@@ -106,6 +106,37 @@ export type {
   VerifyOptions,
   VerifyReport,
 } from './verification';
+// Property authoring under gates (plan §3.3). The two halves of one loop — the
+// dictionary and template an agent writes a clause FROM, and the gates it is
+// judged by — so both come through the barrel, which the standing rule calls the
+// door: a surface an agent cannot import in process is a surface it can only
+// reach by spawning a CLI.
+export {
+  GATE_4_LIMIT,
+  MANDATORY_FIELDS,
+  MEANING_LIMIT,
+  MEANING_NOTICE,
+  PROPERTY_CODES,
+  PROPERTY_CODE_SET,
+  PROPERTY_LIMITS,
+  PropertyRefError,
+  TEMPORAL_FIELDS,
+  TEMPORAL_FRAGMENT,
+  backTranslate,
+  propertyCheck,
+  propertyDraft,
+} from './property';
+export type {
+  DictionaryEntry,
+  FretishField,
+  FretishFieldRow,
+  GateResult,
+  GateStatus,
+  PropertyCheckReport,
+  PropertyDraftReport,
+  PropertyOptions,
+  PropertyOutcome,
+} from './property';
 // The consistency engine's own payload types, so a consumer coming through
 // this barrel can walk a group, a core member and a refusal without a deep
 // import into the semantics layer — the same reason the contract and

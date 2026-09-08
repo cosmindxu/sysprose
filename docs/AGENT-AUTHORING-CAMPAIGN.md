@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 76 tests |
+| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 82 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-07: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **79 catalogue codes** in
+`npm run check` is what raises it — beside **84 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3366,6 +3366,96 @@ holds the run at 2. Third, `docs/USER-GUIDE.md` carries no `--case` or
 method-gate prose yet: the plan schedules that file at commit 9, and until then
 the flag is documented in the generated `docs/CLI-REFERENCE.md` and in
 `docs/CONFORMANCE.md` §8.2b.
+
+**Nothing stood between a requirement's prose and a clause a solver could
+read, and the step that fills that gap must refuse more than it accepts.** An
+agent handed a requirement saying *"shall sustain at least 45 minutes"* had to
+guess the names, the units and the shape of the relation, and every guess that
+parsed reached `verify` as if it had been checked. `src/api/property.ts` closes
+it with two functions and five gates. `propertyDraft` hands over the three
+mandatory FRETish fields filled in from the model, a **data dictionary** of every
+legal name in the subject's scope with its type, unit, dimension, dimension claim
+and value, the `#prompt` guidance that reaches the requirement, a skeleton whose
+last line carries `<bound>` to replace and example clause shapes that pass the
+gates as written — plus the three FRETish fields it cannot encode, as commented
+guidance with the reason on each. `propertyCheck` then runs
+**gate 0 and four judging gates**, refusing at the first that says no: a temporal
+field (`verification/temporal-field-unencodable`), a body that does not parse, a
+name outside the subject's scope (`verification/unresolved-name-in-property`,
+with the nearest names in `expected`), a dimension clash
+(`verification/dimension-clash-in-property`), and a clause that is valid or
+unsatisfiable on its own (`verification/trivial-property`).
+
+**Every name is written through the subject, and that is a refusal the tool had
+to add rather than inherit.** `featureIdsFor` exposes every feature under its
+BARE name as well as its dotted chain, which is right for evaluating a body
+somebody already wrote and wrong for telling an agent what to write: the shipped
+UAV example declares two features called `mass`, first occurrence wins, and a
+dictionary offering `mass` would be offering a silent coin toss. So the
+dictionary carries the dotted form alone, gate 2 accepts the dotted form alone,
+and `endurance >= 45 [min]` is refused with `uav.endurance` as the suggestion.
+`examples/contract-authoring-prompts.sysml` writes the same rule into a model, as
+one of four `#prompt` statements at package level that `property-draft` hands
+back verbatim.
+
+**Gate 0 refuses; it never accepts with a gap — and gate 4 does the opposite,
+loudly.** A clause whose `scope` is not `global`, whose `timing` is not `always`,
+or that writes a `condition` at all is temporal, and nothing in phases 0–3
+decides a temporal claim; "accepted, but the temporal part was ignored" would put
+an undecidable clause into a file with a tick beside it. Gate 4 is the mirror
+image: with no solver it reports `verification/nontriviality-unchecked` and the
+clause is **accepted with a gap**, never accepted, because an unchecked gate that
+printed a pass would be a missing tool producing a green answer. Both sides are
+asserted — `uav.mtow <= uav.mtow` is `trivial-property` with z3 present and
+`nontriviality-unchecked` under `SYSPROSE_NO_Z3=1`.
+
+**The limit gate 4 does not close, printed on every report.** Non-triviality is
+SYNTACTIC: the clause and its negation are checked satisfiable with **no axioms
+asserted at all**, so `uav.mtow <= 25.0 [kg]` is accepted over a model that pins
+`mtow = 18.5 [kg]`. That is not an oversight, it is the scope of the question —
+`verify`'s tautology check and the vacuity report decide the other one — and it
+is stated in words on every report, in `docs/CONFORMANCE.md` §8.3b and in the §6
+limits register, because a gate whose scope a reader has to infer is a gate that
+will be read as stronger than it ran. The second limit beside it is the one the
+whole command exists to be honest about: **nothing here reads prose**, and every
+report ends with *"meaning is not checked; read the back-translation."* The
+back-translation into structured English — `uav shall satisfy: uav.mtow is at
+most 25.0 kg` — is what a person checks the meaning against, and it renders the
+literal the author WROTE rather than the SI magnitude the gates lowered it to.
+
+**Both rows report; neither judges.** A refused clause is an answer about a
+string the caller passed, not a finding about the file, so both subcommands carry
+the reporting exit contract and a refusal exits **0** with the verdict in
+`outcome` / `refusedAt` / `code`. §2 reserves the judging contract's exit 1 for
+an obligation refuted at the model's own values and says "nothing else is exit
+1"; inventing a fourth contract to give an agent loop a nicer signal would have
+been the easy edit and a false one. Exit **2** is what it always is: a missing
+`--clause`, a `REF` that names no requirement, a `REF` that names a library
+element.
+
+**One shared type grew a field, and one gate runs on a clone.**
+`LoweredLiteral` now carries the magnitude and unit as WRITTEN beside the SI
+value it lowers to, because the back-translation is the one consumer that has to
+print a body back to a person; nothing that judges a relation reads either field.
+And gate 3 needs a transient `ConstraintUsage` OWNED by the requirement for its
+scope to be the subject's, so it runs over `model.clone()` — never over the
+caller's model, not even with a `finally` that removes the element again, because
+a throw in between would leave somebody's model carrying an element they never
+authored.
+
+**"Where it goes" points into the body that HOLDS the clauses, and never
+outside it.** The insertion range is computed from the span of the element
+`clausesOf` reads — for a case that is its `objective`, not the case itself — and
+the anchor is clamped inside that span. Both halves close a silent misplacement:
+a clause anchored on a case's own closing brace lands after `objective { … }`,
+and a requirement written entirely on ONE line has no body line to insert before,
+so the unclamped answer put the clause in the enclosing package. In both shapes
+the file still parses with no diagnostic and the clause is simply absent from the
+contract, which is the worst form a placement bug can take. A one-line
+requirement now gets the position just inside its closing brace with a single
+space for an indent; a requirement usage with no body at all gets no range and a
+sentence saying it has no body, rather than the stale-file sentence that used to
+be reported for it.
 
 ### Pinned behaviours (decisions, not defects)
 

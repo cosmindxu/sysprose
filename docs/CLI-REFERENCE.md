@@ -26,7 +26,7 @@ npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
 **The exit-code contract is per subcommand, and there are three of them.** Most
-subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `evidence-status` — for those,
+subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
 obligation refuted with every feature at its model value, or one requirement set
@@ -64,6 +64,8 @@ rather than reporting on the first one.
 | [`prompts`](#prompts) | What guidance applies to the element I am working on? | `prompts` | reports |
 | [`contracts`](#contracts) | What does each requirement assume and guarantee, on which subject, honoured by which part? | `contracts` | reports |
 | [`obligations`](#obligations) | What must be shown, over which axioms, and what do the unit gates refuse? | `obligations` | reports |
+| [`property-draft`](#property-draft) | How do I write a clause this tool will accept, over which names? | `propertyDraft` | reports |
+| [`property-check`](#property-check) | Would this clause pass the gates, and what does it actually say? | `propertyCheck` | reports |
 | [`verify`](#verify) | Does each obligation hold, by which engine, and under what bound? | `verify` | judges |
 | [`consistency`](#consistency) | Can all the requirements on this subject hold at once — and if not, which conflict? | `consistency` | judges |
 | [`evidence-status`](#evidence-status) | What was shown, by which tool, over which model — and is it still valid? | `evidenceStatus` | reports |
@@ -249,6 +251,39 @@ Computed by `obligationsReport (src/api/verification.ts)`. With `--json` the ans
 
 **Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
 
+### `property-draft`
+
+**How do I write a clause this tool will accept, over which names?**
+
+```bash
+npm run sysprose -- property-draft <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The element: an id, a qualified name, or a name unique in the model | — |
+
+Computed by `propertyDraft (src/api/property.ts)`. With `--json` the answer is published under `propertyDraft`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
+### `property-check`
+
+**Would this clause pass the gates, and what does it actually say?**
+
+```bash
+npm run sysprose -- property-check <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The requirement the clause is for: an id, a qualified name, or a name unique in the model | — |
+| `--clause TEXT` | The clause to judge: a constraint body (`uav.mtow &lt;= 25.0 [kg]`), optionally preceded by FRETish fields written `field: value;` or `field = value;` — the spelling `property-draft`'s skeleton emits, and the other one. A `scope` other than global, a `condition`, or a `timing` other than always is refused at gate 0 — no in-process engine here decides a temporal claim | — |
+
+Computed by `propertyCheck (src/api/property.ts)`. With `--json` the answer is published under `propertyCheck`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
 ### `verify`
 
 **Does each obligation hold, by which engine, and under what bound?**
@@ -383,4 +418,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*15 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*17 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

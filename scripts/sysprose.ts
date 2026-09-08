@@ -99,6 +99,9 @@ import {
   obligationsReport,
   orphanReport,
   promptsFor,
+  propertyCheck,
+  propertyDraft,
+  PropertyRefError,
   READING,
   requirementSatisfaction,
   traceabilityMatrix,
@@ -113,7 +116,11 @@ import {
   type EvidenceRecord,
   type EvidenceStatusReport,
   type KeywordUse,
+  type DictionaryEntry,
+  type GateResult,
   type ObligationVerdict,
+  type PropertyCheckReport,
+  type PropertyDraftReport,
   type VerificationCaseVerdict,
   type VerifyEngineOption,
   VerifyOptionError,
@@ -140,6 +147,7 @@ import {
 import { buildGrid } from '../src/diagram/grid';
 import { buildRequirementsTable } from '../src/diagram/requirements-table';
 import { loadModelText, type CheckReport } from '../src/text/load';
+import type { TextRange } from '../src/validation/types';
 import { serializeElement } from '../src/text/serializer';
 import { flagGiven, flagValue, isArgError, parseArgs, type ParsedArgs } from './lib/args';
 import { runMain } from './lib/exit';
@@ -1154,6 +1162,188 @@ function reportObligations(model: Model, name: string, args: ParsedArgs): Report
   return { json: r, text };
 }
 
+/* ────────────────────── property draft / property check ─────────────────── */
+
+/**
+ * `--element REF` on the two property subcommands, which REQUIRE it.
+ *
+ * Unlike `contracts` and `obligations`, whose default is the whole model, there
+ * is no such thing as drafting a clause for every requirement at once: the
+ * skeleton, the dictionary and the insertion point are all about one
+ * requirement. A missing flag is therefore a usage error rather than a default,
+ * and it is raised before the file is read — the same rule `prompts --element`
+ * obeys, for the same reason.
+ */
+function propertyRef(args: ParsedArgs): string {
+  const ref = flagValue(args, 'element');
+  if (ref === undefined) {
+    throw new UsageError('`--element REF` names the requirement to draft a clause for');
+  }
+  return ref;
+}
+
+/** The requirement a property subcommand is about, refusing a library element. */
+function propertyElement(model: Model, args: ParsedArgs): ElementRecord {
+  const ref = propertyRef(args);
+  const el = resolveElementRef(model, ref);
+  if (el.attrs.isLibrary === true) {
+    throw new UsageError(
+      `\`${ref}\` is a bundled standard-library element — a clause is drafted for a requirement in your own model`,
+    );
+  }
+  return el;
+}
+
+/** `--clause TEXT`, which is the whole command: a run without it has nothing to judge. */
+function propertyClause(args: ParsedArgs): string {
+  const clause = flagValue(args, 'clause');
+  if (clause === undefined || clause.trim() === '') {
+    throw new UsageError('`--clause TEXT` is the clause to judge; there is nothing to check without it');
+  }
+  return clause;
+}
+
+/** One dictionary row, aligned so a reader can scan the units column. */
+function dictionaryLine(entry: DictionaryEntry, width: number): string {
+  const facets = [
+    entry.type ?? '(untyped)',
+    entry.unit !== null ? `[${entry.unit}]` : entry.dimension !== null ? '(no unit of its own)' : '',
+    entry.dimension !== null ? `dim ${entry.dimension}` : '',
+    `claim ${entry.claim}`,
+    entry.value !== null ? `= ${entry.value}` : '(no value)',
+    entry.numeric ? '' : '— not comparable as a number',
+  ].filter((f) => f !== '');
+  return `    ${entry.name.padEnd(width)}  ${facets.join('  ')}`;
+}
+
+function reportPropertyDraft(model: Model, name: string, args: ParsedArgs): Report {
+  const el = propertyElement(model, args);
+  let r: PropertyDraftReport;
+  try {
+    r = propertyDraft(model, el.id);
+  } catch (err) {
+    if (err instanceof PropertyRefError) throw new UsageError(err.message);
+    throw err;
+  }
+  const width = Math.min(44, Math.max(8, ...r.dictionary.map((d) => d.name.length)));
+  const text = [
+    `${name}: ${r.requirement.qualifiedName}${r.shortId ? ` <${r.shortId}>` : ''} — the encodable skeleton`,
+    `  subject   ${subjectLine(r.subject)}`,
+    ...(r.statement !== ''
+      ? ['  what the requirement says', ...promptTextLines(r.statement)]
+      : ['  the requirement carries no prose — there is nothing for a clause to mean']),
+    '  FRETish fields — three mandatory, three this tool cannot encode',
+    ...r.fields.map((f) =>
+      f.mandatory
+        ? `    ${f.field.padEnd(10)} ${f.text}`
+        : `    ${f.field.padEnd(10)} ${f.note}`,
+    ),
+    `  data dictionary — ${r.dictionary.length} legal name(s), always written through the subject`,
+    ...(r.dictionary.length === 0
+      ? ['    no valued feature is reachable from the subject: there is nothing to write a clause over']
+      : r.dictionary.map((d) => dictionaryLine(d, width))),
+    ...(r.existing.length > 0
+      ? [
+          `  clauses already on this requirement — ${r.existing.length}`,
+          ...r.existing.map((c) => `    ${c.role} { ${c.expression} }`),
+        ]
+      : ['  this requirement carries no clause yet']),
+    ...(r.prompts.length === 0
+      ? ['  no #prompt reaches this requirement or its subject']
+      : [
+          `  authoring guidance — ${r.prompts.length} #prompt(s), verbatim`,
+          ...r.prompts.flatMap((p) => [
+            `    ${p.via.padEnd(6)} ${p.prompt.qualifiedName || label(p.prompt)}`,
+            ...promptTextLines(p.text),
+          ]),
+        ]),
+    ...(r.examples.length > 0
+      ? [
+          '  example clauses — shapes to edit, not bounds to keep',
+          ...r.examples.map((e) => `    ${e}`),
+        ]
+      : []),
+    '  skeleton',
+    ...r.skeleton.split('\n').map((l) => `    ${l}`),
+    '  limits',
+    ...r.limits.map((l) => `    ${l}`),
+    `  ${r.notice}`,
+  ].join('\n');
+  return { json: r, text };
+}
+
+/** One gate row: `gate 2  resolves in the subject scope  passed  …`. */
+function gateLine(gate: GateResult): string {
+  return `    gate ${gate.gate}  ${gate.name.padEnd(30)} ${gate.status.padEnd(8)} ${gate.detail}`;
+}
+
+/**
+ * The one report that needs the SOURCE SPANS as well as the model.
+ *
+ * `ranges` comes from the same `loadModelText` call the model did, threaded
+ * through `buildReport` rather than stashed in a module variable: the insertion
+ * point is a fact about the text this run read, and a global holding "the last
+ * file loaded" is how a second caller in one process gets a position into
+ * somebody else's file.
+ */
+async function reportPropertyCheck(
+  model: Model,
+  name: string,
+  args: ParsedArgs,
+  text: string,
+  ranges: ReadonlyMap<string, TextRange>,
+): Promise<Report> {
+  const el = propertyElement(model, args);
+  const clause = propertyClause(args);
+  let r: PropertyCheckReport;
+  try {
+    r = await propertyCheck(model, el.id, clause, { ranges, sourceText: text });
+  } catch (err) {
+    if (err instanceof PropertyRefError) throw new UsageError(err.message);
+    throw err;
+  }
+  const head =
+    r.outcome === 'refused'
+      ? `refused at gate ${r.refusedAt}`
+      : r.outcome === 'accepted-with-gap'
+        ? 'accepted with a gap'
+        : 'accepted';
+  const body = [
+    `${name}: ${r.requirement.qualifiedName}${r.shortId ? ` <${r.shortId}>` : ''} — ${head}`,
+    `  clause    ${r.clause}`,
+    ...(r.body !== r.clause ? [`  response  ${r.body}`] : []),
+    ...(r.code !== null ? [`  ${r.code}`] : []),
+    `  ${r.detail}`,
+    '  gates',
+    ...r.gates.map(gateLine),
+    ...(r.reads.length > 0
+      ? [
+          `  reads ${r.reads.length} name(s)`,
+          ...r.reads.map((x) => `    ${x.name} → ${x.qualifiedName}`),
+        ]
+      : []),
+    ...(r.expected.length > 0 ? [`  did you mean: ${r.expected.join(', ')}`] : []),
+    ...(r.backTranslation !== null
+      ? ['  back-translation', `    ${r.backTranslation}`]
+      : ['  no back-translation: the clause did not parse']),
+    ...(r.insertion !== null
+      ? [
+          '  where it goes',
+          r.range !== null
+            ? `    line ${r.range.start.line}, column ${r.range.start.column}` +
+              `${r.rangeNote !== '' ? ` — ${r.rangeNote}` : ''}`
+            : `    ${r.rangeNote}`,
+          `    ${r.indent}${r.insertion}`,
+        ]
+      : []),
+    `  gate 4 answered by: ${r.solver.detail}`,
+    '  limits',
+    ...r.limits.map((l) => `    ${l}`),
+    `  ${r.notice}`,
+  ].join('\n');
+  return { json: r, text: body };
+}
+
 /* ─────────────────────────────── verify ─────────────────────────────────── */
 
 /** The three engine names, checked before the file is read. */
@@ -2063,9 +2253,10 @@ function reportOrphans(model: Model, name: string): Report {
 /* ──────────────────────────────── dispatch ──────────────────────────────── */
 
 /**
- * Async because ONE subcommand is: `verify` resolves `--engine auto` by asking
- * whether a solver backend can be imported, which is a dynamic import. Every
- * other arm stays synchronous and is awaited for free.
+ * Async because THREE subcommands are: `verify` and `consistency` resolve their
+ * engine by asking whether a solver backend can be imported, which is a dynamic
+ * import, and `property-check`'s gate 4 asks the same question. Every other arm
+ * stays synchronous and is awaited for free.
  */
 async function buildReport(
   cmd: CommandSpec,
@@ -2075,6 +2266,8 @@ async function buildReport(
   args: ParsedArgs,
   /** Did the file load cleanly? Only `verify` reads it — see the `--record` refusal. */
   degraded: boolean,
+  /** Element→source-span table. Only `property-check` reads it, for the insertion point. */
+  ranges: ReadonlyMap<string, TextRange>,
 ): Promise<Report> {
   switch (cmd.name) {
     case 'stats':
@@ -2097,6 +2290,10 @@ async function buildReport(
       return reportContracts(model, name, args);
     case 'obligations':
       return reportObligations(model, name, args);
+    case 'property-draft':
+      return reportPropertyDraft(model, name, args);
+    case 'property-check':
+      return reportPropertyCheck(model, name, args, text, ranges);
     case 'verify':
       return reportVerify(model, name, text, args, degraded);
     case 'consistency':
@@ -2136,6 +2333,16 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
       return;
     case 'prompts':
       promptsRef(args);
+      return;
+    case 'property-draft':
+      // `--element` is the whole command on both rows, and `--clause` is half of
+      // the second: a run missing either would parse a model and bind the
+      // library before saying it had nothing to do.
+      propertyRef(args);
+      return;
+    case 'property-check':
+      propertyRef(args);
+      propertyClause(args);
       return;
     case 'verify':
       // Both before the file is read: a mistyped engine name, and `--free` on
@@ -2281,7 +2488,7 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  const { model, report } = await loadModelText(text, {
+  const { model, report, ranges } = await loadModelText(text, {
     library: flagGiven(parsed, 'no-library') ? 'none' : 'full',
     // Piped input has no file name, so it is labelled rather than named — the
     // extension test is about a file the reader could rename.
@@ -2312,7 +2519,7 @@ async function main(): Promise<number> {
 
   let built: Report;
   try {
-    built = await buildReport(cmd, model, name, text, parsed, degraded);
+    built = await buildReport(cmd, model, name, text, parsed, degraded, ranges);
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
     return writeUsageError(cmd, err);

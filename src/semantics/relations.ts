@@ -473,6 +473,21 @@ function binaryDimension(
 export interface LoweredLiteral {
   si: number;
   dimension: Dimension;
+  /**
+   * The magnitude and the unit exactly as the AUTHOR wrote them (`45.0`, `min`).
+   *
+   * Carried because one consumer has to print the body back to a PERSON rather
+   * than hand it to a solver: `property-check`'s back-translation (§3.3). It
+   * renders the lowered tree, where this marker stands for its SI magnitude, and
+   * a rendering that printed `2700` for `45.0 [min]` would show a number that is
+   * in neither the file nor the author's head. Two fields rather than one
+   * pre-joined string, so a renderer chooses its own spelling — `45.0 [min]` in
+   * a clause, `45.0 min` in a sentence — without taking a substring apart.
+   * Nothing that JUDGES a relation reads either: they are display text, never an
+   * input to a gate.
+   */
+  magnitude: string;
+  unit: string;
 }
 
 export interface LoweredBody {
@@ -522,7 +537,12 @@ export function lowerUnitLiterals(raw: string): LoweredBody {
       return `${before}${magnitude}`;
     }
     const name = `${prefix}${n++}`;
-    literals.set(name, { si: Number(magnitude) * u.factorToSI, dimension: u.dimension });
+    literals.set(name, {
+      si: Number(magnitude) * u.factorToSI,
+      dimension: u.dimension,
+      magnitude,
+      unit: unit.trim(),
+    });
     return `${before}${name}`;
   });
   if (ANY_BRACKET_RE.test(text)) {

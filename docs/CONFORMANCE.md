@@ -25,8 +25,8 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2684 passed / 0 failed / 0 skipped** across **138 files** + **128 E2E** across **78 spec files** = **2812 green** (measured 2026-09-07) |
-| Command-line surface | **15 subcommands** in one spec table, over **4 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
+| Full automated suite | **2707 passed / 0 failed / 0 skipped** across **139 files** + **128 E2E** across **78 spec files** = **2835 green** (measured 2026-09-08) |
+| Command-line surface | **17 subcommands** in one spec table, over **5 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -529,6 +529,44 @@ record**. The interop probe that would answer the first question is a later
 commit of the plan; until it runs, no claim is made about what an external reader
 does with either.
 
+### 8.3b `property-check` — what the five gates establish, and what they do not
+
+`property-draft` and `property-check` stand **before** the engines: they judge a
+clause an agent proposes, never the model, and neither of them writes anything.
+Both obey the reporting exit contract for that reason — a refused clause is an
+answer about a string the caller passed and exits **0**, with the verdict in the
+report — because §2 reserves the judging contract's exit 1 for an obligation
+refuted at the model's own values and nothing else.
+
+Gate 0 refuses a clause whose `scope` is not `global`, whose `timing` is not
+`always`, or that writes a `condition` at all: those three FRETish fields state
+something about *time*, and no in-process engine in phases 0–3 of this plan
+decides a temporal claim. It is a **refusal**, not an acceptance with a gap.
+Gates 1–3 are the tool's own gates — `parseRelationBody`, resolution in the
+subject's scope, then `evaluateConstraintQuantityDetailed` and `readRelation` —
+so a clause this command accepts is one the SMT encoder can read; a private
+re-implementation of any of them would let `property-check` accept what `verify`
+then refuses.
+
+**Gate 4 is SYNTACTIC non-triviality, and this is the limit.** The clause and its
+negation are checked satisfiable under z3 **with no axioms asserted at all**, so
+a clause the model's own feature values already satisfy passes it:
+`uav.mtow <= 25.0 [kg]` is accepted over a model that pins `mtow = 18.5 [kg]`.
+What the gate refuses is a clause that is valid or unsatisfiable *on its own*
+(`x <= x`). `verify`'s tautology check and the vacuity report are what decide the
+other question. The limit is printed on every report rather than left to be
+inferred, and it is one of the two limits in the §6 register that this command
+carries.
+
+**Nothing here reads prose, and no report ever says a clause is the
+formalisation a requirement asked for.** Every report — text and JSON, accepted
+or refused — carries the same fixed line: *"meaning is not checked; read the
+back-translation."* The back-translation into structured English is the only
+defence the tool offers against a clause that parses and means the wrong thing,
+and reading it is the author's job. `scripts/agent-repair-bench.ts --suite
+verification` measures how much of the gate surface a model clears from the draft
+alone; it deliberately does not score meaning.
+
 ### 8.4 The SMT seam: the solver backend and the encoder the engine stands on
 
 `z3-solver` ^5.2.0 is an **optional** dependency. `src/semantics/smt/z3-bridge.ts`
@@ -668,7 +706,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2684 pass / 0 skip, 138 files)
+# Full unit + integration + conformance suite (2707 pass / 0 skip, 139 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

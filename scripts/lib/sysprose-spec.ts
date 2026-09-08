@@ -366,6 +366,53 @@ export const COMMANDS: readonly CommandSpec[] = [
       },
     ],
   },
+  // The two that stand BEFORE the engines rather than behind them: an agent
+  // writes a clause with the first and has it refused by the second, and neither
+  // of them decides anything about the model. They report — a refused clause is
+  // an answer about a string the caller passed, not a finding about the file —
+  // so both carry `exitContract: 'report'` and the verdict is in the payload's
+  // `outcome` and `refusedAt`, never in the exit code. Under the reporting
+  // contract 1 means "the model did not load cleanly", and §2 reserves the
+  // judging contract's 1 for a refuted obligation and nothing else.
+  {
+    name: 'property-draft',
+    question: 'How do I write a clause this tool will accept, over which names?',
+    backedBy: 'propertyDraft (src/api/property.ts)',
+    payloadKey: 'propertyDraft',
+    exitContract: 'report',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        // The same words as `where-used`'s, `prompts`' and `contracts`': it is
+        // the same resolution, and two spellings of one grammar is how a reader
+        // learns that the second command wants something else.
+        doc: 'The element: an id, a qualified name, or a name unique in the model',
+      },
+    ],
+  },
+  {
+    name: 'property-check',
+    question: 'Would this clause pass the gates, and what does it actually say?',
+    backedBy: 'propertyCheck (src/api/property.ts)',
+    payloadKey: 'propertyCheck',
+    exitContract: 'report',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        doc: 'The requirement the clause is for: an id, a qualified name, or a name unique in the model',
+      },
+      {
+        name: 'clause',
+        kind: 'value',
+        metavar: 'TEXT',
+        doc: "The clause to judge: a constraint body (`uav.mtow <= 25.0 [kg]`), optionally preceded by FRETish fields written `field: value;` or `field = value;` — the spelling `property-draft`'s skeleton emits, and the other one. A `scope` other than global, a `condition`, or a `timing` other than always is refused at gate 0 — no in-process engine here decides a temporal claim",
+      },
+    ],
+  },
   // The first subcommand in this table that JUDGES. Everything above reports,
   // and every one of them carries `exitContract: 'report'` for that reason; this
   // one carries `'verify'`, and its 1 means refuted.

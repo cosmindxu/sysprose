@@ -997,6 +997,181 @@ describe('L7 — sysprose reporting command', () => {
     }
   }, 120_000);
 
+  /* ── property-draft / property-check (§3.3) ────────────────────────────── */
+
+  /**
+   * The two rows §3.0 promises a CLI case each, at the process boundary.
+   *
+   * These are the two subcommands an agent meets first — drafting comes before
+   * proving — and the whole value of both is that the sentence in the terminal
+   * is the sentence the gates produced. A row whose dispatch arm was never
+   * written prints help and exits 0, which is indistinguishable from a command
+   * that ran and found nothing to say; every assertion below is one a missing
+   * arm would fail.
+   */
+  it('property-draft prints the skeleton, the dictionary and the fields it cannot encode', () => {
+    const r = run(['property-draft', UAV, '--element', 'MassRequirement']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('UAVSurveillanceSystem::MassRequirement');
+    expect(r.stdout).toContain('subject   uav : AirVehicle (declared)');
+    // The three mandatory FRETish fields, filled in from the model.
+    expect(r.stdout).toContain('component  uav');
+    // …and the three that are commentary, each carrying the same marker.
+    for (const field of ['scope', 'condition', 'timing']) {
+      expect(r.stdout, `${field} is emitted as guidance`).toMatch(
+        new RegExp(`${field}\\s+fragment: temporal`),
+      );
+    }
+    expect(r.stdout).toContain('export-only (§3.11)');
+    // The dictionary is written THROUGH the subject, and offers no bare alias.
+    expect(r.stdout).toContain('uav.mtow');
+    expect(r.stdout).toContain('claim literal  = 18.5');
+    expect(r.stdout).not.toMatch(/^ {4}mtow /m);
+    expect(r.stdout).toContain('meaning is not checked; read the back-translation.');
+  }, 90_000);
+
+  it('property-draft --json publishes under `propertyDraft`, beside ok and file', () => {
+    const r = run([
+      'property-draft',
+      UAV,
+      '--element',
+      'UAVSurveillanceSystem::EnduranceRequirement',
+      '--json',
+    ]);
+    expect(r.code).toBe(0);
+    const { keys, body } = payload<{
+      propertyDraft: {
+        requirement: { qualifiedName: string };
+        fields: Array<{ field: string; mandatory: boolean; encodable: boolean }>;
+        dictionary: Array<{ name: string }>;
+        examples: string[];
+        notice: string;
+      };
+    }>(r);
+    expect(keys).toEqual(['file', 'ok', 'propertyDraft']);
+    // The REF resolved as a QUALIFIED NAME, which §3.0 says every REF flag takes.
+    expect(body.propertyDraft.requirement.qualifiedName).toBe(
+      'UAVSurveillanceSystem::EnduranceRequirement',
+    );
+    expect(body.propertyDraft.fields.map((f) => f.field)).toEqual([
+      'component',
+      'shall',
+      'response',
+      'scope',
+      'condition',
+      'timing',
+    ]);
+    expect(body.propertyDraft.fields.filter((f) => f.encodable)).toHaveLength(3);
+    expect(body.propertyDraft.dictionary.some((d) => d.name === 'uav.endurance')).toBe(true);
+    expect(body.propertyDraft.dictionary.some((d) => d.name === 'endurance')).toBe(false);
+    expect(body.propertyDraft.examples.length).toBeGreaterThan(0);
+    expect(body.propertyDraft.notice).toBe('meaning is not checked; read the back-translation.');
+  }, 90_000);
+
+  it('property-check accepts a clause and says where it goes', () => {
+    const r = run([
+      'property-check',
+      UAV,
+      '--element',
+      'MassRequirement',
+      '--clause',
+      'uav.mtow <= 25.0 [kg]',
+    ]);
+    // The REPORT contract: a clause is a string the caller passed, not something
+    // in the file, so its refusal is in the payload and never in the exit code.
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('— accepted');
+    expect(r.stdout).toContain('gate 4  non-trivial on its own         passed');
+    expect(r.stdout).toContain('uav shall satisfy: uav.mtow is at most 25.0 kg');
+    expect(r.stdout).toContain('require constraint { uav.mtow <= 25.0 [kg] }');
+    // The insertion point is INSIDE the requirement body: line 138 is its
+    // closing brace in the shipped example, and the clause goes on the line
+    // before it.
+    expect(r.stdout).toMatch(/line 138, column 1/);
+    expect(r.stdout).toContain('meaning is not checked; read the back-translation.');
+  }, 90_000);
+
+  it('property-check refuses a temporal field at gate 0, and a bare name at gate 2', () => {
+    const temporal = run([
+      'property-check',
+      UAV,
+      '--element',
+      'EnduranceRequirement',
+      '--clause',
+      'scope = after; uav.endurance >= 45.0 [min]',
+    ]);
+    expect(temporal.code).toBe(0);
+    expect(temporal.stdout).toContain('refused at gate 0');
+    expect(temporal.stdout).toContain('verification/temporal-field-unencodable');
+    expect(temporal.stdout).toContain('gate 1  parses                         not-run');
+
+    const bare = run([
+      'property-check',
+      UAV,
+      '--element',
+      'EnduranceRequirement',
+      '--clause',
+      'endurance >= 45 [min]',
+      '--json',
+    ]);
+    expect(bare.code).toBe(0);
+    const { body } = payload<{
+      propertyCheck: { outcome: string; refusedAt: number; code: string; expected: string[] };
+    }>(bare);
+    expect(body.propertyCheck.outcome).toBe('refused');
+    expect(body.propertyCheck.refusedAt).toBe(2);
+    expect(body.propertyCheck.code).toBe('verification/unresolved-name-in-property');
+    expect(body.propertyCheck.expected).toContain('uav.endurance');
+  }, 120_000);
+
+  it('property-check reports the gap rather than a pass when there is no solver', () => {
+    const r = run(
+      [
+        'property-check',
+        UAV,
+        '--element',
+        'MassRequirement',
+        '--clause',
+        'uav.mtow <= uav.mtow',
+        '--json',
+      ],
+      undefined,
+      NO_Z3,
+    );
+    expect(r.code).toBe(0);
+    const { body } = payload<{
+      propertyCheck: { outcome: string; refusedAt: number | null; code: string };
+    }>(r);
+    // The same clause is REFUSED as trivial when z3 is there. With no solver the
+    // gate is unrun and the clause is accepted WITH A GAP — never a pass.
+    expect(body.propertyCheck.outcome).toBe('accepted-with-gap');
+    expect(body.propertyCheck.refusedAt).toBeNull();
+    expect(body.propertyCheck.code).toBe('verification/nontriviality-unchecked');
+  }, 90_000);
+
+  it('property-draft carries the shipped authoring prompts, and both rows refuse a bad REF', () => {
+    const prompts = run([
+      'property-draft',
+      resolve(process.cwd(), 'examples/contract-authoring-prompts.sysml'),
+      '--element',
+      'PayloadMassRequirement',
+    ]);
+    expect(prompts.code).toBe(0);
+    expect(prompts.stdout).toContain('authoring guidance — 4 #prompt(s), verbatim');
+    expect(prompts.stdout).toContain('Name the subject in every path a clause reads');
+
+    // A REF naming something that states no contract is refused BY NAME, exit 2.
+    const notARequirement = run(['property-draft', UAV, '--element', 'AirVehicle']);
+    expect(notARequirement.code).toBe(2);
+    expect(notARequirement.stderr).toContain('not a requirement or a case with an objective');
+
+    // And `--clause` is the whole of the second command: a run without it is a
+    // usage error raised before the model is even read.
+    const noClause = run(['property-check', UAV, '--element', 'MassRequirement']);
+    expect(noClause.code).toBe(2);
+    expect(noClause.stderr).toContain('`--clause TEXT` is the clause to judge');
+  }, 120_000);
+
   /**
    * A requirement USAGE applying a definition is the shape a real model is full
    * of, and it owns no clause. Saying "prose only, nothing to encode" about it

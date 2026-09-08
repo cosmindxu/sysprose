@@ -21,8 +21,11 @@ import {
   connectivityReport,
   modelMetrics,
   orphanReport,
+  propertyCheck,
+  propertyDraft,
   requirementSatisfaction,
 } from '@api/index';
+import type { TextRange } from '@validation/types';
 import { DIAGNOSTIC_CODES } from '@text/index';
 import { loadModelText } from '@text/load';
 import { RULES } from '@validation/index';
@@ -417,15 +420,24 @@ describe('counts quoted in prose', () => {
  */
 describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
   let model: Model;
+  let ranges: Map<string, TextRange>;
+  let source: string;
 
   beforeAll(async () => {
     // The full library bind is what the command does, so it is what the
     // transcripts show — every exclusion figure in them is about the library.
-    const loaded = await loadModelText(read('examples/uav-isr.sysml'), {
-      fileName: 'examples/uav-isr.sysml',
-    });
+    source = read('examples/uav-isr.sysml');
+    const loaded = await loadModelText(source, { fileName: 'examples/uav-isr.sysml' });
     model = loaded.model!;
+    ranges = loaded.ranges;
   }, 60_000);
+
+  /** The requirement the two `property-*` transcripts are taken over. */
+  const massRequirement = (): string => {
+    const el = model.all().find((e) => e.declaredName === 'MassRequirement');
+    expect(el, 'examples/uav-isr.sysml no longer declares MassRequirement').toBeDefined();
+    return el!.id;
+  };
 
   const GUIDE = 'docs/USER-GUIDE.md';
   const claims: Array<{ what: string; pattern: RegExp; actual: () => number }> = [
@@ -543,6 +555,15 @@ describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
       pattern: /\d+ of (\d+) definition\(s\) unused/,
       actual: () => orphanReport(model).definitionsExamined,
     },
+    // The §6 property-authoring transcripts. The dictionary size is a fact about
+    // this file's feature tree and moves the moment somebody adds an attribute
+    // to the UAV, which is exactly the kind of edit that leaves a guide quoting
+    // a number no run has produced since.
+    {
+      what: 'legal names in the property-draft dictionary',
+      pattern: /data dictionary — (\d+) legal name\(s\)/,
+      actual: () => propertyDraft(model, massRequirement()).dictionary.length,
+    },
   ];
 
   for (const claim of claims) {
@@ -555,6 +576,30 @@ describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
       ).toBe(claim.actual());
     });
   }
+
+  /**
+   * The line number `property-check`'s transcript quotes, which is a position in
+   * a file rather than a figure in a report.
+   *
+   * It is the one number in this guide that moves when somebody edits a file
+   * NOWHERE NEAR the sentence quoting it: adding three lines anywhere above
+   * `MassRequirement` in the shipped example silently makes the transcript point
+   * at the wrong place, and a reader following it would put a clause outside the
+   * requirement body. Checked against the run rather than remembered.
+   */
+  it('the insertion line the property-check transcript quotes', async () => {
+    const report = await propertyCheck(model, massRequirement(), 'uav.mtow <= 25.0 [kg]', {
+      ranges,
+      sourceText: source,
+    });
+    expect(report.range, 'property-check no longer returns an insertion range').not.toBeNull();
+    const m = /line (\d+), column 1/.exec(read(GUIDE));
+    expect(m, `${GUIDE} no longer shows an insertion line`).not.toBeNull();
+    expect(
+      Number(m![1]),
+      `${GUIDE} shows line ${m![1]}; the run puts the clause on line ${report.range!.start.line}`,
+    ).toBe(report.range!.start.line);
+  }, 60_000);
 
   /**
    * Step 2 of the walkthrough is followable to the WRONG picture unless it names

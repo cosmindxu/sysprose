@@ -120,6 +120,8 @@ with the function that control runs.
 | What guidance applies to this element? | — no view yet | `npm run sysprose -- prompts model.sysml --element X` | `promptsFor` — `src/api/analytics.ts` |
 | What does each requirement assume and guarantee, and on which subject? | — no view yet | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
 | What must be shown, over which axioms, and what do the gates refuse? | — no view yet | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
+| How do I write a clause this tool will accept, over which names? | — no view yet | `npm run sysprose -- property-draft model.sysml --element X` | `propertyDraft` — `src/api/property.ts` |
+| Would this clause pass the gates, and what does it actually say? | — no view yet | `npm run sysprose -- property-check model.sysml --element X --clause 'u.mass <= 25.0 [kg]'` | `propertyCheck` — `src/api/property.ts` |
 | Does each obligation hold, by which engine, and under what bound? | — no view yet | `npm run sysprose -- verify model.sysml --engine literal` | `verifyModel` — `src/api/verification.ts` |
 | Can all the requirements on this subject hold at once, and if not, which conflict? | — no view yet | `npm run sysprose -- consistency model.sysml` | `consistencyReport` — `src/api/verification.ts` |
 | What was shown, by which tool, over which model — and does it still hold? | **Requirements** view → *Evidence* column (`tb-view-requirements` → `buildRequirementsTable`) † | `npm run sysprose -- evidence-status model.sysml` | `evidenceStatus` — `src/api/evidence.ts` |
@@ -225,7 +227,8 @@ npm run check -- <file.sysml> [--json]   # check a file from the command line
 npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # stats · elements · requirements · trace
                        # connectivity · where-used · orphans · prompts
-                       # contracts · obligations · verify · consistency
+                       # contracts · obligations · property-draft
+                       # property-check · verify · consistency
                        # evidence-status · evidence-attach · evidence-detach
                        # `npm run sysprose -- --help` lists them
 ```

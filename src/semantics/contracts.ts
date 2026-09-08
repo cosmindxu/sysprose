@@ -1093,6 +1093,25 @@ export function contractOf(model: Model, id: ElementId): Contract | undefined {
 }
 
 /**
+ * The element whose BODY holds a contract's clauses: the `objective` of a case,
+ * the requirement itself otherwise.
+ *
+ * Exported because a caller that wants to say WHERE a new clause goes needs the
+ * span of the braces {@link clausesOf} actually reads, and for a case those are
+ * the objective's, not the case's. Anchoring on the case's own closing brace puts
+ * the clause outside `objective { … }`, where it parses, binds nothing, and is
+ * silently absent from the contract — the worst shape a placement bug can take.
+ * `undefined` when a case has no objective of its own, which is a case whose
+ * clauses have no home yet.
+ */
+export function clauseHostOf(model: Model, id: ElementId): ElementId | undefined {
+  const el = model.get(id);
+  if (!el) return undefined;
+  if (!CASE_KINDS.has(el.eClass)) return id;
+  return objectiveOf(model, el)?.id;
+}
+
+/**
  * The verdict facet a requirement CLAIMS, with no evidence behind it.
  *
  * Read here rather than judged: a hand-written `verdict = "pass"` is a claim

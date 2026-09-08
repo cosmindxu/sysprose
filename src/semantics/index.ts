@@ -213,6 +213,7 @@ export {
 export {
   contractsOf,
   contractOf,
+  clauseHostOf,
   claimedVerdictOf,
   isUserModelElement,
   gateRelation,

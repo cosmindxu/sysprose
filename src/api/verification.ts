@@ -106,6 +106,9 @@ import {
   type EvidenceVerdict,
   type ModelVersion,
 } from './evidence';
+// The gate codes, so the whole lane's vocabulary is one set. `./property`
+// imports nothing from here, so the edge is one-way.
+import { PROPERTY_CODE_SET } from './property';
 
 /* ─────────────────────────── the contract report ─────────────────────────── */
 
@@ -1047,6 +1050,11 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   // rather than retyped, for the same reason as the two above: the catalogue
   // guard reads this set, and a code spelled twice is a code that drifts.
   ...VERIFICATION_CASE_CODES,
+  // And the five `property-check`'s gates raise, from `./property`. A clause the
+  // gates refuse is the FIRST `verification/*` code most agents will ever be
+  // shown, since drafting comes before proving, so it had better be one the
+  // catalogue explains.
+  ...PROPERTY_CODE_SET,
 ]);
 
 /**

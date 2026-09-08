@@ -453,6 +453,8 @@ may legitimately differ, and the difference is spelled out under the table.
 | What guidance applies to this element? | — | `npm run sysprose -- prompts model.sysml --element X` |
 | What does each requirement assume and guarantee? | — | `npm run sysprose -- contracts model.sysml` |
 | What must be shown, and what do the gates refuse? | — | `npm run sysprose -- obligations model.sysml` |
+| How do I write a clause the tool will accept? | — | `npm run sysprose -- property-draft model.sysml --element R` |
+| Would this clause pass the gates, and what does it say? | — | `npm run sysprose -- property-check model.sysml --element R --clause '…'` |
 | Does the verdict in the file still hold? | **Requirements** view → *Evidence* column † | `npm run sysprose -- evidence-status model.sysml` |
 | Write a run's verdicts into the file | — | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` |
 | Take them back off | — | `npm run sysprose -- evidence-detach model.sysml` |
@@ -464,7 +466,7 @@ may legitimately differ, and the difference is spelled out under the table.
 what links to nothing. The **Interconnection** view *draws* the ports and
 connections; it computes no connectivity report — `connectivity` exists only in
 the terminal and the SDK, as do `orphans`, `prompts`, `contracts`, `obligations`,
-`evidence-attach`, `evidence-detach` and
+`property-draft`, `property-check`, `evidence-attach`, `evidence-detach` and
 the depth walk behind `where-used`. The **Requirements** view's *Evidence* column
 *reads* what a run left in the file — `current`, `stale` or `unrecorded`, with
 the record's claim word beside it — where `evidence-status` prints every row
@@ -596,6 +598,126 @@ naming bundled library content is refused: every figure in both reports is about
 
 **Source of truth:** `src/semantics/contracts.ts`, `src/semantics/obligations.ts`,
 `src/api/verification.ts`, and the plan these implement,
+[`04-formal-verification-plan.md`](04-formal-verification-plan.md).
+
+### Writing a clause the tool will accept
+
+Between the prose and the proof there is a step nothing above helps with: a
+requirement that says *"shall sustain at least 45 minutes"* has to become a
+relation a solver can read. Two subcommands stand there, and both of them ship
+**before** the clause reaches `verify`.
+
+`property-draft --element R` hands you what you need to write one. The three
+FRETish fields that are mandatory (`component`, `shall`, `response`) filled in
+from the model; the three that are not (`scope`, `condition`, `timing`) printed
+as commented guidance with the reason each is unencodable; a **data dictionary**
+of every legal name in the subject's scope with its type, unit, dimension, value
+and whether it can stand in an arithmetic comparison; every `#prompt` that
+reaches the requirement or its subject, verbatim; a skeleton whose six fields are
+comments and whose last line carries `<bound>` for you to replace; and example
+clause shapes built from the dictionary, each of which passes the gates below as
+written.
+
+```console
+$ npm run sysprose -- property-draft examples/uav-isr.sysml --element MassRequirement
+examples/uav-isr.sysml: UAVSurveillanceSystem::MassRequirement — the encodable skeleton
+  subject   uav : AirVehicle (declared)
+  ...
+  data dictionary — 19 legal name(s), always written through the subject
+    uav.cruisePower                       ISQ::PowerValue  [W]  dim L²·M·T⁻³  claim literal  = 650.0
+    uav.endurance                         ISQ::DurationValue  (no unit of its own)  dim T  claim consistent  = battery.capacity * usableEnergyFraction / cruisePower
+    uav.mtow                              ISQ::MassValue  [kg]  dim M  claim literal  = 18.5
+    ...
+  meaning is not checked; read the back-translation.
+```
+
+Every name in that dictionary is written **through the subject** — `uav.mtow`,
+never a bare `mtow`. That is not decoration: the shipped example has two features
+called `mass`, a bare name resolves to whichever the scope walk reached first,
+and you would have no way to see which one you got.
+
+`property-check --element R --clause TEXT` then judges the clause you wrote, at
+**gate 0 and four gates after it**, and refuses at the first one that says no:
+
+| Gate | What it asks | Refusal |
+|---|---|---|
+| **0** | Is the clause in the encodable fragment? | a `scope` other than `global`, a `condition`, or a `timing` other than `always` is temporal — `verification/temporal-field-unencodable` |
+| **1** | Does it parse? | `verification/unsupported-expression` |
+| **2** | Does every name resolve in the subject's scope? | `verification/unresolved-name-in-property`, with the nearest names it could find |
+| **3** | Do the dimensions agree? | `verification/dimension-clash-in-property` |
+| **4** | Is it non-trivial *on its own*? | `verification/trivial-property` — or `verification/nontriviality-unchecked` when there is no solver |
+
+Gate 0 **refuses**; it does not accept with a gap. A clause carrying a temporal
+field is one nothing downstream can decide, and "accepted, but the temporal part
+was ignored" would put an undecidable clause in your file with a tick beside it.
+The fields are written ahead of the body and separated from it by `;`, in either
+spelling — `scope: after; uav.mtow <= 25.0 [kg]` or `scope = after; …`. The first
+is what `property-draft`'s skeleton emits, so handing that skeleton back with its
+`// ` markers removed reaches gate 0 rather than being refused as arithmetic.
+
+```console
+$ npm run sysprose -- property-check examples/uav-isr.sysml \
+    --element EnduranceRequirement --clause 'endurance >= 45 [min]'
+examples/uav-isr.sysml: UAVSurveillanceSystem::EnduranceRequirement — refused at gate 2
+  ...
+  refused at gate 2: `endurance` does not resolve in the scope of `uav` — did you mean `uav.endurance`? ...
+```
+
+An accepted clause comes back with a **back-translation** into structured
+English and the **insertion range** — the line and column inside the requirement
+body where the clause goes, with the line already indented:
+
+```console
+$ npm run sysprose -- property-check examples/uav-isr.sysml \
+    --element MassRequirement --clause 'uav.mtow <= 25.0 [kg]'
+examples/uav-isr.sysml: UAVSurveillanceSystem::MassRequirement — accepted
+  ...
+  back-translation
+    uav shall satisfy: uav.mtow is at most 25.0 kg
+  where it goes
+    line 138, column 1
+            require constraint { uav.mtow <= 25.0 [kg] }
+  meaning is not checked; read the back-translation.
+```
+
+The range is zero-width and the indentation is copied from the body, so applying
+it is a splice and nothing is overwritten. Three shapes are worth knowing about.
+A requirement written entirely on **one line** has no body line to insert before,
+so the range points just inside its closing brace and the indent is a single
+space. A requirement usage with **no body at all**
+(`requirement massReq : MassReq;`) has nowhere inside it for a clause to live, so
+there is no range and the report says which of those it is rather than guessing.
+And on a **case**, the range points inside `objective { … }` — that is where a
+case's clauses are read from, and a clause outside it would parse and bind
+nothing.
+
+Three things to take from that, and the last one matters most:
+
+- **Neither subcommand judges the model**, so both obey the reporting exit
+  contract: a refused clause is an answer about a string you passed, not a
+  finding about your file, and it exits **0** with the verdict in the report
+  (and in `--json`, under `outcome`, `refusedAt` and `code`). **2** is a usage
+  error — a missing `--clause`, a `REF` that names no requirement.
+- **Gate 4 is *syntactic* non-triviality.** The clause and its negation are
+  checked satisfiable with **no axioms asserted at all**, so
+  `uav.mtow <= 25.0 [kg]` is accepted over a model that pins `mtow = 18.5 [kg]`.
+  It is true of the design as written and the gate does not care: what it refuses
+  is a clause that is valid or unsatisfiable *on its own*. `verify`'s tautology
+  check and the vacuity report are what decide the other question, and the limit
+  is printed on every report.
+- **The tool never says the clause means what the prose meant.** Every report
+  ends with *"meaning is not checked; read the back-translation."* — which is
+  what the back-translation is printed for. Reading it is the one step nothing
+  here can do for you.
+
+Nothing is written back: `property-check` tells you where the clause goes and you
+(or your agent) put it there, then `npm run check` and the ordinary repair loop
+apply. `examples/contract-authoring-prompts.sysml` is a shipped model that writes
+the four authoring rules as `#prompt` statements at package level, so
+`property-draft` hands them to whoever works on any requirement in it.
+
+**Source of truth:** `src/api/property.ts`, `examples/contract-authoring-prompts.sysml`,
+`test/unit/property.test.ts`, and §3.3 of
 [`04-formal-verification-plan.md`](04-formal-verification-plan.md).
 
 ### Whether it holds, and the two words that are not the same

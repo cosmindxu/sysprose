@@ -571,6 +571,41 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** A requirement carries a `verdict` facet saying something other than what this run computed for the verification case that verifies it — for example `pass` in the file over a run that refuted the requirement, or `inconclusive` in the file over one that proved it.
 - **Hint given:** This is a disagreement rather than a defect: a `verdict` facet is ordinary requirements management and may record a verdict reached by inspection with no tool involved. Nothing is rewritten by reporting it. `verify --record` then `evidence-attach` puts the facet back in step with the claim, and `evidence-detach` takes both off; a `pass` over a run that did not prove it is named as overstating on the row.
 
+### `verification/temporal-field-unencodable`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A drafted clause writes a FRETish field this lane cannot read: a `scope` other than `global`, a `condition` at all, or a `timing` other than `always`. All three describe WHEN a response is owed, and no in-process engine in phases 0–3 walks an execution or discharges a liveness claim, so the clause is refused at gate 0 rather than accepted with the temporal part quietly ignored.
+- **Hint given:** Restate the clause as an invariant over the values the design admits and leave the three temporal fields unwritten — `property-draft` emits them as commented guidance for exactly that reason — fold a condition into the requirement as an `assume constraint`, or export the property to an engine that decides temporal logic (`export`, §3.11). "Accepted with the temporal field ignored" is not offered: nothing downstream could decide the clause that reached it.
+
+### `verification/unresolved-name-in-property`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A name in a drafted clause is not one the subject’s scope offers. A bare feature name is the commonest case: a property clause names its features THROUGH the subject (`uav.endurance`, never `endurance`), because a bare name in a requirement that states two subjects names whichever the walk reached first and a reader cannot see which.
+- **Hint given:** Run `npm run sysprose -- property-draft <file> --element REF` for the data dictionary of every legal name with its type, unit and value, and write the dotted form. The row carries the nearest names it could find in `expected`.
+
+### `verification/dimension-clash-in-property`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** Two operands of a drafted clause must share a physical dimension and do not — `uav.endurance >= 45.0 [kg]` compares a duration with a mass. It is the same gate the numeric surface applies, asked before the clause reaches a file rather than after.
+- **Hint given:** Compare quantities of one dimension: read the feature’s `dimension` and `unit` in the `property-draft` dictionary and give the literal a unit of that dimension. A feature that is DERIVED and dimensioned cannot be compared as a bare number at all — it needs a unit literal on the other side.
+
+### `verification/trivial-property`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A drafted clause is valid on its own (`uav.mtow <= uav.mtow` — every assignment makes it true) or unsatisfiable on its own (no assignment does), checked under z3 with NO axioms asserted. Either way it says nothing about the design: proving the first is free, and the second can never be discharged.
+- **Hint given:** State a bound the design has to meet, or check the relation’s direction. Note the gate’s scope: it is SYNTACTIC non-triviality, so a clause the model’s own feature values already satisfy passes it — `uav.mtow <= 25.0 [kg]` is accepted over a model that pins `mtow = 18.5 [kg]`. `verify`’s tautology check and the vacuity report decide that, and the limit is in the §6 register.
+
+### `verification/nontriviality-unchecked`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** Gate 4 did not run: no z3 backend loaded (the package is optional, or `SYSPROSE_NO_Z3` is set), or a check came back `unknown` inside its budget. The clause passed the first four gates and is `accepted-with-gap`.
+- **Hint given:** Install the optional solver package — the absence sentence on the row names it and prints the install command — and re-run to close the gap. It is deliberately not reported as an accepted clause: an unchecked gate that printed "accepted" would be a missing tool producing a green answer, which is the failure this lane is written against.
+
 ## Input handling
 
 Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.
@@ -630,4 +665,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*79 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*84 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

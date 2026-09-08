@@ -129,6 +129,12 @@ const APP_DOORS: ReadonlyArray<{
   // no control and therefore — by the dagger rule below — no dagger.
   { command: 'contracts', controls: [] },
   { command: 'obligations', controls: [] },
+  // The two authoring rows stand BEFORE the engines rather than behind them,
+  // and neither has a control: drafting a clause is an agent's loop in a
+  // terminal, and the app's Properties panel gains a "Draft property" action in
+  // the closing commit at the earliest (§3.3, "App affordance: deferred").
+  { command: 'property-draft', controls: [] },
+  { command: 'property-check', controls: [] },
   // `verify` carries no control for a second reason on top of that one: there
   // is no solver in the browser in this plan at all (`SharedArrayBuffer` needs
   // COOP/COEP headers GitHub Pages cannot set), so the app's job is to read
