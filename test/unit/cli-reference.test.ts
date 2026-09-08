@@ -17,11 +17,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DEFAULT_MAX_CORE as SEMANTICS_MAX_CORE, STATEMENT_KINDS } from '@semantics/index';
+import { DEFAULT_MAX_CONFIGS as ENGINE_MAX_CONFIGS } from '@api/index';
 import { renderCliReference } from '../../scripts/gen-cli-reference';
 import {
   CHECK_EXIT_CODES,
   COMMANDS,
   COMMON_FLAGS,
+  DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_CORE,
   EXIT_CODES,
   REFINE_EXIT_CODES,
@@ -234,6 +236,30 @@ describe('the `--max-core` default and the engine that honours it', () => {
     expect(row, 'the reference no longer renders a `--max-core` row').toBeDefined();
     expect(row!, 'the --max-core row no longer prints its default').toContain(
       `${DEFAULT_MAX_CORE} members`,
+    );
+  });
+});
+
+/**
+ * The same guard on `--max-configs`, and it matters more.
+ *
+ * `reach` prints "exhaustive under {maxConfigs N, …}" on every absence it
+ * claims. A documented default that is not the bound the walk ran under would
+ * make that sentence false about the one figure the whole command hangs on.
+ */
+describe('the `--max-configs` default and the engine that honours it', () => {
+  it('is the number `src/semantics/mc/explore.ts` actually defaults to', () => {
+    expect(
+      DEFAULT_MAX_CONFIGS,
+      '`--max-configs`\u2019s documented default and `DEFAULT_MAX_CONFIGS` disagree',
+    ).toBe(ENGINE_MAX_CONFIGS);
+  });
+
+  it('names it in the reference', () => {
+    const row = DOC.split('\n').find((l) => l.startsWith('| `--max-configs N` |'));
+    expect(row, 'the reference no longer renders a `--max-configs` row').toBeDefined();
+    expect(row!, 'the --max-configs row no longer prints its default').toContain(
+      `${DEFAULT_MAX_CONFIGS} configurations`,
     );
   });
 });

@@ -171,6 +171,12 @@ const APP_DOORS: ReadonlyArray<{
   // not an affordance this plan ships.
   { command: 'evidence-attach', controls: [] },
   { command: 'evidence-detach', controls: [] },
+  // The behaviour lane opens where the rest of this one did: in a terminal. The
+  // app runs state machines (the Simulate affordance) but nothing in it walks a
+  // configuration graph, so the row credits no control rather than crediting
+  // the simulator with an answer it does not compute — the two are different
+  // questions, which is the whole point of the command.
+  { command: 'reach', controls: [] },
 ];
 
 interface Row {

@@ -128,6 +128,7 @@ with the function that control runs.
 | What was shown, by which tool, over which model — and does it still hold? | **Requirements** view → *Evidence* column (`tb-view-requirements` → `buildRequirementsTable`) † | `npm run sysprose -- evidence-status model.sysml` | `evidenceStatus` — `src/api/evidence.ts` |
 | Write the verdicts of a run into the file, as annotations on what they are about | — no view yet | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` | `attachEvidence` — `src/api/evidence.ts` |
 | Take every record back off the file, and the verdict facets with them | — no view yet | `npm run sysprose -- evidence-detach model.sysml` | `detachEvidence` — `src/api/evidence.ts` |
+| Which states are reachable, which transitions are dead, where did the simulator hide a choice? | — no view yet | `npm run sysprose -- reach model.sysml` | `reachReport` — `src/semantics/mc/explore.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -230,7 +231,7 @@ npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # connectivity · where-used · orphans · prompts
                        # contracts · obligations · property-draft
                        # property-check · verify · consistency · refine
-                       # evidence-status · evidence-attach · evidence-detach
+                       # evidence-status · evidence-attach · evidence-detach · reach
                        # `npm run sysprose -- --help` lists them
 ```
 

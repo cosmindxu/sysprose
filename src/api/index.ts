@@ -91,6 +91,7 @@ export {
   INCONSISTENT_REQUIREMENTS_CODE,
   VERIFICATION_CODES,
   VERIFICATION_ERROR_CODES,
+  VERIFICATION_WARNING_CODES,
   VerifyOptionError,
 } from './verification';
 export type {
@@ -258,6 +259,60 @@ export type {
   VerifiedRequirement,
   WriteVerdictReport,
 } from '../semantics/verify';
+
+// Bounded behaviour (plan §3.8). The step relation is here because §3.8 calls it
+// an in-process API in those words — a checker that could only be reached by
+// spawning a CLI is not one — and `reachReport` because it is what the `reach`
+// subcommand is a rendering of.
+export {
+  BEHAVIOUR_CODES,
+  BEHAVIOUR_UNSUPPORTED_CODE,
+  BOUND_EXHAUSTED_CODE,
+  DEAD_TRANSITION_CODE,
+  DEADLOCK_CODE,
+  DEFAULT_MAX_CONFIGS,
+  DEFAULT_MAX_DEPTH,
+  NONDETERMINISTIC_CHOICE_CODE,
+  UNREACHABLE_STATE_CODE,
+  exploreMachine,
+  machineAlphabet,
+  machineStates,
+  reachReport,
+  stateMachinesIn,
+  transitionLabel,
+} from '../semantics/mc/explore';
+export type {
+  BoundHit,
+  DeadlockRow,
+  ExploreBounds,
+  ExploreOptions,
+  ExploreResult,
+  MachineReach,
+  NondeterministicChoice,
+  ReachOptions,
+  ReachReport,
+  StateRef,
+  TransitionRef,
+  UnsupportedConstruct,
+} from '../semantics/mc/explore';
+export {
+  MAX_COMPLETION,
+  advanceClock,
+  enabledTransitions,
+  hashConfig,
+  initialConfig,
+  leafOf,
+  stepConfig,
+} from '../semantics/mc/config';
+export type {
+  EnabledTransition,
+  MachineConfig,
+  StepEffects,
+  StepInput,
+  StepResult,
+} from '../semantics/mc/config';
+export { SEMANTIC_PROFILE, profileLines } from '../semantics/mc/profile';
+export type { ProfileField } from '../semantics/mc/profile';
 
 // REST facade
 export { SysmlApiServer } from './rest';

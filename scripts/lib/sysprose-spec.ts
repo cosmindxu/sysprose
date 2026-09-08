@@ -29,6 +29,15 @@ import { renderFlag, type FlagSpec } from './args';
  */
 export const DEFAULT_MAX_CORE = 8;
 
+/**
+ * The `--max-configs` default, spelled here for the same reason and guarded the
+ * same way: `test/unit/cli-reference.test.ts` compares it against
+ * `DEFAULT_MAX_CONFIGS` in `src/semantics/mc/explore.ts`. A documented bound
+ * that is not the bound the walk ran under would make every "exhaustive under
+ * {…}" line this command prints a false one.
+ */
+export const DEFAULT_MAX_CONFIGS = 10_000;
+
 /** The exit-code contract, stated once and quoted into every help text. */
 export const EXIT_CODES = `Exit codes: 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error`;
 
@@ -616,6 +625,42 @@ export const COMMANDS: readonly CommandSpec[] = [
     payloadKey: 'evidenceDetach',
     exitContract: 'write',
     flags: [],
+  },
+  // The behaviour lane's first command, and the only one in this file with no
+  // solver behind it at all: an explicit walk of a state machine's
+  // configuration graph, exploring every enabled transition where the
+  // interpreter takes the first (plan §3.8). It REPORTS — a state nothing
+  // reaches is a fact about a machine, not a violated requirement — so it
+  // carries the reporting contract and its findings live in the payload, never
+  // in the exit code. What it may never do is let a bound read as a finding,
+  // which is why the absence lists are emptied rather than shortened when a
+  // walk is cut off, and why every figure prints the bounds it holds under.
+  {
+    name: 'reach',
+    question:
+      'Which states are reachable, which transitions are dead, where did the simulator hide a choice?',
+    backedBy: 'reachReport (src/semantics/mc/explore.ts)',
+    payloadKey: 'reach',
+    exitContract: 'report',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        fallback: 'every state machine in the model',
+        // The same words as `where-used`'s, `prompts`' and `contracts`': it is
+        // the same resolution, and two spellings of one grammar is how a reader
+        // learns that the second command wants something else.
+        doc: 'The element: an id, a qualified name, or a name unique in the model',
+      },
+      {
+        name: 'max-configs',
+        kind: 'value',
+        metavar: 'N',
+        fallback: `${DEFAULT_MAX_CONFIGS} configurations`,
+        doc: 'Configurations to explore before the walk gives up. A walk that hits it is PARTIAL: the unreachable and dead lists are emptied rather than shortened, the report says the bound was hit, and no absence is claimed from a walk that did not finish',
+      },
+    ],
   },
 ];
 

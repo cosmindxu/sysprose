@@ -734,6 +734,56 @@ const CODES = [
     hint: 'Install the optional solver package — the absence sentence on the row names it and prints the install command — and re-run to close the gap. It is deliberately not reported as an accepted clause: an unchecked gate that printed "accepted" would be a missing tool producing a green answer, which is the failure this lane is written against.',
   },
 
+  // The six the BEHAVIOUR engine raises (plan §3.8). None is an error, and the
+  // split is the reading rule the block above states: four are findings about a
+  // MACHINE — a state nothing reaches, a transition nothing fires, a state
+  // nothing leaves, a choice the notation does not resolve — and they are
+  // warnings; two say what the engine did NOT do, and are info. An error in
+  // this lane is reserved for a refuted obligation, and `reach` refutes
+  // nothing. The engine is pure TypeScript: no solver is behind any of them.
+  {
+    code: 'verification/unreachable-state',
+    source: 'verification',
+    severity: 'warning',
+    when: 'An EXHAUSTIVE walk of a machine’s configuration graph never entered a state. It is claimed only when four things hold at once: the walk finished inside its bounds, no completion-chase budget was spent, every trigger the machine names was offered, and no unsupported construct was met. On any bound hit the row is suppressed entirely rather than qualified.',
+    hint: 'Either a transition into the state is missing, or the guard on the one that is there can never hold. Read the bounds printed beside the claim: it is true under those and under no others, and `reach --max-configs N` widens them.',
+  },
+  {
+    code: 'verification/dead-transition',
+    source: 'verification',
+    severity: 'warning',
+    when: 'An EXHAUSTIVE walk never found a transition ENABLED in any reachable configuration — its source is unreachable, or its guard never holds where it is. Suppressed under the same four conditions as `verification/unreachable-state`. Only transitions the walk could offer are counted at all: one leaving a control node rather than a state — the `initial` node’s edge, which the interpreter READS to decide where the machine opens — is outside the census, not dead.',
+    hint: 'Note the reading before acting on it: dead means never enabled, so a transition that an inner state’s priority always beats is enabled and is NOT reported here. Fix the guard, or the path into its source.',
+  },
+  {
+    code: 'verification/deadlock',
+    source: 'verification',
+    severity: 'warning',
+    when: 'A reachable configuration has no enabled outgoing transition — no completion transition, and none for any trigger the machine names — and its active leaf is neither marked final nor a `done` node. Reachable means reached by a run of this semantics: a configuration only entered by firing a transition an inner state’s priority always beats is not explored, so nothing is reported there.',
+    hint: 'Give the state a way out, or end the machine there properly — `done finished;` in the notation, or `kind = "final"` through the API. It is a reading of ONE machine under the printed alphabet: it says the machine cannot progress from there, never that the system deadlocks, and this tool never writes "deadlock-free".',
+  },
+  {
+    code: 'verification/nondeterministic-choice',
+    source: 'verification',
+    severity: 'warning',
+    when: 'Two or more transitions leaving the SAME state are enabled at once on one event, in a configuration a run of this semantics reaches, so which of them fires is decided by declaration order. The row names the one the simulator takes and the ones it never takes. Transitions enabled at different levels of the active stack are NOT reported: innermost-first is the profile’s stated priority rule, not an ambiguity.',
+    hint: 'Declaration order is not a semantics. Give the transitions guards that cannot both hold, or different triggers; until then one of them is unreachable in simulation while the model admits both. A row on a trigger-less machine prints no trigger label, because there is none.',
+  },
+  {
+    code: 'verification/bound-exhausted',
+    source: 'verification',
+    severity: 'info',
+    when: 'A bound stopped the walk: the configuration bound (`--max-configs`), the depth bound, or a chain of completion transitions longer than the 64-step chase budget the interpreter itself runs under. The walk is partial.',
+    hint: 'The unreachable and dead lists are emptied rather than shortened, and the report says so: a partial walk cannot say what it never reached. Raise `--max-configs`, or read the run as what it is. This is not a defect in the model.',
+  },
+  {
+    code: 'verification/behaviour-unsupported-construct',
+    source: 'verification',
+    severity: 'info',
+    when: 'A machine uses a construct this engine does not explore: parallel regions (`attrs.parallel`), a history state (`attrs.history` or a history pseudostate) — neither of which `sysml.langium` has a keyword for, so both are reachable only through the API — or a transition missing an endpoint. The machine is not walked and is never reported as exhaustively explored.',
+    hint: 'Nothing under such a machine is a claim of absence: no state is reported unreachable and no transition dead. Model the behaviour with nested states and named triggers, or export the machine to an engine that decides it (§3.11).',
+  },
+
   /* ── round-trip oracle ── */
   {
     code: 'roundtrip/unparseable-serialization',

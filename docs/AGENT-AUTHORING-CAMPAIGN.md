@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 87 tests |
+| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 92 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-07: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **88 catalogue codes** in
+`npm run check` is what raises it — beside **94 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3456,6 +3456,88 @@ requirement now gets the position just inside its closing brace with a single
 space for an indent; a requirement usage with no body at all gets no range and a
 sentence saying it has no body, rather than the stale-file sentence that used to
 be reported for it.
+
+**The interpreter and the behaviour checker are one step relation, and the
+budget is now visible.** `runHierRegion`'s four closures — `fire`,
+`enterCascade`, `exitTo`, `chaseHierCompletion` — are gone: they are
+`enabledTransitions` and `stepConfig` in `src/semantics/mc/config.ts`, and the
+interpreter is the driving loop that asks what is enabled and takes `[0]`. The
+tie-break is unchanged (innermost active state first, declaration order within a
+state) and `test/unit/semantics.mc.differential.test.ts` holds the two to it: on
+every machine the execute suites build and both shipped examples,
+`runStateMachine` equals the left fold of `stepConfig` — visited, fired,
+performed, store and clock. The flat path (`runRegion`) still fires transitions
+with its own inline `find`, which is what makes those cases a comparison of two
+implementations rather than of a function with itself. The chase also stopped
+lying by omission: it used to spend its 64-step budget indistinguishably from
+reaching quiescence, and both paths now return that budget state, published as
+`StateRunResult.completionBudgetHit` and carried onto `executionReport`'s
+`StateMachineRun` — a flag only a caller could see was still a chase that a
+reader could not tell from a machine at rest, and `FlightModes` is one of the
+runs it is true for.
+
+**`reach` suppresses an absence claim rather than shrinking it.** "This state is
+unreachable" and "this transition is dead" are claims of ABSENCE, and a walk that
+was cut off cannot make one. So both lists are published only when four things
+hold at once — the walk finished inside its bounds, no completion chain longer
+than the 64-step chase budget was found, every trigger the machine names was
+offered, and no unsupported construct was met — and otherwise come back **empty**
+with `verification/bound-exhausted` saying which bound was hit. A configuration
+bound and a completion-chase bound do exactly the same thing, and the two cases
+are asserted side by side. A completion CYCLE is not one of those cases and is
+not treated as one: the interpreter's chase never settles on a cycle and says so
+through `completionBudgetHit`, but the walk re-enters a configuration it has
+already hashed, nothing downstream is unexplored, and the absence lists stay
+exact — which is why `FlightModes`, whose completion transitions cycle, is the
+exhaustive demonstration. The walk is deliberately loose in the other direction,
+in exactly one place: it offers each `after(n)` label as a named event instead of
+advancing a clock, so a state behind a dwell is treated as reachable — an
+over-approximation, which can only shrink an absence claim, never invent one.
+
+**Loose about the tie-break, never about the priority rule.** The walk branches
+on every transition enabled at the INNERMOST active level, where a simulation
+takes the first of them, and it stops there. Crossing levels would explore
+configurations reached by firing a transition an inner state always beats — which
+fires in no run at all — and while the absence lists would survive that (they can
+only shrink), `verification/deadlock` and `verification/nondeterministic-choice`
+are claims that a configuration was REACHED, so they would be invented rather
+than found. Every enabled transition is still counted FIRED, at any level,
+because `dead` means never ENABLED anywhere reachable. Two related census
+corrections landed with it: a transition whose source is not a state the stack
+can hold — the `initial start; transition start -> idle;` edge of every
+hand-written machine, which `initialState` CONSUMES rather than fires — is
+outside the census instead of being reported dead on every exhaustive walk; and a
+run that ends at a `done` node is an ending rather than `verification/deadlock`,
+read from the `DoneNode` metaclass beside the `kind = 'final'` attribute an
+API-built machine carries.
+
+**What `reach` will not explore, and why that is not a gap it hides.** A machine
+marked `attrs.parallel`, one with a history state, or one with a transition
+missing an endpoint is `verification/behaviour-unsupported-construct`: it is not
+walked at all, and no state under it is reported unreachable. Neither attribute
+has a keyword in `sysml.langium` — both are reachable only through the API — so
+walking such a machine as though it were an ordinary one would publish a
+reachable set computed under semantics the report says it does not implement.
+`stateMachinesIn` therefore treats a parallel container as the machine even
+though its regions own the transitions; without that, a parallel machine would
+have been reported as two independent ones and walked.
+
+**The demonstration on the shipped example is the hidden choice, not a count.**
+`FlightModes` has four states and five transitions, every one trigger-less, and
+`autonomous` has two of them enabled at once — so declaration order decides, and
+`failsafe` is never entered in simulation while the model plainly admits it.
+`verification/nondeterministic-choice` is that row. It prints the transitions by
+their endpoints (`autonomous -> failsafe`), because they are anonymous and a
+qualified name would have printed the same string twice; and it prints no trigger
+label, because the machine names none.
+
+**`reach` exits 2 for the command line, not for the model.** A `--max-configs`
+that is not a bound and an `--element` that names something holding no machine
+are usage errors and are refused as such. A file that simply declares no state
+machine is not: nothing was misused and nothing failed to load, so it prints
+`0 state machine(s)` with the sentence saying the file owns no transition, and
+exits 0 — the contract every other `report` subcommand keeps, and the one two of
+the shipped examples need to survive a `set -e` walk over a directory.
 
 ### Pinned behaviours (decisions, not defects)
 

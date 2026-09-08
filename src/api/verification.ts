@@ -85,6 +85,7 @@ import {
   type ConsistencyGroup,
   type ConsistencyResult,
 } from '../semantics/consistency';
+import { BEHAVIOUR_CODES, BEHAVIOUR_WARNING_CODES } from '../semantics/mc/explore';
 import {
   checkRefinement,
   refinementCensus,
@@ -1001,6 +1002,24 @@ const STRICT_VACUITY_CODE = 'verification/vacuous-property';
 export const INCONSISTENT_REQUIREMENTS_CODE = 'verification/inconsistent-requirements';
 
 /**
+ * The codes this lane raises as WARNINGS: findings about the model that are not
+ * refutations.
+ *
+ * Bound to the catalogue exactly as {@link VERIFICATION_ERROR_CODES} is, and by
+ * the same test: `test/unit/diagnostic-codes.test.ts` asserts this set is
+ * exactly the `verification/*` entries `src/text/langium/diagnostic-codes.ts`
+ * marks `warning`, and that every remaining `verification/*` entry is `info`.
+ * Three levels, one reading rule — error for a refuted obligation, warning for
+ * a finding about the MODEL that refutes nothing, info for the tool saying what
+ * it did not decide.
+ */
+export const VERIFICATION_WARNING_CODES: ReadonlySet<string> = new Set<string>([
+  // Only the behaviour engine raises one today: an unreachable state, a dead
+  // transition, a state nothing leaves, a choice the notation does not resolve.
+  ...BEHAVIOUR_WARNING_CODES,
+]);
+
+/**
  * The codes this lane raises as errors rather than as info lines.
  *
  * EXPORTED SO IT CAN BE BOUND TO THE CATALOGUE. It is a second statement of a
@@ -1080,6 +1099,10 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   // shown, since drafting comes before proving, so it had better be one the
   // catalogue explains.
   ...PROPERTY_CODE_SET,
+  // The six the behaviour engine raises, from `../semantics/mc/explore`. Same
+  // rule again: this set is what the catalogue guard reads, and a lane with one
+  // prefix has one list of codes whichever module emits them.
+  ...BEHAVIOUR_CODES,
 ]);
 
 /**

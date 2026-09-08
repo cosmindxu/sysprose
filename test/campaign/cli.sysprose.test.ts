@@ -2763,6 +2763,130 @@ package P {
     }
   }, 300_000);
 
+  it('reach walks FlightModes and names the choice the simulator hides', () => {
+    const r = run(['reach', UAV]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('1 state machine(s)');
+    expect(r.stdout).toContain('FlightModes');
+    expect(r.stdout).toContain('4 of 4 state(s) reachable');
+    expect(r.stdout).toContain('0 dead');
+    expect(r.stdout).toContain('exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64');
+    expect(r.stdout).toContain('verification/nondeterministic-choice');
+    expect(r.stdout).toContain('the simulator takes');
+    // The machine is trigger-less, so the report may not print a trigger label
+    // it made up: the alphabet line has to say there is none.
+    expect(r.stdout).toContain('alphabet no named trigger');
+    // And the words this command may never print, whatever it found.
+    expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
+  }, 90_000);
+
+  it('reach --json publishes under `reach`, with the semantic profile beside the figures', () => {
+    const r = run(['reach', UAV, '--json']);
+    expect(r.code).toBe(0);
+    const { keys, body } = payload<{
+      reach: {
+        machines: Array<{
+          machine: { name: string };
+          exhaustive: boolean;
+          boundHit: string;
+          qualification: string;
+          bounds: { maxConfigs: number; maxCompletion: number; alphabet: string[] };
+          states: { total: number; reachable: Array<{ name: string }>; unreachable: unknown[] };
+          transitions: { total: number; fired: number; dead: unknown[] };
+          nondeterminism: Array<{ state: { name: string }; event: string; taken: { to: { name: string } } }>;
+        }>;
+        profile: Array<{ field: string; reading: string; provenance: string }>;
+        totals: { machines: number; exhaustive: number };
+        diagnostics: Array<{ code: string; severity: string }>;
+      };
+    }>(r);
+    expect(keys).toEqual(['file', 'ok', 'reach']);
+    expect(body.reach.totals).toMatchObject({ machines: 1, exhaustive: 1 });
+    const fm = body.reach.machines[0];
+    expect(fm.machine.name).toBe('FlightModes');
+    expect(fm.exhaustive).toBe(true);
+    expect(fm.boundHit).toBe('none');
+    expect(fm.states.total).toBe(4);
+    expect(fm.states.unreachable).toEqual([]);
+    expect(fm.transitions).toMatchObject({ total: 5, fired: 5, dead: [] });
+    expect(fm.bounds.alphabet).toEqual([]);
+    expect(fm.nondeterminism).toHaveLength(1);
+    expect(fm.nondeterminism[0].state.name).toBe('autonomous');
+    expect(fm.nondeterminism[0].event).toBe('');
+    expect(fm.nondeterminism[0].taken.to.name).toBe('manual');
+    // Every report carries the reading it holds under (plan §3.8).
+    expect(body.reach.profile.map((f) => f.field)).toEqual([
+      'run-to-completion',
+      'priority',
+      'history',
+      'regions',
+      'deferred events',
+      'time',
+    ]);
+    expect(body.reach.diagnostics.map((d) => d.code)).toEqual([
+      'verification/nondeterministic-choice',
+    ]);
+  }, 90_000);
+
+  it('reach --max-configs suppresses both absence lists rather than shrinking them', () => {
+    const r = run(['reach', UAV, '--max-configs', '2', '--json']);
+    expect(r.code).toBe(0);
+    const { body } = payload<{
+      reach: {
+        machines: Array<{
+          exhaustive: boolean;
+          boundHit: string;
+          suppressed: boolean;
+          qualification: string;
+          states: { unreachable: unknown[] };
+          transitions: { dead: unknown[] };
+        }>;
+        diagnostics: Array<{ code: string; message: string }>;
+      };
+    }>(r);
+    const fm = body.reach.machines[0];
+    expect(fm.boundHit).toBe('configs');
+    expect(fm.exhaustive).toBe(false);
+    expect(fm.suppressed).toBe(true);
+    expect(fm.states.unreachable).toEqual([]);
+    expect(fm.transitions.dead).toEqual([]);
+    expect(fm.qualification).toContain('lower bounds');
+    const bound = body.reach.diagnostics.find((d) => d.code === 'verification/bound-exhausted');
+    expect(bound!.message).toContain('NOT reported as findings');
+    expect(body.reach.diagnostics.some((d) => d.code === 'verification/unreachable-state')).toBe(
+      false,
+    );
+  }, 90_000);
+
+  it('reach reports a file with no machine at all, and exits 0 doing it', () => {
+    // NOT a usage error. Nothing was misused and nothing failed to load: the
+    // file simply declares no machine, which is a fact about the model and the
+    // report's answer to the question. `reach` carries `exitContract: 'report'`
+    // and two of the shipped examples are this shape, so exiting 2 would break
+    // a `set -e` walk over a directory of models on files that are fine.
+    const noMachine = resolve(process.cwd(), 'examples/uav-isr-verification.sysml');
+    const r = run(['reach', noMachine]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('0 state machine(s)');
+    expect(r.stdout).toContain('declares no element that owns a transition');
+
+    const j = run(['reach', noMachine, '--json']);
+    expect(j.code).toBe(0);
+    const { body } = payload<{ reach: { machines: unknown[]; totals: { machines: number } } }>(j);
+    expect(body.reach.machines).toEqual([]);
+    expect(body.reach.totals.machines).toBe(0);
+  }, 90_000);
+
+  it('reach refuses a --max-configs that is not a bound, and a REF that holds no machine', () => {
+    const bad = run(['reach', UAV, '--max-configs', 'lots']);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toContain('--max-configs');
+
+    const noMachine = run(['reach', UAV, '--element', 'EnduranceRequirement']);
+    expect(noMachine.code).toBe(2);
+    expect(noMachine.stderr).toContain('no state machine');
+  }, 90_000);
+
   it('--no-library skips binding and still reports the file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'nolib.sysml');

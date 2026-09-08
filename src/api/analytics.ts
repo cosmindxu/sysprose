@@ -1809,6 +1809,18 @@ export interface StateMachineRun {
   clock: number;
   /** Whether every region reached a final/complete state (and any join fired). */
   complete: boolean;
+  /**
+   * Whether the run-to-completion chase spent its 64-step budget with something
+   * still enabled — i.e. this run was CUT OFF mid-chase rather than settling.
+   *
+   * Carried here because the flag is worthless at the function boundary alone:
+   * `runStateMachine` learned to return it (plan §3.8) precisely so a reader
+   * could tell "the machine came to rest" from "the simulator stopped counting",
+   * and `visited` / `finalState` / `activeStates` read identically in the two
+   * cases. `FlightModes` in `examples/uav-isr.sysml` is one of the second kind:
+   * its completion transitions cycle, so every run of it is cut off.
+   */
+  completionBudgetHit: boolean;
 }
 
 /** Runnable behaviors in the model, each with a short simulated trace. */
@@ -1897,6 +1909,7 @@ export function executionReport(model: Model): ExecutionReport {
         activeStates: result.activeStates,
         clock: result.clock ?? 0,
         complete: result.complete ?? result.finalState !== null,
+        completionBudgetHit: result.completionBudgetHit === true,
       });
     }
   }

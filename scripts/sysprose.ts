@@ -99,11 +99,15 @@ import {
   obligationsReport,
   orphanReport,
   refinementReport,
+  profileLines,
   promptsFor,
   propertyCheck,
   propertyDraft,
   PropertyRefError,
   READING,
+  reachReport,
+  stateMachinesIn,
+  transitionLabel,
   requirementSatisfaction,
   traceabilityMatrix,
   verdictFor,
@@ -123,6 +127,8 @@ import {
   type PropertyCheckReport,
   type RefinementReport,
   type PropertyDraftReport,
+  type MachineReach,
+  type ReachReport,
   type VerificationCaseVerdict,
   type VerifyEngineOption,
   VerifyOptionError,
@@ -157,6 +163,7 @@ import { flagGiven, flagValue, isArgError, parseArgs, type ParsedArgs } from './
 import { runMain } from './lib/exit';
 import {
   COMMANDS,
+  DEFAULT_MAX_CONFIGS,
   STATEMENT_KIND_FLAG_VALUES,
   TRACE_PRESETS,
   findCommand,
@@ -2475,6 +2482,119 @@ function reportOrphans(model: Model, name: string): Report {
   return { json: r, text };
 }
 
+/* ────────────────────────────── reach ──────────────────────────────────── */
+
+/**
+ * `--max-configs N`, refused before the file is read.
+ *
+ * A bound that is not a bound is an answer about the command line, and the
+ * refusal matters more here than for most flags: every absence this command
+ * reports is true only under the bounds it printed, so a bound the tool
+ * silently replaced with a default would make the printed qualification a lie.
+ */
+function reachMaxConfigs(args: ParsedArgs): number | undefined {
+  const raw = flagValue(args, 'max-configs');
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new UsageError(
+      `--max-configs must be a positive whole number of configurations; got ${raw}. ` +
+        `It is the walk\u2019s budget (default ${DEFAULT_MAX_CONFIGS}), and every figure this command ` +
+        'prints is true only under the bounds printed beside it.',
+    );
+  }
+  return n;
+}
+
+/**
+ * The machine (or machines) to walk.
+ *
+ * A `REF` that holds no state machine is refused BY NAME rather than answered
+ * with an empty report: "0 machines, nothing to say" is indistinguishable from
+ * a model whose machines this command failed to find, and the reader would have
+ * no way to tell which they were looking at. That refusal is for the FLAG. A
+ * file with no machine at all is not a usage error and does not exit 2: nothing
+ * was misused and nothing failed to load, the answer is simply "no machine
+ * here", and `reach` is a `report` command — `evidence-status` prints "nothing
+ * in this file states a verdict" and exits 0 on the same shape. Exiting 2 would
+ * also break a `set -e` walk over a directory of models on the two shipped
+ * examples that declare no machine.
+ */
+function reachScope(model: Model, args: ParsedArgs): ElementRecord | undefined {
+  const scope = verificationScope(model, args);
+  if (scope === undefined) return scope;
+  if (stateMachinesIn(model, scope.id).length === 0) {
+    // Name the machine that CONTAINS the element when there is one: the
+    // commonest mistake is naming a state rather than the machine it is in.
+    const holder = stateMachinesIn(model).find((m) =>
+      model.descendants(m.id).some((d) => d.id === scope.id),
+    );
+    throw new UsageError(
+      `\`${qname(model, scope.id)}\` holds no state machine` +
+        (holder ? ` — it is inside \`${qname(model, holder.id)}\`, which is one` : ''),
+    );
+  }
+  return scope;
+}
+
+/** One machine's block: the figures, then the rows that qualify them. */
+function machineLines(m: MachineReach): string[] {
+  const out: string[] = [
+    `  ${m.machine.qualifiedName} [${m.machine.eClass}]`,
+    `    ${m.configs} configuration(s) explored, depth ${m.depth} \u2014 ${m.qualification}`,
+    `    ${m.states.reachable.length} of ${m.states.total} state(s) reachable; ` +
+      `${m.transitions.fired} of ${m.transitions.total} transition(s) fired, ${m.transitions.dead.length} dead`,
+  ];
+  for (const u of m.unsupported) out.push(`    not explored: ${u.construct} \u2014 ${u.detail}`);
+  for (const s of m.states.unreachable) out.push(`    unreachable  ${s.qualifiedName}`);
+  for (const t of m.transitions.dead) out.push(`    dead         ${transitionLabel(t)}`);
+  for (const d of m.deadlocks) {
+    out.push(`    no way out   ${d.leaf.qualifiedName} \u2014 reached in ${d.steps} step(s), not marked final`);
+  }
+  for (const n of m.nondeterminism) {
+    const on = n.event === '' ? 'as completion transitions (no trigger)' : `on \`${n.event}\``;
+    out.push(
+      `    choice       ${n.state.qualifiedName}: ${n.enabled.length} enabled ${on}; ` +
+        `the simulator takes ${transitionLabel(n.taken)}, never ` +
+        `${n.notTaken.map(transitionLabel).join(', ')}`,
+    );
+  }
+  if (m.suppressed) {
+    out.push(
+      '    the unreachable and dead lists are SUPPRESSED: a walk that did not finish cannot say what it never reached',
+    );
+  }
+  return out;
+}
+
+function reportReach(model: Model, name: string, args: ParsedArgs): Report {
+  const scope = reachScope(model, args);
+  const maxConfigs = reachMaxConfigs(args);
+  const r: ReachReport = reachReport(model, {
+    ...(scope ? { scopeId: scope.id } : {}),
+    ...(maxConfigs !== undefined ? { maxConfigs } : {}),
+  });
+  const text = [
+    `${name}: ${r.totals.machines} state machine(s), ${r.totals.exhaustive} walked to exhaustion; ` +
+      `${r.totals.configs} configuration(s) explored`,
+    ...(scope ? [`  scoped to ${qname(model, scope.id)}`] : []),
+    // The sentence that keeps the command inside its remit: it decides the
+    // finite abstraction it walked, and nothing beyond it.
+    '  a bounded walk of what the interpreter would do \u2014 every figure below holds under the bounds printed beside it',
+    // Said in words rather than left as a bare zero: a reader who asked for a
+    // walk and got no rows needs to know the file has nothing to walk, not
+    // wonder whether the command failed to find it.
+    ...(r.machines.length === 0
+      ? ['  this file declares no element that owns a transition, so there is no configuration graph to walk']
+      : []),
+    ...r.machines.flatMap(machineLines),
+    '  semantic profile (the reading every figure above holds under):',
+    ...profileLines('    '),
+    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text };
+}
+
 /* ──────────────────────────────── dispatch ──────────────────────────────── */
 
 /**
@@ -2531,6 +2651,8 @@ async function buildReport(
       return reportEvidenceAttach(model, name, args, degraded);
     case 'evidence-detach':
       return reportEvidenceDetach(model, name, degraded);
+    case 'reach':
+      return reportReach(model, name, args);
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.
@@ -2591,6 +2713,11 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
       // `--from` is the whole command; a run without it would parse a model,
       // bind the library and then say it had nothing to attach.
       attachFrom(args);
+      return;
+    case 'reach':
+      // A bound that is not a bound is an answer about the command line, and
+      // loading a model to say so costs a second of parsing and binding.
+      reachMaxConfigs(args);
       return;
     default:
       return;

@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DIAGNOSTIC_CODES, diagnosticCode, isKnownCode, renderHint } from '@text/index';
-import { VERIFICATION_CODES, VERIFICATION_ERROR_CODES } from '@api/index';
+import { VERIFICATION_CODES, VERIFICATION_ERROR_CODES, VERIFICATION_WARNING_CODES } from '@api/index';
 
 const DOC = readFileSync(resolve(process.cwd(), 'docs/DIAGNOSTIC-CODES.md'), 'utf8');
 const documented = new Set([...DOC.matchAll(/^### `([^`]+)`$/gm)].map((m) => m[1]));
@@ -74,12 +74,28 @@ describe('diagnostic-code catalogue', () => {
     );
     // Both sides non-empty, or the equality holds over two empty sets.
     expect(catalogueErrors.length, 'the lane stopped raising anything as an error').toBeGreaterThan(0);
+    // The middle level, bound the same way. A finding about the MODEL that is
+    // not a refutation — an unreachable state, a dead transition — is a warning:
+    // filing it as info would put it beside "this construct is outside the
+    // fragment", which is the tool talking about itself.
+    const catalogueWarnings = DIAGNOSTIC_CODES.filter(
+      (c) => c.code.startsWith('verification/') && c.severity === 'warning',
+    )
+      .map((c) => c.code)
+      .sort();
+    expect(
+      [...VERIFICATION_WARNING_CODES].sort(),
+      'the runtime severity and the catalogue disagree about the warnings',
+    ).toEqual(catalogueWarnings);
+    // Both sides non-empty here too, or a lane that downgraded every finding to
+    // info while emptying `BEHAVIOUR_WARNING_CODES` would pass this vacuously.
+    expect(catalogueWarnings.length, 'the lane stopped raising anything as a warning').toBeGreaterThan(0);
     // And every other verification code is an info line — the reading rule the
     // catalogue states in prose, asserted.
     for (const c of DIAGNOSTIC_CODES) {
       if (!c.code.startsWith('verification/')) continue;
-      if (VERIFICATION_ERROR_CODES.has(c.code)) continue;
-      expect(c.severity, `${c.code} is neither an error the lane raises nor an info line`).toBe('info');
+      if (VERIFICATION_ERROR_CODES.has(c.code) || VERIFICATION_WARNING_CODES.has(c.code)) continue;
+      expect(c.severity, `${c.code} is neither an error, a warning, nor an info line`).toBe('info');
     }
   });
 

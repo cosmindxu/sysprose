@@ -35,6 +35,42 @@ import { effectiveFeatures } from './inheritance';
 import { parseExpr, evaluate } from './expr';
 import { scopeFor, checkConstraints, type Scope, type ConstraintCheck } from './evaluate-model';
 import { isBindingEdge, propagateValues } from './connectors';
+// The step relation and the primitives it is built from. They were lifted out
+// of this file so a checker can ask what is enabled without firing it (plan
+// §3.8); the interpreter imports them back and takes the FIRST enabled
+// transition, which is the tie-break it always had.
+import {
+  SUCCESSION_KINDS,
+  advanceClock,
+  afterDuration,
+  applyAssignment,
+  applyTransitionEffect,
+  combinedScope,
+  directStates,
+  enabledTransitions,
+  evalStr,
+  guardHoldsStore,
+  initialConfig,
+  initialState,
+  inlineAssign,
+  isCompletion,
+  isFinalState,
+  isHistoryComposite,
+  isHistoryPseudostate,
+  isTruthy,
+  leafOf,
+  literalValueOf,
+  runStatePhase,
+  seedStore,
+  stepConfig,
+  strAttr,
+  triggerEquals,
+  triggerLabelOf,
+  type EnabledTransition,
+  type MachineConfig,
+  type StepEffects,
+  type StepInput,
+} from './mc/config';
 
 /* ───────────────────────────── action flow ───────────────────────────── */
 
@@ -126,8 +162,6 @@ export interface RunActionOptions {
    */
   maxDepth?: number;
 }
-
-const SUCCESSION_KINDS = new Set(['Succession', 'SuccessionFlow']);
 
 /** Is `el` a node that participates in an action's control/object flow? */
 function isFlowNode(el: ElementRecord): boolean {
@@ -508,61 +542,6 @@ function runLoopBody(
 }
 
 /**
- * Apply an AssignmentActionUsage to the store: `store[target] = eval(value)`.
- * The target name comes from `attrs.target` / `attrs.referent` / `attrs.feature`
- * / the declared name; the value expression from `attrs.value` / `attrs.expression`.
- * A parsed `assign x := -1;` stores the literal as a number, so the value is
- * read raw rather than through `strAttr`, which would skip it silently.
- */
-function applyAssignment(
-  el: ElementRecord,
-  store: Map<string, unknown>,
-  scope: Scope,
-): string | undefined {
-  const target =
-    strAttr(el, 'target') ?? strAttr(el, 'referent') ?? strAttr(el, 'feature') ?? el.declaredName;
-  const raw = el.attrs.value ?? strAttr(el, 'expression');
-  if (!target || raw === undefined) return undefined;
-  const v = evalStr(raw, store, scope);
-  if (v === undefined) return undefined;
-  store.set(target, v);
-  return `${target} = ${formatValue(v)}`;
-}
-
-/** Parse and apply a `name = expr` assignment string to the store. */
-function inlineAssign(text: string, store: Map<string, unknown>, scope: Scope): boolean {
-  const idx = text.indexOf('=');
-  if (idx <= 0 || text[idx + 1] === '=') return false; // no '=' or an '==' operator
-  const lhs = text.slice(0, idx).trim().replace(/:$/, ''); // allow ':=' form
-  const rhs = text.slice(idx + 1).trim();
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(lhs)) return false;
-  const v = evalStr(rhs, store, scope);
-  if (v === undefined) return false;
-  store.set(lhs, v);
-  return true;
-}
-
-/** Seed the store from literal feature values in the behavior, then overrides. */
-function seedStore(
-  model: Model,
-  behavior: ElementRecord,
-  store: Map<string, unknown>,
-  initial?: Map<string, unknown> | Record<string, unknown>,
-): void {
-  for (const f of model.descendants(behavior.id)) {
-    if (!isUsage(f.eClass)) continue;
-    const name = f.declaredName;
-    if (!name || store.has(name)) continue;
-    const v = literalValueOf(f);
-    if (v !== undefined) store.set(name, v);
-  }
-  if (initial) {
-    const entries = initial instanceof Map ? initial.entries() : Object.entries(initial);
-    for (const [k, v] of entries) store.set(k, v);
-  }
-}
-
-/**
  * Seed the FEATURE-ID value store (and, when absent, the by-name store) from
  * literal pin/feature values in `behavior`. Complements {@link seedStore} for
  * called sub-behaviors whose features are not descendants of the caller.
@@ -743,46 +722,9 @@ function pinValue(
   return undefined;
 }
 
-/** A store-aware {@link Scope}: the store (by name) shadows the static scope. */
-function storeScope(store: Map<string, unknown>, scope: Scope): Scope {
-  return (name: string) => (store.has(name) ? store.get(name) : scope(name));
-}
-
-/** Evaluate an expression string against the store, or `undefined` if unknown. */
-function evalStr(raw: unknown, store: Map<string, unknown>, scope: Scope): unknown {
-  if (typeof raw !== 'string') return raw;
-  const s = raw.trim();
-  if (s === '') return undefined;
-  try {
-    const r = evaluate(parseExpr(s), storeScope(store, scope));
-    return 'value' in r ? r.value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** A guard holds against the store when absent or evaluating to boolean true. */
-function guardHoldsStore(edge: ElementRecord, store: Map<string, unknown>, scope: Scope): boolean {
-  const g = edge.attrs.guard;
-  if (typeof g !== 'string' || g.trim() === '') return true;
-  return evalStr(g, store, scope) === true;
-}
-
-/** Read a string-valued attribute, or `undefined`. */
-function strAttr(el: ElementRecord, key: string): string | undefined {
-  const v = el.attrs[key];
-  return typeof v === 'string' ? v : undefined;
-}
-
 /** Coerce a value to a number, or `undefined` when it is not numeric. */
 function asNumber(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-}
-
-/** Compact string form of a store value for trace notes. */
-function formatValue(v: unknown): string {
-  if (typeof v === 'string') return v;
-  return String(v);
 }
 
 /** Kahn topological sort; leftover (cycle) nodes appended in declaration order. */
@@ -932,6 +874,19 @@ export interface StateRunResult {
    * flat/parallel path where completeness is not tracked.
    */
   complete?: boolean;
+  /**
+   * True when the completion chase ran out of its `maxCompletion` budget with a
+   * completion transition still enabled — the run stopped mid-chase rather than
+   * at quiescence.
+   *
+   * WHY IT IS PUBLISHED. The chase used to exhaust its budget indistinguishably
+   * from reaching quiescence: no flag, no return value, and a reader could not
+   * tell a machine that settled from one that was cut off at 64 steps. Anything
+   * that reports on a run has to be able to say which it was (plan §3.8), so the
+   * budget state comes back out. Both interpreter paths set it; it is
+   * `undefined` only for a container that holds no machine at all.
+   */
+  completionBudgetHit?: boolean;
 }
 
 /**
@@ -988,16 +943,18 @@ export function runStateMachine(
   const visited: ElementId[] = [];
   const fired: StateFire[] = [];
   const finals: (ElementId | null)[] = [];
+  let completionBudgetHit = false;
   for (const region of regions) {
     const res = runRegion(model, region.id, stringTriggers, valueStore, performed, maxCompletion);
     visited.push(...res.visited);
     fired.push(...res.fired);
     finals.push(res.finalState);
+    if (res.completionBudgetHit) completionBudgetHit = true;
   }
 
   const activeStates = finals.filter((s): s is ElementId => s !== null);
   const finalState = parallel ? (finals[0] ?? null) : (finals[0] ?? null);
-  return { visited, fired, performed, valueStore, activeStates, finalState };
+  return { visited, fired, performed, valueStore, activeStates, finalState, completionBudgetHit };
 }
 
 /** A driving step is a discrete-clock time advance rather than a named trigger. */
@@ -1013,7 +970,7 @@ function runRegion(
   store: Map<string, unknown>,
   performed: PerformedAction[],
   maxCompletion: number,
-): { visited: ElementId[]; fired: StateFire[]; finalState: ElementId | null } {
+): { visited: ElementId[]; fired: StateFire[]; finalState: ElementId | null; completionBudgetHit: boolean } {
   const region = model.get(regionId)!;
   const desc = model.descendants(regionId);
   const states = desc.filter((e) => e.eClass === 'StateUsage');
@@ -1029,11 +986,15 @@ function runRegion(
   const visited: ElementId[] = [];
   const fired: StateFire[] = [];
 
+  let completionBudgetHit = false;
+
   let current = initialState(model, regionId, states, desc, declIndex);
-  if (!current) return { visited, fired, finalState: null };
+  if (!current) return { visited, fired, finalState: null, completionBudgetHit };
   visited.push(current);
   enterState(model, current, store, scope, performed);
-  current = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion);
+  const opening = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion);
+  current = opening.current;
+  if (opening.exhausted) completionBudgetHit = true;
 
   for (const trigger of triggers) {
     const cur = current!;
@@ -1051,15 +1012,23 @@ function runRegion(
     current = to;
     visited.push(to);
     enterState(model, to, store, scope, performed);
-    current = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion);
+    const chased = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion);
+    current = chased.current;
+    if (chased.exhausted) completionBudgetHit = true;
   }
 
-  return { visited, fired, finalState: current };
+  return { visited, fired, finalState: current, completionBudgetHit };
 }
 
 /**
  * Fire completion (trigger-less) transitions automatically after entering a
- * state, bounded by `budget`, applying entry/exit behaviors and effects.
+ * state, bounded by `budget`, applying entry/exit behaviors and effects — and
+ * SAY whether it stopped at quiescence or ran out of budget.
+ *
+ * The budget state is returned for the same reason its hierarchical sibling
+ * returns one (plan §3.8): a chase cut off mid-run left the machine somewhere
+ * it would not have stopped, and a run that could not tell a reader which of
+ * the two happened was reporting a bound as a fact.
  */
 function chaseCompletion(
   model: Model,
@@ -1071,13 +1040,15 @@ function chaseCompletion(
   visited: ElementId[],
   fired: StateFire[],
   budget: number,
-): ElementId {
+): { current: ElementId; exhausted: boolean } {
   let current = start;
-  for (let i = 0; i < budget; i++) {
-    const t = transitions.find(
+  const enabled = (): ElementRecord | undefined =>
+    transitions.find(
       (tr) => tr.source![0] === current && isCompletion(tr) && guardHoldsStore(tr, store, scope),
     );
-    if (!t) break;
+  for (let i = 0; i < budget; i++) {
+    const t = enabled();
+    if (!t) return { current, exhausted: false };
     const to = t.target![0];
     exitState(model, current, store, scope, performed);
     applyTransitionEffect(t, store, scope);
@@ -1086,7 +1057,9 @@ function chaseCompletion(
     visited.push(to);
     enterState(model, to, store, scope, performed);
   }
-  return current;
+  // Budget spent. Exhausted only if something was still enabled: a chase that
+  // used its last step to reach quiescence did not run out of anything.
+  return { current, exhausted: enabled() !== undefined };
 }
 
 /** Record + apply the entry then do behaviors of a state being entered. */
@@ -1112,77 +1085,6 @@ function exitState(
   runStatePhase(model, stateId, 'exit', store, scope, performed);
 }
 
-/** Record and apply every behavior of a given phase (entry/do/exit). */
-function runStatePhase(
-  model: Model,
-  stateId: ElementId,
-  phase: 'entry' | 'do' | 'exit',
-  store: Map<string, unknown>,
-  scope: Scope,
-  performed: PerformedAction[],
-): void {
-  for (const a of model.children(stateId)) {
-    if (a.attrs.stateSubaction !== phase) continue;
-    performed.push({ stateId, phase, actionId: a.id, name: a.declaredName ?? '' });
-    applyBehaviorEffect(a, store, scope);
-  }
-}
-
-/** Apply a behavior action's store effect (an assignment or `attrs.effect`). */
-function applyBehaviorEffect(el: ElementRecord, store: Map<string, unknown>, scope: Scope): void {
-  const effect = strAttr(el, 'effect');
-  if (effect !== undefined) inlineAssign(effect, store, scope);
-  if (el.eClass === 'AssignmentActionUsage') applyAssignment(el, store, scope);
-  else if (strAttr(el, 'target') !== undefined) applyAssignment(el, store, scope);
-}
-
-/** Apply a transition's effect (an `attrs.effect` assignment) to the store. */
-function applyTransitionEffect(tr: ElementRecord, store: Map<string, unknown>, scope: Scope): void {
-  const effect = strAttr(tr, 'effect');
-  if (effect !== undefined) inlineAssign(effect, store, scope);
-}
-
-/** A transition matches a fired trigger when its non-empty trigger equals it. */
-function triggerEquals(tr: ElementRecord, trigger: string): boolean {
-  const t = tr.attrs.trigger;
-  return typeof t === 'string' && t !== '' && t === trigger;
-}
-
-/** A completion transition carries no trigger. */
-function isCompletion(tr: ElementRecord): boolean {
-  const t = tr.attrs.trigger;
-  return t === undefined || t === null || t === '';
-}
-
-/** Loose truthiness for a boolean-ish attribute value. */
-function isTruthy(v: unknown): boolean {
-  return v === true || v === 'true' || v === 1;
-}
-
-/** Resolve the initial state: an InitialNode's target, else the first StateUsage. */
-function initialState(
-  model: Model,
-  stateId: ElementId,
-  states: ElementRecord[],
-  desc: ElementRecord[],
-  declIndex: Map<ElementId, number>,
-): ElementId | null {
-  const initialNode = desc.find((e) => e.eClass === 'InitialNode');
-  if (initialNode) {
-    const edge = model
-      .edgesFrom(initialNode.id)
-      .find((e) => SUCCESSION_KINDS.has(e.eClass) || e.eClass === 'TransitionUsage');
-    const to = edge?.target?.[0];
-    if (to && states.some((s) => s.id === to)) return to;
-  }
-  if (states.length) {
-    return states
-      .slice()
-      .sort((a, b) => (declIndex.get(a.id) ?? 0) - (declIndex.get(b.id) ?? 0))[0].id;
-  }
-  return null;
-}
-
 /** A transition's trigger matches when equal, or it is a completion transition. */
 function _triggerMatches(tr: ElementRecord, trigger: string): boolean {
   const t = tr.attrs.trigger;
@@ -1191,40 +1093,6 @@ function _triggerMatches(tr: ElementRecord, trigger: string): boolean {
 }
 
 /* ───────────── hierarchical / orthogonal / timed state machines ────────── */
-
-/** Direct child StateUsages of a container (its states at one nesting level). */
-function directStates(model: Model, containerId: ElementId): ElementRecord[] {
-  return model.children(containerId).filter((c) => c.eClass === 'StateUsage');
-}
-
-/** The initial substate of a container (InitialNode target, else first state). */
-function initialSubstate(model: Model, containerId: ElementId): ElementId | null {
-  const states = directStates(model, containerId);
-  const desc = model.descendants(containerId);
-  const declIndex = new Map<ElementId, number>();
-  desc.forEach((e, i) => declIndex.set(e.id, i));
-  return initialState(model, containerId, states, desc, declIndex);
-}
-
-/** Is `el` a history pseudostate (resume-last marker)? */
-function isHistoryPseudostate(el: ElementRecord): boolean {
-  return el.attrs.kind === 'history' || el.attrs.pseudostate === 'history';
-}
-
-/** A composite state that resumes its last-active substate on re-entry. */
-function isHistoryComposite(model: Model, stateId: ElementId): boolean {
-  const s = model.get(stateId);
-  if (!s) return false;
-  if (s.attrs.history === true || s.attrs.kind === 'history') return true;
-  return model.children(stateId).some(isHistoryPseudostate);
-}
-
-/** A final/complete state (a region completes when its leaf is final). */
-function isFinalState(model: Model, stateId: ElementId): boolean {
-  const s = model.get(stateId);
-  if (!s) return false;
-  return s.attrs.kind === 'final' || s.attrs.isFinal === true || s.declaredName === 'final';
-}
 
 /** Container-level transitions (source is the container itself). */
 function containerTransitions(model: Model, containerId: ElementId): ElementRecord[] {
@@ -1239,24 +1107,6 @@ function containerTransitions(model: Model, containerId: ElementId): ElementReco
 /** An orthogonal JOIN transition: a container-level completion/`join` edge. */
 function isJoinTransition(tr: ElementRecord): boolean {
   return tr.attrs.kind === 'join' || isCompletion(tr);
-}
-
-/** The dwell time of an `after(n)` timed transition, or `undefined`. */
-function afterDuration(tr: ElementRecord): number | undefined {
-  const a = tr.attrs.after;
-  if (typeof a === 'number') return a;
-  const t = tr.attrs.trigger;
-  if (typeof t === 'string') {
-    const m = /^after\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*\)$/.exec(t.trim());
-    if (m) return Number(m[1]);
-  }
-  return undefined;
-}
-
-/** The trigger label of a transition (empty for completion transitions). */
-function triggerLabelOf(tr: ElementRecord): string {
-  const t = tr.attrs.trigger;
-  return typeof t === 'string' ? t : '';
 }
 
 /**
@@ -1315,10 +1165,12 @@ function runHierMachine(
 
   const leaves: (ElementId | null)[] = [];
   const completes: boolean[] = [];
+  let completionBudgetHit = false;
   for (const rc of regionContainers) {
     const r = runHierRegion(model, rc.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion);
     leaves.push(r.leaf);
     completes.push(r.complete);
+    if (r.completionBudgetHit) completionBudgetHit = true;
   }
 
   const activeStates = leaves.filter((s): s is ElementId => s !== null);
@@ -1354,13 +1206,27 @@ function runHierMachine(
     finalState,
     clock: clockRef.clock,
     complete,
+    completionBudgetHit,
   };
 }
 
 /**
  * Drive a single hierarchical region (rooted at `containerId`) against the step
- * sequence, maintaining a stack of nested active states. Returns the active leaf
- * and whether the region reached a final state.
+ * sequence. Returns the active leaf, whether the region reached a final state,
+ * and whether the completion chase ever ran out of budget.
+ *
+ * THE FOUR CLOSURES ARE GONE. `fire`, `enterCascade`, `exitTo` and
+ * `chaseHierCompletion` used to be mutable closures over this function's stack;
+ * they are now `stepConfig` / `enabledTransitions` in `./mc/config.ts` and this
+ * function is the DRIVING LOOP over them — it asks what is enabled and takes
+ * `[0]`, which is the same first-enabled tie-break it always had (innermost
+ * active state first, declaration order within a state). The point is that a
+ * checker can now ask the same question and take a different answer, and
+ * `test/unit/semantics.mc.differential.test.ts` holds the two to one relation.
+ *
+ * The run's arrays, store, clock and history map are still this function's to
+ * append to: a configuration is a value, and what a step appended to the run
+ * comes back beside it.
  */
 function runHierRegion(
   model: Model,
@@ -1373,120 +1239,83 @@ function runHierRegion(
   history: Map<ElementId, ElementId>,
   clockRef: { clock: number },
   maxCompletion: number,
-): { leaf: ElementId | null; complete: boolean } {
-  const scope = combinedScope(model, model.get(containerId)!);
-  const stack: ElementId[] = [];
-  const entryTime = new Map<ElementId, number>();
+): { leaf: ElementId | null; complete: boolean; completionBudgetHit: boolean } {
+  const COMPLETION: StepInput = { kind: 'completion' };
+  const TIMEOUT: StepInput = { kind: 'timeout' };
 
-  const allTransitions = model
-    .descendants(containerId)
-    .filter((e) => e.eClass === 'TransitionUsage' && e.source?.[0] !== undefined && e.target?.[0] !== undefined);
-  const transitionsFrom = (sid: ElementId): ElementRecord[] =>
-    allTransitions.filter((t) => t.source![0] === sid);
+  // The region starts from the RUN's store, clock and history, because regions
+  // share all three: region 2 sees what region 1 wrote (`runStateMachine`
+  // concatenates regions, it does not interleave them — the semantic profile
+  // says so in those words).
+  const opening = initialConfig(model, containerId, { store, clock: clockRef.clock, history });
+  let cfg: MachineConfig = opening.config;
+  let completionBudgetHit = false;
 
-  // Enter a state, cascading into its initial (or history-resumed) substate;
-  // entry/do phases fire outer→inner.
-  const enterCascade = (stateId: ElementId): void => {
-    stack.push(stateId);
-    entryTime.set(stateId, clockRef.clock);
-    visited.push(stateId);
-    runStatePhase(model, stateId, 'entry', store, scope, performed);
-    runStatePhase(model, stateId, 'do', store, scope, performed);
-    const subs = directStates(model, stateId);
-    if (subs.length === 0) return;
-    let next: ElementId | null = null;
-    const resumed = history.get(stateId);
-    if (isHistoryComposite(model, stateId) && resumed !== undefined && subs.some((s) => s.id === resumed)) {
-      next = resumed;
-    } else {
-      next = initialSubstate(model, stateId);
+  /** Take a step: publish its effects into the run, and keep the new config. */
+  const apply = (r: { config: MachineConfig; effects: StepEffects }): void => {
+    cfg = r.config;
+    visited.push(...r.effects.visited);
+    fired.push(...r.effects.fired);
+    performed.push(...r.effects.performed);
+    // Written back rather than swapped: `valueStore` is the map the caller gets
+    // and the next region reads, so it has to be the same object throughout.
+    // Nothing in the step relation deletes a key, so setting is enough.
+    for (const [k, v] of r.config.store) store.set(k, v);
+    clockRef.clock = r.config.clock;
+    for (const [k, v] of r.config.history) history.set(k, v);
+  };
+
+  /**
+   * Fire completion (trigger-less) transitions until none is enabled — and SAY
+   * whether it stopped because none was enabled or because the budget ran out.
+   *
+   * The budget state is the return value this closure did not use to have, and
+   * the reason it now does is honesty downstream: a chase that stopped at 64
+   * steps has left the machine mid-run, and a report that called the result
+   * quiescent would be reporting a bound as a fact (plan §3.8).
+   */
+  const chaseHierCompletion = (): { fires: number; exhausted: boolean } => {
+    let fires = 0;
+    while (fires < maxCompletion) {
+      const enabled = enabledTransitions(model, cfg, COMPLETION);
+      if (enabled.length === 0) return { fires, exhausted: false };
+      apply(stepConfig(model, cfg, enabled[0]));
+      fires++;
     }
-    if (next) enterCascade(next);
+    // Budget spent. Exhausted only if something was still enabled: a chase that
+    // used its last step to reach quiescence did not run out of anything.
+    return { fires, exhausted: enabledTransitions(model, cfg, COMPLETION).length > 0 };
   };
 
-  // Exit states from the leaf down to (but not below) `targetLen`; exit phases
-  // fire inner→outer, and each composite parent records its last-active child.
-  const exitTo = (targetLen: number): void => {
-    while (stack.length > targetLen) {
-      const leaf = stack.pop()!;
-      runStatePhase(model, leaf, 'exit', store, scope, performed);
-      const parent = stack[stack.length - 1];
-      if (parent !== undefined) history.set(parent, leaf);
-    }
+  const fire = (choice: EnabledTransition): void => {
+    apply(stepConfig(model, cfg, choice));
+    if (chaseHierCompletion().exhausted) completionBudgetHit = true;
   };
 
-  const chaseHierCompletion = (): void => {
-    for (let k = 0; k < maxCompletion; k++) {
-      let progressed = false;
-      for (let i = stack.length - 1; i >= 0; i--) {
-        const sid = stack[i];
-        const tr = transitionsFrom(sid).find((t) => isCompletion(t) && guardHoldsStore(t, store, scope));
-        if (!tr) continue;
-        exitTo(i);
-        applyTransitionEffect(tr, store, scope);
-        const to = tr.target![0];
-        fired.push({ transitionId: tr.id, from: sid, to, trigger: '' });
-        enterCascade(to);
-        progressed = true;
-        break;
-      }
-      if (!progressed) break;
-    }
-  };
-
-  const fire = (tr: ElementRecord, level: number, label: string): void => {
-    const from = tr.source![0];
-    exitTo(level); // exit leaf..source inclusive (source sits at `level`)
-    applyTransitionEffect(tr, store, scope);
-    const to = tr.target![0];
-    fired.push({ transitionId: tr.id, from, to, trigger: label });
-    enterCascade(to);
-    chaseHierCompletion();
-  };
-
-  const init = initialSubstate(model, containerId);
-  if (init === null) return { leaf: null, complete: false };
-  enterCascade(init);
-  chaseHierCompletion();
+  if (cfg.stack.length === 0) return { leaf: null, complete: false, completionBudgetHit: false };
+  apply(opening);
+  if (chaseHierCompletion().exhausted) completionBudgetHit = true;
 
   for (const step of steps) {
     if (isTimedStep(step)) {
-      clockRef.clock += Math.max(0, step.advance);
+      cfg = advanceClock(cfg, step.advance);
+      clockRef.clock = cfg.clock;
+      // Every `after(n)` whose dwell the advance met, innermost first, bounded
+      // by the same budget the chase uses.
       for (let k = 0; k < maxCompletion; k++) {
-        let progressed = false;
-        for (let i = stack.length - 1; i >= 0; i--) {
-          const sid = stack[i];
-          const tr = transitionsFrom(sid).find((t) => {
-            const n = afterDuration(t);
-            return (
-              n !== undefined &&
-              guardHoldsStore(t, store, scope) &&
-              clockRef.clock - (entryTime.get(sid) ?? 0) >= n
-            );
-          });
-          if (!tr) continue;
-          fire(tr, i, triggerLabelOf(tr));
-          progressed = true;
-          break;
-        }
-        if (!progressed) break;
+        const enabled = enabledTransitions(model, cfg, TIMEOUT);
+        if (enabled.length === 0) break;
+        fire(enabled[0]);
       }
     } else {
-      for (let i = stack.length - 1; i >= 0; i--) {
-        const sid = stack[i];
-        const tr = transitionsFrom(sid).find(
-          (t) => triggerEquals(t, step) && guardHoldsStore(t, store, scope),
-        );
-        if (!tr) continue;
-        fire(tr, i, step);
-        break;
-      }
+      const enabled = enabledTransitions(model, cfg, { kind: 'trigger', trigger: step });
+      if (enabled.length > 0) fire(enabled[0]);
     }
   }
 
-  const leaf = stack.length > 0 ? stack[stack.length - 1] : null;
+  const leaf = leafOf(cfg);
   const complete = leaf !== null && isFinalState(model, leaf);
-  return { leaf, complete };
+  return { leaf, complete, completionBudgetHit };
 }
 
 /* ─────────────────────────── binding propagation ─────────────────────── */
@@ -1906,40 +1735,4 @@ function collectKnown(
       collectKnown(model, type.id, full, byName, known, visited);
     }
   }
-}
-
-/* ─────────────────────────────── helpers ─────────────────────────────── */
-
-/** The literal value of a feature (`attrs.value`), or `undefined` if none/expr. */
-function literalValueOf(feat: ElementRecord | undefined): unknown {
-  if (!feat) return undefined;
-  const raw = feat.attrs.value;
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw === 'number' || typeof raw === 'boolean') return raw;
-  if (typeof raw !== 'string') return undefined;
-  const s = raw.trim();
-  if (
-    s.length >= 2 &&
-    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-  ) {
-    return s.slice(1, -1);
-  }
-  // A self-contained literal expression (e.g. "5", "true") with no references.
-  try {
-    const r = evaluate(parseExpr(s), () => undefined);
-    return 'value' in r ? r.value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Owner scope merged with the element's own scope (owner takes priority). */
-function combinedScope(model: Model, el: ElementRecord): Scope {
-  const own = scopeFor(model, el.id);
-  const owner = el.ownerId != null ? scopeFor(model, el.ownerId) : undefined;
-  return (name: string) => {
-    const v = own(name);
-    if (v !== undefined) return v;
-    return owner ? owner(name) : undefined;
-  };
 }

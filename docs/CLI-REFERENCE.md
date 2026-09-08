@@ -26,7 +26,7 @@ npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
 **The exit-code contract is per subcommand, and there are four of them.** Most
-subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status` — for those,
+subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status`, `reach` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
 obligation refuted with every feature at its model value, or one requirement set
@@ -75,6 +75,7 @@ rather than reporting on the first one.
 | [`evidence-status`](#evidence-status) | What was shown, by which tool, over which model — and is it still valid? | `evidenceStatus` | reports |
 | [`evidence-attach`](#evidence-attach) | Write the records of a verify run into the file, as annotations on what they are about | `evidenceAttach` | writes |
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
+| [`reach`](#reach) | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | `reach` | reports |
 
 ### Options every subcommand takes
 
@@ -393,6 +394,23 @@ Computed by `detachEvidence (src/api/evidence.ts)`. With `--json` the answer is 
 
 **Exit codes.** 0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1.
 
+### `reach`
+
+**Which states are reachable, which transitions are dead, where did the simulator hide a choice?**
+
+```bash
+npm run sysprose -- reach <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The element: an id, a qualified name, or a name unique in the model | every state machine in the model |
+| `--max-configs N` | Configurations to explore before the walk gives up. A walk that hits it is PARTIAL: the unreachable and dead lists are emptied rather than shortened, the report says the bound was hit, and no absence is claimed from a walk that did not finish | 10000 configurations |
+
+Computed by `reachReport (src/semantics/mc/explore.ts)`. With `--json` the answer is published under `reach`, beside `ok` and `file`.
+
+**Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
+
 ### `trace` relationship presets
 
 A preset names the **relationship** kinds only. The row and column metaclasses
@@ -441,4 +459,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*18 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*19 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

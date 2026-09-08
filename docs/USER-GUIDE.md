@@ -458,6 +458,7 @@ may legitimately differ, and the difference is spelled out under the table.
 | Does the verdict in the file still hold? | **Requirements** view → *Evidence* column † | `npm run sysprose -- evidence-status model.sysml` |
 | Write a run's verdicts into the file | — | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` |
 | Take them back off | — | `npm run sysprose -- evidence-detach model.sysml` |
+| Which states can a machine reach, and where did the simulator hide a choice? | — | `npm run sysprose -- reach model.sysml` |
 
 † **Validate** re-runs the rule engine over the model already in the editor;
 `check` parses the file first and then applies those same rules. The
@@ -1324,6 +1325,87 @@ has, no claim is made about it.
 
 **Source of truth:** `src/api/evidence.ts`, the `stale-evidence` rule in
 `src/validation/rules.ts`, and `test/fixtures/agent-authoring/L8-evidence-stale`.
+
+### Which states a machine can reach, and the choice a simulation hides
+
+`reach` walks a state machine's configuration graph. It uses the same step
+relation the simulator uses — the one `runStateMachine` runs — with one
+difference that is the whole point: where the simulator fires the FIRST enabled
+transition, this walks **every** enabled one. That is how it can say something a
+simulation cannot.
+
+```console
+$ npm run sysprose -- reach examples/uav-isr.sysml
+examples/uav-isr.sysml: 1 state machine(s), 1 walked to exhaustion; 4 configuration(s) explored
+  a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
+  UAVSurveillanceSystem::FlightModes [StateDefinition]
+    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}
+    4 of 4 state(s) reachable; 5 of 5 transition(s) fired, 0 dead
+    choice       UAVSurveillanceSystem::FlightModes::autonomous: 2 enabled as completion transitions (no trigger); the simulator takes autonomous -> manual, never autonomous -> failsafe
+  semantic profile (the reading every figure above holds under):
+    ...
+  verification/nondeterministic-choice  `…::autonomous`: 2 transitions are enabled at once …
+```
+
+**The finding on this machine is not the count.** `FlightModes` declares four
+states and five transitions and every one of the five is trigger-less, so the
+machine runs on completion alone — and `autonomous` has two of them enabled at
+once. Declaration order decides which one a simulation takes, so `failsafe` is
+never entered in simulation while the model plainly admits it. That is
+`verification/nondeterministic-choice`, and it is the row worth reading. Note
+what the line does NOT contain: a trigger name. The machine names none, and a
+report that printed one would have invented it.
+
+**Every figure carries the reading it holds under.** The semantic profile
+printed under each machine names six things every published formalisation of
+state machines disagrees about — run-to-completion (chasing is bounded at 64
+steps), priority (innermost substate first), history (shallow, by parent map),
+regions (the interpreter concatenates them; a parallel machine is not explored
+here at all), deferred events (none — there is no event pool), and time
+(discrete `after(n)`; the walk offers each `after(n)` label as an event rather
+than advancing a clock). A verdict about a machine is a verdict under a reading
+of those six, and one that does not say which reading is one you cannot check.
+
+**A bound stops the walk, and then the absence claims stop with it.** Two
+sentences this command will only say after seeing the whole graph: "this state
+is unreachable" and "this transition is dead". Both are claims of ABSENCE, and a
+walk that was cut off cannot make one. So when `--max-configs` is spent, or when
+a chain of completion transitions is longer than the 64-step chase budget, both
+lists come back **empty** — suppressed, not shortened — with
+`verification/bound-exhausted` saying so:
+
+```console
+$ npm run sysprose -- reach examples/uav-isr.sysml --max-configs 2
+…
+    partial under {maxConfigs 2, …} — the configuration bound was reached; the unreachable and dead lists are lower bounds and are NOT reported as findings
+```
+
+The other direction is deliberately loose, in one place: the walk offers each
+`after(n)` label as a named event rather than advancing a clock, so a state
+behind a dwell is treated as reachable. An over-approximation like that can only
+shrink an absence claim, never invent one. It is loose there and nowhere else —
+the walk branches on the declaration-order tie-break, taking every transition
+enabled at the innermost active level where a simulation takes the first, and it
+does not cross the priority rule. A transition an inner state always beats fires
+in no run at all, so a configuration reached through one is a configuration no
+run enters, and `verification/deadlock` and
+`verification/nondeterministic-choice` reported there would be invented rather
+than found.
+
+**What it may never say.** Not "verified", not "deadlock-free", not "proved".
+`verification/deadlock` names a state with no enabled way out that is neither
+marked final nor a `done` node — a reading of one machine under one alphabet,
+never a statement that the system deadlocks. A machine that ends at `done` has
+ended, and is not reported. And `reach` reports rather than judges: a state nothing reaches
+is a fact about a machine, not a violated requirement, so it exits 0 with its
+findings in the report (`--json` publishes them under `reach`). A file that
+declares no machine at all exits 0 too and says so — nothing was misused and
+nothing failed to load. Exit 2 is for the command line: a `--max-configs` that
+is not a bound, or an `--element` that names something holding no machine.
+
+**Source of truth:** `src/semantics/mc/config.ts` (the step relation the
+interpreter and the walk share), `src/semantics/mc/explore.ts` and
+`src/semantics/mc/profile.ts`.
 
 ### The keywords a file carries, including somebody else's
 
