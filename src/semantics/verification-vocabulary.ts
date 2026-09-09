@@ -119,6 +119,36 @@ export const PROPERTY_PATTERN_DEFINITION = 'PropertyPattern';
 export const PROPERTY_PATTERN_QUALIFIED_NAME = `${SYSPROSE_VERIFICATION_PACKAGE}::${PROPERTY_PATTERN_DEFINITION}`;
 
 /**
+ * The metadata definition a fault hypothesis is carried under.
+ *
+ * NOT A KEYWORD, for {@link EVIDENCE_DEFINITION}'s reason: it has a BODY — the
+ * order bound a cut-set enumeration was run to — and §7.27's annotating form
+ * `@Def { attribute … = …; }` is what carries one.
+ *
+ *     @SysproseVerification::FaultHypothesis { maxOrder = 2; }
+ *     @SysproseVerification::FaultHypothesis { attribute maxOrder = 2; }
+ *
+ * BOTH SPELLINGS OF THE CELL ARE READ. §7.27 annotation bodies are ordinarily
+ * written without the keyword, and the parser stores that form as a keyword-less
+ * `ReferenceUsage` rather than as an `AttributeUsage`; a reader who wrote the
+ * shorter one must not have their order bound silently replaced by the default.
+ *
+ * WHY THE ORDER BOUND BELONGS IN THE MODEL AT ALL. Everything else `fault-tree`
+ * reports is computed from the contracts; the order bound is the one part of
+ * the analysis that is an ASSUMPTION — how many independent contract failures
+ * are considered credible at once — and `rauzy-2019`'s argument is that the
+ * safety model stays separate from the design model and is synchronised by
+ * something written down rather than by a flag somebody typed once. This
+ * carrier is that handle: with it in the file, `--max-order` is an override a
+ * reviewer can see, and the tree a run enumerated is the tree the model asked
+ * for.
+ */
+export const FAULT_HYPOTHESIS_DEFINITION = 'FaultHypothesis';
+
+/** `SysproseVerification::FaultHypothesis` — the spelling a carrier is written with. */
+export const FAULT_HYPOTHESIS_QUALIFIED_NAME = `${SYSPROSE_VERIFICATION_PACKAGE}::${FAULT_HYPOTHESIS_DEFINITION}`;
+
+/**
  * The shipped definition, as text.
  *
  * A model that wants `#exceptional` to name something declares this package (or
@@ -128,8 +158,9 @@ export const PROPERTY_PATTERN_QUALIFIED_NAME = `${SYSPROSE_VERIFICATION_PACKAGE}
  * `test/unit/semantics.keywords.test.ts`.
  */
 export const SYSPROSE_VERIFICATION_LIBRARY = `package ${SYSPROSE_VERIFICATION_PACKAGE} {
-    doc /* Three definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #${EXCEPTIONAL_KEYWORD} says an outcome is a failure rather than an equally valid result. ${EVIDENCE_DEFINITION} carries what a verification run showed, as an annotation on the requirement it is about. ${PROPERTY_PATTERN_DEFINITION} carries a behavioural property — a pattern, a scope and the atoms that fill them — as an annotation on the machine it is about. All three are Sysprose extensions, not standard vocabulary. */
+    doc /* Four definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #${EXCEPTIONAL_KEYWORD} says an outcome is a failure rather than an equally valid result. ${EVIDENCE_DEFINITION} carries what a verification run showed, as an annotation on the requirement it is about. ${PROPERTY_PATTERN_DEFINITION} carries a behavioural property — a pattern, a scope and the atoms that fill them — as an annotation on the machine it is about. ${FAULT_HYPOTHESIS_DEFINITION} carries the order bound a cut-set enumeration is run to, which is an assumption about how many failures are credible at once rather than something the contracts state. All four are Sysprose extensions, not standard vocabulary. */
     metadata def <${EXCEPTIONAL_KEYWORD}> ${EXCEPTIONAL_DEFINITION};
     metadata def ${EVIDENCE_DEFINITION};
     metadata def ${PROPERTY_PATTERN_DEFINITION};
+    metadata def ${FAULT_HYPOTHESIS_DEFINITION};
 }`;

@@ -564,6 +564,13 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** A `derive` or `refine` chain the file states is not a refinement: the derived requirement assumes MORE than the one it was derived from (so it applies where the parent’s guarantee is not in force), or the derived requirements together do not entail what the parent promised. Both obligations are read with the orientation the mapper stores — `derive requirement D from R` puts R on the source end and `refine requirement X by Y` puts X on the target end, uniform with `satisfy` — and the row carries a witness this tool re-read before printing.
 - **Hint given:** Read the witness: it satisfies every requirement written down from this one and breaks the one they were written from, or it satisfies the parent’s assumption and not the child’s. The two obligations are `A_R ⊨ ⋀ A_D` and `A_R ∧ ⋀ nf(C_D) ⊨ G_R`, in normal form (`nf(C) = ¬A ∨ G`), so mutual support cannot buy the verdict. Weaken the child’s assumption, strengthen its guarantee, add the sibling requirement that closes the gap, or correct the direction of the edge. It is a decided finding about the model and the run exits 1; no flag forgives one. Nothing in this verdict is about ordering or time.
 
+### `verification/single-point-of-failure`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A cut-set enumeration found a sub-contract whose failure ALONE breaks the top requirement: with that one guarantee withdrawn, the remaining sub-contracts and the connections admit an implementation the top requirement forbids. The row carries the counterexample, re-read through this tool’s own evaluator before it was printed. It is independent of whether the decomposition REFINES — an architecture whose obligation (3) is proved can have several single points of failure, and saying so is what this command is for.
+- **Hint given:** Read the witness: it is the design the remaining contracts admit once this one stops delivering. A fix is redundancy — a second sub-contract guaranteeing the same quantity, which makes the set order 2 — a stronger sibling guarantee, or a weaker top requirement. It is a decided finding about the model and the run exits 1; there is no `--allow-inconclusive` on this command to forgive one. Cut sets of order 2 and above are NOT filed under this code: needing two failures at once is what redundancy looks like from the failure side. Nothing in this verdict is about ordering, time, rates or probabilities, and none of it is a behavioural safety analysis.
+
 ### `verification/optimality-not-established`
 
 - **Severity:** info
@@ -763,4 +770,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*98 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*99 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

@@ -648,6 +648,18 @@ const CODES = [
     hint: 'Read the witness: it satisfies every requirement written down from this one and breaks the one they were written from, or it satisfies the parent’s assumption and not the child’s. The two obligations are `A_R ⊨ ⋀ A_D` and `A_R ∧ ⋀ nf(C_D) ⊨ G_R`, in normal form (`nf(C) = ¬A ∨ G`), so mutual support cannot buy the verdict. Weaken the child’s assumption, strengthen its guarantee, add the sibling requirement that closes the gap, or correct the direction of the edge. It is a decided finding about the model and the run exits 1; no flag forgives one. Nothing in this verdict is about ordering or time.',
   },
   {
+    // The one code `fault-tree` writes back that is its own. The other three it
+    // can file are the refinement lane's — a vacuous contract set is the same
+    // fact whichever command met it, and so is a clause a gate refused — and a
+    // second spelling of any of them would let the two commands explain one
+    // model in two vocabularies.
+    code: 'verification/single-point-of-failure',
+    source: 'verification',
+    severity: 'error',
+    when: 'A cut-set enumeration found a sub-contract whose failure ALONE breaks the top requirement: with that one guarantee withdrawn, the remaining sub-contracts and the connections admit an implementation the top requirement forbids. The row carries the counterexample, re-read through this tool’s own evaluator before it was printed. It is independent of whether the decomposition REFINES — an architecture whose obligation (3) is proved can have several single points of failure, and saying so is what this command is for.',
+    hint: 'Read the witness: it is the design the remaining contracts admit once this one stops delivering. A fix is redundancy — a second sub-contract guaranteeing the same quantity, which makes the set order 2 — a stronger sibling guarantee, or a weaker top requirement. It is a decided finding about the model and the run exits 1; there is no `--allow-inconclusive` on this command to forgive one. Cut sets of order 2 and above are NOT filed under this code: needing two failures at once is what redundancy looks like from the failure side. Nothing in this verdict is about ordering, time, rates or probabilities, and none of it is a behavioural safety analysis.',
+  },
+  {
     // The one code `bounds` writes back, and the reason it is not one of the
     // two `--allow-inconclusive` lowers: forgiving it would put a bound nobody
     // established into a green build through the flag rather than through a

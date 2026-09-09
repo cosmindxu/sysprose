@@ -2309,6 +2309,133 @@ package P {
     expect(r.stdout, 'a bound was printed with no solver').not.toContain('exactly');
   }, 240_000);
 
+  it('fault-tree names the single point of failure and prints the order it was found under', () => {
+    const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
+    const r = run(['fault-tree', budget]);
+    // A DECOMPOSITION THAT REFINES CAN STILL HAVE FOUR SINGLE POINTS OF
+    // FAILURE, and this file is the demonstration: `refine` exits 0 on it two
+    // cases above, and this exits 1 on the same bytes.
+    expect(r.code, 'a single point of failure went green').toBe(1);
+    expect(r.stdout).toContain('verification/single-point-of-failure');
+    expect(r.stdout).toContain('{BatterySupply}');
+    expect(r.stdout).toContain('a basic event is "sub-contract not honoured"');
+    // The bound travels with the answer, and so does what this command IS.
+    expect(r.stdout).toContain('order bound 2, from the default');
+    expect(r.stdout).toContain('6 solver check(s)');
+    expect(r.stdout).toContain('not a behavioural safety analysis');
+    // MUST NEVER read as a behavioural or probabilistic analysis.
+    expect(r.stdout, 'a contract-level fault tree quoted a probability').not.toContain('probability of');
+  }, 240_000);
+
+  it('fault-tree --json publishes a top-level verdict block that agrees with the process', () => {
+    const redundant = `${FIXV}/models/fault-tree-redundant.sysml`;
+    const r = run(['fault-tree', redundant, '--json']);
+    expect(r.code).toBe(1);
+    const { keys, body } = payload<{
+      verdict: {
+        singlePointsOfFailure: number;
+        withCutSets: number;
+        noCutSet: number;
+        vacuous: number;
+        topEventOpen: number;
+        inconclusive: number;
+        undecidedChecks: number;
+        exitCode: number;
+      };
+      faultTree: {
+        checks: number;
+        groups: Array<{
+          maxOrder: number;
+          singlePointOfFailure: boolean | null;
+          cutSets: Array<{ order: number; shortIds: string[] }>;
+          events: Array<{ intermediate: boolean }>;
+        }>;
+      };
+    }>(r);
+    expect(keys).toEqual(['faultTree', 'file', 'ok', 'verdict']);
+    expect(body.verdict).toEqual({
+      singlePointsOfFailure: 1,
+      withCutSets: 1,
+      noCutSet: 0,
+      vacuous: 0,
+      topEventOpen: 0,
+      inconclusive: 0,
+      // ITS OWN FIGURE, because it is a state the exit code is spent on that no
+      // other number in this block accounts for: a tree that found an order-2
+      // cut set and left an order-1 check unanswered is `withCutSets: 1,
+      // inconclusive: 0` — and exit 2.
+      undecidedChecks: 0,
+      exitCode: 1,
+    });
+    expect(body.verdict.exitCode, 'the payload and the process must agree').toBe(r.code);
+    expect(body.faultTree.groups[0].cutSets.map((c) => c.shortIds.join('+'))).toEqual([
+      'BatteryCapacity',
+      'PrimaryOutput+BackupOutput',
+    ]);
+    expect(body.faultTree.groups[0].maxOrder).toBe(2);
+    expect(body.faultTree.checks).toBe(9);
+
+    // The same model at order 1 finds the single point and says nothing about
+    // the pair — a bounded absence is not an absence.
+    const bounded = run(['fault-tree', redundant, '--max-order', '1']);
+    expect(bounded.code).toBe(1);
+    expect(bounded.stdout).toContain('up to order 1');
+    expect(bounded.stdout, 'a run bounded at order 1 named an order-2 set').not.toContain(
+      '{PrimaryOutput, BackupOutput}',
+    );
+  }, 240_000);
+
+  it('fault-tree refuses a state machine with the pointer, and a --max-order that is not a bound', () => {
+    // THE TWO SAFETY LANES STAY APART, at the surface a person meets them. An
+    // empty cut-set list over a machine reads as a behaviour with no failure
+    // mode, so the command refuses by name and points at the other lane.
+    const machine = run(['fault-tree', UAV, '--element', 'FlightModes']);
+    expect(machine.code).toBe(2);
+    expect(machine.stderr).toContain('contract-level fault trees do not cover behaviour');
+    expect(machine.stderr).toContain('check-behaviour');
+    expect(machine.stdout, 'a machine was answered with a cut-set list').not.toContain('cut set');
+
+    // A bound that is not a bound is an answer about the command line, and it
+    // arrives before the model is parsed.
+    const bad = run(['fault-tree', UAV, '--max-order', 'two']);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toContain('--max-order must be a whole number');
+    const zero = run(['fault-tree', UAV, '--max-order', '0']);
+    expect(zero.code).toBe(2);
+  }, 240_000);
+
+  it('fault-tree reports a vacuous contract set, and decides nothing with no solver', () => {
+    const siblings = `${FIXV}/models/refinement-contradictory-siblings.sysml`;
+    const vacuous = run(['fault-tree', siblings]);
+    expect(vacuous.code, 'a vacuity was laundered into an answer').toBe(2);
+    expect(vacuous.stdout).toContain('verification/contract-set-vacuous');
+    expect(vacuous.stdout).toContain('contract set vacuous');
+    expect(vacuous.stdout, 'a vacuity was printed as an absence of failure').not.toContain(
+      'no cut set up to order',
+    );
+
+    const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
+    const absent = run(['fault-tree', budget], undefined, NO_Z3);
+    expect(absent.code).toBe(2);
+    expect(absent.stdout).toContain('verification/tool-absent');
+    expect(absent.stdout).toContain('no solver ran');
+    // The census is still true — an absent solver must not read as a model with
+    // no architecture in it — and no cut set, and no absence of one, is printed.
+    expect(absent.stdout).toContain('4 basic event(s)');
+    expect(absent.stdout, 'a cut set was printed with no solver').not.toContain('is a cut set');
+    // AND IT STATES THE BOUND IT WAS GIVEN, not the one the module defaults to:
+    // a run that enumerated nothing must not attribute an order bound to a
+    // source the reader did not use.
+    expect(absent.stdout).toContain('order bound 2, from the default');
+    const boundedAbsent = run(['fault-tree', budget, '--max-order', '1'], undefined, NO_Z3);
+    expect(boundedAbsent.code).toBe(2);
+    expect(boundedAbsent.stdout).toContain('order bound 1, from --max-order');
+    expect(
+      boundedAbsent.stdout,
+      'a solverless run attributed the bound to a source the reader did not use',
+    ).not.toContain('order bound 2, from the default');
+  }, 240_000);
+
   it('consistency --subject narrows by what the reader typed, and refuses a REF that selects nothing', () => {
     // THREE SPELLINGS A READER REACHES FOR, and the promise they rest on: "a
     // type answers for its subtypes". The type no contract names, and the part

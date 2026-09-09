@@ -38,6 +38,16 @@ export const DEFAULT_MAX_CORE = 8;
  */
 export const DEFAULT_MAX_CONFIGS = 10_000;
 
+/**
+ * The `--max-order` default, spelled here for the same reason and guarded the
+ * same way: `test/unit/cli-reference.test.ts` compares it against
+ * `DEFAULT_MAX_ORDER` in `src/semantics/fault-tree.ts`. A documented bound that
+ * is not the bound the enumeration ran to would make every "no cut set up to
+ * order N" line this command prints a false one — and that line is the whole
+ * discipline of the command.
+ */
+export const DEFAULT_MAX_ORDER = 2;
+
 /** The exit-code contract, stated once and quoted into every help text. */
 export const EXIT_CODES = `Exit codes: 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error`;
 
@@ -190,6 +200,35 @@ export const BOUNDS_EXIT_CODES = `Exit codes: 0 every bound asked for was DECIDE
  */
 export const BEHAVIOUR_EXIT_CODES = `Exit codes: 0 every property stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass. There is no solver in this lane and no --free: the walk reads the model’s own values`
 
+/**
+ * `fault-tree`'s exit-code contract — a SIXTH one, because its 1 is about a
+ * COMBINATION of failures rather than about an obligation, and its 0 is a
+ * bounded absence rather than a discharge.
+ *
+ * Under {@link REFINE_EXIT_CODES} this command would publish three promises it
+ * cannot keep. Its 0 is not "every decomposition was shown to refine" — a
+ * decomposition whose obligation (3) is proved can still have four single
+ * points of failure, which is the whole reason this command exists — and its 1
+ * is not "an obligation refuted" but a sub-contract whose failure ALONE breaks
+ * the top requirement. Nor does it have a `--via`: there is one family of edges
+ * here, the `satisfy` decomposition, and a contract set that cannot hold
+ * together is reported as vacuous rather than as "no cut set" (§3.9), which is
+ * the sentence the whole command turns on.
+ *
+ * WHAT IT DOES NOT SPEND THE 1 ON, stated because it is a judgement: a cut set
+ * of order 2 or above. Two sub-contracts that must fail TOGETHER to break the
+ * top requirement is what redundancy looks like from the failure side, and a
+ * contract that exited 1 over it would teach a reader to delete the redundancy
+ * that produced it.
+ *
+ * AND THERE IS NO `--allow-inconclusive`, for a sharper reason than `bounds`':
+ * the flag's scope is the two UNDECIDED codes, and an undecided order-1 check
+ * is exactly the state §3.9 forbids reading as "no single point of failure". A
+ * flag that lowered it to 0 would launder the one sentence this command may
+ * never write.
+ */
+export const FAULT_TREE_EXIT_CODES = `Exit codes: 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine passed as --element (contract-level fault trees do not cover behaviour), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over`;
+
 /** Flags every subcommand accepts. */
 export const COMMON_FLAGS: readonly FlagSpec[] = [
   {
@@ -285,7 +324,14 @@ export const SCOPE_NAMES: readonly string[] = [
  * section — and under it `verify` would have been documented with 1 meaning the
  * exact opposite of what it means.
  */
-export type ExitContract = 'report' | 'verify' | 'refine' | 'bounds' | 'write' | 'behaviour';
+export type ExitContract =
+  | 'report'
+  | 'verify'
+  | 'refine'
+  | 'bounds'
+  | 'write'
+  | 'behaviour'
+  | 'fault-tree';
 
 /** One subcommand. */
 export interface CommandSpec {
@@ -307,6 +353,7 @@ export function exitCodesFor(cmd: CommandSpec): string {
   if (cmd.exitContract === 'verify') return VERIFY_EXIT_CODES;
   if (cmd.exitContract === 'refine') return REFINE_EXIT_CODES;
   if (cmd.exitContract === 'bounds') return BOUNDS_EXIT_CODES;
+  if (cmd.exitContract === 'fault-tree') return FAULT_TREE_EXIT_CODES;
   if (cmd.exitContract === 'write') return WRITE_EXIT_CODES;
   if (cmd.exitContract === 'behaviour') return BEHAVIOUR_EXIT_CODES;
   return EXIT_CODES;
@@ -712,6 +759,35 @@ export const COMMANDS: readonly CommandSpec[] = [
         name: 'with-requirements',
         kind: 'boolean',
         doc: 'Fold the `require` bodies into the axiom set, each as the implication `assume ⇒ require` the shipped library states a requirement to be, and say so on every verdict line. OFF by default: a requirement is what is being checked, not a fact about the design, which is why `--measure uav.mtow --free all` answers "unbounded above" over a file that plainly states a 25 kg limit',
+      },
+    ],
+  },
+  // The safety half of the composition work, and the sixth exit contract. It
+  // asks the same obligation (3) `refine` asks and asks it again with the
+  // guarantees of a fault set withdrawn — so a decomposition that REFINES can
+  // still have four single points of failure, and this is the command that says
+  // so. It is not a flag on `refine` for that reason: the two exit 1 on
+  // different findings about the same model.
+  {
+    name: 'fault-tree',
+    question: 'Which combinations of contract failures break the top requirement?',
+    backedBy: 'faultTreeReport (src/api/verification.ts)',
+    payloadKey: 'faultTree',
+    exitContract: 'fault-tree',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        fallback: 'every decomposition the model states',
+        doc: 'The top event: an id, a qualified name, or a name unique in the model, naming a system contract, the part that satisfies it, or any contract or part under it. A state machine is REFUSED here rather than answered with an empty cut-set list — a fault tree over contracts says nothing about behaviour, and "no combination of failures breaks this" about a machine nothing looked at is the loudest false statement this command could make',
+      },
+      {
+        name: 'max-order',
+        kind: 'value',
+        metavar: 'N',
+        fallback: `order ${DEFAULT_MAX_ORDER}, or the FaultHypothesis carrier the model states`,
+        doc: 'How many sub-contracts may fail together. The enumeration costs the sum of C(n,k) solver checks and the count is reported, so the bound is a budget as well as a hypothesis; every absence is printed with it and nothing above it is explored. A `@SysproseVerification::FaultHypothesis { maxOrder = 2; }` carrier on the top requirement or its part pins the same number IN THE MODEL, where a reviewer can argue with it, and this flag overrides one; both cell spellings are read, with or without the `attribute` keyword, and a cell this tool cannot read is reported as such rather than passed off as the default',
       },
     ],
   },

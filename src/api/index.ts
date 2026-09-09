@@ -84,6 +84,8 @@ export type {
 export {
   boundsReport,
   contractReport,
+  faultTreeReport,
+  faultTreeVerdict,
   consistencyReport,
   obligationsReport,
   refinementReport,
@@ -98,6 +100,9 @@ export {
 export type {
   BoundsReport,
   BoundsReportOptions,
+  FaultTreeReport,
+  FaultTreeReportOptions,
+  FaultTreeVerdict,
   ConsistencyReport,
   ConsistencyReportOptions,
   ContractReport,
@@ -166,6 +171,30 @@ export type {
   BoundsSense,
   MeasureRef,
 } from '../semantics/bounds';
+// The fault-tree engine's own payload types and its two composed sentences, for
+// the same reason again: a consumer coming through this barrel walks a cut set,
+// a basic event and the order bound it was found under without a deep import
+// into the semantics layer — and the refusal sentence is composed once, where
+// the rule that the two safety lanes stay apart is written down.
+export {
+  behaviourLaneRefusal,
+  isBehaviouralElement,
+  CONTRACT_LEVEL_NOTE,
+  DEFAULT_MAX_ORDER,
+  FAULT_TREE_CODES,
+  ORDERS_NOT_EXPLORED_NOTE,
+  SINGLE_POINT_OF_FAILURE_CODE,
+} from '../semantics/fault-tree';
+export type {
+  BasicEvent,
+  CutSet,
+  FaultTreeGroup,
+  FaultTreeOptions,
+  FaultTreeOutcome,
+  FaultTreeResult,
+  MaxOrderSource,
+  UndecidedCheck,
+} from '../semantics/fault-tree';
 export type {
   ConsistencyGroup,
   ConsistencyOptions,

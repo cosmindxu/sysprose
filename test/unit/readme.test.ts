@@ -152,6 +152,11 @@ const APP_DOORS: ReadonlyArray<{
   // is. The answer is a number with an axiom set printed beside it, which is a
   // terminal answer.
   { command: 'bounds', controls: [] },
+  // And `fault-tree` for the same two reasons once more, plus one of its own:
+  // a cut set is a list with a counterexample under every entry, and no view in
+  // this plan draws a fault tree. The app's job in this lane stays reading
+  // evidence and naming the terminal command.
+  { command: 'fault-tree', controls: [] },
   // `evidence-status` is the ONE row of this lane that has a control, and it is
   // here rather than under a `controls: []` because the Requirements table now
   // carries a read-only Evidence column. It is DAGGERED for the ordinary

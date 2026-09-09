@@ -87,14 +87,18 @@ import type { ElementRecord, Model } from '../src/core/index';
 import Ajv from 'ajv';
 import {
   attachEvidence,
+  behaviourLaneRefusal,
   boundsReport,
   connectivityReport,
+  CONTRACT_LEVEL_NOTE,
   consistencyReport,
   contractReport,
   countUnfollowedTypings,
   detachEvidence,
   evidenceStatus,
+  faultTreeReport,
   impactClosure,
+  isBehaviouralElement,
   isUserElement,
   modelMetrics,
   obligationsReport,
@@ -126,6 +130,8 @@ import {
   type ElementRef,
   type EvidenceRecord,
   type EvidenceStatusReport,
+  type FaultTreeGroup,
+  type FaultTreeReport,
   type KeywordUse,
   type DictionaryEntry,
   type GateResult,
@@ -254,6 +260,16 @@ interface Report {
    * is `verdict.exitCode`.
    */
   bounds?: BoundsReport;
+  /**
+   * The run of the subcommand that judges an architecture from the FAILURE side.
+   *
+   * A field of its own for the reason every one above is: what `fault-tree`
+   * publishes is a set of cut sets and the order they were found under, and a
+   * `verdict` block that had to be read differently depending on which command
+   * produced it would be a block nobody could parse without knowing. What they
+   * share, and all an automation needs, is `verdict.exitCode`.
+   */
+  faultTree?: FaultTreeReport;
 }
 
 /** The four figures the verify exit contract is computed from, and the answer. */
@@ -288,6 +304,36 @@ interface BehaviourVerdict {
   failed: number;
   vacuous: number;
   inconclusive: number;
+  exitCode: number;
+}
+
+/** The same block for `fault-tree`, whose figures are TREES over one model. */
+interface FaultTreeVerdict {
+  singlePointsOfFailure: number;
+  withCutSets: number;
+  noCutSet: number;
+  vacuous: number;
+  /**
+   * Trees whose top event is open with every sub-contract honoured.
+   *
+   * ITS OWN FIELD RATHER THAN A LINE IN `inconclusive`, because it is a DECIDED
+   * negative — obligation (3) refuted before any fault was injected — and it is
+   * one of the two states this command exits 1 on. Folding it into the
+   * undecided count would publish a `verdict` block whose exit code no field in
+   * it accounts for.
+   */
+  topEventOpen: number;
+  inconclusive: number;
+  /**
+   * Checks the solver did not decide, over every tree.
+   *
+   * ITS OWN FIELD FOR THE SAME REASON `topEventOpen` has one: it is a state the
+   * exit code is spent on that no other figure in this block accounts for. A
+   * tree that found an order-2 cut set and left an order-1 check unanswered is
+   * `withCutSets: 1, inconclusive: 0` — and exit 2, which a reader of the JSON
+   * could not otherwise explain from the block that carries it.
+   */
+  undecidedChecks: number;
   exitCode: number;
 }
 
@@ -385,6 +431,28 @@ function judgeBounds(report: BoundsReport, degraded: boolean): BoundsVerdict {
   return {
     decided,
     undecided: report.bounds.length - decided,
+    exitCode: degraded ? 2 : report.exitCode,
+  };
+}
+
+/**
+ * The exit code of a fault-tree run, degradation included.
+ *
+ * The same rule and the same reason as {@link judge}, and the loudest instance
+ * of it: whether the model under the answer was the whole model is a fact about
+ * the FILE, and "no combination of failures breaks this" computed over half a
+ * model is not an answer about that model — the contracts that did not parse
+ * are exactly the ones whose failure nobody enumerated.
+ */
+function judgeFaultTree(report: FaultTreeReport, degraded: boolean): FaultTreeVerdict {
+  return {
+    singlePointsOfFailure: report.singlePointsOfFailure,
+    withCutSets: report.withCutSets,
+    noCutSet: report.noCutSet,
+    vacuous: report.vacuous,
+    topEventOpen: report.topEventOpen,
+    inconclusive: report.inconclusive,
+    undecidedChecks: report.undecidedChecks,
     exitCode: degraded ? 2 : report.exitCode,
   };
 }
@@ -2366,6 +2434,218 @@ async function reportBounds(
   return { json: r, text: rendered, bounds: r };
 }
 
+/* ────────────────────────────── fault tree ──────────────────────────────── */
+
+/**
+ * `--max-order N`, refused before the file is read.
+ *
+ * A bound that is not a bound is an answer about the command line, and a run
+ * that accepted `--max-order two` and enumerated to the default would print
+ * "no cut set up to order 2" over a question the reader did not ask. Zero and
+ * negatives are refused for the same reason: an enumeration to order 0 checks
+ * only the baseline and would report "no cut set" having injected nothing.
+ */
+function faultTreeMaxOrder(args: ParsedArgs): number | undefined {
+  const raw = flagValue(args, 'max-order');
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new UsageError(
+      `--max-order must be a whole number of sub-contracts, 1 or more; got \`${raw}\`. It is how ` +
+        'many failures may happen at once — a hypothesis about the design, and the budget of the ' +
+        'enumeration, which costs the sum of C(n,k) solver checks.',
+    );
+  }
+  return value;
+}
+
+/**
+ * The top event a run was narrowed to, with the ONE element kind this command
+ * refuses by name.
+ *
+ * THE TWO SAFETY LANES STAY APART (§3.9). A `StateUsage` has no contract to
+ * withdraw, so a fault tree over it would enumerate nothing and print an empty
+ * cut-set list — which every safety reader reads as "no combination of failures
+ * breaks this". The refusal points at the behavioural lane, and the pointer is
+ * CONDITIONAL on that command existing in this build: `findCommand` is the
+ * single-token lookup the dispatcher itself uses, and a sentence telling a
+ * reader to run something `--help` does not list is worse than no pointer. The
+ * refusal and the exit code are the same either way.
+ */
+function faultTreeElement(model: Model, args: ParsedArgs): ElementRecord | undefined {
+  const el = verificationScope(model, args);
+  if (el !== undefined && isBehaviouralElement(el)) {
+    throw new UsageError(
+      behaviourLaneRefusal(qname(model, el.id), findCommand('check-behaviour')?.name ?? null),
+    );
+  }
+  return el;
+}
+
+/** One basic event, named with what it expands to when it is not a leaf. */
+function eventLine(event: FaultTreeGroup['events'][number]): string {
+  const where = event.part !== null ? ` on \`${event.part.qualifiedName}\`` : '';
+  return event.intermediate
+    ? `      ${event.shortId || event.contract.qualifiedName}${where}  intermediate event — its own cut sets are the tree under \`${event.expandsTo ?? ''}\``
+    : `      ${event.shortId || event.contract.qualifiedName}${where}  basic event`;
+}
+
+/** One tree: the top event, its basic events, and the cut sets over them. */
+function faultTreeLines(group: FaultTreeGroup): string[] {
+  const source =
+    group.maxOrderSource === 'flag'
+      ? '--max-order'
+      : group.maxOrderSource === 'carrier'
+        ? '@SysproseVerification::FaultHypothesis in the model'
+        : group.maxOrderSource === 'carrier-unreadable'
+          ? 'the default — this element carries a `@SysproseVerification::FaultHypothesis` whose `maxOrder` cell could not be read'
+          : 'the default';
+  // "MINIMAL" IS EARNED. A set whose proper subset went undecided is still a
+  // cut set and is still listed, but nothing showed it is irreducible — so the
+  // heading says what pruning actually did rather than promising minimality
+  // over a check the solver did not answer.
+  const notMinimal = group.cutSets.filter((c) => !c.minimal).length;
+  return [
+    `  ${group.shortId || group.top.qualifiedName} on \`${group.part.qualifiedName}\` — ${group.outcome}` +
+      (group.exceptional
+        ? ' — the top requirement carries `#exceptional`: this outcome is a failure rather than an equally valid result, and its cut sets are unchanged by the tag'
+        : ''),
+    `    ${group.detail}`,
+    ...(group.code !== null ? [`    ${group.code}`] : []),
+    `    order bound ${group.maxOrder}, from ${source}`,
+    ...(group.events.length > 0
+      ? [`    ${group.events.length} basic event(s) — "sub-contract not honoured":`, ...group.events.map(eventLine)]
+      : ['    no sub-contract of this decomposition states a guarantee to withdraw']),
+    // The cut sets, one per line with the witness under it: a set a reader
+    // cannot see the counterexample for is a set they cannot argue with.
+    ...(group.cutSets.length > 0
+      ? [
+          notMinimal === 0
+            ? `    ${group.cutSets.length} minimal cut set(s), supersets pruned:`
+            : `    ${group.cutSets.length} cut set(s), supersets of DECIDED cut sets pruned — ${notMinimal} of them NOT shown to be minimal, because a proper subset was not decided:`,
+          ...group.cutSets.flatMap((c) => [
+            `      order ${c.order}  {${c.shortIds.join(', ')}}${c.minimal ? '' : '  — minimality not established'}`,
+            `        ${c.detail}`,
+            ...(c.witness.length > 0
+              ? [
+                  `        witness: ${c.witness.map((w) => `${w.symbol} = ${witnessNumber(w)}`).join(', ')} (stored magnitudes)`,
+                ]
+              : []),
+          ]),
+        ]
+      : []),
+    ...(group.undecided.length > 0
+      ? [
+          `    ${group.undecided.length} check(s) NOT decided — no absence is claimed over them:`,
+          ...group.undecided.map((u) => `      order ${u.order}  ${u.detail} [${u.code}]`),
+        ]
+      : []),
+    ...(group.vacuityCore.length > 0
+      ? [`    step (0) core: ${group.vacuityCore.join(', ')}`]
+      : []),
+  ];
+}
+
+/**
+ * `fault-tree` — the safety half of the composition work, and the command whose
+ * exit 1 is about a COMBINATION rather than an obligation.
+ *
+ * The header states what a basic event IS before it states any figure, because
+ * a cut set means nothing without it: this is fault injection into CONTRACTS,
+ * "sub-contract i not honoured" is the event, and the same obligation (3)
+ * `refine` proves is the thing being broken. A reader who cannot see that has
+ * been handed a list of part names and no way to act on it.
+ */
+async function reportFaultTree(
+  model: Model,
+  name: string,
+  text: string,
+  args: ParsedArgs,
+): Promise<Report> {
+  const element = faultTreeElement(model, args);
+  const maxOrder = faultTreeMaxOrder(args);
+  const r = await faultTreeReport(model, {
+    ...(element ? { elementId: element.id } : {}),
+    ...(maxOrder !== undefined ? { maxOrder } : {}),
+    sourceText: text,
+  });
+
+  // AN `--element` THAT SELECTED NOTHING IS A USAGE ERROR, not a statement
+  // about the model — the same rule `refine --element` and `consistency
+  // --subject` obey, for the same reason: the run-wide sentence below says the
+  // file states no decomposition at all, and printing that because a REF
+  // matched none of them would be a false claim about the reader's file.
+  if (element !== undefined && r.groups.length === 0) {
+    throw new UsageError(
+      `\`${qname(model, element.id)}\` names no decomposition in this file, so there is no top event ` +
+        'and no sub-contract to withdraw: no requirement here is satisfied by a part that owns another ' +
+        'contract-bearing part. A fault tree needs both halves — `satisfy R by sys;` on the whole and ' +
+        '`satisfy R2 by sys.part;` on a part — so name one of those, or run without `--element` to see ' +
+        'every tree this file states.',
+    );
+  }
+
+  const rendered = [
+    // The two findings lead, for the reason §2 gives for every command in this
+    // lane: a line that opened with the green number reads as a pass with a
+    // footnote, and the footnote is what decides the exit code.
+    `${name}: ${r.singlePointsOfFailure} with a single point of failure, ${r.withCutSets} with cut sets, ` +
+      `${r.noCutSet} with none up to the bound, ${r.vacuous} vacuous, ${r.topEventOpen + r.inconclusive} not enumerated — ` +
+      `${r.groups.length} tree(s) over ${r.contracts} contract(s)`,
+    '  a basic event is "sub-contract not honoured", and a set of them is a CUT SET when obligation ' +
+      '(3) — the same one `refine --via composition` proves — fails with those guarantees withdrawn',
+    r.toolAbsent
+      ? `  no solver ran: a cut set is a claim about every implementation the remaining contracts admit, ` +
+        `so the model’s own values cannot answer it and there is nothing to fall back to — this run is ` +
+        `exit ${r.exitCode}, and no empty cut-set list is printed`
+      : '  minimal cut sets are enumerated by increasing order and supersets are pruned; every absence ' +
+        'below is bounded by the order it was checked to',
+    ...(r.groups.length > 0
+      ? [
+          `  γ, the connection assertion: ${r.bindEqualities} bind equalit${r.bindEqualities === 1 ? 'y' : 'ies'}, ` +
+            `${r.itemFlows} item flow(s); ${r.notEncoded} connection(s) NOT encoded — a connection is not ` +
+            'an equality; bind the attributes if they are one quantity',
+        ]
+      : []),
+    ...(r.refused > 0
+      ? [
+          `  ${r.refused} relation(s) refused by a gate and not asserted — a refused clause of a top ` +
+            'contract, or a refused `assume` of any sub-contract, stands its whole tree down: every fault ' +
+            'set would otherwise be judged against a premise set smaller than the model states',
+        ]
+      : []),
+    ...(r.groups.length === 0
+      ? [
+          '  this model states no decomposition at all — no requirement is satisfied by a part that owns ' +
+            'another contract-bearing part, so there was no top event to injure, which is exit 2',
+        ]
+      : r.groups.flatMap(faultTreeLines)),
+    ...(r.groups.length > 0 && r.withCutSets + r.noCutSet + r.topEventOpen === 0
+      ? [
+          '  nothing was enumerated: exit 0 says every tree was checked to its order bound and none of ' +
+            'them has a single point of failure, and none of these was, so this run is exit 2',
+        ]
+      : []),
+    // AN UNDECIDED CHECK IS SAID OUT LOUD AT RUN LEVEL, not only on the row it
+    // sits on: a tree that also found cut sets is counted as enumerated
+    // everywhere above, and a reader who saw only those figures could not tell
+    // why the run is exit 2.
+    ...(r.undecidedChecks > 0
+      ? [
+          `  ${r.undecidedChecks} check(s) were NOT decided, so this run is exit 2 whatever else it ` +
+            'found: the enumeration is incomplete, no absence is claimed over the sets nobody ' +
+            'answered about, and there is no `--allow-inconclusive` here — an undecided order-1 check ' +
+            'is exactly the state a "no single point of failure" sentence may never be written over',
+        ]
+      : []),
+    ...(r.toolAbsent ? [] : [`  ${r.checks} solver check(s) at ${r.timeoutMs ?? 0} ms each`]),
+    `  ${CONTRACT_LEVEL_NOTE}`,
+    `  model ${r.modelVersion.graph}`,
+    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text: rendered, faultTree: r };
+}
+
 /* ─────────────────────────────── evidence ───────────────────────────────── */
 
 /**
@@ -3023,6 +3303,8 @@ async function buildReport(
       return reportRefinement(model, name, text, args);
     case 'bounds':
       return reportBounds(model, name, text, args);
+    case 'fault-tree':
+      return reportFaultTree(model, name, text, args);
     case 'evidence-status':
       return reportEvidenceStatus(model, name);
     case 'evidence-attach':
@@ -3094,6 +3376,11 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
       // it had nothing to bound.
       boundsMeasure(args);
       boundsSense(args);
+      return;
+    case 'fault-tree':
+      // A bound that is not a bound is an answer about the command line, and
+      // loading a model and binding the library to say so costs a second.
+      faultTreeMaxOrder(args);
       return;
     case 'evidence-attach':
       // `--from` is the whole command; a run without it would parse a model,
@@ -3289,6 +3576,7 @@ async function main(): Promise<number> {
     | RefinementVerdict
     | BehaviourVerdict
     | BoundsVerdict
+    | FaultTreeVerdict
     | undefined = built.verify
     ? judge(built.verify, degraded)
     : built.consistency
@@ -3299,6 +3587,8 @@ async function main(): Promise<number> {
           ? judgeBehaviour(built.behaviour, degraded)
         : built.bounds
           ? judgeBounds(built.bounds, degraded)
+        : built.faultTree
+          ? judgeFaultTree(built.faultTree, degraded)
           : undefined;
 
   const body = flagGiven(parsed, 'json')

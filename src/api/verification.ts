@@ -100,6 +100,15 @@ import {
   type RefinementVia,
 } from '../semantics/refinement';
 import {
+  computeFaultTree,
+  faultTreeCensus,
+  FAULT_TREE_CODES,
+  SINGLE_POINT_OF_FAILURE_CODE,
+  type FaultTreeGroup,
+  type FaultTreeResult,
+} from '../semantics/fault-tree';
+import { FAULT_HYPOTHESIS_QUALIFIED_NAME } from '../semantics/verification-vocabulary';
+import {
   checkBounds,
   prepareBounds,
   AXIOMS_ONLY_NOTE,
@@ -1074,6 +1083,13 @@ export const VERIFICATION_ERROR_CODES: ReadonlySet<string> = new Set([
   // contradiction overstates — so it is a defect in the FILE, not a limit of
   // the tool, and it is the loudest thing `evidence-status` can find.
   VERDICT_OVERSTATES_EVIDENCE_CODE,
+  // The row `fault-tree` exits 1 on: a sub-contract whose failure ALONE breaks
+  // the top requirement. Decided, about the model, and the whole reason that
+  // command exists — a decomposition whose obligation (3) is proved can still
+  // have four of them, so it is a finding rather than a limit and a consumer
+  // filtering on severity has to see it. The other rows of that command say
+  // what was not enumerated and are info lines.
+  SINGLE_POINT_OF_FAILURE_CODE,
 ]);
 
 /**
@@ -1131,6 +1147,13 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   // `../semantics/mc/patterns`: a property nobody could read, and an atom that
   // names nothing. Both are printed on a row a reader is asked to act on.
   ...PROPERTY_PATTERN_CODES,
+  // And the ones `fault-tree` raises, from `../semantics/fault-tree`. Three of
+  // the four are borrowed from the refinement lane on purpose — a vacuous
+  // contract set is the same fact whichever command met it — and the fourth is
+  // this command's own. Same rule as every set above: a printed code the
+  // catalogue cannot explain is a contract stated in a vocabulary the reader
+  // has no dictionary for.
+  ...FAULT_TREE_CODES,
 ]);
 
 /**
@@ -2625,6 +2648,407 @@ function boundsFindings(result: BoundsResult): Finding[] {
       elementName: refusal.qualifiedName,
       code: 'verification/unsupported-expression',
       hint: `The relation is listed with its reason rather than dropped (\`${refusal.reason}\`), and the count travels with every verdict line. An axiom that was not asserted widens the space the bound was computed over, so a bound taken with one missing is looser than the model's — never tighter. A refusal that shares a symbol with what the measure REACHES therefore stands its row down under \`verification/not-evaluable\` instead of publishing one; one out of reach factorises and cannot move the answer, so it is listed and nothing else.`,
+    });
+  }
+  return out;
+}
+
+/* ──────────────────────────── the fault tree ─────────────────────────────── */
+
+/**
+ * `fault-tree` — which combinations of contract failures break the top
+ * requirement.
+ *
+ * THE EXIT CONTRACT OF THIS REPORT, stated once:
+ *
+ *  1. **0 only when every tree was ENUMERATED, every check it ran was DECIDED,
+ *     and none of the trees has a single point of failure.** Cut sets of order
+ *     2 and above are a description of an architecture, not a finding against
+ *     it — a system with no order-1 cut set and one order-2 set is exactly what
+ *     redundancy looks like — so they do not spend the 1. An UNDECIDED check
+ *     does not get the same treatment, and the asymmetry is the point: a tree
+ *     that found an order-2 cut set and left an order-1 check unanswered is
+ *     precisely the state §3.9's MUST-NEVER list is about, so it spends the 2
+ *     even though the enumeration produced rows.
+ *  2. **1 for a decided negative about the architecture**: a sub-contract whose
+ *     failure ALONE breaks the top requirement, or a top event that is already
+ *     open with every sub-contract honoured.
+ *  3. **2 for everything else**, the way every other command in this lane
+ *     spends it: an absent solver, a timeout, a contract set that cannot hold
+ *     together (never "no cut set"), a clause a gate refused, and a model that
+ *     states no decomposition to injure at all.
+ *
+ * There is no `--allow-inconclusive` here, and the reason is sharper than
+ * `bounds`': the flag's whole scope is the two UNDECIDED codes, and an
+ * undecided order-1 check is precisely the state §3.9 forbids reading as "no
+ * single point of failure". A flag that lowered it to 0 would launder the one
+ * sentence this command may never write.
+ */
+
+/** How a fault-tree run is aimed, bounded and told what to read. */
+export interface FaultTreeReportOptions {
+  /** Only the tree at this element: a system contract, or the part it is about. */
+  elementId?: ElementId;
+  /** The order bound. Overrides a `FaultHypothesis` carrier; defaults to 2. */
+  maxOrder?: number;
+  /** The per-check budget in ms. */
+  timeoutMs?: number;
+  /** The file's bytes, so the report binds the text as well as the graph. */
+  sourceText?: string;
+}
+
+/** What a fault-tree run came to, with the arithmetic behind its exit code. */
+export interface FaultTreeReport {
+  /** True when no solver loaded: every tree is `verification/tool-absent`. */
+  toolAbsent: boolean;
+  groups: FaultTreeGroup[];
+  /** Trees with at least one minimal cut set up to the order bound. */
+  withCutSets: number;
+  /** Trees with a sub-contract whose failure alone breaks the top requirement. */
+  singlePointsOfFailure: number;
+  /** Trees enumerated to the bound with no cut set found. */
+  noCutSet: number;
+  /** Trees whose contract set cannot hold together at all. */
+  vacuous: number;
+  /** Trees whose top event is already open with every sub-contract honoured. */
+  topEventOpen: number;
+  inconclusive: number;
+  /**
+   * How many individual checks the solver did not decide, over every tree.
+   *
+   * ITS OWN FIGURE RATHER THAN A LINE IN `inconclusive`, and that is the whole
+   * repair: `inconclusive` counts TREES whose outcome is undecided, and a tree
+   * that found an order-2 cut set AND left an order-1 check unanswered has
+   * outcome `cut-sets`, so it contributes nothing to that count. Without this
+   * number the exit code cannot see the one state §3.9 forbids — "no single
+   * point of failure" over a component nobody checked — and the run goes green
+   * on it. Every undecided check is on a group's `undecided` list; this is
+   * their sum, and {@link faultTreeVerdict} spends the 2 on it.
+   */
+  undecidedChecks: number;
+  /** How many contracts the model states at all. */
+  contracts: number;
+  /** The γ census, over the whole run. */
+  bindEqualities: number;
+  itemFlows: number;
+  connectionEqualities: number;
+  notEncoded: number;
+  /** How many relations a gate or the encoder refused. */
+  refused: number;
+  /** Total solver checks. */
+  checks: number;
+  exitCode: 0 | 1 | 2;
+  /** The per-check budget the run used, or `null` when no solver ran. */
+  timeoutMs: number | null;
+  modelVersion: ModelVersion;
+  diagnostics: Diagnostic[];
+}
+
+/**
+ * Enumerate the minimal cut sets of every decomposition the model states.
+ *
+ * Asynchronous because resolving the backend is a dynamic import — the same one
+ * `verifyModel`, `consistencyReport` and `refinementReport` make, through the
+ * same `loadZ3()`, so the four commands cannot disagree about whether a solver
+ * exists.
+ */
+export async function faultTreeReport(
+  model: Model,
+  opts: FaultTreeReportOptions = {},
+): Promise<FaultTreeReport> {
+  const modelVersion = modelVersionOf(model, opts.sourceText);
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const load = await loadZ3();
+
+  if (load.absent) {
+    // No fallback and no partial answer, and here the rule bites harder than it
+    // does one lane up: a cut set is a claim about what the contracts admit,
+    // the model's own values cannot answer it, and an empty cut-set list is
+    // read by every safety reader as "nothing breaks this". The CENSUS is still
+    // taken, so an absent solver cannot read as a model with no architecture.
+    const census = faultTreeCensus(
+      model,
+      {
+        ...(opts.elementId !== undefined ? { elementId: opts.elementId } : {}),
+        // THE BOUND THE READER ASKED FOR travels into the census too, so a
+        // solverless run does not print a bound, or a provenance, the run was
+        // never given: "order bound 2, from the default" under `--max-order 1`
+        // attributes an assumption to nobody.
+        ...(opts.maxOrder !== undefined ? { maxOrder: opts.maxOrder } : {}),
+      },
+      {
+        code: 'verification/tool-absent',
+        detail: `no solver ran, so no fault was injected into this decomposition: solver absent — ${load.reason}`,
+      },
+    );
+    return {
+      toolAbsent: true,
+      groups: census.groups,
+      withCutSets: 0,
+      singlePointsOfFailure: 0,
+      noCutSet: 0,
+      vacuous: 0,
+      topEventOpen: 0,
+      inconclusive: census.groups.length,
+      undecidedChecks: 0,
+      contracts: census.contracts,
+      bindEqualities: census.bindEqualities,
+      itemFlows: census.itemFlows,
+      connectionEqualities: census.connectionEqualities,
+      notEncoded: census.notEncoded.length,
+      refused: census.refused.length,
+      checks: 0,
+      exitCode: 2,
+      timeoutMs: null,
+      modelVersion,
+      diagnostics: numbered([
+        {
+          severity: 'info',
+          message: `no fault tree was built: solver absent — ${load.reason}`,
+          code: 'verification/tool-absent',
+          hint: 'Install the solver and re-run. There is no point-evaluation engine for this question — a cut set is a claim about every implementation the remaining contracts admit — so an absent solver enumerates nothing, exits 2, and no flag lowers it. An empty cut-set list is never printed here: "no combination of failures breaks this" is not something a run with no solver may say.',
+        },
+      ]),
+    };
+  }
+
+  const result = await computeFaultTree(model, {
+    backend: load,
+    ...(opts.elementId !== undefined ? { elementId: opts.elementId } : {}),
+    ...(opts.maxOrder !== undefined ? { maxOrder: opts.maxOrder } : {}),
+    timeoutMs,
+  });
+
+  return {
+    toolAbsent: false,
+    groups: result.groups,
+    ...faultTreeVerdict(result),
+    contracts: result.contracts,
+    bindEqualities: result.bindEqualities,
+    itemFlows: result.itemFlows,
+    connectionEqualities: result.connectionEqualities,
+    notEncoded: result.notEncoded.length,
+    refused: result.refused.length,
+    checks: result.checks,
+    timeoutMs: result.timeoutMs ?? null,
+    modelVersion,
+  };
+}
+
+/** The counted half of a fault-tree report: the figures, the exit code, the rows. */
+export interface FaultTreeVerdict {
+  withCutSets: number;
+  singlePointsOfFailure: number;
+  noCutSet: number;
+  vacuous: number;
+  topEventOpen: number;
+  inconclusive: number;
+  undecidedChecks: number;
+  exitCode: 0 | 1 | 2;
+  diagnostics: Diagnostic[];
+}
+
+/**
+ * Count a fault-tree enumeration and judge it.
+ *
+ * EXPORTED, ALONE IN THIS FILE, and the reason is a defect this arithmetic
+ * once had: a tree that found an order-2 cut set and left an order-1 check
+ * undecided exited 0 — the machine-readable form of "no single point of
+ * failure" — over exactly the state §3.9 forbids saying it about. That state
+ * has no reproducible trigger through {@link faultTreeReport}, whose backend is
+ * resolved inside it and whose timeouts are a property of the machine the suite
+ * runs on; it is reached by driving `computeFaultTree` with a stub solver. So
+ * the judgement is a pure function of a {@link FaultTreeResult} and the suite
+ * asks it directly, rather than the exit contract's sharpest clause being the
+ * one nothing can execute.
+ */
+export function faultTreeVerdict(result: FaultTreeResult): FaultTreeVerdict {
+  const withCutSets = result.groups.filter((g) => g.outcome === 'cut-sets').length;
+  const singlePointsOfFailure = result.groups.filter((g) => g.singlePointOfFailure === true).length;
+  const noCutSet = result.groups.filter((g) => g.outcome === 'no-cut-set').length;
+  const vacuous = result.groups.filter((g) => g.outcome === 'vacuous').length;
+  const topEventOpen = result.groups.filter((g) => g.outcome === 'top-event-open').length;
+  const inconclusive = result.groups.filter((g) => g.outcome === 'inconclusive').length;
+  const undecidedChecks = result.groups.reduce((n, g) => n + g.undecided.length, 0);
+  return {
+    withCutSets,
+    singlePointsOfFailure,
+    noCutSet,
+    vacuous,
+    topEventOpen,
+    inconclusive,
+    undecidedChecks,
+    exitCode: faultTreeExitCode({
+      enumerated: withCutSets + noCutSet,
+      singlePointsOfFailure,
+      topEventOpen,
+      vacuous,
+      inconclusive,
+      undecidedChecks,
+    }),
+    diagnostics: numbered(faultTreeFindings(result)),
+  };
+}
+
+/**
+ * The exit code of a fault-tree run.
+ *
+ * The order IS the contract, and the first test comes before the rows for
+ * {@link refinementExitCode}'s reason: a run that enumerated nothing must never
+ * be green. "This file states no decomposition I can read, so nothing breaks
+ * it" is indistinguishable from "every tree was checked and none has a single
+ * point of failure", and only one of them is worth exit 0.
+ */
+function faultTreeExitCode(counts: {
+  enumerated: number;
+  singlePointsOfFailure: number;
+  topEventOpen: number;
+  vacuous: number;
+  inconclusive: number;
+  undecidedChecks: number;
+}): 0 | 1 | 2 {
+  if (counts.enumerated + counts.topEventOpen === 0) return 2;
+  if (counts.singlePointsOfFailure > 0 || counts.topEventOpen > 0) return 1;
+  // A vacuity is inconclusive under every command of this lane and no flag
+  // lowers it, so it is tested BEFORE the remaining rows rather than inside them.
+  if (counts.vacuous > 0) return 2;
+  // AN UNDECIDED CHECK, WHEREVER IT SITS. `inconclusive` counts trees whose
+  // OUTCOME was undecided, and it cannot see the check that went unanswered
+  // inside a tree that also found a cut set — the state §3.9's MUST-NEVER list
+  // is about. `refine` gets this for free because its group outcomes partition;
+  // here the outcome is `cut-sets` and the undecided row is a passenger, so it
+  // is counted separately and spends the 2 on its own. There is no
+  // `--allow-inconclusive` in this lane to lower it.
+  if (counts.undecidedChecks > 0) return 2;
+  if (counts.inconclusive > 0) return 2;
+  return 0;
+}
+
+/**
+ * What a fault-tree run files, under the lane's one source and one prefix.
+ *
+ * One ERROR per single point of failure and per top event that is already open
+ * — both are decided facts about the model — and one INFO per vacuous set, per
+ * undecided tree, per refused relation and per connector nothing read as an
+ * equality. A tree with cut sets of order 2 and above and no order-1 one files
+ * an INFO instead: it is a description of a redundant architecture, and filing
+ * it as an error would teach a reader to delete the redundancy that produced it.
+ */
+function faultTreeFindings(result: FaultTreeResult): Finding[] {
+  const out: Finding[] = [];
+  for (const group of result.groups) {
+    const where = group.shortId || group.top.qualifiedName;
+    const label = group.exceptional ? `${where} (#exceptional)` : where;
+    if (group.outcome === 'cut-sets' && group.singlePointOfFailure === true) {
+      const spof = group.cutSets.filter((c) => c.order === 1);
+      out.push({
+        severity: 'error',
+        message:
+          `${label} has ${spof.length} single point(s) of failure: ` +
+          `${spof.map((c) => `{${c.shortIds.join(', ')}}`).join(', ')} — ${group.detail}`,
+        elementId: group.top.id,
+        elementName: group.top.qualifiedName,
+        code: SINGLE_POINT_OF_FAILURE_CODE,
+        hint: 'Each of these sub-contracts, failing alone, admits an implementation the top requirement forbids — read the witness on the row. A fix is redundancy (a second sub-contract that guarantees the same quantity, so the set becomes order 2), a stronger sibling guarantee, or a weaker top requirement. It is a decided finding about the model and the run exits 1; no flag forgives one. This is contract-level analysis: it says nothing about ordering, time, rates or probabilities.',
+      });
+      // A TREE WHOSE CUT SETS ALL NEED TWO OR MORE FAILURES FILES NO ERROR, and
+      // that is a decision rather than an omission: it is what redundancy looks
+      // like from the failure side, the enumeration is the report's ordinary
+      // OUTPUT rather than a finding against the model, and a diagnostic would
+      // teach a reader to delete the redundancy that produced it. The cut sets
+      // are on the group, which every surface of this command prints.
+    } else if (group.outcome === 'top-event-open') {
+      out.push({
+        severity: 'error',
+        message: `${label}: ${group.detail}`,
+        elementId: group.top.id,
+        elementName: group.top.qualifiedName,
+        code: REFINEMENT_FAILED_CODE,
+        hint: 'Obligation (3) is refuted with every sub-contract honoured, so the empty set is a cut set and no fault had to be injected. Run `npm run sysprose -- refine <file> --via composition` and read the witness there: a fault tree over an architecture that does not refine would describe failures nothing has to cause.',
+      });
+    } else if (group.outcome === 'vacuous') {
+      out.push({
+        severity: 'info',
+        message: `${label} was not enumerated — ${group.detail}`,
+        elementId: group.top.id,
+        elementName: group.top.qualifiedName,
+        code: CONTRACT_SET_VACUOUS_CODE,
+        hint: 'The sub-contracts, the connections and the top requirement’s assumption cannot hold together, so obligation (3) can never FAIL and no fault set could be a cut set. Read the core named on the row for the statements that collide. It is inconclusive, exits 2, and no flag lowers it — and it is emphatically not "no cut set".',
+      });
+    } else if (group.outcome === 'inconclusive' && group.code !== null) {
+      out.push({
+        severity: 'info',
+        message: `${label} was not enumerated: ${group.detail}`,
+        elementId: group.top.id,
+        elementName: group.top.qualifiedName,
+        code: group.code,
+        hint: 'Nothing is claimed about this tree, and no absence of failure is claimed either. Read `docs/DIAGNOSTIC-CODES.md` for what this code means, and `npm run sysprose -- refine <file> --via composition` for what the decomposition itself came to. There is no `--allow-inconclusive` here: an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over.',
+      });
+    }
+    // AN UNDECIDED CHECK INSIDE A TREE THAT STILL FOUND CUT SETS, which is the
+    // one place the branches above cannot reach: the group's outcome is
+    // `cut-sets`, so it is neither `inconclusive` nor silent, and before this
+    // row a run in that state filed no diagnostic at all while exiting on it.
+    // The code is the undecided check's own — a timeout is the same fact
+    // whichever command met it — so the JSON `diagnostics` array names what the
+    // exit code was spent on.
+    if (group.outcome === 'cut-sets' && group.undecided.length > 0) {
+      const notMinimal = group.cutSets.filter((c) => !c.minimal).length;
+      out.push({
+        severity: 'info',
+        message:
+          `${label} was enumerated but ${group.undecided.length} check(s) were NOT decided, so no ` +
+          `absence is claimed over them: ${group.undecided.map((u) => u.detail).join('; ')}` +
+          (group.singlePointOfFailure === null
+            ? ' — and because one of them is an order-1 check, nothing is claimed about single points of failure either'
+            : '') +
+          (notMinimal > 0
+            ? ` — ${notMinimal} of the cut set(s) listed are NOT shown to be minimal: a proper subset of each was not decided`
+            : ''),
+        elementId: group.top.id,
+        elementName: group.top.qualifiedName,
+        code: group.undecided[0].code,
+        hint: 'The cut sets on this tree are real — each was confirmed against a counterexample — but the enumeration is incomplete, so the list is neither complete up to the order bound nor certified minimal. The run exits 2 for it and no flag lowers that: an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over. Raise the per-check budget, simplify the arithmetic the contracts state, or read the undecided rows on the report.',
+      });
+    }
+    // A `FaultHypothesis` NOBODY COULD READ, which is worse than none at all:
+    // the bound is the one input of this analysis that is an assumption, and a
+    // report that said "from the default" over a file that pins one would
+    // attribute it to nobody. The run is unchanged — the default bound is
+    // honest about what it enumerated — but the reader is told the carrier is
+    // there and was not read.
+    if (group.maxOrderSource === 'carrier-unreadable') {
+      out.push({
+        severity: 'info',
+        message:
+          `${label} carries a \`@${FAULT_HYPOTHESIS_QUALIFIED_NAME}\` whose \`maxOrder\` this tool ` +
+          `could not read, so this tree ran under the default bound of ${group.maxOrder} rather ` +
+          'than under the one the model states',
+        elementId: group.top.id,
+        elementName: group.top.qualifiedName,
+        code: 'verification/unsupported-expression',
+        hint: `Write the cell as a whole number of at least 1 — \`@${FAULT_HYPOTHESIS_QUALIFIED_NAME} { maxOrder = 2; }\`, or \`{ attribute maxOrder = 2; }\`; both spellings are read. The order bound is an assumption about how many independent failures are considered credible, so it is never guessed at from a malformed cell — but it is never silently attributed to the default either while the file states one.`,
+      });
+    }
+  }
+  for (const connection of result.notEncoded) {
+    out.push({
+      severity: 'info',
+      message: `\`${connection.qualifiedName}\` was not read as an equality: ${connection.hint}`,
+      elementId: connection.id,
+      elementName: connection.qualifiedName,
+      code: 'verification/unsupported-expression',
+      hint: `A connection joins ${connection.ends.length} feature(s) and states nothing about their values, so γ — the connection assertion — does not assert one, and a fault set judged over it is judged over fewer equalities than a reader may expect. \`bind\` the attributes if they are one quantity. This command has no \`--connections-as-equalities\`: the opt-in belongs to the report that judges the architecture, and a cut set found under a reading of the wiring the model does not state would be a failure of somebody else's design.`,
+    });
+  }
+  for (const refusal of result.refused) {
+    out.push({
+      severity: 'info',
+      message: `\`${refusal.expression}\` was not asserted: ${refusal.detail}.`,
+      elementId: refusal.id,
+      elementName: refusal.qualifiedName,
+      code: 'verification/unsupported-expression',
+      hint: `The relation is listed with its reason rather than dropped (\`${refusal.reason}\`). A refused clause of the top contract, and a refused \`assume\` of any sub-contract, stand the whole tree down: every fault set would otherwise be judged against a premise set SMALLER than the model states, which invents cut sets and can rule none out.`,
     });
   }
   return out;

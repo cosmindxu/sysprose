@@ -16,7 +16,11 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DEFAULT_MAX_CORE as SEMANTICS_MAX_CORE, STATEMENT_KINDS } from '@semantics/index';
+import {
+  DEFAULT_MAX_CORE as SEMANTICS_MAX_CORE,
+  DEFAULT_MAX_ORDER as ENGINE_MAX_ORDER,
+  STATEMENT_KINDS,
+} from '@semantics/index';
 import { DEFAULT_MAX_CONFIGS as ENGINE_MAX_CONFIGS, PATTERNS, SCOPES } from '@api/index';
 import { renderCliReference } from '../../scripts/gen-cli-reference';
 import {
@@ -27,7 +31,9 @@ import {
   COMMON_FLAGS,
   DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_CORE,
+  DEFAULT_MAX_ORDER,
   EXIT_CODES,
+  FAULT_TREE_EXIT_CODES,
   PATTERN_NAMES,
   REFINE_EXIT_CODES,
   SCOPE_NAMES,
@@ -119,11 +125,12 @@ describe('the generated command reference', () => {
       bounds: BOUNDS_EXIT_CODES,
       write: WRITE_EXIT_CODES,
       behaviour: BEHAVIOUR_EXIT_CODES,
+      'fault-tree': FAULT_TREE_EXIT_CODES,
     };
     expect(
       COMMANDS.map((c) => c.exitContract).filter((v, i, a) => a.indexOf(v) === i).sort(),
-      'the command table no longer declares all five exit contracts',
-    ).toEqual(['behaviour', 'bounds', 'refine', 'report', 'verify', 'write']);
+      'the command table no longer declares every exit contract',
+    ).toEqual(['bounds', 'behaviour', 'fault-tree', 'refine', 'report', 'verify', 'write'].sort());
 
     for (const cmd of COMMANDS) {
       const section = sections.get(cmd.name);
@@ -214,6 +221,37 @@ describe('the generated command reference', () => {
     expect(flags).not.toContain('free');
     expect(flags).not.toContain('engine');
     expect(flags).not.toContain('timeout');
+  });
+
+  it('gives `fault-tree` a contract whose 1 is a COMBINATION and whose 0 is bounded', () => {
+    // The same reason `refine` and `check-behaviour` have their own, and the
+    // same failure if it did not: under `refine`'s paragraph this command would
+    // publish an exit 0 meaning "every decomposition was shown to refine" — a
+    // decomposition that refines can still have four single points of failure,
+    // which is the whole reason the command exists — and an exit 1 meaning "an
+    // obligation refuted", which is not what it finds.
+    expect(FAULT_TREE_EXIT_CODES).toContain('single point of failure');
+    expect(FAULT_TREE_EXIT_CODES).toContain('1 at least one sub-contract whose failure ALONE');
+    expect(FAULT_TREE_EXIT_CODES).not.toContain('at its model value');
+    expect(FAULT_TREE_EXIT_CODES).toContain('there is no --free here');
+    // The states it must never launder into a green build, named in it — and
+    // the vacuity is named as the thing it is NOT, which is the sentence §3.9
+    // is written against.
+    expect(FAULT_TREE_EXIT_CODES).toContain('vacuous');
+    expect(FAULT_TREE_EXIT_CODES).toContain('never as "no cut set"');
+    expect(FAULT_TREE_EXIT_CODES).toContain('absent solver');
+    expect(FAULT_TREE_EXIT_CODES).toContain('higher orders are not explored');
+    expect(FAULT_TREE_EXIT_CODES).not.toBe(REFINE_EXIT_CODES);
+    const injecting = COMMANDS.filter((c) => c.exitContract === 'fault-tree').map((c) => c.name);
+    expect(injecting, 'the fault-tree contract is declared by exactly `fault-tree`').toEqual([
+      'fault-tree',
+    ]);
+    // And no flag exists on that row for anything the sentence refuses — the
+    // forgiveness flag least of all: an undecided order-1 check is exactly the
+    // state a "no single point of failure" sentence may never be written over.
+    const flags = flagsFor(COMMANDS.find((c) => c.name === 'fault-tree')!).map((f) => f.name);
+    expect(flags).not.toContain('free');
+    expect(flags).not.toContain('allow-inconclusive');
   });
 
   it('names every JUDGING subcommand in the top-level exit-code caveat', () => {
@@ -372,6 +410,36 @@ describe('the `--pattern` vocabulary and the catalogue behind it', () => {
       PATTERNS.filter((p) => p.kind === 'liveness').map((p) => p.name),
       'the liveness pair moved — the --pattern row says the LAST TWO are liveness',
     ).toEqual(PATTERN_NAMES.slice(-2));
+  });
+});
+
+/**
+ * The same guard again on `--max-order`, and it matters for the same reason.
+ *
+ * `fault-tree` prints "no cut set up to order N" and "minimal cut sets up to
+ * order N" on every answer it gives. A documented default that is not the bound
+ * the enumeration ran to would make both of those sentences false about the one
+ * figure the whole command hangs on — and this one is a HYPOTHESIS as well as a
+ * budget, so a reader who trusted the printed default would mis-read every
+ * absence in the report.
+ */
+describe('the `--max-order` default and the engine that honours it', () => {
+  it('is the number `src/semantics/fault-tree.ts` actually defaults to', () => {
+    expect(
+      DEFAULT_MAX_ORDER,
+      '`--max-order`\u2019s documented default and `DEFAULT_MAX_ORDER` disagree',
+    ).toBe(ENGINE_MAX_ORDER);
+  });
+
+  it('names it in the reference, beside the carrier that can pin it in the model', () => {
+    const row = DOC.split('\n').find((l) => l.startsWith('| `--max-order N` |'));
+    expect(row, 'the reference no longer renders a `--max-order` row').toBeDefined();
+    expect(row!, 'the --max-order row no longer prints its default').toContain(
+      `order ${DEFAULT_MAX_ORDER}`,
+    );
+    expect(row!, 'the --max-order row no longer names the carrier that pins it').toContain(
+      'FaultHypothesis',
+    );
   });
 });
 

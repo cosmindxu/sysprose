@@ -458,6 +458,7 @@ may legitimately differ, and the difference is spelled out under the table.
 | Does the verdict in the file still hold? | **Requirements** view → *Evidence* column † | `npm run sysprose -- evidence-status model.sysml` |
 | Write a run's verdicts into the file | — | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` |
 | Take them back off | — | `npm run sysprose -- evidence-detach model.sysml` |
+| Which contract failures break the top requirement? | — | `npm run sysprose -- fault-tree model.sysml --max-order 2` |
 | Which states can a machine reach, and where did the simulator hide a choice? | — | `npm run sysprose -- reach model.sysml` |
 
 † **Validate** re-runs the rule engine over the model already in the editor;
@@ -1331,6 +1332,115 @@ pins the direction of the difference: the heuristic never beats the proved bound
 `src/api/verification.ts`, and the L8 cases in
 `test/campaign/verification.test.ts`.
 
+### Which contract failures break the top requirement
+
+`refine` asks whether the parts add up to the whole. `fault-tree` asks the same
+question from the other side: **which combinations of contract failures would
+break it?** A basic event is "sub-contract *i* not honoured", and a set of them
+is a **cut set** when the refinement obligation fails with those guarantees
+withdrawn. It is the same obligation (3) `refine --via composition` proves, over
+the same normal form and the same γ — asked again with parts of the premise set
+taken away.
+
+**A decomposition that refines can still have a single point of failure.** That
+is the whole reason this is a separate command, and the shipped power-budget
+example is the demonstration: `refine` exits **0** on it, and
+
+```console
+$ npm run sysprose -- fault-tree examples/uav-power-budget.sysml
+examples/uav-power-budget.sysml: 1 with a single point of failure, 1 with cut sets, 0 with none up to the bound, 0 vacuous, 0 not enumerated — 1 tree(s) over 5 contract(s)
+  a basic event is "sub-contract not honoured", and a set of them is a CUT SET when obligation (3) — the same one `refine --via composition` proves — fails with those guarantees withdrawn
+  UAVPowerBudget::PowerBudget on `UAVPowerBudget::PowerSystem` — cut-sets
+    4 basic event(s); 4 minimal cut set(s) up to order 2: {BatterySupply}, {ComputerDraw}, {PropulsionDraw}, {RadioDraw}. there is a single point of failure … 6 check(s), all decided …
+    order bound 2, from the default
+      order 1  {BatterySupply}
+        witness: …BatteryPack::availablePower = 0, …
+$ echo $?
+1
+```
+
+Four single points of failure in a decomposition whose obligations are all
+proved. Each load's draw is bounded by **its own** guarantee and by nothing
+else, so withdrawing any one of them frees a term of the sum the pack has to
+cover. Redundancy is what changes that answer, and it shows up as an order-2
+cut set: with two supplies bound to one bus, neither is a cut set alone and the
+**pair** is — `{PrimaryOutput, BackupOutput}` in
+`test/fixtures/verification/models/fault-tree-redundant.sysml`.
+
+**Minimal, bounded, and counted.** Sets are enumerated by increasing order and
+every superset of a cut set is pruned rather than checked — withdrawing more
+guarantees cannot restore an obligation that already failed — so the list is
+minimal. The enumeration costs the sum of C(n,k) solver checks and the report
+prints the count. And the bound travels with the answer: **"no cut set up to
+order 2 — higher orders not explored"** is the whole sentence, never the first
+half of it.
+
+**"Minimal" is withheld when a smaller set went undecided.** Pruning removes the
+supersets of sets *shown* to be cut sets; it cannot remove the supersets of one
+the solver did not answer about, because that smaller set may itself be the cut
+set. Those supersets are still checked and still listed — each is a real cut
+set, confirmed against a counterexample — but the row says *minimality not
+established* and the head sentence drops the word. **And any undecided check
+makes the run exit 2**, whatever else it found: the enumeration is incomplete,
+and an undecided order-1 check is exactly the state a "no single point of
+failure" sentence may never be written over. There is no `--allow-inconclusive`
+here to lower it.
+
+**`--max-order N`, and the same number written in the model.** The order bound
+is the one part of this analysis that is an *assumption* — how many independent
+failures you consider credible at once — rather than something the contracts
+state. A carrier puts it where a reviewer sees it, and the flag overrides one:
+
+```sysml
+requirement def MissionPower {
+    @SysproseVerification::FaultHypothesis { attribute maxOrder = 2; }
+    subject sys : Avionics;
+    require constraint { sys.bus.voltage >= 20.0 [V] }
+}
+```
+
+Both spellings of the cell are read — `{ maxOrder = 2; }` and `{ attribute
+maxOrder = 2; }`. A cell this tool cannot read as a whole number is never
+guessed at, because inventing a bound would put a number nobody wrote onto every
+absence the command prints; instead the run says the carrier is there and was
+not read, and enumerates to the default.
+
+The report says which of the four the number came from — `--max-order`, the
+carrier, an unreadable carrier, or the default.
+
+**A vacuous contract set is reported as vacuous, never as "no cut set".** If the
+sub-contracts, the connections and the top requirement's assumption cannot hold
+together, obligation (3) can never *fail*, so no fault set could ever be a cut
+set. Enumerating over that would print this command's most reassuring sentence
+about its least trustworthy model, so step (0) runs first and the row reads
+`inconclusive: contract set vacuous` at exit **2**. Nothing lowers it.
+
+**Nothing is claimed about a check that was not decided.** "No single point of
+failure" is a statement about every order-1 check having been *decided*; a check
+that timed out is not a component shown to be harmless. One undecided order-1
+check and the report says so instead — and there is no `--allow-inconclusive`
+here to forgive it.
+
+**The two safety lanes stay apart.** A state machine passed as `--element` is
+**refused**, with a pointer to `check-behaviour`:
+
+```console
+$ npm run sysprose -- fault-tree examples/uav-isr.sysml --element FlightModes
+sysprose fault-tree: `UAVSurveillanceSystem::FlightModes` is a state machine; contract-level fault trees do not cover behaviour. …
+$ echo $?
+2
+```
+
+An empty cut-set list over a machine would read as a behaviour with no failure
+mode, which is the loudest false statement this command could make. And every
+report says what it is: **contract-level fault-tree analysis over the refinement
+obligations** — nothing about ordering, time, rates or probabilities, and not a
+behavioural safety analysis.
+
+**Source of truth:** `src/semantics/fault-tree.ts`, `faultTreeReport` in
+`src/api/verification.ts`, and the L8 cases in
+`test/campaign/verification.test.ts`.
+
 ### The verdict in the file, and whether it still holds
 
 A verdict that lives only in a terminal scrollback is a verdict nobody can
@@ -1735,10 +1845,11 @@ vocabulary Sysprose ships is a package you paste into your own file:
 
 ```sysml
 package SysproseVerification {
-    doc /* Three definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #exceptional says an outcome is a failure rather than an equally valid result. Evidence carries what a verification run showed, as an annotation on the requirement it is about. PropertyPattern carries a behavioural property — a pattern, a scope and the atoms that fill them — as an annotation on the machine it is about. All three are Sysprose extensions, not standard vocabulary. */
+    doc /* Four definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #exceptional says an outcome is a failure rather than an equally valid result. Evidence carries what a verification run showed, as an annotation on the requirement it is about. PropertyPattern carries a behavioural property — a pattern, a scope and the atoms that fill them — as an annotation on the machine it is about. FaultHypothesis carries the order bound a cut-set enumeration is run to, which is an assumption about how many failures are credible at once rather than something the contracts state. All four are Sysprose extensions, not standard vocabulary. */
     metadata def <exceptional> ExceptionalOutcome;
     metadata def Evidence;
     metadata def PropertyPattern;
+    metadata def FaultHypothesis;
 }
 ```
 

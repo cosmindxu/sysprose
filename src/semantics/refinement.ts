@@ -2574,3 +2574,360 @@ function truthOf(
   }
   return all;
 }
+
+/* ─────────────── the seam the fault-tree lane injects failures through ───── */
+
+/**
+ * What one obligation (3) came to, with the guarantees of a fault set dropped.
+ *
+ * Raw on purpose: the sentences a reader gets belong to whoever asked the
+ * question, and a fault tree's are not a refinement report's — "obligation (3)
+ * refuted" and "{battery} is a cut set" are the same solver answer described to
+ * two different readers. What travels here is the answer and the evidence for
+ * it.
+ */
+export interface InjectedOutcome {
+  /**
+   * `holds` — the negation was unsat, so the top event survives this fault set.
+   * `fails` — a counterexample was found AND this tool's own evaluator
+   * reproduced it. `undecided` — everything else, including a counterexample
+   * the evaluator would not confirm.
+   */
+  status: 'holds' | 'fails' | 'undecided';
+  /** The `verification/*` code for an undecided row, `null` otherwise. */
+  code: string | null;
+  /** Why it was undecided, or the empty string when it was decided. */
+  detail: string;
+  witness: WitnessValue[];
+  witnessConfirmed: boolean;
+  /** How many solver checks this answer cost. Always 1. */
+  checks: number;
+  logic: string;
+  fragment: Fragment;
+}
+
+/**
+ * One decomposition, prepared for fault injection.
+ *
+ * WHY THIS SEAM EXISTS AT ALL, rather than a second transcription of the normal
+ * form inside `./fault-tree`. A cut set is DEFINED as a set of sub-contracts
+ * whose failure makes obligation (3) fail, so the two commands have to be
+ * asking the solver the same question about the same encoding: a fault tree
+ * built over a second reading of `nf(C) = ¬A ∨ G`, a second γ, or a second
+ * refusal policy would enumerate cut sets of an architecture `refine` never
+ * judged, and the two answers would drift apart in exactly the direction that
+ * costs something — a "no cut set" over a premise set that is not the file's.
+ * So the normal form, γ, the refusal asymmetry and the witness gate stay here,
+ * in one file, and the fault tree asks this object.
+ */
+export interface InjectionTarget {
+  system: ContractRef;
+  shortId: string;
+  subject: ContractSubject | null;
+  /** The part the system contract is satisfied by. Never `null` for a decomposition. */
+  part: ContractRef;
+  /** The sub-contracts, in model order: one basic event each. */
+  components: Array<{ contract: ContractRef; shortId: string; part: ContractRef | null }>;
+  /** The equalities γ asserted for this group. */
+  gamma: GammaEdge[];
+  /** Connectors this group is about that nothing read as an equality. */
+  notEncoded: UnencodedConnection[];
+  /** Relations of this group's contracts that nothing asserted. */
+  refused: RefusedClause[];
+  /** The γ census sentence every verdict line of this group must carry. */
+  census: string;
+  /**
+   * Non-null when NOTHING may be injected here, with the reason.
+   *
+   * The three cases are {@link judgeGroup}'s own, and they are fatal here for a
+   * sharper reason than they are there. A cut set is published as a finding
+   * about an architecture, and every one of these leaves the premise set
+   * SMALLER than the file states: a refused conjunct of the system contract
+   * weakens the goal, a component whose `assume` lost a conjunct has a normal
+   * form stronger than the file's and is kept out, and an empty premise set
+   * makes every fault set trivially a cut set. Enumerating over any of them
+   * would print cut sets of a model the reader does not have.
+   */
+  standDown: { code: string; detail: string } | null;
+  /**
+   * Step (0): can `A ∧ ⋀ nf(C′) ∧ γ` hold at all?
+   *
+   * Run ONCE per group by the caller, and once is enough for a whole
+   * enumeration: dropping premises only ever makes a satisfiable antecedent
+   * more satisfiable, so a baseline that answered `sat` cannot become `unsat`
+   * under any fault set. A baseline that answered `unsat` is a contract set
+   * that entails everything, which is why §3.9 reports it as vacuous rather
+   * than as "no cut set".
+   */
+  baseline(opts: { backend: Z3Backend; timeoutMs?: number }): Promise<CheckOutcome>;
+  /**
+   * Obligation (3), with the guarantees of `dropped` removed from the premises.
+   *
+   * A basic event is "sub-contract *i* not honoured", and a component that does
+   * not honour its contract promises NOTHING: its normal form leaves the
+   * premise set entirely rather than being replaced by something weaker. That
+   * is the same injection `stewart-2021` makes into an AGREE contract and the
+   * same one `bozzano-2014` calls a basic event.
+   */
+  obligationThree(
+    dropped: ReadonlySet<ElementId>,
+    opts: { backend: Z3Backend; timeoutMs?: number },
+  ): Promise<InjectedOutcome>;
+}
+
+/** The census a fault-tree run reports at RUN level, beside its groups. */
+export interface InjectionCensus {
+  targets: InjectionTarget[];
+  /** How many contracts the model states at all. */
+  contracts: number;
+  bindEqualities: number;
+  itemFlows: number;
+  connectionEqualities: number;
+  /** Every connector nothing read as an equality, model-wide, listed once. */
+  notEncoded: UnencodedConnection[];
+  /** Every relation nothing asserted, model-wide, listed once. */
+  refused: RefusedClause[];
+}
+
+/**
+ * Prepare every decomposition the model states for fault injection.
+ *
+ * Pure: no solver is touched here, and that is deliberate rather than
+ * incidental. A run with no backend still has to say which decompositions it
+ * did not decide and over how many equalities — {@link refinementCensus} exists
+ * for the same reason one lane up — so the census and the deciding half are
+ * separated at the same seam in both.
+ */
+export function faultInjectionTargets(
+  model: Model,
+  opts: { elementId?: ElementId; connectionsAsEqualities?: boolean } = {},
+): InjectionCensus {
+  const connectionsAsEqualities = opts.connectionsAsEqualities === true;
+  const prepared = prepare(model, connectionsAsEqualities);
+  const targets: InjectionTarget[] = [];
+  for (const decomposition of decompositionsOf(model, prepared.contracts, opts.elementId)) {
+    targets.push(injectionTarget(model, decomposition, prepared, connectionsAsEqualities));
+  }
+  const kinds = prepared.gamma.encoded.map((g) => g.edge.kind);
+  const refused: RefusedClause[] = [];
+  const seen = new Set<ElementId>();
+  for (const r of [...targets.flatMap((t) => t.refused), ...prepared.gamma.refused]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    refused.push(r);
+  }
+  return {
+    targets,
+    contracts: prepared.contracts.length,
+    bindEqualities: kinds.filter((k) => k === 'bind').length,
+    itemFlows: kinds.filter((k) => k === 'flow').length,
+    connectionEqualities: kinds.filter((k) => k === 'connection').length,
+    notEncoded: prepared.gamma.notEncoded,
+    refused,
+  };
+}
+
+/** One decomposition, encoded once and asked many times. */
+function injectionTarget(
+  model: Model,
+  decomposition: Decomposition,
+  prepared: Prepared,
+  connectionsAsEqualities: boolean,
+): InjectionTarget {
+  const systemPartRef = refOf(model, decomposition.systemPart);
+  const system = encodeContract(decomposition.system, systemPartRef, prepared.rows);
+  const components = decomposition.components.map((c) =>
+    encodeContract(c.contract, refOf(model, c.part), prepared.rows),
+  );
+  const groupGamma = gammaFor(prepared.gamma.encoded, [system, ...components]);
+  const notEncoded = notEncodedFor(model, prepared.gamma.notEncoded, decomposition, prepared.byType);
+  const census = gammaSentence(groupGamma.edges, notEncoded, connectionsAsEqualities);
+  const refused = [
+    ...system.refused,
+    ...components.flatMap((c) => c.refused),
+    ...prepared.gamma.refused,
+  ];
+  const withheld = components.filter((c) => c.hasRefusedAssumption);
+  const premises = components
+    .filter((c) => !c.hasRefusedAssumption)
+    .map((c) => ({ contract: c, term: c.nf }))
+    .filter((p): p is { contract: EncodedContract; term: string } => p.term !== null);
+
+  const standDown: { code: string; detail: string } | null =
+    system.hasRefusal || system.nf === null
+      ? {
+          code: REFINEMENT_UNDECIDED_CODE,
+          detail:
+            system.nf === null
+              ? 'the system contract states no guarantee this lane encodes, so there is no top event to ' +
+                'injure: a fault tree needs a failure to be a failure OF something'
+              : `a gate refused ${system.refused.length} clause(s) of the system contract, and dropping a ` +
+                'conjunct of `nf(C)` would weaken the very obligation a cut set is defined as breaking — ' +
+                'so no fault was injected here ' +
+                `(${system.refused.map((r) => `${r.qualifiedName}: ${r.reason}`).join('; ')})`,
+        }
+      : withheld.length > 0
+        ? {
+            code: REFINEMENT_UNDECIDED_CODE,
+            detail:
+              `${withheld.length} of ${components.length} sub-contract(s) ` +
+              `(${withheld.map((c) => c.contract.qualifiedName).join(', ')}) had an \`assume\` clause a ` +
+              'gate refused, so their normal forms are not the file’s and were not asserted. Every fault ' +
+              'set would then be judged against a premise set SMALLER than the model states — which ' +
+              'invents cut sets and cannot rule one out — so nothing was enumerated',
+          }
+        : premises.length === 0
+          ? {
+              code: REFINEMENT_UNDECIDED_CODE,
+              detail:
+                'no sub-contract of this decomposition contributes a normal form this lane may assert, ' +
+                'so there is no guarantee to withdraw and every fault set would be the empty one',
+            }
+          : null;
+
+  const variables = [
+    ...system.vars,
+    ...components.flatMap((c) => c.vars),
+    ...groupGamma.rows.flatMap((g) => g.row.vars),
+  ];
+  const nonlinear =
+    system.nonlinear ||
+    components.some((c) => c.nonlinear) ||
+    groupGamma.rows.some((g) => g.row.encoded?.nonlinear === true);
+  const syntacticNonlinear =
+    system.syntacticNonlinear ||
+    components.some((c) => c.syntacticNonlinear) ||
+    groupGamma.rows.some((g) => g.row.encoded?.syntacticNonlinear === true);
+  const gammaAssertions: ScriptAssertion[] = groupGamma.rows.flatMap((g) =>
+    termsOf(g.row).map((t) => ({ kind: 'axiom' as const, name: g.edge.qualifiedName, term: t })),
+  );
+  const systemAssume: ScriptAssertion[] =
+    system.antecedent !== null
+      ? [
+          {
+            kind: 'premise' as const,
+            name: `${decomposition.system.qualifiedName}::assume`,
+            term: system.antecedent,
+          },
+        ]
+      : [];
+
+  const run = async (
+    assertions: ScriptAssertion[],
+    opts: { backend: Z3Backend; timeoutMs?: number },
+  ): Promise<{ outcome: CheckOutcome; logic: string; fragment: Fragment }> => {
+    const script = scriptOf(assertions, variables, { nonlinear, syntacticNonlinear });
+    const outcome = await opts.backend.check(script.text, {
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      variables: script.symbols,
+    });
+    return { outcome, logic: script.logic, fragment: script.fragment };
+  };
+
+  return {
+    system: contractRef(decomposition.system),
+    shortId: decomposition.system.shortId,
+    subject: decomposition.system.subject,
+    part: systemPartRef,
+    components: decomposition.components.map((c) => ({
+      contract: contractRef(c.contract),
+      shortId: c.contract.shortId,
+      part: refOf(model, c.part),
+    })),
+    gamma: groupGamma.edges,
+    notEncoded,
+    refused,
+    census,
+    standDown,
+    baseline: async (opts) =>
+      (await run([...systemAssume, ...premises.map(premiseAssertion), ...gammaAssertions], opts))
+        .outcome,
+    obligationThree: async (dropped, opts) => {
+      const kept = premises.filter((p) => !dropped.has(p.contract.contract.id));
+      const { outcome, logic, fragment } = await run(
+        [
+          ...kept.map(premiseAssertion),
+          ...gammaAssertions,
+          {
+            kind: 'goal',
+            name: `${decomposition.system.qualifiedName}::nf`,
+            term: notTerm(system.nf ?? 'true'),
+          },
+        ],
+        opts,
+      );
+      return injectedOutcome(outcome, logic, fragment, (values) =>
+        confirmCounterexample(values, {
+          assumed: [],
+          premises: kept.map((p) => p.contract),
+          gamma: groupGamma.rows.map((g) => g.row),
+          goalFalse: system,
+        }),
+      );
+    },
+  };
+}
+
+/** One contract's normal form, as a premise assertion. */
+function premiseAssertion(p: { contract: EncodedContract; term: string }): ScriptAssertion {
+  return { kind: 'premise', name: p.contract.contract.qualifiedName, term: p.term };
+}
+
+/**
+ * One solver answer about an injected obligation (3), through the witness gate.
+ *
+ * THE GATE IS NOT OPTIONAL HERE EITHER. A `sat` is the counterexample that
+ * makes a fault set a cut set, and a counterexample this tool's own evaluator
+ * cannot reproduce is an encoder defect rather than a failure of the
+ * architecture — so it comes back `undecided`, and the enumeration above is
+ * then forbidden to claim the absence of a single point of failure.
+ */
+function injectedOutcome(
+  outcome: CheckOutcome,
+  logic: string,
+  fragment: Fragment,
+  confirm: (values: ReadonlyMap<string, number | boolean>) => { ok: true } | { ok: false; why: string },
+): InjectedOutcome {
+  const shape = { checks: 1, logic, fragment };
+  if (outcome.status === 'unsat') {
+    return { ...shape, status: 'holds', code: null, detail: '', witness: [], witnessConfirmed: false };
+  }
+  if (outcome.status !== 'sat') {
+    return {
+      ...shape,
+      status: 'undecided',
+      code: outcome.status === 'unknown' ? 'verification/timeout' : 'verification/not-evaluable',
+      detail:
+        outcome.status === 'unknown'
+          ? `unknown after ${outcome.timeoutMs} ms (${outcome.reason || 'no reason given'})`
+          : `the solver refused the script this tool produced: ${outcome.reason}. That is a defect in ` +
+            'this tool, not in the model',
+      witness: [],
+      witnessConfirmed: false,
+    };
+  }
+  const values = new Map<string, number | boolean>();
+  for (const w of outcome.witness) if (w.value !== null) values.set(w.symbol, w.value);
+  const confirmation = confirm(values);
+  if (!confirmation.ok) {
+    return {
+      ...shape,
+      status: 'undecided',
+      code: 'verification/not-evaluable',
+      detail:
+        `a counterexample was found and this tool’s own evaluator would not confirm it: ` +
+        `${confirmation.why}. A counterexample this tool cannot reproduce is not evidence that the ` +
+        'top event occurs',
+      witness: outcome.witness,
+      witnessConfirmed: false,
+    };
+  }
+  return {
+    ...shape,
+    status: 'fails',
+    code: null,
+    detail: `witness ${witnessSentence(outcome.witness)} (stored magnitudes), re-read in process`,
+    witness: outcome.witness,
+    witnessConfirmed: true,
+  };
+}

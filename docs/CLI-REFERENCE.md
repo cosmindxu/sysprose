@@ -25,7 +25,7 @@ npm run sysprose -- --help                 # the subcommand list
 npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
-**The exit-code contract is per subcommand, and there are five of them.** Most
+**The exit-code contract is per subcommand, and there are 7 of them.** Most
 subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status`, `reach` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
@@ -39,10 +39,14 @@ in it at all: 0 every bound asked for was DECIDED — an optimum whose optimalit
 `evidence-attach` and `evidence-detach` *write* the
 file back, and they have no exit 1 at all:
 0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1.
-`check-behaviour` judges a *machine* and carries the fifth,
+`check-behaviour` judges a *machine* and carries another,
 because there is no solver in that lane and no `--free` for it either:
-0 every property stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass. There is no solver in this lane and no --free: the walk reads the model’s own values. Each section below states its own
-contract in full, and every section states which of the five it obeys.
+0 every property stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass. There is no solver in this lane and no --free: the walk reads the model’s own values.
+`fault-tree` judges an *architecture from the failure side* and carries the last of them,
+because its 1 is a combination of contract failures rather than one refuted
+obligation — a decomposition that refines can still have a single point of
+failure: 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine passed as --element (contract-level fault trees do not cover behaviour), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over. Each section below states its own
+contract in full, and every section states which of the 7 it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is
@@ -79,11 +83,12 @@ rather than reporting on the first one.
 | [`consistency`](#consistency) | Can all the requirements on this subject hold at once — and if not, which conflict? | `consistency` | judges |
 | [`refine`](#refine) | Do the component contracts entail the system contract, and is every component assumption discharged? | `refinement` | judges |
 | [`bounds`](#bounds) | What is the tightest value this measure can take under the model’s axioms? | `bounds` | decides |
+| [`fault-tree`](#fault-tree) | Which combinations of contract failures break the top requirement? | `faultTree` | judges |
 | [`evidence-status`](#evidence-status) | What was shown, by which tool, over which model — and is it still valid? | `evidenceStatus` | reports |
 | [`evidence-attach`](#evidence-attach) | Write the records of a verify run into the file, as annotations on what they are about | `evidenceAttach` | writes |
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
 | [`reach`](#reach) | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | `reach` | reports |
-| [`check-behaviour`](#check-behaviour) | Does this safety pattern hold on every reachable configuration? | `behaviour` | reports |
+| [`check-behaviour`](#check-behaviour) | Does this safety pattern hold on every reachable configuration? | `behaviour` | judges |
 
 ### Options every subcommand takes
 
@@ -377,6 +382,23 @@ Computed by `boundsReport (src/api/verification.ts)`. With `--json` the answer i
 
 **Exit codes.** 0 every bound asked for was DECIDED — an optimum whose optimality z3's νZ established, an exact supremum or infimum it proved is approached and never attained, or an unboundedness it proved under the axioms that were asserted · 2 usage/IO error, a degraded model, or any bound that was not decided — a value νZ does not certify as the tightest (nonlinear), a timeout, an absent solver, an axiom set that cannot hold together, or a measure no relation in the model reads. There is no exit 1: a bound is what the axioms admit and not a verdict, and there is no --allow-inconclusive here.
 
+### `fault-tree`
+
+**Which combinations of contract failures break the top requirement?**
+
+```bash
+npm run sysprose -- fault-tree <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The top event: an id, a qualified name, or a name unique in the model, naming a system contract, the part that satisfies it, or any contract or part under it. A state machine is REFUSED here rather than answered with an empty cut-set list — a fault tree over contracts says nothing about behaviour, and "no combination of failures breaks this" about a machine nothing looked at is the loudest false statement this command could make | every decomposition the model states |
+| `--max-order N` | How many sub-contracts may fail together. The enumeration costs the sum of C(n,k) solver checks and the count is reported, so the bound is a budget as well as a hypothesis; every absence is printed with it and nothing above it is explored. A `@SysproseVerification::FaultHypothesis { maxOrder = 2; }` carrier on the top requirement or its part pins the same number IN THE MODEL, where a reviewer can argue with it, and this flag overrides one; both cell spellings are read, with or without the `attribute` keyword, and a cell this tool cannot read is reported as such rather than passed off as the default | order 2, or the FaultHypothesis carrier the model states |
+
+Computed by `faultTreeReport (src/api/verification.ts)`. With `--json` the answer is published under `faultTree`, beside `ok` and `file`.
+
+**Exit codes.** 0 every fault tree the model states was enumerated to its order bound and none of them has a single point of failure — every order-1 check decided and none of them broken — and there was at least one tree to enumerate · 1 at least one sub-contract whose failure ALONE breaks the top requirement, with a counterexample this tool re-read and confirmed, or a top event that is already open with every sub-contract honoured · 2 usage/IO error, a degraded model, a model that states no decomposition to inject a failure into, a state machine passed as --element (contract-level fault trees do not cover behaviour), or ANY undecided check — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is reported as vacuous and never as "no cut set". A cut set of order 2 or above is what redundancy looks like from the failure side, so it does not spend the 1; every absence is bounded by the order it was checked to and higher orders are not explored. A cut set reads no feature value: there is no --free here, and no --allow-inconclusive either, because an undecided order-1 check is exactly the state a "no single point of failure" sentence may never be written over.
+
 ### `evidence-status`
 
 **What was shown, by which tool, over which model — and is it still valid?**
@@ -505,4 +527,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*21 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*22 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

@@ -61,6 +61,8 @@ import {
   ALLOW_INCONCLUSIVE_CODES,
   attachEvidence,
   boundsReport,
+  faultTreeReport,
+  faultTreeVerdict,
   canonicalElements,
   consistencyReport,
   detachEvidence,
@@ -71,15 +73,26 @@ import {
   sha256Hex,
   toolVersion,
   traceabilityMatrix,
+  VERIFICATION_CODES,
   VERIFICATION_ERROR_CODES,
   verifyModel,
   type VerifyEngineOption,
   type VerifyReport,
 } from '@api/index';
+import { findCommand } from '../../scripts/lib/sysprose-spec';
 import {
+  behaviourLaneRefusal,
   checkBounds,
   checkConsistency,
+  computeFaultTree,
+  isBehaviouralElement,
   CONNECTION_HINT,
+  CONTRACT_LEVEL_NOTE,
+  DEFAULT_MAX_ORDER,
+  FAULT_TREE_CODES,
+  ORDERS_NOT_EXPLORED_NOTE,
+  SINGLE_POINT_OF_FAILURE_CODE,
+  SYSPROSE_VERIFICATION_LIBRARY,
   optimize,
   CONNECTIONS_AS_EQUALITIES_NOTE,
   CONTRACT_SET_VACUOUS_CODE,
@@ -1670,6 +1683,10 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
     );
     for (const file of [
       'src/semantics/consistency.ts',
+      // The safety lane's own module, added with it: `fault-tree` prints a
+      // sentence about what it is on every report, and the reserved word is
+      // exactly the one a fault-tree report would reach for.
+      'src/semantics/fault-tree.ts',
       'src/api/verification.ts',
       'scripts/sysprose.ts',
       'scripts/lib/sysprose-spec.ts',
@@ -3473,5 +3490,570 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
     expect(folded.bounds[0].value, 'the folded implication was not escapable through its antecedent').toBe(23);
     expect(folded.requirements).toEqual(['BoundsAssume::MassRequirement', 'BoundsAssume::HeavyPayload']);
     expect(folded.exitCode).toBe(0);
+  });
+});
+
+/**
+ * L8 — `fault-tree`: which combinations of contract failures break the top event.
+ *
+ * A SUITE-LEVEL CASE for the reason the refinement block above is one: a
+ * `test/fixtures/verification/<case>/expected.json` is a projection of a
+ * `VerifyReport`, and a cut-set enumeration is a different report about a
+ * different question.
+ *
+ * WHAT EACH CASE PINS is a sentence from §3.9's MUST-NEVER list turned into a
+ * property, and three of them are the reason the module is shaped the way it is:
+ *
+ *  - **A vacuous baseline is never "no cut set".** Obligation (3) cannot FAIL
+ *    from an unsatisfiable antecedent, so a contract set that entails
+ *    everything survives every fault set — and the tool that enumerated over it
+ *    would print the most reassuring sentence it has about the least safe model
+ *    in the corpus.
+ *  - **An undecided order-1 check forbids the no-single-point claim.** Driven
+ *    by a stub backend rather than by a timeout, so the case says what it means
+ *    on every machine: one check comes back `unknown` and the group's
+ *    `singlePointOfFailure` must be `null`, not `false`.
+ *  - **A state machine is refused, in BOTH builds.** The pointer to
+ *    `check-behaviour` is conditional on that row existing, and the fallback
+ *    sentence is checked here because the build that needs it is the one this
+ *    repository does not have — phase 4 has landed, so the live branch is the
+ *    pointer and the fallback would otherwise never be executed at all.
+ *
+ * The redundancy fixture carries the two answers a fault tree exists to tell
+ * apart: one sub-contract whose failure alone breaks the top requirement, and
+ * two that have to fail together.
+ */
+describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
+  const BUDGET = 'examples/uav-power-budget.sysml';
+  const REDUNDANT = 'test/fixtures/verification/models/fault-tree-redundant.sysml';
+  const SIBLINGS = 'test/fixtures/verification/models/refinement-contradictory-siblings.sysml';
+  const LEVELS = 'test/fixtures/verification/models/refinement-three-level.sysml';
+  const MUTUAL = 'test/fixtures/verification/models/refinement-mutual-support.sysml';
+
+  /** One run over one model, with the flags a person would type. */
+  async function tree(
+    path: string,
+    opts: Parameters<typeof faultTreeReport>[1] = {},
+    text?: string,
+  ): Promise<Awaited<ReturnType<typeof faultTreeReport>>> {
+    const source = text ?? read(path);
+    const { model } = await loadModelText(source, { fileName: path });
+    if (!model) throw new Error(`${path} produced no model`);
+    return faultTreeReport(model, { ...opts, sourceText: source });
+  }
+
+  withZ3('{battery} is an order-1 cut set on the power-budget example, with the bound stated', async () => {
+    // THE FLAGSHIP EXAMPLE, AND WHAT IT HONESTLY SAYS. `{battery}` — the pack's
+    // own contract — is an order-1 cut set: withdraw its guarantee and the
+    // available power is unconstrained, so the loads no longer fit inside it.
+    //
+    // AND SO ARE THE OTHER THREE, which is a fact about this model rather than
+    // about the tool: each load's draw is bounded by ITS OWN guarantee and by
+    // nothing else, so withdrawing any one of them frees a term of the sum.
+    // §4's own sentence for this commit expects `{radio}` NOT to be a cut set
+    // here, and on the model as shipped that is false — the property it is
+    // about is redundancy, which this example does not have and
+    // `fault-tree-redundant.sysml` does. Both are pinned, and the shipped
+    // example is pinned as it is rather than as the plan hoped.
+    const r = await tree(BUDGET);
+    expect(r.exitCode, 'a single point of failure went green').toBe(1);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('cut-sets');
+    expect(group.singlePointOfFailure).toBe(true);
+    expect(group.code).toBe(SINGLE_POINT_OF_FAILURE_CODE);
+    expect(group.events.map((e) => e.shortId || e.contract.declaredName)).toEqual([
+      'BatterySupply',
+      'ComputerDraw',
+      'PropulsionDraw',
+      'RadioDraw',
+    ]);
+    const battery = group.cutSets.find((c) => c.shortIds.includes('BatterySupply'));
+    expect(battery, '{battery} is no longer a cut set of the power budget').toBeDefined();
+    expect(battery!.order).toBe(1);
+    // The witness is a design the remaining contracts admit and the top
+    // requirement forbids — re-read in process before it was printed, exactly
+    // as `refine` re-reads a counterexample.
+    expect(battery!.witness.length).toBeGreaterThan(0);
+    // Every order-2 subset contains one of the four singletons, so pruning
+    // leaves the check count at step (0) + the baseline + four.
+    expect(group.checks, 'supersets of a cut set were checked rather than pruned').toBe(6);
+    expect(group.maxOrder).toBe(DEFAULT_MAX_ORDER);
+    expect(group.maxOrderSource).toBe('default');
+    // MUST NEVER be read as a behavioural analysis, on any surface.
+    expect(group.detail).toContain('not a behavioural safety analysis');
+  });
+
+  withZ3('redundancy is an order-2 cut set, neither half is one, and the radio is not', async () => {
+    const r = await tree(REDUNDANT);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('cut-sets');
+    expect(group.cutSets.map((c) => c.shortIds.join('+'))).toEqual([
+      'BatteryCapacity',
+      'PrimaryOutput+BackupOutput',
+    ]);
+    // THE THREE PROPERTIES THE MODEL EXISTS FOR, one assertion each.
+    expect(
+      group.cutSets.filter((c) => c.order === 1).map((c) => c.shortIds[0]),
+      'a supply on its own became a single point of failure, so the redundancy was not read',
+    ).toEqual(['BatteryCapacity']);
+    expect(
+      group.cutSets.some((c) => c.shortIds.includes('RadioDraw')),
+      'a sub-contract the top requirement never mentions was reported as a cut set',
+    ).toBe(false);
+    expect(group.singlePointOfFailure).toBe(true);
+    // Step (0), the baseline, four order-1 checks and the three order-2 subsets
+    // that are not supersets of `{BatteryCapacity}`.
+    expect(group.checks).toBe(9);
+    expect(group.undecided).toEqual([]);
+    expect(r.exitCode).toBe(1);
+  });
+
+  withZ3('--max-order 1 finds the single point and never claims the order-2 set absent', async () => {
+    const r = await tree(REDUNDANT, { maxOrder: 1 });
+    const [group] = r.groups;
+    expect(group.maxOrder).toBe(1);
+    expect(group.maxOrderSource).toBe('flag');
+    expect(group.cutSets.map((c) => c.shortIds.join('+'))).toEqual(['BatteryCapacity']);
+    // THE ORDER-2 SET IS NOT MENTIONED, and neither is its absence: the pair
+    // that IS a cut set at order 2 was never checked, and a run bounded at 1
+    // that said anything about order 2 would be claiming the absence of a
+    // failure it did not look for.
+    expect(group.detail).toContain('up to order 1');
+    expect(group.detail, 'a run bounded at order 1 spoke about order 2').not.toContain('order 2');
+    expect(group.detail).not.toContain('BackupOutput');
+    expect(group.checks, 'order-2 subsets were checked under --max-order 1').toBe(6);
+  });
+
+  withZ3('a vacuous baseline reports the contract set vacuous, never "no cut set"', async () => {
+    // THE CASE §3.9 IS WRITTEN AGAINST. C₁ = ⟨true, x > 10⟩ and C₂ = ⟨true,
+    // x < 5⟩ over one bind class cannot hold together, so obligation (3) can
+    // never FAIL — and an enumeration over them would print the most
+    // reassuring sentence this command has about a contract set that entails
+    // everything.
+    const r = await tree(SIBLINGS);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('vacuous');
+    expect(group.code).toBe(CONTRACT_SET_VACUOUS_CODE);
+    expect(group.detail).toContain('contract set vacuous');
+    // The CLAIM form, not the phrase: the sentence quotes "no cut set" in order
+    // to say it is not that, and a guard that could not tell a mention from a
+    // claim would forbid the row from stating its own charter. What must never
+    // appear is the bounded-absence sentence — "no cut set up to order N" — or
+    // the note that travels with it.
+    expect(group.detail, 'a vacuity was printed as an absence of failure').not.toMatch(
+      /no cut set up to order/,
+    );
+    expect(group.detail).not.toContain(ORDERS_NOT_EXPLORED_NOTE);
+    expect(group.cutSets, 'a vacuous baseline produced cut sets').toEqual([]);
+    expect(group.singlePointOfFailure, 'a vacuity claimed something about single points').toBeNull();
+    expect(group.checks, 'the enumeration ran past step (0)').toBe(1);
+    expect(r.exitCode).toBe(2);
+    expect(r.vacuous).toBe(1);
+  });
+
+  withZ3('a top event already open with every sub-contract honoured is not enumerated', async () => {
+    // The mutual-support model's obligation (3) is `⊤ ⊨ p`, which is refuted
+    // with nothing withdrawn: the empty set is the cut set. Injecting failures
+    // into an architecture that does not refine would describe failures nothing
+    // has to cause, so the row says so and points at the report that owns it.
+    const r = await tree(MUTUAL);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('top-event-open');
+    expect(group.code).toBe(REFINEMENT_FAILED_CODE);
+    expect(group.detail).toContain('with EVERY sub-contract honoured');
+    expect(group.detail).toContain('refine --via composition');
+    expect(group.cutSets).toEqual([]);
+    expect(group.checks, 'the enumeration ran past the baseline').toBe(2);
+    // A decided negative about the architecture, so it is exit 1 — never a
+    // green build, and never an empty cut-set list read as "nothing breaks it".
+    expect(r.exitCode).toBe(1);
+    expect(r.topEventOpen).toBe(1);
+  });
+
+  it('an undecided order-1 check forbids the no-single-point claim', async () => {
+    // A STUB BACKEND, NOT A TIMEOUT, so the case means the same thing on every
+    // machine: step (0) is satisfiable, the baseline holds, and the FIRST
+    // order-1 check comes back `unknown`. Every other check holds, so a build
+    // that read "not shown to fail" as "shown to be harmless" would report `no
+    // cut set` with `singlePointOfFailure: false` — the one sentence §3.9 says
+    // this command may never write.
+    const { model } = await loadModelText(read(REDUNDANT), { fileName: REDUNDANT });
+    if (!model) throw new Error('the probe produced no model');
+    let call = 0;
+    const stub: Z3Backend = {
+      absent: false,
+      version: '0.0.0-stub',
+      fullVersion: 'stub',
+      seed: 0,
+      initMs: 0,
+      async check(_script, opts) {
+        call += 1;
+        const status = call === 1 ? 'sat' : call === 3 ? 'unknown' : 'unsat';
+        return {
+          status,
+          reason: status === 'unknown' ? 'stubbed' : '',
+          timedOut: false,
+          timeoutMs: opts?.timeoutMs ?? 0,
+          elapsedMs: 0,
+          witness: [],
+          core: [],
+        };
+      },
+      async optimize(_script, _sense, opts) {
+        return {
+          status: 'error',
+          reason: 'this stub answers checks only',
+          timedOut: false,
+          timeoutMs: opts?.timeoutMs ?? 0,
+          elapsedMs: 0,
+          bound: null,
+          witness: [],
+        };
+      },
+    };
+    const r = await computeFaultTree(model, { backend: stub });
+    const [group] = r.groups;
+    expect(group.cutSets).toEqual([]);
+    expect(group.undecided.map((u) => u.order)).toEqual([1]);
+    expect(
+      group.singlePointOfFailure,
+      'an undecided order-1 check was read as a component shown to be harmless',
+    ).toBeNull();
+    expect(group.outcome, 'an undecided enumeration was reported as an absence').toBe(
+      'inconclusive',
+    );
+    expect(group.detail).toContain('nothing is claimed about single points of failure');
+    expect(group.detail, 'an absence was claimed over a check nobody decided').not.toContain(
+      'no single point of failure',
+    );
+  });
+
+  it('a state machine is refused in both builds, and never answered with an empty list', () => {
+    // THE TWO SAFETY LANES STAY APART. The refusal is the same and so is the
+    // exit code; only the POINTER moves, and it moves on whether the row
+    // exists. The live branch is the pointer — phase 4 has landed — so the
+    // fallback is checked here, against the build this repository does not
+    // have but the plan explicitly allows.
+    expect(
+      findCommand('check-behaviour'),
+      'the pointer branch below is checked against a command that no longer exists',
+    ).toBeDefined();
+    const withCommand = behaviourLaneRefusal('P::FlightModes', 'check-behaviour');
+    expect(withCommand).toContain('is a state machine; contract-level fault trees do not cover behaviour');
+    expect(withCommand).toContain('check-behaviour <file> --element P::FlightModes --from-keywords');
+    const fallback = behaviourLaneRefusal('P::FlightModes', null);
+    expect(
+      fallback,
+      'the fallback sentence points at a subcommand this build may not ship',
+    ).not.toContain('check-behaviour');
+    // AND IT POINTS AT NOTHING AT ALL, rather than at a command spelled from
+    // whatever the lookup returned: a build with no behavioural lane must not
+    // print "run `npm run sysprose -- null`" either.
+    expect(fallback, 'the fallback still tells a reader to run something').not.toContain(
+      'npm run sysprose',
+    );
+    expect(fallback).toContain('is a state machine; contract-level fault trees do not cover behaviour');
+    // THE REFUSAL IS THE SAME REFUSAL; only the pointer is added to it. That is
+    // §4's own sentence for this commit — "the refusal and the exit code are
+    // unchanged either way" — and it is what makes the conditional safe.
+    expect(withCommand.startsWith(fallback), 'the two builds refuse differently').toBe(true);
+    // Both say what an empty cut-set list would have said instead, which is the
+    // thing being refused rather than a flourish.
+    for (const message of [withCommand, fallback]) {
+      expect(message).toContain('empty cut-set list');
+    }
+    // And the predicate the CLI branches on names the metaclass a machine is.
+    expect(isBehaviouralElement({ eClass: 'StateUsage' } as never)).toBe(true);
+    expect(isBehaviouralElement({ eClass: 'PartUsage' } as never)).toBe(false);
+  });
+
+  withZ3('the enumeration is deterministic: two runs produce identical JSON', async () => {
+    // A CUT-SET LIST IS A DIFF SOMEBODY READS. Subsets are enumerated in
+    // lexicographic order over the components in model order, so two runs over
+    // one file cannot disagree about the order the sets are printed in — which
+    // is what makes a change to this list a change worth reviewing.
+    const first = await tree(REDUNDANT);
+    const second = await tree(REDUNDANT);
+    const project = (r: Awaited<ReturnType<typeof faultTreeReport>>) =>
+      JSON.stringify(
+        r.groups.map((g) => ({
+          top: g.top.qualifiedName,
+          events: g.events.map((e) => e.contract.qualifiedName),
+          cutSets: g.cutSets.map((c) => ({ order: c.order, events: c.events })),
+          checks: g.checks,
+          outcome: g.outcome,
+        })),
+        null,
+        2,
+      );
+    expect(project(first)).toBe(project(second));
+  });
+
+  withZ3('a hierarchy expands a sub-contract that is itself a system into an intermediate event', async () => {
+    // `bozzano-2014`'s intermediate event: a basic event whose failure is not
+    // primitive, because the sub-contract that fails is the TOP event of the
+    // tree one level down. The three-level model yields two trees, and the
+    // mid-level contract is a basic event of the upper one and the top of the
+    // lower one — which is what "expands" means here.
+    const r = await tree(LEVELS);
+    expect(r.groups.map((g) => g.top.declaredName)).toEqual(['VehicleBudget', 'PackBudget']);
+    const [vehicle, pack] = r.groups;
+    const [midEvent] = vehicle.events;
+    expect(midEvent.contract.declaredName).toBe('PackBudget');
+    expect(midEvent.intermediate, 'a whole subsystem was presented as an atom').toBe(true);
+    expect(midEvent.expandsTo).toBe(pack.top.qualifiedName);
+    // And the leaves of the lower tree are leaves.
+    expect(pack.events.map((e) => e.intermediate)).toEqual([false, false]);
+    // The upper tree has ONE sub-contract, so its order bound is clamped to 1
+    // and the report says which number was asked for.
+    expect(vehicle.maxOrder).toBe(1);
+    expect(vehicle.detail).toContain('asked for 2');
+  });
+
+  withZ3('a FaultHypothesis carrier pins the bound in the model, and --max-order overrides it', async () => {
+    // §3.9's sync handle (`rauzy-2019`): the order bound is the one part of
+    // this analysis that is an ASSUMPTION rather than a computation, so the
+    // model can carry it where a reviewer sees it. The shipped package is
+    // prepended rather than retyped — the carrier is the tool's own vocabulary,
+    // and a hand-copied package resolves whatever the copy says.
+    const source = `${SYSPROSE_VERIFICATION_LIBRARY}\n\n${read(REDUNDANT).replace(
+      '    requirement def MissionPower {',
+      '    requirement def MissionPower {\n        @SysproseVerification::FaultHypothesis { attribute maxOrder = 1; }',
+    )}`;
+    expect(source, 'the carrier was not inserted').toContain('FaultHypothesis { attribute maxOrder');
+    const pinned = await tree(REDUNDANT, {}, source);
+    expect(pinned.groups[0].maxOrder).toBe(1);
+    expect(pinned.groups[0].maxOrderSource).toBe('carrier');
+    expect(pinned.groups[0].cutSets.map((c) => c.shortIds.join('+'))).toEqual(['BatteryCapacity']);
+    // The flag is an override a reviewer can see, not a second opinion.
+    const overridden = await tree(REDUNDANT, { maxOrder: 2 }, source);
+    expect(overridden.groups[0].maxOrder).toBe(2);
+    expect(overridden.groups[0].maxOrderSource).toBe('flag');
+    expect(overridden.groups[0].cutSets.map((c) => c.shortIds.join('+'))).toEqual([
+      'BatteryCapacity',
+      'PrimaryOutput+BackupOutput',
+    ]);
+  });
+
+  withZ3('#exceptional labels the top event and leaves its cut sets unchanged', async () => {
+    const bare = await tree(REDUNDANT);
+    const source = `${SYSPROSE_VERIFICATION_LIBRARY}\n\n${read(REDUNDANT).replace(
+      '    requirement def MissionPower {',
+      '    #SysproseVerification::exceptional requirement def MissionPower {',
+    )}`;
+    const tagged = await tree(REDUNDANT, {}, source);
+    expect(bare.groups[0].exceptional, 'an untagged outcome was read as a failure').toBe(false);
+    expect(tagged.groups[0].exceptional, 'the shipped keyword no longer resolves').toBe(true);
+    // THE TAG IS A LABEL, NOT AN INPUT. It says an outcome is a failure rather
+    // than an equally valid result; it is not a fact the solver reads, and the
+    // tree is the same tree.
+    expect(tagged.groups[0].cutSets.map((c) => c.shortIds.join('+'))).toEqual(
+      bare.groups[0].cutSets.map((c) => c.shortIds.join('+')),
+    );
+    expect(tagged.groups[0].checks).toBe(bare.groups[0].checks);
+    expect(tagged.exitCode).toBe(bare.exitCode);
+  });
+
+  withZ3('an undecided check spends the 2 even when the same tree found cut sets', async () => {
+    // THE STATE THE EXIT CODE ONCE COULD NOT SEE. `inconclusive` counts trees
+    // whose OUTCOME was undecided, and a tree that found an order-2 cut set and
+    // left an order-1 check unanswered has outcome `cut-sets` — so it was
+    // counted as enumerated, filed no diagnostic, and the run went GREEN over
+    // exactly the state §3.9's MUST-NEVER list is about. The undecided CHECKS
+    // are counted separately for that reason and spend the 2 on their own.
+    //
+    // Driven by forcing ONE answer of the real solver to `unknown` — the same
+    // status a budget overrun returns — and the check is selected by the
+    // premises its script names rather than by a call index, so the case says
+    // the same thing if the encoding ever reorders.
+    const source = read(REDUNDANT);
+    const { model } = await loadModelText(source, { fileName: REDUNDANT });
+    if (!model) throw new Error('the probe produced no model');
+    const real = await loadZ3();
+    if (real.absent) throw new Error('the probe found no solver');
+    const wrapped: Z3Backend = {
+      ...real,
+      async check(script, opts) {
+        const out = await real.check(script, opts);
+        // The order-1 check that withdraws {BatteryCapacity}: the only script
+        // that keeps all three other premises and drops that one.
+        const drops = (name: string) => !script.includes(`premise:FaultTreeRedundant::${name}`);
+        const forced =
+          drops('BatteryCapacity') &&
+          !drops('PrimaryOutput') &&
+          !drops('BackupOutput') &&
+          !drops('RadioDraw');
+        return forced
+          ? { ...out, status: 'unknown' as const, reason: 'forced', witness: [], core: [] }
+          : out;
+      },
+    };
+    const result = await computeFaultTree(model, { backend: wrapped, timeoutMs: 30_000 });
+    const [group] = result.groups;
+    // The tree is a clean enumeration by its own outcome, and it still has an
+    // order-1 check nobody answered.
+    expect(group.outcome).toBe('cut-sets');
+    expect(group.cutSets.length).toBeGreaterThan(0);
+    expect(group.undecided.map((u) => u.order)).toEqual([1]);
+    expect(group.singlePointOfFailure).toBeNull();
+    const verdict = faultTreeVerdict(result);
+    expect(verdict.inconclusive, 'the tree is counted as enumerated — that is the trap').toBe(0);
+    expect(verdict.withCutSets).toBe(1);
+    expect(verdict.undecidedChecks).toBe(1);
+    expect(verdict.exitCode, 'an undecided order-1 check went green').toBe(2);
+    // AND IT IS SAID OUT LOUD. Before this row the state filed no diagnostic at
+    // all, so the JSON named nothing the exit code was spent on.
+    const said = verdict.diagnostics.find((d) => d.code === group.undecided[0].code);
+    expect(said, 'the run exited 2 and its diagnostics named nothing').toBeDefined();
+    expect(said?.severity).toBe('info');
+    expect(said?.message).toContain('NOT decided');
+    // MINIMALITY IS NOT CLAIMED OVER A SUBSET NOBODY DECIDED. Every listed set
+    // that contains the undecided singleton is a real cut set — each was
+    // confirmed against a counterexample — but the singleton inside it may be
+    // the cut set, so the word "minimal" is withheld from the row and from the
+    // head sentence.
+    const supersets = group.cutSets.filter((c) => c.shortIds.includes('BatteryCapacity'));
+    expect(supersets.length).toBeGreaterThan(0);
+    expect(supersets.every((c) => c.minimal)).toBe(false);
+    const unaffected = group.cutSets.filter((c) => !c.shortIds.includes('BatteryCapacity'));
+    expect(unaffected.length).toBeGreaterThan(0);
+    expect(
+      unaffected.every((c) => c.minimal),
+      'a set no undecided subset touches lost its minimality claim',
+    ).toBe(true);
+    expect(group.detail).toContain('NOT shown to be minimal');
+    expect(group.detail, 'a set nothing showed to be irreducible was called minimal').not.toContain(
+      'minimal cut set(s)',
+    );
+    for (const c of supersets) expect(c.detail).toContain('MINIMALITY NOT ESTABLISHED');
+  });
+
+  withZ3('a tree with no cut set up to the bound is exit 0, and the absence carries it', async () => {
+    // THE GREEN PATH, which is the one sentence §3.9 lets this command say
+    // about an absence: "no cut set up to order 1 — higher orders not
+    // explored". Nothing else in this block executes `return 0`, and an exit
+    // contract whose 0 is never taken is a contract nothing holds to.
+    //
+    // The model is the redundancy fixture with the top requirement's ENERGY
+    // clause dropped, so the only thing it asks for is the bus voltage — which
+    // two sub-contracts guarantee through the same bound quantity. No single
+    // one of them is a cut set, which is what redundancy looks like.
+    const source = read(REDUNDANT).replace(
+      '        require constraint { sys.battery.usableEnergy >= 300.0 [Wh] }\n',
+      '',
+    );
+    expect(source, 'the energy clause was not dropped').not.toContain('usableEnergy >= 300.0');
+    const r = await tree(REDUNDANT, { maxOrder: 1 }, source);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('no-cut-set');
+    expect(group.cutSets).toEqual([]);
+    expect(group.undecided).toEqual([]);
+    expect(group.code, 'an absence within the bound is not a finding').toBeNull();
+    expect(group.singlePointOfFailure, 'every order-1 check was decided and none broke it').toBe(
+      false,
+    );
+    expect(r.noCutSet).toBe(1);
+    expect(r.undecidedChecks).toBe(0);
+    expect(r.exitCode, 'a fully decided, unbroken tree was not green').toBe(0);
+    // EVERY ABSENCE CARRIES ITS BOUND. `Σ C(n,k)` checks up to k say nothing
+    // about k+1, and the sentence says so in the same breath as the absence.
+    expect(group.detail).toContain('no cut set up to order 1');
+    expect(group.detail).toContain(ORDERS_NOT_EXPLORED_NOTE);
+    expect(group.detail).toContain('no single point of failure');
+    expect(group.detail).toContain(CONTRACT_LEVEL_NOTE);
+    // And the same model at the default bound finds the pair, still green:
+    // two sub-contracts that must fail TOGETHER is a description of the
+    // architecture, not a finding against it.
+    const two = await tree(REDUNDANT, { maxOrder: 2 }, source);
+    expect(two.groups[0].cutSets.map((c) => c.shortIds.join('+'))).toEqual([
+      'PrimaryOutput+BackupOutput',
+    ]);
+    expect(two.groups[0].singlePointOfFailure).toBe(false);
+    expect(two.exitCode, 'an order-2 cut set spent the 1 that belongs to a single point').toBe(0);
+  });
+
+  withZ3('reads the bound in BOTH carrier spellings, and never invents one', async () => {
+    // §3.9 WRITES THE KEYWORD-LESS FORM — `@SysproseVerification::FaultHypothesis
+    // { maxOrder = 2; }` — and the parser stores that as a keyword-less
+    // `ReferenceUsage` rather than as an `AttributeUsage`. A reader who copies
+    // the carrier out of the specification must not have their bound silently
+    // replaced by the default: the bound is the one input of this analysis that
+    // is an assumption, and an assumption dropped without a word is the failure
+    // the sync handle exists to prevent.
+    const carry = (cell: string) =>
+      `${SYSPROSE_VERIFICATION_LIBRARY}\n\n${read(REDUNDANT).replace(
+        '    requirement def MissionPower {',
+        `    requirement def MissionPower {\n        @SysproseVerification::FaultHypothesis { ${cell} }`,
+      )}`;
+    for (const cell of ['maxOrder = 1;', 'attribute maxOrder = 1;']) {
+      const r = await tree(REDUNDANT, {}, carry(cell));
+      expect(r.groups[0].maxOrder, `\`${cell}\` was not read`).toBe(1);
+      expect(r.groups[0].maxOrderSource).toBe('carrier');
+    }
+    // A CELL THIS TOOL CANNOT READ IS NOT A DEFAULT. The bound is not guessed
+    // at from a malformed cell — inventing one would put a number nobody wrote
+    // onto every absence — but the run says the carrier is there and was not
+    // read, instead of attributing the assumption to nobody.
+    const unreadable = await tree(REDUNDANT, {}, carry('attribute maxOrder = "two";'));
+    expect(unreadable.groups[0].maxOrder).toBe(DEFAULT_MAX_ORDER);
+    expect(unreadable.groups[0].maxOrderSource).toBe('carrier-unreadable');
+    const row = unreadable.diagnostics.find((d) => d.message.includes('FaultHypothesis'));
+    expect(row, 'a carrier nobody could read was passed off as the default').toBeDefined();
+    expect(row?.severity).toBe('info');
+    expect(row?.code).toBe('verification/unsupported-expression');
+    // And a model with no carrier at all still says `default`, with no row.
+    const bare = await tree(REDUNDANT);
+    expect(bare.groups[0].maxOrderSource).toBe('default');
+    expect(bare.diagnostics.some((d) => d.message.includes('FaultHypothesis'))).toBe(false);
+  });
+
+  it('names every code it can file, borrowed ones included', () => {
+    // The constant is what an exit-contract table keys on, so a code this
+    // command files that is missing from it would document an exit contract
+    // whose loudest 2 — an undecided order-1 check — has no code in the list.
+    for (const code of [
+      SINGLE_POINT_OF_FAILURE_CODE,
+      CONTRACT_SET_VACUOUS_CODE,
+      REFINEMENT_FAILED_CODE,
+      REFINEMENT_UNDECIDED_CODE,
+      'verification/timeout',
+      'verification/not-evaluable',
+      'verification/tool-absent',
+      'verification/unsupported-expression',
+    ]) {
+      expect(FAULT_TREE_CODES, `${code} is filed by this lane and not declared`).toContain(code);
+      expect(VERIFICATION_CODES, `${code} is not in the lane's catalogue`).toContain(code);
+    }
+  });
+
+  it('decides nothing with no solver, and prints no empty cut-set list', async () => {
+    const before = process.env.SYSPROSE_NO_Z3;
+    process.env.SYSPROSE_NO_Z3 = '1';
+    try {
+      const r = await tree(REDUNDANT, { maxOrder: 1 });
+      expect(r.toolAbsent).toBe(true);
+      expect(r.exitCode).toBe(2);
+      const [group] = r.groups;
+      // THE BOUND THE READER ASKED FOR, not the one the module defaults to. A
+      // run that enumerated nothing must not attribute an order bound to a
+      // source the reader did not use — the census reports the bound this
+      // command WOULD have enumerated to, and where the number came from.
+      expect(group.maxOrder).toBe(1);
+      expect(group.maxOrderSource).toBe('flag');
+      expect(group.code).toBe('verification/tool-absent');
+      expect(group.outcome).toBe('inconclusive');
+      // THE CENSUS IS STILL TRUE — an absent solver must not read as a model
+      // with no architecture in it — and no absence is claimed over it.
+      expect(group.events.length).toBe(4);
+      expect(group.cutSets).toEqual([]);
+      expect(group.singlePointOfFailure).toBeNull();
+      expect(group.detail, 'an absence of failure was claimed with no solver').not.toContain(
+        'no cut set',
+      );
+      expect(r.checks).toBe(0);
+    } finally {
+      if (before === undefined) delete process.env.SYSPROSE_NO_Z3;
+      else process.env.SYSPROSE_NO_Z3 = before;
+    }
   });
 });

@@ -273,6 +273,7 @@ export {
 // what is exported here is a pure function of the model and the options.
 export {
   checkRefinement,
+  faultInjectionTargets,
   refinementCensus,
   CONNECTION_HINT,
   CONNECTIONS_AS_EQUALITIES_NOTE,
@@ -293,9 +294,34 @@ export {
   type RefinementOutcome,
   type RefinementResult,
   type RefinementVia,
+  type InjectedOutcome,
+  type InjectionCensus,
+  type InjectionTarget,
   type RefusedClause,
   type UnencodedConnection,
 } from './refinement';
+// Contract-level fault trees (plan §3.9): the cut sets of the SAME obligation
+// (3) the refinement lane states, taken with the guarantees of a fault set
+// withdrawn. It takes its backend as an argument for `checkRefinement`'s reason.
+export {
+  computeFaultTree,
+  faultTreeCensus,
+  behaviourLaneRefusal,
+  isBehaviouralElement,
+  CONTRACT_LEVEL_NOTE,
+  DEFAULT_MAX_ORDER,
+  FAULT_TREE_CODES,
+  ORDERS_NOT_EXPLORED_NOTE,
+  SINGLE_POINT_OF_FAILURE_CODE,
+  type BasicEvent,
+  type CutSet,
+  type FaultTreeGroup,
+  type FaultTreeOptions,
+  type FaultTreeOutcome,
+  type FaultTreeResult,
+  type MaxOrderSource,
+  type UndecidedCheck,
+} from './fault-tree';
 export {
   obligationsOf,
   type EvidenceRef,

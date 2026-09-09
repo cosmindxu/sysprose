@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **all five** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 103 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 107 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-07: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **98 catalogue codes** in
+`npm run check` is what raises it — beside **99 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3997,6 +3997,57 @@ holding, and the deferral is recorded here rather than left to be discovered
 from a transcript. The corpus's exact-optimum case is over `payload` and `mtow`
 in kg for the same reason, and `endurance` is its nonlinear one — which is what
 §3.1 predicts of it anyway, since its divisor is a feature.
+
+**A cut set is the refinement obligation asked again with a guarantee
+withdrawn — and the four sentences `fault-tree` will not write.** Basic events
+are "sub-contract *i* not honoured", so a set is a cut set exactly when
+obligation (3) FAILS with those normal forms out of the premise set. The
+enumeration therefore goes through the SAME seam the refinement lane states
+(`faultInjectionTargets` in `src/semantics/refinement.ts`): one normal form, one
+γ, one refusal policy and one witness gate, because a fault tree built over a
+second reading of `nf(C) = ¬A ∨ G` would enumerate cut sets of an architecture
+`refine` never judged. What the command refuses to say is the whole discipline
+of it. It never says **"no cut set"** over a VACUOUS contract set — obligation
+(3) cannot fail from an unsatisfiable antecedent, so step (0) runs first and a
+contradiction is `verification/contract-set-vacuous` at exit 2, which is the
+most reassuring sentence this command has withheld from its least trustworthy
+model. It never says **"no single point of failure"** when an order-1 check was
+undecided: `singlePointOfFailure` is `null` rather than `false` there, so the
+sentence cannot be composed at all, and there is no `--allow-inconclusive` on
+this command to forgive one. It never states an absence without its **bound** —
+"no cut set up to order 2, higher orders not explored" is the whole sentence.
+And it never answers a **state machine** with an empty cut-set list: a
+`StateUsage` is refused by name, with a pointer to `check-behaviour` that is
+emitted only when `findCommand` resolves that row, so a build shipping this
+command without phase 4 prints "this element is a state machine; contract-level
+fault trees do not cover behaviour" instead of advertising a subcommand `--help`
+does not list. Measured on the shipped power-budget example: `refine` exits 0
+and this exits 1 with FOUR single points of failure, because each load's draw is
+bounded by its own guarantee and by nothing else. **Recorded against §4 of the
+plan:** that section expects `{radio}` NOT to be a cut set there, and on the
+model as shipped it is one — the property it is about is redundancy, which that
+example does not have and `fault-tree-redundant.sysml` does (two supplies bound
+to one bus: neither is a cut set alone, the pair is one, and the radio's
+contract, which the top requirement never mentions, is not). Both are pinned,
+the shipped example as it is rather than as the plan hoped.
+
+**An undecided check spends the 2 wherever it sits, and "minimal" is earned.**
+The two of these are one defect seen from two sides, and both were found by
+review rather than by the suite. A tree whose enumeration found an order-2 cut
+set AND left an order-1 check unanswered has outcome `cut-sets`: it is not an
+undecided TREE, so a count of undecided trees cannot see it, and the run went
+green over precisely the state the "no single point of failure" rule is about.
+The undecided CHECKS are now counted in their own figure, published in the
+`--json` verdict block, filed as a diagnostic and tested before the `return 0`
+— through `faultTreeVerdict`, which is exported for exactly that reason: the
+state has no reproducible trigger through the report, whose backend is resolved
+inside it, so the suite drives `computeFaultTree` with one solver answer forced
+to `unknown` and asks the judgement directly. The same undecided check also
+costs the word *minimal*: pruning removes the supersets of sets SHOWN to be cut
+sets, and it cannot remove the supersets of one nobody decided, so those sets
+are listed — each is real — with *minimality not established* on the row and
+the word dropped from the head sentence. Neither the green path nor that
+sentence had a case before this pass; both do now.
 
 ## 5. Phase status
 

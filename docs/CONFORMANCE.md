@@ -25,8 +25,8 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2866 passed / 0 failed / 0 skipped** across **142 files** + **128 E2E** across **78 spec files** = **2994 green** (measured 2026-09-09) |
-| Command-line surface | **21 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
+| Full automated suite | **2889 passed / 0 failed / 0 skipped** across **142 files** + **128 E2E** across **78 spec files** = **3017 green** (measured 2026-09-09) |
+| Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
@@ -637,6 +637,55 @@ definitions' features in its bindings for exactly that reason, and says so in it
 own doc comment. Closing the gap would need a delegation term in γ that the plan
 does not specify; until it does, the failure direction is the conservative one.
 
+### 8.3d `fault-tree` — what a cut set is a claim about, and the four it never makes
+
+`fault-tree` injects contract failures into the decomposition §8.3c judges. A
+basic event is **"sub-contract *i* not honoured"**, and a set *F* is a **cut
+set** exactly when obligation (3) — `⋀ nf(C′) ∧ γ ⊨ nf(C)`, the same obligation,
+the same normal form, the same γ — **fails** with the normal forms in *F* out of
+the premise set. That is `stewart-2021`'s fault injection into an AGREE contract
+and `bozzano-2014`'s basic event, and the enumeration goes through one seam into
+the refinement module rather than transcribing the normal form a second time: a
+fault tree over a second reading of `nf(C) = ¬A ∨ G` would enumerate cut sets of
+an architecture the other command never judged.
+
+**Cut sets are minimal, bounded and counted.** Sets are enumerated by increasing
+order up to `--max-order` (default 2); every superset of a cut set is pruned
+rather than checked, because withdrawing more guarantees cannot restore an
+obligation that already failed; and the number of solver checks is printed.
+Pruning removes the supersets of sets *shown* to be cut sets, never those of a
+set the solver did not answer about — such a superset is still a cut set, but
+its minimality was never established, and the row says so rather than calling it
+minimal. A `@SysproseVerification::FaultHypothesis { maxOrder = 2; }` carrier
+pins the bound **in the model** — `rauzy-2019`'s point that the safety model and
+the design model stay separate and are synchronised by something written down —
+and the flag overrides it, with the report naming which of the four the number
+came from. Both cell spellings are read, with and without the `attribute`
+keyword; a cell that cannot be read is reported as such rather than passed off
+as the default.
+
+**The four sentences it never writes.** *No cut set* over a **vacuous** contract
+set: obligation (3) cannot fail from an unsatisfiable antecedent, so step (0)
+runs first and a contradiction is `verification/contract-set-vacuous` at exit 2
+(§8.3c's rule, one lane along). *No single point of failure* when any order-1
+check was **undecided**: the field is `null` rather than `false` there, and there
+is no `--allow-inconclusive` on this command to forgive one. **Any** undecided
+check spends the 2, including one that sits inside a tree whose enumeration also
+found cut sets — that tree is not an undecided *tree*, so the undecided *checks*
+are counted in their own figure and tested before the `return 0`. An **absence
+without its bound**: "no cut set up to order 2 — higher orders not explored" is
+the whole sentence, and §6's register lists it beside "no violation within k".
+And an **empty cut-set list over a state machine**: a `StateUsage` passed as
+`--element` is refused by name, with a pointer to `check-behaviour` emitted only
+when that row exists in the build.
+
+**What it is, said on every report.** Contract-level fault-tree analysis over
+the refinement obligations — **not** a behavioural safety analysis, and nothing
+about ordering, time, rates or probabilities. The model states no failure rates
+and this tool derives none: a cut set here is a structural statement about which
+contract failures suffice, and an order-2 cut set is what redundancy looks like
+from the failure side rather than a finding against the design.
+
 ### 8.4 The SMT seam: the solver backend and the encoder the engine stands on
 
 `z3-solver` ^5.2.0 is an **optional** dependency. `src/semantics/smt/z3-bridge.ts`
@@ -799,6 +848,7 @@ and nothing is claimed about what another tool makes of it.
 | **OSLC PSM** | OSLC Core catalog/provider/query + Turtle/RDF-XML/JSON-LD + **`oslc:ResourceShape` full-shape resources** (`test/server/oslc-shapes`) | A representative subset of the OSLC SysML PSM (no delegated dialogs). |
 | **Requirements — contracts and obligations** | `contracts` / `obligations` read `RequirementDefinition` / `RequirementUsage` clause roles and case `objective`s into an assumption/guarantee inventory and a proof worklist (`src/semantics/contracts.ts`, `src/semantics/obligations.ts`) | **These commands report structure only.** They evaluate nothing and decide nothing: no solver stands behind them, and neither prints a word about whether a requirement holds. A requirement USAGE is not read through its definition's clauses (the definition carries its own contract, and the usage's row names it rather than being counted as bodiless); an attribute declared in a `port def` is one element however many ports reach it, so the variables a clause reads are reported per PATH and their `in`/`out` direction is taken from the port the path names; `discharged` and `stale` are declared in the status vocabulary and never produced, because both are read back from an evidence record that does not ship yet. |
 | **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine — a point evaluation (`src/semantics/engines/literal.ts`) or negation-UNSAT in z3 (`src/semantics/engines/smt.ts`) — and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). `proved` is reachable only under `--engine smt`, only as UNSAT-of-negation over a satisfiable axiom set with satisfiable premises and a two-sided domain, and only for the quantifier-free arithmetic fragment the unit gates pass — anything else is inconclusive with a code, and a missing solver is exit 2 rather than a fallback. The two engines are held to one answer by a differential gate over the whole fixture corpus, and every constraint-bearing element is accounted for by a relation census; neither says the gatherer reads every construct the standard defines. What an external tool makes of a record or a verdict facet is untested. |
+| **Safety — cut sets from contract-failure injection (`fault-tree`)** | Minimal cut sets over the refinement obligations of §8.3c, enumerated by increasing order with supersets pruned and the check count reported (`src/semantics/fault-tree.ts`); §8.3d above states what a cut set claims and the four sentences the command never writes | **Contract-level FTA, never a behavioural safety analysis**, and every report says so. No failure rates, no probabilities and no importance measures: the model states none and none is derived. Every absence carries the order it was checked to; a vacuous contract set is reported as vacuous and never as "no cut set"; an undecided order-1 check forbids the no-single-point claim; a state machine is refused rather than answered with an empty list. The order bound is an assumption about how many failures are credible at once, carried in a Sysprose metadata definition, and what an external reader makes of that carrier is untested. |
 | **Behaviour — bounded safety verdicts (`reach`, `check-behaviour`)** | An explicit walk of a state machine's configuration graph, exploring every enabled transition where the simulator takes the first (`src/semantics/mc/`), with safety patterns decided by bad-prefix search over it; §8.5 above states the profile, the split and the exit contract | **This is a reading of THIS tool's interpreter, not of the specification's execution semantics**, and every verdict prints the six-field profile it holds under. PSSM is not implemented and no conformance with it is claimed. Liveness is not decided in-process; a parallel or history machine is refused rather than walked; a bound hit empties every absence claim and can never produce a pass. The property carrier is a Sysprose metadata definition, and what an external reader makes of it is untested. |
 
 **The load-bearing gap.** The interop client round-trips **fully** against our own
@@ -818,7 +868,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2866 pass / 0 skip, 142 files)
+# Full unit + integration + conformance suite (2889 pass / 0 skip, 142 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)
