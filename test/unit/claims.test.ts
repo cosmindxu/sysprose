@@ -42,8 +42,9 @@ const SKIP_DIRS = new Set([
 /**
  * Files exempt by path, with the reason.
  * - `src/library/std/**` — EPL-2.0 licence + notice text we may not edit.
- * - the two survey docs — they describe OTHER tools and the standard itself,
- *   where "SysON leads OMG/SysML v2 compliance" is a fact about someone else.
+ * - the two survey docs, and the book review — they report what OTHER tools,
+ *   the standard, and the literature say, where "SysON leads OMG/SysML v2
+ *   compliance" is a fact about someone else and not a claim about this tool.
  * - this file, and `CLAUDE.md` — the rule itself has to quote the banned forms
  *   verbatim in order to define them.
  */
@@ -54,6 +55,14 @@ const SKIP_FILES = (rel: string): boolean =>
   // The verification plan quotes every banned form verbatim in order to ban it:
   // its MUST-NEVER list IS the list of sentences this guard exists to catch.
   rel === join('docs', '04-formal-verification-plan.md') ||
+  // The book review quotes the literature verbatim, and two of those quotations
+  // ARE reserved forms: the Handbook's "or the property is verified" (ch 13, on
+  // CEGAR's termination) and Baier & Katoen's theorem title "Realizable Fairness
+  // is Irrelevant for Safety Properties". Measured: those two lines, and only
+  // those two, fire the guard. Rewording either would misquote a source, so the
+  // file is exempt as a whole — like the two survey docs above, it reports what
+  // OTHER work says rather than making a claim about this tool.
+  rel === join('docs', '05-model-checking-literature.md') ||
   rel === join('test', 'unit', 'claims.test.ts') ||
   rel === 'CLAUDE.md' ||
   rel === 'package-lock.json';
