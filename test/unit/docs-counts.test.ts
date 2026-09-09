@@ -231,6 +231,23 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     pattern: /\*\*(\d+) diagram view kinds\*\*/,
     actual: viewKindCount,
   },
+  // TEST-REPORT quotes the view count nine times and had NONE of them pinned,
+  // which is how it came to say 16 in nine places while the union said 17. Two
+  // are pinned here — the §2 opening claim and the §4 pillar figure — because
+  // they are the two a reader meets first and because they are written in two
+  // different shapes, so a future rename cannot silently take both.
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'view count in the interaction-surface claim',
+    pattern: /all \*\*(\d+) view switches\*\*/,
+    actual: viewKindCount,
+  },
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'view count in the graphical-notation pillar',
+    pattern: /\*\*(\d+) ViewKinds\*\*/,
+    actual: viewKindCount,
+  },
   {
     file: 'docs/TEST-REPORT.md',
     what: 'rule count in the validation-engine row',
@@ -296,6 +313,18 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     what: 'example-model count in the command-line surface row',
     pattern: /\*\*(\d+)\s+shipped\s+example\s+models\*\*/,
     actual: () => exampleCount,
+  },
+  {
+    // The README's verification section tells a reader how many subcommands the
+    // lane's commands are among, which is the same fact `docs/CONFORMANCE.md`
+    // states and the same table both are rendered from. It is quoted in the
+    // most-read document in the repository, so it is the one most worth
+    // measuring: a reader who counts the Develop block and finds a different
+    // number stops believing the rest of the page.
+    file: 'README.md',
+    what: 'subcommand count in the verification section',
+    pattern: /\*\*(\d+)\s+subcommands\*\*/,
+    actual: () => COMMANDS.length,
   },
   // ── docs/USER-GUIDE.md ────────────────────────────────────────────────────
   // The guide is written for a person deciding whether to trust the tool, so a

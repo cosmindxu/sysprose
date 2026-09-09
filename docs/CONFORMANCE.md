@@ -25,15 +25,15 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2889 passed / 0 failed / 0 skipped** across **142 files** + **128 E2E** across **78 spec files** = **3017 green** (measured 2026-09-09) |
+| Full automated suite | **2938 passed / 0 failed / 0 skipped** across **145 files** + **128 E2E** across **78 spec files** = **3066 green** (measured 2026-09-09) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
 | Real `.kerml` / `.sysml` corpus parse rate | **100 %** (94 / 94 files, 0 parse errors) |
 | OMG REST endpoints validated against the OpenAPI 3.1 schema | **10 / 10** live endpoints (server: 25 paths / 29 operations / 18 schemas) |
 | OSLC Core structural conformance | **8 / 8** structural checks + **11** full-shape checks (catalog / provider / query / resource / `oslc:ResourceShape` + Turtle / RDF-XML / JSON-LD) |
-| Interop — self round-trip over HTTP (`test/interop`) | **PASS** — `PilotApiClient` push→pull preserves the **13-element** pilot model (element set + endpoints + query) |
-| Interop — **LIVE round-trip vs. the real OMG pilot** (`SYSMLV2_PILOT_URL`) | **NOT RUN** — the build environment is offline; the client is ready (`npm run interop`) but no live OMG reference server has been exercised. See "The load-bearing gap" below. |
+| Interop — self round-trip over HTTP (`test/interop`) | **PASS** — `PilotApiClient` push→pull preserves the **13-element** pilot model (element set + endpoints + query), and the verdict-bearing fixture's carrier, both `verdict` cells and its record string character for character |
+| Interop — **LIVE round-trip vs. the real OMG pilot** (`SYSMLV2_PILOT_URL`) | **RUN, and mixed** — read of 300 live elements and a `Package` write round-trip **PASS** (2026-07-02); the verdict-bearing write of 2026-09-09 is **refused as written** (four defects of our own dialect) and, once those are repaired in the probe, **accepted with the structure intact and every tool-local value dropped** — the evidence's contents do not survive. §6.1 has the measurement, and names the one row it could not take. |
 
 ---
 
@@ -231,14 +231,63 @@ same code path drives both the self round-trip and the live-pilot adapter below.
     payload}` format (`POST /projects/{id}/commits?branchId=…`), and pulled it
     back with the element **`@id` preserved** — **ROUND-TRIP OK**.
 
-> **Honest caveat.** The live round-trip is now exercised (above) and passed, but
-> it is a **representative** exchange (one `Package` written; a bounded 300-element
-> read), not a full-model bidirectional migration — pushing arbitrary models needs
-> containment expressed as reified `OwningMembership` payloads, which this minimal
-> proof did not exercise. Also, the pilot does not support project deletion
-> (`DELETE /projects/:id` → 500), so one clearly-named `sysprose-interop-test-*`
-> project remains on that public demo server. Point `SYSMLV2_PILOT_URL` at any
-> conformant pilot to reproduce.
+### 6.1 The verdict-bearing write probe — what another tool did with our evidence (2026-09-09)
+
+A `Package` surviving the wire says nothing about the two things the
+verification lane writes, and both of them are **tool-local tags the
+specification does not define**: a `metadata RequirementMetadata { attribute
+verdict = "…"; }` cell and an `@SysproseVerification::Evidence { … }` carrier
+holding the record (§8.2, §8.3). A conforming reader is entitled to ignore
+either. Whether a real one does is a fact about somebody else's server, so
+`scripts/pilot-write-roundtrip.ts` now pushes a **verdict-bearing model** —
+`scripts/lib/verdict-fixture.ts`, 19 elements, written by the real `verify` +
+`attachEvidence` path, one carrier, two `verdict` cells and a 1466-character
+record string — instead of a bare `Package`. It was run against the same public
+pilot on **2026-09-09**, and this is what it measured.
+
+| Stage | What was pushed | Result |
+|---|---|---|
+| 1 — as this tool writes it | the 19 elements of `ModelApi.toModelJSON()`, unmodified | **REFUSED** — `POST …/commits` → **500**. |
+| 2 — three shape defects of **our** dialect repaired | the same 19 elements with the metaclass name `Satisfy` corrected to `SatisfyRequirementUsage`, `RequirementDefinition.text` sent as a list where the specification has `text : String[0..*]`, and the boolean `MetadataUsage.annotation` dropped where the specification has `annotation : Annotation[0..*]` | **STILL REFUSED** — `POST …/commits` → **500**. Stage 2 differs from stage 3 in exactly one property, so this is what isolates the fourth defect: `MetadataUsage.type`, which we send as a string and which the specification *derives*. |
+| 3 — `MetadataUsage.type` dropped as well | the same 19 elements, `type` gone | **ACCEPTED, and the values did not come back.** 19 pushed, 19 pulled. Structure preserved, re-derived by the script on every run: **19/19 ids**, **19/19 metaclasses**, **14/14 `declaredName`s**, **18/18 containment (`owner`) edges**, and the one `text` body returned as sent once it was a list (the pilot *adds* an empty `text: []` to one further element — an addition of its own, not a loss of ours). Every **tool-local property was dropped** — `value` (the cell that holds each verdict string and the whole record), `requirementRole`, `declares`, `expression` — so the facet returned as a **named, empty shell**: **2 verdict cells sent / 0 back, 1466 record characters sent / 0 back, 4 record summary cells sent / 0 back**. |
+
+**One row this probe cannot measure, and does not pretend to.** The *carrier
+count* is not comparable at stage 3. `MetadataUsage.type` is the only property on
+the wire that says an `@SysproseVerification::Evidence` carrier is one — it is
+what `verdictBearingSignature` reads to find carriers at all — so the very repair
+that got the commit accepted is the repair that makes a carrier unidentifiable,
+and a perfect lossless echo would have returned 0 carriers too. The script prints
+that row as `N/A … NOT MEASURABLE` rather than scoring it, and the repair is held
+back to its own stage for exactly this reason. What IS measured is the thing that
+matters more: the carrier's *contents* — the claim word, the engine, the model
+digest and the whole 1466-character record — were dropped.
+
+**Read that as it is.** The pilot did not misread a Sysprose verdict, upgrade a
+claim or return a verdict nobody computed; it kept the model and discarded the
+annotation, which is exactly what a reader is entitled to do with a tag it does
+not know. **So the interoperability of the evidence record is now measured, and
+the measurement is negative**: today, the *values* a Sysprose verdict is made of
+do not survive a round trip through that server's API, and no claim is made that
+they survive any other. The four dialect defects are ours and are **not fixed
+here** — they are recorded so the next commit that touches `toElementJSON` has
+the failing shapes in hand. The offline control runs on every push
+(`test/interop/self-roundtrip.test.ts`, "round-trips a verdict facet and an
+evidence carrier"): the same fixture through the same client against our own
+server keeps the carrier, both verdict cells and the record character for character. That is a
+control on the fixture and on our own wire, not a second opinion about the
+pilot's — the carrier row above is unmeasurable on the pilot for a reason that is
+ours, and the offline test cannot supply the number the live run could not take.
+
+> **Honest caveat.** The live round-trip is exercised (above), and it is a
+> **representative** exchange — 19 elements written, a bounded 300-element read —
+> not a full-model bidirectional migration. It answers the **API/JSON path only**;
+> what a foreign *textual* parser makes of the `.sysml` bytes is a different
+> question and is untested. Also, the pilot does not support project deletion
+> (`DELETE /projects/:id` → 500), so the clearly-named `sysprose-interop-test-*`
+> projects each run creates — one per stage, three per run — remain on that
+> public demo server. Point `SYSMLV2_PILOT_URL` at any conformant pilot to
+> reproduce; the script re-derives every figure in the table above, structure
+> rows included, so a re-run either reproduces it or contradicts it.
 
 ---
 
@@ -520,14 +569,19 @@ behind it (`verification/claimed-without-evidence`, info — a verdict reached b
 inspection is ordinary requirements management) and a `verdict = "pass"` over a
 claim that is not `proved` (`verification/verdict-overstates-evidence`, error).
 
-**Untested, and stated as such:** what another tool makes of a Sysprose evidence
-record or verdict facet. The write path is tested only inside Sysprose, and the
-verdict facet is an unbound tag holding a quoted string where the standard has an
-enumeration on a different metaclass — a conforming SysML v2 reader is entitled
-to ignore that line. The digest also catches model edits, **not a hand-edited
-record**. The interop probe that would answer the first question is a later
-commit of the plan; until it runs, no claim is made about what an external reader
-does with either.
+**Measured, and it is a negative result:** what another tool makes of a Sysprose
+evidence record or verdict facet. The verdict facet is an unbound tag holding a
+quoted string where the standard has an enumeration on a different metaclass — a
+conforming SysML v2 reader is entitled to ignore that line, and the one that was
+asked did. §6.1 records the probe: pushed to the public OMG pilot on 2026-09-09,
+the model came back with its 19 ids, 19 metaclasses, 14 names and 18 containment
+edges intact and **every tool-local value dropped** — both `verdict` cells and
+all 1466 characters of the record. Nothing was misread and no verdict was
+invented; the evidence's contents simply did not travel. (Whether the carrier
+ELEMENT survived is the one row that probe cannot take, and §6.1 says why.)
+Inside Sysprose the write path holds — the same fixture through the same client
+against our own server keeps all of it — so the boundary is the reader, not the
+writer. The digest also catches model edits, **not a hand-edited record**.
 
 ### 8.3b `property-check` — what the five gates establish, and what they do not
 
@@ -826,14 +880,47 @@ true — the two antecedents this engine detects are a scope no explored run ope
 and a `precedence` whose P never occurs. Sub-formula-replacement vacuity is not
 done. `--strict-vacuity` raises the row to `verification/vacuous-property`, an
 error, and changes no exit code. The verdict vocabulary is four words — `pass`,
-`fail`, `vacuous`, `inconclusive` — and `proved`, `verified` and `deadlock-free`
-are none of them.
+`fail`, `vacuous`, `inconclusive` — and this command never says `proved`, never
+says `verified` and never says `deadlock-free`.
 
 **The property carrier is Sysprose's, not the specification's.**
 `@SysproseVerification::PropertyPattern { attribute pattern = …; }` is §7.27
 annotating metadata over a `metadata def` this tool ships as text, exactly as the
 evidence carrier is (§7). A conforming external reader may ignore it entirely,
 and nothing is claimed about what another tool makes of it.
+
+### 8.6 The vocabulary this lane reads, and the vocabulary it writes
+
+Scattered across §7 and §8 this is already true; gathered in one place it is
+checkable. The rule the two tables encode: **the lane reads the notation's own
+constructs and writes almost nothing back**, and the little it writes is one
+standard annotation plus tags that are visibly this tool's.
+
+**Read — the specification's own constructs, taken at their own meaning.**
+
+| Construct | What the lane does with it |
+|---|---|
+| `RequirementDefinition` / `RequirementUsage`, and their `subject`, `assume`, `require`, `objective` clauses | The contract: `assume` is the premise, `require` the promise, `subject` who both are about. Nothing is inferred that the clauses do not say. |
+| `objective` on a `CaseDefinition`/`UseCaseDefinition`/`VerificationCaseDefinition` and their usages | A contract on a behaviour, with the subject **defaulted** to `Case::result` per the shipped `Systems Library/Cases.sysml` and **bound** to the case subject per `VerificationCases.sysml` |
+| `Satisfy`, `Derive`, `Refine`, `Verify` | Who claims to discharge what, and in which direction — `Derive` is read source = original, target = derived |
+| `ConstraintUsage` bodies, feature values, `ISQ` typing and unit literals | The relations that are encoded, scaled to coherent SI; a construct outside the encodable fragment is `verification/unsupported-construct`, named (§8.3) |
+| `VerificationCases::VerificationMethod` and `VerificationMethodKind` | The gate of §8.2b: a case without `analyze` in its list is not judged at all |
+| `VerificationCases::VerdictKind` literals | **Mirrored as strings** in the values the `verdict` facet may take. It is not a `VerdictKind` reference and does not pretend to be (§8.2). |
+| Any `#keyword` over a `metadata def`, ours or a third party's | Inventoried with what it resolves to, and never acted on by accident (§7) |
+
+**Written — one standard annotation, and three tags that are this tool's.**
+
+| Written | Whose vocabulary | Where it is justified |
+|---|---|---|
+| `@VerificationCases::VerificationMethod { attribute kind = analyze; }` on a case that stated no method | **The specification's**, and the only standard element this lane writes | §8.2b |
+| `metadata RequirementMetadata { attribute verdict = "…"; }` | **Tool-local.** `RequirementMetadata` has 0 occurrences in Part 1; the identifier resolves to nothing, and the value is an unbound quoted string | §8.2 |
+| `@SysproseVerification::Evidence { … }` | **Tool-local**, §7.27 annotating metadata over a `metadata def` this tool ships as text | §8.3, and the interop measurement in §6.1 |
+| `@SysproseVerification::PropertyPattern { … }`, `metadata def <exceptional> ExceptionalOutcome` | **Tool-local**, the same mechanism, and named as an extension everywhere they appear | §7, §8.5 |
+
+Everything else the lane produces — verdict lines, SMT-LIB, Othello, SMV, Lean
+skeletons, evidence JSON — leaves the model alone and lands in the terminal or
+in a file. No command in this lane edits a requirement's text, a constraint or a
+value.
 
 ---
 
@@ -852,9 +939,13 @@ and nothing is claimed about what another tool makes of it.
 | **Behaviour — bounded safety verdicts (`reach`, `check-behaviour`)** | An explicit walk of a state machine's configuration graph, exploring every enabled transition where the simulator takes the first (`src/semantics/mc/`), with safety patterns decided by bad-prefix search over it; §8.5 above states the profile, the split and the exit contract | **This is a reading of THIS tool's interpreter, not of the specification's execution semantics**, and every verdict prints the six-field profile it holds under. PSSM is not implemented and no conformance with it is claimed. Liveness is not decided in-process; a parallel or history machine is refused rather than walked; a bound hit empties every absence claim and can never produce a pass. The property carrier is a Sysprose metadata definition, and what an external reader makes of it is untested. |
 
 **The load-bearing gap.** The interop client round-trips **fully** against our own
-spec-shaped server (§6), but the environment is **offline**, so there is **no live
-round-trip against a running OMG SysML v2 pilot server** — set `SYSMLV2_PILOT_URL`
-and run `npm run interop` to exercise it. We validate against the published
+spec-shaped server (§6), and against the live OMG pilot it round-trips a read and
+a `Package` write but **not what this tool annotates a model with**: the
+verdict-bearing probe of §6.1 is refused as written and, repaired, comes back
+with every tool-local value dropped. So the gap is no longer "untested" — it is
+**measured, and negative for the evidence record**. Re-run it with
+`SYSMLV2_PILOT_URL` set and `npx tsx scripts/pilot-write-roundtrip.ts`. We
+validate against the published
 **specifications and schemas** (clean-room) and our own spec-shaped server, not a
 running OMG reference implementation. Each pillar is a faithful, load-bearing
 subset per `docs/TEST-REPORT.md` §8; the honest residual is the deepest
@@ -868,13 +959,13 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2889 pass / 0 skip, 142 files)
+# Full unit + integration + conformance suite (2938 pass / 0 skip, 145 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)
 npx vitest run test/conformance --no-coverage
 
-# Interop self round-trip over HTTP (7 pass, 1 file)
+# Interop self round-trip over HTTP (8 pass, 1 file)
 npx vitest run test/interop --no-coverage
 
 # Real .kerml/.sysml corpus parse rate (100 %)
@@ -885,6 +976,9 @@ npm run interop             # or: npx tsx scripts/pilot-roundtrip.ts
 
 # Live-pilot round-trip (requires a reachable OMG SysML v2 pilot server)
 SYSMLV2_PILOT_URL=https://pilot.example/api SYSMLV2_PILOT_TOKEN=… npm run interop
+
+# Live-pilot WRITE probe — what a foreign reader does with a verdict (§6.1)
+npx tsx scripts/pilot-write-roundtrip.ts
 
 # Networked API / OSLC server (manual smoke)
 npm run serve               # then GET /api/... and /oslc/...

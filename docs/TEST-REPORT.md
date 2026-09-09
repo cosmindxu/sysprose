@@ -12,7 +12,7 @@ not from the source under test.
 **This revision closes the systematic UI-coverage gap.** The engine, API, and
 semantics were already deeply tested; this pass adds a dedicated end-to-end (E2E)
 spec for **every UI feature and every user–tool interaction** — the full toolbar
-and project lifecycle, keyboard shortcuts, all **16 view switches**, the complete
+and project lifecycle, keyboard shortcuts, all **17 view switches**, the complete
 Explorer interaction surface (expand/collapse, multi-metaclass create, inline
 rename with Enter/Escape, delete-cascade, HTML5 drag-reparent), **every**
 Properties field plus unit conversion, palette node-create **and** click-to-connect
@@ -71,7 +71,7 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | Per-test E2E trace screenshots | `test-results/e2e/<scenario>/test-finished-1.png` (**52 dirs**) |
 
 All suites are green. Coverage spans **all six OMG pillars** — KerML metamodel,
-textual notation (Langium), graphical notation (16 view kinds), API & Services
+textual notation (Langium), graphical notation (17 view kinds), API & Services
 (versioning/REST/Query/OSLC + live HTTP server), standard libraries (full 38.8k
 elements), and KerML semantics (inheritance/conformance/expr/constraints/execution/
 units) — **and now the complete UI interaction surface end-to-end**. Real-time
@@ -130,7 +130,7 @@ Screenshots are under `test-results/screenshots/`.
 | **`/`** → focus Explorer search | `E gui-keyboard` (*"/" focuses the Explorer search box*) | PASS | `document.activeElement` = `explorer-search` |
 | Global handler ignores INPUT/TEXTAREA/**SELECT**/contenteditable | `E keyboard-shortcuts` (focuses brand before keys) | PASS | Matches handler guard |
 
-### 2.3 View switching — all 16 view kinds (`tb-view-<kind>`)
+### 2.3 View switching — all 17 view kinds (`tb-view-<kind>`)
 
 Renderer contract: graph views → the React Flow `diagram-canvas`; allocation →
 `matrix-view`; sequence → `sequence-view`; grid → `grid-view`; requirements →
@@ -298,7 +298,7 @@ The deep engine coverage that underpins the UI. (Condensed; full per-file counts
 | Behavioral execution | `U semantics.execute`/`execute-full`; `I semantics-exec.integration` | PASS |
 | Fuller execution — composite/call actions, item-flow data, hierarchical/history/orthogonal/timed states, `executeBehavior` | `U semantics.execution-full`; `I execution.integration`; `E execution` | PASS |
 | Textual notation — Langium grammar (default) + round-trip | `U langium.grammar`/`text.grammar2`/`text.parser`/`text.roundtrip`; `I pipeline.roundtrip`; `C corpus`/`roundtrip` | PASS |
-| Diagram builders — 16 views + symbols/markers + layout | `U diagram.build`/`.matrix`/`.sequence`/`.parametric`/`.grid`/`.case`/`.symbols`/`.symbols2`/`.layout`/`.layout2`/`.exports`; `I pipeline.diagram` | PASS |
+| Diagram builders — 17 views + symbols/markers + layout | `U diagram.build`/`.matrix`/`.sequence`/`.parametric`/`.grid`/`.case`/`.symbols`/`.symbols2`/`.layout`/`.layout2`/`.exports`; `I pipeline.diagram` | PASS |
 | 3D geometry scene builder — solids from `attrs.shape`/library-shape typing, explicit-vs-deterministic-grid positions, sizes, colours, containment, bounds, library exclusion; real Three.js/WebGL render + raycast | `U diagram.geometry` (18), `U diagram.geometry3d` (14); `E geometry3d` | PASS |
 | Numeric MoE solver — parametric constraint solving, binding propagation, coupled-system convergence, MoE evaluation + gradient-free optimization over bounded variables | `U semantics.solver` (10); `I analysis.integration`; `E solve` | PASS |
 | Query — operators, `matches`, orderBy, offset+cursor paging, composites | `U api.query`/`api.query2`; `I pipeline.api` | PASS |
@@ -430,7 +430,7 @@ the shared `captureErrors` fixture.
 | 3 | `explorer-interactions` :: expand/collapse, multi-metaclass create, rename (Enter/Escape), delete-cascade, drag-reparent | PASS | 17.6 s |
 | 4 | `properties` :: edits name / direction / value / multiplicity of a port | PASS | 7.4 s |
 | 5 | `properties-all-fields` :: edits identity/usage/port/requirement/transition/doc/unit fields | PASS | 13.6 s |
-| 6 | `view-switching` :: all 16 views render correct centre panel, no errors | PASS | 12.1 s |
+| 6 | `view-switching` :: all 17 views render correct centre panel, no errors | PASS | 12.1 s |
 | 7 | `diagram-create-connect` :: interconnection add part+port, connect, all views render | PASS | 11.2 s |
 | 8 | `diagram-edges` :: relationship edges render across views (handle-fix regression) | PASS | 10.1 s |
 | 9 | `diagram-node-drag` :: dragging a node moves it and the position persists | PASS | 7.6 s |
@@ -557,7 +557,7 @@ issue** — see row 87.
 | 81 | `text-apply-contract` :: applying text **stops a running simulation** rather than orphaning it against a deleted state machine | PASS | 2.2 s |
 | 82 | `containment-refusal` :: an element dropped into its own descendant is refused — nothing moves, the tree stays walkable, the refusal is a *handled* console error and never an uncaught page error, and no phantom undo entry is left behind (the next Undo reaches the real previous edit) | PASS | 2.0 s |
 | 83 | `containment-refusal` :: copying a subtree and pasting it into one of its **own members** clones a detached snapshot — exactly 2 elements for a 2-element subtree, no recursive explosion — original nesting intact, one undo removes it | PASS | 1.5 s |
-| 84 | `selection-across-views` :: one selection survives a tour of **all 16 views** (Properties and the Explorer row agree at every stop), and the 16 diagram rebuilds never leak into the undo history — the next Undo still lands on the real edit | PASS | 2.1 s |
+| 84 | `selection-across-views` :: one selection survives a tour of **all 17 views** (Properties and the Explorer row agree at every stop), and the 17 diagram rebuilds never leak into the undo history — the next Undo still lands on the real edit | PASS | 2.1 s |
 | 85 | `identity-roundtrip` :: names with a space, an embedded double quote, non-ASCII, and `<script>x</script>` survive serialization → reparse → **re**-serialization (a quoting bug typically survives one hop and corrupts on the second), and the markup name renders as text with no script injected | PASS | 2.9 s |
 | 86 | `identity-roundtrip` :: a GUI-authored model of five mixed metaclasses survives export → New → import with every metaclass *and* name intact, alongside the rest of the model | PASS | 3.3 s |
 | 87 | `text-apply-contract` :: unparseable text reports parse errors, and they **survive the asynchronous standard-library merge**; a subsequent well-formed Apply clears them | PASS (was an expected failure; the defect it tracked is fixed) | 2.1 s |
@@ -659,7 +659,7 @@ limits — not untested interactions.
 | §1.4 / §2 KerML kernel — reified relationships, ownership, classification/featuring | Relationships first-class; ownership reified; effective features & conformance | `core.model`; `persist-api.persistence`; `semantics.inheritance`/`.featuring`/`.metaclasses`/`.metamodel-complete`; `semantics.conformance` |
 | §2.3 Semantics — expression evaluation, constraint checking, execution | Self-contained parser/evaluator + constraint + behavioral execution | `semantics.expr`, `semantics.constraints`, `semantics.execute`/`execute-full`, `semantics-exec.integration`, validation rule `constraint-violation` |
 | §3 Textual notation — definitions/usages, `:>`/`:>>`/`::>`, connections, requirements, states, actions, expressions | **Langium** grammar (default) + AST→Model mapper; legacy parser as oracle | `langium.grammar`, `text.grammar2`, `text.parser`, `text.roundtrip`, `pipeline.roundtrip`, `conformance/corpus`, `conformance/roundtrip` |
-| §4 Graphical notation — 16 view kinds; composition ◆, reference ◇, specialization △, dependency dashed, control nodes, ports | **16 ViewKinds** + fuller SysML marker/shape set | `diagram.build`/`.parametric`/`.matrix`/`.sequence`/`.grid`/`.case`/`.symbols`/`.symbols2`; `pipeline.diagram`; E2E `view-switching`, `palette-per-view`, `diagram-edges`, `diagram-views2/3` |
+| §4 Graphical notation — 17 view kinds; composition ◆, reference ◇, specialization △, dependency dashed, control nodes, ports | **17 ViewKinds** + fuller SysML marker/shape set | `diagram.build`/`.parametric`/`.matrix`/`.sequence`/`.grid`/`.case`/`.symbols`/`.symbols2`; `pipeline.diagram`; E2E `view-switching`, `palette-per-view`, `diagram-edges`, `diagram-views2/3` |
 | §5.2–5.3 API & Services — Project ▸ Branch/Tag ▸ Commit ▸ Element; version semantics; element-at-commit; diff | In-memory Git-like `ProjectRepository` + REST + live HTTP server | `api.versioning`, `api.rest2`, `server/api-server`, `conformance/api-contract` |
 | §5.4 Element JSON shape | OMG element-graph (`@id`/`@type`, reified ownership, endpoint refs) | `persistence.io` (api-json idempotent, OMG shape), `api.rest`/`api.rest2`, `conformance/roundtrip` |
 | §5.5 Query language | Recursive constraint tree, both spellings, richer operators, orderBy | `api.query`, `api.query2` |
@@ -709,18 +709,18 @@ narrowed subset.
 |---|---|---|---|
 | **KerML metamodel** (reified relationships, ownership, classification/featuring, effective features) | **Covered** | Full metaclass hierarchy classifies all bundled library metaclasses (`semantics.metaclasses`, `.metamodel-complete`, `.featuring`); full name/import resolution (`semantics.resolve`) + type operators (`:`,`:>`,`:>>`,`::>`) (`semantics.conformance`, `.inheritance`); interchange integrity on standard models (`conformance/roundtrip`) | Deepest formal metaclass-intersection corners of the complete normative metamodel. |
 | **Textual notation / grammar** (Langium, default parser) | **Covered** | `langium.grammar`/`text.grammar2` self-tests; `text.parser`/`text.roundtrip`; 100% real-corpus parse (94/94, `scripts/grammar-coverage.ts`) + `conformance/corpus` + full textual round-trip (`conformance/roundtrip`) | Byte-exact concrete-syntax fidelity (comments/whitespace) beyond the element-set round-trip. |
-| **Graphical notation** (16 view kinds) | **Covered** | general/interconnection/action/state/requirement/tree + parametric/sequence/allocation/geometry + case/grid + requirements-table/analysis/planning/regroup; `diagram.*` + `planning`/`graph-analysis`/`regroup` units + `view-switching`/`palette-per-view`/`diagram-edges`/`diagram-views2`/`diagram-views3` E2E | Exhaustive symbol minutiae and a standardized graphical-interchange format (not yet standardized by OMG). |
-| **API & Services** (networked + concurrency + OSLC full-shape + interop client) | **Covered** | Complete surface: `api.versioning`, `api.rest2`, `api.query2`; live HTTP/Express server (`src/server`) with 10/10 endpoints validated against OpenAPI 3.1.1 (`conformance/api-contract`); concurrent-writer serialization (`server/concurrency`, `concurrency-full`); OSLC structural + `oslc:ResourceShape` full-shape (Turtle/RDF-XML/JSON-LD) (`conformance/oslc-conformance`, `server/oslc-shapes`); interop client `PilotApiClient` self round-trip over HTTP (`interop/self-roundtrip`) plus a LIVE round-trip against the real OMG pilot | Live write proven with a representative `Package`; full-model push needs reified `OwningMembership` payloads. |
+| **Graphical notation** (17 view kinds) | **Covered** | general/interconnection/action/state/requirement/tree + parametric/sequence/allocation/geometry + case/grid + requirements-table/contracts-table/analysis/planning/regroup; `diagram.*` + `planning`/`graph-analysis`/`regroup` units + `view-switching`/`palette-per-view`/`diagram-edges`/`diagram-views2`/`diagram-views3` E2E | Exhaustive symbol minutiae and a standardized graphical-interchange format (not yet standardized by OMG). |
+| **API & Services** (networked + concurrency + OSLC full-shape + interop client) | **Covered** | Complete surface: `api.versioning`, `api.rest2`, `api.query2`; live HTTP/Express server (`src/server`) with 10/10 endpoints validated against OpenAPI 3.1.1 (`conformance/api-contract`); concurrent-writer serialization (`server/concurrency`, `concurrency-full`); OSLC structural + `oslc:ResourceShape` full-shape (Turtle/RDF-XML/JSON-LD) (`conformance/oslc-conformance`, `server/oslc-shapes`); interop client `PilotApiClient` self round-trip over HTTP (`interop/self-roundtrip`) plus a LIVE round-trip against the real OMG pilot | The live WRITE is now measured further than a representative `Package`, and the measurement is negative: the verdict-bearing probe of `docs/CONFORMANCE.md` §6.1 (2026-09-09) is refused until four defects of our own dialect are repaired, and then comes back with its 19 ids, metaclasses, names and containment intact and every tool-local value dropped. Full-model push still needs reified `OwningMembership` payloads. |
 | **Standard libraries** (FULL, 38.8k elements + unit interpretation) | **Covered** | `full-library.load`/`.resolve`; `src/library/std` bundles the full ingested XMI release — 38,761 elements across 98 packages; unit/dimensional interpretation (`semantics.units`, `units.integration`) | USCustomary/domain breadth beyond the bundled release. |
 | **KerML semantics** (execution + connectors/flows + units) | **Covered** | `semantics.expr`, `semantics.constraints`/`checkConstraints`, `semantics.conformance` (Integer⊑Real), semantic validation rules, behavioral execution (`semantics.execute`/`execute-full`, `semantics-exec.integration`), connector/flow semantics (`semantics.connectors`), unit semantics (`semantics.units`, `units.integration`), full name/type resolution (`semantics.resolve`, `complete-semantics.integration`) | Deepest formal-semantics corners (complete model-level interpretation of every behavioral construct). |
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **1137 green automated
-checks** (**1114** unit/integration/conformance/server/interop across **89 files**,
-**0 skips**, + **78 E2E** across **52 files**) and no failures. The report now
+SysML v2 standard family — all six read **Covered** — with **3066 green automated
+checks** (**2938** unit/integration/conformance/server/interop across **145 files**,
+**0 skips**, + **128 E2E** across **78 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
-project lifecycle, keyboard shortcuts, all 16 view switches, the full Explorer
+project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
 interaction surface, every Properties field with unit conversion, palette
 create-and-connect per view, node drag, Problems navigation, textual bidirectional
 sync, the API/analytics console with commit history, and simulate/check — each
@@ -735,10 +735,12 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (1114 passed /
-0 skipped across 86 files) and `test-results/e2e-results.json` (78/78 across 52
-files), plus `scripts/grammar-coverage.ts` (100%, 94/94),
-`scripts/pilot-roundtrip.ts` (self round-trip, EQUIVALENT) and
-`src/library/std/manifest.json` (38,761 elements / 98 packages), captured on
-2026-07-03. See `docs/CONFORMANCE.md` for the full scorecard and
+*End of report. Counts and verdicts derived from a live `vitest run` (2938 passed /
+0 skipped across 145 files) and Playwright (128/128 across 78 spec files), plus
+`scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
+round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
+verdict-bearing write probe — see `docs/CONFORMANCE.md` §6.1) and
+`src/library/std/manifest.json` (38,761 elements / 98 packages), re-measured on
+2026-09-09; the prose sections below it date from the 2026-07-03 run they
+describe. See `docs/CONFORMANCE.md` for the full scorecard and
 `docs/FEATURE-PARITY.md` for the parity matrix vs. mainstream MBSE tools.*

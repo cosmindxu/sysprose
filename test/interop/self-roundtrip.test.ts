@@ -15,6 +15,10 @@ import { buildSampleModel, Model } from '@core/index';
 import { parseModel } from '@text/index';
 import { createServer } from '../../src/server/app';
 import { PilotApiClient } from '../../src/interop/index';
+import {
+  buildVerdictBearingModel,
+  verdictBearingSignature,
+} from '../../scripts/lib/verdict-fixture';
 
 /** Canonical, order-insensitive signature of a model's element set. */
 function signature(model: Model): { elements: string[]; endpoints: string[] } {
@@ -160,6 +164,45 @@ describe('PilotApiClient self round-trip', () => {
 
     const commits = await client.listCommits(pushed.projectId);
     expect(commits.some((c) => c['@id'] === pushed.commitId)).toBe(true);
+  });
+
+  /**
+   * The offline half of the verification lane's interoperability probe.
+   *
+   * `scripts/pilot-write-roundtrip.ts` asks a FOREIGN server what it does with
+   * the two things this lane writes — a `verdict` facet and an
+   * `@SysproseVerification::Evidence` carrier, both tool-local tags the standard
+   * does not define. That probe needs a network and a live pilot, so it cannot
+   * run here; what CAN run here, on every push, is the same fixture through the
+   * same client against our own server. It does not establish interoperability —
+   * only the live probe can, and `docs/CONFORMANCE.md` §6 records what it
+   * measured. What it establishes is the control the live result is read
+   * against: the carrier and the record survive a push→pull when the server at
+   * the other end keeps them, so a loss on the far side is the far side's
+   * reading and not our client dropping them on the way out.
+   */
+  it('round-trips a verdict facet and an evidence carrier (the interop probe fixture)', async () => {
+    const client = new PilotApiClient(baseUrl);
+    const { model } = await buildVerdictBearingModel();
+    const sent = verdictBearingSignature(model);
+    // The fixture is only worth pushing if it carries what the probe looks for.
+    expect(sent.carriers.length).toBe(1);
+    expect(sent.verdicts.length).toBeGreaterThan(0);
+    expect(sent.recordChars).toBeGreaterThan(500);
+
+    const pushed = await client.pushModel(model, 'VerdictRT');
+    const pulled = await client.pullModel(pushed.projectId, pushed.commitId);
+    const back = verdictBearingSignature(pulled);
+
+    expect(back.carriers).toEqual(sent.carriers);
+    expect(back.verdicts).toEqual(sent.verdicts);
+    expect(back.cells).toEqual(sent.cells);
+    // The record is the longest string this lane writes; a transport that
+    // truncated it would still round-trip every other cell.
+    expect(back.recordChars).toBe(sent.recordChars);
+    // And no verdict was invented on the way back: the facet says what the
+    // claim allows, which for a `literal` run is never `pass`.
+    expect(back.verdicts.every((v) => v.endsWith('= "inconclusive"'))).toBe(true);
   });
 
   it('uses the base URL verbatim as the API root (trailing slash trimmed)', async () => {

@@ -2,7 +2,9 @@
 
 **Another system modeler** — models as prose, tested by agents in the browser. Sysprose is a
 pure-browser modeling tool: author systems graphically *and* as textual definitions, validate,
-analyze, simulate and automate, all client-side with **no backend required**. It exposes a
+**verify**, analyze, simulate and automate, all client-side with **no backend required**.
+Validation asks whether the model is *well formed*; verification asks whether what the model
+*says* is true — and refuses to answer, out loud and with a reason, when it cannot. It exposes a
 programmable **API for data analysis and automation**, with an in-browser TypeScript SDK and an
 OMG SysML v2 *API & Services*–shaped query facade.
 
@@ -32,6 +34,7 @@ tool does and does not keep for you.
 - **Standards-native model** — the in-memory model mirrors the OMG API element-graph (flat `@id`/`@type`, relationships reified as first-class elements), so it round-trips losslessly.
 - **Graphical + textual** — multiple diagram views (General/BDD, Interconnection/IBD, Action, State, Requirement, Tree) kept in sync with the SysML v2 textual notation.
 - **Validation** — a rule engine flags naming, typing, multiplicity, containment and traceability issues.
+- **Formal verification, from a terminal** — read every requirement as the assume/guarantee pair its own `assume` and `require` clauses state, decide it with an SMT solver or say honestly that nothing decided it, find the subset of a requirement set that conflicts, check whether the parts deliver what the whole promised, walk a state machine exhaustively rather than one run at a time, and write the verdict back into the file, where it goes stale the moment the design changes.
 - **API-first** — query the model with OMG-shaped constraint trees, compute analytics (metrics, requirement-satisfaction coverage, traceability, where-used), and script automations.
 - **Local-first** — projects persist in the browser (IndexedDB/localStorage); import/export `.sysml`, model JSON, and OMG element-graph JSON.
 - **A kind for every statement** — one keyword says whether a statement binds (`#'requirement'`), explains (`#prose`) or is guidance for an agent (`#prompt`); coverage counts the first, and the guidance is collectable for whatever it applies to.
@@ -118,7 +121,7 @@ with the function that control runs.
 | What breaks if I change this element? | Properties → *Used by* (`prop-used-by` → `whereUsed`), *Impact graph* (`prop-impact` → `neighboursOf`) † | `npm run sysprose -- where-used model.sysml --element X` | `impactClosure` — `src/api/analytics.ts` |
 | What did I declare and never use? | — no view yet | `npm run sysprose -- orphans model.sysml` | `orphanReport` — `src/api/analytics.ts` |
 | What guidance applies to this element? | — no view yet | `npm run sysprose -- prompts model.sysml --element X` | `promptsFor` — `src/api/analytics.ts` |
-| What does each requirement assume and guarantee, and on which subject? | — no view yet | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
+| What does each requirement assume and guarantee, and on which subject? | **Contracts** view (`tb-view-contracts` → `buildContractsTable`) † | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
 | What must be shown, over which axioms, and what do the gates refuse? | — no view yet | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
 | How do I write a clause this tool will accept, over which names? | — no view yet | `npm run sysprose -- property-draft model.sysml --element X` | `propertyDraft` — `src/api/property.ts` |
 | Would this clause pass the gates, and what does it actually say? | — no view yet | `npm run sysprose -- property-check model.sysml --element X --clause 'u.mass <= 25.0 [kg]'` | `propertyCheck` — `src/api/property.ts` |
@@ -149,12 +152,17 @@ evidence a run left behind and shows it as one read-only column
 per revision): `current` / `stale` / `unrecorded`, with the record's claim word beside it and the
 requirement's slice in the tooltip, where `evidence-status` prints every row with its digest, its
 slice and its `verification/*` code. Nothing in the app writes a verdict.
-`connectivity`, `orphans`, `prompts`,
-`contracts`, `obligations`, `verify`, `evidence-attach`, `evidence-detach` and the depth-walking
+The **Contracts** view *projects* the same inventory through
+`buildContractsTable` (`src/diagram/contracts-table.ts`), which asks `contractReport` once per
+revision and keeps the rows and the census it returns, where `contracts` also prints the keyword
+inventory, the exclusion counts and the `verification/*` reasons behind every refusal — and,
+unlike the view, can be asked about one element. `connectivity`, `orphans`, `prompts`,
+`obligations`, `verify`, `evidence-attach`, `evidence-detach` and the depth-walking
 `impactClosure` have no control in the
-app at all — they are the terminal's and the SDK's alone. There is no solver in the browser in this
-plan (`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), and a Contracts view is
-the closing commit of the formal-verification plan; the command line ships first.
+app at all — they are the terminal's and the SDK's alone. There is no solver in the browser
+(`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), so no view reaches a
+verdict: the two that read this lane show what a run left behind and print the command that
+produces one.
 
 **Somebody else's `#keyword` vocabulary is read, kept and never acted on by accident.** A prefix
 keyword is the notation's own extension point (SysML v2 §7.27.1, §7.27.4); Sysprose stores every
@@ -180,6 +188,68 @@ still runs its own copy of them (`loadStandardLibraryAsync`, `src/ui/store.ts`),
 library in the background after your edit rather than binding it up front. Flags and exit codes:
 [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md), generated from the table the command parses.
 What each control and view is *for*: [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md).
+
+## Formal verification, from a terminal
+
+A requirement in this notation already states a contract: its `assume` clauses are the premise,
+its `require` clauses the promise, and `subject` says who both are about. The verification lane
+reads that pair and decides it — or says, with a code and a reason, that it did not. It is the
+largest capability in the tool, it lives in the terminal and in the SDK, and the app reads what
+it left behind rather than reaching a verdict of its own.
+
+One real run, over the shipped example, with the solver installed:
+
+```console
+$ npm run sysprose -- verify examples/uav-isr.sysml --engine smt
+examples/uav-isr.sysml: 0 inconclusive, 2 discharged, 0 refuted — engine smt
+  negation-unsat under a satisfiable axiom set — `proved` means exactly that, at 5000 ms per check, with every feature value bound as the model states it
+  UAVSurveillanceSystem::EnduranceRequirement  uav.endurance >= 45.0 [min]
+    proved: A ∧ P ∧ ¬G unsat, QF_NRA, 4 fixed / 0 free, timeout 5000 ms; assumptions satisfiable
+    bound: every feature at the value the model binds it to; 4 symbol(s), 0 free; compared as 2835.6923076923076 vs 2700 in T, coherent SI; decided by z3 Z3 5.1.0.0, seed 0
+    digest sha256:e4618d6fd278f0b61d3cfb371ee1c3ec8fad02a0cf2ad962e1a34179c845490e
+  UAVSurveillanceSystem::MassRequirement  uav.mtow <= 25.0 [kg]
+    proved: A ∧ P ∧ ¬G unsat, QF_LRA, 1 fixed / 0 free, timeout 5000 ms; assumptions satisfiable
+    bound: every feature at the value the model binds it to; 1 symbol(s), 0 free; compared as 18.5 vs 25 in M, coherent SI; decided by z3 Z3 5.1.0.0, seed 0
+    digest sha256:24296a7c6a06b2e66207cc2c3f3dac028f58123a199b55cbf7842f45ef02d545
+  model sha256:4b48f0ed02c1e05425881beb3b29f0cce8f3a7cff55605eb12759174ba31e9a2
+  sysprose 0.1.0 (git …) · standard library 38761 element(s)
+```
+
+That is a real run of this repository, copied out of the terminal; only the commit sha in the
+provenance line is elided, because it changes with every commit and nothing about the verdict
+depends on it.
+
+Read the shape rather than the numbers. Every line carries its own warrant: which question was
+asked (`A ∧ P ∧ ¬G unsat`), in which fragment, over how many symbols and how many of them were
+freed, under what timeout, by which solver build — and the digest of the obligation, so the same
+answer can be recognised again after an edit. The same lane also asks whether a requirement set
+can hold at once and names the subset that conflicts (`consistency`), whether the parts deliver
+what the whole promised (`refine`), how tight a measure can get (`bounds`), which combinations of
+contract failures break the top requirement (`fault-tree`), which configurations a state machine
+can reach and whether a safety pattern survives all of them (`reach`, `check-behaviour`), and it
+writes verdicts back into the file as annotations that go stale when the design moves
+(`evidence-attach`, `evidence-status`). All of them are among the **22 subcommands** listed in the
+Develop block below, and every flag is in
+[`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md).
+
+**What it will not print, and where it goes red.**
+
+- **`proved` means one thing** — the negation of the goal is unsatisfiable under an axiom set that
+  is itself satisfiable, non-vacuously. Never from a point evaluation, never from a bounded walk,
+  never from a solver that was not there. `--engine literal` evaluates at the values you wrote and
+  says `holds-at-values`, which is a different sentence.
+- **A missing solver turns the build red, not green.** With no z3 available, `--engine auto` and
+  `--engine smt` report `verification/tool-absent` on every obligation and exit **2** —
+  inconclusive — and `--allow-inconclusive` does not lower it: that flag reaches only timeouts and
+  unsupported constructs. This is the path most likely to rot into a silent pass, so CI runs it on
+  every push with the solver switched off and asserts the exit code.
+- **A requirement discharged by a false assumption is `vacuous`, not a pass** — a declared
+  deviation from the specification's own `RequirementCheck` semantics, recorded as one in
+  [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md) §8.
+- **No liveness, no reactive synthesis, no in-browser solver, no kernel-checked proof.** z3 is trusted
+  as a solver; nothing here is machine-checked in a proof kernel. The limits are listed, each with
+  what it costs you, in [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) §9 and
+  [`docs/04-formal-verification-plan.md`](docs/04-formal-verification-plan.md) §6.
 
 ## Architecture
 

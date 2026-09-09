@@ -132,7 +132,7 @@ one in this corpus was read and corrected by hand.
 Every count in this table is read off the tree, not remembered — the figures
 elsewhere that are NOT (the L9 bench results, and §1's account of what was true
 before the campaign) are quoted from a dated run file or from history, and say
-so where they appear. Measured 2026-09-07: **83 fixture directories** under
+so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
@@ -3634,6 +3634,67 @@ event nothing accepts is dropped where it was offered rather than pooled, and an
 as an event. Six fields, six executable pins: a provenance that compiles is not
 the same as a reading that holds, and the profile is printed under every verdict
 this command reaches.
+
+**The claims guard reserves sentence forms, not words — and a pronoun subject
+slips through.** `test/unit/claims.test.ts` scans the whole tree for the
+sentences this project may not print — a subject of ours being *verified*,
+*correct*, *safe*, *proved* without a warrant, *consistent* without a scope, and
+the two words nothing here earns. The obvious guard is a word list, and it is
+unusable: replicating the guard's own walk over its 696-file scan set (measured
+2026-09-09), the tree already holds 104 `safe`, 61 `correct` and 42 `verified` in
+ordinary prose, so a bare-word gate would open red on two hundred lines that
+claim nothing. Scoping the form to a SUBJECT fixes that — the unscoped copula
+form fires on 21 pre-existing lines, none of them a claim about this tool, and
+the subject-scoped one fires on 0 of them — but it buys the fix with holes, and
+the holes are written down beside the form rather than left to be discovered:
+a pronoun subject ("it is safe") is not caught, because `it` is deliberately
+absent from the subject list (that one alternative alone puts
+`test/conformance/corpus.test.ts`:9 back); a subject the list does not enumerate
+walks past; a non-copula clause ("we verified the model") walks past; and an
+allowance within 80 characters after a claim still defuses it. Three holes that
+were there when the form was first written are now closed, each for **0**
+additional hits across the tree: an adverb or `proven` between the copula and the
+adjective ("the requirement is **formally** verified", "the tool is **proven**
+safe") — the sentence a reader would actually quote, and the one the first form
+walked straight past; a plural or demonstrative subject ("these models are
+verified"); and an allowance sitting anywhere else on the same line, which used
+to let one honest half of a sentence pay for a claim in the other half. The guard
+catches the sentence a reader would quote against us, not every English sentence
+containing the word, and the guard itself is tested by planting each of those
+sentences — the caught ones and their negations — in a document written inside
+the test rather than by trusting the regexes to be right.
+
+**A Sysprose verdict does not survive a foreign reader — measured, not
+supposed.** The evidence carrier and the `verdict` facet are §7.27 metadata over
+a `metadata def`: tool-local tags a conforming reader may ignore. On 2026-09-09
+the write probe (`scripts/pilot-write-roundtrip.ts`) pushed a verdict-bearing
+model to the public OMG pilot and it did ignore them — 19 ids, 19 metaclasses, 14
+names and 18 containment edges came back, and every tool-local value was dropped:
+both `verdict` cells and all 1466 characters of the record. The probe also found
+**four** defects in **our** element-graph dialect that the pilot refuses outright
+(`Satisfy` for `SatisfyRequirementUsage`, a scalar `RequirementDefinition.text`
+where the specification has `String[0..*]`, `MetadataUsage.annotation` as a
+boolean where the specification has `Annotation[0..*]`, and `MetadataUsage.type`
+as a stored string where the specification derives it). They are recorded in
+`docs/CONFORMANCE.md` §6.1 and **not fixed here**: this commit is the closing
+documentation pass, and a serializer change on the last commit of a plan is how a
+green gate stops meaning anything. What is fixed is the claim — the docs no
+longer say the question is untested, they say what the answer was, **and which
+one row of it could not be measured**: repairing the fourth defect is what got
+the commit accepted, and `MetadataUsage.type` is also the only property on the
+wire identifying an evidence carrier, so the carrier row of that stage would have
+measured the probe's own erasure. It is printed as not measurable, not as a loss.
+
+**The Contracts view shows what a requirement states, never whether it holds.**
+z3 WASM needs `SharedArrayBuffer`, which needs COOP/COEP headers GitHub Pages
+cannot set, so there is no solver in the browser and no view in this app reaches
+a verdict. The two that read this lane are read-only by construction: Contracts
+projects the inventory `contractReport` returns — including the clauses a gate
+refused, with the reason, because a view that showed the clauses and hid the
+refusals would let a reader believe a requirement was fully encoded when half its
+body had been turned away — and the Requirements table's Evidence column reads
+what a run left in the file. Each prints the exact terminal command that would
+decide it.
 
 ### Pinned behaviours (decisions, not defects)
 

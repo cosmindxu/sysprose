@@ -30,7 +30,8 @@ export type ViewKind =
   | 'requirements'
   | 'analysis'
   | 'planning'
-  | 'regroup';
+  | 'regroup'
+  | 'contracts';
 
 /** A port anchored on a node boundary (interconnection views). */
 export interface DiagramPort {
@@ -625,4 +626,88 @@ export interface RequirementsTableModel {
   /** The read-only evidence column, right of the facets. */
   evidenceColumns: { key: string; label: string }[];
   rows: ReqRow[];
+}
+
+/* ─────────────────────────── Contracts table view ─────────────────────────── */
+
+/**
+ * One `assume` / `require` clause as the Contracts view shows it.
+ *
+ * `encodable` is the gate's answer and `refusal` the sentence beside it, both
+ * carried verbatim from {@link Contract}: the view REPORTS what the terminal
+ * command reports and decides nothing of its own. There is no solver in the
+ * browser (§9 of the plan's non-goals — z3 WASM needs `SharedArrayBuffer`,
+ * which needs COOP/COEP headers GitHub Pages cannot set), so a cell that looked
+ * like a verdict would be a cell no code in this app can make true.
+ */
+export interface ContractClauseCell {
+  id: string;
+  role: 'assume' | 'require';
+  /** The body as the author wrote it, before unit lowering. */
+  expression: string;
+  /** Where it was written: on the requirement, or inside a case objective. */
+  via: 'requirement' | 'objective';
+  /** Did every unit/typing gate accept it? */
+  encodable: boolean;
+  /** The branchable refusal reason, when it did not. */
+  reason: string | null;
+  /** The sentence a reader gets for that refusal. */
+  refusal: string | null;
+  /** The fragment the clause lives in (`qf-lra`, `qf-nra`, `unsupported`, …). */
+  fragment: string;
+}
+
+/** One contract — a requirement, or a case objective — as a table row. */
+export interface ContractRow {
+  id: string;
+  /** The `<R-UAV-001>` short name, or `''` — never invented. */
+  shortId: string;
+  name: string;
+  qualifiedName: string;
+  eClass: string;
+  /** `uav : AirVehicle`, or `''` when the contract states no subject. */
+  subject: string;
+  /** How the subject got there: declared, inherited, or a case default/binding. */
+  subjectOrigin: string | null;
+  assumptions: ContractClauseCell[];
+  guarantees: ContractClauseCell[];
+  /**
+   * The definitions whose clauses this usage inherits but does not own.
+   *
+   * A `requirement r : MassLimit;` owns no clause and is NOT "prose only"; the
+   * row says where its clauses are filed instead of reading as empty.
+   */
+  inheritedFrom: string[];
+  /** Relations a gate refused, with the reason each was refused for. */
+  refused: Array<{ expression: string; reason: string; detail: string }>;
+  /** The weakest fragment that admits every clause of the contract. */
+  fragment: string;
+  /** The `#keyword`s on the declaration, exactly as written. */
+  keywords: string[];
+}
+
+/**
+ * The Contracts view: the assume/guarantee inventory `sysprose -- contracts`
+ * prints, read in the app.
+ *
+ * READ-ONLY, and for the same reason the Evidence column is: this view reports
+ * what a requirement SAYS, never whether it holds. The command that decides is
+ * named on the view itself ({@link ContractsTableModel.terminal}) so a reader
+ * who wants a verdict is sent to a command that can produce one — `verify`, not
+ * the `contracts` command this view projects, which reaches no verdict either.
+ */
+export interface ContractsTableModel {
+  columns: { key: string; label: string }[];
+  rows: ContractRow[];
+  /** The census under the table, measured off the rows rather than quoted. */
+  summary: {
+    contracts: number;
+    subjects: number;
+    noFormalClause: number;
+    assumptions: number;
+    guarantees: number;
+    refused: number;
+  };
+  /** The exact terminal command that answers what this view will not. */
+  terminal: string;
 }

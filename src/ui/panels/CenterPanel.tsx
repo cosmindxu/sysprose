@@ -6,7 +6,8 @@
  * {@link DiagramCanvas} (keeping its `data-testid="diagram-canvas"`). The
  * non-graph views render their dedicated, prop-driven components from the
  * diagram module: 'allocation' → {@link MatrixView} (from `store.matrix`),
- * 'sequence' → {@link SequenceView} (from `store.sequence`), 'grid' →
+ * 'sequence' → {@link SequenceView} (from `store.sequence`), 'contracts' →
+ * the model-backed `ContractsTable`, 'grid' →
  * {@link GridView} (from `store.grid`), and 'geometry' → the lazily-loaded
  * Three.js `Geometry3DView` (from `store.scene`, `data-testid="geometry-3d"`).
  * The 'case' view is a React Flow graph and uses the shared {@link DiagramCanvas}
@@ -25,6 +26,7 @@ import { RequirementsTable } from './RequirementsTable';
 import { GraphAnalysisView } from './GraphAnalysisView';
 import { PlanningView } from './PlanningView';
 import { RegroupView } from './RegroupView';
+import { ContractsTable } from './ContractsTable';
 
 /**
  * The Three.js WebGL geometry view is loaded LAZILY (a dynamic import) so the
@@ -97,6 +99,17 @@ export function CenterPanel(): JSX.Element {
     return (
       <ScrollBox testid="center-requirements">
         <RequirementsTable />
+      </ScrollBox>
+    );
+  }
+
+  if (activeView === 'contracts') {
+    // Model-backed and read-only: the panel derives its rows from the live
+    // model on every `rev`, the way the requirements editor does, and writes
+    // nothing back.
+    return (
+      <ScrollBox testid="center-contracts">
+        <ContractsTable />
       </ScrollBox>
     );
   }

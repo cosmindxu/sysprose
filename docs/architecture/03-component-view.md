@@ -2,7 +2,10 @@
 
 The Browser SPA container decomposes into **12 source modules** under `src/`.
 This page lists each module's responsibility, public surface (its `index.ts`),
-and direct dependencies. The *documented* layering (from
+and direct dependencies. **Every file count below is `.ts` + `.tsx` under the
+module, subdirectories included, re-measured 2026-09-09** — the figures had drifted
+by as much as a factor of two while the counting rule was left unstated, which is
+how `ui/` came to read "12 files" for a tree holding 28. The *documented* layering (from
 `03-architecture-and-plan.md` §4) is compared with the *actual* import graph in
 [`04-dependency-graph.md`](./04-dependency-graph.md).
 
@@ -80,7 +83,7 @@ see `04`).
 
 ## Per-module detail
 
-### `core/` — the contract (5 files)
+### `core/` — the contract (9 files)
 **Responsibility:** the in-memory SysML v2 model: `ElementRecord` (uniform
 node/relationship), `Model` (CRUD, containment index, change events, JSON
 round-trip), `ModelFactory`, metaclass catalogues & predicates, id generation.
@@ -90,7 +93,7 @@ round-trip), `ModelFactory`, metaclass catalogues & predicates, id generation.
 **Depends on:** nothing (pure TS, uses `globalThis.crypto` /
 `globalThis.structuredClone`).
 
-### `text/` — textual notation (3 source + Langium)
+### `text/` — textual notation (14 files: 6 hand-written + the generated Langium output)
 **Responsibility:** bidirectional conversion between SysML v2 textual notation
 and the `Model`.
 **Live parser:** Langium grammar (`src/text/langium/sysml.langium`) → generated
@@ -107,13 +110,13 @@ code — see `08 §G`.
 **Public surface:** `parseModel`/`parse`/`serializeModel`/`serialize`/
 `serializeElement`, `lex`, `ParseResult`/`ParseDiagnostic`.
 
-### `validation/` — rule engine (4 files)
+### `validation/` — rule engine (5 files)
 **Responsibility:** rule-based model checker producing `Diagnostic[]`.
 **Public surface:** `validate(model)`, `RULES` registry, `Diagnostic` type.
 **Actual deps:** `core`, plus `semantics` (for type/conformance checks) —
 **undeclared in the plan**.
 
-### `api/` — SDK + Query + analytics + REST/OSLC + versioning (9 files)
+### `api/` — SDK + Query + analytics + REST/OSLC + versioning (12 files)
 **Responsibility:** three surfaces over one implementation — `ModelApi` (TS
 SDK), OMG-API-shaped `QueryEngine`, pure analytics functions, and the
 in-process OMG REST/OSLC facade.
@@ -127,13 +130,22 @@ returning `400` on a present-but-malformed body (finding H1). Internal to
 **Actual deps:** `core`, plus `semantics` (units, evaluate) — **undeclared in
 the plan**.
 
-### `diagram/` — model→graph + layout + renderers (17 files)
+### `diagram/` — model→graph + layout + renderers (27 files)
 **Responsibility:** per-view model→`DiagramGraph` projection, `elkjs`
 auto-layout, React Flow custom nodes/edges, SVG export, Three.js 3D geometry
-scene, matrix/sequence/grid builders.
+scene, matrix/sequence/grid/requirements/contracts builders.
 **Public surface** (`src/diagram/index.ts`): `buildDiagram`, `layoutDiagram`,
 `svgFromDiagram`, `nodeTypes`/`edgeTypes`, `toReactFlow`, plus pure builders
-for matrix/sequence/grid/geometry3d, and 3 React view components.
+for matrix/sequence/grid/requirements/contracts/geometry3d, and 3 React view
+components.
+**The two table builders that read a report rather than the graph.**
+`buildRequirementsTable` and `buildContractsTable` (`contracts-table.ts`) are
+projections of an `api/` report — `contractReport` for the latter — not of a
+`DiagramGraph`, so they carry the report's own census and refusal reasons into
+the view instead of recomputing anything. That is the seam that keeps the app
+read-only over the verification lane: the browser has no solver (COOP/COEP), so
+a view may show what a requirement STATES and what a run LEFT BEHIND, and never
+a verdict of its own.
 **Caveat:** the barrel re-exports React components, so importing *anything*
 from `@diagram/index` transitively pulls React into the type graph (`08 §D`).
 
@@ -144,15 +156,15 @@ import/export across `model-json`, `sysml`, and `api-json` formats.
 **Public surface:** 3 store classes + `createDefaultStore`, `exportModel`/
 `importModel`, `downloadText`/`openTextFile`.
 
-### `ui/` — React app (12 files, ~4 k LOC)
+### `ui/` — React app (28 files, ~10.9 k LOC)
 **Responsibility:** Explorer, Canvas (React Flow), Palette, Properties, Text
 Editor, Toolbar, Bottom Panel, Collaborate panel, command palette.
 **Public surface:** `App`, the `useAppStore` zustand store, commands.
-**Notable:** the store directly instantiates `Y.Doc` (`src/ui/store.ts:1056`),
+**Notable:** the store directly instantiates `Y.Doc` (`src/ui/store.ts:2385`),
 bypassing the `collab/` abstraction; and reaches past `@diagram/index` into
 `@xyflow/react` for ~12 primitives (`08 §C`).
 
-### `semantics/` — KerML semantics engine (19 files) — *undocumented layer*
+### `semantics/` — KerML semantics engine (37 files: 28 top-level plus `engines/` and `mc/`) — *undocumented layer*
 **Responsibility:** inheritance & effective features, conformance, name
 resolution, a self-contained expression evaluator, units/dimensions,
 parametric solver, action/state execution.
@@ -176,10 +188,10 @@ two-way-syncs the `Model` to a `Y.Doc`; `connect` joins a relay room via
 **Public surface:** `bindModelToDoc`, `connect`, `setLocalSelection`,
 `readPeers`, `colorForClient`.
 
-### `interop/` — OMG pilot client (2 files) — *out of plan scope*
+### `interop/` — OMG pilot client (8 files) — *out of plan scope*
 **Responsibility:** opt-in HTTPS client against a real OMG SysML v2 pilot
 server for interoperability round-trips (`npm run interop`).
-**Public surface:** `PilotClient`.
+**Public surface:** `PilotApiClient`, `elementsToModel`.
 
 ### `server/` — Express REST/OSLC (4 files) — *out of plan scope*
 **Responsibility:** the optional HTTP container described in `02`. Thin

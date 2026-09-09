@@ -39,11 +39,16 @@ const EXTRA_VIEW_COMMANDS: Array<{ id: string; label: string; view: ViewKind }> 
   { id: 'tb-view-analysis', label: 'Analysis', view: 'analysis' },
   { id: 'tb-view-planning', label: 'Planning', view: 'planning' },
   { id: 'tb-view-regroup', label: 'Regroup', view: 'regroup' },
+  { id: 'tb-view-contracts', label: 'Contracts', view: 'contracts' },
 ];
 
 /**
- * The 16 views grouped for the dedicated view bar (row 2), so switching diagrams
+ * The views grouped for the dedicated view bar (row 2), so switching diagrams
  * is discoverable instead of buried in a horizontally-scrolling command row.
+ *
+ * The count is deliberately not written here: it moved with the Contracts view
+ * and a number in a comment is a number nothing measures. `ViewKind` is the
+ * list, and `docs-counts.test.ts` counts it for the documents that quote it.
  */
 const VIEW_GROUPS: Array<{ title: string; views: ViewKind[] }> = [
   {
@@ -61,7 +66,7 @@ const VIEW_GROUPS: Array<{ title: string; views: ViewKind[] }> = [
       'geometry',
     ],
   },
-  { title: 'Tables', views: ['allocation', 'grid', 'requirements'] },
+  { title: 'Tables', views: ['allocation', 'grid', 'requirements', 'contracts'] },
   { title: 'Analyze', views: ['analysis', 'planning', 'regroup'] },
 ];
 

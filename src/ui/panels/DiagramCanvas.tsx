@@ -83,6 +83,9 @@ const DEFAULT_EDGE_KIND: Record<ViewKind, string> = {
   analysis: 'Dependency',
   planning: 'Dependency',
   regroup: 'Dependency',
+  // The Contracts view draws nothing and is read-only; the entry exists so the
+  // record stays exhaustive, not because an edge can be drawn there.
+  contracts: 'Satisfy',
 };
 
 /** Fit-animation duration, honoring the user's reduced-motion preference. */

@@ -38,11 +38,12 @@ project on anyone's disk but yours. That shapes everything below, especially
 ## 1. What this is, and what it is not
 
 Sysprose is a **modeling tool for one model at a time**, held in your browser.
-You author a system as text or by drawing, and it gives you back 16 views
+You author a system as text or by drawing, and it gives you back 17 views
 of the same model — block diagrams, an interconnection diagram, action and state
-diagrams, requirement tables, a traceability matrix, a dependency-structure
-matrix, a 3D massing view — plus a rule-based check, a numeric solver, an
-execution engine and a scriptable API.
+diagrams, requirement tables, a contract inventory, a traceability matrix, a
+dependency-structure matrix, a 3D massing view — plus a rule-based check, a
+numeric solver, an execution engine, a verification lane you drive from a
+terminal and a scriptable API.
 
 What it is **not**:
 
@@ -63,7 +64,7 @@ same answer comes out of the browser, the terminal and a script; and the
 feedback is machine-readable, so an agent can write a model, read the findings
 and repair them.
 
-**Source of truth:** `src/diagram/types.ts:15-31` (the view list), `README.md`
+**Source of truth:** `src/diagram/types.ts:17-34` (the view list), `README.md`
 ("Name and standards status"), `src/api/versioning.ts:172-187` (the Versions
 tab's repository, an in-memory one).
 
@@ -143,7 +144,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:130-237`, `src/ui/panels/Toolbar.tsx:411-560`,
+**Source of truth:** `src/ui/App.tsx:130-237`, `src/ui/panels/Toolbar.tsx:416-565`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -310,6 +311,15 @@ app.
 | Allocation | A matrix of elements × elements with a mark wherever an Allocation joins them (falling back to Satisfy when a model declares no allocations) | What is allocated to what? | `tb-view-allocation` |
 | Grid | Every in-scope non-relationship element as a row: name, metaclass, type, multiplicity, value, redefines, doc | What is in this model, in bulk? | `tb-view-grid` |
 | Requirements | Hierarchical requirement rows with outline numbers, editable id / name / text, chips for Satisfied By / Verified By / Refined By / Traced To / Derived From, and a Kind cell plus the nine management attributes (status, verdict, risk, priority, criticality, rationale, source, owner, verification) | Are my requirements covered, and by what? | `tb-view-requirements` |
+| Contracts | One row per requirement or case objective: the subject and how it got there, every `assume` and every `require` clause as written, the relations a gate refused with the reason, and the fragment the row sits in — with the census under it | What does each requirement assume and guarantee, and about whom? | `tb-view-contracts` |
+
+The **Contracts** view is read-only and reaches no verdict: it shows what a
+requirement *states*, never whether it holds. There is no solver in the browser
+(`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), so under
+the table it prints the exact command that does decide. A clause a unit or
+typing gate refused is shown with its reason rather than dropped, because a
+view that showed the clauses and hid the refusals would let you believe a
+requirement was fully encoded when half its body had been turned away.
 
 The Requirements view edits the model directly: adding a chip creates the
 backing relationship, and ✕ deletes it. A cell with a closed list of values is a
@@ -342,8 +352,8 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
-`regroup.ts`, `requirements-table.ts`; `src/ui/panels/Toolbar.tsx:47-64`
-(the grouping); `src/ui/store.ts:212-226` (the diagram scope).
+`regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:52-69`
+(the grouping); `src/ui/store.ts:217-231` (the diagram scope).
 
 ---
 
@@ -396,7 +406,7 @@ deliberate: it keeps typing responsive.
 Undo is 50 snapshots deep, it covers model changes (not view changes, not the
 theme), and any new edit clears the redo stack. Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:858-967` (the recompute cycle),
+**Source of truth:** `src/ui/store.ts:863-972` (the recompute cycle),
 `1873-1896` (`applyText`), `2260-2298` (undo), `2395-2416` (the post-apply
 refresh); `src/ui/panels/TextEditor.tsx`;
 `test/e2e/text-apply-contract.spec.ts:30` (the one-undo guarantee, as a test).
@@ -451,7 +461,7 @@ may legitimately differ, and the difference is spelled out under the table.
 | What breaks if I change this? | Properties → *Used by* † | `npm run sysprose -- where-used model.sysml --element X` |
 | What did I declare and never use? | — | `npm run sysprose -- orphans model.sysml` |
 | What guidance applies to this element? | — | `npm run sysprose -- prompts model.sysml --element X` |
-| What does each requirement assume and guarantee? | — | `npm run sysprose -- contracts model.sysml` |
+| What does each requirement assume and guarantee? | **Contracts** view † | `npm run sysprose -- contracts model.sysml` |
 | What must be shown, and what do the gates refuse? | — | `npm run sysprose -- obligations model.sysml` |
 | How do I write a clause the tool will accept? | — | `npm run sysprose -- property-draft model.sysml --element R` |
 | Would this clause pass the gates, and what does it say? | — | `npm run sysprose -- property-check model.sysml --element R --clause '…'` |
@@ -467,9 +477,12 @@ may legitimately differ, and the difference is spelled out under the table.
 `trace` tabulates every element of the row and column kinds and so also shows
 what links to nothing. The **Interconnection** view *draws* the ports and
 connections; it computes no connectivity report — `connectivity` exists only in
-the terminal and the SDK, as do `orphans`, `prompts`, `contracts`, `obligations`,
+the terminal and the SDK, as do `orphans`, `prompts`, `obligations`,
 `property-draft`, `property-check`, `evidence-attach`, `evidence-detach` and
-the depth walk behind `where-used`. The **Requirements** view's *Evidence* column
+the depth walk behind `where-used`. The **Contracts** view projects the rows and
+the census `contractReport` returns, where `contracts` also prints the keyword
+inventory, the exclusion counts and every refusal reason, and can be scoped to
+one element with `--element`. The **Requirements** view's *Evidence* column
 *reads* what a run left in the file — `current`, `stale` or `unrecorded`, with
 the record's claim word beside it — where `evidence-status` prints every row
 with its digest, its slice and its `verification/*` code; nothing in the app
@@ -776,6 +789,30 @@ That last line is the rule to remember: with no solver present, the same file
 that is exit 0 under `--engine literal` is exit **2** under the default
 `--engine auto`. "No solver, nothing to report, exit 0" would be
 indistinguishable from a proof, so it does not happen.
+
+**Every claim this lane can make, and what each one costs you.** A *claim* is
+the word in the evidence record; a *verdict* is the three-valued facet written
+back into the file, and only two claims are allowed to move it (`proved` ⇒
+`pass`, `refuted` ⇒ `fail`). The exit code is the run's, not the row's: the
+strongest row wins, in the order refuted → design-admitted → undecided.
+
+| Claim | Which engine can reach it | The exact condition | The run's exit code |
+|---|---|---|---|
+| `proved` | `smt` only, and it is the only claim `smt` counts as a discharge | `A ∧ P ∧ ¬G` is **unsat** — over an axiom set itself checked satisfiable, with the assumptions satisfiable, inside the timeout, with no freed feature left unbounded | **0** when every row is discharged |
+| `holds-at-values` | `literal` only, and `literal` can reach nothing stronger | The relation evaluates true with every feature at the value your model binds it to — one point of an infinite space | **0** under `--engine literal`, because you asked for a point evaluation by name; it is **not** a discharge under `smt` or `auto` |
+| `refuted` | both | `literal`: false at your values. `smt`: `A ∧ P ∧ ¬G` **sat**, with the witness re-confirmed through this tool's own evaluator before you see it | **1** — and `--allow-inconclusive` does not reach it |
+| `design-admitted` | `smt` | A refutation reached only **after** `--free` released a value your model states, so it is a design your model admits rather than a violation of it | **2**, never 1 |
+| `vacuous` | both | `literal`: the `assume` clause is false at your values (`verification/vacuous-pass`). `smt`: `A ∧ P` is unsat, so nothing at all satisfies the premises (`verification/vacuous`) | **2**, with `--strict-vacuity` and without it — the flag changes the code and the severity and nothing else |
+| `inconclusive` | both | Everything else, each row carrying the `verification/*` code that says which — timeout, unsupported construct, unbounded free variable, inconsistent axioms, unconfirmed witness, absent tool | **2**, unless the code is `verification/timeout` or `verification/unsupported-construct` **and** you passed `--allow-inconclusive`, which lowers those two and only those two |
+| `holds-structurally`, `holds-within-bound` | none in this build | Declared in the evidence vocabulary and in `schemas/evidence-record.schema.json`, reserved for a structural argument and for a bounded walk. **No engine here writes either**, so a record carrying one did not come from this build | — |
+
+Two readings that table is defending. `holds-at-values` discharging a run is
+not a proof being rebranded: it is the reader naming a point evaluation on the
+command line and getting exactly that, which is why the same file is exit 2 the
+moment the engine is `auto`. And an empty run is exit **2**, not 0 — a model
+that states no obligation has not been shown anything, and a build that went
+green because every requirement was deleted is the failure this lane exists to
+prevent.
 
 **What `proved` stands on.** The engine asks four questions per obligation, and
 each of the last three exists to stop a proof that would be void rather than
@@ -1920,7 +1957,7 @@ it, every one of these engines is an importable function — `checkText`,
 `modelMetrics`, `requirementSatisfaction`, `whereUsed`, `analysisReport`,
 `buildGrid`, `buildDSM`, `buildPlan` — with no DOM anywhere in them.
 
-**Source of truth:** `src/ui/store.ts:1627-1753` (the four buttons),
+**Source of truth:** `src/ui/store.ts:1743-1869` (the four buttons),
 `src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:39-64`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -2190,7 +2227,7 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 `modelDescription.xml` for the selected block.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:497-517`, `1904-1953`, `src/ui/App.tsx:71-75`,
+`src/ui/store.ts:502-522`, `2020-2069`, `src/ui/App.tsx:71-75`,
 `test/e2e/persistence-reload.spec.ts`.
 
 ---
@@ -2222,8 +2259,25 @@ Stated plainly, because finding these out by surprise is worse.
 - **One file at a time.** No cross-file imports, no workspace.
 - **`Ctrl+N` is not a shortcut.** New is a toolbar button only.
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:165`,
-`858-905`, `2428-2469`, `src/ui/panels/Toolbar.tsx:80-89`, `186-229`,
+**The verification lane's own register.** These are not defects to be fixed
+later; they are the boundary of what this tool is allowed to say, and each one
+is a sentence it will refuse to print rather than a corner it will cut.
+
+| The limit | What you do not get, and what happens instead |
+|---|---|
+| **No solver in the browser** | z3 WASM needs `SharedArrayBuffer`, which needs COOP/COEP headers GitHub Pages cannot set. The Contracts view and the Requirements table's Evidence column *read*; they never decide, and each prints the command that does. |
+| **A missing solver is red, not green** | `--engine auto` and `--engine smt` with no solver report `verification/tool-absent` on every obligation and exit **2**. `--allow-inconclusive` reaches `verification/timeout` and `verification/unsupported-construct` only — never tool-absence, never a design admitted, never a vacuity, never a refutation. |
+| **`proved` is a solver's word, not a kernel's** | z3 is trusted as a solver. Nothing here is checked in a proof kernel, and the phrase "kernel-checked" is reserved for an imported result whose axiom set was parsed. |
+| **Not two independent engines** | Measured on this machine: `z3` 5.0.0 is on `PATH` and `cvc5` is not, so a cross-check runs the z3 binary against the z3 WASM build (`z3-solver` 5.2.0, engine Z3 5.1.0.0). That catches an export defect; it is not two engines agreeing. `--cross-check cvc5` reports `inconclusive: cvc5 not installed` with the command to run, and a disagreement is always inconclusive with both verdicts named — the tool never picks a winner. |
+| **No liveness, and no reactive-synthesis question either** | `existence` and `response` come back inconclusive until a lasso search lands and a fairness assumption is named. `consistency` decides whether static contracts can hold at once, which is a different question from whether a reactive component could be built to meet them — a question this tool does not ask and whose word it never prints. Two words are reserved outright, and a guard in the test suite keeps both out of the source and the documents. |
+| **No domain axioms from a quantity kind** | Typing a feature `ISQ::PowerValue` tells this tool nothing about its sign. A freed feature bounded on one side only is `verification/free-variable-unbounded`, never a refutation — otherwise `cruisePower = -1 W` reads as a counterexample and the arithmetic check confirms it. |
+| **A narrow encodable fragment** | Only single-valued scalar features with ScalarValues typing are encoded. Multiplicity > 1, chains through unresolved typings, strings, enums, `null`, `%` and variable exponents are `verification/unsupported-construct` — inconclusive, with the construct named. Ordering on °C is encoded in kelvin; arithmetic on °C is refused, exactly as the numeric surface refuses it. |
+| **A bounded behaviour walk** | The in-process engine decides the finite abstraction it exhaustively explored, and says so: a `pass` needs the whole configuration graph, a `fail` does not. There is no event pool and no deferred events, completion chasing stops at 64, and `after(n)` is a discrete clock, not dense time. |
+| **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
+| **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
+
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:170`,
+`863-910`, `2544-2585`, `src/ui/panels/Toolbar.tsx:85-94`, `191-234`,
 `src/api/analytics.ts:1225-1232`, `src/ui/commands.ts:111-213`.
 
 ---
@@ -2282,7 +2336,7 @@ quietly go stale.
 | Group | Views | Test ids |
 |---|---|---|
 | Diagrams | General, Interconnection, Action, State, Requirement, Tree, Parametric, Case, Sequence, Geometry | `tb-view-general`, `tb-view-interconnection`, `tb-view-action`, `tb-view-state`, `tb-view-requirement`, `tb-view-tree`, `tb-view-parametric`, `tb-view-case`, `tb-view-sequence`, `tb-view-geometry` |
-| Tables | Allocation, Grid, Requirements | `tb-view-allocation`, `tb-view-grid`, `tb-view-requirements` |
+| Tables | Allocation, Grid, Requirements, Contracts | `tb-view-allocation`, `tb-view-grid`, `tb-view-requirements`, `tb-view-contracts` |
 | Analyze | Analysis, Planning, Regroup | `tb-view-analysis`, `tb-view-planning`, `tb-view-regroup` |
 
 ### Panels

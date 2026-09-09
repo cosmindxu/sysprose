@@ -25,7 +25,7 @@ import {
   type ElementRecord,
   type FeatureDirection,
 } from '@core/index';
-import { whereUsed } from '@api/index';
+import { keywordUsesOf, whereUsed, type KeywordUse } from '@api/index';
 import { elementCentrality } from '@diagram/index';
 import {
   RM_ATTR_KEYS,
@@ -45,7 +45,7 @@ import {
   type StatementKind,
 } from '@semantics/index';
 import { DIMENSIONLESS, dimEqual, dimToString } from '@semantics/units';
-import { useAppStore } from '../store';
+import { evidenceRowAt, proveInTerminalHint, useAppStore } from '../store';
 import { ImpactGraph } from './ImpactGraph';
 
 /** Read an attribute as a display string (empty for absent/non-primitive). */
@@ -79,6 +79,33 @@ function facetLabel(key: RmAttrKey): string {
 /** Cap the rendered "Used by" list so a widely-referenced element can't spawn
  *  thousands of DOM nodes; the section header still shows the true total. */
 const MAX_USED_BY = 50;
+
+/**
+ * The command the Evidence section names, because the app cannot reach a
+ * verdict itself (plan §6, non-goal 9: no in-browser solver in this plan).
+ */
+const VERIFY_COMMAND = 'npm run sysprose -- verify <file.sysml> --engine smt --record evidence.json';
+
+/**
+ * What one keyword on the selection resolves to, in the inventory's own words.
+ *
+ * The classification is `keywordUsesOf`'s — the same reader `contracts
+ * --keywords` prints from — so the panel cannot describe a spelling one way
+ * while the command describes it another. All this does is turn one
+ * {@link KeywordUse} into a sentence.
+ */
+function keywordReading(use: KeywordUse): string {
+  if (use.origin === 'foreign') {
+    return `a third-party spelling, read as ${use.foreign?.readAs ?? 'nothing'}`;
+  }
+  if (use.readBySpelling) return `Sysprose vocabulary, read by spelling (${use.readBySpelling.package})`;
+  if (use.resolvedTo) {
+    return use.origin === 'sysprose'
+      ? `Sysprose vocabulary — ${use.resolvedTo.qualifiedName}`
+      : use.resolvedTo.qualifiedName;
+  }
+  return 'names no `metadata def` in scope';
+}
 
 /** Cap the descendants walk so selecting a huge subtree stays responsive. */
 const MAX_DESCENDANTS = 2000;
@@ -150,6 +177,22 @@ export function Properties(): JSX.Element {
     () => elementCentrality(model.all()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [model, rev],
+  );
+  // What a verification run left on THIS element, and whether it still holds.
+  // Through the store's per-revision memo: the status is a digest of the whole
+  // user model, and a panel that re-renders on every keystroke must not pay for
+  // a SHA-256 per character. Read-only — nothing here writes a verdict, because
+  // nothing in this bundle can compute one.
+  const evidence = useMemo(
+    () => (selectionId ? evidenceRowAt(model, rev, selectionId) : undefined),
+    [model, rev, selectionId],
+  );
+  // The `#keyword`s written on the selection, with what each resolves to —
+  // classified by the same reader the keyword inventory prints from.
+  const keywords = useMemo(
+    () => (selectionId ? keywordUsesOf(model, selectionId) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [model, selectionId, rev],
   );
   const prScore = selectionId ? centrality.score.get(selectionId) : undefined;
   const prRank = selectionId ? centrality.rank.get(selectionId) : undefined;
@@ -666,6 +709,54 @@ export function Properties(): JSX.Element {
                 </>
               )}
             </div>
+          </div>
+        )}
+
+        {el && (
+          <div className="properties-relations" data-testid="prop-evidence">
+            <div className="panel-title">Evidence</div>
+            <span
+              className="evidence-chip"
+              data-testid="prop-evidence-chip"
+              data-status={evidence?.status ?? 'none'}
+              title={evidence?.detail ?? 'Nothing has been recorded about this element.'}
+            >
+              {evidence?.status ?? 'none'}
+            </span>
+            {/* The CLAIM word, verbatim. Never the `verdict` facet: a facet is
+                three-valued and cannot tell a proof from a point evaluation,
+                and displaying one where the other belongs is exactly the
+                upgrade the plan forbids. */}
+            {evidence?.claim !== undefined && (
+              <span className="evidence-claim" data-testid="prop-evidence-claim">
+                {' '}
+                {evidence.claim}
+              </span>
+            )}
+            {evidence?.status === 'stale' && evidence.slice.length > 0 && (
+              <div className="evidence-slice" data-testid="prop-evidence-slice">
+                re-read: {evidence.slice.join(', ')}
+              </div>
+            )}
+            <div className="evidence-terminal" data-testid="prop-evidence-terminal">
+              {proveInTerminalHint(VERIFY_COMMAND)}
+            </div>
+          </div>
+        )}
+
+        {el && keywords.length > 0 && (
+          <div className="properties-relations" data-testid="prop-keywords">
+            <div className="panel-title">Keywords ({keywords.length})</div>
+            <ul className="rel-list">
+              {keywords.map((use, i) => (
+                <li key={`${use.keyword}-${i}`} data-testid="prop-keyword-item">
+                  <code>#{use.keyword}</code>{' '}
+                  <span className="rel-note" data-testid="prop-keyword-reading">
+                    {keywordReading(use)}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 

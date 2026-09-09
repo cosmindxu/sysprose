@@ -22,7 +22,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 | Capability | Commercial desktop tool | Open-source web tool | **This tool** | Covered by test(s) |
 |---|---|---|---|---|
 | Model explorer / containment tree | Yes | Yes | **Yes** | `E explorer-crud`, `E explorer-interactions` (expand/collapse, create, rename, delete-cascade, reparent); `U core.model` (containment index) |
-| Multi-view workspace / view tabs | Yes | Yes | **Yes** | `E view-switching` (all 16 `tb-view-*`); `E diagram-create-connect` |
+| Multi-view workspace / view tabs | Yes | Yes | **Yes** | `E view-switching` (all 17 `tb-view-*`); `E diagram-create-connect` |
 | Per-metaclass tree type icons | Yes | Yes | **Yes** | `iconFor()` renders a category glyph per row (Explorer.tsx); `E gui-navigation` asserts `.tree-icon` |
 | Explorer search / filter + hide-library + focus + breadcrumb | Yes | Yes | **Yes** | `E gui-explorer` (search + count, library toggle, ◎ focus/scope-to-subtree), `E gui-navigation` (breadcrumb path); selection-reveal keeps the two parallel trees in sync |
 | Element search / query navigation | Yes | Yes | **Yes** (via API console) | `E api-console2` (query → tabulated rows), `U api.query`/`api.query2` |
@@ -121,7 +121,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 ## Summary — where we stand vs. the modern tools
 
 **At parity (Yes, test-covered):** model explorer with full CRUD + drag-reparent;
-**16 diagram view kinds** with auto-layout; palette element creation and
+**17 diagram view kinds** with auto-layout; palette element creation and
 click-to-connect across 9 views; manual node drag; properties/specification
 editing of every field; undo/redo; textual notation with live bidirectional sync
 (Langium, 100% corpus parse); 25-rule validation with navigable diagnostics;

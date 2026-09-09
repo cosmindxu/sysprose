@@ -596,6 +596,44 @@ describe('§7 — the three kinds of statement', () => {
       expect(GUIDE, `§7 names the \`${id}\` rule it cites`).toContain(`\`${id}\``);
     }
   });
+
+  /**
+   * Every OTHER "Source of truth" citation at least points INTO its file.
+   *
+   * The rules.ts ranges above are the only ones whose target is a named
+   * declaration a test can bracket mechanically; the rest point at a region — a
+   * recompute cycle, a group of toolbar buttons — and no assertion can say
+   * whether a reader lands on the right paragraph of it. What CAN be said, and
+   * is worth saying, is that the file still exists and the range is still inside
+   * it. That is the failure this guide actually shipped: commit 16 inserted 90
+   * lines into `src/ui/store.ts` and left five ranges pointing past what they
+   * described, and a range that runs off the end of a shrinking file is the same
+   * defect one step further along. A citation nobody can follow is worse than no
+   * citation, because a reader spends the search before finding that out.
+   */
+  it('every cited source range exists and lies inside its file', () => {
+    const seen = new Map<string, string[]>();
+    const cites = [...GUIDE.matchAll(/`(src\/[\w./-]+\.tsx?):(\d+)(?:-(\d+))?`/g)];
+    expect(cites.length, 'the guide cites no source line ranges at all').toBeGreaterThan(5);
+    for (const m of cites) {
+      const [, file, fromText, toText] = m;
+      if (!seen.has(file)) seen.set(file, read(file).split('\n'));
+      const lines = seen.get(file)!;
+      const from = Number(fromText);
+      const to = toText === undefined ? from : Number(toText);
+      expect(to, `${file}:${from}-${to} runs backwards`).toBeGreaterThanOrEqual(from);
+      expect(
+        from,
+        `${file}:${from} is past the end of a ${lines.length}-line file`,
+      ).toBeLessThanOrEqual(lines.length);
+      expect(
+        to,
+        `${file}:${from}-${to} runs off the end of a ${lines.length}-line file`,
+      ).toBeLessThanOrEqual(lines.length);
+      // A citation landing on a blank line is one the file moved under.
+      expect(lines[from - 1].trim(), `${file}:${from} is a blank line`).not.toBe('');
+    }
+  });
 });
 
 /**

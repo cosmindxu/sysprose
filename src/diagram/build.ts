@@ -778,6 +778,10 @@ export function buildDiagram(
       // Rendered by the model-backed RegroupView (planRegroup), not the React
       // Flow graph — empty projection.
       return { nodes: [], edges: [], viewKind: 'regroup' };
+    case 'contracts':
+      // Rendered by the model-backed ContractsTable (buildContractsTable), not
+      // the React Flow graph — empty projection.
+      return { nodes: [], edges: [], viewKind: 'contracts' };
     default: {
       const _exhaustive: never = viewKind;
       throw new Error(`Unknown view kind: ${String(_exhaustive)}`);

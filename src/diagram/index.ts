@@ -17,6 +17,9 @@ export type {
   SequenceDiagram,
   GridModel,
   RequirementsTableModel,
+  ContractsTableModel,
+  ContractRow,
+  ContractClauseCell,
   ReqRow,
   ReqReference,
   ReqRefColumn,
@@ -94,6 +97,12 @@ export {
   REQUIREMENT_ATTR_COLUMNS,
   REQUIREMENT_EVIDENCE_COLUMNS,
 } from './requirements-table';
+// The Contracts view — the assume/guarantee inventory, read in the app.
+export {
+  buildContractsTable,
+  CONTRACT_COLUMNS,
+  CONTRACTS_TERMINAL_COMMAND,
+} from './contracts-table';
 export {
   buildGraphAnalysis,
   buildDSM,

@@ -1,5 +1,5 @@
 /**
- * View-switching coverage — clicks ALL 16 `tb-view-<kind>` toolbar buttons and
+ * View-switching coverage — clicks ALL 17 `tb-view-<kind>` toolbar buttons and
  * asserts the correct centre-panel renderer mounts for each, with zero
  * console/page errors across the whole sweep and a screenshot per view.
  *
@@ -9,13 +9,14 @@
  *  - allocation → the dedicated `matrix-view` table (no diagram-canvas);
  *  - sequence   → the dedicated `sequence-view` SVG (no diagram-canvas);
  *  - grid       → the dedicated `grid-view` table (no diagram-canvas);
- *  - geometry   → the lazy Three.js `geometry-3d` WebGL view (no diagram-canvas).
+ *  - geometry   → the lazy Three.js `geometry-3d` WebGL view (no diagram-canvas);
+ *  - contracts  → the read-only `contracts-table` (no diagram-canvas).
  */
 
 import { test, expect } from '@playwright/test';
 import { captureErrors, gotoApp, shot } from './fixtures';
 
-/** The 16 views and the centre-panel testid each is expected to render. */
+/** The 17 views and the centre-panel testid each is expected to render. */
 const GRAPH_VIEWS = [
   'general',
   'interconnection',
@@ -42,9 +43,13 @@ const DEDICATED_VIEWS: Array<{ view: string; testid: string }> = [
   { view: 'planning', testid: 'planning-view' },
   // The regroup view is the re-bundling workbench (preview-only in Phase 1).
   { view: 'regroup', testid: 'regroup-view' },
+  // The contracts view is the read-only assume/guarantee inventory: it reports
+  // what each requirement STATES and reaches no verdict, because there is no
+  // solver in this bundle.
+  { view: 'contracts', testid: 'contracts-table' },
 ];
 
-test('all 16 views render their correct centre panel without console errors', async ({ page }) => {
+test('all 17 views render their correct centre panel without console errors', async ({ page }) => {
   const errors = captureErrors(page);
   await gotoApp(page);
 

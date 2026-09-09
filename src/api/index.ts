@@ -84,6 +84,10 @@ export type {
 export {
   boundsReport,
   contractReport,
+  // The per-element half of the keyword inventory: the app asks it about the
+  // selection, through the same classifier the command uses.
+  keywordUsesOf,
+  keywordUsesOn,
   faultTreeReport,
   faultTreeVerdict,
   consistencyReport,

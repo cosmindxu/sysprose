@@ -194,6 +194,9 @@ const TOOLS_BY_VIEW: Record<ViewKind, ToolGroup[]> = {
   analysis: [],
   planning: [],
   regroup: [],
+  // Read-only inventory: a contract is written in a requirement body, never
+  // drawn, so this view offers no tools.
+  contracts: [],
 };
 
 /** Whether a view offers drawing tools — used to hide the palette column on the

@@ -37,7 +37,7 @@
  * answer the same kind of question.
  */
 
-import type { ElementId, Model } from '@core/index';
+import type { ElementId, ElementRecord, Model } from '@core/index';
 import type { Diagnostic } from '@validation/types';
 import {
   contractsOf,
@@ -301,59 +301,81 @@ function keywordUses(model: Model, scoped: (id: ElementId) => boolean): KeywordU
   const out: KeywordUse[] = [];
   for (const el of model.all()) {
     if (!isUserModelElement(model, el) || !scoped(el.id)) continue;
-    for (const keyword of keywordsOnRecord(el)) {
-      const def = resolveKeyword(model, keyword);
-      const alias = foreignKeyword(keyword);
-      // Only when nothing resolved: a model that declares its own
-      // `metadata def <prose>` is using its own vocabulary, and `resolvedTo`
-      // has to be free to say so.
-      const bySpelling =
-        !alias && !def && statementKindOfKeyword(keyword.written) !== undefined;
-      const origin: KeywordOrigin = alias
-        ? 'foreign'
-        : def
-          ? isSysproseVocabulary(model, def)
-            ? 'sysprose'
-            : 'other'
-          : bySpelling
-            ? 'sysprose'
-            : 'unresolved';
-      out.push({
-        keyword: keyword.written,
-        element: {
-          id: el.id,
-          eClass: el.eClass,
-          ...(el.declaredName !== undefined ? { declaredName: el.declaredName } : {}),
-          qualifiedName: model.qualifiedName(el.id),
-        },
-        resolvedTo: def
-          ? {
-              id: def.id,
-              qualifiedName: model.qualifiedName(def.id),
-              ...(def.declaredName !== undefined ? { declaredName: def.declaredName } : {}),
-              ...(def.declaredShortName !== undefined
-                ? { shortName: def.declaredShortName }
-                : {}),
-            }
-          : null,
-        origin,
-        foreign: alias
-          ? {
-              readAs:
-                alias.reads.as === 'keyword'
-                  ? `\`${alias.reads.keyword}\``
-                  : // `an assume clause`, but `a require clause`: the string is
-                    // read inside a sentence, and the article is chosen on the
-                    // word rather than on the backtick in front of it.
-                    `${alias.reads.role === 'assume' ? 'an' : 'a'} \`${alias.reads.role}\` clause`,
-              note: alias.note,
-            }
-          : null,
-        readBySpelling: bySpelling ? { package: STATEMENT_KIND_PACKAGE } : null,
-      });
-    }
+    out.push(...keywordUsesOn(model, el));
   }
   return out;
+}
+
+/**
+ * The keyword uses on ONE element, classified exactly as the inventory
+ * classifies them.
+ *
+ * Exported because the app asks the same question about the selected element,
+ * and a second classifier in the Properties panel is how the panel and the
+ * command come to disagree about what a spelling is READ AS — which is the one
+ * thing §3.12 says this reader must never let happen. It takes a record rather
+ * than an id so the whole-model walk above does not fetch twice.
+ */
+export function keywordUsesOn(model: Model, el: ElementRecord): KeywordUse[] {
+  const out: KeywordUse[] = [];
+  for (const keyword of keywordsOnRecord(el)) {
+    const def = resolveKeyword(model, keyword);
+    const alias = foreignKeyword(keyword);
+    // Only when nothing resolved: a model that declares its own
+    // `metadata def <prose>` is using its own vocabulary, and `resolvedTo`
+    // has to be free to say so.
+    const bySpelling =
+      !alias && !def && statementKindOfKeyword(keyword.written) !== undefined;
+    const origin: KeywordOrigin = alias
+      ? 'foreign'
+      : def
+        ? isSysproseVocabulary(model, def)
+          ? 'sysprose'
+          : 'other'
+        : bySpelling
+          ? 'sysprose'
+          : 'unresolved';
+    out.push({
+      keyword: keyword.written,
+      element: {
+        id: el.id,
+        eClass: el.eClass,
+        ...(el.declaredName !== undefined ? { declaredName: el.declaredName } : {}),
+        qualifiedName: model.qualifiedName(el.id),
+      },
+      resolvedTo: def
+        ? {
+            id: def.id,
+            qualifiedName: model.qualifiedName(def.id),
+            ...(def.declaredName !== undefined ? { declaredName: def.declaredName } : {}),
+            ...(def.declaredShortName !== undefined
+              ? { shortName: def.declaredShortName }
+              : {}),
+          }
+        : null,
+      origin,
+      foreign: alias
+        ? {
+            readAs:
+              alias.reads.as === 'keyword'
+                ? `\`${alias.reads.keyword}\``
+                : // `an assume clause`, but `a require clause`: the string is
+                  // read inside a sentence, and the article is chosen on the
+                  // word rather than on the backtick in front of it.
+                  `${alias.reads.role === 'assume' ? 'an' : 'a'} \`${alias.reads.role}\` clause`,
+            note: alias.note,
+          }
+        : null,
+      readBySpelling: bySpelling ? { package: STATEMENT_KIND_PACKAGE } : null,
+    });
+  }
+  return out;
+}
+
+/** {@link keywordUsesOn} for a caller holding an id. */
+export function keywordUsesOf(model: Model, id: ElementId): KeywordUse[] {
+  const el = model.get(id);
+  return el ? keywordUsesOn(model, el) : [];
 }
 
 /**

@@ -23,7 +23,7 @@
  *  - add / delete requirement; row ↔ model selection sync.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
 import { buildRequirementsTable } from '@diagram/index';
 import type { ReqAttrColumn, ReqReference, ReqRefColumn, ReqRow } from '@diagram/index';
@@ -49,7 +49,6 @@ const EMPTY_FACET = '—';
 export function RequirementsTable(): JSX.Element {
   // Re-render on every model mutation; read the live model directly.
   const rev = useAppStore((s) => s.rev);
-  void rev;
   const model = useAppStore((s) => s.model);
   const selectionId = useAppStore((s) => s.selectionId);
   const hoverId = useAppStore((s) => s.hoverId);
@@ -80,7 +79,16 @@ export function RequirementsTable(): JSX.Element {
   // carries `FAULTED_DECLARATION_REFUSAL` in its title.
   const [noteRefusal, setNoteRefusal] = useState<ElementId | null>(null);
 
-  const table = buildRequirementsTable(model);
+  // ONCE PER REVISION, NOT ONCE PER RENDER. `buildRequirementsTable` takes the
+  // canonical digest of the whole model for its Evidence column, and this panel
+  // re-renders on hover and on every keystroke in an open cell — neither of
+  // which can have changed what a row says. `rev` is the store's own "the model
+  // moved" counter, so it is exactly the key under which the projection is
+  // still valid, and it is what makes the README's "once per revision" true.
+  // `rev` is not "unnecessary": the `Model` is mutated IN PLACE, so its
+  // reference is stable across edits and `rev` is the only dependency that moves.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const table = useMemo(() => buildRequirementsTable(model), [model, rev]);
 
   /** Candidate elements a requirement may be linked to (non-library, non-relationship, non-annotation, not self). */
   function linkCandidates(reqId: ElementId): ElementRecord[] {

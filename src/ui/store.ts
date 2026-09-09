@@ -112,6 +112,10 @@ import {
   type Commit,
   type MergeConflict,
   type MergeStrategy,
+  evidenceHolders,
+  evidenceStatus,
+  type EvidenceStatusReport,
+  type EvidenceStatusRow,
 } from '@api/index';
 import {
   buildDiagram,
@@ -160,6 +164,7 @@ import {
 import {
   SimulationSession,
   UNWRITABLE_NOTE_BODY_REFUSAL,
+  claimedVerdictOf,
   clearStatementKind as semClearStatementKind,
   hasRequirementAttr,
   isSimulatable as semIsSimulatable,
@@ -968,6 +973,106 @@ let autoRecomputeSuppressed = false;
 // pass `false` so they never clobber the user's in-progress text edits.
 let recomputePendingForce = false;
 
+/* ────────────── evidence in the app: read-only, and paid for once ────────── */
+
+/**
+ * The empty report — what a model nothing was ever recorded about gets.
+ *
+ * `graph` is the empty string rather than a digest of nothing: a caller
+ * comparing a record's digest against this must not accidentally MATCH, and
+ * `''` is the one value no SHA-256 hex string can take.
+ */
+const NO_EVIDENCE_REPORT: EvidenceStatusReport = {
+  graph: '',
+  rows: [],
+  current: 0,
+  stale: 0,
+  unrecorded: 0,
+  overstated: 0,
+};
+
+/**
+ * The evidence status of the open model, computed at most once per revision.
+ *
+ * WHY IT IS MEMOISED, AND KEYED ON `(model, rev)`. `evidenceStatus` takes the
+ * canonical digest of the whole user model — a SHA-256 over a sorted,
+ * id-canonicalised serialization — and the Properties chip that wants it
+ * re-renders on every keystroke. Hashing the model once per character is a cost
+ * a reader pays for a sentence that cannot have changed: `rev` is the store's
+ * own "the model moved" counter, so it is exactly the key under which the
+ * answer is still valid.
+ *
+ * BUT `rev` ALONE IS NOT AN IDENTITY. It is a counter on one store, and a
+ * second model asked at the same number is a different question: the store
+ * starts at `rev: 0` and every panel harness in `test/unit` resets a freshly
+ * parsed model at `rev: 0` too, so a memo keyed on the number alone hands the
+ * second model the FIRST one's report — the app showing a verdict it did not
+ * compute for the model on screen, which is the one thing this lane's gate
+ * exists to prevent. The model reference is therefore part of the key.
+ *
+ * AND IT IS SKIPPED ENTIRELY when there is nothing to say. Two things make a
+ * model worth hashing: an evidence carrier, or a `verdict` facet somebody wrote
+ * by hand — which is the `unrecorded` row, and the one a cheap "are there
+ * carriers?" test alone would miss.
+ *
+ * (The Requirements table's Evidence column does NOT come through here: it is
+ * built by `buildRequirementsTable`, which asks `evidenceStatus` itself, once
+ * per build, and that panel memoises the whole build on the same `[model, rev]`
+ * key. Naming it here would be describing a caller this function does not have.)
+ */
+let evidenceMemo: { model: Model; rev: number; report: EvidenceStatusReport } | null = null;
+
+export function evidenceStatusAt(model: Model, rev: number): EvidenceStatusReport {
+  if (evidenceMemo && evidenceMemo.model === model && evidenceMemo.rev === rev) {
+    return evidenceMemo.report;
+  }
+  let report = NO_EVIDENCE_REPORT;
+  try {
+    const worthAsking =
+      evidenceHolders(model).length > 0 ||
+      model.all().some((el) => claimedVerdictOf(model, el.id) !== undefined);
+    if (worthAsking) report = evidenceStatus(model);
+  } catch (err) {
+    // A degraded model must not take the panel down with it: the chip then
+    // reads `none`, which is what "this app cannot tell you" looks like.
+    console.error('evidenceStatusAt failed', err);
+    report = NO_EVIDENCE_REPORT;
+  }
+  evidenceMemo = { model, rev, report };
+  return report;
+}
+
+/** The evidence row for one element, or `undefined` when it has none. */
+export function evidenceRowAt(
+  model: Model,
+  rev: number,
+  id: ElementId,
+): EvidenceStatusRow | undefined {
+  return evidenceStatusAt(model, rev).rows.find((r) => r.id === id);
+}
+
+/**
+ * The sentence the app prints where a verdict would go, with the exact command.
+ *
+ * NO SOLVER RUNS IN THIS BUNDLE. z3 WASM needs `SharedArrayBuffer`, which needs
+ * the COOP/COEP headers GitHub Pages cannot set, so the app's job in this lane
+ * is to read what a run left behind and name the command that produces one
+ * (plan §6, non-goal 9). `crossOriginIsolated` is ASKED rather than assumed
+ * because the reason changes with the host: on a page that is not isolated the
+ * headers are the reason and the reader can act on it; on one that is, the
+ * reason is simply that this plan ships no in-browser engine. A hint that gave
+ * the wrong reason would send somebody to fix a header that was already set.
+ */
+export function proveInTerminalHint(command: string): string {
+  const isolated =
+    typeof globalThis !== 'undefined' &&
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
+  const why = isolated
+    ? 'This build ships no in-browser engine'
+    : 'This page is not cross-origin isolated, so no in-browser engine could run here';
+  return `${why} — run it in a terminal: ${command}`;
+}
+
 export const useAppStore = create<AppState>((set, get) => {
   /** Snapshot the current model onto the undo stack and clear redo. */
   function pushUndo(): void {
@@ -1473,6 +1578,17 @@ export const useAppStore = create<AppState>((set, get) => {
         // The requirements table is MODEL-BACKED: the RequirementsTable panel
         // reads the live model + `rev` and re-derives its rows itself. There is
         // no projection to compute here, so nothing to build.
+        return;
+      }
+
+      if (activeView === 'contracts') {
+        // Same shape as `requirements`, and for the same reason: the
+        // ContractsTable panel reads the live model + `rev` and derives its own
+        // rows. Without this arm the view would fall through to the React Flow
+        // branch below, `buildDiagram` would return the deliberately empty
+        // `contracts` projection, and `store.diagram` would be overwritten with
+        // an empty graph on every keystroke — stale state written for a view
+        // that never reads it.
         return;
       }
 

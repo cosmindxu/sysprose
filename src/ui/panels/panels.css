@@ -370,11 +370,11 @@
   white-space: nowrap;
 }
 .req-evidence-current {
-  color: var(--ok, #2e7d32);
+  color: var(--success, #2e7d32);
 }
 .req-evidence-stale,
 .req-evidence-unrecorded {
-  color: var(--warn, #b26a00);
+  color: var(--warning, #b26a00);
 }
 .req-evidence-claim {
   color: var(--text-muted);
@@ -1509,4 +1509,87 @@
 }
 .req-note-refusal {
   padding: 2px 6px;
+}
+
+/* ── Contracts view (read-only assume/guarantee inventory) ────────────────── */
+.contracts-table table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.contracts-table th,
+.contracts-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  vertical-align: top;
+}
+.contracts-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.contracts-table tbody tr {
+  cursor: pointer;
+}
+.contracts-table tbody tr:hover {
+  background: var(--hover);
+}
+.contracts-table tbody tr.is-selected {
+  background: var(--selection);
+}
+.contract-clause code {
+  font-size: 11px;
+}
+/* A refused relation is the number that decides how much of a row an engine
+   ever sees, so it is coloured as a warning rather than hidden in a tooltip. */
+.contract-refusal {
+  color: var(--warning, #b26a00);
+}
+.contract-keyword,
+.contract-origin,
+.contract-inherited {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.contracts-summary,
+.contracts-terminal {
+  padding: 6px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.contracts-terminal {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Properties: the evidence chip and the keyword readings ───────────────── */
+/* The chip is coloured by STATUS and never by verdict: `current` says the
+   record is about this model, not that the model is good. */
+.evidence-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  text-transform: lowercase;
+}
+.evidence-chip[data-status='stale'] {
+  color: var(--warning, #b26a00);
+}
+.evidence-claim,
+.evidence-slice,
+.evidence-terminal,
+.rel-note {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.evidence-terminal {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-top: 4px;
+  word-break: break-word;
 }

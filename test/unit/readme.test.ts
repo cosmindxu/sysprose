@@ -124,10 +124,23 @@ const APP_DOORS: ReadonlyArray<{
   // not credit the selector with an answer it does not compute.
   { command: 'orphans', controls: [] },
   { command: 'prompts', controls: [] },
-  // The verification lane ships to the terminal first and to the app last: a
-  // Contracts table view is the closing commit of the plan, so both rows carry
-  // no control and therefore — by the dagger rule below — no dagger.
-  { command: 'contracts', controls: [] },
+  // The verification lane shipped to the terminal first and to the app last,
+  // and the Contracts view is the last of it: the row now names a real control
+  // and is DAGGERED, because the view projects `contractReport` through
+  // `buildContractsTable` (rows + the census) where the command also prints the
+  // keyword inventory, the exclusion counts and every refusal reason, and can
+  // be scoped to one element. `obligations` still has no control, so it keeps
+  // its `— no view yet` cell and — by the dagger rule below — no dagger.
+  {
+    command: 'contracts',
+    controls: [
+      {
+        id: 'tb-view-contracts',
+        fn: 'buildContractsTable',
+        file: 'src/ui/panels/ContractsTable.tsx',
+      },
+    ],
+  },
   { command: 'obligations', controls: [] },
   // The two authoring rows stand BEFORE the engines rather than behind them,
   // and neither has a control: drafting a clause is an agent's loop in a

@@ -1,7 +1,7 @@
 /**
- * The selection is one thing, seen from sixteen places.
+ * The selection is one thing, seen from seventeen places.
  *
- * `view-switching` tours all 16 views and checks each renders its own panel. It
+ * `view-switching` tours all 17 views and checks each renders its own panel. It
  * starts from a clean slate every time and never carries state across the tour.
  * But a modeller's whole workflow is "select something, look at it another way",
  * and each view maintains its own node/row/cell rendering — so a view that
@@ -36,9 +36,13 @@ const VIEWS = [
   'analysis',
   'planning',
   'regroup',
+  // The Contracts view is read-only and reaches no verdict, which makes it the
+  // easiest one to forget here — and the easiest to get wrong: a table that
+  // rebuilt itself off the selection could silently drop it on mount.
+  'contracts',
 ] as const;
 
-test('one selection survives a tour of all 16 views, and undo still lands', async ({ page }) => {
+test('one selection survives a tour of all 17 views, and undo still lands', async ({ page }) => {
   const errors = captureErrors(page);
   await gotoApp(page);
 
@@ -63,7 +67,7 @@ test('one selection survives a tour of all 16 views, and undo still lands', asyn
   }
   await shot(page, 'tour-a-selection-held');
 
-  // ── The tour rebuilt the diagram 16 times; none of it entered the history ──
+  // ── The tour rebuilt the diagram 17 times; none of it entered the history ──
   await page.getByTestId('tb-undo').click();
   await expect.poll(() => hasNamed(page, 'PartDefinition', 'Engine')).toBe(true);
   await expect.poll(() => nameOf(page, engineId)).toBe('Engine');
