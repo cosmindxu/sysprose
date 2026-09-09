@@ -28,6 +28,7 @@ import {
   COMMANDS,
   COMMON_FLAGS,
   EXIT_CODES,
+  BOUNDS_EXIT_CODES,
   REFINE_EXIT_CODES,
   TRACE_PRESETS,
   WRITE_EXIT_CODES,
@@ -120,6 +121,10 @@ export function renderCliReference(): string {
   // but about an ARCHITECTURE rather than about the file's values, which is why
   // it carries its own contract instead of `verify`'s. See REFINE_EXIT_CODES.
   const refining = COMMANDS.filter((c) => c.exitContract === 'refine');
+  // `bounds` DECIDES without judging: it reports the tightest value the axioms
+  // admit, and a number is not a violation — so its contract is the only one in
+  // this table with no exit 1 to misread.
+  const bounding = COMMANDS.filter((c) => c.exitContract === 'bounds');
   const writing = COMMANDS.filter((c) => c.exitContract === 'write');
   // And the behaviour lane's judging half, which carries a contract of its own
   // for `refine`'s reason: `verify`'s paragraph names a `--free`, a `--timeout`
@@ -161,6 +166,9 @@ obligation refuted with every feature at its model value, or one requirement set
 nothing can satisfy. ${listOf(refining.map((c) => `\`${c.name}\``))} ${refining.length === 1 ? 'judges an *architecture*' : 'judge an *architecture*'} and ${refining.length === 1 ? 'carries' : 'carry'} a contract of
 ${refining.length === 1 ? 'its' : 'their'} own, because a refinement obligation reads no feature value and there is
 no \`--free\` for it: ${REFINE_EXIT_CODES.replace('Exit codes: ', '')}.
+${listOf(bounding.map((c) => `\`${c.name}\``))} ${bounding.length === 1 ? 'DECIDES' : 'DECIDE'} without judging — ${bounding.length === 1 ? 'it reports' : 'they report'} the tightest value
+the model's axioms admit, and a number is not a violation — so ${bounding.length === 1 ? 'its contract has' : 'their contract has'} no exit 1
+in it at all: ${BOUNDS_EXIT_CODES.replace('Exit codes: ', '')}.
 ${listOf(writing.map((c) => `\`${c.name}\``))} ${writing.length === 1 ? '*writes*' : '*write*'} the
 file back, and ${writing.length === 1 ? 'it has' : 'they have'} no exit 1 at all:
 ${WRITE_EXIT_CODES.replace('Exit codes: ', '')}.
@@ -188,7 +196,7 @@ rather than reporting on the first one.
 
 | Subcommand | Question it answers | \`--json\` key | Exit contract |
 |---|---|---|---|
-${COMMANDS.map((c) => `| [\`${c.name}\`](#${c.name}) | ${cell(c.question)} | \`${c.payloadKey}\` | ${c.exitContract === 'verify' || c.exitContract === 'refine' || c.exitContract === 'behaviour' ? 'judges' : c.exitContract === 'write' ? 'writes' : 'reports'} |`).join('\n')}
+${COMMANDS.map((c) => `| [\`${c.name}\`](#${c.name}) | ${cell(c.question)} | \`${c.payloadKey}\` | ${c.exitContract === 'verify' || c.exitContract === 'refine' ? 'judges' : c.exitContract === 'bounds' ? 'decides' : c.exitContract === 'write' ? 'writes' : 'reports'} |`).join('\n')}
 
 ### Options every subcommand takes
 

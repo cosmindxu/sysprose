@@ -346,7 +346,7 @@ export async function judgeBySmt(
   // are separate statements about the model, and silently deleting them would
   // widen the design space past what the reader asked for.
   const axioms = encodedRows.filter(
-    (e) => e.row.role === 'axiom' && !(e.row.source === 'feature-value' && freed(e.row, free)),
+    (e) => e.row.role === 'axiom' && !(e.row.source === 'feature-value' && isFreedValueAxiom(e.row, free)),
   );
   const premisesByRequirement = new Map<ElementId, EncodedRow[]>();
   for (const e of encodedRows) {
@@ -390,8 +390,14 @@ export async function judgeBySmt(
   return out;
 }
 
-/** Is this feature-value axiom the binding of a feature the caller released? */
-function freed(row: Obligation, free: ReadonlySet<string>): boolean {
+/**
+ * Is this feature-value axiom the binding of a feature the caller released?
+ *
+ * EXPORTED because `bounds` releases values with the same flag and must drop
+ * exactly the same axioms: two readings of one `--free` is how one command
+ * would answer over a design space the other one bounded differently.
+ */
+export function isFreedValueAxiom(row: Obligation, free: ReadonlySet<string>): boolean {
   if (free.has(row.element.qualifiedName)) return true;
   return row.vars.some((v) => free.has(v.qualifiedName) && v.featureId === row.element.id);
 }

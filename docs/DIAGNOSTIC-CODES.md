@@ -557,6 +557,20 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Fires when:** Step (0) of the refinement check found the antecedent unsatisfiable: the sub-contracts, the connection assertion and the system assumption cannot hold together. Every refinement obligation over them is entailed by a contradiction, so none of them is claimed.
 - **Hint given:** Read the unsat core named on the row for the statements that collide — two sibling contracts over one bind class whose guarantees exclude each other are the usual cause. Without this step the tool would print "obligation (3) proved" over an architecture whose components cannot coexist. It is inconclusive, exits 2, and no flag lowers it; `--strict-vacuity` is a `verify` flag and does not change this code.
 
+### `verification/derivation-not-refinement`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** A `derive` or `refine` chain the file states is not a refinement: the derived requirement assumes MORE than the one it was derived from (so it applies where the parent’s guarantee is not in force), or the derived requirements together do not entail what the parent promised. Both obligations are read with the orientation the mapper stores — `derive requirement D from R` puts R on the source end and `refine requirement X by Y` puts X on the target end, uniform with `satisfy` — and the row carries a witness this tool re-read before printing.
+- **Hint given:** Read the witness: it satisfies every requirement written down from this one and breaks the one they were written from, or it satisfies the parent’s assumption and not the child’s. The two obligations are `A_R ⊨ ⋀ A_D` and `A_R ∧ ⋀ nf(C_D) ⊨ G_R`, in normal form (`nf(C) = ¬A ∨ G`), so mutual support cannot buy the verdict. Weaken the child’s assumption, strengthen its guarantee, add the sibling requirement that closes the gap, or correct the direction of the edge. It is a decided finding about the model and the run exits 1; no flag forgives one. Nothing in this verdict is about ordering or time.
+
+### `verification/optimality-not-established`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** z3 returned a bound for a measure and this tool will not call it the optimum: the script it optimised over is nonlinear in its bytes — a product or a quotient of two features — and νZ is complete for LINEAR real arithmetic only. The value is a bound the optimiser reached, not one it established as the tightest.
+- **Hint given:** Read the row as the bound it is. Pinning the feature that makes the objective nonlinear (a divisor, or the second operand of a product) puts the question back inside the fragment νZ decides, and `npm run sysprose -- obligations <file>` shows which relation carries it. It exits 2 and no flag lowers it: presenting a non-optimal bound as the optimum is the one sentence this command may never write. The heuristic `optimize` in `src/semantics/solver.ts` searches for a point and proves nothing, so it is not a second opinion about optimality either.
+
 ### `verification/free-variable-unbounded`
 
 - **Severity:** info
@@ -749,4 +763,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*96 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*98 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

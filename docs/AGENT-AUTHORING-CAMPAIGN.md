@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **all five** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 97 tests |
+| L7 | The command-line contract: **all five** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 103 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-07: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **96 catalogue codes** in
+`npm run check` is what raises it — beside **98 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3896,6 +3896,107 @@ false negative. `examples/uav-power-budget.sysml` binds the definitions' feature
 exactly that reason and records it in its own doc comment; it is sound there
 because each definition is instantiated once in that system. Closing the gap in
 general needs a delegation term in γ, which §3.6 does not specify.
+
+**A derivation chain is a refinement question too, and its orientation is
+measured rather than assumed.** `refine --via derive|refine` reuses the same
+checker over the `Derive` and `Refine` edges, and the two store their ends the
+OPPOSITE way round: `derive requirement D from R;` puts `R` on the source end
+(`mapRequirementRelation` files the referenced element as the source and the
+requirement as the target, uniform with `satisfy`), so the parent is what a
+child POINTS AT, while `refine requirement X by Y;` puts `Y` on the source end,
+so the parent is what a child IS POINTED AT BY. Getting that backwards would not
+fail loudly — it would check the mirror obligations and print "refines" for a
+chain written the other way up — so the corpus runs both spellings and both
+directions: `derivation-conjoins.sysml` refines and, with its two edges rewritten
+the other way round, does not. The obligations are §3.6's: `A_R ⊨ ⋀ A_D` (the
+derived set assumes no more, or it applies where the parent's guarantee is not
+in force) and `A_R ∧ ⋀ nf(C_D) ⊨ G_R` (the children, in normal form, entail what
+the parent promised), preceded by the same step (0) — a parent assumption that
+contradicts its children entails both obligations for free.
+`verification/derivation-not-refinement` is a code of its own rather than
+`verification/refinement-failed` because the fix is an edit to a requirement and
+not to an architecture, and a derivation group **names no part**: the edge joins
+two requirements and states nothing about who satisfies either of them, so the
+group's `part` is `null` and every renderer says so instead of borrowing one.
+
+**A bound is exact, or it says it is not — and every line names which clauses
+were axioms.** `bounds --measure REF` optimises over z3's `Optimize`, and its
+axiom set is exactly what `obligations` files as `axiom`: feature values, `bind`
+equalities and `assert constraint` bodies. A `require` clause is not one — a
+requirement is what is being checked, not a fact — and neither is an `assume`,
+which is the guard a requirement applies under; folding either in silently would
+bound a measure by half a requirement while the line said no requirement had
+been read. So `--measure uav.mtow --free all` answers **unbounded above** on a
+file that plainly states a 25 kg limit, and `--with-requirements` folds the
+bodies in as the implication `assume ⇒ require` the shipped library states a
+requirement to be and says so on every row. Three of νZ's answers are three
+different sentences and the report never collapses them: an optimum that is
+attained, an exact supremum or infimum the design approaches and never attains
+(z3 writes `5 + (−1)·ε`), and an unboundedness — and a fourth,
+`verification/optimality-not-established`, for a value returned over a script
+that is nonlinear in its BYTES, where νZ's completeness does not reach. That
+fourth one is its own code precisely so that no flag can lower it: `bounds`
+ships no `--allow-inconclusive`, whose whole scope is the two undecided codes,
+because presenting a non-optimal bound as the optimum is the one sentence this
+command may never write. **Its exit contract is a fifth one and it has no 1**:
+every other judging subcommand spends its 1 on a decided negative about the
+model, and a bound is not one. The heuristic `optimize` in
+`src/semantics/solver.ts` is named on every report beside the proved bound, and
+the L8 corpus pins the direction of the difference — a coordinate descent may
+fall short of the optimum and may never beat it.
+
+**A relation nothing asserted is a bound nobody may publish — but only where the
+objective can reach it.** An axiom a gate refused was not asserted, and dropping
+one WIDENS the design space: the bound over what is left is looser than the
+model's and never tighter. Published as a decided row that reads *unbounded
+above* over a file whose only ceiling on the quantity is the refused relation,
+or as an `optimum` looser than the model's, it is the sentence §3.7 forbids
+arriving through a silence instead of through a claim. So a refusal that shares
+a symbol with the objective's own closure stands the row down under
+`verification/not-evaluable`; one in an unrelated corner of the file factorises
+— an assignment satisfying it pastes onto one satisfying the closure — and is
+listed rather than acted on. That is the reach test `verify` already applies
+before it publishes a refutation, over the same closure, and
+`bounds-refused-axiom.sysml` pins both directions. The design point z3 stopped
+at goes back through this tool's own evaluator before any of it is published
+(§5's witness gate), because `bounds` is the surface with the least redundancy
+behind it: its ANSWER is a number the encoder produced. And a `supremum` row
+publishes no point at all, for the reason an `unbounded` row does not — the
+bound is never attained, so the feasible design the optimiser stopped at is not
+at it.
+
+**A refused clause on a DERIVED requirement is read by which half it came from.**
+The derivation lane withheld a child from the premise set on ANY refusal, and
+that cost a real verdict: a child whose GUARANTEE lost a conjunct has an `nf`
+that is WEAKER than the file's (`¬A ∨ (g₁ ∧ g₂)` entails `¬A ∨ g₁`), so
+asserting the smaller form proves the composition obligation from LESS than the
+model states — sound, and merely harder. Withholding it instead shrank the
+premise set below the file's and published a REFUTATION at exit 1, with a
+confirmed witness at a design the withheld child forbids. The test is now the one
+the composition lane applies to a component: a refused `assume` is fatal (`¬a₁`
+entails `¬a₁ ∨ ¬a₂`, so the smaller form is an axiom the model does not
+contain), a refused `require` is not, and a composition row over a premise set
+that lost a child is `undecided` rather than refuted —
+`derivation-refused-clause.sysml` pins both directions. A `derive`/`refine` edge
+whose other end names no contract — a part, a case — forms no chain and is
+COUNTED, so "this model states no `derive` chain at all" is never printed about
+a file that plainly writes one.
+
+**Known limitation — a bound is reported in the magnitude the model STORES, and
+a unit is named only where the feature declares one.** §3.7's own verdict
+vocabulary reads "47.3 min" and "25 kg", and this build writes `6 [kg] (6 in
+coherent SI)` for a feature that declares a unit and `25 (coherent SI; the
+feature declares no unit)` for one whose value is an expression — `mtow` and
+`endurance` in `bounds-uav.sysml` are both of the second kind. Naming a unit on
+those rows would mean deriving a coherent unit from the declared quantity kind
+(`ISQ::MassValue` → kg, `ISQ::DurationValue` → s) and then converting into a
+display unit nobody wrote down, which is a unit-conversion surface §3.7 does not
+specify; a wrong one would be worse than the parenthesis, because the number
+would still look like an answer. So the row says which of the two a reader is
+holding, and the deferral is recorded here rather than left to be discovered
+from a transcript. The corpus's exact-optimum case is over `payload` and `mtow`
+in kg for the same reason, and `endurance` is its nonlinear one — which is what
+§3.1 predicts of it anyway, since its divisor is a feature.
 
 ## 5. Phase status
 

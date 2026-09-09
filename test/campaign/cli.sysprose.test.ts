@@ -29,6 +29,7 @@
 import { describe, it, expect } from 'vitest';
 import Ajv from 'ajv';
 import { spawnSync } from 'node:child_process';
+import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -821,9 +822,19 @@ describe('L7 — sysprose reporting command', () => {
     // belongs in it — its exit 1 is a property REFUTED, and left out of this
     // list it was documented, in the one place a reader meets the contract
     // before running anything, as "the model did not load cleanly".
-    expect(top.stdout).toContain(
-      '`verify`, `consistency`, `refine` and `check-behaviour` judge and have their own contract',
-    );
+    // FIVE subcommands now carry a contract of their own. The sentence is built
+    // from the spec table, so assert the invariant — every non-report contract is
+    // named, and the verb is not "judge" (`bounds` carries a contract and judges
+    // nothing) — rather than a frozen string two parallel chains both rewrote.
+    for (const c of COMMANDS.filter(
+      // The sentence names the JUDGING commands. `report`'s exit 1 is about the
+      // load and the writing commands have no 1 at all, so neither belongs in a
+      // line whose whole job is to say the contract above does not apply.
+      (x) => x.exitContract !== 'report' && x.exitContract !== 'write',
+    )) {
+      expect(top.stdout).toContain(`\`${c.name}\``);
+    }
+    expect(top.stdout).toContain('each carry a contract of their own');
 
     const sub = run(['where-used', '--help']);
     expect(sub.code).toBe(0);
@@ -2039,14 +2050,23 @@ package P {
     }
   }, 240_000);
 
-  it('refine refuses a --via this build does not answer, and a --element that names nothing', () => {
+  it('refine refuses a --via outside the four families, and a --element that names nothing', () => {
     const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
-    // A FAMILY THE PLAN NAMES AND THIS BUILD DOES NOT ANSWER is a usage error,
-    // not an empty report: reporting nothing over the derivation edges would
-    // read as a model that states none.
+    // A FAMILY THE MODEL STATES NOTHING IN is not a usage error and not a green
+    // build either: the power-budget example states a decomposition and no
+    // derivation, so `--via derive` says exactly that and exits 2, where exit 0
+    // would claim every chain in the file was shown to refine.
     const derive = run(['refine', budget, '--via', 'derive']);
     expect(derive.code).toBe(2);
-    expect(derive.stderr).toContain('is not answered by this build');
+    expect(derive.stdout).toContain('states no `derive` chain this lane can read');
+    // AND IT PRINTS NO γ CENSUS. γ is a wiring question and a `derive` edge
+    // joins two requirements — a run that read only chains borrowing the
+    // decomposition line would tell a reader their file states an architecture
+    // it does not.
+    expect(
+      derive.stdout,
+      'a derivation-only run printed the connection census',
+    ).not.toContain('γ, the connection assertion');
     const nonsense = run(['refine', budget, '--via', 'sideways']);
     expect(nonsense.code).toBe(2);
     expect(nonsense.stderr).toContain('--via must be one of');
@@ -2061,6 +2081,24 @@ package P {
       'a REF that selected nothing was reported as a model that states nothing',
     ).not.toContain('this model states no decomposition at all');
 
+    // …and the refusal follows `--via`, because a `--via derive` run never read
+    // a `satisfy` edge: advice to write one is advice about a different
+    // question than the one that was asked.
+    const emptyChain = run([
+      'refine',
+      `${FIXV}/models/derivation-conjoins.sysml`,
+      '--via',
+      'derive',
+      '--element',
+      'DerivationConjoins::rig',
+    ]);
+    expect(emptyChain.code).toBe(2);
+    expect(emptyChain.stderr).toContain('names no `derive` chain in this file');
+    expect(
+      emptyChain.stderr,
+      'a derivation run advised the reader to write a `satisfy` edge',
+    ).not.toContain('satisfy R by sys;');
+
     // AND ITS `--help` PUBLISHES ITS OWN CONTRACT, at the process boundary
     // where a reader actually meets it. `verify`'s paragraph is written in
     // terms of the file's VALUES — "with every feature at its model value", "a
@@ -2068,7 +2106,10 @@ package P {
     // refinement obligation reads none of them.
     const help = run(['refine', '--help']);
     expect(help.code).toBe(0);
-    expect(help.stdout).toContain('every decomposition the model states was shown to refine');
+    expect(help.stdout).toContain('every decomposition or derivation chain the --via family reads');
+    // …and it names every family `--via` accepts, so no reader meets an exit-1
+    // cause their run cannot produce.
+    expect(help.stdout).toContain('derive/refine chain');
     expect(help.stdout, 'refine published verify’s value-based exit contract').not.toContain(
       'at its model value',
     );
@@ -2088,6 +2129,184 @@ package P {
       expect(r.stdout).toContain('1 decomposition(s) over 5 contract(s)');
       expect(r.stdout, 'a verdict was printed with no solver').not.toContain('— refined');
     }
+  }, 240_000);
+
+  it('refine reads a derivation chain with the orientation the mapper stores', () => {
+    // THE ORIENTATION, AT THE PROCESS BOUNDARY. `derive requirement D from R`
+    // stores R on the source end, so R is the parent — and the same file read
+    // the other way up does not refine. A build with the orientation reversed
+    // would print "refined" here rather than failing, which is why both
+    // directions are run.
+    const chain = `${FIXV}/models/derivation-conjoins.sysml`;
+    const r = run(['refine', chain, '--via', 'derive']);
+    expect(r.code, 'a chain the file states was not shown to refine').toBe(0);
+    expect(r.stdout).toContain('1 derivation chain(s) over 3 contract(s)');
+    expect(r.stdout).toContain('DerivationConjoins::TotalMass via derive — refined');
+    // A derivation names no part, so the row must not claim one.
+    expect(r.stdout, 'a derivation chain was reported on a part the edge never names').not.toContain(
+      'via derive — refined on `',
+    );
+    expect(r.stdout).toContain('the derived set entails the parent’s guarantee  proved');
+    expect(r.stdout).toContain('`derive requirement D from R` makes R the parent');
+    expect(r.stdout).toContain('nothing here is claimed about ordering or time');
+
+    // And the chain that is NOT a refinement is exit 1, with its own code and a
+    // witness beside it.
+    const stronger = `${FIXV}/models/derivation-stronger-assumption.sysml`;
+    const bad = run(['refine', stronger, '--via', 'derive']);
+    expect(bad.code).toBe(1);
+    expect(bad.stdout).toContain('verification/derivation-not-refinement');
+    expect(bad.stdout).toContain('assumes no more: DerivationStrongerAssumption::BodyMass  refuted');
+    expect(bad.stdout).toContain('witness: DerivationStrongerAssumption::Vehicle::speed');
+  }, 240_000);
+
+  it('bounds answers unbounded over a stated limit, and 25 exactly when it is folded in', () => {
+    // THE FLAGSHIP PAIR OF §3.7, at the surface a person meets it: a `require`
+    // clause is not an axiom, so the measure is unbounded above over a file
+    // that plainly states a 25 kg limit — and the line says which clauses were
+    // axioms, every time, rather than once in a header.
+    const uav = `${FIXV}/models/bounds-uav.sysml`;
+    const open = run(['bounds', uav, '--measure', 'uav.mtow', '--free', 'all']);
+    expect(open.code, 'a proved unboundedness is a decided answer').toBe(0);
+    expect(open.stdout).toContain('unbounded above');
+    expect(open.stdout).toContain('`require` and `assume` clauses excluded');
+    // No witness on an unbounded row: there is no maximising design to name.
+    expect(open.stdout, 'a point was printed as the witness of an unbounded bound').not.toMatch(
+      /unbounded above[\s\S]{0,400}?\n\s+at /,
+    );
+
+    const folded = run([
+      'bounds',
+      uav,
+      '--measure',
+      'uav.mtow',
+      '--free',
+      'all',
+      '--with-requirements',
+    ]);
+    expect(folded.code).toBe(0);
+    expect(folded.stdout).toContain('= 25');
+    expect(folded.stdout).toContain('--with-requirements');
+    expect(folded.stdout).toContain('1 requirement(s) folded in: BoundsUav::MassRequirement');
+  }, 240_000);
+
+  it('bounds prints a nonlinear bound as a bound, exits 2, and names the other optimiser', () => {
+    const uav = `${FIXV}/models/bounds-uav.sysml`;
+    const r = run([
+      'bounds',
+      uav,
+      '--measure',
+      'uav.endurance',
+      '--sense',
+      'both',
+      '--free',
+      'BoundsUav::BatteryPack::capacity',
+    ]);
+    expect(r.code, 'a bound νZ did not certify went green').toBe(2);
+    expect(r.stdout).toContain('verification/optimality-not-established');
+    expect(r.stdout).toContain('optimality not established (nonlinear)');
+    // The report names BOTH optimisers and says which is which, so the proved
+    // bound and the heuristic search are never read as one thing.
+    expect(r.stdout).toContain('src/semantics/solver.ts');
+
+    // …and the JSON payload publishes a verdict block that agrees with the
+    // process, under a contract with no exit 1 in it.
+    const json = run([
+      'bounds',
+      uav,
+      '--measure',
+      'uav.payload',
+      '--free',
+      'uav.payload',
+      '--sense',
+      'both',
+      '--json',
+    ]);
+    expect(json.code).toBe(0);
+    const { keys, body } = payload<{
+      verdict: { decided: number; undecided: number; exitCode: number };
+      bounds: { bounds: Array<{ sense: string; outcome: string; value: number }> };
+    }>(json);
+    expect(keys).toEqual(['bounds', 'file', 'ok', 'verdict']);
+    expect(body.verdict).toEqual({ decided: 2, undecided: 0, exitCode: 0 });
+    expect(body.verdict.exitCode, 'the payload and the process must agree').toBe(json.code);
+    expect(body.bounds.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'optimum', 2],
+      ['max', 'optimum', 6],
+    ]);
+  }, 240_000);
+
+  it('bounds refuses a missing --measure, an unknown --sense, and publishes its own contract', () => {
+    const uav = `${FIXV}/models/bounds-uav.sysml`;
+    const none = run(['bounds', uav]);
+    expect(none.code).toBe(2);
+    expect(none.stderr).toContain('--measure names the feature to bound and is required');
+    const sense = run(['bounds', uav, '--measure', 'uav.mtow', '--sense', 'sideways']);
+    expect(sense.code).toBe(2);
+    expect(sense.stderr).toContain('--sense must be one of min, max, both');
+    // A REF that names nothing is refused by name rather than reported as a
+    // model with nothing to bound.
+    const missing = run(['bounds', uav, '--measure', 'uav.nosuchthing']);
+    expect(missing.code).toBe(2);
+    expect(missing.stderr).toContain('--measure names nothing in this model');
+
+    // ITS `--help` PUBLISHES ITS OWN CONTRACT, and that contract has no exit 1:
+    // this subcommand reports what the axioms admit and judges nothing.
+    const help = run(['bounds', '--help']);
+    expect(help.code).toBe(0);
+    expect(help.stdout).toContain('every bound asked for was DECIDED');
+    expect(help.stdout).toContain('There is no exit 1');
+    expect(help.stdout, 'bounds published a judging exit contract').not.toContain(
+      'at least one obligation refuted',
+    );
+  }, 240_000);
+
+  it('bounds stands a row down where a refused axiom reaches the objective', () => {
+    // AT THE PROCESS BOUNDARY, because this is the row a reader acts on: an
+    // axiom nothing asserted widens the space the bound was computed over, so
+    // the answer is looser than the model's — and "unbounded above" over a file
+    // that plainly states a 9 m ceiling is exactly the sentence §3.7 forbids,
+    // arriving through a silence instead of through a claim.
+    const model = `${FIXV}/models/bounds-refused-axiom.sysml`;
+    const near = run([
+      'bounds',
+      model,
+      '--measure',
+      'b.depth',
+      '--free',
+      'BoundsRefusedAxiom::TankB::depth',
+    ]);
+    expect(near.code, 'a bound over a partial axiom set exited green').toBe(2);
+    expect(near.stdout).toContain('verification/not-evaluable');
+    expect(near.stdout).toContain('PARTIAL axiom set');
+    expect(near.stdout, 'a widened space was published as unbounded').not.toContain(
+      'unbounded above',
+    );
+
+    // The same refusal, out of reach of the other tank's objective: it can move
+    // neither the bound nor whether one exists, so the row is decided and the
+    // refusal is listed.
+    const far = run([
+      'bounds',
+      model,
+      '--measure',
+      'a.level',
+      '--free',
+      'BoundsRefusedAxiom::TankA::level',
+    ]);
+    expect(far.code).toBe(0);
+    expect(far.stdout).toContain('max `BoundsRefusedAxiom::TankA::level` = 3');
+    expect(far.stdout).toContain('1 relation(s) refused by a gate');
+  }, 240_000);
+
+  it('bounds decides nothing with no solver, and still names the measure', () => {
+    const uav = `${FIXV}/models/bounds-uav.sysml`;
+    const r = run(['bounds', uav, '--measure', 'uav.mtow', '--sense', 'both'], undefined, NO_Z3);
+    expect(r.code).toBe(2);
+    expect(r.stdout).toContain('verification/tool-absent');
+    expect(r.stdout).toContain('no solver ran');
+    expect(r.stdout).toContain('BoundsUav::AirVehicle::mtow');
+    expect(r.stdout, 'a bound was printed with no solver').not.toContain('exactly');
   }, 240_000);
 
   it('consistency --subject narrows by what the reader typed, and refuses a REF that selects nothing', () => {

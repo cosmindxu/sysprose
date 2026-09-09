@@ -21,6 +21,7 @@ import { DEFAULT_MAX_CONFIGS as ENGINE_MAX_CONFIGS, PATTERNS, SCOPES } from '@ap
 import { renderCliReference } from '../../scripts/gen-cli-reference';
 import {
   BEHAVIOUR_EXIT_CODES,
+  BOUNDS_EXIT_CODES,
   CHECK_EXIT_CODES,
   COMMANDS,
   COMMON_FLAGS,
@@ -115,13 +116,14 @@ describe('the generated command reference', () => {
       report: EXIT_CODES,
       verify: VERIFY_EXIT_CODES,
       refine: REFINE_EXIT_CODES,
+      bounds: BOUNDS_EXIT_CODES,
       write: WRITE_EXIT_CODES,
       behaviour: BEHAVIOUR_EXIT_CODES,
     };
     expect(
       COMMANDS.map((c) => c.exitContract).filter((v, i, a) => a.indexOf(v) === i).sort(),
       'the command table no longer declares all five exit contracts',
-    ).toEqual(['behaviour', 'refine', 'report', 'verify', 'write']);
+    ).toEqual(['behaviour', 'bounds', 'refine', 'report', 'verify', 'write']);
 
     for (const cmd of COMMANDS) {
       const section = sections.get(cmd.name);
@@ -169,6 +171,19 @@ describe('the generated command reference', () => {
     expect(REFINE_EXIT_CODES).toContain('vacuous');
     expect(REFINE_EXIT_CODES).toContain('absent solver');
     expect(REFINE_EXIT_CODES).not.toBe(VERIFY_EXIT_CODES);
+    // AND IT NAMES EVERY FAMILY `--via` ACCEPTS. A `--via derive` run refutes
+    // on a chain, not on a decomposition, and exits 2 on a file that states no
+    // chain — so a contract speaking only of decompositions would publish, in
+    // `refine --help` and in the generated reference, an exit-1 cause that
+    // family cannot produce and an exit-2 cause it never hits. The vocabulary
+    // is pinned against the flag's own values so the two cannot drift apart.
+    const viaValues = flagsFor(COMMANDS.find((c) => c.name === 'refine')!).find(
+      (f) => f.name === 'via',
+    )!.doc;
+    for (const family of ['derive', 'refine'])
+      expect(viaValues, '`--via` no longer offers this family').toContain(family);
+    expect(REFINE_EXIT_CODES).toContain('derivation chain');
+    expect(REFINE_EXIT_CODES).toContain('derive/refine chain');
     const refining = COMMANDS.filter((c) => c.exitContract === 'refine').map((c) => c.name);
     expect(refining, 'the refinement contract is declared by exactly `refine`').toEqual(['refine']);
     // And no `--free` flag exists on the row that publishes that sentence.
@@ -221,7 +236,31 @@ describe('the generated command reference', () => {
       ).toBe(judges);
     }
     // And the sentence still reads as English with more than one of them in it.
-    expect(usage).toContain('judge and have their own contract');
+    expect(usage).toContain('each carry a contract of their own');
+  });
+
+  it('gives `bounds` a contract with no exit 1 in it at all', () => {
+    // The other three judging contracts spend their 1 on a decided negative —
+    // a load failure, a finding, a refuted obligation, an architecture that
+    // does not refine. `bounds` has none to spend it on: it reports what the
+    // model's axioms admit, and a number is not a violation. A contract with a
+    // 1 in it would document a state this subcommand cannot reach, which is the
+    // same defect `refine`'s own contract exists to avoid one row up.
+    expect(BOUNDS_EXIT_CODES).not.toContain('· 1 ');
+    expect(BOUNDS_EXIT_CODES).toContain('There is no exit 1');
+    expect(BOUNDS_EXIT_CODES).not.toContain('at least one obligation refuted');
+    // The three states it must never launder into a green build are named.
+    expect(BOUNDS_EXIT_CODES).toContain('absent solver');
+    expect(BOUNDS_EXIT_CODES).toContain('nonlinear');
+    expect(BOUNDS_EXIT_CODES).toContain('cannot hold together');
+    // …and the flag whose whole scope is the two undecided codes is not offered
+    // here, so it cannot lower a bound whose optimality nobody established.
+    expect(BOUNDS_EXIT_CODES).toContain('no --allow-inconclusive here');
+    const bounding = COMMANDS.filter((c) => c.exitContract === 'bounds').map((c) => c.name);
+    expect(bounding, 'the bounds contract is declared by exactly `bounds`').toEqual(['bounds']);
+    expect(
+      flagsFor(COMMANDS.find((c) => c.name === 'bounds')!).map((f) => f.name),
+    ).not.toContain('allow-inconclusive');
   });
 
   it('states in words that `verify`’s 1 means refuted, not a load failure', () => {

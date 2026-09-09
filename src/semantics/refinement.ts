@@ -128,12 +128,26 @@ export const REFINEMENT_UNDECIDED_CODE = 'verification/refinement-undecided';
 /** Step (0): the sub-contracts, the connections and the system assumption collide. */
 export const CONTRACT_SET_VACUOUS_CODE = 'verification/contract-set-vacuous';
 
+/**
+ * A `derive` or `refine` chain the file states that is NOT a refinement.
+ *
+ * Its own code rather than {@link REFINEMENT_FAILED_CODE}, because the fix is a
+ * different one and the reader is a different person: a composition failure
+ * says the parts do not add up, and this says the requirement somebody derived
+ * asks for something its parent does not — either it assumes MORE than the
+ * parent grants (so the derived set applies where the parent's guarantee is not
+ * in force), or the children together do not entail what the parent promised.
+ * Both are edits to a requirement, not to an architecture.
+ */
+export const DERIVATION_NOT_REFINEMENT_CODE = 'verification/derivation-not-refinement';
+
 /** Every code this module can file, for the exit-contract tables to key on. */
 export const REFINEMENT_CODES: readonly string[] = [
   REFINEMENT_FAILED_CODE,
   UNCONNECTED_ASSUMPTION_CODE,
   REFINEMENT_UNDECIDED_CODE,
   CONTRACT_SET_VACUOUS_CODE,
+  DERIVATION_NOT_REFINEMENT_CODE,
 ];
 
 /**
@@ -199,13 +213,24 @@ function notAConnectHint(eClass: string): string {
 /** Which family of edges a refinement run reads. */
 export type RefinementVia = 'composition' | 'derive' | 'refine' | 'all';
 
+/**
+ * The family ONE group was read from. `all` is a run, never a group.
+ *
+ * On the group rather than only on the run, because the two families answer
+ * different questions over different edges and a reader handed a mixed run has
+ * to be able to tell which of them a row is about: a composition group is about
+ * the parts of a system, and a derivation group is about a requirement somebody
+ * wrote down from another requirement.
+ */
+export type RefinementFamily = 'composition' | 'derive' | 'refine';
+
 /** How a refinement run is narrowed, bounded and told what to encode. */
 export interface RefinementOptions {
   /** The solver. Absence is decided by the caller, never here. */
   backend: Z3Backend;
   /** Only the decomposition at this element: a system contract, or the part it is about. */
   elementId?: ElementId;
-  /** Which family of edges to read. Only `composition` is answered today. */
+  /** Which family of edges to read: composition, derivation, refinement, or all three. */
   via?: RefinementVia;
   /** Read a bare `connect` as a value equality — the OCRA reading, opt-in. */
   connectionsAsEqualities?: boolean;
@@ -291,15 +316,24 @@ export type RefinementOutcome = 'refined' | 'not-refined' | 'vacuous' | 'inconcl
 
 /** One system contract, its components, and what came of the obligations. */
 export interface RefinementGroup {
-  /** The system contract C = ⟨A, G⟩. */
+  /** Which family of edges this group was read from. */
+  via: RefinementFamily;
+  /** The system contract C = ⟨A, G⟩ — or, `--via derive|refine`, the parent requirement. */
   system: ContractRef;
   /** The `<R-PWR-000>` short name of the system contract, or `''`. */
   shortId: string;
   subject: ContractSubject | null;
-  /** The part the system contract is satisfied by. */
-  part: ContractRef;
+  /**
+   * The part the system contract is satisfied by.
+   *
+   * `null` for a DERIVATION group, and that is not an omission: a `derive` edge
+   * joins two requirements and says nothing about who satisfies either of them,
+   * so naming a part there would attribute the answer to an architecture the
+   * edge never mentioned.
+   */
+  part: ContractRef | null;
   /** The sub-contracts C′, each with the part that satisfies it. */
-  components: Array<{ contract: ContractRef; shortId: string; part: ContractRef }>;
+  components: Array<{ contract: ContractRef; shortId: string; part: ContractRef | null }>;
   outcome: RefinementOutcome;
   /** The `verification/*` code, for a group that is not `refined`. */
   code: string | null;
@@ -340,6 +374,13 @@ export interface RefinementResult {
   refused: RefusedClause[];
   /** How many contracts were considered at all. */
   contracts: number;
+  /**
+   * `derive`/`refine` edges whose other end states no contract this lane reads.
+   *
+   * Counted so that "this model states no chain at all" is a sentence about the
+   * file rather than about what this lane could group.
+   */
+  unreadEdges: number;
   /** Total solver checks. */
   checks: number;
   /** The per-check budget every check above ran under. */
@@ -1024,6 +1065,490 @@ function notEncodedFor(
   });
 }
 
+/* ───────────────────────── derivation and refinement ─────────────────────── */
+
+/**
+ * One parent requirement and the requirements the file DERIVES from it (or that
+ * REFINE it), read with the orientation the mapper actually stores.
+ *
+ * THE ORIENTATION IS MEASURED, NOT ASSUMED, and the two families store it the
+ * opposite way round — which is the whole reason this is one function with a
+ * `via` rather than two copies of one rule:
+ *
+ *  - `derive requirement D from R;` maps to `Derive` with **source = R** (the
+ *    original) and **target = D** (the derived), so `Contract.derivedFrom` on
+ *    `D` names `R`. The parent is what a child POINTS AT.
+ *  - `refine requirement X by Y;` maps to `Refine` with **source = Y** (the
+ *    element doing the refining) and **target = X**, uniform with `satisfy`
+ *    (`mapRequirementRelation`: the referenced element is the source and the
+ *    requirement is the target). So `Contract.refinedBy` on `X` names `Y`, and
+ *    the parent is what a child IS POINTED AT BY.
+ *
+ * Getting that backwards would not fail loudly: it would check the mirror
+ * obligations and report "refines" for a chain written the other way up, which
+ * is why the corpus pins the reversed direction as a refutation.
+ */
+interface Derivation {
+  via: 'derive' | 'refine';
+  /** R — the requirement being refined toward. */
+  parent: Contract;
+  /** The D's — the requirements the file writes down from it. */
+  children: Contract[];
+}
+
+/**
+ * Group the contracts into derivation chains, one parent at a time.
+ *
+ * THE EDGES THIS LANE CANNOT READ ARE COUNTED, NOT DISCARDED. A
+ * `derive requirement Child from rig;` names a part on its other end, so it
+ * states no obligation over two contracts and produces no group — and a run
+ * that reported only the groups would then tell a reader "this model states no
+ * `derive` chain at all", which is false about a file that plainly writes one.
+ * They come back beside the groups so the sentence can be true.
+ */
+function derivationsOf(
+  contracts: readonly Contract[],
+  elementId: ElementId | undefined,
+  via: 'derive' | 'refine',
+): { groups: Derivation[]; unread: number } {
+  const byId = new Map<ElementId, Contract>(contracts.map((c) => [c.id, c]));
+  const out: Derivation[] = [];
+  let unread = 0;
+  if (via === 'derive') {
+    for (const candidate of contracts) {
+      for (const ref of candidate.derivedFrom) {
+        if (!byId.has(ref.id) || ref.id === candidate.id) unread += 1;
+      }
+    }
+  }
+  for (const parent of contracts) {
+    const children: Contract[] = [];
+    if (via === 'derive') {
+      // Every contract that names THIS one as what it was derived from.
+      for (const candidate of contracts) {
+        if (candidate.id === parent.id) continue;
+        if (candidate.derivedFrom.some((r) => r.id === parent.id)) children.push(candidate);
+      }
+    } else {
+      for (const ref of parent.refinedBy) {
+        const child = byId.get(ref.id);
+        // A `refine … by` whose target is not a contract at all — a part, a
+        // case — states no obligation this lane can check, and inventing one
+        // from an element with no `assume`/`require` would answer about a
+        // contract the file does not have.
+        if (child && child.id !== parent.id) children.push(child);
+        else unread += 1;
+      }
+    }
+    if (children.length === 0) continue;
+    if (
+      elementId !== undefined &&
+      elementId !== parent.id &&
+      !children.some((c) => c.id === elementId)
+    ) {
+      continue;
+    }
+    out.push({ via, parent, children });
+  }
+  return { groups: out, unread };
+}
+
+/**
+ * Judge one derivation chain: the derived set assumes no more, and together it
+ * entails what the parent promised.
+ *
+ * THE TWO OBLIGATIONS, from §3.6, over the measured orientation:
+ *
+ *  - **assumption**, per derived requirement *D*: `A_R ∧ γ ⊨ A_D`. A derived
+ *    requirement that assumes MORE than its parent applies in fewer situations
+ *    than the parent's guarantee is claimed in, so discharging the parent by
+ *    discharging the children would leave the gap unproved. This is the row the
+ *    plan's own case pins: "a derived requirement with a stronger assumption
+ *    does not refine, with a witness".
+ *  - **composition**: `A_R ∧ ⋀ nf(C_D) ∧ γ ⊨ G_R`. The children, in normal
+ *    form, entail the parent's guarantee. Normal form for the same reason as in
+ *    a composition group — with bare guarantees the check is unsound under
+ *    mutual support — and `nf(C_D) = ¬A_D ∨ G_D` is the form §3.6 writes as
+ *    `nf(G_D)` in shorthand: the conjunct is the child CONTRACT's normal form,
+ *    which is what makes the pair of obligations sound together.
+ *
+ * Step (0) runs first here too. A parent assumption that contradicts the
+ * children's normal forms entails both obligations for free, and "derivation
+ * refines" over a contradiction is the same false verdict §3.6's step (0)
+ * exists to prevent one level down.
+ */
+async function judgeDerivation(input: {
+  model: Model;
+  derivation: Derivation;
+  prepared: Prepared;
+  connectionsAsEqualities: boolean;
+  backend: Z3Backend;
+  timeoutMs: number | undefined;
+}): Promise<RefinementGroup> {
+  const { derivation, prepared, connectionsAsEqualities } = input;
+  const parent = encodeContract(derivation.parent, null, prepared.rows);
+  const children = derivation.children.map((c) => encodeContract(c, null, prepared.rows));
+  const groupGamma = gammaFor(prepared.gamma.encoded, [parent, ...children]);
+  const gammaEdges = groupGamma.edges;
+  // A DERIVATION IS NOT ABOUT WIRING. `notEncoded` is attributed to the
+  // decomposition a connector sits in, and a `derive` edge sits in no
+  // decomposition at all — so this group lists none rather than borrowing
+  // another group's connectors to pad its census.
+  const census = `${gammaSentence(gammaEdges, [], connectionsAsEqualities)} (a derivation chain, not a wiring question)`;
+  const word = derivation.via === 'derive' ? 'derived' : 'refining';
+  const refused = [
+    ...parent.refused,
+    ...children.flatMap((c) => c.refused),
+    ...prepared.gamma.refused,
+  ];
+
+  const base = {
+    via: derivation.via,
+    system: contractRef(derivation.parent),
+    shortId: derivation.parent.shortId,
+    subject: derivation.parent.subject,
+    part: null,
+    components: derivation.children.map((c) => ({
+      contract: contractRef(c),
+      shortId: c.shortId,
+      part: null,
+    })),
+    obligations: [] as RefinementObligation[],
+    gamma: gammaEdges,
+    notEncoded: [] as UnencodedConnection[],
+    refused,
+    vacuityCore: [] as string[],
+    fragment: 'qf-lra' as Fragment,
+    logic: '',
+    checks: 0,
+  };
+
+  // A PARENT WITH A REFUSED CLAUSE IS NOT THE PARENT THE FILE STATES, in either
+  // half: `G_R` is the goal of the composition obligation, where a dropped
+  // conjunct weakens it, and `A_R` is asserted as a plain premise of both
+  // obligations, where a dropped conjunct weakens the premise set and can
+  // produce a REFUTATION the file does not deserve. One is a proof bought
+  // cheaply and the other is a false alarm, so nothing is claimed either way.
+  if (parent.hasRefusal || parent.nf === null) {
+    return {
+      ...base,
+      outcome: 'inconclusive',
+      code: REFINEMENT_UNDECIDED_CODE,
+      detail:
+        (parent.nf === null
+          ? `\`${derivation.parent.qualifiedName}\` states no guarantee this lane encodes, so there is ` +
+            `nothing for its ${word} requirement(s) to entail`
+          : `a gate refused ${parent.refused.length} clause(s) of \`${derivation.parent.qualifiedName}\`, ` +
+            `and neither half of a derivation obligation survives a missing conjunct — the goal would be ` +
+            `weaker and the premise set would be too, so nothing is claimed ` +
+            `(${parent.refused.map((r) => `${r.qualifiedName}: ${r.reason}`).join('; ')})`) +
+        `. ${census}`,
+    };
+  }
+
+  // A CHILD WHOSE `A_D` LOST A CONJUNCT IS NOT A PREMISE — and the test is the
+  // one {@link judgeGroup} applies to a component, for the same reason and with
+  // the same asymmetry. Reading it as "any refusal" instead cost a real
+  // verdict: a child that lost a conjunct of its GUARANTEE has an `nf` that is
+  // WEAKER than the file's ({@link encodeContract}: `¬A ∨ (g₁ ∧ g₂)` entails
+  // `¬A ∨ g₁`), so asserting the smaller form proves obligation (2) from LESS
+  // than the model states — sound, and merely harder. Withholding it instead
+  // shrank the premise set below the file's and published a REFUTATION at exit
+  // 1, with a confirmed witness at a design the withheld child forbids. A
+  // refused `assume` is the other direction and is still fatal: `¬a₁` entails
+  // `¬a₁ ∨ ¬a₂`, so the smaller form is an axiom the model does not contain.
+  const withheld = children.filter((c) => c.hasRefusedAssumption);
+  const premises = children
+    .filter((c) => !c.hasRefusedAssumption)
+    .map((c) => ({ contract: c, term: c.nf }))
+    .filter((p): p is { contract: EncodedContract; term: string } => p.term !== null);
+  const gammaAssertions: ScriptAssertion[] = groupGamma.rows.flatMap((g) =>
+    termsOf(g.row).map((t) => ({ kind: 'axiom' as const, name: g.edge.qualifiedName, term: t })),
+  );
+  const parentAssume: ScriptAssertion[] =
+    parent.antecedent !== null
+      ? [
+          {
+            kind: 'premise' as const,
+            name: `${derivation.parent.qualifiedName}::assume`,
+            term: parent.antecedent,
+          },
+        ]
+      : [];
+
+  const variables = [
+    ...parent.vars,
+    ...children.flatMap((c) => c.vars),
+    ...groupGamma.rows.flatMap((g) => g.row.vars),
+  ];
+  const nonlinear =
+    parent.nonlinear ||
+    children.some((c) => c.nonlinear) ||
+    groupGamma.rows.some((g) => g.row.encoded?.nonlinear === true);
+  const syntacticNonlinear =
+    parent.syntacticNonlinear ||
+    children.some((c) => c.syntacticNonlinear) ||
+    groupGamma.rows.some((g) => g.row.encoded?.syntacticNonlinear === true);
+
+  let checks = 0;
+  let logic = '';
+  let fragment: Fragment = 'qf-lra';
+  const run = async (assertions: ScriptAssertion[]): Promise<CheckOutcome> => {
+    const script = scriptOf(assertions, variables, { nonlinear, syntacticNonlinear });
+    logic = script.logic;
+    fragment = script.fragment;
+    checks += 1;
+    return input.backend.check(script.text, {
+      timeoutMs: input.timeoutMs,
+      variables: script.symbols,
+    });
+  };
+
+  // ── step (0): can the parent assumption and the children hold together? ────
+  const zero = await run([
+    ...parentAssume,
+    ...premises.map((p) => ({
+      kind: 'premise' as const,
+      name: p.contract.contract.qualifiedName,
+      term: p.term,
+    })),
+    ...gammaAssertions,
+  ]);
+  if (zero.status === 'unsat') {
+    return {
+      ...base,
+      checks,
+      logic,
+      fragment,
+      outcome: 'vacuous',
+      code: CONTRACT_SET_VACUOUS_CODE,
+      vacuityCore: [...zero.core],
+      detail:
+        `vacuous: \`${derivation.parent.qualifiedName}\`’s assumption and the ${word} requirement(s) ` +
+        `cannot hold together (core ${zero.core.length > 0 ? zero.core.join(', ') : 'the solver named none'}) — ` +
+        `every obligation over them holds for nothing, so none is claimed. ${census}`,
+    };
+  }
+  if (zero.status !== 'sat') {
+    return {
+      ...base,
+      checks,
+      logic,
+      fragment,
+      outcome: 'inconclusive',
+      code: zero.status === 'unknown' ? 'verification/timeout' : 'verification/not-evaluable',
+      detail:
+        zero.status === 'unknown'
+          ? `the solver was asked whether this chain can hold together at all and did not answer ` +
+            `(${zero.reason || 'unknown'} after ${zero.timeoutMs} ms). Nothing is claimed. ${census}`
+          : `the solver refused the script this tool produced: ${zero.reason}. That is a defect in this ` +
+            `tool, not in the model. ${census}`,
+    };
+  }
+
+  const obligations: RefinementObligation[] = [];
+
+  // ── the assumption obligation, per derived requirement: A_R ∧ γ ⊨ A_D ──────
+  for (const child of children) {
+    // THE REFUSAL TEST READS THE `assume` HALF ONLY, exactly as obligation (4)
+    // does in {@link judgeGroup}: `A_D` is the GOAL of this row, so a refused
+    // `assume` leaves a goal weaker than the file's — easier to discharge, the
+    // one direction in which a missing relation buys a verdict — while a
+    // refused `require` leaves `A_D` untouched and this row answerable.
+    if (child.hasRefusedAssumption) {
+      obligations.push({
+        kind: 'assumption',
+        component: contractRef(child.contract),
+        part: null,
+        outcome: 'undecided',
+        code: REFINEMENT_UNDECIDED_CODE,
+        detail:
+          `${child.contract.assumptions.length} \`assume\` clause(s) of \`${child.contract.qualifiedName}\` ` +
+          `were stated and ${child.assumptions.filter((a) => a.encoded).length} of them encoded, so ` +
+          `\`A_D\` as built is not the assumption the file states: dropping a conjunct of it weakens the ` +
+          `goal of this row, and dropping one from its \`nf\` STRENGTHENS a premise of the composition ` +
+          `row. Nothing is claimed about it and its normal form was not asserted. ${census}`,
+        witness: [],
+        witnessConfirmed: false,
+        checks: 0,
+      });
+      continue;
+    }
+    if (child.antecedent === null) {
+      obligations.push({
+        kind: 'assumption',
+        component: contractRef(child.contract),
+        part: null,
+        outcome: 'no-assumption',
+        code: null,
+        detail:
+          `\`${child.contract.qualifiedName}\` assumes nothing, so it cannot assume more than ` +
+          `\`${derivation.parent.qualifiedName}\` does and there is no obligation to discharge. ${census}`,
+        witness: [],
+        witnessConfirmed: false,
+        checks: 0,
+      });
+      continue;
+    }
+    const before = checks;
+    const outcome = await run([
+      ...parentAssume,
+      ...gammaAssertions,
+      {
+        kind: 'goal',
+        name: `${child.contract.qualifiedName}::assume`,
+        term: notTerm(child.antecedent),
+      },
+    ]);
+    obligations.push(
+      obligationRow({
+        kind: 'assumption',
+        component: contractRef(child.contract),
+        part: null,
+        outcome,
+        checks: checks - before,
+        census,
+        proved:
+          `\`${child.contract.qualifiedName}\` assumes no more than \`${derivation.parent.qualifiedName}\` ` +
+          `does (negation unsat), ${census}`,
+        refuted:
+          `\`${child.contract.qualifiedName}\` assumes MORE than \`${derivation.parent.qualifiedName}\` ` +
+          `grants, so it applies where the parent’s guarantee is not in force`,
+        code: DERIVATION_NOT_REFINEMENT_CODE,
+        confirm: (values) =>
+          confirmCounterexample(values, {
+            assumed: parent.assumptions,
+            premises: [],
+            gamma: groupGamma.rows.map((g) => g.row),
+            goalFalse: { antecedentOnly: true, contract: child },
+          }),
+      }),
+    );
+  }
+
+  // ── the composition obligation: A_R ∧ ⋀ nf(C_D) ∧ γ ⊨ G_R ─────────────────
+  if (premises.length === 0) {
+    obligations.push({
+      kind: 'composition',
+      component: null,
+      part: null,
+      outcome: 'undecided',
+      code: REFINEMENT_UNDECIDED_CODE,
+      detail:
+        `no ${word} requirement of this chain contributes a normal form this lane may assert, so the ` +
+        `antecedent is the parent’s assumption alone — and entailing a parent’s guarantee from its own ` +
+        `assumption is a claim about that requirement, not about its derivation. ${census}`,
+      witness: [],
+      witnessConfirmed: false,
+      checks: 0,
+    });
+  } else {
+    const before = checks;
+    const outcome = await run([
+      ...parentAssume,
+      ...premises.map((p) => ({
+        kind: 'premise' as const,
+        name: p.contract.contract.qualifiedName,
+        term: p.term,
+      })),
+      ...gammaAssertions,
+      {
+        kind: 'goal',
+        name: `${derivation.parent.qualifiedName}::require`,
+        term: notTerm(conjunction(parent.guarantees.flatMap(termsOf)) ?? 'true'),
+      },
+    ]);
+    obligations.push(
+      obligationRow({
+        kind: 'composition',
+        component: null,
+        part: null,
+        outcome,
+        checks: checks - before,
+        census,
+        proved:
+          `the ${premises.length} ${word} requirement(s) together entail ` +
+          `\`${derivation.parent.qualifiedName}\`’s guarantee (negation unsat), ${census} — in normal form ` +
+          `\`nf(C) = ¬A ∨ G\`, so mutual support cannot buy the verdict`,
+        refuted:
+          `the ${word} requirement(s) do NOT entail \`${derivation.parent.qualifiedName}\`’s guarantee: ` +
+          `a design satisfying every one of them breaks the requirement they were written from`,
+        code: DERIVATION_NOT_REFINEMENT_CODE,
+        confirm: (values) =>
+          confirmCounterexample(values, {
+            assumed: parent.assumptions,
+            premises: premises.map((p) => p.contract),
+            gamma: groupGamma.rows.map((g) => g.row),
+            goalFalse: { guaranteeOnly: true, contract: parent },
+          }),
+      }),
+    );
+    // A REFUTATION IS NEVER PUBLISHED OVER A PREMISE SET SMALLER THAN THE
+    // FILE'S. A child withheld above lost a conjunct of its `A_D`, so its real
+    // normal form is one this run never asserted — and the very clause that was
+    // dropped may exclude the design point just found. A PROOF under a smaller
+    // premise set stays a proof (it used less than the file states); a
+    // refutation does not, so this row is downgraded rather than the group
+    // being stood down wholesale. The same asymmetry {@link ./engines/smt}
+    // applies to a refused axiom in reach of a goal.
+    const composition = obligations[obligations.length - 1];
+    if (composition.outcome === 'refuted' && withheld.length > 0) {
+      obligations[obligations.length - 1] = {
+        ...composition,
+        outcome: 'undecided',
+        code: REFINEMENT_UNDECIDED_CODE,
+        detail:
+          `a design point breaking \`${derivation.parent.qualifiedName}\`’s guarantee was found under a ` +
+          `PARTIAL premise set: ${withheld.length} ${word} requirement(s) ` +
+          `(${withheld.map((c) => c.contract.qualifiedName).join(', ')}) had an \`assume\` clause a gate ` +
+          `refused and were not asserted, and the very clause that was dropped may exclude this point. ` +
+          `A proof under a partial premise set would still be sound; a refutation is not. ${census}`,
+      };
+    }
+  }
+
+  const outcome = outcomeOf(obligations);
+  return {
+    ...base,
+    checks,
+    logic,
+    fragment,
+    obligations,
+    outcome,
+    code: groupCodeOf(outcome, obligations),
+    detail: derivationDetail(outcome, obligations, derivation, premises.length, census, refused),
+  };
+}
+
+/** The derivation group's sentence, which always carries the census and the family. */
+function derivationDetail(
+  outcome: RefinementOutcome,
+  obligations: readonly RefinementObligation[],
+  derivation: Derivation,
+  asserted: number,
+  census: string,
+  refused: readonly RefusedClause[],
+): string {
+  const discharged = obligations.filter((o) => o.outcome === 'proved').length;
+  const open = obligations.filter((o) => o.outcome === 'refuted' || o.outcome === 'undecided').length;
+  const family = derivation.via === 'derive' ? 'derivation' : 'refinement';
+  const head =
+    outcome === 'refined'
+      ? `${family} refines: ${discharged} obligation(s) proved over ${asserted} of ${derivation.children.length} ${family === 'derivation' ? 'derived' : 'refining'} requirement(s), ${census}`
+      : outcome === 'not-refined'
+        ? `${family} does NOT refine: ${open} obligation(s) not discharged over ${derivation.children.length} ${family === 'derivation' ? 'derived' : 'refining'} requirement(s), ${census}`
+        : `${family} not decided: ${open} obligation(s) undecided over ${derivation.children.length} ${family === 'derivation' ? 'derived' : 'refining'} requirement(s), ${census}`;
+  return (
+    `${head}. ` +
+    (refused.length === 0
+      ? '0 relations refused'
+      : `${refused.length} relation(s) refused by a gate and not asserted (${refused
+          .map((r) => `${r.qualifiedName}: ${r.reason}`)
+          .join('; ')})`) +
+    '. Nothing here is about ordering or time'
+  );
+}
+
 /* ──────────────────────────────── the run ────────────────────────────────── */
 
 /** Everything a run needs before a solver is involved. */
@@ -1091,6 +1616,18 @@ function contractRef(contract: Contract): ContractRef {
 }
 
 /**
+ * The families one `--via` asks for, in a fixed order so two runs print alike.
+ *
+ * `all` is a RUN and never a group: the three families read different edges and
+ * answer different questions, so a run over all of them is three sets of groups
+ * side by side, each row saying which family it came from — not one merged
+ * answer that would have to be read differently depending on where it came from.
+ */
+function familiesOf(via: RefinementVia): RefinementFamily[] {
+  return via === 'all' ? ['composition', 'derive', 'refine'] : [via];
+}
+
+/**
  * The census a run with NO SOLVER can still take, with every group undecided.
  *
  * The same shape {@link checkRefinement} returns, so the report above it does
@@ -1104,54 +1641,124 @@ export function refinementCensus(
   undecided: { code: string; detail: string },
 ): RefinementResult {
   const connectionsAsEqualities = opts.connectionsAsEqualities === true;
+  const via = opts.via ?? 'composition';
   const prepared = prepare(model, connectionsAsEqualities);
   const groups: RefinementGroup[] = [];
-  for (const d of decompositionsOf(model, prepared.contracts, opts.elementId)) {
-    const encodedSystem = encodeContract(
-      d.system,
-      refOf(model, d.systemPart),
-      prepared.rows,
-    );
-    const encodedComponents = d.components.map((c) =>
-      encodeContract(c.contract, refOf(model, c.part), prepared.rows),
-    );
-    const gamma = gammaFor(prepared.gamma.encoded, [encodedSystem, ...encodedComponents]).edges;
-    const notEncoded = notEncodedFor(model, prepared.gamma.notEncoded, d, prepared.byType);
-    groups.push({
-      system: contractRef(d.system),
-      shortId: d.system.shortId,
-      subject: d.system.subject,
-      part: refOf(model, d.systemPart),
-      components: d.components.map((c) => ({
-        contract: contractRef(c.contract),
-        shortId: c.contract.shortId,
-        part: refOf(model, c.part),
-      })),
-      outcome: 'inconclusive',
-      code: undecided.code,
-      detail: `${undecided.detail}. ${gammaSentence(gamma, notEncoded, connectionsAsEqualities)}`,
-      obligations: [],
-      gamma,
-      notEncoded,
-      refused: [
-        ...encodedSystem.refused,
-        ...encodedComponents.flatMap((c) => c.refused),
-        ...prepared.gamma.refused,
-      ],
-      vacuityCore: [],
-      fragment: 'qf-lra',
-      logic: '',
-      checks: 0,
-    });
+  let unreadEdges = 0;
+  // THE FAMILY LOOP IS `familiesOf`, and it is the same loop {@link
+  // checkRefinement} runs — deliberately, and not as a tidy-up. A census taken
+  // family-by-family in one order and a run taken in another publish the same
+  // groups in different places under `--via all`, so a reader comparing a
+  // no-solver run against a solved one sees rows move for no reason.
+  const derivations = familiesOf(via).flatMap((f) => {
+    if (f === 'composition') return [];
+    const found = derivationsOf(prepared.contracts, opts.elementId, f);
+    unreadEdges += found.unread;
+    return found.groups;
+  });
+  const decompositions = familiesOf(via).includes('composition')
+    ? decompositionsOf(model, prepared.contracts, opts.elementId)
+    : [];
+  for (const family of familiesOf(via)) {
+    if (family === 'composition') {
+      for (const d of decompositions) groups.push(censusDecomposition(model, d, prepared, connectionsAsEqualities, undecided));
+      continue;
+    }
+    for (const d of derivations.filter((x) => x.via === family)) {
+      groups.push(censusDerivation(d, prepared, connectionsAsEqualities, undecided));
+    }
   }
   return runResult(groups, {
     via: opts.via ?? 'composition',
     connectionsAsEqualities,
     gamma: prepared.gamma,
     contracts: prepared.contracts.length,
+    unreadEdges,
     checks: 0,
     timeoutMs: undefined,
   });
+}
+
+/** One derivation chain as an undecided census row. */
+function censusDerivation(
+  d: Derivation,
+  prepared: Prepared,
+  connectionsAsEqualities: boolean,
+  undecided: { code: string; detail: string },
+): RefinementGroup {
+  const parent = encodeContract(d.parent, null, prepared.rows);
+  const children = d.children.map((c) => encodeContract(c, null, prepared.rows));
+  const gamma = gammaFor(prepared.gamma.encoded, [parent, ...children]).edges;
+  return {
+    via: d.via,
+    system: contractRef(d.parent),
+    shortId: d.parent.shortId,
+    subject: d.parent.subject,
+    part: null,
+    components: d.children.map((c) => ({
+      contract: contractRef(c),
+      shortId: c.shortId,
+      part: null,
+    })),
+    outcome: 'inconclusive',
+    code: undecided.code,
+    detail: `${undecided.detail}. ${gammaSentence(gamma, [], connectionsAsEqualities)}`,
+    obligations: [],
+    gamma,
+    notEncoded: [],
+    refused: [
+      ...parent.refused,
+      ...children.flatMap((c) => c.refused),
+      ...prepared.gamma.refused,
+    ],
+    vacuityCore: [],
+    fragment: 'qf-lra',
+    logic: '',
+    checks: 0,
+  };
+}
+
+/** One decomposition as an undecided census row. */
+function censusDecomposition(
+  model: Model,
+  d: Decomposition,
+  prepared: Prepared,
+  connectionsAsEqualities: boolean,
+  undecided: { code: string; detail: string },
+): RefinementGroup {
+  const encodedSystem = encodeContract(d.system, refOf(model, d.systemPart), prepared.rows);
+  const encodedComponents = d.components.map((c) =>
+    encodeContract(c.contract, refOf(model, c.part), prepared.rows),
+  );
+  const gamma = gammaFor(prepared.gamma.encoded, [encodedSystem, ...encodedComponents]).edges;
+  const notEncoded = notEncodedFor(model, prepared.gamma.notEncoded, d, prepared.byType);
+  return {
+    via: 'composition',
+    system: contractRef(d.system),
+    shortId: d.system.shortId,
+    subject: d.system.subject,
+    part: refOf(model, d.systemPart),
+    components: d.components.map((c) => ({
+      contract: contractRef(c.contract),
+      shortId: c.contract.shortId,
+      part: refOf(model, c.part),
+    })),
+    outcome: 'inconclusive',
+    code: undecided.code,
+    detail: `${undecided.detail}. ${gammaSentence(gamma, notEncoded, connectionsAsEqualities)}`,
+    obligations: [],
+    gamma,
+    notEncoded,
+    refused: [
+      ...encodedSystem.refused,
+      ...encodedComponents.flatMap((c) => c.refused),
+      ...prepared.gamma.refused,
+    ],
+    vacuityCore: [],
+    fragment: 'qf-lra',
+    logic: '',
+    checks: 0,
+  };
 }
 
 /** Assemble the run-level figures from the groups and the γ census. */
@@ -1162,6 +1769,7 @@ function runResult(
     connectionsAsEqualities: boolean;
     gamma: Gamma;
     contracts: number;
+    unreadEdges: number;
     checks: number;
     timeoutMs: number | undefined;
   },
@@ -1184,6 +1792,7 @@ function runResult(
     notEncoded: ctx.gamma.notEncoded,
     refused,
     contracts: ctx.contracts,
+    unreadEdges: ctx.unreadEdges,
     checks: ctx.checks,
     timeoutMs: ctx.timeoutMs,
   };
@@ -1235,23 +1844,44 @@ export async function checkRefinement(
   const prepared = prepare(model, connectionsAsEqualities);
   const groups: RefinementGroup[] = [];
   let checks = 0;
-  for (const d of decompositionsOf(model, prepared.contracts, opts.elementId)) {
-    const group = await judgeGroup({
-      model,
-      decomposition: d,
-      prepared,
-      connectionsAsEqualities,
-      backend: opts.backend,
-      timeoutMs: opts.timeoutMs,
-    });
-    checks += group.checks;
-    groups.push(group);
+  let unreadEdges = 0;
+  for (const family of familiesOf(via)) {
+    if (family === 'composition') {
+      for (const d of decompositionsOf(model, prepared.contracts, opts.elementId)) {
+        const group = await judgeGroup({
+          model,
+          decomposition: d,
+          prepared,
+          connectionsAsEqualities,
+          backend: opts.backend,
+          timeoutMs: opts.timeoutMs,
+        });
+        checks += group.checks;
+        groups.push(group);
+      }
+      continue;
+    }
+    const found = derivationsOf(prepared.contracts, opts.elementId, family);
+    unreadEdges += found.unread;
+    for (const d of found.groups) {
+      const group = await judgeDerivation({
+        model,
+        derivation: d,
+        prepared,
+        connectionsAsEqualities,
+        backend: opts.backend,
+        timeoutMs: opts.timeoutMs,
+      });
+      checks += group.checks;
+      groups.push(group);
+    }
   }
   return runResult(groups, {
     via,
     connectionsAsEqualities,
     gamma: prepared.gamma,
     contracts: prepared.contracts.length,
+    unreadEdges,
     checks,
     timeoutMs: opts.timeoutMs,
   });
@@ -1330,6 +1960,7 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
   ];
 
   const base = {
+    via: 'composition' as const,
     system: contractRef(decomposition.system),
     shortId: decomposition.system.shortId,
     subject: decomposition.system.subject,
@@ -1812,10 +2443,15 @@ interface Counterexample {
   /** The γ equalities. */
   gamma: readonly EncodedRow[];
   /**
-   * The goal, negated: either a whole contract's normal form (obligation 3) or
-   * one component's antecedent (obligation 4).
+   * The goal, negated: a whole contract's normal form (obligation 3), one
+   * component's antecedent (obligation 4), or — on a derivation chain, where
+   * the parent's assumption is asserted as a premise rather than folded into a
+   * normal form — one contract's GUARANTEE alone.
    */
-  goalFalse: EncodedContract | { antecedentOnly: true; contract: EncodedContract };
+  goalFalse:
+    | EncodedContract
+    | { antecedentOnly: true; contract: EncodedContract }
+    | { guaranteeOnly: true; contract: EncodedContract };
 }
 
 /**
@@ -1869,7 +2505,9 @@ function confirmCounterexample(
   const goal =
     'antecedentOnly' in what.goalFalse
       ? truthOf(what.goalFalse.contract.assumptions, values)
-      : normalFormAt(what.goalFalse, values);
+      : 'guaranteeOnly' in what.goalFalse
+        ? truthOf(what.goalFalse.contract.guarantees, values)
+        : normalFormAt(what.goalFalse, values);
   if (typeof goal === 'string') return { ok: false, why: goal };
   if (goal) {
     return {

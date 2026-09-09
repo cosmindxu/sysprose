@@ -249,6 +249,24 @@ export {
   type RefusedRelation,
   type UnengageableRequirement,
 } from './consistency';
+// Bounds (plan §3.7): the tightest value a measure can take under the model's
+// AXIOMS, over z3's `Optimize`. The checker takes its backend as an argument for
+// the same reason the two below it do.
+export {
+  checkBounds,
+  prepareBounds,
+  AXIOMS_ONLY_NOTE,
+  BOUNDS_CODES,
+  OPTIMALITY_NOT_ESTABLISHED_CODE,
+  WITH_REQUIREMENTS_NOTE,
+  type Bound,
+  type BoundOutcome,
+  type BoundsOptions,
+  type BoundsResult,
+  type BoundsSense,
+  type MeasureRef,
+  type RefusedAxiom,
+} from './bounds';
 // Contract refinement (plan §3.6): Cimatti's Theorem 1 in normal form, over the
 // equalities the model states. The checker takes its backend as an argument —
 // whether a solver exists is decided once, in `src/api/verification.ts` — so
@@ -259,6 +277,7 @@ export {
   CONNECTION_HINT,
   CONNECTIONS_AS_EQUALITIES_NOTE,
   CONTRACT_SET_VACUOUS_CODE,
+  DERIVATION_NOT_REFINEMENT_CODE,
   REFINEMENT_CODES,
   REFINEMENT_FAILED_CODE,
   REFINEMENT_UNDECIDED_CODE,
@@ -266,6 +285,7 @@ export {
   type GammaEdge,
   type GammaKind,
   type ObligationOutcome,
+  type RefinementFamily,
   type RefinementGroup,
   type RefinementObligation,
   type RefinementObligationKind,

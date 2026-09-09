@@ -32,7 +32,10 @@ subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivit
 obligation refuted with every feature at its model value, or one requirement set
 nothing can satisfy. `refine` judges an *architecture* and carries a contract of
 its own, because a refinement obligation reads no feature value and there is
-no `--free` for it: 0 every decomposition the model states was shown to refine — obligation (3) proved and every component assumption discharged, over a satisfiable contract set — and there was at least one decomposition to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract · 2 usage/IO error, a degraded model, a model that states no decomposition at all, or ANY undecided decomposition — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here.
+no `--free` for it: 0 every decomposition or derivation chain the --via family reads was shown to refine — for a decomposition, obligation (3) proved and every component assumption discharged; for a derive/refine chain, every derived requirement shown to assume no more than its parent and the set shown to entail the parent's guarantee — over a satisfiable contract set, and there was at least one of them to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract, or the derived requirements admit one that breaks the requirement they were written from · 2 usage/IO error, a degraded model, a model that states no decomposition or derivation chain the --via family can read, or ANY undecided group — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here.
+`bounds` DECIDES without judging — it reports the tightest value
+the model's axioms admit, and a number is not a violation — so its contract has no exit 1
+in it at all: 0 every bound asked for was DECIDED — an optimum whose optimality z3's νZ established, an exact supremum or infimum it proved is approached and never attained, or an unboundedness it proved under the axioms that were asserted · 2 usage/IO error, a degraded model, or any bound that was not decided — a value νZ does not certify as the tightest (nonlinear), a timeout, an absent solver, an axiom set that cannot hold together, or a measure no relation in the model reads. There is no exit 1: a bound is what the axioms admit and not a verdict, and there is no --allow-inconclusive here.
 `evidence-attach` and `evidence-detach` *write* the
 file back, and they have no exit 1 at all:
 0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1.
@@ -75,11 +78,12 @@ rather than reporting on the first one.
 | [`verify`](#verify) | Does each obligation hold, by which engine, and under what bound? | `verify` | judges |
 | [`consistency`](#consistency) | Can all the requirements on this subject hold at once — and if not, which conflict? | `consistency` | judges |
 | [`refine`](#refine) | Do the component contracts entail the system contract, and is every component assumption discharged? | `refinement` | judges |
+| [`bounds`](#bounds) | What is the tightest value this measure can take under the model’s axioms? | `bounds` | decides |
 | [`evidence-status`](#evidence-status) | What was shown, by which tool, over which model — and is it still valid? | `evidenceStatus` | reports |
 | [`evidence-attach`](#evidence-attach) | Write the records of a verify run into the file, as annotations on what they are about | `evidenceAttach` | writes |
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
 | [`reach`](#reach) | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | `reach` | reports |
-| [`check-behaviour`](#check-behaviour) | Does this safety pattern hold on every reachable configuration? | `behaviour` | judges |
+| [`check-behaviour`](#check-behaviour) | Does this safety pattern hold on every reachable configuration? | `behaviour` | reports |
 
 ### Options every subcommand takes
 
@@ -346,13 +350,32 @@ npm run sysprose -- refine <file.sysml|-> [options]
 | Flag | What it does | Default |
 |---|---|---|
 | `--element REF` | The decomposition: an id, a qualified name, or a name unique in the model, naming a system contract, the part that satisfies it, or any contract or part under it. A REF that names no decomposition is refused by name rather than reported as a file with no architecture in it | every decomposition the model states |
-| `--via KIND` | Which family of edges to read: `composition` — the contracts on the parts a `satisfy` attaches under the part the system contract is satisfied by. `derive`, `refine` and `all` are named by the plan and NOT answered by this build; asking for one is a usage error rather than an empty report | `composition` |
+| `--via KIND` | Which family of edges to read: `composition` — the contracts on the parts a `satisfy` attaches under the part the system contract is satisfied by; `derive` — the requirements a `derive requirement D from R` writes down from another, checked with the orientation the mapper stores (the parent is the SOURCE of the edge); `refine` — the same question over `refine requirement X by Y`, which stores its ends the other way round (the parent is the TARGET, uniform with `satisfy`); `all` — every family in one run, each row naming the one it came from | `composition` |
 | `--connections-as-equalities` | Read a bare `connect` as a value equality — the OCRA reading. OFF by default: a connection joins two features and states nothing about their values, so it is listed under `notEncoded` with the hint "bind the attributes if they are one quantity". It reads `connect` and nothing else: an `allocate` is a traceability mapping and an interface joins ports through connections of its own, so both stay listed under the flag with a hint naming what they are. When the flag is used the fact is printed on EVERY verdict line, because it changes what the verdict claims. Counter-evidence, recorded rather than buried: the one published SysML v2 → OCRA path translates `connect` and `bind` alike, so the default here is a stricter reading than that path takes | — |
 | `--allow-inconclusive` | Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, never for a vacuous contract set, never for verification/refinement-undecided, never over a refuted obligation, and never over a run in which nothing at all was decided | — |
 
 Computed by `refinementReport (src/api/verification.ts)`. With `--json` the answer is published under `refinement`, beside `ok` and `file`.
 
-**Exit codes.** 0 every decomposition the model states was shown to refine — obligation (3) proved and every component assumption discharged, over a satisfiable contract set — and there was at least one decomposition to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract · 2 usage/IO error, a degraded model, a model that states no decomposition at all, or ANY undecided decomposition — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here.
+**Exit codes.** 0 every decomposition or derivation chain the --via family reads was shown to refine — for a decomposition, obligation (3) proved and every component assumption discharged; for a derive/refine chain, every derived requirement shown to assume no more than its parent and the set shown to entail the parent's guarantee — over a satisfiable contract set, and there was at least one of them to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract, or the derived requirements admit one that breaks the requirement they were written from · 2 usage/IO error, a degraded model, a model that states no decomposition or derivation chain the --via family can read, or ANY undecided group — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here.
+
+### `bounds`
+
+**What is the tightest value this measure can take under the model’s axioms?**
+
+```bash
+npm run sysprose -- bounds <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--measure REF` | The feature to bound: a qualified name, the dotted path a constraint body writes (`uav.endurance`), or a feature name unique in the model. A REF that resolves to something no relation in the model reads is reported as such rather than as an unbounded quantity — "unbounded" is arithmetically true of a feature nothing constrains and would read as a finding about the design | — |
+| `--sense DIR` | Which direction to push the measure in: min \| max \| both. Two directions are two solver runs, deliberately — z3 optimises several objectives lexicographically, so one script carrying both would answer the second one under the first already fixed | `max` |
+| `--free F` | Release a feature value (qualified name, dotted path, or `all`) so the bound may range over it. With nothing released every value is pinned and the bound is the value in the file; `all` releases every value the file STATES and keeps every equation that says how a quantity is COMPUTED, which is the same rule `consistency` releases under | none — every value the file states is an axiom of the bound |
+| `--with-requirements` | Fold the `require` bodies into the axiom set, each as the implication `assume ⇒ require` the shipped library states a requirement to be, and say so on every verdict line. OFF by default: a requirement is what is being checked, not a fact about the design, which is why `--measure uav.mtow --free all` answers "unbounded above" over a file that plainly states a 25 kg limit | — |
+
+Computed by `boundsReport (src/api/verification.ts)`. With `--json` the answer is published under `bounds`, beside `ok` and `file`.
+
+**Exit codes.** 0 every bound asked for was DECIDED — an optimum whose optimality z3's νZ established, an exact supremum or infimum it proved is approached and never attained, or an unboundedness it proved under the axioms that were asserted · 2 usage/IO error, a degraded model, or any bound that was not decided — a value νZ does not certify as the tightest (nonlinear), a timeout, an absent solver, an axiom set that cannot hold together, or a measure no relation in the model reads. There is no exit 1: a bound is what the axioms admit and not a verdict, and there is no --allow-inconclusive here.
 
 ### `evidence-status`
 
@@ -482,4 +505,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*20 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*21 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

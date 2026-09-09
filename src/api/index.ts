@@ -82,6 +82,7 @@ export type {
 
 // Verification lane (plan docs/04-formal-verification-plan.md §3.1, §3.2, §3.4, §3.6)
 export {
+  boundsReport,
   contractReport,
   consistencyReport,
   obligationsReport,
@@ -95,6 +96,8 @@ export {
   VerifyOptionError,
 } from './verification';
 export type {
+  BoundsReport,
+  BoundsReportOptions,
   ConsistencyReport,
   ConsistencyReportOptions,
   ContractReport,
@@ -146,6 +149,23 @@ export type {
 // import into the semantics layer — the same reason the contract and
 // obligation types are re-exported below.
 export { DEFAULT_MAX_CORE, READING, witnessNumber } from '../semantics/consistency';
+// The bounds engine's own payload types, for the same reason: a consumer coming
+// through this barrel walks a bound and the measure it is about without a deep
+// import into the semantics layer.
+export {
+  AXIOMS_ONLY_NOTE,
+  BOUNDS_CODES,
+  OPTIMALITY_NOT_ESTABLISHED_CODE,
+  WITH_REQUIREMENTS_NOTE,
+} from '../semantics/bounds';
+export type {
+  Bound,
+  BoundOutcome,
+  BoundsOptions,
+  BoundsResult,
+  BoundsSense,
+  MeasureRef,
+} from '../semantics/bounds';
 export type {
   ConsistencyGroup,
   ConsistencyOptions,

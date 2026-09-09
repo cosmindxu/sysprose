@@ -147,6 +147,11 @@ const APP_DOORS: ReadonlyArray<{
   // in this plan either: a contract decomposition is a terminal answer with a
   // witness in it, and the app's job in this lane stays reading evidence.
   { command: 'refine', controls: [] },
+  // And `bounds` for the same two reasons as `refine`: there is no solver in
+  // the browser, and no view in this plan shows what a measure's tightest value
+  // is. The answer is a number with an axiom set printed beside it, which is a
+  // terminal answer.
+  { command: 'bounds', controls: [] },
   // `evidence-status` is the ONE row of this lane that has a control, and it is
   // here rather than under a `controls: []` because the Requirements table now
   // carries a read-only Evidence column. It is DAGGERED for the ordinary

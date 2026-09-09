@@ -87,6 +87,7 @@ import type { ElementRecord, Model } from '../src/core/index';
 import Ajv from 'ajv';
 import {
   attachEvidence,
+  boundsReport,
   connectivityReport,
   consistencyReport,
   contractReport,
@@ -116,6 +117,9 @@ import {
   verifyModel,
   witnessNumber,
   type AttachReport,
+  type Bound,
+  type BoundsReport,
+  type BoundsSense,
   type ConsistencyGroup,
   type ConsistencyReport,
   type DetachReport,
@@ -239,6 +243,17 @@ interface Report {
    * needs, is `verdict.exitCode`.
    */
   behaviour?: BehaviourReport;
+   /**
+   * The run of the one subcommand that DECIDES without judging.
+   *
+   * A fourth field rather than a widened third one, for the reason the second
+   * and third are their own: what `bounds` publishes is a bound and a sense,
+   * not a count of obligations, and a `verdict` block that had to be read
+   * differently depending on which command produced it would be a block nobody
+   * could parse without knowing. What they share, and all an automation needs,
+   * is `verdict.exitCode`.
+   */
+  bounds?: BoundsReport;
 }
 
 /** The four figures the verify exit contract is computed from, and the answer. */
@@ -273,6 +288,13 @@ interface BehaviourVerdict {
   failed: number;
   vacuous: number;
   inconclusive: number;
+  exitCode: number;
+}
+
+/** The same block for `bounds`, whose figures are BOUNDS and which has no 1. */
+interface BoundsVerdict {
+  decided: number;
+  undecided: number;
   exitCode: number;
 }
 
@@ -345,6 +367,24 @@ function judgeBehaviour(report: BehaviourReport, degraded: boolean): BehaviourVe
     failed: report.counts.failed,
     vacuous: report.counts.vacuous,
     inconclusive: report.counts.inconclusive,
+    exitCode: degraded ? 2 : report.exitCode,
+  };
+}
+
+/**
+ * The exit code of a bounds run, degradation included.
+ *
+ * The same rule and the same reason as {@link judge}: whether the model under
+ * the answer was the whole model is a fact about the FILE, and the tightest
+ * value of a measure computed over half a model is not an answer about that
+ * model — the axioms that would have bounded it may be the ones that did not
+ * parse.
+ */
+function judgeBounds(report: BoundsReport, degraded: boolean): BoundsVerdict {
+  const decided = report.bounds.filter((b) => b.code === null).length;
+  return {
+    decided,
+    undecided: report.bounds.length - decided,
     exitCode: degraded ? 2 : report.exitCode,
   };
 }
@@ -1960,37 +2000,23 @@ async function reportConsistency(
 
 /* ──────────────────────────────── refine ────────────────────────────────── */
 
-/** The `--via` families this build actually answers. */
-const VIA_ANSWERED: readonly RefinementVia[] = ['composition'];
-
-/** Every `--via` family the plan names, answered or not. */
+/** Every `--via` family, all of which this build answers. */
 const VIA_VALUES: readonly RefinementVia[] = ['composition', 'derive', 'refine', 'all'];
 
 /**
  * `--via KIND`, refused rather than silently answered as something else.
  *
- * `derive`, `refine` and `all` are named by the plan and are a later commit's
- * work. A run that accepted one and reported over the composition edges anyway
- * would answer a question nobody asked, and one that accepted it and reported
- * nothing would say the model states no derivation — a false claim about the
- * reader's file. Both are worse than a usage error, so this is a usage error.
+ * A spelling outside the four is a usage error rather than an empty report: a
+ * run that accepted one and reported nothing would say the model states no
+ * decomposition and no derivation, which is a claim about the reader's file and
+ * not about their command line.
  */
 function refineVia(args: ParsedArgs): RefinementVia | undefined {
   const raw = flagValue(args, 'via');
   if (raw === undefined || raw.trim() === '') return undefined;
   const value = raw.trim();
-  if ((VIA_ANSWERED as readonly string[]).includes(value)) return value as RefinementVia;
-  if ((VIA_VALUES as readonly string[]).includes(value)) {
-    throw new UsageError(
-      `\`--via ${value}\` is not answered by this build: only \`composition\` is. Derivation and ` +
-        'refinement edges are a later commit of the verification plan, and reporting nothing over ' +
-        'them would read as a model that states none.',
-    );
-  }
-  throw new UsageError(
-    `--via must be one of ${VIA_VALUES.join(', ')}; got \`${raw}\`. This build answers ` +
-      `${VIA_ANSWERED.join(', ')}.`,
-  );
+  if ((VIA_VALUES as readonly string[]).includes(value)) return value as RefinementVia;
+  throw new UsageError(`--via must be one of ${VIA_VALUES.join(', ')}; got \`${raw}\`.`);
 }
 
 /**
@@ -2005,22 +2031,37 @@ function refineElement(model: Model, args: ParsedArgs): ElementRecord | undefine
   return verificationScope(model, args);
 }
 
-/** One decomposition, as a person reads it. */
+/** One decomposition or derivation chain, as a person reads it. */
 function refinementLines(group: RefinementGroup): string[] {
+  // THE ROWS OF A DERIVATION CHAIN ARE NOT CIMATTI'S (3) AND (4), and printing
+  // them under those numbers would name obligations this run did not check: a
+  // derivation asks whether the derived set assumes no more and whether it
+  // entails what the parent promised. `group.part` is `null` there because a
+  // `derive` edge joins two requirements and names no part at all.
+  const derivation = group.part === null;
+  const kindOf = (o: RefinementGroup['obligations'][number]): string =>
+    derivation
+      ? o.kind === 'composition'
+        ? 'the derived set entails the parent’s guarantee'
+        : `assumes no more: ${o.component?.qualifiedName ?? ''}`
+      : o.kind === 'composition'
+        ? 'obligation (3)'
+        : `obligation (4) ${o.component?.qualifiedName ?? ''}`;
   return [
-    `  ${group.shortId || group.system.qualifiedName} on \`${group.part.qualifiedName}\` — ${group.outcome}`,
+    `  ${group.shortId || group.system.qualifiedName} ${derivation ? `via ${group.via}` : `on \`${group.part!.qualifiedName}\``} — ${group.outcome}`,
     `    ${group.detail}`,
     ...(group.code !== null ? [`    ${group.code}`] : []),
-    `    ${group.components.length} sub-contract(s): ${group.components
-      .map((c) => `${c.shortId || c.contract.qualifiedName} on \`${c.part.qualifiedName}\``)
+    `    ${group.components.length} ${derivation ? (group.via === 'derive' ? 'derived requirement(s)' : 'refining requirement(s)') : 'sub-contract(s)'}: ${group.components
+      .map(
+        (c) =>
+          `${c.shortId || c.contract.qualifiedName}${c.part !== null ? ` on \`${c.part.qualifiedName}\`` : ''}`,
+      )
       .join(', ')}`,
-    // Each obligation on its own line, named by which of Cimatti's two it is
-    // and by the component it is about: a decomposition whose rows were folded
-    // into one sentence is a decomposition a reader cannot act on.
+    // Each obligation on its own line, named by which one it is and by the
+    // contract it is about: a group whose rows were folded into one sentence is
+    // a group a reader cannot act on.
     ...group.obligations.map(
-      (o) =>
-        `      ${o.kind === 'composition' ? 'obligation (3)' : `obligation (4) ${o.component?.qualifiedName ?? ''}`}` +
-        `  ${o.outcome}${o.code !== null ? ` [${o.code}]` : ''}`,
+      (o) => `      ${kindOf(o)}  ${o.outcome}${o.code !== null ? ` [${o.code}]` : ''}`,
     ),
     ...group.obligations
       .filter((o) => o.witness.length > 0)
@@ -2078,20 +2119,42 @@ async function reportRefinement(
   // at all, and printing that because a REF matched none of them would be a
   // false claim about the reader's file.
   if (element !== undefined && r.groups.length === 0) {
+    // THE SENTENCE FOLLOWS `--via`, exactly as the run-wide one below does. A
+    // `--via derive` run reads no `satisfy` edge at all, so telling its reader
+    // to write one — and calling their chain a decomposition — is advice about
+    // a different question than the one they asked.
     throw new UsageError(
-      `\`${qname(model, element.id)}\` names no decomposition in this file: no requirement is ` +
-        'satisfied by a part that owns another contract-bearing part here. A decomposition needs ' +
-        'both halves — `satisfy R by sys;` on the whole and `satisfy R2 by sys.part;` on a part — ' +
-        'so name one of those, or run without `--element` to see every decomposition this file states.',
+      via === 'derive' || via === 'refine'
+        ? `\`${qname(model, element.id)}\` names no \`${via}\` chain in this file: no requirement here ` +
+          `is ${via === 'derive' ? 'written down from another one' : 'refined by another one'}. A chain ` +
+          `needs both halves — \`${via === 'derive' ? 'derive requirement D from R;' : 'refine requirement X by Y;'}\` ` +
+          `— so name a requirement on one end of one, or run without \`--element\` to see every ` +
+          `\`${via}\` chain this file states.`
+        : `\`${qname(model, element.id)}\` names no decomposition in this file: no requirement is ` +
+          'satisfied by a part that owns another contract-bearing part here. A decomposition needs ' +
+          'both halves — `satisfy R by sys;` on the whole and `satisfy R2 by sys.part;` on a part — ' +
+          'so name one of those, or run without `--element` to see every decomposition this file states.',
     );
   }
 
+  // WHAT THE RUN COUNTED depends on the family it read. A derivation chain is
+  // not a decomposition — it joins two requirements and names no part — and a
+  // header that called it one would tell a reader their file states an
+  // architecture it does not.
+  const decompositions = r.groups.filter((g) => g.via === 'composition').length;
+  const chains = r.groups.length - decompositions;
+  const population =
+    chains === 0
+      ? `${r.groups.length} decomposition(s) over ${r.contracts} contract(s)`
+      : decompositions === 0
+        ? `${chains} derivation chain(s) over ${r.contracts} contract(s)`
+        : `${decompositions} decomposition(s) and ${chains} derivation chain(s) over ${r.contracts} contract(s)`;
   const rendered = [
     // The two undecided-or-failing figures lead, for the reason §2 gives for
     // `verify`: a line that opened with the green number reads as a pass with a
     // footnote, and the footnote is what decides the exit code.
     `${name}: ${r.notRefined} not refined, ${r.vacuous} vacuous, ${r.inconclusive} inconclusive, ` +
-      `${r.refined} refined — ${r.groups.length} decomposition(s) over ${r.contracts} contract(s)`,
+      `${r.refined} refined — ${population}`,
     r.toolAbsent
       ? `  no solver ran: a refinement obligation is a claim about every implementation the contracts ` +
         `admit, so the model’s own values cannot answer it and there is nothing to fall back to — ` +
@@ -2099,14 +2162,29 @@ async function reportRefinement(
       : `  obligations are Cimatti’s Theorem 1 in normal form (\`nf(C) = ¬A ∨ G\`), preceded by the ` +
         'satisfiability precondition step (0): bare guarantees are unsound under mutual support, and ' +
         'an unsatisfiable antecedent entails everything',
-    `  γ, the connection assertion: ${r.bindEqualities} bind equalit${r.bindEqualities === 1 ? 'y' : 'ies'}, ` +
-      `${r.itemFlows} item flow(s)` +
-      (r.connectionsAsEqualities
-        ? `, ${r.connectionEqualities} connection equalit${r.connectionEqualities === 1 ? 'y' : 'ies'} — ` +
-          '`--connections-as-equalities` read bare `connect` edges as value equalities, which is the ' +
-          'OCRA reading and not this tool’s default'
-        : `; ${r.notEncoded} connection(s) NOT encoded — a connection is not an equality; bind the ` +
-          'attributes if they are one quantity'),
+    ...(chains > 0
+      ? [
+          '  a derivation chain is checked with the orientation the mapper stores: `derive requirement ' +
+            'D from R` makes R the parent, `refine requirement X by Y` makes X the parent, and the two ' +
+            'obligations are `A_R ⊨ ⋀ A_D` and `A_R ∧ ⋀ nf(C_D) ⊨ G_R`',
+        ]
+      : []),
+    // γ IS A WIRING CENSUS, AND A DERIVATION CHAIN HAS NO WIRING. It joins two
+    // requirements and names no part, so a run that read only chains prints no
+    // γ line — with or without a solver, which is why `toolAbsent` is not an
+    // alternative here.
+    ...(decompositions > 0
+      ? [
+          `  γ, the connection assertion: ${r.bindEqualities} bind equalit${r.bindEqualities === 1 ? 'y' : 'ies'}, ` +
+            `${r.itemFlows} item flow(s)` +
+            (r.connectionsAsEqualities
+              ? `, ${r.connectionEqualities} connection equalit${r.connectionEqualities === 1 ? 'y' : 'ies'} — ` +
+                '`--connections-as-equalities` read bare `connect` edges as value equalities, which is the ' +
+                'OCRA reading and not this tool’s default'
+              : `; ${r.notEncoded} connection(s) NOT encoded — a connection is not an equality; bind the ` +
+                'attributes if they are one quantity'),
+        ]
+      : []),
     ...(r.refused > 0
       ? [
           `  ${r.refused} relation(s) refused by a gate and not asserted — a refused conjunct of a ` +
@@ -2124,13 +2202,29 @@ async function reportRefinement(
       : []),
     ...(r.groups.length === 0
       ? [
-          '  this model states no decomposition at all — no requirement is satisfied by a part that ' +
-            'owns another contract-bearing part, so there was nothing to answer, which is exit 2',
+          via === 'derive' || via === 'refine'
+            ? `  this model states no \`${via}\` chain this lane can read — no requirement here is ` +
+              'written down from another REQUIREMENT, so there was nothing to answer, which is exit 2' +
+              (r.unreadEdges > 0
+                ? `; ${r.unreadEdges} \`${via}\` edge(s) name an element on the other end that states no ` +
+                  'contract — a part, a case — and a chain between a requirement and a part states no ' +
+                  'obligation over two contracts'
+                : '')
+            : '  this model states no decomposition at all — no requirement is satisfied by a part that ' +
+              'owns another contract-bearing part, so there was nothing to answer, which is exit 2',
         ]
       : r.groups.flatMap(refinementLines)),
+    // The edges this lane could not read, on a run that DID find chains: the
+    // census has to add up whether or not the answer was empty.
+    ...(r.groups.length > 0 && r.unreadEdges > 0 && via !== 'composition'
+      ? [
+          `  ${r.unreadEdges} \`derive\`/\`refine\` edge(s) name an element on the other end that ` +
+            'states no contract this lane can read, so they form no chain and nothing is claimed about them',
+        ]
+      : []),
     ...(r.groups.length > 0 && r.refined + r.notRefined === 0
       ? [
-          '  nothing was decided: exit 0 says every decomposition was shown to refine, and none of ' +
+          `  nothing was decided: exit 0 says every ${chains > 0 && decompositions === 0 ? 'derivation chain' : 'decomposition'} was shown to refine, and none of ` +
             'these was, so this run is exit 2 with `--allow-inconclusive` and without it',
         ]
       : []),
@@ -2141,6 +2235,135 @@ async function reportRefinement(
     ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
   ].join('\n');
   return { json: r, text: rendered, refinement: r };
+}
+
+/* ──────────────────────────────── bounds ────────────────────────────────── */
+
+/** The senses `--sense` accepts, in the order the report prints them. */
+const SENSE_VALUES: readonly BoundsSense[] = ['min', 'max', 'both'];
+
+/**
+ * `--measure REF`, which is the whole command.
+ *
+ * Refused before the file is read: a run with no measure has nothing to bound,
+ * and parsing a model and binding the standard library to say so costs a second.
+ */
+function boundsMeasure(args: ParsedArgs): string {
+  const raw = flagValue(args, 'measure');
+  if (raw === undefined || raw.trim() === '') {
+    throw new UsageError(
+      '--measure names the feature to bound and is required: a qualified name, the dotted path a ' +
+        'constraint body writes (`uav.endurance`), or a feature name unique in the model.',
+      true,
+    );
+  }
+  return raw.trim();
+}
+
+/** `--sense min|max|both`, refused rather than silently read as the default. */
+function boundsSense(args: ParsedArgs): BoundsSense | undefined {
+  const raw = flagValue(args, 'sense');
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = raw.trim();
+  if ((SENSE_VALUES as readonly string[]).includes(value)) return value as BoundsSense;
+  throw new UsageError(`--sense must be one of ${SENSE_VALUES.join(', ')}; got \`${raw}\`.`);
+}
+
+/**
+ * `--free`, with the one spelling that is not a feature name.
+ *
+ * `all` releases every value the file STATES — the same set `consistency`
+ * releases by default — and keeps every equation that says how a quantity is
+ * COMPUTED. It is a keyword rather than a feature, so it is separated here and
+ * never handed to the feature resolver, which would refuse it by name.
+ */
+function boundsFree(args: ParsedArgs): { free: string[]; freeAll: boolean } {
+  const raw = flagValue(args, 'free');
+  if (raw === undefined || raw.trim() === '') return { free: [], freeAll: false };
+  const spellings = raw
+    .split(',')
+    .map((x) => x.trim())
+    .filter((x) => x !== '');
+  return {
+    free: spellings.filter((x) => x !== 'all'),
+    freeAll: spellings.includes('all'),
+  };
+}
+
+/** One bound, as a person reads it. */
+function boundLines(bound: Bound): string[] {
+  return [
+    `  ${bound.sense}  ${bound.outcome}${bound.code !== null ? ` [${bound.code}]` : ''}`,
+    `    ${bound.detail}`,
+    ...(bound.value !== null ? [`    z3 wrote the bound as ${bound.term}`] : []),
+    ...(bound.witness.length > 0
+      ? [
+          `    at ${bound.witness
+            .map((w) => `${w.symbol} = ${witnessNumber(w)}`)
+            .join(', ')} (stored magnitudes)`,
+        ]
+      : []),
+  ];
+}
+
+/**
+ * `bounds` — the one subcommand that decides something without judging anything.
+ *
+ * The header names the axiom set before it names a number, because the number
+ * means something different otherwise: the same measure over the same model
+ * answers "unbounded above" and "25 exactly" depending on whether a `require`
+ * body was folded in, and a reader who cannot see which was done has been
+ * handed a figure they cannot use.
+ */
+async function reportBounds(
+  model: Model,
+  name: string,
+  text: string,
+  args: ParsedArgs,
+): Promise<Report> {
+  const measure = boundsMeasure(args);
+  const sense = boundsSense(args);
+  const { free, freeAll } = boundsFree(args);
+  const r = await boundsReport(model, {
+    measure,
+    ...(sense !== undefined ? { sense } : {}),
+    ...(free.length > 0 ? { free } : {}),
+    ...(freeAll ? { freeAll: true } : {}),
+    withRequirements: flagGiven(args, 'with-requirements'),
+    sourceText: text,
+  });
+
+  const undecided = r.bounds.filter((b) => b.code !== null).length;
+  const rendered = [
+    // The undecided figure leads, for the reason §2 gives for every command in
+    // this lane: a line that opened with the number reads as an answer with a
+    // footnote, and the footnote is what decides the exit code.
+    `${name}: ${undecided} not established, ${r.bounds.length - undecided} decided — ` +
+      `\`${r.measure?.qualifiedName ?? measure}\` over ${r.axioms} assertion(s)`,
+    r.toolAbsent
+      ? `  no solver ran: a bound is a claim about every design the axioms admit, and the value in ` +
+        `the file is one of them rather than the tightest — this run is exit ${r.exitCode}`
+      : `  the axiom set: ${r.withRequirements ? 'the model’s axioms PLUS the `require` bodies (`--with-requirements`), each as `assume ⇒ require`' : 'feature values, `bind` equalities and `assert constraint` bodies; `require` and `assume` clauses excluded, because a requirement is what is being checked, not a fact'}`,
+    `  ${r.released.length} feature value(s) released${r.released.length > 0 ? `: ${r.released.join(', ')}` : ' — every value the file states is an axiom of this bound'}`,
+    ...(r.requirements.length > 0
+      ? [`  ${r.requirements.length} requirement(s) folded in: ${r.requirements.join(', ')}`]
+      : []),
+    ...(r.refused > 0
+      ? [
+          `  ${r.refused} relation(s) refused by a gate and not asserted — an axiom that was not ` +
+            'asserted widens the space this bound was computed over, so the bound is looser than the ' +
+            'model’s and never tighter',
+        ]
+      : []),
+    ...r.bounds.flatMap(boundLines),
+    // The other optimiser, named so the two are never read as one another.
+    '  z3’s νZ proves a bound; the coordinate-descent `optimize` in ' +
+      'src/semantics/solver.ts searches for a point and proves nothing — this report is the first',
+    ...(r.toolAbsent ? [] : [`  ${r.checks} solver check(s) at ${r.timeoutMs ?? 0} ms each`]),
+    `  model ${r.modelVersion.graph}`,
+    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text: rendered, bounds: r };
 }
 
 /* ─────────────────────────────── evidence ───────────────────────────────── */
@@ -2798,6 +3021,8 @@ async function buildReport(
       return reportConsistency(model, name, text, args);
     case 'refine':
       return reportRefinement(model, name, text, args);
+    case 'bounds':
+      return reportBounds(model, name, text, args);
     case 'evidence-status':
       return reportEvidenceStatus(model, name);
     case 'evidence-attach':
@@ -2859,10 +3084,16 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
       consistencyMaxCore(args);
       return;
     case 'refine':
-      // A `--via` this build does not answer is an answer about the command
-      // line too, and it is the one a reader is most likely to type: the plan
-      // names four families and this build answers one.
+      // A `--via` outside the four families is an answer about the command line,
+      // and it is the one a reader is most likely to mistype.
       refineVia(args);
+      return;
+    case 'bounds':
+      // `--measure` is the whole command and `--sense` is a closed list; a run
+      // missing either would parse a model and bind the library before saying
+      // it had nothing to bound.
+      boundsMeasure(args);
+      boundsSense(args);
       return;
     case 'evidence-attach':
       // `--from` is the whole command; a run without it would parse a model,
@@ -3057,6 +3288,7 @@ async function main(): Promise<number> {
     | ConsistencyVerdict
     | RefinementVerdict
     | BehaviourVerdict
+    | BoundsVerdict
     | undefined = built.verify
     ? judge(built.verify, degraded)
     : built.consistency
@@ -3065,6 +3297,8 @@ async function main(): Promise<number> {
         ? judgeRefinement(built.refinement, degraded)
         : built.behaviour
           ? judgeBehaviour(built.behaviour, degraded)
+        : built.bounds
+          ? judgeBounds(built.bounds, degraded)
           : undefined;
 
   const body = flagGiven(parsed, 'json')

@@ -91,6 +91,7 @@ import {
   checkRefinement,
   refinementCensus,
   CONTRACT_SET_VACUOUS_CODE,
+  DERIVATION_NOT_REFINEMENT_CODE,
   REFINEMENT_CODES,
   REFINEMENT_FAILED_CODE,
   UNCONNECTED_ASSUMPTION_CODE,
@@ -98,6 +99,18 @@ import {
   type RefinementResult,
   type RefinementVia,
 } from '../semantics/refinement';
+import {
+  checkBounds,
+  prepareBounds,
+  AXIOMS_ONLY_NOTE,
+  BOUNDS_CODES,
+  OPTIMALITY_NOT_ESTABLISHED_CODE,
+  WITH_REQUIREMENTS_NOTE,
+  type Bound,
+  type BoundsResult,
+  type BoundsSense,
+  type MeasureRef,
+} from '../semantics/bounds';
 import {
   METHOD_NOT_PERFORMED_CODE,
   VERDICT_CHANGED_CODE,
@@ -1051,6 +1064,11 @@ export const VERIFICATION_ERROR_CODES: ReadonlySet<string> = new Set([
   // are info lines.
   REFINEMENT_FAILED_CODE,
   UNCONNECTED_ASSUMPTION_CODE,
+  // And the third row that command exits 1 on: a `derive` or `refine` chain the
+  // solver refuted. The same KIND of finding — decided, about the model — and
+  // its own code because the fix is an edit to a requirement rather than to an
+  // architecture.
+  DERIVATION_NOT_REFINEMENT_CODE,
   // A `verdict = "pass"` facet over a record that did not prove anything. Both
   // artefacts are the tool's own, they contradict each other, and the
   // contradiction overstates — so it is a defect in the FILE, not a limit of
@@ -1090,11 +1108,16 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   // rather than retyped, for the same reason as the two above: the catalogue
   // guard reads this set, and a code spelled twice is a code that drifts.
   ...VERIFICATION_CASE_CODES,
-  // The four `refine` raises, from `../semantics/refinement`. Two of them are
-  // decided findings and two say what was not decided; all four are printed,
+  // The five `refine` raises, from `../semantics/refinement`. Three of them are
+  // decided findings and two say what was not decided; all five are printed,
   // and a printed code the catalogue cannot explain is a contract stated in a
   // vocabulary the reader has no dictionary for.
   ...REFINEMENT_CODES,
+  // And the ones `bounds` raises, from `../semantics/bounds`. Same rule again:
+  // this set is what the catalogue guard reads, and the one code that is this
+  // command's own — `verification/optimality-not-established` — is precisely a
+  // contract stated over a code string, so the reader must have its entry.
+  ...BOUNDS_CODES,
   // And the five `property-check`'s gates raise, from `./property`. A clause the
   // gates refuse is the FIRST `verification/*` code most agents will ever be
   // shown, since drafting comes before proving, so it had better be one the
@@ -2040,6 +2063,14 @@ export interface RefinementReport {
   allowInconclusive: boolean;
   /** How many contracts the model states at all. */
   contracts: number;
+  /**
+   * `derive`/`refine` edges whose other end states no contract this lane reads.
+   *
+   * A `derive requirement Child from rig;` names a part, so it forms no chain —
+   * and a run reporting only the chains would tell a reader their file states
+   * none at all. Counted so the sentence can be true.
+   */
+  unreadEdges: number;
   /** The γ census, over the whole run. */
   bindEqualities: number;
   itemFlows: number;
@@ -2082,6 +2113,16 @@ export async function refinementReport(
     // values cannot answer it — there is no point evaluation to degrade to.
     // The CENSUS is still taken, so an absent solver cannot read as a file with
     // no architecture in it.
+    // THE NOUN FOLLOWS THE FAMILY. A `--via derive` run reads no decomposition
+    // at all, and a tool-absent sentence that called its chain one would tell a
+    // reader their file states an architecture it does not — the same rule the
+    // solved path already obeys.
+    const noun =
+      via === 'composition'
+        ? 'decomposition'
+        : via === 'all'
+          ? 'decomposition or chain'
+          : `\`${via}\` chain`;
     const census = refinementCensus(
       model,
       {
@@ -2091,7 +2132,7 @@ export async function refinementReport(
       },
       {
         code: 'verification/tool-absent',
-        detail: `no solver ran, so nothing was decided about this decomposition: solver absent — ${load.reason}`,
+        detail: `no solver ran, so nothing was decided about this ${noun}: solver absent — ${load.reason}`,
       },
     );
     return {
@@ -2109,6 +2150,7 @@ export async function refinementReport(
       forgiven: 0,
       allowInconclusive,
       contracts: census.contracts,
+      unreadEdges: census.unreadEdges,
       bindEqualities: census.bindEqualities,
       itemFlows: census.itemFlows,
       connectionEqualities: census.connectionEqualities,
@@ -2121,7 +2163,7 @@ export async function refinementReport(
       diagnostics: numbered([
         {
           severity: 'info',
-          message: `no decomposition was checked: solver absent — ${load.reason}`,
+          message: `no ${noun} was checked: solver absent — ${load.reason}`,
           code: 'verification/tool-absent',
           hint: 'Install the solver and re-run. There is no point-evaluation engine for this question — a refinement obligation is a claim about every implementation the contracts admit, not about the values in the file — so an absent solver decides nothing here, exits 2, and `--allow-inconclusive` does not lower it.',
         },
@@ -2160,6 +2202,7 @@ export async function refinementReport(
     forgiven,
     allowInconclusive,
     contracts: result.contracts,
+    unreadEdges: result.unreadEdges,
     bindEqualities: result.bindEqualities,
     itemFlows: result.itemFlows,
     connectionEqualities: result.connectionEqualities,
@@ -2216,21 +2259,35 @@ function refinementFindings(
   const out: Finding[] = [];
   for (const group of result.groups) {
     const where = group.shortId || group.system.qualifiedName;
+    // WHAT THE ROW IS ABOUT depends on the family it came from, and a message
+    // that named a part for a derivation chain would attribute the answer to an
+    // architecture the `derive` edge never mentioned: a derivation joins two
+    // REQUIREMENTS, and `group.part` is `null` there for exactly that reason.
+    const subject =
+      group.part !== null
+        ? `the components of \`${group.part.qualifiedName}\``
+        : `the ${group.via === 'derive' ? 'derived' : 'refining'} requirement(s) of \`${group.system.qualifiedName}\``;
+    const scope =
+      group.part !== null
+        ? `the decomposition under \`${group.part.qualifiedName}\``
+        : `the ${group.via === 'derive' ? 'derivation' : 'refinement'} chain under \`${group.system.qualifiedName}\``;
     if (group.outcome === 'not-refined') {
       const failing = group.obligations.find((o) => o.outcome === 'refuted');
       out.push({
         severity: 'error',
-        message: `the components of \`${group.part.qualifiedName}\` do not refine ${where}: ${group.detail}`,
+        message: `${subject} do not refine ${where}: ${group.detail}`,
         elementId: failing?.component?.id ?? group.system.id,
         elementName: failing?.component?.qualifiedName ?? group.system.qualifiedName,
         code: group.code ?? REFINEMENT_FAILED_CODE,
         hint:
-          'Read the witness on the failing row: it is an implementation every component contract admits and the system contract forbids. The obligations are Cimatti’s Theorem 1 in normal form (`nf(C) = ¬A ∨ G`), so a component whose assumption is false contributes nothing — strengthening a sibling’s guarantee, or connecting the quantity the assumption is about, is where a fix starts. Nothing here is about ordering or time.',
+          group.part !== null
+            ? 'Read the witness on the failing row: it is an implementation every component contract admits and the system contract forbids. The obligations are Cimatti’s Theorem 1 in normal form (`nf(C) = ¬A ∨ G`), so a component whose assumption is false contributes nothing — strengthening a sibling’s guarantee, or connecting the quantity the assumption is about, is where a fix starts. Nothing here is about ordering or time.'
+            : 'Read the witness on the failing row: it satisfies every requirement written down from this one and breaks the one they were written from — or it satisfies the parent’s assumption and not the child’s, which is a child that applies in fewer situations than the parent’s guarantee is claimed in. The two obligations are `A_R ⊨ A_D` (the derived set assumes no more) and `A_R ∧ ⋀ nf(C_D) ⊨ G_R` (together they entail what the parent promised), read with the orientation the mapper stores: `derive requirement D from R` makes R the parent, and `refine requirement X by Y` makes X the parent. Weaken the child’s assumption, strengthen its guarantee, or correct the direction of the edge. Nothing here is about ordering or time.',
       });
     } else if (group.outcome === 'vacuous') {
       out.push({
         severity: 'info',
-        message: `the decomposition under \`${group.part.qualifiedName}\` was not decided — ${group.detail}`,
+        message: `${scope} was not decided — ${group.detail}`,
         elementId: group.system.id,
         elementName: group.system.qualifiedName,
         code: CONTRACT_SET_VACUOUS_CODE,
@@ -2240,7 +2297,7 @@ function refinementFindings(
       const forgiven = allowInconclusive && ALLOW_INCONCLUSIVE_CODES.has(group.code);
       out.push({
         severity: 'info',
-        message: `the decomposition under \`${group.part.qualifiedName}\` was not decided: ${group.detail}`,
+        message: `${scope} was not decided: ${group.detail}`,
         elementId: group.system.id,
         elementName: group.system.qualifiedName,
         code: group.code,
@@ -2268,6 +2325,306 @@ function refinementFindings(
       elementName: refusal.qualifiedName,
       code: 'verification/unsupported-expression',
       hint: `The relation is listed with its reason rather than dropped, and the count travels with every verdict (\`${refusal.reason}\`). Any refused conjunct of a system contract stands the whole decomposition down as undecided, because dropping it would weaken the very goal being proved. On a component contract the half it came from decides: a refused \`require\` conjunct only weakens that component's normal form, which a proof survives, while a refused \`assume\` conjunct STRENGTHENS it — dropping \`a₂\` turns \`¬a₁ ∨ ¬a₂ ∨ G\` into \`¬a₁ ∨ G\` — so that contract is left out of the premise set entirely and its own obligation (4) is undecided.`,
+    });
+  }
+  return out;
+}
+
+/* ───────────────────────────── the bounds report ─────────────────────────── */
+
+/**
+ * `bounds` — the tightest value a measure can take under the model's axioms.
+ *
+ * THE EXIT CONTRACT OF THIS REPORT, stated once:
+ *
+ *  1. **0 only for a bound that was DECIDED.** An optimum whose optimality νZ established, an
+ *     exact supremum or infimum it proved is approached and never attained, or
+ *     an unboundedness it proved — all three are answers about the model. A
+ *     value with no optimality claim is not one of them.
+ *  2. **There is no 1.** This command judges nothing: it reports the tightest
+ *     value the axioms admit, and a number is not a violation. §2 reserves 1
+ *     for a refuted obligation, and a bounds run has none.
+ *  3. **2 for everything else**, the way every other command in this lane
+ *     spends it: an absent solver, a timeout, an axiom set that cannot hold
+ *     together, a measure no relation reads — and a bound νZ does not certify
+ *     as the optimum, which is its own code precisely so that no flag can lower
+ *     it into 1.
+ *
+ * There is no `--allow-inconclusive` here, deliberately: the flag's whole scope
+ * is the two UNDECIDED codes, and forgiving them would leave a run whose only
+ * answer was "we could not certify this" reading as a run that answered.
+ */
+
+/** How a bounds run is aimed, released and bounded. */
+export interface BoundsReportOptions {
+  /**
+   * The measure: a qualified name, the dotted path a constraint body writes, or
+   * a feature name unique in the model — the same three spellings `--free`
+   * takes, through the same resolver.
+   */
+  measure: string;
+  /** `min`, `max`, or `both`. Default `max`. */
+  sense?: BoundsSense;
+  /** Feature values to release, in the spellings a person types. */
+  free?: readonly string[];
+  /** Release every value the file STATES (`--free all`). */
+  freeAll?: boolean;
+  /** Fold the `require` bodies in as `assume ⇒ require`, and say so on every line. */
+  withRequirements?: boolean;
+  /** The per-check budget in ms. */
+  timeoutMs?: number;
+  /** The file's bytes, so the report binds the text as well as the graph. */
+  sourceText?: string;
+}
+
+/** What a bounds run came to, with the arithmetic behind its exit code. */
+export interface BoundsReport {
+  /** True when no solver loaded: every row is `verification/tool-absent`. */
+  toolAbsent: boolean;
+  /** The feature the run is about, or `null` when no relation reads it. */
+  measure: MeasureRef | null;
+  bounds: Bound[];
+  withRequirements: boolean;
+  /** The feature values released, sorted. */
+  released: string[];
+  /** The `require` bodies folded in, by requirement — empty without the flag. */
+  requirements: string[];
+  /** How many assertions the objective stood on, after the reachability trim. */
+  axioms: number;
+  /** How many relations a gate refused and nothing asserted. */
+  refused: number;
+  /** Is the script z3 saw nonlinear in its bytes — the question νZ turns on? */
+  nonlinear: boolean;
+  fragment: string;
+  logic: string;
+  /** The unsat core, when the assertions cannot hold together. */
+  vacuityCore: string[];
+  checks: number;
+  exitCode: 0 | 1 | 2;
+  /** The per-check budget the run used, or `null` when no solver ran. */
+  timeoutMs: number | null;
+  modelVersion: ModelVersion;
+  diagnostics: Diagnostic[];
+}
+
+/**
+ * Bound one measure, or say why it was not bounded.
+ *
+ * Asynchronous because resolving the backend is a dynamic import — the same one
+ * `verifyModel`, `consistencyReport` and `refinementReport` make, through the
+ * same `loadZ3()`, so the four commands cannot disagree about whether a solver
+ * exists.
+ */
+export async function boundsReport(
+  model: Model,
+  opts: BoundsReportOptions,
+): Promise<BoundsReport> {
+  const sense: BoundsSense = opts.sense ?? 'max';
+  const withRequirements = opts.withRequirements === true;
+  const modelVersion = modelVersionOf(model, opts.sourceText);
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const rows = obligationsOf(model);
+
+  // THE MEASURE AND EVERY `--free` SPELLING ARE RESOLVED BEFORE ANYTHING RUNS,
+  // through the resolver `--free` already uses: a spelling that named nothing
+  // would otherwise print a bound over a design space the reader never asked
+  // for, and one that named two things would bound whichever the model walk
+  // reached first.
+  const measure = resolveFreeFeatures(model, [opts.measure], rows);
+  if (measure.unresolved.length > 0 || measure.ambiguous.length > 0) {
+    throw new VerifyOptionError(
+      measure.ambiguous.length > 0
+        ? `--measure \`${opts.measure}\` names ${measure.ambiguous[0].candidates.length} elements of ` +
+          `this model (${measure.ambiguous[0].candidates.join(', ')}). A bare name is accepted only ` +
+          'where it is unique — write the qualified name of the one you mean.'
+        : `--measure names nothing in this model: \`${opts.measure}\`. Write the qualified name, the ` +
+          'dotted path a constraint body would use (`uav.endurance`), or a feature name unique in ' +
+          `scope. Readable here: ${freeableSentence(rows)}`,
+    );
+  }
+  // A REF THAT RESOLVES AND NO RELATION READS is NOT a usage error: it is a
+  // fact about the model this report states in a row of its own, because
+  // "unbounded" is arithmetically true of such a quantity and would read as a
+  // finding about a design that never constrains it.
+  const measureId =
+    measure.features.values().next().value ??
+    measure.unread
+      .map((u) => model.all().find((el) => model.qualifiedName(el.id) === u.qualifiedName)?.id)
+      .find((id): id is ElementId => id !== undefined);
+  if (measureId === undefined) {
+    throw new VerifyOptionError(
+      `--measure names nothing in this model: \`${opts.measure}\`. Readable here: ${freeableSentence(rows)}`,
+    );
+  }
+
+  const free = [...(opts.free ?? [])];
+  const freed = resolveFreeFeatures(model, free, rows);
+  const refusals: string[] = [];
+  if (freed.unresolved.length > 0) {
+    refusals.push(
+      `--free names nothing in this model: \`${freed.unresolved.join('`, `')}\`. Write the qualified ` +
+        'name, the dotted path a constraint body would use (`uav.cruisePower`), or a feature name ' +
+        'unique in scope',
+    );
+  }
+  for (const a of freed.ambiguous) {
+    refusals.push(
+      `--free \`${a.spelling}\` names ${a.candidates.length} elements of this model ` +
+        `(${a.candidates.join(', ')}). A bare name is accepted only where it is unique`,
+    );
+  }
+  for (const u of freed.unread) {
+    refusals.push(
+      `--free \`${u.spelling}\` resolves to ${u.qualifiedName}, which no relation in this model ` +
+        `reads: releasing it would change nothing. Releasable here: ${freeableSentence(rows)}`,
+    );
+  }
+  if (refusals.length > 0) {
+    throw new VerifyOptionError(
+      `${refusals.join('; ')}. A spelling that freed nothing would print a bound under a design ` +
+        'space that was never in force.',
+    );
+  }
+
+  const load = await loadZ3();
+  const senses: Array<'min' | 'max'> = sense === 'both' ? ['min', 'max'] : [sense];
+
+  if (load.absent) {
+    // No fallback and no partial answer: a bound is a claim about every design
+    // the axioms admit, and the value in the file is one of them rather than
+    // the tightest. The CENSUS is still taken, so an absent solver cannot read
+    // as a model with nothing to bound.
+    const prepared = prepareBounds(model, {
+      measureId,
+      free: freed.qualifiedNames,
+      ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
+      withRequirements,
+    });
+    const detail =
+      `no solver ran, so nothing was bounded: solver absent — ${load.reason}. ` +
+      `The question would have been asked over ${prepared.assertions.length} assertion(s) — ` +
+      `${withRequirements ? WITH_REQUIREMENTS_NOTE : AXIOMS_ONLY_NOTE}`;
+    return {
+      toolAbsent: true,
+      measure: prepared.measure,
+      bounds: senses.map((s) => ({
+        sense: s,
+        outcome: 'inconclusive' as const,
+        code: 'verification/tool-absent',
+        detail,
+        value: null,
+        siValue: null,
+        term: '',
+        witness: [],
+        checks: 0,
+      })),
+      withRequirements,
+      released: prepared.released,
+      requirements: prepared.requirements,
+      axioms: prepared.assertions.length,
+      refused: prepared.refused.length,
+      nonlinear: prepared.syntacticNonlinear,
+      fragment: 'qf-lra',
+      logic: '',
+      vacuityCore: [],
+      checks: 0,
+      exitCode: 2,
+      timeoutMs: null,
+      modelVersion,
+      diagnostics: numbered([
+        {
+          severity: 'info',
+          message: `no bound was computed: solver absent — ${load.reason}`,
+          code: 'verification/tool-absent',
+          hint: 'Install the solver and re-run. There is no point-evaluation engine for this question — the value in the file is one design the axioms admit, not the tightest one — so an absent solver decides nothing here and exits 2.',
+        },
+      ]),
+    };
+  }
+
+  const result = await checkBounds(model, {
+    backend: load,
+    measureId,
+    sense,
+    free: freed.qualifiedNames,
+    ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
+    withRequirements,
+    timeoutMs,
+  });
+
+  return {
+    toolAbsent: false,
+    measure: result.measure,
+    bounds: result.bounds,
+    withRequirements: result.withRequirements,
+    released: result.released,
+    requirements: result.requirements,
+    axioms: result.axioms,
+    refused: result.refused.length,
+    nonlinear: result.nonlinear,
+    fragment: result.fragment,
+    logic: result.logic,
+    vacuityCore: result.vacuityCore,
+    checks: result.checks,
+    exitCode: boundsExitCode(result),
+    timeoutMs: result.timeoutMs ?? null,
+    modelVersion,
+    diagnostics: numbered(boundsFindings(result)),
+  };
+}
+
+/** The outcomes that are an ANSWER about the model, and therefore exit 0. */
+const DECIDED_BOUNDS: ReadonlySet<string> = new Set([
+  'optimum',
+  'supremum',
+  'infimum',
+  'unbounded',
+]);
+
+/**
+ * The exit code of a bounds run.
+ *
+ * The empty test comes first for the reason it does everywhere in this lane: a
+ * run that decided nothing must never be green, and "this file gave me no row
+ * to compute" is indistinguishable from "every bound was found" at exit 0.
+ */
+function boundsExitCode(result: BoundsResult): 0 | 1 | 2 {
+  if (result.bounds.length === 0) return 2;
+  return result.bounds.every((b) => DECIDED_BOUNDS.has(b.outcome)) ? 0 : 2;
+}
+
+/**
+ * What a bounds run files, under the lane's one source and one prefix.
+ *
+ * Every row is an INFO, and that is the reading rule rather than a shrug: not
+ * one of them is a defect in the model. A bound is a fact about what the axioms
+ * admit, and the rows that are not bounds are this tool saying what it did not
+ * establish — which is the one thing a silence could never say.
+ */
+function boundsFindings(result: BoundsResult): Finding[] {
+  const out: Finding[] = [];
+  const name = result.measure?.qualifiedName ?? '';
+  for (const bound of result.bounds) {
+    if (bound.code === null) continue;
+    out.push({
+      severity: 'info',
+      message: `${bound.sense} \`${name}\` was not established: ${bound.detail}`,
+      ...(result.measure ? { elementId: result.measure.id, elementName: name } : {}),
+      code: bound.code,
+      hint:
+        bound.code === OPTIMALITY_NOT_ESTABLISHED_CODE
+          ? 'The value on the row is a bound z3 reached, not one it established as the tightest: νZ is complete for linear real arithmetic, and a product or a quotient of two features is not that. Pin the feature that makes the objective nonlinear, or read the row as the bound it is. It exits 2, and no flag lowers it — a non-optimal bound presented as the optimum is the one sentence this command may never write.'
+          : 'Nothing is claimed about this bound. Read `docs/DIAGNOSTIC-CODES.md` for what this code means, and `npm run sysprose -- obligations <file>` for the axioms this measure would have been bounded over.',
+    });
+  }
+  for (const refusal of result.refused) {
+    out.push({
+      severity: 'info',
+      message: `\`${refusal.expression}\` was not asserted: ${refusal.detail}.`,
+      elementId: refusal.id,
+      elementName: refusal.qualifiedName,
+      code: 'verification/unsupported-expression',
+      hint: `The relation is listed with its reason rather than dropped (\`${refusal.reason}\`), and the count travels with every verdict line. An axiom that was not asserted widens the space the bound was computed over, so a bound taken with one missing is looser than the model's — never tighter. A refusal that shares a symbol with what the measure REACHES therefore stands its row down under \`verification/not-evaluable\` instead of publishing one; one out of reach factorises and cannot move the answer, so it is listed and nothing else.`,
     });
   }
   return out;

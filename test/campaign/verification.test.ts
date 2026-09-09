@@ -60,6 +60,7 @@ import type { Model } from '@core/index';
 import {
   ALLOW_INCONCLUSIVE_CODES,
   attachEvidence,
+  boundsReport,
   canonicalElements,
   consistencyReport,
   detachEvidence,
@@ -76,8 +77,10 @@ import {
   type VerifyReport,
 } from '@api/index';
 import {
+  checkBounds,
   checkConsistency,
   CONNECTION_HINT,
+  optimize,
   CONNECTIONS_AS_EQUALITIES_NOTE,
   CONTRACT_SET_VACUOUS_CODE,
   READING,
@@ -1611,6 +1614,20 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
           core: [],
         };
       },
+      // This stub exists to answer ONE question wrongly on purpose. It bounds
+      // nothing, and a bounds run that reached it would be a caller asking a
+      // consistency stub for an optimum.
+      async optimize(_script, _sense, opts) {
+        return {
+          status: 'error',
+          reason: 'this stub answers checks only',
+          timedOut: false,
+          timeoutMs: opts?.timeoutMs ?? 0,
+          elapsedMs: 0,
+          bound: null,
+          witness: [],
+        };
+      },
     };
     const r = await checkConsistency(model, { backend: stub });
     const [group] = r.groups;
@@ -2816,5 +2833,645 @@ describe('L8 — refine: Cimatti’s obligations, in normal form, over the equal
     expect(r.exitCode).toBe(2);
     // Its nine bare connections are listed rather than counted away.
     expect(r.notEncoded).toBe(9);
+  });
+});
+
+/**
+ * L8 — `refine --via derive|refine`: a requirement written down from another
+ * requirement, checked with the orientation the mapper actually stores.
+ *
+ * THE ORIENTATION IS THE POINT OF THIS BLOCK, and it is the one thing here that
+ * could go wrong silently. The two families store their ends the opposite way
+ * round — `derive requirement D from R` maps to `Derive` with source `R` and
+ * target `D`, while `refine requirement X by Y` maps to `Refine` with source
+ * `Y` and target `X`, uniform with `satisfy` — so a checker that assumed one
+ * rule for both would not fail loudly: it would check the mirror obligations
+ * and report "refines" for a chain written the other way up. The reversed case
+ * below is what makes that a red test rather than a plausible report.
+ *
+ * The two obligations, from §3.6: `A_R ⊨ ⋀ A_D` (the derived set assumes no
+ * more) and `A_R ∧ ⋀ nf(C_D) ⊨ G_R` (together they entail what the parent
+ * promised), in normal form for the same reason the composition ones are.
+ */
+describe('L8 — refine: derivation and refinement chains, with the measured orientation', () => {
+  const STRONGER = 'test/fixtures/verification/models/derivation-stronger-assumption.sysml';
+  const CONJOINS = 'test/fixtures/verification/models/derivation-conjoins.sysml';
+  const REFINES = 'test/fixtures/verification/models/derivation-refine-chain.sysml';
+  const REFUSED = 'test/fixtures/verification/models/derivation-refused-clause.sysml';
+  const VACUOUS = 'test/fixtures/verification/models/derivation-vacuous.sysml';
+  const DANGLING = 'test/fixtures/verification/models/derivation-dangling-edge.sysml';
+  const MIXED = 'test/fixtures/verification/models/refinement-mixed-families.sysml';
+
+  async function refine(
+    path: string,
+    opts: Parameters<typeof refinementReport>[1] = {},
+    text?: string,
+  ): Promise<Awaited<ReturnType<typeof refinementReport>>> {
+    const source = text ?? read(path);
+    const { model } = await loadModelText(source, { fileName: path });
+    if (!model) throw new Error(`${path} produced no model`);
+    return refinementReport(model, { ...opts, sourceText: source });
+  }
+
+  withZ3('a derived requirement that assumes MORE does not refine, and names the witness', async () => {
+    const r = await refine(STRONGER, { via: 'derive' });
+    expect(r.exitCode, 'a chain that is not a refinement went green').toBe(1);
+    expect(r.notRefined).toBe(1);
+    const [group] = r.groups;
+    expect(group.via).toBe('derive');
+    expect(group.system.qualifiedName).toBe('DerivationStrongerAssumption::MassBudget');
+    // A DERIVATION NAMES NO PART. The edge joins two requirements and says
+    // nothing about who satisfies either of them.
+    expect(group.part, 'a derivation group named a part the edge never mentions').toBeNull();
+    expect(group.components.map((c) => c.contract.qualifiedName)).toEqual([
+      'DerivationStrongerAssumption::BodyMass',
+    ]);
+    const assumption = group.obligations.find((o) => o.kind === 'assumption')!;
+    expect(assumption.outcome).toBe('refuted');
+    expect(assumption.code).toBe('verification/derivation-not-refinement');
+    expect(assumption.detail).toContain('assumes MORE than');
+    // The witness is a speed the parent covers and the child does not, re-read
+    // through this tool's own evaluator before it was printed.
+    expect(assumption.witnessConfirmed, 'a counterexample was printed unconfirmed').toBe(true);
+    const speed = assumption.witness.find(
+      (w) => w.symbol === 'DerivationStrongerAssumption::Vehicle::speed',
+    )!;
+    expect(speed, 'the witness no longer names the quantity the assumptions differ on').toBeDefined();
+    expect(Number(speed.value)).toBeGreaterThan(10);
+    expect(Number(speed.value)).toBeLessThanOrEqual(30);
+    expect(group.code).toBe('verification/derivation-not-refinement');
+    // MUST NEVER claim anything temporal.
+    expect(group.detail).toContain('Nothing here is about ordering or time');
+  });
+
+  withZ3('two derived children conjoin to imply the parent, and neither does alone', async () => {
+    const r = await refine(CONJOINS, { via: 'derive' });
+    expect(r.exitCode).toBe(0);
+    expect(r.refined).toBe(1);
+    const [group] = r.groups;
+    expect(group.components).toHaveLength(2);
+    const composition = group.obligations.find((o) => o.kind === 'composition')!;
+    expect(composition.outcome).toBe('proved');
+    expect(composition.detail).toContain('negation unsat');
+    expect(composition.detail).toContain('nf(C) = ¬A ∨ G');
+    // Neither child assumes anything, so there is nothing to discharge — and an
+    // empty obligation is reported as empty rather than as proved.
+    expect(group.obligations.filter((o) => o.kind === 'assumption').map((o) => o.outcome)).toEqual([
+      'no-assumption',
+      'no-assumption',
+    ]);
+
+    // AND THE CONJUNCTION IS WHAT DOES IT: with one of the two derivations
+    // removed, the remaining child does not entail the parent.
+    const alone = read(CONJOINS).replace('    derive requirement PackMass from TotalMass;\n', '');
+    expect(alone, 'the mutation matched nothing').not.toBe(read(CONJOINS));
+    const one = await refine(CONJOINS, { via: 'derive' }, alone);
+    expect(one.exitCode, 'one bound of two entailed the total').toBe(1);
+    expect(one.groups[0].obligations.find((o) => o.kind === 'composition')!.outcome).toBe('refuted');
+  });
+
+  withZ3('the reversed direction is refuted, so the orientation cannot be assumed', async () => {
+    // `derive requirement TotalMass from BodyMass;` makes the 18 kg body bound
+    // the PARENT and the 25 kg total the derived requirement. Read that way the
+    // chain does not refine — a checker that had the orientation backwards
+    // would report the same model as refined, which is why this case exists.
+    const reversed = read(CONJOINS).replace(
+      '    derive requirement BodyMass from TotalMass;\n    derive requirement PackMass from TotalMass;',
+      '    derive requirement TotalMass from BodyMass;',
+    );
+    expect(reversed, 'the mutation matched nothing').not.toBe(read(CONJOINS));
+    const r = await refine(CONJOINS, { via: 'derive' }, reversed);
+    expect(r.exitCode).toBe(1);
+    const [group] = r.groups;
+    expect(group.system.qualifiedName, 'the parent is the SOURCE of a `derive` edge').toBe(
+      'DerivationConjoins::BodyMass',
+    );
+    expect(group.components.map((c) => c.contract.qualifiedName)).toEqual([
+      'DerivationConjoins::TotalMass',
+    ]);
+    const composition = group.obligations.find((o) => o.kind === 'composition')!;
+    expect(composition.outcome).toBe('refuted');
+    expect(composition.witnessConfirmed).toBe(true);
+  });
+
+  withZ3('a `refine` edge is read the OTHER way round, because that is how it is stored', async () => {
+    // `refine requirement X by Y` puts `Y` on the source end and `X` on the
+    // target, uniform with `satisfy` — so `X` is the parent here where a
+    // `derive` edge's parent is its source. Both are measured, neither is
+    // assumed, and the reversed spelling below is refuted.
+    const r = await refine(REFINES, { via: 'refine' });
+    expect(r.exitCode).toBe(0);
+    const [group] = r.groups;
+    expect(group.via).toBe('refine');
+    expect(group.system.qualifiedName).toBe('DerivationRefineChain::SpeedEnvelope');
+    expect(group.components.map((c) => c.contract.qualifiedName)).toEqual([
+      'DerivationRefineChain::CruiseSpeed',
+    ]);
+    expect(group.obligations.find((o) => o.kind === 'composition')!.outcome).toBe('proved');
+
+    const reversed = read(REFINES).replace(
+      'refine requirement SpeedEnvelope by CruiseSpeed;',
+      'refine requirement CruiseSpeed by SpeedEnvelope;',
+    );
+    expect(reversed, 'the mutation matched nothing').not.toBe(read(REFINES));
+    const back = await refine(REFINES, { via: 'refine' }, reversed);
+    expect(back.exitCode, 'a 30 m/s envelope refined a 25 m/s cruise limit').toBe(1);
+    expect(back.groups[0].system.qualifiedName).toBe('DerivationRefineChain::CruiseSpeed');
+  });
+
+  withZ3('`--via all` reads every family in one run, each row saying which it came from', async () => {
+    // The three families answer different questions over different edges, so a
+    // run over all of them is three sets of groups side by side — never one
+    // merged answer a reader would have to know the provenance of.
+    const source = read(CONJOINS).replace(
+      '    derive requirement PackMass from TotalMass;',
+      '    derive requirement PackMass from TotalMass;\n    refine requirement TotalMass by BodyMass;',
+    );
+    expect(source, 'the mutation matched nothing').not.toBe(read(CONJOINS));
+    const r = await refine(CONJOINS, { via: 'all' }, source);
+    expect(r.via).toBe('all');
+    expect(r.groups.map((g) => g.via).sort()).toEqual(['derive', 'refine']);
+    // The `refine` chain is a single 18 kg bound against a 25 kg total, which
+    // does not entail it — so the run carries one of each verdict and is exit 1.
+    expect(r.refined).toBe(1);
+    expect(r.notRefined).toBe(1);
+    expect(r.exitCode).toBe(1);
+  });
+
+  withZ3('a child that lost a GUARANTEE conjunct stays in the premise set; one that lost an `assume` does not', async () => {
+    // THE TWO HALVES OF `nf(C_D)` DO NOT MOVE IN THE SAME DIRECTION, and reading
+    // them as if they did cost a real verdict: withholding a child on ANY
+    // refusal turned this chain — which does refine — into exit 1 with a
+    // CONFIRMED witness at `massPack = 8`, a design `PackMass` forbids.
+    const shipped = await refine(REFUSED, { via: 'derive' });
+    expect(shipped.exitCode, 'a refused `require` conjunct refuted a chain that refines').toBe(0);
+    expect(shipped.refined).toBe(1);
+    expect(shipped.refused, 'the refusal was dropped instead of being listed').toBeGreaterThan(0);
+    expect(shipped.groups[0].obligations.find((o) => o.kind === 'composition')!.outcome).toBe(
+      'proved',
+    );
+
+    // The other direction: the SAME clause written as an `assume` strengthens
+    // the child's normal form once the gate drops it (`¬a₁` entails
+    // `¬a₁ ∨ ¬a₂`, and with the only `assume` gone it collapses to a bare `G`),
+    // so the child is kept out of the premise set and files its own undecided
+    // row. And the composition row over what is left is never a REFUTATION: the
+    // clause that was dropped may exclude the very point it found.
+    const asAssume = read(REFUSED).replace(
+      '        require constraint { rig.mode == "auto" }',
+      '        assume constraint { rig.mode == "auto" }',
+    );
+    expect(asAssume, 'the mutation matched nothing').not.toBe(read(REFUSED));
+    const withheld = await refine(REFUSED, { via: 'derive' }, asAssume);
+    expect(withheld.exitCode, 'a refutation was published over a partial premise set').toBe(2);
+    expect(withheld.notRefined).toBe(0);
+    const composition = withheld.groups[0].obligations.find((o) => o.kind === 'composition')!;
+    expect(composition.outcome).toBe('undecided');
+    expect(composition.code).toBe('verification/refinement-undecided');
+    expect(composition.detail).toContain('PARTIAL premise set');
+    expect(
+      withheld.groups[0].obligations.find(
+        (o) => o.component?.qualifiedName === 'DerivationRefusedClause::PackMass',
+      )!.outcome,
+    ).toBe('undecided');
+  });
+
+  withZ3('a chain whose antecedent is unsatisfiable is VACUOUS, never refined', async () => {
+    // STEP (0), ONE LEVEL DOWN. `Parent` applies only below 5 kg and `Child`
+    // demands at least 10, so both derivation obligations are entailed by a
+    // contradiction. Without step (0) this file prints "derivation refines" at
+    // exit 0 — the twin of the contradictory-sibling case one level up.
+    const r = await refine(VACUOUS, { via: 'derive' });
+    expect(r.exitCode).toBe(2);
+    expect(r.vacuous).toBe(1);
+    expect(r.refined, 'a contradiction bought a refinement verdict').toBe(0);
+    const [group] = r.groups;
+    expect(group.outcome).toBe('vacuous');
+    expect(group.code).toBe('verification/contract-set-vacuous');
+    expect(group.vacuityCore.length, 'a vacuity with no core names nothing').toBeGreaterThan(0);
+    // …and no flag launders it: §2 puts vacuity outside `--allow-inconclusive`
+    // altogether.
+    expect(ALLOW_INCONCLUSIVE_CODES.has('verification/contract-set-vacuous')).toBe(false);
+    const forgiven = await refine(VACUOUS, { via: 'derive', allowInconclusive: true });
+    expect(forgiven.exitCode).toBe(2);
+  });
+
+  withZ3('a `derive` edge whose other end states no contract is counted, not silently dropped', async () => {
+    // `derive requirement Child from rig;` names a PART on its other end, so
+    // there is no obligation over two contracts to check and no group to make.
+    // Reporting only the groups made the run say "this model states no `derive`
+    // chain at all" about a file that plainly writes one.
+    const r = await refine(DANGLING, { via: 'derive' });
+    expect(r.groups).toEqual([]);
+    expect(r.exitCode).toBe(2);
+    expect(r.unreadEdges, 'an edge this lane could not read vanished from the census').toBe(1);
+  });
+
+  it('publishes the families in the SAME order with a solver and without one', async () => {
+    // `--via all` is three sets of groups side by side, and a census taken
+    // family-by-family in one order against a run taken in another moves rows
+    // for no reason a reader can see. The fixture states BOTH families, which
+    // is what makes the order observable at all.
+    const before = process.env.SYSPROSE_NO_Z3;
+    process.env.SYSPROSE_NO_Z3 = '1';
+    let census: string[];
+    try {
+      const absent = await refine(MIXED, { via: 'all' });
+      expect(absent.toolAbsent).toBe(true);
+      census = absent.groups.map((g) => `${g.via}:${g.system.qualifiedName}`);
+      expect(census.length, 'the fixture no longer states both families').toBeGreaterThan(1);
+      expect(new Set(census.map((r) => r.split(':')[0])).size).toBe(2);
+    } finally {
+      if (before === undefined) delete process.env.SYSPROSE_NO_Z3;
+      else process.env.SYSPROSE_NO_Z3 = before;
+    }
+    const solved = await refine(MIXED, { via: 'all' });
+    expect(solved.groups.map((g) => `${g.via}:${g.system.qualifiedName}`)).toEqual(census);
+  }, 120_000);
+
+  it('states no chain where the model states none, and is not green for it', async () => {
+    // `examples/uav-power-budget.sysml` states a decomposition and no
+    // derivation at all, and exit 0 would say every chain in it was shown to
+    // refine.
+    const r = await refine('examples/uav-power-budget.sysml', { via: 'derive' });
+    expect(r.groups).toEqual([]);
+    expect(r.exitCode).toBe(2);
+  }, 120_000);
+});
+
+/**
+ * L8 — `bounds`: the tightest value the model admits, or the sentence saying it
+ * is not the tightest.
+ *
+ * WHAT EACH CASE PINS is a sentence from §3.7's MUST-NEVER list turned into a
+ * property:
+ *
+ *  - a `require` body is not an axiom, so `--free all` answers **unbounded
+ *    above** over a file that states a 25 kg limit — and the line says which
+ *    clauses were axioms, every time;
+ *  - `--with-requirements` folds that body in and the line says SO, which is the
+ *    other half of the same rule;
+ *  - a nonlinear objective yields a value and never the word "optimum", because
+ *    νZ is complete for linear real arithmetic and this is not it;
+ *  - the heuristic `optimize` in `src/semantics/solver.ts` is a different thing
+ *    with a different guarantee, and it never beats the bound z3 proved.
+ */
+describe('L8 — bounds: exact, or honest about not being exact', () => {
+  const UAV = 'test/fixtures/verification/models/bounds-uav.sysml';
+  const REFUSED_AXIOM = 'test/fixtures/verification/models/bounds-refused-axiom.sysml';
+  const ASSUME = 'test/fixtures/verification/models/bounds-assume.sysml';
+
+  async function bounds(
+    opts: Parameters<typeof boundsReport>[1],
+    path = UAV,
+  ): Promise<Awaited<ReturnType<typeof boundsReport>>> {
+    const source = read(path);
+    const { model } = await loadModelText(source, { fileName: path });
+    if (!model) throw new Error(`${path} produced no model`);
+    return boundsReport(model, { ...opts, sourceText: source });
+  }
+
+  withZ3('a two-sided range gives an exact min and max, in the unit the file declares', async () => {
+    const r = await bounds({ measure: 'uav.payload', sense: 'both', free: ['uav.payload'] });
+    expect(r.exitCode).toBe(0);
+    expect(r.bounds.map((b) => [b.sense, b.outcome, b.value])).toEqual([
+      ['min', 'optimum', 2],
+      ['max', 'optimum', 6],
+    ]);
+    for (const b of r.bounds) {
+      expect(b.detail).toContain('[kg]');
+      expect(b.detail, 'a verdict line did not say which clauses were axioms').toContain(
+        '`require` and `assume` clauses excluded',
+      );
+    }
+    // The derived measure over the same range, which is the interesting one: a
+    // linear equation carries the range through to the total.
+    const derived = await bounds({ measure: 'uav.mtow', sense: 'both', free: ['uav.payload'] });
+    expect(derived.bounds.map((b) => b.value)).toEqual([14.5, 18.5]);
+    expect(derived.exitCode).toBe(0);
+  });
+
+  withZ3('answers UNBOUNDED over a file that states a limit, because a limit is not an axiom', async () => {
+    const r = await bounds({ measure: 'uav.mtow', sense: 'max', freeAll: true });
+    expect(r.bounds).toHaveLength(1);
+    const [max] = r.bounds;
+    expect(max.outcome, 'a `require` clause bounded a measure it was never an axiom of').toBe(
+      'unbounded',
+    );
+    expect(max.detail).toContain('unbounded above');
+    expect(max.detail).toContain('`require` and `assume` clauses excluded');
+    expect(max.value).toBeNull();
+    // A decided answer: z3 proved there is no finite bound, and that is exit 0.
+    expect(r.exitCode).toBe(0);
+
+    // …and with the requirement folded in, the same measure is 25 exactly, with
+    // the fact printed on the line rather than left to be inferred.
+    const folded = await bounds({
+      measure: 'uav.mtow',
+      sense: 'max',
+      freeAll: true,
+      withRequirements: true,
+    });
+    expect(folded.bounds[0].outcome).toBe('optimum');
+    expect(folded.bounds[0].value).toBe(25);
+    expect(folded.bounds[0].detail).toContain('--with-requirements');
+    expect(folded.requirements).toEqual(['BoundsUav::MassRequirement']);
+    expect(folded.exitCode).toBe(0);
+  });
+
+  withZ3('a nonlinear objective is a bound and never an optimum, and exits 2', async () => {
+    const r = await bounds({
+      measure: 'uav.endurance',
+      sense: 'max',
+      free: ['BoundsUav::BatteryPack::capacity'],
+    });
+    const [max] = r.bounds;
+    expect(max.outcome).toBe('bound-without-optimality');
+    expect(max.code).toBe('verification/optimality-not-established');
+    expect(max.detail).toContain('optimality not established (nonlinear)');
+    expect(max.detail, 'a non-optimal bound was presented as the optimum').not.toContain('exactly');
+    expect(max.value).toBeCloseTo(3101.538, 2);
+    expect(r.nonlinear).toBe(true);
+    // NOT ONE OF THE TWO CODES `--allow-inconclusive` LOWERS. A flag that
+    // forgave this would put a bound whose optimality nobody established into a green build.
+    expect(ALLOW_INCONCLUSIVE_CODES.has('verification/optimality-not-established')).toBe(false);
+    expect(r.exitCode).toBe(2);
+  });
+
+  withZ3('the νZ optimum is never beaten by the heuristic `optimize`', async () => {
+    // TWO DIFFERENT THINGS WITH TWO DIFFERENT GUARANTEES, and the report says
+    // which is which: `optimize` is a coordinate descent with a golden-section
+    // line search that returns a point it FOUND, and this returns a bound z3
+    // PROVED. A search that beat the proved bound would mean one of them is
+    // wrong about the model. The tolerance is relative and tiny: the heuristic
+    // reads its objective back through the numeric surface, so the last bits of
+    // a binary64 division are not the property under test.
+    const source = read(UAV);
+    const { model } = await loadModelText(source, { fileName: UAV });
+    if (!model) throw new Error('the fixture produced no model');
+    const idOf = (qualifiedName: string): string => {
+      const el = model.all().find((e) => model.qualifiedName(e.id) === qualifiedName);
+      if (!el) throw new Error(`no ${qualifiedName}`);
+      return el.id;
+    };
+    const capacity = idOf('BoundsUav::BatteryPack::capacity');
+    const endurance = idOf('BoundsUav::AirVehicle::endurance');
+    const range = new Map<string, [number, number]>([[capacity, [500, 700]]]);
+    const proved = await bounds({
+      measure: 'uav.endurance',
+      sense: 'both',
+      free: ['BoundsUav::BatteryPack::capacity'],
+    });
+    const [min, max] = proved.bounds;
+    const noise = (v: number) => Math.abs(v) * 1e-9;
+    const heuristicMax = optimize(model, endurance, [capacity], { sense: 'max', bounds: range });
+    expect(heuristicMax.value).toBeLessThanOrEqual(max.value! + noise(max.value!));
+    const heuristicMin = optimize(model, endurance, [capacity], { sense: 'min', bounds: range });
+    expect(heuristicMin.value).toBeGreaterThanOrEqual(min.value! - noise(min.value!));
+    // And the report names the other one, so the two are never read as one.
+    expect(max.detail).toContain('νZ');
+  });
+
+  withZ3('a strict bound is a supremum, and says it is never attained', async () => {
+    // THE THIRD ANSWER A SINGLE NUMBER CANNOT TELL APART. `payload < 6` has no
+    // maximum: 6 is the supremum and no design takes it. z3 says so as
+    // `6 + (−1)·ε`, and a report that printed `6` as the optimum would name a
+    // value the model excludes.
+    const source = read(UAV).replace('payload <= 6.0 [kg]', 'payload < 6.0 [kg]');
+    expect(source, 'the mutation matched nothing').not.toBe(read(UAV));
+    const { model } = await loadModelText(source, { fileName: UAV });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await boundsReport(model, {
+      measure: 'uav.payload',
+      sense: 'max',
+      free: ['uav.payload'],
+      sourceText: source,
+    });
+    const [max] = r.bounds;
+    expect(max.outcome).toBe('supremum');
+    expect(max.value).toBe(6);
+    expect(max.detail).toContain('never attained');
+    expect(max.term, 'the exact answer no longer carries the epsilon z3 wrote').toContain('epsilon');
+    // AND IT PUBLISHES NO POINT. The optimiser still hands one back, and it is
+    // a feasible design BELOW the supremum — printing `payload = 5` beside
+    // "6 exactly, approached and never attained" invites the one reading this
+    // row exists to deny, exactly as it would on an unbounded row.
+    expect(max.witness, 'a supremum row printed the point the optimiser stopped at').toEqual([]);
+    // An exact bound IS an answer about the model, so it is decided and green.
+    expect(r.exitCode).toBe(0);
+  });
+
+  withZ3('an axiom set that cannot hold together bounds nothing, and says so with a core', async () => {
+    // A vacuity, one level down from `refine`'s: a bound over an unsatisfiable
+    // set is entailed by a contradiction, and no flag launders that into a
+    // number.
+    const source = read(UAV).replace(
+      'assert constraint payloadRange { payload >= 2.0 [kg] and payload <= 6.0 [kg] }',
+      'assert constraint payloadRange { payload >= 8.0 [kg] and payload <= 6.0 [kg] }',
+    );
+    expect(source, 'the mutation matched nothing').not.toBe(read(UAV));
+    const { model } = await loadModelText(source, { fileName: UAV });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await boundsReport(model, {
+      measure: 'uav.mtow',
+      sense: 'max',
+      free: ['uav.payload'],
+      sourceText: source,
+    });
+    expect(r.bounds[0].outcome).toBe('vacuous');
+    expect(r.bounds[0].code).toBe('verification/inconsistent-axioms');
+    expect(r.vacuityCore.length, 'a vacuity with no core names nothing').toBeGreaterThan(0);
+    expect(r.exitCode).toBe(2);
+  });
+
+  it('decides nothing with no solver, and still names the measure', async () => {
+    // The honest-absence path. There is no point evaluation to fall back to: a
+    // bound is a claim about every design the axioms admit, and the value in
+    // the file is one of them.
+    const before = process.env.SYSPROSE_NO_Z3;
+    process.env.SYSPROSE_NO_Z3 = '1';
+    try {
+      const r = await bounds({ measure: 'uav.mtow', sense: 'both' });
+      expect(r.toolAbsent).toBe(true);
+      expect(r.exitCode).toBe(2);
+      expect(r.measure?.qualifiedName).toBe('BoundsUav::AirVehicle::mtow');
+      expect(r.bounds.map((b) => b.code)).toEqual([
+        'verification/tool-absent',
+        'verification/tool-absent',
+      ]);
+      expect(r.diagnostics[0].code).toBe('verification/tool-absent');
+    } finally {
+      if (before === undefined) delete process.env.SYSPROSE_NO_Z3;
+      else process.env.SYSPROSE_NO_Z3 = before;
+    }
+  }, 120_000);
+
+  withZ3('refuses a REF that names no feature this lane reads, rather than calling it unbounded', async () => {
+    // "Unbounded" is arithmetically true of a quantity no relation mentions,
+    // and it would read as a finding about a model that never constrains it.
+    const r = await bounds({ measure: 'uav.battery', sense: 'max' });
+    expect(r.bounds[0].outcome).toBe('inconclusive');
+    expect(r.bounds[0].code).toBe('verification/unsupported-construct');
+    expect(r.bounds[0].detail).toContain('no relation this lane encodes reads');
+    expect(r.exitCode).toBe(2);
+    // ONE ROW PER SENSE, whatever `--sense` asked for: a payload whose SHAPE
+    // depended on which branch produced it would make two runs of one command
+    // two different documents.
+    const both = await bounds({ measure: 'uav.battery', sense: 'both' });
+    expect(both.bounds.map((b) => b.sense)).toEqual(['min', 'max']);
+    expect(both.exitCode).toBe(2);
+  });
+
+  withZ3('a design point this tool cannot reproduce is not a bound', async () => {
+    // §5's WITNESS GATE, at the surface with the least redundancy behind it:
+    // `bounds` is the one command whose ANSWER is a number the encoder
+    // produced, so an encoder defect of the class §5 names — a wrong unit
+    // factor, a sign error, a mis-scaled offset — has nothing else to catch it.
+    // Measured with a real encoder defect (every numeric literal scaled by 1.5
+    // in `smt/encode.ts`): without this gate the run publishes
+    // `max payload = 9 [kg] exactly` at exit 0.
+    //
+    // Here the defect is injected at the BACKEND instead, so the case pins the
+    // gate rather than one encoder bug: the real solver answers, and the point
+    // it stopped at is replaced by one the model's own `payloadRange` forbids.
+    const source = read(UAV);
+    const { model } = await loadModelText(source, { fileName: UAV });
+    if (!model) throw new Error('the fixture produced no model');
+    const measureId = model.all().find(
+      (e) => model.qualifiedName(e.id) === 'BoundsUav::AirVehicle::payload',
+    )!.id;
+    const real = await loadZ3();
+    if (real.absent) throw new Error('the solver is required for this case');
+
+    // The control: the solver's own point, re-read and confirmed.
+    const honest = await checkBounds(model, {
+      backend: real,
+      measureId,
+      sense: 'max',
+      free: new Set(['BoundsUav::AirVehicle::payload']),
+    });
+    expect(honest.bounds[0].outcome).toBe('optimum');
+    expect(honest.bounds[0].value).toBe(6);
+
+    // The same run with one value of the point moved outside the range the
+    // model states. Nothing else changes — the bound z3 returned is the bound
+    // it returned.
+    const tampered: Z3Backend = {
+      ...real,
+      check: (script, opts) => real.check(script, opts),
+      optimize: async (script, sense, opts) => {
+        const outcome = await real.optimize(script, sense, opts);
+        return {
+          ...outcome,
+          witness: outcome.witness.map((w) =>
+            w.symbol === 'BoundsUav::AirVehicle::payload'
+              ? { ...w, term: '9.0', value: 9 }
+              : w,
+          ),
+        };
+      },
+    };
+    const r = await checkBounds(model, {
+      backend: tampered,
+      measureId,
+      sense: 'max',
+      free: new Set(['BoundsUav::AirVehicle::payload']),
+    });
+    const [max] = r.bounds;
+    expect(max.outcome, 'a bound was published over a point this tool cannot reproduce').toBe(
+      'inconclusive',
+    );
+    expect(max.code).toBe('verification/not-evaluable');
+    expect(max.detail).toContain('would not confirm the point it stopped at');
+    expect(max.value, 'a number was published beside an unconfirmed point').toBeNull();
+  });
+
+  withZ3('a refused axiom the objective can REACH stands the row down; one it cannot does not', async () => {
+    // A DROPPED AXIOM WIDENS THE SPACE, so the bound over what is left is
+    // LOOSER than the model's — and every decided outcome here claims it is
+    // not. The reach test is the one `verify` applies before it publishes a
+    // refutation, over the same closure.
+    const near = await bounds(
+      { measure: 'b.depth', sense: 'max', free: ['BoundsRefusedAxiom::TankB::depth'] },
+      REFUSED_AXIOM,
+    );
+    expect(near.refused).toBe(1);
+    expect(near.bounds[0].outcome, 'a bound over a partial axiom set was published as one').toBe(
+      'inconclusive',
+    );
+    expect(near.bounds[0].code).toBe('verification/not-evaluable');
+    expect(near.bounds[0].detail).toContain('PARTIAL axiom set');
+    expect(near.exitCode).toBe(2);
+
+    // The same refusal, out of reach: it shares no symbol with `TankA::level`,
+    // so an assignment satisfying it pastes onto one satisfying A's closure and
+    // it can move neither the bound nor whether one exists. Listing it is all
+    // this run owes it.
+    const far = await bounds(
+      { measure: 'a.level', sense: 'max', free: ['BoundsRefusedAxiom::TankA::level'] },
+      REFUSED_AXIOM,
+    );
+    expect(far.refused, 'the run-level refusal census no longer sees it').toBe(1);
+    expect(far.bounds[0].outcome).toBe('optimum');
+    expect(far.bounds[0].value).toBe(3);
+    expect(far.exitCode).toBe(0);
+  });
+
+  withZ3('an UNBOUNDEDNESS reached over a nonlinear script is not one νZ established', async () => {
+    // νZ is complete for LINEAR real arithmetic and nothing else, and `oo` is as
+    // much a claim about the tightest value as a number is. The finite half of
+    // this rule was already pinned; the infinite half escaped it, and exited 0
+    // over the same script the same run called nonlinear.
+    const source = read(UAV).replace(
+      'assert constraint packSize { battery.capacity >= 500.0 [Wh] and battery.capacity <= 700.0 [Wh] }',
+      'assert constraint packSize { battery.capacity >= 500.0 [Wh] }',
+    );
+    expect(source, 'the mutation matched nothing').not.toBe(read(UAV));
+    const { model } = await loadModelText(source, { fileName: UAV });
+    if (!model) throw new Error('the probe produced no model');
+    const r = await boundsReport(model, {
+      measure: 'uav.endurance',
+      sense: 'max',
+      free: ['BoundsUav::BatteryPack::capacity'],
+      sourceText: source,
+    });
+    expect(r.nonlinear).toBe(true);
+    const [max] = r.bounds;
+    expect(max.outcome, 'an `oo` over a nonlinear script was published as proved').toBe(
+      'bound-without-optimality',
+    );
+    expect(max.code).toBe('verification/optimality-not-established');
+    expect(max.term).toBe('oo');
+    expect(max.detail).toContain('not linear');
+    expect(r.exitCode).toBe(2);
+  });
+
+  withZ3('an `assume` is not an axiom, and folded in it is escapable through its own antecedent', async () => {
+    // BOTH HALVES OF THE `assume` RULE. Without the flag, `HeavyPayload`'s
+    // `assume` constrains nothing — it is requirement CONTEXT, not a fact about
+    // the design — so nothing outside a requirement bounds `emptyMass`.
+    const bare = await bounds(
+      { measure: 'uav.emptyMass', sense: 'max', freeAll: true },
+      ASSUME,
+    );
+    expect(bare.bounds[0].outcome, 'an `assume` bounded a measure it is not an axiom of').toBe(
+      'unbounded',
+    );
+    expect(bare.bounds[0].detail).toContain('`require` and `assume` clauses excluded');
+    expect(bare.requirements).toEqual([]);
+
+    // With the flag, the requirement is folded in as `assume ⇒ require`, and the
+    // ANTECEDENT is what makes the answer 23 rather than 20: a 2 kg payload
+    // escapes `HeavyPayload` entirely and is held only by the 25 kg total.
+    // Folding the `assume` into the AXIOM set, or asserting the guarantee
+    // without it, answers 20 — a TIGHTER bound than the file states.
+    const folded = await bounds(
+      { measure: 'uav.emptyMass', sense: 'max', freeAll: true, withRequirements: true },
+      ASSUME,
+    );
+    expect(folded.bounds[0].outcome).toBe('optimum');
+    expect(folded.bounds[0].value, 'the folded implication was not escapable through its antecedent').toBe(23);
+    expect(folded.requirements).toEqual(['BoundsAssume::MassRequirement', 'BoundsAssume::HeavyPayload']);
+    expect(folded.exitCode).toBe(0);
   });
 });

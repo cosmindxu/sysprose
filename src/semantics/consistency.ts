@@ -575,8 +575,14 @@ function scriptOf(units: readonly Unit[]): {
  * it, while `k = 2.0 * 5.0` says what `k` is and nothing else. `row.vars` is
  * the gathered read set of the row's own body, so the question is asked of the
  * relation this lane actually asserts rather than of the bytes it came from.
+ *
+ * EXPORTED because `bounds --free all` releases exactly this set: "release
+ * every value the file STATES, and keep every equation that says how the model
+ * COMPUTES a quantity" is one rule, and two implementations of it would let one
+ * command bound a measure over a design space the other one called
+ * inconsistent.
  */
-function isLiteralValueAxiom(model: Model, row: Obligation): boolean {
+export function isLiteralValueAxiom(model: Model, row: Obligation): boolean {
   if (row.role !== 'axiom' || row.source !== 'feature-value') return false;
   const raw = model.get(row.element.id)?.attrs.value;
   if (raw === undefined || raw === null) return false;

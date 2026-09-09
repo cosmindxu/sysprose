@@ -1172,13 +1172,162 @@ about *every* implementation the contracts admit, so `examples/uav-power-budget.
 refines whether its design point draws 607 W or 6 W. That is the difference
 between `refine` and `verify`, and it is why `--free` has no meaning here.
 
-**`--via` names the family of edges.** This build answers `composition`. The
-plan also names `derive`, `refine` and `all` — derivation chains read as contract
-refinement — and asking for one of those is a usage error rather than an empty
-report, because reporting nothing over them would read as a model that states
-none.
+**`--via` names the family of edges, and there are three of them.**
+`composition` is the question above. `derive` and `refine` ask the same question
+of a *requirement* somebody wrote down from another requirement, and `all` runs
+every family in one pass with each row naming the one it came from.
+
+**A derivation is checked with the orientation your file actually stores.** The
+two spellings store their ends the opposite way round, and this is the one place
+where guessing would not fail loudly — it would check the mirror obligations and
+report "refines" for a chain written the other way up:
+
+- `derive requirement D from R;` puts **R on the source end**, so `R` is the
+  parent and `D` is written down from it.
+- `refine requirement X by Y;` puts **Y on the source end**, uniform with
+  `satisfy`, so `X` is the parent and `Y` is the one doing the refining.
+
+**The two obligations, over that orientation.** With `nf(C) = ¬A ∨ G` as before:
+
+- `A_R ⊨ ⋀ A_D` — the derived set **assumes no more** than its parent. A child
+  that assumes more applies in fewer situations than the parent's guarantee is
+  claimed in, so discharging the children would leave that gap unproved.
+- `A_R ∧ ⋀ nf(C_D) ⊨ G_R` — the children, in normal form, **entail what the
+  parent promised**. Two children that each carry part of a budget conjoin to
+  imply the whole of it; one of them alone does not.
+
+```console
+$ npm run sysprose -- refine derived.sysml --via derive
+derived.sysml: 1 not refined, 0 vacuous, 0 inconclusive, 0 refined — 1 derivation chain(s) over 2 contract(s)
+  a derivation chain is checked with the orientation the mapper stores: `derive requirement D from R` makes R the parent, …
+  DerivationStrongerAssumption::MassBudget via derive — not-refined
+    verification/derivation-not-refinement
+      assumes no more: DerivationStrongerAssumption::BodyMass  refuted [verification/derivation-not-refinement]
+      witness: DerivationStrongerAssumption::Vehicle::speed = 11 (stored magnitudes)
+$ echo $?
+1
+```
+
+A derivation group **names no part**, and the report says so rather than
+borrowing one: a `derive` edge joins two requirements and states nothing about
+who satisfies either of them — so a `--via derive` run prints no γ census
+either, with or without a solver. Its failures file
+`verification/derivation-not-refinement` rather than
+`verification/refinement-failed`, because the fix is an edit to a requirement and
+not to an architecture.
+
+**An edge whose other end is not a requirement forms no chain, and is counted.**
+`derive requirement Child from rig;` names a *part*, so there is no obligation
+over two contracts to check. The run says how many such edges it found rather
+than reporting "this model states no `derive` chain at all" about a file that
+plainly writes one.
+
+**A refused clause on a derived requirement is read by which half it came from.**
+A dropped conjunct of its **guarantee** makes `nf(C_D)` weaker, and a weaker
+premise is implied by the real one — so the child stays in the premise set and a
+proof under it is still a proof. A dropped conjunct of its **`assume`**
+strengthens `nf(C_D)` into an axiom the file does not state, so that child is
+kept out, files its own undecided row, and the composition row over what is left
+is never published as a **refutation**: the very clause that was dropped may
+exclude the design point it found.
 
 **Source of truth:** `src/semantics/refinement.ts`, `refinementReport` in
+`src/api/verification.ts`, and the L8 cases in
+`test/campaign/verification.test.ts`.
+
+### The tightest value the model admits
+
+`verify` asks whether a requirement holds; `bounds` asks a different question
+with no verdict in it — *how far can this quantity actually go, given what my
+model says?* It is z3's optimiser (νZ) over the model's **axioms**.
+
+**Which clauses are axioms, and which are not.** The axiom set is exactly what
+`obligations` files as `axiom`: **feature values**, **`bind` equalities** and
+**`assert constraint` bodies**. A `require` clause is *not* one of them — a
+requirement is what is being checked, not a fact about the design — and neither
+is an `assume`, which is the guard a requirement applies under. That is why the
+answer below is *unbounded above* on a file that plainly states a 25 kg limit:
+
+```console
+$ npm run sysprose -- bounds uav.sysml --measure uav.mtow --free all
+uav.sysml: 0 not established, 1 decided — `BoundsUav::AirVehicle::mtow` over 2 assertion(s)
+  the axiom set: feature values, `bind` equalities and `assert constraint` bodies; `require` and `assume` clauses excluded, because a requirement is what is being checked, not a fact
+  max  unbounded
+    max `BoundsUav::AirVehicle::mtow`: unbounded above — over 2 assertion(s) — …
+$ echo $?
+0
+```
+
+The exclusion is repeated on **every** verdict line rather than once in a
+header, because a reader who scrolls to a row has been handed a claim they have
+to be able to check. `--with-requirements` folds those bodies in — each as the
+implication `assume ⇒ require` the shipped library says a requirement *is* — and
+says so on the line:
+
+```console
+$ npm run sysprose -- bounds uav.sysml --measure uav.mtow --free all --with-requirements
+  max `BoundsUav::AirVehicle::mtow` = 25 (coherent SI; the feature declares no unit) exactly (linear optimum, optimality established by z3's νZ) … PLUS the `require` bodies … (`--with-requirements`)
+$ echo $?
+0
+```
+
+The parenthesis is not noise. **The bound is reported in the magnitude the model
+STORES, with the unit the feature declares beside it** — `payload` is `6 [kg]
+(6 in coherent SI)` — and `mtow` declares no unit literal at all (its value is
+the expression `emptyMass + payload`), so what it stores is coherent SI already
+and the line says which of the two a reader is holding. A quantity whose unit
+you want named on the row is one the file should declare a unit for.
+
+**`--free` decides what may move.** With nothing released every value the file
+states is an axiom, so the bound *is* the value in the file. Release a feature
+and the bound ranges over it; `--free all` releases every value the file
+**states** and keeps every equation that says how a quantity is **computed** —
+the same rule `consistency` releases under, so the two commands cannot answer
+over different design spaces.
+
+**Exact, or honest about not being exact.** Four answers, and they are not the
+same sentence:
+
+| Answer | What it means |
+|---|---|
+| `optimum` | νZ established its optimality and a design attains it — the witness is printed |
+| `supremum` / `infimum` | exact, and **never attained** (`x < 5` has no maximum) |
+| `unbounded` | z3 proved there is no finite bound in that direction — over a **linear** script, the only shape νZ is complete for |
+| `bound-without-optimality` | a bound z3 reached over a **nonlinear** script, which νZ does not certify — finite or `oo` alike |
+
+The last one is `verification/optimality-not-established`, and it exits **2**. It
+is deliberately not one of the two codes `--allow-inconclusive` lowers — and
+`bounds` does not offer that flag at all — because presenting a non-optimal
+bound as the optimum is the one sentence this command may never write.
+
+**A refused axiom is a missing axiom, and the row says so instead of a number.**
+A relation a gate could not encode was not asserted, and dropping one **widens**
+the design space — so the bound over what is left is looser than the model's,
+never tighter. When such a refusal shares a symbol with what the objective can
+reach, the row is `verification/not-evaluable` at exit **2** rather than a
+bound: a file whose only ceiling on a quantity is a relation the encoder refused
+would otherwise read *unbounded above*. A refusal in an unrelated corner of the
+file cannot move the answer and is listed rather than acted on — the same reach
+test `verify` applies before it publishes a refutation.
+
+**The point z3 stopped at is re-read before the number is published.** Every
+design point this lane prints goes back through the tool's own evaluator first
+(§5's witness gate), and `bounds` is the surface with the least redundancy
+behind it — its answer *is* a number the encoder produced. A point this tool
+cannot reproduce is `verification/not-evaluable`, never a bound.
+
+**`bounds` publishes its own exit-code contract, and it has no 1.** Every other
+judging subcommand spends its 1 on a decided negative about the model. A bound
+is not one: **0** is every bound decided, **2** is anything undecided, and there
+is no 1 to misread.
+
+**Two optimisers, named so they are never read as one.** `bounds` reports a
+bound z3 **proved**; the `optimize` function in `src/semantics/solver.ts` is a
+coordinate descent with a golden-section line search that returns a point it
+**found** and proves nothing. The report says which is which, and the L8 corpus
+pins the direction of the difference: the heuristic never beats the proved bound.
+
+**Source of truth:** `src/semantics/bounds.ts`, `boundsReport` in
 `src/api/verification.ts`, and the L8 cases in
 `test/campaign/verification.test.ts`.
 

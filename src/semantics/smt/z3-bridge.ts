@@ -84,6 +84,66 @@ export interface Z3Backend {
   readonly initMs: number;
   /** Run one bounded check over an SMT-LIB2 script. */
   check(script: string, opts?: CheckOptions): Promise<CheckOutcome>;
+  /**
+   * Run one bounded OPTIMISATION over an SMT-LIB2 script that ends in a single
+   * `(maximize …)` or `(minimize …)`.
+   *
+   * A separate entry point rather than a flag on {@link check}, because what
+   * comes back is a different thing: `νZ` answers with a BOUND — possibly
+   * infinite, possibly a supremum nothing attains — and a caller that read that
+   * as a `sat` witness would print a design point where the model admits none.
+   *
+   * ONE OBJECTIVE PER SCRIPT, and the reason is measured rather than assumed:
+   * z3 optimises several objectives LEXICOGRAPHICALLY by default, so a script
+   * carrying `(minimize x)` and `(maximize x)` answers `1` for both on
+   * `1 ≤ x ≤ 5` — the maximisation runs under the minimum already fixed. A
+   * `--sense both` run is therefore two scripts and two calls, never one.
+   */
+  optimize(script: string, sense: OptimizeSense, opts?: CheckOptions): Promise<OptimizeOutcome>;
+}
+
+/** Which direction an objective is pushed in. */
+export type OptimizeSense = 'min' | 'max';
+
+/**
+ * The bound z3 proved, in the three parts νZ actually reports it in.
+ *
+ * `getUpperAsVector` / `getLowerAsVector` return `[infinity, rational,
+ * epsilon]`, and all three matter to a verdict line that must not overstate
+ * itself:
+ *
+ *  - `infinite ≠ 0` is **unbounded** in the direction asked for — there is no
+ *    optimum and printing the rational part (which is 0) as one would state a
+ *    number the model never admits.
+ *  - `epsilon ≠ 0` is a supremum or infimum the model APPROACHES and never
+ *    attains: `x < 5` has no maximum, and z3 says so as `5 + (−1)·ε`. It is an
+ *    exact bound and it is not a value the design can take, and those are two
+ *    different sentences.
+ *  - otherwise the rational part is the optimum, attained.
+ */
+export interface ObjectiveBound {
+  /** z3's own rendering — `oo`, `5`, `(+ 5.0 (* (- 1.0) epsilon))`. The exact answer. */
+  term: string;
+  /** The infinity coefficient: `+1` unbounded above, `−1` unbounded below, `0` finite. */
+  infinite: number;
+  /** The finite part as a JS number, or `null` when it is not one. */
+  value: number | null;
+  /** The epsilon coefficient: non-zero for a bound that is approached, never reached. */
+  epsilon: number;
+}
+
+/** What one bounded optimisation came to. */
+export interface OptimizeOutcome {
+  status: CheckStatus;
+  /** z3's `reasonUnknown()`, or the message it refused the script with. `''` otherwise. */
+  reason: string;
+  timedOut: boolean;
+  timeoutMs: number;
+  elapsedMs: number;
+  /** The bound, for `sat`. `null` for every other status. */
+  bound: ObjectiveBound | null;
+  /** The point z3 stopped at, for `sat`. Empty otherwise. */
+  witness: WitnessValue[];
 }
 
 /** What {@link loadZ3} answers: a backend, or an absence with a reason. */
@@ -191,6 +251,19 @@ interface Z3Api {
 }
 interface Z3Context {
   Solver: new () => Z3Solver;
+  Optimize: new () => Z3Optimize;
+}
+interface Z3Optimize {
+  set(key: string, value: string | number | boolean): void;
+  fromString(script: string): void;
+  check(): Promise<'sat' | 'unsat' | 'unknown'>;
+  model(): Z3Model;
+  /** `[infinity, rational, epsilon]` — see {@link ObjectiveBound}. */
+  getUpperAsVector(index: number): Iterable<{ toString(): string }>;
+  getLowerAsVector(index: number): Iterable<{ toString(): string }>;
+  getUpper(index: number): { toString(): string };
+  getLower(index: number): { toString(): string };
+  reasonUnknown(): string;
 }
 interface Z3Solver {
   set(key: string, value: string | number | boolean): void;
@@ -271,6 +344,7 @@ export async function loadZ3(): Promise<Z3Load> {
     seed: RANDOM_SEED,
     initMs,
     check: (script, opts) => runCheck(ctx, script, opts),
+    optimize: (script, sense, opts) => runOptimize(ctx, script, sense, opts),
   };
 }
 
@@ -345,6 +419,92 @@ async function runCheck(
   return { ...empty, status, reason, timedOut: reason === 'timeout', elapsedMs };
 }
 
+/**
+ * One bounded optimisation, with a fresh `Optimize` so no objective outlives
+ * its script.
+ *
+ * The same asymmetry {@link runCheck} runs under — a fresh optimiser, the
+ * cached context — and for the same measured reason (see {@link cached}).
+ *
+ * WHAT IS READ BACK, AND FROM WHICH SIDE. A maximisation's answer is its UPPER
+ * bound and a minimisation's is its LOWER one; reading the other side of the
+ * pair reports the value the search started from rather than the one it proved.
+ * The vector form is read rather than the term, because the three coefficients
+ * are the difference between "unbounded", "approached and never attained" and
+ * "attained" — three different verdict sentences that all render as one string.
+ */
+async function runOptimize(
+  ctx: Z3Context,
+  script: string,
+  sense: OptimizeSense,
+  opts: CheckOptions = {},
+): Promise<OptimizeOutcome> {
+  const timeoutMs = boundOf(opts.timeoutMs);
+  const empty = { bound: null, witness: [] as WitnessValue[], timeoutMs };
+  const opt = new ctx.Optimize();
+  opt.set('timeout', timeoutMs);
+  opt.set('random_seed', RANDOM_SEED);
+
+  try {
+    opt.fromString(script);
+  } catch (err) {
+    // The same reading as `check`'s: a script z3 REFUSES is a defect in what
+    // this tool produced — an objective over a symbol nothing declared, most
+    // likely — and never an undecided answer about the model.
+    return { ...empty, status: 'error', reason: messageOf(err), timedOut: false, elapsedMs: 0 };
+  }
+
+  const t0 = now();
+  let status: 'sat' | 'unsat' | 'unknown';
+  try {
+    status = await opt.check();
+  } catch (err) {
+    return { ...empty, status: 'error', reason: messageOf(err), timedOut: false, elapsedMs: now() - t0 };
+  }
+  const elapsedMs = now() - t0;
+
+  if (status !== 'sat') {
+    const reason = status === 'unknown' ? safe(() => opt.reasonUnknown(), 'unknown') : '';
+    return { ...empty, status, reason, timedOut: reason === 'timeout', elapsedMs };
+  }
+  return {
+    ...empty,
+    status,
+    reason: '',
+    timedOut: false,
+    elapsedMs,
+    bound: boundOfObjective(opt, sense),
+    witness: witnessOf(opt, opts.variables),
+  };
+}
+
+/** The proved bound of objective 0, from the side the sense asked for. */
+function boundOfObjective(opt: Z3Optimize, sense: OptimizeSense): ObjectiveBound | null {
+  const parts = safe(
+    () =>
+      [...(sense === 'max' ? opt.getUpperAsVector(0) : opt.getLowerAsVector(0))].map((p) =>
+        p.toString(),
+      ),
+    [] as string[],
+  );
+  const term = safe(
+    () => (sense === 'max' ? opt.getUpper(0) : opt.getLower(0)).toString(),
+    parts.join(' '),
+  );
+  if (parts.length !== 3) return null;
+  const asNumber = (s: string): number => {
+    const v = rationalToNumber(s);
+    return typeof v === 'number' ? v : 0;
+  };
+  const rational = rationalToNumber(parts[1]);
+  return {
+    term,
+    infinite: asNumber(parts[0]),
+    value: typeof rational === 'number' ? rational : null,
+    epsilon: asNumber(parts[2]),
+  };
+}
+
 /** The budget, refused rather than silently repaired when it is not one. */
 function boundOf(ms: number | undefined): number {
   if (ms === undefined) return DEFAULT_TIMEOUT_MS;
@@ -357,8 +517,17 @@ function boundOf(ms: number | undefined): number {
   return Math.ceil(ms);
 }
 
-/** The model, as `symbol → value`, in the caller's order when it named one. */
-function witnessOf(solver: Z3Solver, wanted: readonly string[] | undefined): WitnessValue[] {
+/**
+ * The model, as `symbol → value`, in the caller's order when it named one.
+ *
+ * Typed on the one method it uses rather than on `Z3Solver`, because the
+ * optimiser answers with a model too and a second copy of this function is how
+ * the two surfaces would come to filter their witnesses differently.
+ */
+function witnessOf(
+  solver: { model(): Z3Model },
+  wanted: readonly string[] | undefined,
+): WitnessValue[] {
   const found = new Map<string, string>();
   try {
     const model = solver.model();

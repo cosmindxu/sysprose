@@ -128,14 +128,42 @@ export const VERIFY_EXIT_CODES = `Exit codes: 0 every obligation discharged non-
  * Its own contract is the one the code actually implements, in
  * `refinementExitCode`: **1** is a decided negative about the architecture — an
  * obligation refuted with a confirmed counterexample — and **2** is everything
- * undecided, which here includes a VACUOUS contract set and a decomposition
- * stood down because a gate refused a clause of it. `--allow-inconclusive`
+ * undecided, which here includes a VACUOUS contract set and a group stood down
+ * because a gate refused a clause of it. `--allow-inconclusive`
  * lowers 2 → 0 for the two merely-undecided codes and never for a vacuity, an
  * absent solver or `verification/refinement-undecided`; a run in which nothing
  * at all was decided is 2 whatever the flag says, because exit 0 asserts that
- * every decomposition the model states was SHOWN to refine.
+ * every group the model states was SHOWN to refine.
+ *
+ * AND IT NAMES ALL THREE FAMILIES `--via` ACCEPTS, not just decompositions. A
+ * `--via derive` run refutes on `verification/derivation-not-refinement` and
+ * exits 2 on a file that states no CHAIN — neither of which is a decomposition
+ * — so a contract that spoke only of decompositions documented an exit 1 that
+ * family cannot produce and an exit 2 cause that is not the one it hits.
  */
-export const REFINE_EXIT_CODES = `Exit codes: 0 every decomposition the model states was shown to refine — obligation (3) proved and every component assumption discharged, over a satisfiable contract set — and there was at least one decomposition to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract · 2 usage/IO error, a degraded model, a model that states no decomposition at all, or ANY undecided decomposition — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here`;
+export const REFINE_EXIT_CODES = `Exit codes: 0 every decomposition or derivation chain the --via family reads was shown to refine — for a decomposition, obligation (3) proved and every component assumption discharged; for a derive/refine chain, every derived requirement shown to assume no more than its parent and the set shown to entail the parent's guarantee — over a satisfiable contract set, and there was at least one of them to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract, or the derived requirements admit one that breaks the requirement they were written from · 2 usage/IO error, a degraded model, a model that states no decomposition or derivation chain the --via family can read, or ANY undecided group — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here`;
+
+/**
+ * `bounds`'s exit-code contract — a FIFTH one, because this subcommand answers
+ * a question with no verdict in it.
+ *
+ * Every other contract in this file spends its **1** on a decided negative: a
+ * file that did not load, a finding, a refuted obligation, an architecture that
+ * does not refine. `bounds` has none to spend it on. It reports the tightest
+ * value the model's axioms admit, and a number is not a violation — §2 reserves
+ * exit 1 for a refuted obligation and this subcommand produces none, so a
+ * contract with a 1 in it would document a state the command cannot reach.
+ *
+ * What it does spend is the difference between a bound that was DECIDED and one
+ * that was not: an optimum whose optimality νZ established, an exact supremum or infimum, or a
+ * proved unboundedness are answers about the model; a value νZ could not
+ * certify as the tightest is not, and neither is a timeout, an absent solver,
+ * an axiom set that cannot hold together, or a measure no relation reads. There
+ * is no `--allow-inconclusive` here: the flag's scope is the two UNDECIDED
+ * codes, and a run whose only answer was "optimality not established" must not read
+ * as a run that answered.
+ */
+export const BOUNDS_EXIT_CODES = `Exit codes: 0 every bound asked for was DECIDED — an optimum whose optimality z3's νZ established, an exact supremum or infimum it proved is approached and never attained, or an unboundedness it proved under the axioms that were asserted · 2 usage/IO error, a degraded model, or any bound that was not decided — a value νZ does not certify as the tightest (nonlinear), a timeout, an absent solver, an axiom set that cannot hold together, or a measure no relation in the model reads. There is no exit 1: a bound is what the axioms admit and not a verdict, and there is no --allow-inconclusive here`;
 
 /**
  * `check-behaviour`'s exit-code contract — a FIFTH one, and it is here for the
@@ -257,7 +285,7 @@ export const SCOPE_NAMES: readonly string[] = [
  * section — and under it `verify` would have been documented with 1 meaning the
  * exact opposite of what it means.
  */
-export type ExitContract = 'report' | 'verify' | 'refine' | 'write' | 'behaviour';
+export type ExitContract = 'report' | 'verify' | 'refine' | 'bounds' | 'write' | 'behaviour';
 
 /** One subcommand. */
 export interface CommandSpec {
@@ -278,6 +306,7 @@ export interface CommandSpec {
 export function exitCodesFor(cmd: CommandSpec): string {
   if (cmd.exitContract === 'verify') return VERIFY_EXIT_CODES;
   if (cmd.exitContract === 'refine') return REFINE_EXIT_CODES;
+  if (cmd.exitContract === 'bounds') return BOUNDS_EXIT_CODES;
   if (cmd.exitContract === 'write') return WRITE_EXIT_CODES;
   if (cmd.exitContract === 'behaviour') return BEHAVIOUR_EXIT_CODES;
   return EXIT_CODES;
@@ -632,7 +661,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         kind: 'value',
         metavar: 'KIND',
         fallback: 'composition',
-        doc: 'Which family of edges to read: `composition` — the contracts on the parts a `satisfy` attaches under the part the system contract is satisfied by. `derive`, `refine` and `all` are named by the plan and NOT answered by this build; asking for one is a usage error rather than an empty report',
+        doc: 'Which family of edges to read: `composition` — the contracts on the parts a `satisfy` attaches under the part the system contract is satisfied by; `derive` — the requirements a `derive requirement D from R` writes down from another, checked with the orientation the mapper stores (the parent is the SOURCE of the edge); `refine` — the same question over `refine requirement X by Y`, which stores its ends the other way round (the parent is the TARGET, uniform with `satisfy`); `all` — every family in one run, each row naming the one it came from',
       },
       {
         name: 'connections-as-equalities',
@@ -643,6 +672,46 @@ export const COMMANDS: readonly CommandSpec[] = [
         name: 'allow-inconclusive',
         kind: 'boolean',
         doc: 'Lower exit 2 to 0 for the UNDECIDED codes only — verification/timeout and verification/unsupported-construct. Never for an absent solver, never for a vacuous contract set, never for verification/refinement-undecided, never over a refuted obligation, and never over a run in which nothing at all was decided',
+      },
+    ],
+  },
+  // The fourth subcommand with an exit contract of its own, and the only one in
+  // this table that DECIDES something without judging anything: `verify`,
+  // `consistency` and `refine` all spend an exit 1 on a decided negative about
+  // the model, and a bound is not one — it is what the axioms admit. Its own
+  // contract is what says so; `verify`'s would document an exit 1 it cannot
+  // reach, exactly as it would have for `refine`.
+  {
+    name: 'bounds',
+    question: 'What is the tightest value this measure can take under the model’s axioms?',
+    backedBy: 'boundsReport (src/api/verification.ts)',
+    payloadKey: 'bounds',
+    exitContract: 'bounds',
+    flags: [
+      {
+        name: 'measure',
+        kind: 'value',
+        metavar: 'REF',
+        doc: 'The feature to bound: a qualified name, the dotted path a constraint body writes (`uav.endurance`), or a feature name unique in the model. A REF that resolves to something no relation in the model reads is reported as such rather than as an unbounded quantity — "unbounded" is arithmetically true of a feature nothing constrains and would read as a finding about the design',
+      },
+      {
+        name: 'sense',
+        kind: 'value',
+        metavar: 'DIR',
+        fallback: 'max',
+        doc: 'Which direction to push the measure in: min | max | both. Two directions are two solver runs, deliberately — z3 optimises several objectives lexicographically, so one script carrying both would answer the second one under the first already fixed',
+      },
+      {
+        name: 'free',
+        kind: 'value',
+        metavar: 'F',
+        fallback: 'none — every value the file states is an axiom of the bound',
+        doc: 'Release a feature value (qualified name, dotted path, or `all`) so the bound may range over it. With nothing released every value is pinned and the bound is the value in the file; `all` releases every value the file STATES and keeps every equation that says how a quantity is COMPUTED, which is the same rule `consistency` releases under',
+      },
+      {
+        name: 'with-requirements',
+        kind: 'boolean',
+        doc: 'Fold the `require` bodies into the axiom set, each as the implication `assume ⇒ require` the shipped library states a requirement to be, and say so on every verdict line. OFF by default: a requirement is what is being checked, not a fact about the design, which is why `--measure uav.mtow --free all` answers "unbounded above" over a file that plainly states a 25 kg limit',
       },
     ],
   },
@@ -815,13 +884,16 @@ export function renderTopUsage(): string {
     ...(judging.length > 0
       ? [
           // Written as a sentence rather than as a joined list, because there
-          // is more than one judging subcommand now and "`verify`,
-          // `consistency` judges" is not English. A reader who cannot parse the
-          // line cannot act on the one thing it says.
+          // is more than one such subcommand now and "`verify`, `consistency`
+          // judges" is not English. The VERB is deliberately not "judge" any
+          // more either: `bounds` carries a contract of its own and judges
+          // nothing — it reports what the axioms admit — so a line that called
+          // it a judging subcommand would tell a reader to look for an exit 1
+          // it cannot produce.
           `  …for every subcommand that REPORTS. ${listOf(judging.map((c) => `\`${c.name}\``))} ` +
             (judging.length === 1
-              ? 'judges and has its own contract: run its `--help`.'
-              : 'judge and have their own contract: run their `--help`.'),
+              ? 'carries a contract of its own: run its `--help`.'
+              : 'each carry a contract of their own: run their `--help`.'),
         ]
       : []),
   ].join('\n');
