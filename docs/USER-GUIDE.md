@@ -1688,6 +1688,51 @@ run enters, and `verification/deadlock` and
 `verification/nondeterministic-choice` reported there would be invented rather
 than found.
 
+**A guard it could not evaluate is not a guard that is false.** A bound is not
+the only thing that stops an absence claim. Ten lines that parse clean, with no
+diagnostics of their own:
+
+```sysml
+part def Ctrl {
+    attribute mode : Integer;          // no value, anywhere
+    state def Modes {
+        state idle;
+        state hazard;
+        transition idle if mode == 3 then hazard;
+    }
+}
+```
+
+The model does not say `mode != 3`; it says *nothing* about `mode`, so
+`mode == 3` evaluates to nothing at all. A walk cannot fire that transition — it
+has to pick something, and it picks not firing — but "the walk did not fire it"
+is not "no run ever could". So `reach` withholds all three absence lists for that
+machine (unreachable, dead, and the no-way-out rows), prints `undetermined
+under {…}` where it would otherwise print `exhaustive`, and raises
+`verification/guard-undetermined` naming the guard and the names nothing valued:
+
+```console
+    1 configuration(s) explored, depth 0 — undetermined under {maxConfigs 10000, …} — 1 guard(s) the walk could not evaluate; the unreachable, dead and no-way-out lists are WITHHELD and are NOT reported as findings
+    undecided    idle -> hazard — guard `mode == 3`: no value for mode
+  verification/guard-undetermined  the guard `mode == 3` on transition `idle -> hazard` could not be evaluated — no value is in scope for `mode`. …
+```
+
+Write `attribute mode : Integer = 3;` (or `= 4`) and the walk decides it — and
+with `= 4` you get the unreachable state and the dead transition back, because
+then the guard really is false.
+
+A hidden-choice row is an *existential* claim — two transitions were enabled at
+once in a configuration the walk reached — so a bound never withholds one. A
+withheld edge is more delicate, and the narrow statement is the true one:
+removing a candidate **beside** a choice can only shrink it, but removing one
+**inside** it moves which level of the active stack the choice is read at, and
+that can invent a row. So a choice is withheld exactly where an undetermined
+guard sits strictly inside it, and reported everywhere else.
+
+`check-behaviour` shares the gate: a property no bad prefix violated over a
+graph missing an edge nothing decided is `inconclusive` (exit 2), never `pass`
+and never `vacuous`, and its row is the same `verification/guard-undetermined`.
+
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither
 marked final nor a `done` node — a reading of one machine under one alphabet,
@@ -1810,7 +1855,7 @@ re-parsing a sentence.
 | **pass** | no bad prefix, over a graph the walk saw **whole**, on a safety pattern | 0 |
 | **fail** | a bad prefix, printed as the run that produced it — still a fail under a bound, because a witness is a real run | 1 |
 | **vacuous** | the property's antecedent never holds, over a graph the walk saw **whole**: a scope no run opens, or a `precedence` whose P never happens | **2** |
-| **inconclusive** | a bound hit — including one that stopped the walk before the antecedent, which is *not* a vacuity — a construct the explorer refuses (parallel regions, history), a liveness pattern, a property that could not be read, or an atom that names nothing | **2** |
+| **inconclusive** | a bound hit — including one that stopped the walk before the antecedent, which is *not* a vacuity — a guard the walk could not evaluate, a construct the explorer refuses (parallel regions, history), a liveness pattern, a property that could not be read, or an atom that names nothing | **2** |
 
 **A bound can hide a violation and can never invent one**, which is why those
 two rows are not symmetric. `--max-configs N` that stops the walk turns a would-be
@@ -2273,6 +2318,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **No domain axioms from a quantity kind** | Typing a feature `ISQ::PowerValue` tells this tool nothing about its sign. A freed feature bounded on one side only is `verification/free-variable-unbounded`, never a refutation — otherwise `cruisePower = -1 W` reads as a counterexample and the arithmetic check confirms it. |
 | **A narrow encodable fragment** | Only single-valued scalar features with ScalarValues typing are encoded. Multiplicity > 1, chains through unresolved typings, strings, enums, `null`, `%` and variable exponents are `verification/unsupported-construct` — inconclusive, with the construct named. Ordering on °C is encoded in kelvin; arithmetic on °C is refused, exactly as the numeric surface refuses it. |
 | **A bounded behaviour walk** | The in-process engine decides the finite abstraction it exhaustively explored, and says so: a `pass` needs the whole configuration graph, a `fail` does not. There is no event pool and no deferred events, completion chasing stops at 64, and `after(n)` is a discrete clock, not dense time. |
+| **A guard nothing values is not a guard that is false** | `transition idle if mode == 3 then hazard;` over an `attribute mode : Integer;` with no value is a question this tool does not decide. `reach` withholds that machine's unreachable, dead and no-way-out lists, prints `undetermined under {…}` instead of `exhaustive`, and raises `verification/guard-undetermined` naming the guard and the names nothing valued — give the feature a value (`= 3`) and the walk decides it. `check-behaviour` shares the gate and reports `inconclusive` (exit 2) rather than `pass` or `vacuous`. A hidden-choice row stays where the withheld guard is beside it — two transitions enabled at once is an existential claim, and removing a candidate next to them can only shrink it — and is withheld where the withheld guard is strictly inside it, because that moves which level the choice is read at. |
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 

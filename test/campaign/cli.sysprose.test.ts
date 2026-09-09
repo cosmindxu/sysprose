@@ -3207,6 +3207,88 @@ package P {
     );
   }, 90_000);
 
+  it('reach withholds every absence over a guard it could not evaluate, and says why', () => {
+    // The defect at the surface a person uses. `GuardProbe::Ctrl` never values
+    // `mode`, so `if mode == 3` decides nothing — and this command used to print
+    // `exhaustive` beside three absence findings about it. The two machines
+    // below it in the same file are the controls: `= 4` is a guard that is
+    // genuinely false and keeps every finding, `= 3` fires.
+    const probe = resolve(process.cwd(), `${FIXV}/models/guard-undetermined.sysml`);
+    const r = run(['reach', probe]);
+    // A warning does not move a report command's exit code.
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('3 state machine(s), 2 walked to exhaustion');
+    expect(r.stdout).toContain('verification/guard-undetermined');
+    expect(r.stdout).toContain('undecided    idle -> hazard — guard `mode == 3`: no value for mode');
+    expect(r.stdout).toContain(
+      'the unreachable, dead and no-way-out lists are WITHHELD: a guard this walk could not evaluate is not a guard that is false',
+    );
+    // The undecided machine is never called exhaustive, and nothing is claimed
+    // absent about it.
+    const ctrl = r.stdout.slice(
+      r.stdout.indexOf('GuardProbe::Ctrl::Modes'),
+      r.stdout.indexOf('GuardProbe::Decided::Modes'),
+    );
+    expect(ctrl).toContain('undetermined under {maxConfigs 10000');
+    expect(ctrl).not.toContain('exhaustive');
+    expect(ctrl).not.toContain('unreachable  ');
+    expect(ctrl).not.toContain('no way out   ');
+    // The control: the machine that DID decide its guard still says everything.
+    expect(r.stdout).toContain('unreachable  GuardProbe::Decided::Modes::hazard');
+    expect(r.stdout).toContain('no way out   GuardProbe::Decided::Modes::idle');
+    // And the words this command may never print, whatever it withheld.
+    expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
+  }, 90_000);
+
+  it('check-behaviour will not pass a property over a guard it could not evaluate', () => {
+    // THE SAME DEFECT ONE LANE OVER, and the worse half of it: `reach`
+    // withholding its lists while this command printed `pass`, `exhaustive` and
+    // exit 0 over the SAME machine in the SAME file made the tool contradict
+    // itself, and a bare `pass` is the half somebody acts on. Both commands now
+    // read the fifth condition off one walk result.
+    const probe = resolve(process.cwd(), `${FIXV}/models/guard-undetermined.sysml`);
+    const pattern = 'pattern=absence, scope=globally, p=state hazard';
+    const undecided = run([
+      'check-behaviour',
+      probe,
+      '--element',
+      'GuardProbe::Ctrl::Modes',
+      '--pattern',
+      pattern,
+    ]);
+    // Inconclusive is exit 2 by the lane's contract, and no flag lowers this
+    // one: `--allow-inconclusive` is scoped to `verification/timeout` and
+    // `verification/unsupported-construct`.
+    expect(undecided.code).toBe(2);
+    expect(undecided.stdout).toContain('0 pass, 0 fail, 0 vacuous, 1 inconclusive');
+    expect(undecided.stdout).toContain('verification/guard-undetermined');
+    expect(undecided.stdout).toContain('undetermined under {maxConfigs 10000');
+    expect(undecided.stdout).toContain('NOT a pass');
+    // The verdict block must not carry the promise it declined to make.
+    const verdict = undecided.stdout.slice(
+      0,
+      undecided.stdout.indexOf('semantic profile'),
+    );
+    expect(verdict).not.toContain('exhaustive');
+    expect(verdict).not.toMatch(/\bPASS\b/);
+    expect(undecided.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
+
+    // THE CONTROL, in the same file: `mode = 4` decides the guard false, so
+    // `hazard` really is never entered and the pass is earned. A fix that
+    // withheld here would have replaced a wrong claim with silence.
+    const decided = run([
+      'check-behaviour',
+      probe,
+      '--element',
+      'GuardProbe::Decided::Modes',
+      '--pattern',
+      pattern,
+    ]);
+    expect(decided.code).toBe(0);
+    expect(decided.stdout).toContain('1 pass, 0 fail, 0 vacuous, 0 inconclusive');
+    expect(decided.stdout).toContain('exhaustive under {maxConfigs 10000');
+  }, 90_000);
+
   it('reach reports a file with no machine at all, and exits 0 doing it', () => {
     // NOT a usage error. Nothing was misused and nothing failed to load: the
     // file simply declares no machine, which is a fact about the model and the

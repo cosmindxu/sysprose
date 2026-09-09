@@ -15,6 +15,11 @@
  * produce `exhaustive: false` and EMPTY absence lists, in exactly the same way,
  * because a bound hit that could masquerade as a finding is the failure this
  * whole lane is written against.
+ *
+ * The third half was added by a defect the first two did not catch, and it is
+ * the same failure through a door the bounds do not cover: a walk that finished
+ * inside every bound, over a guard nothing in the model decides. Its half of
+ * this file is the last two describes.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -28,6 +33,7 @@ import {
   BEHAVIOUR_UNSUPPORTED_CODE,
   DEAD_TRANSITION_CODE,
   DEADLOCK_CODE,
+  GUARD_UNDETERMINED_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
   UNREACHABLE_STATE_CODE,
   exploreMachine,
@@ -36,7 +42,12 @@ import {
   walkableTransitions,
 } from '../../src/semantics/mc/explore';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
-import { MAX_COMPLETION, hashConfig, initialConfig } from '../../src/semantics/mc/config';
+import {
+  MAX_COMPLETION,
+  hashConfig,
+  initialConfig,
+  stepCandidates,
+} from '../../src/semantics/mc/config';
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
 
@@ -343,16 +354,452 @@ describe('the semantic profile is data, and its provenance is real', () => {
     }
   });
 
-  it('names the six codes this engine can raise', () => {
+  it('names the seven codes this engine can raise', () => {
     expect([...BEHAVIOUR_CODES].sort()).toEqual([
       'verification/behaviour-unsupported-construct',
       'verification/bound-exhausted',
       'verification/dead-transition',
       'verification/deadlock',
+      'verification/guard-undetermined',
       'verification/nondeterministic-choice',
       'verification/unreachable-state',
     ]);
   });
+});
+
+/* ────────────── a guard nothing decided is not a guard that is false ─────── */
+
+/**
+ * The defect this gate closes, and the two controls that stop it over-firing.
+ *
+ * `GuardProbe::Ctrl` gives `mode` no value at all, so `if mode == 3` evaluates
+ * to NOTHING. The step relation reads that as "does not fire" because it has to
+ * pick something — and before the gate, the report read the same silence as
+ * "the transition is never enabled" and published three absence findings under
+ * the word `exhaustive`, on a ten-line model with no diagnostics of its own.
+ *
+ * The two controls are the same machine with a value. `= 4` makes the guard
+ * genuinely FALSE: the absence findings are correct there and must still be
+ * printed, or the fix has traded a false claim for a missing one. `= 3` makes it
+ * hold, and nothing about that machine may change at all.
+ */
+describe('a guard the walk could not evaluate is not a guard that is false', () => {
+  const PROBE = 'test/fixtures/verification/models/guard-undetermined.sysml';
+  let report: ReturnType<typeof reachReport>;
+  beforeAll(async () => {
+    const loaded = await loadModelText(read(PROBE), { fileName: PROBE });
+    report = reachReport(loaded.model!);
+  }, 90_000);
+
+  const machine = (owner: string) =>
+    report.machines.find((m) => m.machine.qualifiedName === `GuardProbe::${owner}::Modes`)!;
+
+  it('carries the guard, and the name nothing gave a value to, to the surface', () => {
+    const ctrl = machine('Ctrl');
+    expect(ctrl, `${PROBE} no longer declares GuardProbe::Ctrl::Modes`).toBeDefined();
+    expect(ctrl.undeterminedGuards).toHaveLength(1);
+    const row = ctrl.undeterminedGuards[0];
+    expect(row.guard).toBe('mode == 3');
+    expect(row.unresolved).toEqual(['mode']);
+    expect(row.transition.from!.name).toBe('idle');
+    expect(row.transition.to!.name).toBe('hazard');
+  });
+
+  it('withholds all three absence lists and never says `exhaustive`', () => {
+    const ctrl = machine('Ctrl');
+    // The walk FINISHED — no bound was hit — which is exactly why the four
+    // older conditions all held and the report published anyway.
+    expect(ctrl.boundHit).toBe('none');
+    expect(ctrl.exhaustive).toBe(false);
+    expect(ctrl.suppressed).toBe(true);
+    expect(ctrl.states.unreachable).toEqual([]);
+    expect(ctrl.transitions.dead).toEqual([]);
+    // The deadlock row is an absence claim too — "this configuration has no way
+    // out" — over the very edge the walk could not decide.
+    expect(ctrl.deadlocks).toEqual([]);
+    expect(ctrl.qualification).toContain('undetermined under');
+    expect(ctrl.qualification).toContain('WITHHELD');
+    expect(ctrl.qualification, 'the report called an undecided walk exhaustive').not.toContain(
+      'exhaustive',
+    );
+  });
+
+  it('warns, and the warning is the reason the lists are short', () => {
+    const forCtrl = report.diagnostics.filter((d) =>
+      d.elementName?.startsWith('GuardProbe::Ctrl::'),
+    );
+    const warned = forCtrl.filter((d) => d.code === GUARD_UNDETERMINED_CODE);
+    expect(warned).toHaveLength(1);
+    expect(warned[0].severity).toBe('warning');
+    expect(warned[0].message).toContain('mode == 3');
+    expect(warned[0].message).toContain('could not be evaluated');
+    expect(warned[0].message).toContain('withheld');
+    // Never the two sentences that would say the tool decided it.
+    expect(warned[0].message).not.toContain('never enabled');
+    expect(warned[0].hint).toContain('attribute mode : Integer = 3;');
+    // And NOTHING else is filed about that machine: the three findings the
+    // defect published are gone, and the reason is in their place.
+    expect(forCtrl.map((d) => d.code)).toEqual([GUARD_UNDETERMINED_CODE]);
+  });
+
+  it('a guard that is genuinely false keeps every finding it had', () => {
+    // The over-firing control. `mode = 4` makes `mode == 3` FALSE, decided, and
+    // a fix that withheld here would have replaced a wrong claim with silence.
+    const decided = machine('Decided');
+    expect(decided.undeterminedGuards).toEqual([]);
+    expect(decided.exhaustive).toBe(true);
+    expect(decided.suppressed).toBe(false);
+    expect(decided.qualification).toContain('exhaustive under');
+    expect(decided.states.unreachable.map((s) => s.name)).toEqual(['hazard']);
+    expect(decided.transitions.dead).toHaveLength(1);
+    expect(decided.deadlocks.map((d) => d.leaf.name)).toEqual(['idle']);
+    const codes = report.diagnostics
+      .filter((d) => d.elementName?.startsWith('GuardProbe::Decided::'))
+      .map((d) => d.code)
+      .sort();
+    expect(codes).toEqual([
+      DEAD_TRANSITION_CODE,
+      DEADLOCK_CODE,
+      UNREACHABLE_STATE_CODE,
+    ].sort());
+  });
+
+  it('a guard that holds fires, and is untouched', () => {
+    const fires = machine('Fires');
+    expect(fires.undeterminedGuards).toEqual([]);
+    expect(fires.exhaustive).toBe(true);
+    expect(fires.states.reachable.map((s) => s.name).sort()).toEqual(['hazard', 'idle']);
+    expect(fires.states.unreachable).toEqual([]);
+    expect(fires.transitions).toMatchObject({ total: 1, fired: 1 });
+    expect(fires.transitions.dead).toEqual([]);
+    expect(
+      report.diagnostics.some(
+        (d) => d.elementName?.startsWith('GuardProbe::Fires::') && d.code === GUARD_UNDETERMINED_CODE,
+      ),
+    ).toBe(false);
+  });
+
+  it('counts the undecided machine out of the exhaustive total', () => {
+    expect(report.totals.machines).toBe(3);
+    expect(report.totals.exhaustive).toBe(2);
+  });
+
+  it('a hidden choice survives an undetermined guard beside it', () => {
+    // The asymmetry, stated as a test. `a -> b` and `a -> c` are enabled at once
+    // on `go`; `a -> d` carries a guard nothing decides. The absence lists go,
+    // because a withheld edge could have been enabled — but the CHOICE is an
+    // existential claim about a configuration the walk reached, and withholding
+    // an edge can only ever remove a candidate from it, never invent one.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Both');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    const c = f.state('c', sm.id);
+    const d = f.state('d', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, trigger: 'go' });
+    f.transition(a.id, c.id, { ownerId: sm.id, trigger: 'go' });
+    f.transition(a.id, d.id, { ownerId: sm.id, trigger: 'go', guard: 'armed' });
+
+    const only = reachReport(m).machines[0];
+    expect(only.undeterminedGuards.map((g) => g.guard)).toEqual(['armed']);
+    expect(only.undeterminedGuards[0].unresolved).toEqual(['armed']);
+    expect(only.states.unreachable).toEqual([]);
+    expect(only.transitions.dead).toEqual([]);
+    expect(only.nondeterminism, 'a hidden choice was withheld by an unrelated guard').toHaveLength(
+      1,
+    );
+    expect(only.nondeterminism[0].state.name).toBe('a');
+    expect(only.nondeterminism[0].taken.to!.name).toBe('b');
+  });
+
+  it('reports one row per transition, not one per configuration it was consulted at', () => {
+    // `s0 -> s1` on `go`, and a guarded self-loop the walk offers at both
+    // configurations. One transition, one row, whatever the store did in
+    // between.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Twice');
+    const s0 = f.state('s0', sm.id);
+    const s1 = f.state('s1', sm.id);
+    f.transition(s0.id, s1.id, { ownerId: sm.id, trigger: 'go' });
+    f.transition(s1.id, s0.id, { ownerId: sm.id, trigger: 'back', guard: 'armed' });
+    const only = reachReport(m).machines[0];
+    expect(only.configs).toBeGreaterThan(1);
+    expect(only.undeterminedGuards).toHaveLength(1);
+    expect(reachReport(m).diagnostics.filter((d) => d.code === GUARD_UNDETERMINED_CODE)).toHaveLength(
+      1,
+    );
+  });
+
+  it('withholds a hidden choice a WITHHELD INNER EDGE would have manufactured', () => {
+    // The other half of the asymmetry, and the half that was stated wrongly
+    // first. `innermost` is read off the ENABLED list, so an undetermined guard
+    // strictly inside it lowers the level the choice is read at and lets outer
+    // transitions the priority rule would have beaten into the row. Measured on
+    // this machine: with `armed` unvalued the report carried
+    // `Outer: takes O1, never O2`; with `armed = 1` — the same guard, DECIDED,
+    // and true — it carries no such row at all. A row that appears only because
+    // an edge was withheld is one the withholding invented.
+    const build = (armed?: number) => {
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const sm = f.stateDef('Hier');
+      if (armed !== undefined) f.attribute('armed', sm.id, { type: 'Integer', value: armed });
+      const outer = f.state('Outer', sm.id);
+      const inner = f.state('inner', outer.id);
+      const o1 = f.state('O1', sm.id);
+      const o2 = f.state('O2', sm.id);
+      f.transition(inner.id, inner.id, { ownerId: outer.id, trigger: 'go', guard: 'armed == 1' });
+      f.transition(outer.id, o1.id, { ownerId: sm.id, trigger: 'go' });
+      f.transition(outer.id, o2.id, { ownerId: sm.id, trigger: 'go' });
+      return reachReport(m).machines[0];
+    };
+    const undecided = build();
+    expect(undecided.undeterminedGuards.map((g) => g.guard)).toEqual(['armed == 1']);
+    expect(
+      undecided.nondeterminism,
+      'a choice was reported at a level a withheld edge sits strictly inside',
+    ).toEqual([]);
+    // Decided TRUE: the inner self-loop wins the priority rule at every
+    // configuration, so `Outer`'s two transitions are never the innermost
+    // level and there is no choice. This is the reading the row above claimed.
+    expect(build(1).nondeterminism).toEqual([]);
+    // Decided FALSE: the inner edge really is not enabled, `Outer` really is
+    // innermost, and the choice really is there. Still reported — the gate
+    // reads "could not decide", never "did not fire".
+    expect(build(2).nondeterminism.map((n) => n.state.name)).toEqual(['Outer']);
+  });
+
+  it('keeps a choice a withheld OUTER edge sits above', () => {
+    // The other side of the level test, and the one that decides `>` rather
+    // than `!==`. The choice is between `inner -> A` and `inner -> B`, at the
+    // innermost level; the undetermined guard is on `Outer -> X`, OUTSIDE it. A
+    // transition an inner state's priority beats fires in no run while the
+    // inner one is enabled, so whether it would have been enabled changes
+    // nothing about the two that were — the choice stands, and withholding it
+    // would withdraw a finding the walk really made. (The same-level case is
+    // the `a hidden choice survives an undetermined guard beside it` control
+    // above.)
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Above');
+    const outer = f.state('Outer', sm.id);
+    const inner = f.state('inner', outer.id);
+    const a = f.state('A', sm.id);
+    const b = f.state('B', sm.id);
+    const x = f.state('X', sm.id);
+    f.transition(inner.id, a.id, { ownerId: outer.id, trigger: 'go' });
+    f.transition(inner.id, b.id, { ownerId: outer.id, trigger: 'go' });
+    f.transition(outer.id, x.id, { ownerId: sm.id, trigger: 'go', guard: 'armed' });
+    const only = reachReport(m).machines[0];
+    expect(only.undeterminedGuards.map((g) => g.guard)).toEqual(['armed']);
+    expect(
+      only.nondeterminism,
+      'a choice at the innermost level was withheld by a guard OUTSIDE it',
+    ).toHaveLength(1);
+    expect(only.nondeterminism[0].state.name).toBe('inner');
+  });
+
+  it('a deadlock survives a BOUND and never an undetermined guard', () => {
+    // The asymmetry the `deadlocks` gate is written on, and it is NOT the
+    // `publishable` flag. A bound stops the walk ENQUEUEING successors; every
+    // input is still offered at every configuration it dequeues, so a
+    // configuration it found nothing enabled at is one it really found nothing
+    // enabled at. An undetermined guard is different in kind: it is an edge out
+    // that may have been enabled and nothing here decided whether it was.
+    // Gating the row on `publishable` instead would withdraw a sound finding on
+    // every partial walk, and nothing else in this file would notice.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Bnd');
+    const s0 = f.state('s0', sm.id);
+    const deadEnd = f.state('deadEnd', sm.id);
+    f.transition(s0.id, deadEnd.id, { ownerId: sm.id, trigger: 'go' });
+    let prev = s0;
+    for (let i = 1; i <= 6; i++) {
+      const s = f.state(`c${i}`, sm.id);
+      f.transition(prev.id, s.id, { ownerId: sm.id, trigger: 'n' });
+      prev = s;
+    }
+    const bounded = reachReport(m, { maxConfigs: 2 }).machines[0];
+    expect(bounded.boundHit).toBe('configs');
+    expect(bounded.suppressed).toBe(true);
+    expect(bounded.states.unreachable).toEqual([]);
+    expect(bounded.transitions.dead).toEqual([]);
+    expect(
+      bounded.deadlocks.map((d) => d.leaf.name),
+      'a bound withdrew a deadlock it could not have made wrong',
+    ).toContain('deadEnd');
+
+    // And the same machine with one undetermined guard on the way out of the
+    // dead end publishes none.
+    const m2 = new Model();
+    const f2 = new ModelFactory(m2);
+    const sm2 = f2.stateDef('Undec');
+    const a = f2.state('a', sm2.id);
+    const stuck = f2.state('stuck', sm2.id);
+    f2.transition(a.id, stuck.id, { ownerId: sm2.id, trigger: 'go' });
+    f2.transition(stuck.id, a.id, { ownerId: sm2.id, trigger: 'back', guard: 'armed' });
+    const undecided = reachReport(m2).machines[0];
+    expect(undecided.boundHit).toBe('none');
+    expect(undecided.undeterminedGuards).toHaveLength(1);
+    expect(undecided.deadlocks).toEqual([]);
+  });
+
+  it('names BOTH causes when a bound stopped the walk as well', () => {
+    // Two different repairs — value the feature, raise `--max-configs` — and a
+    // reader shown only the first raises nothing and wonders why the lists are
+    // still short.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('BothCauses');
+    const s0 = f.state('s0', sm.id);
+    // Consulted at the OPENING configuration, so the bound cannot stop the walk
+    // reaching it, and a chain long enough that `--max-configs 3` does stop the
+    // walk somewhere else.
+    f.transition(s0.id, s0.id, { ownerId: sm.id, trigger: 'probe', guard: 'armed' });
+    let prev = s0;
+    for (let i = 1; i <= 6; i++) {
+      const s = f.state(`s${i}`, sm.id);
+      f.transition(prev.id, s.id, { ownerId: sm.id, trigger: 'n' });
+      prev = s;
+    }
+    const r = reachReport(m, { maxConfigs: 3 }).machines[0];
+    expect(r.boundHit).not.toBe('none');
+    expect(r.undeterminedGuards.length).toBeGreaterThan(0);
+    expect(r.qualification).toContain('undetermined under');
+    expect(r.qualification, 'the bound the walk also hit went unnamed').toContain('bound');
+  });
+
+  it('names no missing feature when every name in the guard resolves', () => {
+    // The boundary is `evalStr` answering nothing, and that is WIDER than an
+    // unresolved name: `evaluate` yields no value for a non-boolean operand
+    // under `not`, for a mixed-type comparison, and for non-finite arithmetic.
+    // `mode` HAS a value in all four rows below. The direction is the
+    // conservative one and stays — a guard the walk could not read is not a
+    // guard that is false, whichever way it failed to read — but the hint must
+    // not tell an author to give a value to a feature that already has one.
+    const check = (guard: string) => {
+      const m = new Model();
+      const f = new ModelFactory(m);
+      const sm = f.stateDef('TypeErr');
+      f.attribute('mode', sm.id, { type: 'Integer', value: 3 });
+      const s0 = f.state('s0', sm.id);
+      const s1 = f.state('s1', sm.id);
+      f.transition(s0.id, s1.id, { ownerId: sm.id, trigger: 'go', guard });
+      const r = reachReport(m);
+      return { machine: r.machines[0], diags: r.diagnostics };
+    };
+    for (const guard of ['not mode', 'mode and true', 'mode > "x"', 'mode / 0 == 1']) {
+      const { machine, diags } = check(guard);
+      expect(machine.undeterminedGuards, `\`${guard}\` was decided`).toHaveLength(1);
+      expect(machine.undeterminedGuards[0].unresolved).toEqual([]);
+      const row = diags.find((d) => d.code === GUARD_UNDETERMINED_CODE)!;
+      expect(row.message).toContain('could not read it as a value at all');
+      expect(row.hint, `\`${guard}\` was blamed on a value \`mode\` already has`).not.toContain(
+        'attribute mode : Integer = 3;',
+      );
+      expect(row.hint).toContain('not a predicate');
+    }
+  });
+
+  it('`resolveNames` is a cost switch, not a second reading of the step relation', () => {
+    // The interpreter's and the property search's hot path calls
+    // `enabledTransitions`, which throws the undetermined rows away — so it must
+    // not pay to parse each undetermined guard and walk its AST at every
+    // configuration and every input. What it must NOT change is WHICH
+    // transitions are undetermined: that is the step relation, and this module
+    // exists because a second reading of it drifts from the first.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Cost');
+    const s0 = f.state('s0', sm.id);
+    const s1 = f.state('s1', sm.id);
+    f.transition(s0.id, s1.id, { ownerId: sm.id, trigger: 'go', guard: 'armed' });
+    const cfg = initialConfig(m, sm.id).config;
+    const input = { kind: 'trigger', trigger: 'go' } as const;
+    const cheap = stepCandidates(m, cfg, input);
+    const full = stepCandidates(m, cfg, input, true);
+    expect(cheap.enabled).toEqual(full.enabled);
+    expect(cheap.undetermined.map((u) => [u.transition.id, u.guard, u.level])).toEqual(
+      full.undetermined.map((u) => [u.transition.id, u.guard, u.level]),
+    );
+    // Only the names differ, and only the caller that keeps them pays for them.
+    expect(cheap.undetermined[0].unresolved).toEqual([]);
+    expect(full.undetermined[0].unresolved).toEqual(['armed']);
+    // And the walk is the caller that keeps them, so the report is unaffected.
+    expect(reachReport(m).machines[0].undeterminedGuards[0].unresolved).toEqual(['armed']);
+  });
+
+  it('names every name that was ever missing, not only the first configuration’s', () => {
+    // The union branch, and it needs TWO ROUTES to one state rather than a
+    // prefix: a store only ever gains values along a run, so a guard consulted
+    // at the opening configuration is already missing every name it will ever
+    // miss and nothing later adds to it. Here `T` is reached two ways — one
+    // assigns `a`, the other assigns `b` — so the SAME self-loop is
+    // undetermined over `b` at one configuration and over `a` at the other, and
+    // one row has to carry both. Dropping the later names would send an author
+    // to fix half the guard.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Union');
+    const s0 = f.state('s0', sm.id);
+    const t = f.state('T', sm.id);
+    f.transition(s0.id, t.id, { ownerId: sm.id, trigger: 'pa', effect: 'a = true' });
+    f.transition(s0.id, t.id, { ownerId: sm.id, trigger: 'pb', effect: 'b = true' });
+    const loop = f.transition(t.id, t.id, { ownerId: sm.id, trigger: 'probe', guard: 'a and b' });
+    const only = reachReport(m).machines[0];
+    const rows = only.undeterminedGuards.filter((g) => g.transition.id === loop.id);
+    // ONE row for the transition, whatever the store did on the way in.
+    expect(rows).toHaveLength(1);
+    expect([...rows[0].unresolved].sort(), 'the row named only one route’s missing name').toEqual([
+      'a',
+      'b',
+    ]);
+  });
+
+  it('a guard that yields a value which is not a boolean stays DECIDED', () => {
+    // The other side of the line, and the reason the gate is written on
+    // "could not evaluate" rather than on "is not true". `mode` HAS a value
+    // here; it is 3, which is not `true`, and the walk decided that by reading
+    // it. Calling that undetermined would fire this gate on a model nothing in
+    // which is unknown.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('NotAPredicate');
+    f.attribute('mode', sm.id, { type: 'Integer', value: 3 });
+    const s0 = f.state('s0', sm.id);
+    const s1 = f.state('s1', sm.id);
+    f.transition(s0.id, s1.id, { ownerId: sm.id, trigger: 'go', guard: 'mode' });
+    const only = reachReport(m).machines[0];
+    expect(only.undeterminedGuards).toEqual([]);
+    expect(only.exhaustive).toBe(true);
+    expect(only.states.unreachable.map((s) => s.name)).toEqual(['s1']);
+  });
+});
+
+describe('the shipped examples carry no undetermined guard, so this fix moves nothing', () => {
+  // MEASURED before the gate landed: no `.sysml` in this repository carries a
+  // single transition guard, so every figure `reach` prints over the corpus has
+  // to be identical afterwards. If one of these moves, the gate is over-firing
+  // and the fix is wrong.
+  for (const path of ['examples/uav-isr.sysml', 'examples/vehicle.sysml', 'examples/views-tour.sysml']) {
+    it(`${path} — every machine still walks to exhaustion`, async () => {
+      const loaded = await loadModelText(read(path), { fileName: path });
+      const r = reachReport(loaded.model!);
+      expect(r.machines.length).toBeGreaterThan(0);
+      for (const m of r.machines) {
+        expect(m.undeterminedGuards, `${m.machine.qualifiedName} gained an undetermined guard`).toEqual(
+          [],
+        );
+        expect(m.exhaustive).toBe(true);
+        expect(m.suppressed).toBe(false);
+        expect(m.qualification).toContain('exhaustive under');
+      }
+      expect(r.diagnostics.filter((d) => d.code === GUARD_UNDETERMINED_CODE)).toEqual([]);
+    }, 90_000);
+  }
 });
 
 /* ─────────────────── what the walk must not invent ──────────────────────── */

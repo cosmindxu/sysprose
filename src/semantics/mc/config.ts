@@ -35,7 +35,7 @@
  */
 
 import { type ElementId, type ElementRecord, type Model, isUsage } from '@core/index';
-import { parseExpr, evaluate } from '../expr';
+import { parseExpr, evaluate, type ExprNode } from '../expr';
 import { scopeFor, type Scope } from '../evaluate-model';
 // Type-only, and erased by `isolatedModules`: the two record shapes an
 // interpreter run publishes are declared beside `runStateMachine` because they
@@ -66,15 +66,125 @@ export function evalStr(raw: unknown, store: ReadonlyMap<string, unknown>, scope
   }
 }
 
-/** A guard holds against the store when absent or evaluating to boolean true. */
+/**
+ * What a guard did against a store: it held, it failed, or the walk could not
+ * say.
+ *
+ * WHY THREE AND NOT TWO. `evalStr` answers `undefined` both when the expression
+ * throws and when a name in it has no value anywhere, so a boolean reading of it
+ * makes "could not evaluate" and "evaluated to false" the same answer — and
+ * `guardHoldsStore` takes the second reading. That is the right reading for
+ * STEPPING (the interpreter has to pick something, and a guard it cannot decide
+ * must not fire), and the wrong one for a REPORT: an absence published over an
+ * undecided guard says the transition is never enabled when the honest answer is
+ * that nothing here decided it. So the two readings are separated: the boolean
+ * below still drives every step, and `'undetermined'` is what the report reads.
+ *
+ * WHERE THE LINE ACTUALLY FALLS, measured rather than assumed. `'fails'` means
+ * the expression EVALUATED and the value was not `true` — `if mode` where `mode`
+ * is `3` is decided, and inventing an undetermined row for it would fire this
+ * gate on a model nothing in which is unknown. `'undetermined'` means the
+ * expression yielded no value at all, and `evaluate` yields none in more cases
+ * than an unresolved name: a non-boolean operand under `not`/`and`/`or`, a
+ * mixed-type comparison, non-finite arithmetic (`src/semantics/expr.ts`). So
+ * `not mode` over the SAME fully-valued `mode` is undetermined while `mode` is
+ * decided — the defect there is a type error in the guard rather than a missing
+ * value, and the row says so by naming no unresolved name. That is the
+ * conservative direction (a guard the walk could not read is not a guard that is
+ * false, whichever way it failed to read), but it is not the narrow
+ * unresolved-name reading, and the hint a reader is given branches on which of
+ * the two it was.
+ */
+export type GuardVerdict = 'holds' | 'fails' | 'undetermined';
+
+/** The guard text of an edge, or `undefined` when it carries none. */
+export function guardTextOf(edge: ElementRecord): string | undefined {
+  const g = edge.attrs.guard;
+  if (typeof g !== 'string' || g.trim() === '') return undefined;
+  return g.trim();
+}
+
+/** Three-valued reading of a guard against the store — see {@link GuardVerdict}. */
+export function guardVerdictStore(
+  edge: ElementRecord,
+  store: ReadonlyMap<string, unknown>,
+  scope: Scope,
+): GuardVerdict {
+  const g = guardTextOf(edge);
+  if (g === undefined) return 'holds'; // an absent guard is not a guard that failed
+  const v = evalStr(g, store, scope);
+  if (v === true) return 'holds';
+  if (v === undefined) return 'undetermined';
+  return 'fails';
+}
+
+/**
+ * The names a guard reads and this store and scope give no value to.
+ *
+ * Read off the parsed expression rather than off the evaluator, because the
+ * evaluator short-circuits: `false and x` is decided without ever asking about
+ * `x`, and a report that named `x` there would send an author to fix a name
+ * that decided nothing. Only called where the verdict is already
+ * `'undetermined'`, so every name it returns is one that was actually needed.
+ * An expression that does not parse names nothing — the guard is unreadable
+ * rather than unresolved — and the empty list is the honest answer.
+ */
+export function unresolvedGuardNames(
+  guard: string,
+  store: ReadonlyMap<string, unknown>,
+  scope: Scope,
+): string[] {
+  const resolve = storeScope(store, scope);
+  let node;
+  try {
+    node = parseExpr(guard);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const walk = (n: ExprNode): void => {
+    switch (n.kind) {
+      case 'ref': {
+        const name = n.path.join('.');
+        if (resolve(name) === undefined && !seen.has(name)) {
+          seen.add(name);
+          out.push(name);
+        }
+        return;
+      }
+      case 'unary':
+        walk(n.operand);
+        return;
+      case 'binary':
+        walk(n.left);
+        walk(n.right);
+        return;
+      case 'if':
+        walk(n.cond);
+        walk(n.then);
+        walk(n.else);
+        return;
+      default:
+        return;
+    }
+  };
+  walk(node);
+  return out;
+}
+
+/**
+ * A guard holds against the store when absent or evaluating to boolean true.
+ *
+ * The STEP relation's reading, unchanged: an undetermined guard does not fire.
+ * What a report may say about one is {@link guardVerdictStore}'s answer.
+ */
 export function guardHoldsStore(
   edge: ElementRecord,
   store: ReadonlyMap<string, unknown>,
   scope: Scope,
 ): boolean {
-  const g = edge.attrs.guard;
-  if (typeof g !== 'string' || g.trim() === '') return true;
-  return evalStr(g, store, scope) === true;
+  return guardVerdictStore(edge, store, scope) === 'holds';
 }
 
 /** Read a string-valued attribute, or `undefined`. */
@@ -571,21 +681,101 @@ export function enabledTransitions(
   cfg: MachineConfig,
   input: StepInput,
 ): EnabledTransition[] {
+  // `resolveNames` left off: this is the interpreter's and the property
+  // search's hot path — `checkProperty` calls it once per configuration per
+  // input, up to `maxConfigs` times — and resolving the names of a guard whose
+  // row nobody keeps re-parsed the expression and walked its AST at every one
+  // of them. Measured at ~2.5x on a configuration with an undetermined guard.
+  return stepCandidates(model, cfg, input).enabled;
+}
+
+/** A transition whose guard was offered at a configuration and decided nothing. */
+export interface UndeterminedGuard {
+  transition: ElementRecord;
+  /** The guard text, as written. */
+  guard: string;
+  /**
+   * Its level on the active stack, outer 0 → innermost last, and load-bearing
+   * rather than decoration. An undetermined guard STRICTLY INNER of the
+   * innermost level that was enabled may have been the transition the priority
+   * rule would have picked, so the enabled set at the outer level is one this
+   * walk saw only because an inner edge was withheld — see the
+   * nondeterminism note in `./explore.ts`.
+   */
+  level: number;
+  /**
+   * The names it reads that nothing here gives a value to.
+   *
+   * EMPTY where the caller did not ask for them ({@link stepCandidates}'s
+   * `resolveNames`), and empty where the guard yielded no value for a reason
+   * that is not a missing name at all — a type error inside it. The two are
+   * told apart by who is asking: only the walk asks, and it always asks.
+   */
+  unresolved: readonly string[];
+}
+
+/** What one offered input found: what fires, and what could not be decided. */
+export interface StepCandidates {
+  enabled: EnabledTransition[];
+  undetermined: UndeterminedGuard[];
+}
+
+/**
+ * {@link enabledTransitions}, and beside it the guards that decided nothing.
+ *
+ * ONE traversal and ONE {@link matches}, deliberately. The undetermined set has
+ * to be read at exactly the configurations and inputs the walk actually offered
+ * — a second pass over the transitions would be a second reading of when a
+ * guard is consulted, and this module exists because a second reading of the
+ * step relation drifts from the first. So the walk asks for both at once and
+ * the interpreter keeps asking for the half it uses.
+ *
+ * `resolveNames` is a COST switch and not a second reading: which transitions
+ * are undetermined is decided identically either way, and the flag only says
+ * whether to spend a parse and an AST walk naming what each one could not read.
+ * The walk wants the names (they are the whole content of the row an author
+ * acts on); {@link enabledTransitions} throws the rows away and must not pay
+ * for them.
+ */
+export function stepCandidates(
+  model: Model,
+  cfg: MachineConfig,
+  input: StepInput,
+  resolveNames = false,
+): StepCandidates {
   const scope = regionScope(model, cfg.regionId);
   const all = regionTransitions(model, cfg.regionId);
-  const out: EnabledTransition[] = [];
+  const enabled: EnabledTransition[] = [];
+  const undetermined: UndeterminedGuard[] = [];
   for (let level = cfg.stack.length - 1; level >= 0; level--) {
     const sid = cfg.stack[level];
     for (const tr of all) {
       if (tr.source![0] !== sid) continue;
-      if (!matches(model, cfg, tr, sid, input, scope)) continue;
-      out.push({ transition: tr, level, label: labelFor(tr, input) });
+      const verdict = matches(model, cfg, tr, sid, input, scope);
+      if (verdict === 'enabled') {
+        enabled.push({ transition: tr, level, label: labelFor(tr, input) });
+      } else if (verdict === 'undetermined') {
+        const guard = guardTextOf(tr)!;
+        undetermined.push({
+          transition: tr,
+          guard,
+          level,
+          unresolved: resolveNames ? unresolvedGuardNames(guard, cfg.store, scope) : [],
+        });
+      }
     }
   }
-  return out;
+  return { enabled, undetermined };
 }
 
-/** Does one transition match the offered input, guard included? */
+/**
+ * Does one transition match the offered input, guard included?
+ *
+ * `'disabled'` covers everything that is not about the guard — the wrong
+ * trigger, a completion transition offered a trigger, a dwell not yet elapsed —
+ * because none of those is a question this walk failed to answer. Only a guard
+ * it could not evaluate is `'undetermined'`.
+ */
 function matches(
   model: Model,
   cfg: MachineConfig,
@@ -593,17 +783,18 @@ function matches(
   sid: ElementId,
   input: StepInput,
   scope: Scope,
-): boolean {
+): 'enabled' | 'disabled' | 'undetermined' {
   if (input.kind === 'trigger') {
-    if (!triggerEquals(tr, input.trigger)) return false;
+    if (!triggerEquals(tr, input.trigger)) return 'disabled';
   } else if (input.kind === 'completion') {
-    if (!isCompletion(tr)) return false;
+    if (!isCompletion(tr)) return 'disabled';
   } else {
     const n = afterDuration(tr);
-    if (n === undefined) return false;
-    if (cfg.clock - (cfg.entryTime.get(sid) ?? 0) < n) return false;
+    if (n === undefined) return 'disabled';
+    if (cfg.clock - (cfg.entryTime.get(sid) ?? 0) < n) return 'disabled';
   }
-  return guardHoldsStore(tr, cfg.store, scope);
+  const verdict = guardVerdictStore(tr, cfg.store, scope);
+  return verdict === 'holds' ? 'enabled' : verdict === 'fails' ? 'disabled' : 'undetermined';
 }
 
 /**

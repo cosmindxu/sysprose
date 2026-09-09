@@ -21,9 +21,20 @@
  * gets here" — and absence is exactly what a partial walk cannot establish. So
  * the two lists are published only when the walk was exhaustive, no
  * completion-chase budget was spent, every trigger the machine names was
- * actually offered, and no unsupported construct was met. Otherwise they come
- * back EMPTY with `verification/bound-exhausted` on the report and the sentence
- * that says the lists are lower bounds and are not reported as findings.
+ * actually offered, no unsupported construct was met, and every guard it
+ * consulted DECIDED something. Otherwise they come back EMPTY with
+ * `verification/bound-exhausted` on the report and the sentence that says the
+ * lists are lower bounds and are not reported as findings.
+ *
+ * THE FIFTH CONDITION IS THE ONE A BOUND DOES NOT COVER. A guard over a feature
+ * the model never values (`transition idle if mode == 3 then hazard;` with
+ * `attribute mode : Integer;`) evaluates to nothing at all, and the step
+ * relation reads "did not evaluate" as "did not fire" because it must pick
+ * something. Nothing about that walk is partial — it saw the whole graph its
+ * own step relation admits — so the four conditions above all hold and the
+ * report published three absence findings about a question the tool never
+ * decided. `undeterminedGuards` is that question carried to the surface, and
+ * `verification/guard-undetermined` is the reader's reason the lists are short.
  *
  * The other direction is deliberately the loose one: the walk OVER-approximates
  * what is reachable, by offering every `after(n)` label as a named event rather
@@ -52,7 +63,6 @@ import type { ElementId, ElementRecord, Model } from '@core/index';
 import type { Diagnostic } from '@validation/types';
 import {
   MAX_COMPLETION,
-  enabledTransitions,
   hashConfig,
   initialConfig,
   isFinalState,
@@ -62,6 +72,7 @@ import {
   leafOf,
   regionTransitions,
   seedStore,
+  stepCandidates,
   stepConfig,
   triggerLabelOf,
   type EnabledTransition,
@@ -84,6 +95,8 @@ export const NONDETERMINISTIC_CHOICE_CODE = 'verification/nondeterministic-choic
 export const BOUND_EXHAUSTED_CODE = 'verification/bound-exhausted';
 /** A construct this engine does not explore. The machine is never called exhaustive. */
 export const BEHAVIOUR_UNSUPPORTED_CODE = 'verification/behaviour-unsupported-construct';
+/** A guard the walk consulted and could not evaluate: the absence lists are withheld. */
+export const GUARD_UNDETERMINED_CODE = 'verification/guard-undetermined';
 
 /** Every code this module can put in front of a reader, for the catalogue guard. */
 export const BEHAVIOUR_CODES: ReadonlySet<string> = new Set([
@@ -93,18 +106,24 @@ export const BEHAVIOUR_CODES: ReadonlySet<string> = new Set([
   NONDETERMINISTIC_CHOICE_CODE,
   BOUND_EXHAUSTED_CODE,
   BEHAVIOUR_UNSUPPORTED_CODE,
+  GUARD_UNDETERMINED_CODE,
 ]);
 
 /**
- * The four this engine raises as WARNINGS, and none of the six as an error.
+ * The five this engine raises as WARNINGS, and none of the seven as an error.
  *
  * The reading rule, not an omission. An error in this lane is reserved for a
- * refuted obligation, and `reach` refutes nothing. But the four below are
+ * refuted obligation, and `reach` refutes nothing. But the five below are
  * findings about a MACHINE — a state nothing reaches, a transition nothing
- * fires, a state nothing leaves, a choice the notation does not resolve — and
- * filing them as info would put them beside "this construct is outside the
- * fragment", which is the tool talking about ITSELF. The remaining two do
- * exactly that, and they are info.
+ * fires, a state nothing leaves, a choice the notation does not resolve, a
+ * guard nothing in the model decides — and filing them as info would put them
+ * beside "this construct is outside the fragment", which is the tool talking
+ * about ITSELF. The remaining two do exactly that, and they are info.
+ *
+ * `verification/guard-undetermined` is a warning for the sharper reason that it
+ * is the REASON the absence lists are short. A reader who sees an empty
+ * unreachable list and an info line has been told good news; the thing that
+ * withheld the lists has to sit at the same level as the findings it withheld.
  *
  * Exported for the same reason `VERIFICATION_ERROR_CODES` is: the catalogue
  * carries the severity too, and `test/unit/diagnostic-codes.test.ts` asserts
@@ -116,6 +135,7 @@ export const BEHAVIOUR_WARNING_CODES: ReadonlySet<string> = new Set([
   DEAD_TRANSITION_CODE,
   DEADLOCK_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
+  GUARD_UNDETERMINED_CODE,
 ]);
 
 /* ────────────────────────────── the bounds ──────────────────────────────── */
@@ -192,6 +212,23 @@ export interface DeadlockRow {
   steps: number;
 }
 
+/**
+ * A transition whose guard the walk consulted and could not evaluate.
+ *
+ * NOT a guard that is false. A guard that reads a feature the model gives no
+ * value to answers nothing at all, and the step relation reads nothing as "does
+ * not fire" because it has to pick one. That reading is right for a run and
+ * wrong for a report, so the fact is carried here and the report declines to
+ * publish an absence over it.
+ */
+export interface UndeterminedGuardRow {
+  transition: TransitionRef;
+  /** The guard text, as the author wrote it. */
+  guard: string;
+  /** The names it reads that nothing in scope or in the store gives a value to. */
+  unresolved: readonly string[];
+}
+
 /** A construct this engine will not explore, and what it does instead. */
 export interface UnsupportedConstruct {
   /** A branchable name for the construct. */
@@ -209,7 +246,18 @@ export interface ExploreResult {
   configs: number;
   /** The deepest branch, in steps from the opening configuration. */
   depth: number;
-  /** Did the walk see the WHOLE configuration graph? */
+  /**
+   * Did the walk see the WHOLE configuration graph *its own step relation
+   * admits*?
+   *
+   * ONE OF FIVE CONDITIONS, never the published verdict, and the distinction is
+   * one word wide so it is stated here. This flag is `true` on a walk carrying
+   * an undetermined guard — the walk really did finish — while
+   * `MachineReach.exhaustive`, the figure a reader is shown, is `false` there.
+   * Both consumers gate it: `reachOne` in this file, and `checkProperty` in
+   * `./patterns.ts`. A third consumer that read this flag alone would print
+   * `exhaustive` over a graph missing an edge nobody decided.
+   */
   exhaustive: boolean;
   boundHit: BoundHit;
   /** Every state entered on some explored run. */
@@ -221,6 +269,14 @@ export interface ExploreResult {
   nondeterminism: readonly NondeterministicChoice[];
   deadlocks: readonly DeadlockRow[];
   unsupported: readonly UnsupportedConstruct[];
+  /**
+   * Every transition whose guard was consulted and decided nothing, once each.
+   *
+   * A walk with one of these saw the whole graph its step relation admits and
+   * still cannot say what is unreachable, because "the guard did not hold" was
+   * never established — only "the guard did not evaluate".
+   */
+  undeterminedGuards: readonly UndeterminedGuardRow[];
 }
 
 /* ───────────────────────── refs and small readers ───────────────────────── */
@@ -432,6 +488,11 @@ export function exploreMachine(
   const offered = new Set<string>();
   const nondeterminism: NondeterministicChoice[] = [];
   const deadlocks: DeadlockRow[] = [];
+  // ONE row per transition, not one per configuration it was consulted at: a
+  // guard over an unvalued feature is undetermined at every configuration the
+  // walk offers it, and a reader needs the transition once, not a row per state
+  // of a store the guard does not depend on.
+  const undeterminedGuards = new Map<ElementId, UndeterminedGuardRow>();
 
   // A construct this engine does not explore ends the answer here. Walking the
   // machine anyway and marking the result non-exhaustive would publish a
@@ -451,6 +512,7 @@ export function exploreMachine(
       nondeterminism,
       deadlocks,
       unsupported,
+      undeterminedGuards: [],
     };
   }
 
@@ -482,7 +544,29 @@ export function exploreMachine(
 
     for (const input of inputs) {
       if (input.kind === 'trigger') offered.add(input.trigger);
-      const enabled = enabledTransitions(model, here.config, input);
+      const { enabled, undetermined } = stepCandidates(model, here.config, input, true);
+      // Recorded whether or not anything was enabled, and BEFORE the early
+      // `continue` below: a configuration where the only outgoing edge is an
+      // undetermined guard has nothing enabled, and it is exactly the one whose
+      // deadlock row would otherwise be published over a question nothing
+      // answered.
+      for (const u of undetermined) {
+        const seenRow = undeterminedGuards.get(u.transition.id);
+        if (seenRow === undefined) {
+          undeterminedGuards.set(u.transition.id, {
+            transition: transitionRef(model, u.transition),
+            guard: u.guard,
+            unresolved: [...u.unresolved],
+          });
+        } else {
+          // The same guard can be undetermined over DIFFERENT names at
+          // different configurations (a store that gained one of them on the
+          // way here), and the row names every name that was ever missing —
+          // dropping the later ones would send an author to fix half of it.
+          const union = new Set([...seenRow.unresolved, ...u.unresolved]);
+          undeterminedGuards.set(u.transition.id, { ...seenRow, unresolved: [...union] });
+        }
+      }
       if (enabled.length === 0) continue;
       anyEnabled = true;
       // The interpreter fires `enabled[0]`, and the list is innermost level
@@ -494,14 +578,28 @@ export function exploreMachine(
       // a beaten transition is one no run enters, and a deadlock or an
       // ambiguity reported there is invented rather than found.
       const innermost = enabled[0].level;
-      recordNondeterminism(
-        model,
-        here.config,
-        input,
-        enabled.filter((e) => e.level === innermost),
-        nondetSeen,
-        nondeterminism,
-      );
+      // AND NOT OVER A WITHHELD INNER EDGE. A hidden choice is an existential
+      // claim, and at ONE level a withheld edge can only ever remove a
+      // candidate from it — but `innermost` is read off the enabled list, so an
+      // undetermined guard STRICTLY INSIDE it lowers the level this row is
+      // recorded at and lets outer transitions the priority rule would have
+      // beaten into the filter. Measured: `Outer -go-> O1`, `Outer -go-> O2`
+      // and a guarded self-loop on a substate reports a choice at `Outer` when
+      // the guard is unvalued and reports none when the same guard is decided
+      // TRUE — a row manufactured by the withholding, which is the one thing
+      // this lane may not do. Rows at or outside a level that is still fully
+      // decided stand.
+      const withheldInside = undetermined.some((u) => u.level > innermost);
+      if (!withheldInside) {
+        recordNondeterminism(
+          model,
+          here.config,
+          input,
+          enabled.filter((e) => e.level === innermost),
+          nondetSeen,
+          nondeterminism,
+        );
+      }
 
       for (const choice of enabled) {
         fired.add(choice.transition.id);
@@ -555,6 +653,7 @@ export function exploreMachine(
     nondeterminism,
     deadlocks,
     unsupported,
+    undeterminedGuards: [...undeterminedGuards.values()],
   };
 }
 
@@ -677,9 +776,16 @@ export interface MachineReach {
     dead: readonly TransitionRef[];
   };
   nondeterminism: readonly NondeterministicChoice[];
+  /**
+   * EMPTY whenever a guard was undetermined — a deadlock row is an absence
+   * claim about ONE configuration's outgoing edges, and an edge the walk could
+   * not decide is exactly what makes it wrong.
+   */
   deadlocks: readonly DeadlockRow[];
   unsupported: readonly UnsupportedConstruct[];
-  /** True when the two absence lists were withheld because a bound stopped the walk. */
+  /** The guards this walk consulted and could not evaluate. Never `false`. */
+  undeterminedGuards: readonly UndeterminedGuardRow[];
+  /** True when the two absence lists were withheld — by a bound, or by an undecided guard. */
   suppressed: boolean;
 }
 
@@ -770,7 +876,9 @@ function boundSentence(hit: BoundHit): string {
  *
  * The four conditions of §3.8 are computed here and nowhere else: exhaustive,
  * no completion budget spent, every named trigger offered, no unsupported
- * construct. All four, or the absence lists are empty.
+ * construct. All four — and the fifth this tool learned the hard way, that
+ * every guard the walk consulted decided something — or the absence lists are
+ * empty.
  */
 function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): MachineReach {
   const walk = exploreMachine(model, machine.id, opts);
@@ -783,8 +891,14 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
   // thing standing between such a change and a shrunk claim printed as a full
   // one.
   const alphabetOffered = walk.bounds.alphabet.every((t) => walk.offered.has(t));
+  // The fifth condition, named on its own because it gates one MORE list than
+  // the other four do. A guard the walk could not evaluate is not a guard that
+  // is false, so nothing this walk saw establishes that a transition is never
+  // enabled, that a state is never entered — or that a configuration has no way
+  // out, which is the same absence read over one configuration's outgoing edges.
+  const guardsDecided = walk.undeterminedGuards.length === 0;
   const publishable =
-    walk.exhaustive && alphabetOffered && walk.unsupported.length === 0;
+    walk.exhaustive && alphabetOffered && walk.unsupported.length === 0 && guardsDecided;
 
   const states = machineStates(model, machine.id);
   const transitions = walkableTransitions(model, machine.id);
@@ -796,15 +910,26 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     ? transitions.filter((t) => !walk.fired.has(t.id)).map((t) => transitionRef(model, t))
     : [];
 
+  // The word `exhaustive` appears in exactly one branch, and an undetermined
+  // guard is not it: the walk finished, so "partial" would be false too, and
+  // saying either would be the report answering a question it declined.
   const qualification = publishable
     ? `exhaustive under ${boundsSentence(walk.bounds)}`
     : walk.unsupported.length > 0
       ? `not explored — ${walk.unsupported.map((u) => u.construct).join(', ')}; no figure below is a claim of absence`
-      : `partial under ${boundsSentence(walk.bounds)} — ${
-          walk.boundHit === 'none'
-            ? 'a trigger the machine names was never offered'
-            : boundSentence(walk.boundHit)
-        }; the unreachable and dead lists are lower bounds and are NOT reported as findings`;
+      : !guardsDecided
+        ? // BOTH causes, when both are present. An undetermined guard is fixed
+          // in the model and a bound is raised with `--max-configs`; a reader
+          // shown only the first would raise nothing and wonder why the walk
+          // stayed short after they valued the feature.
+          `undetermined under ${boundsSentence(walk.bounds)} — ${walk.undeterminedGuards.length} guard(s) the walk could not evaluate${
+            walk.boundHit === 'none' ? '' : `, and ${boundSentence(walk.boundHit)}`
+          }; the unreachable, dead and no-way-out lists are WITHHELD and are NOT reported as findings`
+        : `partial under ${boundsSentence(walk.bounds)} — ${
+            walk.boundHit === 'none'
+              ? 'a trigger the machine names was never offered'
+              : boundSentence(walk.boundHit)
+          }; the unreachable and dead lists are lower bounds and are NOT reported as findings`;
 
   return {
     machine: {
@@ -821,9 +946,29 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     qualification,
     states: { total: states.length, reachable, unreachable },
     transitions: { total: transitions.length, fired: walk.fired.size, dead },
+    // PUBLISHED ON A PARTIAL WALK, and the asymmetry is deliberate. A hidden
+    // choice is an EXISTENTIAL claim — two transitions were enabled at once in
+    // a configuration this walk reached — and a BOUND cannot manufacture one:
+    // it stops the walk enqueueing successors and takes nothing away from a
+    // configuration already dequeued. The two absence claims run the other way,
+    // which is why they are gated here and this is not.
+    //
+    // A WITHHELD EDGE IS NOT AS INNOCENT, and the narrow true statement is the
+    // one to hold on to: removing a candidate at the SAME level can only shrink
+    // a choice. Removing one at a STRICTLY INNER level moves which level the
+    // choice is read at, and that CAN invent a row — so `exploreMachine`
+    // declines to record one there, and what survives to here was found at a
+    // level nothing inside was withheld from.
     nondeterminism: walk.nondeterminism,
-    deadlocks: walk.deadlocks,
+    // Gated on the guards ALONE, not on `publishable`. A deadlock row says one
+    // configuration the walk REACHED had no enabled edge out, and a bound
+    // cannot make that wrong — the walk evaluates every input at a
+    // configuration it dequeues, and a bound only stops it enqueueing
+    // successors. An undetermined guard CAN make it wrong: it is an edge out
+    // that may have been enabled, and nothing here decided whether it was.
+    deadlocks: guardsDecided ? walk.deadlocks : [],
     unsupported: walk.unsupported,
+    undeterminedGuards: walk.undeterminedGuards,
     suppressed: !publishable,
   };
 }
@@ -851,6 +996,35 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
         elementName: m.machine.qualifiedName,
         code: BEHAVIOUR_UNSUPPORTED_CODE,
         hint: 'Nothing below this line is a claim of absence: the machine was not walked, so no state is reported unreachable and no transition dead.',
+      });
+    }
+    // BEFORE the absence rows, and never suppressed: this finding IS the reason
+    // the lists below it are short, and a reader who meets an empty unreachable
+    // list without it reads the shortness as good news.
+    for (const g of m.undeterminedGuards) {
+      const names =
+        g.unresolved.length > 0
+          ? `no value is in scope for ${g.unresolved.map((n) => `\`${n}\``).join(', ')}`
+          : 'this walk could not read it as a value at all';
+      findings.push({
+        severity: 'warning',
+        message:
+          `the guard \`${g.guard}\` on transition \`${transitionLabel(g.transition)}\` could not be ` +
+          `evaluated — ${names}. The walk did not decide whether it holds, so the unreachable, dead ` +
+          'and no-way-out lists for this machine are withheld.',
+        elementId: g.transition.id,
+        elementName: g.transition.qualifiedName,
+        code: GUARD_UNDETERMINED_CODE,
+        // TWO DEFECTS, TWO HINTS. A guard with an unresolved name wants a value;
+        // a guard that named nothing missing and still yielded nothing has a
+        // type error inside it (`not mode` over an Integer `mode`, a mixed-type
+        // comparison, a division by zero), and telling its author to give a
+        // value to a feature that already has one sends them to look at the one
+        // thing that is fine.
+        hint:
+          g.unresolved.length > 0
+            ? 'Give the feature a value the walk can read — `attribute mode : Integer = 3;` — or drive the machine from a state that assigns it. This is NOT a claim that the guard is false: a guard nothing decided is not a guard that never holds, which is why no absence is reported over it.'
+            : 'Every name in this guard resolves, so the guard did not evaluate to a value for some other reason — most often that it is not a predicate (`if mode` needs a comparison), that it compares two different kinds of value, or that its arithmetic is not finite. This is NOT a claim that the guard is false: a guard nothing decided is not a guard that never holds, which is why no absence is reported over it.',
       });
     }
     if (m.boundHit !== 'none') {

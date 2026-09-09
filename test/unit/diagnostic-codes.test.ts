@@ -9,7 +9,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DIAGNOSTIC_CODES, diagnosticCode, isKnownCode, renderHint } from '@text/index';
-import { VERIFICATION_CODES, VERIFICATION_ERROR_CODES, VERIFICATION_WARNING_CODES } from '@api/index';
+import {
+  GUARD_UNDETERMINED_CODE,
+  VERIFICATION_CODES,
+  VERIFICATION_ERROR_CODES,
+  VERIFICATION_WARNING_CODES,
+} from '@api/index';
+import type { UndeterminedGuardRow } from '@api/index';
 
 const DOC = readFileSync(resolve(process.cwd(), 'docs/DIAGNOSTIC-CODES.md'), 'utf8');
 const documented = new Set([...DOC.matchAll(/^### `([^`]+)`$/gm)].map((m) => m[1]));
@@ -97,6 +103,22 @@ describe('diagnostic-code catalogue', () => {
       if (VERIFICATION_ERROR_CODES.has(c.code) || VERIFICATION_WARNING_CODES.has(c.code)) continue;
       expect(c.severity, `${c.code} is neither an error, a warning, nor an info line`).toBe('info');
     }
+  });
+
+  it('the behaviour engine’s newest row is nameable from the in-process API', () => {
+    // §3.8 calls the in-process API a first-class surface in those words, and a
+    // consumer that can read `MachineReach.undeterminedGuards` but cannot name
+    // its element type or branch on its code without hardcoding a string has
+    // half a surface. The type-only import above is the pin for the type: it is
+    // erased at runtime and checked by `npm run typecheck`.
+    expect(GUARD_UNDETERMINED_CODE).toBe('verification/guard-undetermined');
+    expect(VERIFICATION_WARNING_CODES.has(GUARD_UNDETERMINED_CODE)).toBe(true);
+    const row: UndeterminedGuardRow = {
+      transition: { id: 'x', name: '', qualifiedName: 'x', from: null, to: null, label: '' },
+      guard: 'mode == 3',
+      unresolved: ['mode'],
+    };
+    expect(row.unresolved).toEqual(['mode']);
   });
 
   it('has no duplicate codes', () => {

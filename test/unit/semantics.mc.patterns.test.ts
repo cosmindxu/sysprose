@@ -46,6 +46,7 @@ import {
 import {
   BEHAVIOUR_UNSUPPORTED_CODE,
   BOUND_EXHAUSTED_CODE,
+  GUARD_UNDETERMINED_CODE,
   exploreMachine,
   machineAlphabet,
   stateMachinesIn,
@@ -1117,5 +1118,91 @@ describe('the semantic profile is a description of what the interpreter does', (
     expect(
       checkProperty(m, sm.id, prop({ pattern: 'absence', scope: 'globally', p: 'state B' })).claim,
     ).toBe('fail');
+  });
+});
+
+/**
+ * The fifth publishability condition, on THIS command.
+ *
+ * `reach` withholding its absence lists over a guard nothing decided while
+ * `check-behaviour` wrote `pass` and `exhaustive` over the same machine was the
+ * tool contradicting itself between two commands on one file — and a `pass`
+ * with no reason to doubt it is the worse half of the contradiction, because it
+ * is the one somebody acts on. Both halves are pinned here: the gate, and the
+ * two controls that stop it firing where the walk DID decide.
+ */
+describe('a pass needs every guard decided, not only every bound unspent', () => {
+  /** `s0 -go-> s1` under a guard, and `mode` valued or not. */
+  function guarded(value?: number): { model: Model; machineId: ElementId } {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Modes');
+    if (value !== undefined) f.attribute('mode', sm.id, { type: 'Integer', value });
+    const idle = f.state('idle', sm.id);
+    const hazard = f.state('hazard', sm.id);
+    f.transition(idle.id, hazard.id, { ownerId: sm.id, guard: 'mode == 3' });
+    return { model: m, machineId: sm.id };
+  }
+  const absence = prop({ pattern: 'absence', scope: 'globally', p: 'state hazard' });
+
+  it('reports inconclusive rather than pass, and never prints `exhaustive`', () => {
+    const { model, machineId } = guarded();
+    const row = checkProperty(model, machineId, absence);
+    expect(row.claim).toBe('inconclusive');
+    expect(row.code).toBe(GUARD_UNDETERMINED_CODE);
+    expect(row.exhaustive).toBe(false);
+    expect(row.qualification).toContain('undetermined under');
+    expect(row.qualification, 'a walk that decided nothing was called exhaustive').not.toContain(
+      'exhaustive',
+    );
+    // The sentence has to name the guard and the missing name, and say it is
+    // not a pass — a reader who is only told "inconclusive" raises a bound.
+    expect(row.detail).toContain('mode == 3');
+    expect(row.detail).toContain('`mode`');
+    expect(row.detail).toContain('NOT a pass');
+    expect(row.witness).toEqual([]);
+  });
+
+  it('is NOT the bound row: the two are fixed differently and say so', () => {
+    const { model, machineId } = guarded();
+    const row = checkProperty(model, machineId, absence);
+    expect(row.code).not.toBe(BOUND_EXHAUSTED_CODE);
+    expect(row.boundHit).toBe('none');
+    // `--allow-inconclusive` is scoped to timeout and unsupported-construct, so
+    // naming this row `verification/bound-exhausted` would not have laundered
+    // it — but it would have sent an author to raise `--max-configs` over a
+    // walk that finished.
+    expect(row.detail).not.toContain('--max-configs');
+  });
+
+  it('a guard that is genuinely false still passes, exhaustively', () => {
+    // The over-firing control. `mode = 4` decides `mode == 3` FALSE, so `hazard`
+    // really is never entered and the pass is earned.
+    const { model, machineId } = guarded(4);
+    const row = checkProperty(model, machineId, absence);
+    expect(row.claim).toBe('pass');
+    expect(row.exhaustive).toBe(true);
+    expect(row.qualification).toContain('exhaustive under');
+  });
+
+  it('a guard that holds refutes it, with a witness', () => {
+    const { model, machineId } = guarded(3);
+    const row = checkProperty(model, machineId, absence);
+    expect(row.claim).toBe('fail');
+    expect(row.witness.length).toBeGreaterThan(1);
+  });
+
+  it('the report counts it undecided and exits 2, and the row reaches a reader', () => {
+    const { model, machineId } = guarded();
+    const rep = behaviourReport(model, {
+      machineId,
+      pattern: 'pattern=absence, scope=globally, p=state hazard',
+    });
+    expect(rep.counts).toMatchObject({ passed: 0, failed: 0, vacuous: 0, inconclusive: 1 });
+    // Inconclusive is exit 2 by the lane's contract, and no flag lowers this
+    // one: `--allow-inconclusive` is scoped to `verification/timeout` and
+    // `verification/unsupported-construct`.
+    expect(rep.exitCode).toBe(2);
+    expect(rep.diagnostics.map((d) => d.code)).toContain(GUARD_UNDETERMINED_CODE);
   });
 });

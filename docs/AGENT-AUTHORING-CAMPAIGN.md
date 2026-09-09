@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 107 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 109 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **99 catalogue codes** in
+`npm run check` is what raises it — beside **100 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3539,6 +3539,54 @@ machine is not: nothing was misused and nothing failed to load, so it prints
 exits 0 — the contract every other `report` subcommand keeps, and the one two of
 the shipped examples need to survive a `set -e` walk over a directory.
 
+**A guard the walk could not evaluate is not a guard that is false.** The fifth
+publishability condition, and the one no bound covers. Ten lines that parse
+clean — `attribute mode : Integer;` and `transition idle if mode == 3 then
+hazard;` — used to print `exhaustive` beside three absence findings: an
+unreachable state, a dead transition and a deadlock. The model does not say
+`mode != 3`; it says *nothing* about `mode`, and the honest answer is
+*undetermined*. The cause is one conflation: `evalStr` returns `undefined` both
+when an expression throws and when a name in it has no value, so *could not
+evaluate* and *evaluated to false* were the same answer and the walk took the
+second reading. That reading is right for STEPPING — the interpreter has to pick
+something, and it still does not fire an undetermined guard — and wrong for a
+REPORT. The walk now records, per transition, the guards it consulted and could
+not decide, with the guard text and the names nothing valued
+(`ExploreResult.undeterminedGuards`); `reach` withholds `unreachable`, `dead`
+**and** `deadlock` over such a machine, prints `undetermined under {…}` in place
+of `exhaustive`, and raises `verification/guard-undetermined` — a WARNING,
+because it is the reason the lists below it are short and a reader who meets an
+empty list under an info line has been told good news. `check-behaviour` reads
+the same fifth condition off the same walk result and reports `inconclusive`
+(exit 2) rather than `pass` or `vacuous`: the two commands cannot contradict each
+other about one machine, which they did for exactly as long as the gate lived in
+only one of them.
+
+A hidden-choice row is an EXISTENTIAL claim about a configuration the walk
+reached, and the narrow true statement about it is the one to keep. Removing a
+candidate BESIDE a choice can only shrink it. Removing one INSIDE it moves which
+level of the active stack the choice is read at — `innermost` is taken off the
+enabled list — and that manufactures rows: measured on a composite `Outer` with a
+guarded substate self-loop, the report carried `Outer: takes O1, never O2` with
+the guard unvalued and carried nothing at all with the same guard DECIDED and
+true. So the row is withheld exactly where an undetermined guard sits strictly
+inside it, and published everywhere else.
+
+Two controls stop the gate over-firing, both in
+`test/fixtures/verification/models/guard-undetermined.sysml`: `mode = 4` is a
+guard that is genuinely false and keeps every finding it had, `mode = 3` fires.
+The boundary is narrower than "an unresolved name": `evalStr` answers nothing for
+a type error inside the guard too (`not mode` over an Integer `mode`, a
+mixed-type comparison, non-finite arithmetic), and those are undetermined as
+well — conservative, and the diagnostic branches its hint so it never tells an
+author to value a feature that already has a value. `deadlock` rows are gated on
+this condition ALONE and not on `publishable`: a bound stops the walk enqueueing
+successors and takes nothing away from a configuration it already dequeued and
+offered every input at, so a deadlock found under a bound is still one that was
+found, while an undetermined guard is an edge out nothing decided. Measured: no
+`.sysml` in this repository carries a transition guard, so no golden in the
+corpus moved.
+
 **A safety property is a claim you make about a machine, and
 `check-behaviour` judges it.** `reach` reports; this one decides. A property is
 a pattern from `vogel-2022`'s catalogue over a scope, filled with atoms — `state
@@ -3562,12 +3610,14 @@ both report `inconclusive: liveness not checked in-process` until a lasso search
 lands and a fairness assumption is named. The refusal is asserted with a
 positive control beside it, on a graph where the safety sibling passes.
 
-**A pass needs the whole graph; a fail does not.** `exhaustive` is computed once,
-in `exploreMachine`, from the four conditions `reach` already publishes under —
-and a `pass` is written only when it holds. A bound hit, a parallel or history
-machine, an unreadable property or an atom that names nothing is `inconclusive`
-⇒ exit 2. A violation found under the same bound is still a `fail`, because the
-witness is a run this semantics admits: a bound can hide a violation and can
+**A pass needs the whole graph; a fail does not.** `exhaustive` is computed from
+`exploreMachine`'s walk, over the same five conditions `reach` publishes under —
+the four bound-and-construct ones and the undetermined-guard gate recorded above
+— and a `pass` is written only when all five hold. A bound hit, a parallel or
+history machine, a guard the walk could not evaluate, an unreadable property or
+an atom that names nothing is `inconclusive` ⇒ exit 2. A violation found under
+the same bound is still a `fail`, because the witness is a run this semantics
+admits: a bound can hide a violation and can
 never invent one. That asymmetry is the whole shape of the command.
 
 **An unresolvable atom is never read as `false`.** `absence of state failsafe`

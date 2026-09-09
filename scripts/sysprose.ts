@@ -3086,10 +3086,24 @@ function machineLines(m: MachineReach): string[] {
   const out: string[] = [
     `  ${m.machine.qualifiedName} [${m.machine.eClass}]`,
     `    ${m.configs} configuration(s) explored, depth ${m.depth} \u2014 ${m.qualification}`,
+    // NOT `dead.length` when the list was withheld. The count is derived from a
+    // list this report has just declined to publish, so `0 dead` on a
+    // suppressed machine is the good-news reading of a short list — the exact
+    // misreading the withholding exists to prevent — printed one line above the
+    // sentence that says the list is withheld.
     `    ${m.states.reachable.length} of ${m.states.total} state(s) reachable; ` +
-      `${m.transitions.fired} of ${m.transitions.total} transition(s) fired, ${m.transitions.dead.length} dead`,
+      `${m.transitions.fired} of ${m.transitions.total} transition(s) fired, ` +
+      `${m.suppressed ? 'dead withheld' : `${m.transitions.dead.length} dead`}`,
   ];
   for (const u of m.unsupported) out.push(`    not explored: ${u.construct} \u2014 ${u.detail}`);
+  // Printed FIRST among the rows, because it is why the rows below it are
+  // short. The unresolved names are named: an author who is told a guard could
+  // not be evaluated and not which name was missing has to guess.
+  for (const g of m.undeterminedGuards) {
+    const names =
+      g.unresolved.length > 0 ? `no value for ${g.unresolved.join(', ')}` : 'not readable as a value';
+    out.push(`    undecided    ${transitionLabel(g.transition)} \u2014 guard \`${g.guard}\`: ${names}`);
+  }
   for (const s of m.states.unreachable) out.push(`    unreachable  ${s.qualifiedName}`);
   for (const t of m.transitions.dead) out.push(`    dead         ${transitionLabel(t)}`);
   for (const d of m.deadlocks) {
@@ -3104,8 +3118,14 @@ function machineLines(m: MachineReach): string[] {
     );
   }
   if (m.suppressed) {
+    // Two different reasons for the same short lists, and a reader acts on them
+    // differently: a bound is raised with `--max-configs`, an undecided guard is
+    // fixed in the model. Printing the bound sentence over a walk that finished
+    // would send them to the wrong one.
     out.push(
-      '    the unreachable and dead lists are SUPPRESSED: a walk that did not finish cannot say what it never reached',
+      m.undeterminedGuards.length > 0
+        ? '    the unreachable, dead and no-way-out lists are WITHHELD: a guard this walk could not evaluate is not a guard that is false'
+        : '    the unreachable and dead lists are SUPPRESSED: a walk that did not finish cannot say what it never reached',
     );
   }
   return out;

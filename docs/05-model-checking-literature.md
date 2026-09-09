@@ -89,7 +89,7 @@ Independently, and without any temporal logic, Stanley & Laski, *Software Verifi
 
 **Verdict vocabulary.** MAY say: `recoverable: standby is reachable from every reachable configuration (exhaustive under {…})`; `not recoverable: 2 configuration(s) form a trap — {failsafe, failsafeHold} — from which standby is unreachable; entry witness of 3 step(s)`; `inconclusive: bound exhausted`.
 
-**MUST NEVER say:** "the system can always recover" — escaping a trap may need a trigger the real environment never offers, so this is a claim about the machine under a cooperative environment. Never a recoverability claim on a non-exhaustive walk: it is an absence claim in disguise (absence of an escape path) and the four publishability conditions in `explore.ts` govern it. Never "livelock", never "deadlock-free".
+**MUST NEVER say:** "the system can always recover" — escaping a trap may need a trigger the real environment never offers, so this is a claim about the machine under a cooperative environment. Never a recoverability claim on a non-exhaustive walk: it is an absence claim in disguise (absence of an escape path) and the publishability conditions in `explore.ts` govern it. Never "livelock", never "deadlock-free".
 
 **Honest cost.** One commit. The adjacency retention is the only change to `exploreMachine`, and `reach`'s existing golden output is its own differential test — it must not move.
 

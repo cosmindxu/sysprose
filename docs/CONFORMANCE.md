@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2938 passed / 0 failed / 0 skipped** across **145 files** + **128 E2E** across **78 spec files** = **3066 green** (measured 2026-09-09) |
+| Full automated suite | **2965 passed / 0 failed / 0 skipped** across **145 files** + **128 E2E** across **78 spec files** = **3093 green** (measured 2026-09-09) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -868,11 +868,13 @@ properties, and a bad-prefix search over a finite graph decides them. Two —
 `existence`, `response` — are liveness, and a bad-prefix search finds no bad
 prefix for either on any graph; both report `inconclusive: liveness not checked
 in-process` until a lasso search lands and a fairness assumption is named. A
-`pass` is emitted only when the walk saw the graph **whole** (the four conditions
-§3.8 states, computed once in `exploreMachine`); a bound hit, a parallel or
-history machine, an unreadable property or an atom that names nothing is
-`inconclusive` ⇒ exit 2. A **fail** does not need exhaustion, and the asymmetry
-is deliberate: a bound can hide a violation and can never invent one.
+`pass` is emitted only when the walk saw the graph **whole**: the four conditions
+§3.8 states, computed from `exploreMachine`'s walk, **and** the fifth this tool
+added afterwards — every guard the walk consulted decided something. A bound hit,
+a parallel or history machine, a guard the walk could not evaluate, an unreadable
+property or an atom that names nothing is `inconclusive` ⇒ exit 2. A **fail**
+does not need exhaustion, and the asymmetry is deliberate: a bound can hide a
+violation and can never invent one.
 
 **The declared deviation of §8.1 extends to this command, in the same words.** A
 property whose antecedent never holds is `vacuous` ⇒ inconclusive ⇒ exit 2, not
@@ -936,7 +938,7 @@ value.
 | **Requirements — contracts and obligations** | `contracts` / `obligations` read `RequirementDefinition` / `RequirementUsage` clause roles and case `objective`s into an assumption/guarantee inventory and a proof worklist (`src/semantics/contracts.ts`, `src/semantics/obligations.ts`) | **These commands report structure only.** They evaluate nothing and decide nothing: no solver stands behind them, and neither prints a word about whether a requirement holds. A requirement USAGE is not read through its definition's clauses (the definition carries its own contract, and the usage's row names it rather than being counted as bodiless); an attribute declared in a `port def` is one element however many ports reach it, so the variables a clause reads are reported per PATH and their `in`/`out` direction is taken from the port the path names; `discharged` and `stale` are declared in the status vocabulary and never produced, because both are read back from an evidence record that does not ship yet. |
 | **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine — a point evaluation (`src/semantics/engines/literal.ts`) or negation-UNSAT in z3 (`src/semantics/engines/smt.ts`) — and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). `proved` is reachable only under `--engine smt`, only as UNSAT-of-negation over a satisfiable axiom set with satisfiable premises and a two-sided domain, and only for the quantifier-free arithmetic fragment the unit gates pass — anything else is inconclusive with a code, and a missing solver is exit 2 rather than a fallback. The two engines are held to one answer by a differential gate over the whole fixture corpus, and every constraint-bearing element is accounted for by a relation census; neither says the gatherer reads every construct the standard defines. What an external tool makes of a record or a verdict facet is untested. |
 | **Safety — cut sets from contract-failure injection (`fault-tree`)** | Minimal cut sets over the refinement obligations of §8.3c, enumerated by increasing order with supersets pruned and the check count reported (`src/semantics/fault-tree.ts`); §8.3d above states what a cut set claims and the four sentences the command never writes | **Contract-level FTA, never a behavioural safety analysis**, and every report says so. No failure rates, no probabilities and no importance measures: the model states none and none is derived. Every absence carries the order it was checked to; a vacuous contract set is reported as vacuous and never as "no cut set"; an undecided order-1 check forbids the no-single-point claim; a state machine is refused rather than answered with an empty list. The order bound is an assumption about how many failures are credible at once, carried in a Sysprose metadata definition, and what an external reader makes of that carrier is untested. |
-| **Behaviour — bounded safety verdicts (`reach`, `check-behaviour`)** | An explicit walk of a state machine's configuration graph, exploring every enabled transition where the simulator takes the first (`src/semantics/mc/`), with safety patterns decided by bad-prefix search over it; §8.5 above states the profile, the split and the exit contract | **This is a reading of THIS tool's interpreter, not of the specification's execution semantics**, and every verdict prints the six-field profile it holds under. PSSM is not implemented and no conformance with it is claimed. Liveness is not decided in-process; a parallel or history machine is refused rather than walked; a bound hit empties every absence claim and can never produce a pass. The property carrier is a Sysprose metadata definition, and what an external reader makes of it is untested. |
+| **Behaviour — bounded safety verdicts (`reach`, `check-behaviour`)** | An explicit walk of a state machine's configuration graph, exploring every enabled transition where the simulator takes the first (`src/semantics/mc/`), with safety patterns decided by bad-prefix search over it; §8.5 above states the profile, the split and the exit contract | **This is a reading of THIS tool's interpreter, not of the specification's execution semantics**, and every verdict prints the six-field profile it holds under. PSSM is not implemented and no conformance with it is claimed. Liveness is not decided in-process; a parallel or history machine is refused rather than walked; a bound hit empties the unreachable and dead lists and can never produce a pass — it does NOT empty the deadlock rows, which are about a configuration the walk already dequeued and offered every input at, and which a bound cannot make wrong; and a guard the walk consulted and could not evaluate withholds all three of `reach`'s absence claims outright (`verification/guard-undetermined`) rather than reading “did not evaluate” as “is false”, and makes `check-behaviour` report `inconclusive` rather than `pass` or `vacuous`. The property carrier is a Sysprose metadata definition, and what an external reader makes of it is untested. |
 
 **The load-bearing gap.** The interop client round-trips **fully** against our own
 spec-shaped server (§6), and against the live OMG pilot it round-trips a read and
@@ -959,7 +961,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2938 pass / 0 skip, 145 files)
+# Full unit + integration + conformance suite (2965 pass / 0 skip, 145 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

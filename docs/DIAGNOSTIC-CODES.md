@@ -659,29 +659,36 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** warning
 - **Source:** verification
-- **Fires when:** An EXHAUSTIVE walk of a machine’s configuration graph never entered a state. It is claimed only when four things hold at once: the walk finished inside its bounds, no completion-chase budget was spent, every trigger the machine names was offered, and no unsupported construct was met. On any bound hit the row is suppressed entirely rather than qualified.
+- **Fires when:** An EXHAUSTIVE walk of a machine’s configuration graph never entered a state. It is claimed only when five things hold at once: the walk finished inside its bounds, no completion-chase budget was spent, every trigger the machine names was offered, no unsupported construct was met, and every guard the walk consulted decided something. On any bound hit, and over any guard the walk could not evaluate, the row is suppressed entirely rather than qualified.
 - **Hint given:** Either a transition into the state is missing, or the guard on the one that is there can never hold. Read the bounds printed beside the claim: it is true under those and under no others, and `reach --max-configs N` widens them.
 
 ### `verification/dead-transition`
 
 - **Severity:** warning
 - **Source:** verification
-- **Fires when:** An EXHAUSTIVE walk never found a transition ENABLED in any reachable configuration — its source is unreachable, or its guard never holds where it is. Suppressed under the same four conditions as `verification/unreachable-state`. Only transitions the walk could offer are counted at all: one leaving a control node rather than a state — the `initial` node’s edge, which the interpreter READS to decide where the machine opens — is outside the census, not dead.
+- **Fires when:** An EXHAUSTIVE walk never found a transition ENABLED in any reachable configuration — its source is unreachable, or its guard never holds where it is. Suppressed under the same five conditions as `verification/unreachable-state`. Only transitions the walk could offer are counted at all: one leaving a control node rather than a state — the `initial` node’s edge, which the interpreter READS to decide where the machine opens — is outside the census, not dead.
 - **Hint given:** Note the reading before acting on it: dead means never enabled, so a transition that an inner state’s priority always beats is enabled and is NOT reported here. Fix the guard, or the path into its source.
 
 ### `verification/deadlock`
 
 - **Severity:** warning
 - **Source:** verification
-- **Fires when:** A reachable configuration has no enabled outgoing transition — no completion transition, and none for any trigger the machine names — and its active leaf is neither marked final nor a `done` node. Reachable means reached by a run of this semantics: a configuration only entered by firing a transition an inner state’s priority always beats is not explored, so nothing is reported there.
+- **Fires when:** A reachable configuration has no enabled outgoing transition — no completion transition, and none for any trigger the machine names — and its active leaf is neither marked final nor a `done` node. Reachable means reached by a run of this semantics: a configuration only entered by firing a transition an inner state’s priority always beats is not explored, so nothing is reported there. It is an absence claim about one configuration’s outgoing edges, so it is WITHHELD over a machine carrying a guard the walk could not evaluate (`verification/guard-undetermined`) — that guard is an edge out nothing decided. A bound does not withhold it: a bound stops the walk enqueueing successors and takes nothing away from a configuration it already dequeued and offered every input at.
 - **Hint given:** Give the state a way out, or end the machine there properly — `done finished;` in the notation, or `kind = "final"` through the API. It is a reading of ONE machine under the printed alphabet: it says the machine cannot progress from there, never that the system deadlocks, and this tool never writes "deadlock-free".
 
 ### `verification/nondeterministic-choice`
 
 - **Severity:** warning
 - **Source:** verification
-- **Fires when:** Two or more transitions leaving the SAME state are enabled at once on one event, in a configuration a run of this semantics reaches, so which of them fires is decided by declaration order. The row names the one the simulator takes and the ones it never takes. Transitions enabled at different levels of the active stack are NOT reported: innermost-first is the profile’s stated priority rule, not an ambiguity.
+- **Fires when:** Two or more transitions leaving the SAME state are enabled at once on one event, in a configuration a run of this semantics reaches, so which of them fires is decided by declaration order. The row names the one the simulator takes and the ones it never takes. Transitions enabled at different levels of the active stack are NOT reported: innermost-first is the profile’s stated priority rule, not an ambiguity. Nor is a row reported at a level a guard the walk could not evaluate sits strictly inside: that guard may have been the transition the priority rule would have picked, and the choice above it would then be one the withholding invented rather than one the walk found.
 - **Hint given:** Declaration order is not a semantics. Give the transitions guards that cannot both hold, or different triggers; until then one of them is unreachable in simulation while the model admits both. A row on a trigger-less machine prints no trigger label, because there is none.
+
+### `verification/guard-undetermined`
+
+- **Severity:** warning
+- **Source:** verification
+- **Fires when:** The walk consulted a transition’s guard and could not evaluate it — a name it reads has no value anywhere in scope or in the store (`transition idle if mode == 3 then hazard;` over `attribute mode : Integer;`), or the expression yielded no value for a reason that is not a missing name at all — a type error inside it, such as `not mode` over an Integer `mode`, a comparison between two different kinds of value, or arithmetic that is not finite. Raised once per transition, naming the guard text and the names that were missing, if any. It is NOT a guard that is false: the step relation does not fire an undetermined guard because it has to pick something, and that reading is right for a run and wrong for a report.
+- **Hint given:** Read which of the two it is off the row: if it names missing names, give those features a value the walk can read (`attribute mode : Integer = 3;`) or drive the machine from a state whose effect assigns them; if it names none, every name resolves and the guard itself is the defect — most often that it is not a predicate. Until then the machine’s unreachable, dead and no-way-out lists are WITHHELD — they are absence claims, and nothing here established the absence — and the report says `undetermined under {…}` rather than `exhaustive`. `check-behaviour` is gated on the same condition and reports the property inconclusive rather than `pass` or `vacuous`. A hidden-choice row still stands where the withheld guard is at or outside the level the choice was read at — two transitions enabled at once is an existential claim, and removing a candidate beside them can only shrink it — but not where the withheld guard is strictly inside it, because that moves which level the choice is read at.
 
 ### `verification/bound-exhausted`
 
@@ -770,4 +777,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*99 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*100 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

@@ -1060,7 +1060,8 @@ export const INCONSISTENT_REQUIREMENTS_CODE = 'verification/inconsistent-require
  */
 export const VERIFICATION_WARNING_CODES: ReadonlySet<string> = new Set<string>([
   // Only the behaviour engine raises one today: an unreachable state, a dead
-  // transition, a state nothing leaves, a choice the notation does not resolve.
+  // transition, a state nothing leaves, a choice the notation does not resolve,
+  // a guard nothing in the model decides.
   ...BEHAVIOUR_WARNING_CODES,
 ]);
 
@@ -1161,7 +1162,7 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   // shown, since drafting comes before proving, so it had better be one the
   // catalogue explains.
   ...PROPERTY_CODE_SET,
-  // The six the behaviour engine raises, from `../semantics/mc/explore`. Same
+  // The seven the behaviour engine raises, from `../semantics/mc/explore`. Same
   // rule again: this set is what the catalogue guard reads, and a lane with one
   // prefix has one list of codes whichever module emits them.
   ...BEHAVIOUR_CODES,

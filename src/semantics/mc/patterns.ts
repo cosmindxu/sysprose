@@ -19,11 +19,14 @@
  *
  * THREE SENTENCES THIS FILE MUST NEVER PRODUCE, and where each is stopped:
  *
- *  1. **A pass on a partial walk.** `exhaustive` comes from `exploreMachine`,
- *     which computes it from the four conditions §3.8 states, and a `pass` is
- *     written only when it is true. A bound hit or an unsupported construct
- *     makes the property `inconclusive`, never `pass` — the absence of a bad
- *     prefix in half a graph is not the absence of one.
+ *  1. **A pass on a partial walk.** `exhaustive` is read off `exploreMachine`'s
+ *     result — the four conditions §3.8 states, plus the fifth this tool learned
+ *     the hard way, that every guard the walk consulted decided something — and
+ *     a `pass` is written only when all five hold. A bound hit, an unsupported
+ *     construct or a guard nothing in the model decides makes the property
+ *     `inconclusive`, never `pass`: the absence of a bad prefix in half a graph
+ *     is not the absence of one, and neither is its absence in a graph missing
+ *     an edge nobody decided.
  *  2. **A pass on a property class this engine cannot decide.** See the liveness
  *     paragraph above.
  *  3. **A pass over an antecedent that never holds.** A property whose scope no
@@ -42,9 +45,13 @@
  * WHY THE WALK IS RUN TWICE. `exploreMachine` answers "was this graph seen
  * whole", which is one authority for every absence claim in this lane, and the
  * product search below answers "is there a bad prefix". Folding the second into
- * the first would put the four publishability conditions in two places, and the
- * one thing worse than paying for a second walk is two readings of what
- * `exhaustive` means.
+ * the first would put the publishability conditions in two places, and the one
+ * thing worse than paying for a second walk is two readings of what
+ * `exhaustive` means. That is not a slogan: this file and `reachOne` DID drift
+ * apart for exactly one commit, `reach` withholding its lists over an
+ * undetermined guard while `check-behaviour` printed `pass` and `exhaustive`
+ * over the same machine, and the repair was to read the fifth condition off the
+ * same walk result rather than to recompute it.
  */
 
 import type { ElementId, ElementRecord, Model } from '@core/index';
@@ -80,6 +87,7 @@ import {
   BOUND_EXHAUSTED_CODE,
   DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_DEPTH,
+  GUARD_UNDETERMINED_CODE,
   exploreMachine,
   machineAlphabet,
   transitionLabel,
@@ -1174,16 +1182,33 @@ export function checkProperty(
   // Deleting it here while `reachOne` keeps it would leave two readings of what
   // "exhaustive" means, which is the one thing this lane cannot afford.
   const alphabetOffered = walk.bounds.alphabet.every((t) => walk.offered.has(t));
+  // The FIFTH condition, and it is `reachOne`'s: a guard the walk consulted and
+  // could not evaluate is not a guard that is false. A property no bad prefix
+  // violated over a graph some of whose edges were never decided is
+  // inconclusive, not a pass — the withheld edge is exactly the one that might
+  // have led to the violation. Read from the SAME `exploreMachine` result the
+  // other four are read from, so the two commands cannot drift on it: `reach`
+  // withholding its absence lists while this one wrote `pass` and `exhaustive`
+  // over the same machine was the tool contradicting itself on one file.
+  const guardsDecided = walk.undeterminedGuards.length === 0;
   const found = search(model, machineId, property, bounds);
-  const exhaustive = walk.exhaustive && alphabetOffered && found.boundHit === 'none';
+  const exhaustive =
+    walk.exhaustive && alphabetOffered && found.boundHit === 'none' && guardsDecided;
   const boundHit = found.boundHit !== 'none' ? found.boundHit : walk.boundHit;
   const qualification = exhaustive
     ? `exhaustive under ${boundsSentence(bounds)}`
-    : `partial under ${boundsSentence(bounds)} — ${
-        boundHit === 'none'
-          ? 'a trigger the machine names was never offered'
-          : boundSentence(boundHit)
-      }`;
+    : !guardsDecided
+      ? // Neither `exhaustive` nor `partial`: the walk FINISHED, so "partial"
+        // would be false too, and either word answers a question this row
+        // declined. Same sentence `reachOne` prints, for the same reason.
+        `undetermined under ${boundsSentence(bounds)} — ${walk.undeterminedGuards.length} guard(s) the walk could not evaluate${
+          boundHit === 'none' ? '' : `, and ${boundSentence(boundHit)}`
+        }`
+      : `partial under ${boundsSentence(bounds)} — ${
+          boundHit === 'none'
+            ? 'a trigger the machine names was never offered'
+            : boundSentence(boundHit)
+        }`;
   const base = {
     ...row,
     configs: found.configs,
@@ -1243,6 +1268,33 @@ export function checkProperty(
   // established one. Reporting it as `vacuous` printed "its antecedent is never
   // met" about an antecedent the walk simply had not reached yet, and
   // `--strict-vacuity` filed that as an error against a model that was fine.
+  // ...AND A GUARD THE WALK COULD NOT EVALUATE TAKES BOTH AWAY, for the reason a
+  // bound does and one a bound does not: the graph this search ran over is
+  // missing an edge nothing decided, so "no bad prefix" and "no run opened the
+  // scope" are both absences it did not establish. Ahead of the bound branch
+  // because the two are fixed differently — this one in the model, that one with
+  // `--max-configs` — and a reader given the wrong sentence raises the wrong
+  // thing. `--allow-inconclusive` is scoped to `verification/timeout` and
+  // `verification/unsupported-construct`, so this row keeps exit 2.
+  if (!guardsDecided) {
+    const g = walk.undeterminedGuards[0];
+    return {
+      ...base,
+      claim: 'inconclusive',
+      code: GUARD_UNDETERMINED_CODE,
+      detail:
+        `inconclusive: ${walk.undeterminedGuards.length} guard(s) on this machine could not be ` +
+        `evaluated — the first is \`${g.guard}\`${
+          g.unresolved.length > 0
+            ? ` (no value is in scope for ${g.unresolved.map((n) => `\`${n}\``).join(', ')})`
+            : ' (it did not evaluate to a value)'
+        }. The walk did not decide whether those transitions are enabled, so this ` +
+        'property was searched over a graph missing an edge that may well be there — and one of ' +
+        'the runs it hides is exactly where a bad prefix would be. This is NOT a pass: `reach` on ' +
+        'the same machine withholds its unreachable, dead and no-way-out lists for the same reason.',
+      witness: [],
+    };
+  }
   if (!exhaustive) {
     return {
       ...base,

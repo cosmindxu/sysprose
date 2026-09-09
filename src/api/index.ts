@@ -325,6 +325,7 @@ export {
   DEADLOCK_CODE,
   DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_DEPTH,
+  GUARD_UNDETERMINED_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
   UNREACHABLE_STATE_CODE,
   exploreMachine,
@@ -346,6 +347,7 @@ export type {
   ReachReport,
   StateRef,
   TransitionRef,
+  UndeterminedGuardRow,
   UnsupportedConstruct,
 } from '../semantics/mc/explore';
 export {
