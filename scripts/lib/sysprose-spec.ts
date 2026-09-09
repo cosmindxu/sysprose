@@ -137,6 +137,31 @@ export const VERIFY_EXIT_CODES = `Exit codes: 0 every obligation discharged non-
  */
 export const REFINE_EXIT_CODES = `Exit codes: 0 every decomposition the model states was shown to refine — obligation (3) proved and every component assumption discharged, over a satisfiable contract set — and there was at least one decomposition to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract · 2 usage/IO error, a degraded model, a model that states no decomposition at all, or ANY undecided decomposition — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here`;
 
+/**
+ * `check-behaviour`'s exit-code contract — a FIFTH one, and it is here for the
+ * reason {@link REFINE_EXIT_CODES} is here.
+ *
+ * Under {@link VERIFY_EXIT_CODES} this command would publish, in its own
+ * `--help` and in the generated reference, four promises it cannot keep: a
+ * refutation "with every feature at its model value" (there are no obligations
+ * and no `--free` here), "a relation not evaluable at the model's values", "an
+ * absent solver" — §3.8 is explicit that the engine is pure TypeScript and no
+ * solver is in this lane at all — and a `--timeout` it does not have. What it
+ * DOES share with the other judging contracts is the shape: **1 is a decided
+ * negative** — a property refuted with a witness trace of a run this semantics
+ * admits — and **2 is everything undecided**, which here includes a bound the
+ * walk hit, a machine construct this engine refuses to explore, a LIVENESS
+ * pattern it does not decide in-process, a property it could not read, an atom
+ * that names nothing, and a VACUOUS property, which no flag launders into a
+ * pass. `--strict-vacuity` raises that last row from a line to an error and
+ * changes nothing else, exactly as it does for `verify` (§2).
+ *
+ * A run with nothing to decide is **2** for {@link VERIFY_EXIT_CODES}' own
+ * reason: exit 0 says every property was shown to hold, so a machine that
+ * states none has been shown nothing.
+ */
+export const BEHAVIOUR_EXIT_CODES = `Exit codes: 0 every property stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass. There is no solver in this lane and no --free: the walk reads the model’s own values`
+
 /** Flags every subcommand accepts. */
 export const COMMON_FLAGS: readonly FlagSpec[] = [
   {
@@ -192,6 +217,36 @@ export const TRACE_PRESETS: ReadonlyMap<string, readonly string[]> = new Map([
 export const STATEMENT_KIND_FLAG_VALUES: readonly string[] = ['requirement', 'prose', 'prompt'];
 
 /**
+ * The property patterns and scopes `check-behaviour --pattern` accepts.
+ *
+ * Copied here rather than imported from `@semantics/mc/patterns`, for
+ * {@link STATEMENT_KIND_FLAG_VALUES}'s reason and no other: this module is read
+ * by a documentation generator and three doc guards, and pulling the model
+ * graph in to render a help line would give every one of them the whole
+ * semantics layer. The price of a copy is drift, so it is not left to good
+ * intentions — `test/unit/cli-reference.test.ts` compares both lists against
+ * `PATTERNS` and `SCOPES` and fails if a pattern is added to the catalogue and
+ * not offered here, or offered here and not implemented.
+ */
+export const PATTERN_NAMES: readonly string[] = [
+  'absence',
+  'universality',
+  'bounded-existence',
+  'precedence',
+  'existence',
+  'response',
+];
+
+/** The five scopes, copied for the same reason and guarded the same way. */
+export const SCOPE_NAMES: readonly string[] = [
+  'globally',
+  'before',
+  'after',
+  'between',
+  'after-until',
+];
+
+/**
  * Which exit-code contract a subcommand obeys.
  *
  * `report` is {@link EXIT_CODES}: the subcommand reports and does not judge, so
@@ -202,7 +257,7 @@ export const STATEMENT_KIND_FLAG_VALUES: readonly string[] = ['requirement', 'pr
  * section — and under it `verify` would have been documented with 1 meaning the
  * exact opposite of what it means.
  */
-export type ExitContract = 'report' | 'verify' | 'refine' | 'write';
+export type ExitContract = 'report' | 'verify' | 'refine' | 'write' | 'behaviour';
 
 /** One subcommand. */
 export interface CommandSpec {
@@ -224,6 +279,7 @@ export function exitCodesFor(cmd: CommandSpec): string {
   if (cmd.exitContract === 'verify') return VERIFY_EXIT_CODES;
   if (cmd.exitContract === 'refine') return REFINE_EXIT_CODES;
   if (cmd.exitContract === 'write') return WRITE_EXIT_CODES;
+  if (cmd.exitContract === 'behaviour') return BEHAVIOUR_EXIT_CODES;
   return EXIT_CODES;
 }
 
@@ -662,6 +718,49 @@ export const COMMANDS: readonly CommandSpec[] = [
       },
     ],
   },
+  // The behaviour lane's judging half. `reach` reports on a machine; this one
+  // decides a CLAIM somebody wrote about it, which is why it carries an exit
+  // code of its own (see BEHAVIOUR_EXIT_CODES) where `reach` carries the
+  // reporting contract. The engine behind both is the same pure-TypeScript
+  // walk: there is no solver in this lane, and the row's `backedBy` says which
+  // function a reader can call to get the same answer in process.
+  {
+    name: 'check-behaviour',
+    question: 'Does this safety pattern hold on every reachable configuration?',
+    backedBy: 'behaviourReport (src/semantics/mc/patterns.ts)',
+    payloadKey: 'behaviour',
+    exitContract: 'behaviour',
+    flags: [
+      {
+        name: 'element',
+        kind: 'value',
+        metavar: 'REF',
+        // No `fallback`, because there is no default: a property is a claim
+        // about ONE machine, and a run that checked every machine in the file
+        // against every property in it would answer a question nobody asked.
+        doc: 'The state machine to check: an id, a qualified name, or a name unique in the model. Required',
+      },
+      {
+        name: 'pattern',
+        kind: 'value',
+        metavar: 'SPEC',
+        fallback: 'the properties the machine itself carries',
+        doc: `One property, in the same field names the @SysproseVerification::PropertyPattern carrier uses: \`pattern=absence, scope=globally, p=state failsafe\`. Patterns: ${PATTERN_NAMES.join(' | ')} — the last two are LIVENESS and report inconclusive, because a bad-prefix search decides neither. Scopes: ${SCOPE_NAMES.join(' | ')}. Atoms: \`state X\`, \`trigger t\`, \`fires T\`, \`node N\`, or an expression. It is checked BESIDE the carriers, never instead of them, and a field value may hold no comma or semicolon (the carrier form has no such limit)`,
+      },
+      {
+        name: 'max-configs',
+        kind: 'value',
+        metavar: 'N',
+        fallback: `${DEFAULT_MAX_CONFIGS} configurations`,
+        doc: 'Configurations to explore before the walk gives up. A walk that hits it can still REFUTE a property — a witness is a real run — and can never pass one: no bad prefix in part of a graph is not the absence of one, so the row is inconclusive and the run exits 2',
+      },
+      {
+        name: 'strict-vacuity',
+        kind: 'boolean',
+        doc: 'Raise a vacuous property from a row to verification/vacuous-property, an error. It does NOT change the exit code: a vacuity is inconclusive and exits 2 with the flag and without it',
+      },
+    ],
+  },
 ];
 
 export function findCommand(name: string): CommandSpec | undefined {
@@ -676,13 +775,22 @@ export function flagsFor(cmd: CommandSpec): FlagSpec[] {
 /** `--help` with no subcommand: what the tool is and what it can be asked. */
 export function renderTopUsage(): string {
   const width = Math.max(...COMMANDS.map((c) => c.name.length));
-  // Both judging contracts, in one list: `refine` carries its own text (a
-  // refinement obligation reads no feature value, so `verify`'s wording does
-  // not fit it) but it judges just the same, and a reader told only about
-  // `verify`'s two would take `refine`'s exit 1 for a load failure.
-  const judging = COMMANDS.filter(
-    (c) => c.exitContract === 'verify' || c.exitContract === 'refine',
-  );
+  // EVERY judging contract, in one list: `refine` and `check-behaviour` each
+  // carry their own text (a refinement obligation reads no feature value and a
+  // behavioural property has no solver behind it, so `verify`'s wording fits
+  // neither) but both judge just the same, and a reader told only about
+  // `verify`'s two would take their exit 1 for a load failure — which is its
+  // exact opposite. Filtered by what the contract SAYS rather than by a list of
+  // names, so a sixth contract cannot be added and quietly left out:
+  // `check-behaviour` was, and its exit 1 (a property refuted, with a witness)
+  // read as "the model did not load cleanly" in the one place a reader who has
+  // not run the tool yet meets the contract.
+  const judging = COMMANDS.filter((c) => {
+    const contract = exitCodesFor(c);
+    // The two that do not judge: `report`'s 1 is about the load, and the
+    // writing commands have no 1 at all.
+    return contract !== EXIT_CODES && contract !== WRITE_EXIT_CODES;
+  });
   return [
     'sysprose — report on a SysML v2–style model from the command line',
     '',

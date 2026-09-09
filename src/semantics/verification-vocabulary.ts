@@ -91,6 +91,34 @@ export const EVIDENCE_DEFINITION = 'Evidence';
 export const EVIDENCE_QUALIFIED_NAME = `${SYSPROSE_VERIFICATION_PACKAGE}::${EVIDENCE_DEFINITION}`;
 
 /**
+ * The metadata definition a behavioural property is carried under.
+ *
+ * NOT A KEYWORD either, and for {@link EVIDENCE_DEFINITION}'s reason: a
+ * property has a BODY — a pattern name, a scope, and the atoms that fill them —
+ * and §7.27's annotating form `@Def { attribute … = "…"; }` is what carries a
+ * body onto an element that is already declared. A bare `#PropertyPattern`
+ * would be a tag claiming to be a property and carrying none.
+ *
+ * ONE ATTRIBUTE PER FIELD, which is the whole shape of it:
+ *
+ *     @SysproseVerification::PropertyPattern {
+ *         attribute pattern = "absence";
+ *         attribute scope = "globally";
+ *         attribute p = "state failsafe";
+ *     }
+ *
+ * rather than one attribute holding a sentence. The phrase-to-atom trace is
+ * what a reader argues with — which pattern, over which scope, filled by which
+ * atom — and a sentence would have to be re-parsed to say any of it back. The
+ * fields are exactly the ones `--pattern` takes at a terminal, in the same
+ * names, so a property typed once is the same property wherever it is written.
+ */
+export const PROPERTY_PATTERN_DEFINITION = 'PropertyPattern';
+
+/** `SysproseVerification::PropertyPattern` — the spelling a carrier is written with. */
+export const PROPERTY_PATTERN_QUALIFIED_NAME = `${SYSPROSE_VERIFICATION_PACKAGE}::${PROPERTY_PATTERN_DEFINITION}`;
+
+/**
  * The shipped definition, as text.
  *
  * A model that wants `#exceptional` to name something declares this package (or
@@ -100,7 +128,8 @@ export const EVIDENCE_QUALIFIED_NAME = `${SYSPROSE_VERIFICATION_PACKAGE}::${EVID
  * `test/unit/semantics.keywords.test.ts`.
  */
 export const SYSPROSE_VERIFICATION_LIBRARY = `package ${SYSPROSE_VERIFICATION_PACKAGE} {
-    doc /* Two definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #${EXCEPTIONAL_KEYWORD} says an outcome is a failure rather than an equally valid result. ${EVIDENCE_DEFINITION} carries what a verification run showed, as an annotation on the requirement it is about. Both are Sysprose extensions, not standard vocabulary. */
+    doc /* Three definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #${EXCEPTIONAL_KEYWORD} says an outcome is a failure rather than an equally valid result. ${EVIDENCE_DEFINITION} carries what a verification run showed, as an annotation on the requirement it is about. ${PROPERTY_PATTERN_DEFINITION} carries a behavioural property — a pattern, a scope and the atoms that fill them — as an annotation on the machine it is about. All three are Sysprose extensions, not standard vocabulary. */
     metadata def <${EXCEPTIONAL_KEYWORD}> ${EXCEPTIONAL_DEFINITION};
     metadata def ${EVIDENCE_DEFINITION};
+    metadata def ${PROPERTY_PATTERN_DEFINITION};
 }`;

@@ -25,7 +25,7 @@ npm run sysprose -- --help                 # the subcommand list
 npm run sysprose -- <subcommand> --help    # the flags of one subcommand
 ```
 
-**The exit-code contract is per subcommand, and there are four of them.** Most
+**The exit-code contract is per subcommand, and there are five of them.** Most
 subcommands *report*: `stats`, `elements`, `requirements`, `trace`, `connectivity`, `where-used`, `orphans`, `prompts`, `contracts`, `obligations`, `property-draft`, `property-check`, `evidence-status`, `reach` — for those,
 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error. `verify` and `consistency`
 *judge*, and their 1 means a **decided negative** — an
@@ -35,8 +35,11 @@ its own, because a refinement obligation reads no feature value and there is
 no `--free` for it: 0 every decomposition the model states was shown to refine — obligation (3) proved and every component assumption discharged, over a satisfiable contract set — and there was at least one decomposition to decide · 1 at least one obligation refuted, with a counterexample this tool re-read and confirmed: the component contracts admit an implementation that breaks the system contract · 2 usage/IO error, a degraded model, a model that states no decomposition at all, or ANY undecided decomposition — a timeout, an absent solver, a clause a gate refused, or a contract set that is vacuous, which is never laundered into a pass. A refinement obligation reads no feature value and there is no --free here.
 `evidence-attach` and `evidence-detach` *write* the
 file back, and they have no exit 1 at all:
-0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1. Each section below states its own
-contract in full, and every section states which of the four it obeys.
+0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1.
+`check-behaviour` judges a *machine* and carries the fifth,
+because there is no solver in that lane and no `--free` for it either:
+0 every property stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass. There is no solver in this lane and no --free: the walk reads the model’s own values. Each section below states its own
+contract in full, and every section states which of the five it obeys.
 
 Under the reporting contract, exit **1** is about the *model*, not the report:
 those subcommands report and do not judge, so finding four unused definitions is
@@ -76,6 +79,7 @@ rather than reporting on the first one.
 | [`evidence-attach`](#evidence-attach) | Write the records of a verify run into the file, as annotations on what they are about | `evidenceAttach` | writes |
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
 | [`reach`](#reach) | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | `reach` | reports |
+| [`check-behaviour`](#check-behaviour) | Does this safety pattern hold on every reachable configuration? | `behaviour` | judges |
 
 ### Options every subcommand takes
 
@@ -411,6 +415,25 @@ Computed by `reachReport (src/semantics/mc/explore.ts)`. With `--json` the answe
 
 **Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
 
+### `check-behaviour`
+
+**Does this safety pattern hold on every reachable configuration?**
+
+```bash
+npm run sysprose -- check-behaviour <file.sysml|-> [options]
+```
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--element REF` | The state machine to check: an id, a qualified name, or a name unique in the model. Required | — |
+| `--pattern SPEC` | One property, in the same field names the @SysproseVerification::PropertyPattern carrier uses: `pattern=absence, scope=globally, p=state failsafe`. Patterns: absence \| universality \| bounded-existence \| precedence \| existence \| response — the last two are LIVENESS and report inconclusive, because a bad-prefix search decides neither. Scopes: globally \| before \| after \| between \| after-until. Atoms: `state X`, `trigger t`, `fires T`, `node N`, or an expression. It is checked BESIDE the carriers, never instead of them, and a field value may hold no comma or semicolon (the carrier form has no such limit) | the properties the machine itself carries |
+| `--max-configs N` | Configurations to explore before the walk gives up. A walk that hits it can still REFUTE a property — a witness is a real run — and can never pass one: no bad prefix in part of a graph is not the absence of one, so the row is inconclusive and the run exits 2 | 10000 configurations |
+| `--strict-vacuity` | Raise a vacuous property from a row to verification/vacuous-property, an error. It does NOT change the exit code: a vacuity is inconclusive and exits 2 with the flag and without it | — |
+
+Computed by `behaviourReport (src/semantics/mc/patterns.ts)`. With `--json` the answer is published under `behaviour`, beside `ok` and `file`.
+
+**Exit codes.** 0 every property stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass. There is no solver in this lane and no --free: the walk reads the model’s own values.
+
 ### `trace` relationship presets
 
 A preset names the **relationship** kinds only. The row and column metaclasses
@@ -459,4 +482,4 @@ Branch on `code`, never on `message` — see
 
 ---
 
-*19 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*
+*20 subcommands. Generated from `scripts/lib/sysprose-spec.ts`.*

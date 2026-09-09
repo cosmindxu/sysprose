@@ -498,8 +498,8 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** error
 - **Source:** verification
-- **Fires when:** A requirement does not hold with every feature at the value the model binds it to. Both engines file it: the literal one evaluates the relation and reads it as false, and the SMT one finds `A ∧ P ∧ ¬G` satisfiable and confirms the witness in process. It is the one code on a DECIDED row, and the run exits 1.
-- **Hint given:** Read the row’s `detail` for the two magnitudes the comparison was made on, and the witness for the assignment that breaks the requirement in the units the file stores. Fix the design or the requirement and re-run. `--allow-inconclusive` does not forgive a violation, and exit 1 outranks every undecided row in the same run.
+- **Fires when:** A requirement does not hold with every feature at the value the model binds it to. Both engines file it: the literal one evaluates the relation and reads it as false, and the SMT one finds `A ∧ P ∧ ¬G` satisfiable and confirms the witness in process. `check-behaviour` files the same code for a behavioural property a bad-prefix search REFUTED: a run of the configuration graph that breaks the pattern, printed step by step. It is the one code on a DECIDED row, and the run exits 1.
+- **Hint given:** Read the row’s `detail` for the two magnitudes the comparison was made on, and the witness for the assignment that breaks the requirement in the units the file stores — or, in the behaviour lane, the witness trace: a run this semantics admits, with the atoms that hold at each observation. A bound can hide a violation and can never invent one, so a refutation stands whether or not the walk finished. Fix the design or the requirement and re-run. `--allow-inconclusive` does not forgive a violation, and exit 1 outranks every undecided row in the same run.
 
 ### `verification/vacuous`
 
@@ -512,8 +512,8 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** error
 - **Source:** verification
-- **Fires when:** `--strict-vacuity` was given and an obligation was vacuous. It is the same row as `verification/vacuous` or `verification/vacuous-pass`, raised from an info line to an error so a vacuity cannot be scrolled past.
-- **Hint given:** The flag changes the code and the severity and NOTHING else: the claim stays `vacuous`, the row stays undecided, and the run exits 2 exactly as it does without the flag. Fix the antecedent so the obligation stands on something that can hold.
+- **Fires when:** `--strict-vacuity` was given and an obligation was vacuous. It is the same row as `verification/vacuous` or `verification/vacuous-pass`, raised from an info line to an error so a vacuity cannot be scrolled past. `check-behaviour` raises it from a third row, which carries no code of its own: a property whose scope no run of an exhaustively walked machine opens, or a `precedence` whose P never occurs.
+- **Hint given:** The flag changes the code and the severity and NOTHING else: the claim stays `vacuous`, the row stays undecided, and the run exits 2 exactly as it does without the flag. Fix the antecedent so the obligation — or the behavioural property — stands on something that can hold.
 
 ### `verification/inconsistent-axioms`
 
@@ -666,15 +666,29 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** info
 - **Source:** verification
-- **Fires when:** A bound stopped the walk: the configuration bound (`--max-configs`), the depth bound, or a chain of completion transitions longer than the 64-step chase budget the interpreter itself runs under. The walk is partial.
-- **Hint given:** The unreachable and dead lists are emptied rather than shortened, and the report says so: a partial walk cannot say what it never reached. Raise `--max-configs`, or read the run as what it is. This is not a defect in the model.
+- **Fires when:** A bound stopped the walk: the configuration bound (`--max-configs`), the depth bound, or a chain of completion transitions longer than the 64-step chase budget the interpreter itself runs under. The walk is partial. `check-behaviour` files it for a property whose search found no bad prefix over a graph it did not finish — and for one whose scope no explored run opened, because “the antecedent is never met” is a claim of absence a partial walk has not established either.
+- **Hint given:** The unreachable and dead lists are emptied rather than shortened, and the report says so: a partial walk cannot say what it never reached. In the behaviour lane the property is inconclusive rather than `pass` or `vacuous`, for the same reason. Raise `--max-configs`, or read the run as what it is. This is not a defect in the model.
 
 ### `verification/behaviour-unsupported-construct`
 
 - **Severity:** info
 - **Source:** verification
-- **Fires when:** A machine uses a construct this engine does not explore: parallel regions (`attrs.parallel`), a history state (`attrs.history` or a history pseudostate) — neither of which `sysml.langium` has a keyword for, so both are reachable only through the API — or a transition missing an endpoint. The machine is not walked and is never reported as exhaustively explored.
-- **Hint given:** Nothing under such a machine is a claim of absence: no state is reported unreachable and no transition dead. Model the behaviour with nested states and named triggers, or export the machine to an engine that decides it (§3.11).
+- **Fires when:** A machine uses a construct this engine does not explore: parallel regions (`attrs.parallel`), a history state (`attrs.history` or a history pseudostate) — neither of which `sysml.langium` has a keyword for, so both are reachable only through the API — or a transition missing an endpoint. The machine is not walked and is never reported as exhaustively explored. `check-behaviour` also files it for a PROPERTY CLASS this engine does not decide: `existence` and `response` are liveness, violated only by an infinite run that never delivers what it promised, and a bad-prefix search finds no bad prefix for either — so a walk would answer “no violation found” on every graph and a pass drawn from that would be the strongest verdict the command has, printed for the two properties it cannot decide.
+- **Hint given:** Nothing under such a machine is a claim of absence: no state is reported unreachable and no transition dead, and no liveness property is reported to hold. Model the behaviour with nested states and named triggers, write the safety half of what you meant (`absence`, `universality`, `bounded-existence`, `precedence`), or export the machine to an engine that decides it (§3.11). No flag lowers this row: `--allow-inconclusive` is scoped to `verification/timeout` and `verification/unsupported-construct`, and this is neither.
+
+### `verification/malformed-property`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A behavioural property could not be read as one: a `pattern` outside the catalogue (`absence`, `universality`, `bounded-existence`, `precedence`, `existence`, `response`), a `scope` outside its five, a field the pattern needs and did not get, a `bounded-existence` with no `n`, a `--pattern` that is not `key=value` — or an expression atom that parses and is not a predicate, so it yielded a number (or nothing) where the walk needed a boolean.
+- **Hint given:** Write the property as `pattern=absence, scope=globally, p=state failsafe`, which is exactly the field set the `@SysproseVerification::PropertyPattern` carrier uses. A property nobody could read is never dropped from the run: it is inconclusive and exits 2, because a typo that silently removed a claim would look like a clean sweep.
+
+### `verification/unknown-atom`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A name in a property names nothing the machine has: `state X` for a state it does not declare, `trigger t` for a trigger no transition names, `fires T` for a transition with no such declared name, `node N` for no such node — or an expression reading a feature that is in no scope the walk offered. A name matching several elements lands here too, rather than resolving to whichever the walk reached first.
+- **Hint given:** The row lists what the machine DOES offer, so a misspelling is one line from being fixed; on an ambiguous name, write the qualified one. This is never read as "the atom is false": `absence of state failsafe` would then PASS the moment `failsafe` were misspelt, which is the loudest way this lane could print a green verdict that means nothing.
 
 ## Input handling
 
@@ -735,4 +749,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*94 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*96 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

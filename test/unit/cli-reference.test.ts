@@ -17,20 +17,25 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DEFAULT_MAX_CORE as SEMANTICS_MAX_CORE, STATEMENT_KINDS } from '@semantics/index';
-import { DEFAULT_MAX_CONFIGS as ENGINE_MAX_CONFIGS } from '@api/index';
+import { DEFAULT_MAX_CONFIGS as ENGINE_MAX_CONFIGS, PATTERNS, SCOPES } from '@api/index';
 import { renderCliReference } from '../../scripts/gen-cli-reference';
 import {
+  BEHAVIOUR_EXIT_CODES,
   CHECK_EXIT_CODES,
   COMMANDS,
   COMMON_FLAGS,
   DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_CORE,
   EXIT_CODES,
+  PATTERN_NAMES,
   REFINE_EXIT_CODES,
+  SCOPE_NAMES,
   STATEMENT_KIND_FLAG_VALUES,
   VERIFY_EXIT_CODES,
   WRITE_EXIT_CODES,
+  exitCodesFor,
   flagsFor,
+  renderTopUsage,
 } from '../../scripts/lib/sysprose-spec';
 
 const PATH = resolve(process.cwd(), 'docs/CLI-REFERENCE.md');
@@ -111,11 +116,12 @@ describe('the generated command reference', () => {
       verify: VERIFY_EXIT_CODES,
       refine: REFINE_EXIT_CODES,
       write: WRITE_EXIT_CODES,
+      behaviour: BEHAVIOUR_EXIT_CODES,
     };
     expect(
       COMMANDS.map((c) => c.exitContract).filter((v, i, a) => a.indexOf(v) === i).sort(),
-      'the command table no longer declares all four exit contracts',
-    ).toEqual(['refine', 'report', 'verify', 'write']);
+      'the command table no longer declares all five exit contracts',
+    ).toEqual(['behaviour', 'refine', 'report', 'verify', 'write']);
 
     for (const cmd of COMMANDS) {
       const section = sections.get(cmd.name);
@@ -167,6 +173,55 @@ describe('the generated command reference', () => {
     expect(refining, 'the refinement contract is declared by exactly `refine`').toEqual(['refine']);
     // And no `--free` flag exists on the row that publishes that sentence.
     expect(flagsFor(COMMANDS.find((c) => c.name === 'refine')!).map((f) => f.name)).not.toContain('free');
+  });
+
+  it('gives `check-behaviour` a contract with no solver and no --free in it', () => {
+    // The same reason `refine` has its own, and the same failure if it did not:
+    // under `verify`'s paragraph this command would publish an absent solver, a
+    // `--timeout` and a `--free` it does not have — and §3.8 is explicit that
+    // the engine is pure TypeScript, so "an absent solver" is a state it cannot
+    // reach at all. The two contracts still agree about what 1 MEANS.
+    expect(BEHAVIOUR_EXIT_CODES).toContain('1 at least one property refuted');
+    expect(BEHAVIOUR_EXIT_CODES).toContain('witness trace');
+    expect(BEHAVIOUR_EXIT_CODES).not.toContain('at its model value');
+    expect(BEHAVIOUR_EXIT_CODES).toContain('There is no solver in this lane and no --free');
+    // The undecided states this lane must never launder, named in it.
+    expect(BEHAVIOUR_EXIT_CODES).toContain('vacuous');
+    expect(BEHAVIOUR_EXIT_CODES).toContain('liveness');
+    expect(BEHAVIOUR_EXIT_CODES).toContain('a bound the walk hit');
+    expect(BEHAVIOUR_EXIT_CODES).not.toBe(VERIFY_EXIT_CODES);
+    const behaving = COMMANDS.filter((c) => c.exitContract === 'behaviour').map((c) => c.name);
+    expect(behaving, 'the behaviour contract is declared by exactly `check-behaviour`').toEqual([
+      'check-behaviour',
+    ]);
+    // And no flag exists on that row for anything the sentence refuses.
+    const flags = flagsFor(COMMANDS.find((c) => c.name === 'check-behaviour')!).map((f) => f.name);
+    expect(flags).not.toContain('free');
+    expect(flags).not.toContain('engine');
+    expect(flags).not.toContain('timeout');
+  });
+
+  it('names every JUDGING subcommand in the top-level exit-code caveat', () => {
+    // THE ONE PLACE A READER WHO HAS NOT RUN THE TOOL YET MEETS THE CONTRACT.
+    // `sysprose --help` prints the REPORTING sentence — under which 1 means
+    // "the model did not load cleanly" — and then names the subcommands that do
+    // not obey it. `check-behaviour` was left out of that list while exiting 1
+    // on a property refuted, so its exit 1 was documented as its own opposite.
+    // Derived from the contracts rather than from a list of names, so a sixth
+    // contract cannot be added and quietly left out the same way.
+    const usage = renderTopUsage();
+    expect(usage).toContain(EXIT_CODES);
+    for (const cmd of COMMANDS) {
+      const contract = exitCodesFor(cmd);
+      // `report`'s 1 is about the load, and the writing commands have no 1.
+      const judges = contract !== EXIT_CODES && contract !== WRITE_EXIT_CODES;
+      expect(
+        usage.includes(`\`${cmd.name}\` `) || usage.includes(`\`${cmd.name}\`,`),
+        `${cmd.name} (${cmd.exitContract}) ${judges ? 'is judging and is not named' : 'reports and must not be named'} in the top-level caveat`,
+      ).toBe(judges);
+    }
+    // And the sentence still reads as English with more than one of them in it.
+    expect(usage).toContain('judge and have their own contract');
   });
 
   it('states in words that `verify`’s 1 means refuted, not a load failure', () => {
@@ -237,6 +292,47 @@ describe('the `--max-core` default and the engine that honours it', () => {
     expect(row!, 'the --max-core row no longer prints its default').toContain(
       `${DEFAULT_MAX_CORE} members`,
     );
+  });
+});
+
+/**
+ * The third and fourth values the command table copies rather than imports.
+ *
+ * `--pattern`'s help line offers a pattern catalogue and a scope list, and both
+ * are spelled in `sysprose-spec.ts` for the same reason `--kind`'s vocabulary
+ * is: that module is read by a documentation generator and three doc guards and
+ * stays free of model imports. The failure a copy invites is precise — a
+ * pattern added to `PATTERNS` and not offered here is one the reference does
+ * not document, and one offered here and not in `PATTERNS` is a name
+ * `check-behaviour` refuses with `verification/malformed-property` after telling
+ * the reader to type it.
+ */
+describe('the `--pattern` vocabulary and the catalogue behind it', () => {
+  it('offers exactly the patterns and scopes the engine declares, in the same order', () => {
+    expect(
+      PATTERN_NAMES,
+      '`check-behaviour --pattern` and `PATTERNS` disagree about the catalogue',
+    ).toEqual(PATTERNS.map((p) => p.name));
+    expect(
+      SCOPE_NAMES,
+      '`check-behaviour --pattern` and `SCOPES` disagree about the scopes',
+    ).toEqual(SCOPES.map((s) => s.name));
+  });
+
+  it('names every one of them in the reference, and says which two are liveness', () => {
+    const row = DOC.split('\n').find((l) => l.startsWith('| `--pattern SPEC` |'));
+    expect(row, 'the reference no longer renders a `--pattern` row').toBeDefined();
+    for (const name of PATTERN_NAMES) expect(row!, `the row offers ${name}`).toContain(name);
+    for (const name of SCOPE_NAMES) expect(row!, `the row offers ${name}`).toContain(name);
+    // The half of the row that keeps the command honest: the two patterns it
+    // cannot decide are named as such where a reader chooses one.
+    expect(row!, 'the --pattern row no longer says which patterns are liveness').toContain(
+      'LIVENESS',
+    );
+    expect(
+      PATTERNS.filter((p) => p.kind === 'liveness').map((p) => p.name),
+      'the liveness pair moved — the --pattern row says the LAST TWO are liveness',
+    ).toEqual(PATTERN_NAMES.slice(-2));
   });
 });
 

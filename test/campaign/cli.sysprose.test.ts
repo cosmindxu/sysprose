@@ -817,9 +817,12 @@ describe('L7 — sysprose reporting command', () => {
     // EVERY judging subcommand, and a sentence that survives there being more
     // than two of them: a list joined with commas rendered "`verify`,
     // `consistency` judges", which is not English and is the one line telling a
-    // reader that the contract above does not apply to these.
+    // reader that the contract above does not apply to these. `check-behaviour`
+    // belongs in it — its exit 1 is a property REFUTED, and left out of this
+    // list it was documented, in the one place a reader meets the contract
+    // before running anything, as "the model did not load cleanly".
     expect(top.stdout).toContain(
-      '`verify`, `consistency` and `refine` judge and have their own contract',
+      '`verify`, `consistency`, `refine` and `check-behaviour` judge and have their own contract',
     );
 
     const sub = run(['where-used', '--help']);
@@ -2886,6 +2889,189 @@ package P {
     expect(noMachine.code).toBe(2);
     expect(noMachine.stderr).toContain('no state machine');
   }, 90_000);
+
+  it('check-behaviour refutes a property on FlightModes, with the witness the simulator hides', () => {
+    // THE FINDING ON THIS MACHINE, from the other side. `reach` says two
+    // completion transitions are enabled at `autonomous` and the simulator
+    // takes the first, so `failsafe` is never entered in simulation. Here the
+    // same fact is a REFUTATION: the model admits a run that reaches it, and
+    // the witness is that run.
+    const r = run([
+      'check-behaviour',
+      UAV,
+      '--element',
+      'FlightModes',
+      '--pattern',
+      'pattern=absence, scope=globally, p=state failsafe',
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain('FAIL');
+    expect(r.stdout).toContain('witness — a run this semantics admits');
+    expect(r.stdout).toContain('failsafe');
+    expect(r.stdout).toContain('verification/refuted');
+    // The bound every figure holds under, and the words this command may never
+    // print whatever it found.
+    expect(r.stdout).toContain('exhaustive under {maxConfigs 10000');
+    expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
+  }, 90_000);
+
+  it('check-behaviour --json publishes under `behaviour`, with a verdict beside it', () => {
+    const r = run([
+      'check-behaviour',
+      UAV,
+      '--element',
+      'FlightModes',
+      '--pattern',
+      'pattern=absence, scope=globally, p=state standby',
+      '--json',
+    ]);
+    expect(r.code).toBe(1);
+    const { keys, body } = payload<{
+      verdict: { passed: number; failed: number; vacuous: number; inconclusive: number; exitCode: number };
+      behaviour: {
+        machine: { name: string };
+        properties: Array<{
+          claim: string;
+          code: string | null;
+          patternClass: string;
+          exhaustive: boolean;
+          sentence: string;
+          witness: Array<{ index: number; leaf: { name: string }; holds: string[] }>;
+        }>;
+        profile: Array<{ field: string }>;
+        counts: { passed: number; failed: number };
+        exitCode: number;
+      };
+    }>(r);
+    expect(keys).toEqual(['behaviour', 'file', 'ok', 'verdict']);
+    // The verdict block and the process status agree, which is the one thing an
+    // automation cannot recover from if they do not.
+    expect(body.verdict.exitCode).toBe(1);
+    expect(body.verdict).toMatchObject({ passed: 0, failed: 1, vacuous: 0, inconclusive: 0 });
+    expect(body.behaviour.machine.name).toBe('FlightModes');
+    const p = body.behaviour.properties[0];
+    expect(p.claim).toBe('fail');
+    expect(p.code).toBe('verification/refuted');
+    expect(p.patternClass).toBe('safety');
+    // `standby` is the OPENING configuration, so the bad prefix is one step long.
+    expect(p.witness.map((w) => w.leaf.name)).toEqual(['standby']);
+    expect(p.witness[0].holds).toEqual(['p']);
+    // Every verdict carries the reading it holds under (plan §3.8).
+    expect(body.behaviour.profile.map((f) => f.field)).toEqual([
+      'run-to-completion',
+      'priority',
+      'history',
+      'regions',
+      'deferred events',
+      'time',
+    ]);
+  }, 90_000);
+
+  it('check-behaviour never passes a liveness pattern, and says why', () => {
+    const r = run([
+      'check-behaviour',
+      UAV,
+      '--element',
+      'FlightModes',
+      '--pattern',
+      'pattern=response, scope=globally, p=state standby, s=state failsafe',
+    ]);
+    // Inconclusive ⇒ exit 2, on a machine where a bad-prefix search finds
+    // nothing at all — which is exactly when a naive engine would print a pass.
+    expect(r.code).toBe(2);
+    expect(r.stdout).toContain('INCONCLUSIVE');
+    expect(r.stdout).toContain('liveness not checked in-process');
+    expect(r.stdout).not.toContain('PASS');
+  }, 90_000);
+
+  it('check-behaviour exits 2 on a vacuity, with --strict-vacuity and without it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-behaviour-'));
+    const file = join(dir, 'vacuous.sysml');
+    // `stuck` is declared and nothing reaches it, so "absence of `manual` after
+    // `stuck`" is true of this machine for a reason that has nothing to do with
+    // it. Carried in the FILE, as §7.27 metadata, rather than given on the
+    // command line — the carrier is the door this command is meant to be used
+    // through.
+    writeFileSync(
+      file,
+      `package Modes {
+    state def M {
+        @SysproseVerification::PropertyPattern {
+            attribute pattern = "absence";
+            attribute scope = "after";
+            attribute p = "state manual";
+            attribute q = "state stuck";
+        }
+        state standby;
+        state manual;
+        state stuck;
+        transition standby -> manual;
+        transition manual -> standby;
+    }
+}
+`,
+    );
+    try {
+      const plain = run(['check-behaviour', file, '--element', 'M']);
+      const strict = run(['check-behaviour', file, '--element', 'M', '--strict-vacuity']);
+      // BOTH SPELLINGS, so the flag cannot quietly acquire exit semantics §2
+      // does not give it: it raises the row to an error and changes nothing else.
+      expect(plain.code).toBe(2);
+      expect(strict.code).toBe(2);
+      expect(plain.stdout).toContain('VACUOUS');
+      expect(strict.stdout).toContain('VACUOUS');
+      expect(plain.stdout).not.toContain('verification/vacuous-property');
+      expect(strict.stdout).toContain('error verification/vacuous-property');
+      expect(strict.stdout).toContain('changes no exit code');
+      // And the property was read off the carrier, not invented.
+      expect(plain.stdout).toContain('@PropertyPattern on Modes::M');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('check-behaviour exits 2 on a pattern outside the catalogue, and on a missing --element', () => {
+    const unknown = run([
+      'check-behaviour',
+      UAV,
+      '--element',
+      'FlightModes',
+      '--pattern',
+      'pattern=eventually, scope=globally, p=state failsafe',
+    ]);
+    expect(unknown.code).toBe(2);
+    expect(unknown.stdout).toContain('verification/malformed-property');
+    expect(unknown.stdout).toContain('not a pattern in the catalogue');
+
+    // `--element` has no default, and the refusal says why rather than
+    // reporting on every machine in the file.
+    const noElement = run(['check-behaviour', UAV]);
+    expect(noElement.code).toBe(2);
+    expect(noElement.stderr).toContain('--element REF is required');
+
+    // A reference that holds no machine is refused BY NAME, the same way
+    // `reach --element` refuses one.
+    const noMachine = run(['check-behaviour', UAV, '--element', 'EnduranceRequirement']);
+    expect(noMachine.code).toBe(2);
+    expect(noMachine.stderr).toContain('no state machine');
+
+    // And a machine that states nothing to decide is exit 2, not exit 0: a run
+    // that checked nothing has not passed.
+    const nothing = run(['check-behaviour', UAV, '--element', 'FlightModes']);
+    expect(nothing.code).toBe(2);
+    expect(nothing.stdout).toContain('states no property');
+
+    // A `--pattern` WHOSE VALUE EXPANDED TO NOTHING — the CI line whose shell
+    // variable was empty. It is a property nobody could read, not a flag nobody
+    // gave: dropped, the run would report on the carriers alone and look like a
+    // clean sweep. The row it lands as says which of the reader's properties
+    // was not checked.
+    const blank = run(['check-behaviour', UAV, '--element', 'FlightModes', '--pattern', '']);
+    expect(blank.code).toBe(2);
+    expect(blank.stdout).toContain('verification/malformed-property');
+    expect(blank.stdout).toContain('no fields at all');
+    expect(blank.stdout).not.toContain('states no property');
+  }, 210_000);
 
   it('--no-library skips binding and still reports the file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));

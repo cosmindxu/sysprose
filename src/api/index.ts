@@ -313,6 +313,42 @@ export type {
 } from '../semantics/mc/config';
 export { SEMANTIC_PROFILE, profileLines } from '../semantics/mc/profile';
 export type { ProfileField } from '../semantics/mc/profile';
+// Safety patterns over that graph (plan §3.8), through the same door and for
+// the same reason: `check-behaviour` is a rendering of `behaviourReport`, and a
+// checker an agent could only reach by spawning a CLI is not an in-process API.
+export {
+  PATTERNS,
+  PROPERTY_FIELDS,
+  PROPERTY_PATTERN_CODES,
+  SCOPES,
+  behaviourReport,
+  checkProperty,
+  isPropertyCarrier,
+  parsePropertyText,
+  propertiesOf,
+  traceLine,
+} from '../semantics/mc/patterns';
+export type {
+  BehaviourOptions,
+  BehaviourReport,
+  PatternClass,
+  PatternName,
+  PatternSpec,
+  PropertyClaim,
+  PropertySource,
+  PropertyText,
+  PropertyVerdict,
+  ScopeName,
+  ScopeSpec,
+  TraceStep,
+} from '../semantics/mc/patterns';
+export {
+  MALFORMED_PROPERTY_CODE,
+  UNKNOWN_ATOM_CODE,
+  atomHolds,
+  readAtom,
+} from '../semantics/mc/atoms';
+export type { Atom, AtomKind, AtomRefusal, AtomResult, Observation } from '../semantics/mc/atoms';
 
 // REST facade
 export { SysmlApiServer } from './rest';

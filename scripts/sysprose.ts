@@ -106,7 +106,9 @@ import {
   PropertyRefError,
   READING,
   reachReport,
+  behaviourReport,
   stateMachinesIn,
+  traceLine,
   transitionLabel,
   requirementSatisfaction,
   traceabilityMatrix,
@@ -127,7 +129,9 @@ import {
   type PropertyCheckReport,
   type RefinementReport,
   type PropertyDraftReport,
+  type BehaviourReport,
   type MachineReach,
+  type PropertyVerdict,
   type ReachReport,
   type VerificationCaseVerdict,
   type VerifyEngineOption,
@@ -224,6 +228,17 @@ interface Report {
    * What they share, and all an automation needs, is `verdict.exitCode`.
    */
   refinement?: RefinementReport;
+  /**
+   * The run of the FOURTH subcommand that judges.
+   *
+   * A fourth field for the same reason there is a third: the four publish
+   * different figures — obligations, requirement sets, decompositions, and now
+   * properties over a state machine — and one `verdict` block that had to be
+   * read differently depending on which command produced it would be a block
+   * nobody could parse without knowing. What they share, and all an automation
+   * needs, is `verdict.exitCode`.
+   */
+  behaviour?: BehaviourReport;
 }
 
 /** The four figures the verify exit contract is computed from, and the answer. */
@@ -247,6 +262,15 @@ interface ConsistencyVerdict {
 interface RefinementVerdict {
   refined: number;
   notRefined: number;
+  vacuous: number;
+  inconclusive: number;
+  exitCode: number;
+}
+
+/** The same block for `check-behaviour`, whose figures are PROPERTIES. */
+interface BehaviourVerdict {
+  passed: number;
+  failed: number;
   vacuous: number;
   inconclusive: number;
   exitCode: number;
@@ -304,6 +328,23 @@ function judgeRefinement(report: RefinementReport, degraded: boolean): Refinemen
     notRefined: report.notRefined,
     vacuous: report.vacuous,
     inconclusive: report.inconclusive,
+    exitCode: degraded ? 2 : report.exitCode,
+  };
+}
+
+/**
+ * The exit code of a behaviour run, degradation included.
+ *
+ * The same rule and the same reason as {@link judge}: whether the model under
+ * the answer was the whole model is a fact about the FILE, and a safety
+ * property called held over half a machine is not an answer about that machine.
+ */
+function judgeBehaviour(report: BehaviourReport, degraded: boolean): BehaviourVerdict {
+  return {
+    passed: report.counts.passed,
+    failed: report.counts.failed,
+    vacuous: report.counts.vacuous,
+    inconclusive: report.counts.inconclusive,
     exitCode: degraded ? 2 : report.exitCode,
   };
 }
@@ -2595,6 +2636,118 @@ function reportReach(model: Model, name: string, args: ParsedArgs): Report {
   return { json: r, text };
 }
 
+/* ─────────────────────────── check-behaviour ────────────────────────────── */
+
+/**
+ * `--element REF`, which this command cannot do without.
+ *
+ * `reach` defaults to every machine in the file and this one has no default at
+ * all, and the difference is not an oversight: `reach` REPORTS on machines, so
+ * "all of them" is a coherent answer, while a property is a CLAIM about one
+ * machine. A run that checked every property in the file against every machine
+ * in it would answer a question nobody asked and would report failures against
+ * machines the property was never about.
+ */
+function behaviourElement(args: ParsedArgs): string {
+  const ref = flagValue(args, 'element');
+  if (ref === undefined || ref === '') {
+    throw new UsageError(
+      '--element REF is required: it names the state machine the property is about. ' +
+        'There is no default — a property is a claim about one machine, and checking every ' +
+        'property in the file against every machine in it would report failures against machines ' +
+        'the property was never about.',
+      true,
+    );
+  }
+  return ref;
+}
+
+/** The machine to check, refused BY NAME when the reference holds none. */
+function behaviourMachine(model: Model, args: ParsedArgs): ElementRecord {
+  behaviourElement(args);
+  const scope = verificationScope(model, args)!;
+  const machines = stateMachinesIn(model, scope.id);
+  if (machines.length === 0) {
+    const holder = stateMachinesIn(model).find((m) =>
+      model.descendants(m.id).some((d) => d.id === scope.id),
+    );
+    throw new UsageError(
+      `\`${qname(model, scope.id)}\` holds no state machine` +
+        (holder ? ` — it is inside \`${qname(model, holder.id)}\`, which is one` : ''),
+    );
+  }
+  if (machines.length > 1) {
+    // Refused rather than answered over all of them, for `behaviourElement`'s
+    // reason: a verdict is about one machine, and a `REF` that holds several is
+    // a reference the reader has to narrow.
+    throw new UsageError(
+      [
+        `\`${qname(model, scope.id)}\` holds ${machines.length} state machines:`,
+        ...machines.map((m) => `    ${qname(model, m.id)} [${m.eClass}]`),
+        '  name one of them — a property is a claim about one machine.',
+      ].join('\n'),
+    );
+  }
+  return machines[0];
+}
+
+/** One property's block: the verdict, then the trace that stands behind it. */
+function propertyLines(v: PropertyVerdict): string[] {
+  const from = v.property.source === 'flag' ? '--pattern' : `@PropertyPattern on ${v.property.carrier}`;
+  const out: string[] = [
+    `  ${v.claim.toUpperCase().padEnd(12)} ${v.sentence}`,
+    `    from ${from}`,
+    `    ${v.detail}`,
+  ];
+  if (v.code !== null) out.push(`    ${v.code}`);
+  if (v.claim !== 'inconclusive' || v.configs > 0) {
+    out.push(`    ${v.configs} product state(s) explored — ${v.qualification}`);
+  }
+  if (v.witness.length > 0) {
+    out.push('    witness — a run this semantics admits:');
+    for (const step of v.witness) out.push(`      ${traceLine(step)}`);
+  }
+  return out;
+}
+
+function reportCheckBehaviour(model: Model, name: string, args: ParsedArgs): Report {
+  const machine = behaviourMachine(model, args);
+  const maxConfigs = reachMaxConfigs(args);
+  const pattern = flagValue(args, 'pattern');
+  const r: BehaviourReport = behaviourReport(model, {
+    machineId: machine.id,
+    ...(pattern !== undefined ? { pattern } : {}),
+    ...(maxConfigs !== undefined ? { maxConfigs } : {}),
+    strictVacuity: flagGiven(args, 'strict-vacuity'),
+  });
+  const text = [
+    `${name}: ${qname(model, machine.id)} — ${r.properties.length} propert${r.properties.length === 1 ? 'y' : 'ies'}: ` +
+      `${r.counts.passed} pass, ${r.counts.failed} fail, ${r.counts.vacuous} vacuous, ` +
+      `${r.counts.inconclusive} inconclusive`,
+    // The two sentences that keep the command inside its remit: what a pass is
+    // a claim about, and what this engine does not decide at all. It reaches
+    // four words and no others — and the three louder ones a reader might
+    // expect are not among them, which is said by their absence and by the
+    // claims guard rather than by naming them here.
+    '  a pass is a claim about every configuration this walk reached, under the bounds printed beside it, and about nothing outside them: pass, fail, vacuous, inconclusive are the four words this command reaches',
+    '  liveness (`existence`, `response`) is NOT decided here: a bad-prefix search finds no bad prefix for either, so both report inconclusive',
+    ...(r.properties.length === 0
+      ? [
+          '  this machine states no property and none was given: nothing was decided, which is exit 2 — a run that checked nothing has not passed',
+          '  write one with `--pattern "pattern=absence, scope=globally, p=state failsafe"`, or carry it in the model as `@SysproseVerification::PropertyPattern { attribute pattern = "absence"; … }`',
+        ]
+      : []),
+    ...r.properties.flatMap(propertyLines),
+    '  semantic profile (the reading every verdict above holds under):',
+    ...profileLines('    '),
+    ...(r.strictVacuity
+      ? ['  --strict-vacuity: every vacuous row above is also an error below; the exit code is the same with the flag and without it']
+      : []),
+    ...r.diagnostics.map((d) => `  ${d.severity} ${d.code}  ${d.message}`),
+  ].join('\n');
+  return { json: r, text, behaviour: r };
+}
+
 /* ──────────────────────────────── dispatch ──────────────────────────────── */
 
 /**
@@ -2653,6 +2806,8 @@ async function buildReport(
       return reportEvidenceDetach(model, name, degraded);
     case 'reach':
       return reportReach(model, name, args);
+    case 'check-behaviour':
+      return reportCheckBehaviour(model, name, args);
     default:
       // Unreachable while COMMANDS and this switch agree; exiting 2 rather than
       // reporting nothing is the honest answer if they ever do not.
@@ -2717,6 +2872,15 @@ function precheckArgs(cmd: CommandSpec, args: ParsedArgs): void {
     case 'reach':
       // A bound that is not a bound is an answer about the command line, and
       // loading a model to say so costs a second of parsing and binding.
+      reachMaxConfigs(args);
+      return;
+    case 'check-behaviour':
+      // Both before the file is read: a missing `--element` is the whole
+      // command, and a bound that is not a bound is an answer about the command
+      // line. The `--pattern` spelling is NOT checked here — a property that
+      // cannot be read is reported as an inconclusive ROW, so the reader sees
+      // it beside the carriers it was checked with rather than instead of them.
+      behaviourElement(args);
       reachMaxConfigs(args);
       return;
     default:
@@ -2888,13 +3052,20 @@ async function main(): Promise<number> {
   // Computed once, here, because it is what the process exits with AND what the
   // `--json` body publishes: a payload whose `verdict.exitCode` disagreed with
   // the process's own status is the one thing an automation cannot recover from.
-  const verdict: Verdict | ConsistencyVerdict | RefinementVerdict | undefined = built.verify
+  const verdict:
+    | Verdict
+    | ConsistencyVerdict
+    | RefinementVerdict
+    | BehaviourVerdict
+    | undefined = built.verify
     ? judge(built.verify, degraded)
     : built.consistency
       ? judgeConsistency(built.consistency, degraded)
       : built.refinement
         ? judgeRefinement(built.refinement, degraded)
-        : undefined;
+        : built.behaviour
+          ? judgeBehaviour(built.behaviour, degraded)
+          : undefined;
 
   const body = flagGiven(parsed, 'json')
     ? JSON.stringify(

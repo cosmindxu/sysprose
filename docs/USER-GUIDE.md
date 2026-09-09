@@ -1407,6 +1407,149 @@ is not a bound, or an `--element` that names something holding no machine.
 interpreter and the walk share), `src/semantics/mc/explore.ts` and
 `src/semantics/mc/profile.ts`.
 
+### Whether a safety property holds on every configuration
+
+`reach` reports on a machine. `check-behaviour` **judges a claim you made about
+one**: a *property pattern* — a shape with holes in it — filled with *atoms*
+that name things the walk can observe. It walks the same configuration graph
+`reach` walks, looking for a **bad prefix**: a finite run that breaks the
+property. Finding one is a `fail`, printed as that run. Finding none over a
+graph the walk saw *whole* is a `pass`. Everything else is said out loud.
+
+```console
+$ npm run sysprose -- check-behaviour examples/uav-isr.sysml --element FlightModes \
+    --pattern 'pattern=absence, scope=globally, p=state failsafe'
+examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pass, 1 fail, 0 vacuous, 0 inconclusive
+  a pass is a claim about every configuration this walk reached, under the bounds printed beside it, and about nothing outside them: pass, fail, vacuous, inconclusive are the four words this command reaches
+  liveness (`existence`, `response`) is NOT decided here: a bad-prefix search finds no bad prefix for either, so both report inconclusive
+  FAIL         `state failsafe` never holds, over the whole run
+    from --pattern
+    fail — witness trace of 3 step(s) …
+    verification/refuted
+    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}
+    witness — a run this semantics admits:
+       0  start → UAVSurveillanceSystem::FlightModes::standby
+       1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual
+       2  completion manual -> autonomous → UAVSurveillanceSystem::FlightModes::autonomous
+       3  completion autonomous -> failsafe → UAVSurveillanceSystem::FlightModes::failsafe  [holds p]
+  semantic profile (the reading every verdict above holds under):
+    ...
+```
+
+**This is `reach`'s finding from the other side.** `reach` says two completion
+transitions are enabled at `autonomous` and the simulator takes the first, so
+`failsafe` is never entered *in simulation*. Here that same fact refutes a
+property: the model admits a run that reaches `failsafe`, and the witness is
+that run, step by step. A tool that only simulated would have told you the
+opposite.
+
+**The catalogue, and the half of it this engine will not decide.**
+
+| Pattern | Class | Reads | Decided here? |
+|---|---|---|---|
+| `absence` | safety | P never holds | yes |
+| `universality` | safety | P holds at every configuration | yes |
+| `bounded-existence` | safety | P *occurs* at most `n` times | yes |
+| `precedence` | safety | S holds before P ever does | yes |
+| `existence` | **liveness** | P holds at some point | **no** |
+| `response` | **liveness** | every P is followed by an S | **no** |
+
+A safety property is broken by a finite run, so a search for one either finds it
+or, having seen the whole graph, has not. A **liveness** property is broken only
+by an infinite run that never delivers what it promised, and a bad-prefix search
+finds no bad prefix for one on *any* graph. Reporting "nothing found, so it
+holds" would print this command's strongest verdict for exactly the two
+properties it cannot decide, so both come back `inconclusive: liveness not
+checked in-process` — until a lasso search lands and a fairness assumption is
+named.
+
+`bounded-existence` counts **occurrences**, not configurations. `state Outer`
+holds at every observation from the moment the machine enters `Outer` until it
+leaves — `state X` reads the whole active stack — so a composite entered once and
+never left has *occurred once*, however many steps happen inside it. That is
+Dwyer's reading (his at-most-`n` formula counts maximal intervals), and counting
+configurations instead would refute "at most once" about a machine that enters
+the state exactly once.
+
+**The five scopes**, each naming *where* the property has to hold: `globally`,
+`before R`, `after Q`, `between Q and R`, `after Q until R`. The last two differ
+on one run and it matters: `between` speaks only about segments that actually
+close, so a `Q` never followed by an `R` says nothing at all (vacuous), while
+`after … until` is a weak until and the same run is a violation. Both are written
+over `Q & !R`, so an observation where the opening **and** closing atoms hold
+together opens no segment at all: there is nothing between a `Q` and an `R` that
+are the same observation. On a hierarchical machine that is not a corner case —
+a composite state and the substate its entry cascades into hold together at
+every observation.
+
+**The five atoms**: `state X` (X is on the active stack), `node N` (N is the
+active leaf, which is how you name a `done` node), `trigger t` (the event
+offered on this step), `fires T` (a named transition fired), or an **expression**
+— read by the same parser your guards are read with, over the same store.
+
+**A property lives in the model, as §7.27 metadata.** `--pattern` is for trying
+one out; the carrier is how a claim stays with the machine it is about, and it
+is checked *beside* whatever you type, never instead of it:
+
+```sysml
+state def FlightModes {
+    @SysproseVerification::PropertyPattern {
+        attribute pattern = "absence";
+        attribute scope = "globally";
+        attribute p = "state failsafe";
+    }
+    state standby;
+    …
+}
+```
+
+One attribute per field, so the phrase-to-atom trace survives a save: a reader
+can see which pattern, over which scope, filled by which atom, without
+re-parsing a sentence.
+
+**What it refuses to say, and how each refusal reads.**
+
+| You get | When | Exit |
+|---|---|---|
+| **pass** | no bad prefix, over a graph the walk saw **whole**, on a safety pattern | 0 |
+| **fail** | a bad prefix, printed as the run that produced it — still a fail under a bound, because a witness is a real run | 1 |
+| **vacuous** | the property's antecedent never holds, over a graph the walk saw **whole**: a scope no run opens, or a `precedence` whose P never happens | **2** |
+| **inconclusive** | a bound hit — including one that stopped the walk before the antecedent, which is *not* a vacuity — a construct the explorer refuses (parallel regions, history), a liveness pattern, a property that could not be read, or an atom that names nothing | **2** |
+
+**A bound can hide a violation and can never invent one**, which is why those
+two rows are not symmetric. `--max-configs N` that stops the walk turns a would-be
+pass into `inconclusive`; a violation found *inside* the same bound is still a
+violation. A vacuity is on the `pass` side of that line: "no run opens the scope"
+is a claim of *absence*, and a walk that stopped at a bound has not established
+one — so a partial walk that never reached the antecedent is `inconclusive`, not
+`vacuous`, and `--strict-vacuity` files nothing against the model for it.
+
+**A property nobody could read is never dropped.** A `pattern` outside the
+catalogue, a `scope` outside its five, a missing field — and a *carrier attribute
+that is not a property field at all*, which is the one a typo reaches: `scope` is
+the only field with a default, so a carrier written `scpoe = "after"` read
+without it would silently become a different property and be decided as if
+somebody had written it. Every one of them is `verification/malformed-property`
+⇒ exit 2. So is a `--pattern` whose value expanded to nothing, for the same
+reason: dropping it would report on the carriers alone and look like a clean
+sweep.
+
+**An atom that names nothing is never read as `false`.** `absence of state
+failsafe` would otherwise PASS the moment somebody misspelt `failsafe` — the
+loudest way this whole lane could print a green verdict that means nothing. A
+name the machine does not have is `verification/unknown-atom`, the row lists what
+the machine *does* offer, and the run exits 2.
+
+**Vacuity is surfaced and no flag launders it.** A property whose antecedent
+never holds is true of your machine for a reason that has nothing to do with your
+machine. It is `vacuous` ⇒ exit 2, with `--strict-vacuity` and without it; the
+flag raises the row from a line to `verification/vacuous-property`, an **error**,
+and changes nothing else — including the exit code.
+
+**Source of truth:** `src/semantics/mc/patterns.ts` (the catalogue, the monitor
+and the bad-prefix search), `src/semantics/mc/atoms.ts` (the five atom
+spellings), and `src/semantics/mc/explore.ts` for the walk they both stand on.
+
 ### The keywords a file carries, including somebody else's
 
 A `#keyword` in front of a declaration is the notation's own extension point:
@@ -1443,9 +1586,10 @@ vocabulary Sysprose ships is a package you paste into your own file:
 
 ```sysml
 package SysproseVerification {
-    doc /* Two definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #exceptional says an outcome is a failure rather than an equally valid result. Evidence carries what a verification run showed, as an annotation on the requirement it is about. Both are Sysprose extensions, not standard vocabulary. */
+    doc /* Three definitions SysML v2 does not express, carried over metadata definitions (SysML v2 7.27.1, 7.27.4). #exceptional says an outcome is a failure rather than an equally valid result. Evidence carries what a verification run showed, as an annotation on the requirement it is about. PropertyPattern carries a behavioural property — a pattern, a scope and the atoms that fill them — as an annotation on the machine it is about. All three are Sysprose extensions, not standard vocabulary. */
     metadata def <exceptional> ExceptionalOutcome;
     metadata def Evidence;
+    metadata def PropertyPattern;
 }
 ```
 
@@ -1464,6 +1608,14 @@ engine, a tool version and a model digest. So it is written in §7.27's
 *annotating* form, `@SysproseVerification::Evidence { attribute … = "…"; }`, by
 `evidence-attach`, and a bare `#Evidence` that carried no record and claimed to
 be one is a spelling this package does not allow.
+
+**`PropertyPattern` is not a keyword either, and for the same reason.** A
+behavioural property has a body — a pattern name, a scope, and the atoms that
+fill them — so it is written in the annotating form too,
+`@SysproseVerification::PropertyPattern { attribute pattern = "absence"; … }`,
+one attribute per field. `check-behaviour` reads it; nothing writes it, because
+a property is a claim you make about your machine and not one this tool invents
+for you.
 
 **The statement kinds are the exception, and the inventory says so.** `#prose`,
 `#prompt` and `#'requirement'` are read from the **spelling** — that is what lets

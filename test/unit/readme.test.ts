@@ -177,6 +177,11 @@ const APP_DOORS: ReadonlyArray<{
   // the simulator with an answer it does not compute — the two are different
   // questions, which is the whole point of the command.
   { command: 'reach', controls: [] },
+  // And its judging half, for the same reason twice over: nothing in the app
+  // walks a configuration graph, and nothing in it reads a `@PropertyPattern`
+  // carrier either. The Simulate affordance runs ONE run of a machine, which is
+  // the question this command exists to be different from.
+  { command: 'check-behaviour', controls: [] },
 ];
 
 interface Row {

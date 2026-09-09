@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **all three** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 92 tests |
+| L7 | The command-line contract: **all five** exit-code contracts, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 97 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-07: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **94 catalogue codes** in
+`npm run check` is what raises it — beside **96 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3538,6 +3538,102 @@ machine is not: nothing was misused and nothing failed to load, so it prints
 `0 state machine(s)` with the sentence saying the file owns no transition, and
 exits 0 — the contract every other `report` subcommand keeps, and the one two of
 the shipped examples need to survive a `set -e` walk over a directory.
+
+**A safety property is a claim you make about a machine, and
+`check-behaviour` judges it.** `reach` reports; this one decides. A property is
+a pattern from `vogel-2022`'s catalogue over a scope, filled with atoms — `state
+X`, `node N`, `trigger t`, `fires T`, or an expression read by the same parser
+the guards are read with — and it is decided by searching the configuration
+graph for a **bad prefix**: a finite run that breaks it. Finding one is a `fail`,
+printed AS that run, step by step, with the atoms that hold at each step. On
+`FlightModes` that is `reach`'s own finding from the other side: `absence of
+state failsafe` is refuted by a three-step trace, on the machine whose simulator
+never enters `failsafe` because declaration order sends it elsewhere. A tool
+that only simulated would have said the opposite.
+
+**The catalogue is split by what a bad-prefix search can decide, and the two it
+cannot are named rather than answered.** `absence`, `universality`,
+`bounded-existence` and `precedence` are safety properties and are decided.
+`existence` and `response` are LIVENESS: they are broken only by an infinite run
+that never delivers, and a bad-prefix search finds no bad prefix for one on any
+graph. Under a naïve "nothing found, so it holds" rule that would print this
+command's strongest verdict for exactly the two properties it cannot decide, so
+both report `inconclusive: liveness not checked in-process` until a lasso search
+lands and a fairness assumption is named. The refusal is asserted with a
+positive control beside it, on a graph where the safety sibling passes.
+
+**A pass needs the whole graph; a fail does not.** `exhaustive` is computed once,
+in `exploreMachine`, from the four conditions `reach` already publishes under —
+and a `pass` is written only when it holds. A bound hit, a parallel or history
+machine, an unreadable property or an atom that names nothing is `inconclusive`
+⇒ exit 2. A violation found under the same bound is still a `fail`, because the
+witness is a run this semantics admits: a bound can hide a violation and can
+never invent one. That asymmetry is the whole shape of the command.
+
+**An unresolvable atom is never read as `false`.** `absence of state failsafe`
+would otherwise PASS the moment somebody misspelt `failsafe` — the loudest way
+this lane could print a green verdict that means nothing. A name the machine does
+not have is `verification/unknown-atom` and the row lists what the machine does
+offer; an ambiguous one is refused with every match printed, the same rule §3.0
+states for every `REF` this lane takes; a clause that is not a predicate is
+`verification/malformed-property`. All three are inconclusive, and none of them
+is dropped from the run. Neither is a CARRIER attribute that is not a property
+field: `scope` is the only field with a default, so a carrier written `scpoe =
+"after"` read without it would silently become a different property and be
+decided — with a witness, exiting 1 — as if somebody had written it. Nor is a
+`--pattern` whose value expanded to nothing, which dropped would have reported on
+the carriers alone and looked like a clean sweep.
+
+**Vacuity, in the two forms this engine can see.** A scope no run opens —
+`after Q` on a machine that never reaches Q — and a `precedence` whose P never
+happens are both antecedents that never hold, and both are `vacuous` ⇒ exit 2
+rather than a pass. Sub-formula-replacement vacuity is not done, and the row says
+which two were checked. `--strict-vacuity` raises the row to
+`verification/vacuous-property`, an error, and changes NOTHING else — both
+spellings are asserted, so the flag cannot quietly acquire exit semantics §2 does
+not give it. **A vacuity needs the whole graph, exactly as a pass does**: "no run
+opens the scope" is a claim of ABSENCE, so a walk stopped by a bound before the
+antecedent is `inconclusive` ⇒ `verification/bound-exhausted`, never `vacuous` —
+otherwise a bound hit masqueraded as a finding and `--strict-vacuity` filed an
+error against a model that was fine. The scope pair that pins Dwyer's readings
+apart is in the corpus: `between Q and R` over a segment that never closes is
+vacuous, and `after Q until R` over the same trace is a fail, because a weak
+until needs no closing.
+
+**Three readings that a table of `absence` cases could not have pinned**, each
+now a case of its own. Both two-atom scopes carry Dwyer's `Q & !R` conjunct, so
+an observation where the opening and closing atoms hold TOGETHER opens no segment
+at all — on a hierarchical machine that is the common case, not a corner one,
+because a composite state and the substate its entry cascades into hold together
+at every observation. `bounded-existence` counts OCCURRENCES and not
+configurations, so a composite entered once and never left has occurred once
+however many steps happen inside it. And the verdict sentence is built in one
+substitution pass rather than five, so an atom whose own text contains a
+placeholder letter — a state called `N` — is printed as itself rather than as the
+next letter's filling. Every safety pattern × every scope now carries a `pass`
+and a `fail` case, which is how all three were found.
+
+**A property lives in the model as §7.27 metadata**, one attribute per field —
+`@SysproseVerification::PropertyPattern { attribute pattern = "absence";
+attribute scope = "globally"; attribute p = "state failsafe"; }` — so the
+phrase-to-atom trace survives a save and a reader can see which pattern, over
+which scope, filled by which atom without re-parsing a sentence. It round-trips
+idempotently from the second save, which is this plan's standing claim and not
+byte-identity from arbitrary input. `--pattern` takes the same field names at a
+terminal and is checked BESIDE the carriers, never instead of them.
+
+**The semantic profile is now pinned to the behaviour it describes, not only to
+the symbols it cites.** `reach`'s suite asserts that every field names a symbol
+that still exists; this one asserts that every field's SENTENCE is true of a run
+— the 64-step chase budget is spent by a 70-step chain and not by a 3-step one,
+the innermost substate wins a trigger offered at two levels, a history composite
+resumes its last-active child where an ordinary one re-enters its initial one,
+parallel regions are concatenated (`a1, a2, b1, b2`) rather than interleaved, an
+event nothing accepts is dropped where it was offered rather than pooled, and an
+`after(n)` transition fires for no undriven run while the walk offers its label
+as an event. Six fields, six executable pins: a provenance that compiles is not
+the same as a reading that holds, and the profile is printed under every verdict
+this command reaches.
 
 ### Pinned behaviours (decisions, not defects)
 

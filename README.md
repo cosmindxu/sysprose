@@ -129,6 +129,7 @@ with the function that control runs.
 | Write the verdicts of a run into the file, as annotations on what they are about | — no view yet | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` | `attachEvidence` — `src/api/evidence.ts` |
 | Take every record back off the file, and the verdict facets with them | — no view yet | `npm run sysprose -- evidence-detach model.sysml` | `detachEvidence` — `src/api/evidence.ts` |
 | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | — no view yet | `npm run sysprose -- reach model.sysml` | `reachReport` — `src/semantics/mc/explore.ts` |
+| Does this safety pattern hold on every reachable configuration? | — no view yet | `npm run sysprose -- check-behaviour model.sysml --element FlightModes --pattern 'pattern=absence, scope=globally, p=state failsafe'` | `behaviourReport` — `src/semantics/mc/patterns.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -231,7 +232,8 @@ npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # connectivity · where-used · orphans · prompts
                        # contracts · obligations · property-draft
                        # property-check · verify · consistency · refine
-                       # evidence-status · evidence-attach · evidence-detach · reach
+                       # evidence-status · evidence-attach · evidence-detach
+                       # reach · check-behaviour
                        # `npm run sysprose -- --help` lists them
 ```
 

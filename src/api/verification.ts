@@ -86,6 +86,7 @@ import {
   type ConsistencyResult,
 } from '../semantics/consistency';
 import { BEHAVIOUR_CODES, BEHAVIOUR_WARNING_CODES } from '../semantics/mc/explore';
+import { PROPERTY_PATTERN_CODES } from '../semantics/mc/patterns';
 import {
   checkRefinement,
   refinementCensus,
@@ -1103,6 +1104,10 @@ export const VERIFICATION_CODES: ReadonlySet<string> = new Set<string>([
   // rule again: this set is what the catalogue guard reads, and a lane with one
   // prefix has one list of codes whichever module emits them.
   ...BEHAVIOUR_CODES,
+  // And the two `check-behaviour` adds on top of them, from
+  // `../semantics/mc/patterns`: a property nobody could read, and an atom that
+  // names nothing. Both are printed on a row a reader is asked to act on.
+  ...PROPERTY_PATTERN_CODES,
 ]);
 
 /**
