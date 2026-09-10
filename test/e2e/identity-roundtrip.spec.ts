@@ -54,6 +54,21 @@ test('names with spaces, quotes, unicode and markup survive text regeneration', 
   // ── The serializer must quote them, and the parser must read them back ──
   await openTab(page, 'tab-text');
   const editor = page.getByTestId('text-editor');
+  // The editor regenerates its text FROM the model, and that regeneration is not
+  // synchronous with opening the tab. Reading `inputValue()` straight away races
+  // it: on a fast machine the text is already there, on a slower runner it is
+  // still the pre-authoring text and every name is missing. Wait for the text to
+  // catch up with the model first, then assert per name so a genuine quoting bug
+  // still says WHICH name it lost.
+  await expect
+    .poll(
+      async () => {
+        const text = await editor.inputValue();
+        return AWKWARD.every((n) => text.includes(n));
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
   const serialized = await editor.inputValue();
   for (const name of AWKWARD) {
     expect(serialized, `"${name}" should appear in the notation`).toContain(name);
@@ -70,6 +85,17 @@ test('names with spaces, quotes, unicode and markup survive text regeneration', 
 
   // Re-serializing the reparsed model produces the same names again — a quoting
   // bug typically survives one hop and corrupts on the second.
+  // Same race on the way back: the model has the names (polled above), but the
+  // editor's text is regenerated from it asynchronously.
+  await expect
+    .poll(
+      async () => {
+        const text = await editor.inputValue();
+        return AWKWARD.every((n) => text.includes(n));
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
   const reserialized = await editor.inputValue();
   for (const name of AWKWARD) {
     expect(reserialized, `"${name}" should survive a second serialization`).toContain(name);
