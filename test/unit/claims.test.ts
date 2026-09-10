@@ -63,6 +63,14 @@ const SKIP_FILES = (rel: string): boolean =>
   // file is exempt as a whole — like the two survey docs above, it reports what
   // OTHER work says rather than making a claim about this tool.
   rel === join('docs', '05-model-checking-literature.md') ||
+  // The implementation plan is the third of these, and for the FIRST of the two
+  // reasons rather than the second: it is not reporting what other work says, it
+  // is writing the MUST-NEVER lists themselves. A list of sentences the tool may
+  // never print has to print them once, in order to name them — `deadlock-free`,
+  // `realizable`, and every reserved copula form — which is exactly the shape
+  // this guard exists to catch. Measured before the entry was added: the file
+  // fires on the forms it quotes in order to ban them, and on nothing else.
+  rel === join('docs', '06-model-checking-implementation-plan.md') ||
   rel === join('test', 'unit', 'claims.test.ts') ||
   rel === 'CLAUDE.md' ||
   rel === 'package-lock.json';
