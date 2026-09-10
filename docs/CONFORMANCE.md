@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **2997 passed / 0 failed / 0 skipped** across **145 files** + **128 E2E** across **78 spec files** = **3125 green** (measured 2026-09-10) |
+| Full automated suite | **3000 passed / 0 failed / 0 skipped** across **145 files** + **128 E2E** across **78 spec files** = **3128 green** (measured 2026-09-10) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -848,6 +848,67 @@ the eight new L8 consistency cases run in process and cost **~2.4 s** between
 them. The budget is still 241 s and this build still does not meet it, for the
 same reason and by the same accounting.
 
+**Where the budget actually went, and the one file that was spending it.** By
+the end of the lane the gate's wall clock was not the solver and not the
+engine: it was `test/campaign/cli.sysprose.test.ts`, which spawned `npx tsx
+scripts/sysprose.ts` **240 times** — a node, a tsx transform of the
+whole import graph and a bind of the 38 761-element library apiece — and ran
+**787 s of a 790 s run**. Every other file in the suite finished in parallel
+underneath it, so the gate cost what that one file cost, and every commit after
+it paid the bill again. The cases now ask what they are asserting: the ones
+about the PROGRAM (exit status, `-` on stdin, a payload past the pipe buffer, an
+unknown flag or subcommand, an unreadable or unwritable file, every `--help`, an
+invocation through a symlinked path, the one nonlinear optimisation whose memory
+is unbounded, and one end-to-end run per exit contract) still spawn — **82
+spawns, down from 240** — and the ones
+about the TEXT call the same `main` in this process, which `scripts/sysprose.ts`
+now exports and runs only when it was run as a script. A bridge case spanning
+all 22 subcommands runs the same argv both ways and requires the same bytes and
+the same code, so the equality the split rests on is checked rather than
+assumed.
+
+**Both spawn figures are counts of processes actually started**, not of the
+places in the source that say to start one: `spawnSync` was wrapped in that file
+and the calls logged, once over the file as it stood at `c929278` and once over
+the file as it stands now. The distinction is not pedantry — several call sites
+sit inside loops. The figure this section published before, 223, was a count of
+`run([` lines in the source, and the run it described started 240
+processes.
+
+The wall clock was taken the same way at both ends, one file at a time
+(`npx vitest run test/campaign/cli.sysprose.test.ts`), each started with
+`ps -eo pid,args | grep "[v]itest"` showing nothing on the machine but the run
+about to begin: **772.77 s over 96 cases before, 268.50 s over 99 cases after**
+— the same assertions over the same models, at a little over a third of the wall
+clock. Neither figure is delicate. The before run had another worktree's suite
+join it partway through, and the same file measured 776.44 s on a machine that
+was running four of them for its whole length: half a percent apart, because
+what this file spends is serial process startup rather than CPU, and startup
+does not contend.
+
+**A first cut of this split was faster and unsound, and the number it produced is
+recorded here so nobody chases it again.** Moving EVERY case in-process reached
+322.96 s at the gate — and produced five `Aborted(Runtime error: The application
+has corrupted its heap memory area (address zero)!)` unhandled errors from
+`z3-solver`'s WASM module over 70 in-process solver calls. z3 carries
+process-global state and does not survive being driven many times inside one
+worker; the subprocess boundary had been supplying that isolation for free, and
+converting the calls removed it silently. vitest's own warning for that condition
+is the point — an unhandled error of this kind "might cause false positive
+tests", so the failure mode is a GREEN run, not a red one. A solver-bearing
+subcommand therefore spawns, for the same reason `-` does: not because the
+assertion is about the process, but because the invocation needs one. Under
+`SYSPROSE_NO_Z3` no solver loads, so those cases stay in-process.
+
+At the gate the change reads as **760.83 s → 548.74 s** for `npx vitest run`
+(145 files, 3 000 tests, 0 failed, 0 solver aborts), both measured on an idle
+machine with `ps` showing no other vitest process. This one file is still the
+longest pole. Measured on the tree that ships this: 48 call sites spawn because
+what they assert is the process contract, 70 more are routed to a spawn at
+invocation because their subcommand can load the solver, and 113 run in-process.
+Neither spawning set is available to trade — one is the contract, the other is
+the isolation.
+
 ### 8.5 `check-behaviour` — what a safety verdict is a verdict about
 
 **Nothing here is a claim about the specification's execution semantics.** The
@@ -961,7 +1022,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (2997 pass / 0 skip, 145 files)
+# Full unit + integration + conformance suite (3000 pass / 0 skip, 145 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

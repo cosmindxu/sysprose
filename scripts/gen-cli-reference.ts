@@ -20,7 +20,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isMainModule } from './lib/is-main';
 import type { FlagSpec } from './lib/args';
 import {
   BEHAVIOUR_EXIT_CODES,
@@ -278,13 +278,12 @@ Branch on \`code\`, never on \`message\` — see
 
 /**
  * Only write when this file was RUN. Imported — which the drift test does — it
- * must not touch the document it is being compared against.
+ * must not touch the document it is being compared against. The comparison is
+ * `scripts/lib/is-main.ts` rather than two lines here because it has a trap in
+ * it: the loader resolves symlinks in `import.meta.url` and `process.argv[1]`
+ * keeps them, so a path with a symlinked component read as an import.
  */
-const runAsScript =
-  process.argv[1] !== undefined &&
-  resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
-
-if (runAsScript) {
+if (isMainModule(import.meta.url)) {
   const out = resolve(process.cwd(), 'docs/CLI-REFERENCE.md');
   writeFileSync(out, renderCliReference());
   process.stdout.write(`Wrote ${out} — ${COMMANDS.length} subcommands.\n`);

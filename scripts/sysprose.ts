@@ -175,6 +175,7 @@ import type { TextRange } from '../src/validation/types';
 import { serializeElement } from '../src/text/serializer';
 import { flagGiven, flagValue, isArgError, parseArgs, type ParsedArgs } from './lib/args';
 import { runMain } from './lib/exit';
+import { isMainModule } from './lib/is-main';
 import {
   COMMANDS,
   DEFAULT_MAX_CONFIGS,
@@ -3518,9 +3519,28 @@ function writeUsageError(cmd: CommandSpec, err: UsageError): number {
   return 2;
 }
 
-async function main(): Promise<number> {
-  const argv = process.argv.slice(2);
-
+/**
+ * The whole command, from an argument vector to an exit code.
+ *
+ * EXPORTED, and taking its `argv` as a defaulted parameter, for exactly one
+ * caller besides the binary: the L7 campaign suite, which used to prove every
+ * sentence this command prints by spawning `npx tsx scripts/sysprose.ts` —
+ * 240 times, measured by logging the spawns rather than counting the
+ * call sites, each paying a fresh node, a fresh tsx transform and a bind of the
+ * 38 761-element library, which was 99.6% of the test gate's wall clock. The
+ * suite now spawns for what only a process can prove (exit status, `-` on
+ * stdin, a pipe that fills, stderr routing, `--help`, this file's own entry
+ * guard) and calls THIS function for what it is actually asserting about the
+ * text. Nothing about the run changes: the writes still go to
+ * `process.stdout`/`process.stderr` and the number returned is still what the
+ * process exits with, which is what makes the suite's bridge case — the same
+ * argv, in-process and spawned, byte-identical on stdout and equal on the code
+ * — a check with something to say rather than a tautology.
+ *
+ * It is NOT a library API: it writes to the process's streams and reads the
+ * process's environment. `src/api` is where a programmatic caller belongs.
+ */
+export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   if (argv.length === 0) {
     process.stderr.write(`sysprose: no subcommand\n\n${renderTopUsage()}\n`);
     return 2;
@@ -3725,4 +3745,15 @@ async function main(): Promise<number> {
   return degraded ? 1 : 0;
 }
 
-runMain('sysprose', main);
+/**
+ * Only when this file was RUN — the guard `scripts/gen-cli-reference.ts` and
+ * `scripts/agent-repair-bench.ts` already use, for the same reason. `main` is
+ * imported by the L7 suite now, and an import that ran the command as a side
+ * effect would read the suite's own argv and exit the test worker with it.
+ *
+ * It is `scripts/lib/is-main.ts` rather than three lines here because the
+ * comparison has a trap in it — the loader resolves symlinks in
+ * `import.meta.url` and `process.argv[1]` keeps them — and a guard that gets
+ * that wrong does not fail loudly: it runs nothing, prints nothing and exits 0.
+ */
+if (isMainModule(import.meta.url)) runMain('sysprose', main);

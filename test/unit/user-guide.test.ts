@@ -255,12 +255,15 @@ describe('the user guide and the command reference describe one tool', () => {
  * them, which is the guide's own promise that they were run at all).
  *
  * The transcripts are compared against the ANALYSIS FUNCTIONS rather than
- * against a re-run of the command: `scripts/sysprose.ts` calls `runMain` at
- * module scope, so importing it would run it. That splits the claim in two —
- * the figures and the rows are checked here, the rendering of them by
+ * against a re-run of the command. That splits the claim in two — the figures
+ * and the rows are checked here, the rendering of them by
  * `test/campaign/cli.sysprose.test.ts` — and it is the half that goes stale,
  * since a report changes what it says about a model far more often than it
- * changes how it lays a line out.
+ * changes how it lays a line out. The split used to be forced: `scripts/
+ * sysprose.ts` ran the CLI on import. It no longer does (it exports `main` and
+ * runs it only when it was RUN as a script), so this is now a division of
+ * labour rather than an impossibility — calling `main` here and asserting the
+ * whole transcript is available to the commit that wants to own it.
  */
 describe('§7 — the three kinds of statement', () => {
   /** The first fenced block of `lang` whose body starts with `prefix`. */
@@ -297,10 +300,12 @@ describe('§7 — the three kinds of statement', () => {
    * note to anything at all and every figure in the guide would still agree,
    * leaving the guide quoting a line the tool no longer produces — which is the
    * half of a transcript a reader trusts most, because it is the half that
-   * explains the rest. `scripts/sysprose.ts` cannot be IMPORTED to get at the
-   * literal (it calls `runMain` at module scope, so importing it runs the CLI),
-   * so it is read as text. A weaker link than an import, and a far stronger one
-   * than nothing: a reword fails here instead of shipping.
+   * explains the rest. So the literal is read out of `scripts/sysprose.ts` as
+   * TEXT and the guide is required to quote it. A weaker link than running the
+   * command, and a far stronger one than nothing: a reword fails here instead
+   * of shipping. (It was once the only link available — the file ran the CLI on
+   * import. Since it exports `main`, running it here is possible; doing so is a
+   * change to this file's design, not to this commit's.)
    */
   const CLI_SOURCE = read('scripts/sysprose.ts');
   function cliLiteral(pattern: RegExp, what: string): string {
@@ -644,10 +649,12 @@ describe('§7 — the three kinds of statement', () => {
  * Three claims are checkable. The PACKAGE the reader is told to paste has to be
  * the package the tool ships, byte for byte. The snippet has to check clean as
  * printed. And the TRANSCRIPT has to be the output the command really produces
- * — which cannot be re-run here (`scripts/sysprose.ts` calls `runMain` at module
- * scope), so it is held against the L7 case that spawns the command and asserts
- * those exact strings. A renderer change reddens the campaign case; this one
- * then reddens until the guide is brought with it.
+ * — which is not re-run here, but held against the L7 case that runs the
+ * command over this same vocabulary and asserts those exact strings. A renderer
+ * change reddens the campaign case; this one then reddens until the guide is
+ * brought with it. (That L7 case calls `main` in process rather than spawning
+ * it, as most of that file now does; the bridge case there is what keeps the
+ * two the same run.)
  */
 describe('the keyword vocabulary section', () => {
   const CAMPAIGN = read('test/campaign/cli.sysprose.test.ts');

@@ -23,14 +23,59 @@
  * nothing ever printed a warning); and a file that failed to parse exiting 1
  * with its diagnostics rather than 2 as "no elements".
  *
- * Each spawn pays ~3 s of tsx startup plus the library bind, so the timeouts
+ * Each spawn pays ~3.4 s of tsx startup plus the library bind, so the timeouts
  * are generous and the cases are chosen, not exhaustive.
+ *
+ * ── TWO WAYS TO INVOKE, AND WHICH ONE A CASE GETS ──────────────────────────
+ *
+ * This file used to spawn `npx tsx scripts/sysprose.ts` 240 times —
+ * measured by logging the spawns, not by counting the `run([` call sites, two
+ * of which sit inside loops — which was 787 s of a 790 s test gate: every other
+ * file in the suite ran in parallel underneath this one, so the gate's wall
+ * clock WAS this file. What was being paid 240 times, and is worth
+ * paying a few dozen times, is process startup. 82 are left.
+ *
+ * So each invocation is asked what it is actually proving:
+ *
+ *  · `spawnCli(…)` — the PROGRAM. Everything only a process can be wrong
+ *    about: the exit STATUS the shell sees, `-` on stdin, a payload larger than
+ *    a pipe buffer, an unknown flag or subcommand, a file that cannot be read
+ *    or written, every `--help`, the entry guard that decides whether the
+ *    module runs at all (through a symlinked path, where it once decided
+ *    wrongly and printed nothing), the two solver-bearing renderings the bridge
+ *    below cannot compare, the one run that hands z3 an unbounded NONLINEAR
+ *    optimisation (see that case for what it did to a shared context), and one
+ *    full end-to-end run for each of the seven exit contracts in
+ *    `scripts/lib/sysprose-spec.ts` (`report`, `verify`, `refine`, `bounds`,
+ *    `write`, `behaviour`, `fault-tree`).
+ *  · `run(…)` — the same `main`, called here, streams captured. Everything a
+ *    case asserts about the TEXT the command prints and the code it comes back
+ *    with, which is the code the program exits with because it is the number
+ *    `runMain` assigns to `process.exitCode`.
+ *
+ * Nothing was deleted to make that split: every sentence asserted before is
+ * asserted still, from the same models, with the same figures. The one thing
+ * the split could quietly lose is the equality it assumes — that calling the
+ * function and running the program do the same thing — so that equality is
+ * itself a case: `the same argv, called and spawned, prints the same bytes`
+ * near the end of this file walks a sample spanning ALL 22 subcommands and
+ * requires byte-identical stdout, stderr and code from both — with two
+ * exceptions it states and justifies rather than hides (a `--json` payload of
+ * per-load UUIDs, and a report whose text is a point z3 chose). If those ever
+ * diverge, the in-process cases are measuring something the binary does not do,
+ * and that case is what says so.
  */
 import { describe, it, expect } from 'vitest';
 import Ajv from 'ajv';
 import { spawnSync } from 'node:child_process';
 import { COMMANDS } from '../../scripts/lib/sysprose-spec';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+// The command itself, for the cases that assert what it PRINTS. Importing it
+// runs nothing: `scripts/sysprose.ts` calls `runMain` only when it was run as a
+// script (`scripts/lib/is-main.ts`, shared with `gen-cli-reference.ts`). That
+// guard is asserted here too — see the symlink case — because getting it wrong
+// does not fail loudly, it runs nothing and exits 0.
+import { main as sysproseMain } from '../../scripts/sysprose';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 // The shipped package is imported rather than retyped: the whole point of the
@@ -43,7 +88,7 @@ const CLI = resolve(process.cwd(), 'scripts/sysprose.ts');
 const CHECK_CLI = resolve(process.cwd(), 'scripts/sysml-check.ts');
 const UAV = resolve(process.cwd(), 'examples/uav-isr.sysml');
 const FIX = resolve(process.cwd(), 'test/fixtures/agent-authoring');
-/** The L8 verdict corpus, whose models this level re-uses at the process boundary. */
+/** The L8 verdict corpus, whose models this level re-uses at the command line. */
 const FIXV = resolve(process.cwd(), 'test/fixtures/verification');
 
 interface Run {
@@ -53,12 +98,18 @@ interface Run {
 }
 
 /**
+ * Run the command as a PROGRAM: a real process, a real exit status.
+ *
  * `spawnSync`, not `execFileSync`: the latter returns only stdout on success,
  * so every assertion about stderr on an exit-0 run silently held against the
  * empty string — which is how a warning the command never printed looked like a
  * warning it correctly suppressed.
+ *
+ * Every call here costs ~3.4 s — a node, a tsx transform of the whole import
+ * graph, and a bind of the 38 761-element library — so it is spent only where
+ * the process is what is being asserted; see the file header for the split.
  */
-function run(args: string[], input?: string, env?: Record<string, string>): Run {
+function spawnCli(args: string[], input?: string, env?: Record<string, string>): Run {
   const r = spawnSync('npx', ['tsx', CLI, ...args], {
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
@@ -75,6 +126,125 @@ function run(args: string[], input?: string, env?: Record<string, string>): Run 
   return { code: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
+/** Collect what is written to a stream, in the chunks it is written in. */
+function capture(sink: string[]): typeof process.stdout.write {
+  return ((chunk: string | Uint8Array, enc?: unknown, cb?: unknown): boolean => {
+    sink.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+    const done = typeof enc === 'function' ? enc : cb;
+    if (typeof done === 'function') (done as () => void)();
+    return true;
+  }) as typeof process.stdout.write;
+}
+
+/**
+ * Run the command as a FUNCTION: `main` on this process, its streams captured.
+ *
+ * The same entry the binary calls (`scripts/sysprose.ts` exports it and runs it
+ * only when it was RUN), with the same argv, so what is asserted here is what
+ * the command prints — and the bridge case at the end of this file spawns and
+ * calls the same argv for a sample spanning every subcommand and requires
+ * byte-identical stdout and the same code, which is what keeps that sentence
+ * true. ~140 ms against ~3.4 s, because node, the tsx transform and the parse
+ * of the library JSON are paid once for the whole file instead of once per case.
+ *
+ * WHAT IT CANNOT DO, deliberately: stdin. `-` reads file descriptor 0, which in
+ * this process is the test runner's, so a `-` here would read something that is
+ * not the model — it is refused rather than silently answered. Every `-` case
+ * spawns.
+ *
+ * SHARED STATE. What is shared between calls is the library JSON, parsed once
+ * and read-only: every run still builds its OWN `Model` and merges the library
+ * into it, so a subcommand that rewrites a model (`evidence-attach`) rewrites a
+ * copy of its own, exactly as a process would. The bridge case is also the
+ * check on that claim — it runs late, after every other in-process case in this
+ * file, and compares against a process that starts clean.
+ *
+ * The exception, and it is deliberate on the other side too: the SOLVER. One
+ * `Z3Context` is cached for the life of the process (`src/semantics/smt/
+ * z3-bridge.ts`), so a witness or an unsat core — both of them points the
+ * solver CHOSE — can move with what it solved before. Nothing here asserts such
+ * a value, and the case above the bridge (`a report that carries a solver
+ * choice prints the same bytes the second time in one process`) is what says so
+ * out loud, so a future case that started depending on the order of this file
+ * fails there rather than in a witness assertion.
+ *
+ * That shared context also has a MEMORY consequence, and it is the reason one
+ * more case spawns. A nonlinear optimisation allocates without a bound, and one
+ * that blows up in a shared context takes every solver-bearing case after it
+ * with it — measured here: `bounds … --measure uav.endurance --free …` answered
+ * in 200 ms against a fresh context and, in a warm one, asked for 4.2 GB, which
+ * a 32-bit WASM module cannot serve; z3 aborted, its promise never settled, and
+ * seven cases failed. The rule that follows is written on that case: a run
+ * whose solver work is unbounded keeps its own process. Anything moved in here
+ * later should be read against it.
+ */
+/**
+ * The subcommands that can load `z3-solver`, and therefore cannot run in-process.
+ *
+ * z3 ships as a WASM module with process-global state, and it does not survive
+ * being driven many times inside one worker: a full in-process conversion of
+ * this file produced five `Aborted(Runtime error: The application has corrupted
+ * its heap memory area (address zero)!)` unhandled errors over 70 solver calls,
+ * and vitest's own warning for that condition is that it "might cause false
+ * positive tests" — the failure mode is not a red test, it is a green one.
+ *
+ * The subprocess boundary was providing that isolation for free, and moving
+ * these calls in-process removed it silently. So a solver-bearing subcommand
+ * spawns, for the same reason `-` does: not because the assertion is about the
+ * process, but because the invocation needs one. With `SYSPROSE_NO_Z3` set the
+ * solver is never loaded, so those cases stay in-process and keep the speed.
+ */
+const SOLVER_BEARING = new Set(['verify', 'consistency', 'refine', 'bounds', 'fault-tree']);
+
+async function run(args: string[], env?: Record<string, string>): Promise<Run> {
+  if (args.includes('-')) {
+    throw new Error('`-` reads this process\'s stdin — spawn it with spawnCli() instead');
+  }
+  if (SOLVER_BEARING.has(args[0] ?? '') && (env?.SYSPROSE_NO_Z3 ?? process.env.SYSPROSE_NO_Z3) === undefined) {
+    return spawnCli(args, undefined, env);
+  }
+  const out: string[] = [];
+  const err: string[] = [];
+  const realOut = process.stdout.write;
+  const realErr = process.stderr.write;
+  const restore: Array<() => void> = [];
+  for (const [k, v] of Object.entries(env ?? {})) {
+    const before = process.env[k];
+    restore.push(() => {
+      if (before === undefined) delete process.env[k];
+      else process.env[k] = before;
+    });
+    process.env[k] = v;
+  }
+  process.stdout.write = capture(out);
+  process.stderr.write = capture(err);
+  let code: number;
+  try {
+    code = await sysproseMain(args);
+  } catch (thrown) {
+    // THE PROGRAM'S OWN ENDING, reproduced rather than improved on. `runMain`
+    // (scripts/lib/exit.ts) turns a rejection into `sysprose: internal error:`
+    // plus the stack on stderr and exit 2, and a case that asserts what the
+    // command does with a bad argument has to see what the command does — one
+    // refusal reaches a reader down exactly this path today (`bounds --measure`
+    // naming nothing throws `VerifyOptionError` past `main`, so its message is
+    // delivered under an internal-error banner with a stack; the L7 case that
+    // asserts the message and exit 2 passes either way, which is how it stayed
+    // unnoticed while these cases were spawned). The one thing that is NOT the
+    // same both ways is the stack's own text — file paths and line numbers
+    // differ under vitest's transform — so no bridge row below takes this path.
+    process.stderr.write(
+      `sysprose: internal error: ${thrown instanceof Error ? thrown.stack : String(thrown)}\n`,
+    );
+    code = 2;
+  } finally {
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+    for (const undo of restore) undo();
+  }
+  return { code, stdout: out.join(''), stderr: err.join('') };
+}
+
 /** `SYSPROSE_NO_Z3=1` — the switch the §5 CI job asserts exit 2 under. */
 const NO_Z3 = { SYSPROSE_NO_Z3: '1' };
 
@@ -86,7 +256,7 @@ function payload<T>(r: Run): { keys: string[]; body: T } {
 
 describe('L7 — sysprose reporting command', () => {
   it('stats reports the model, not the bundled library', () => {
-    const r = run(['stats', UAV]);
+    const r = spawnCli(['stats', UAV]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('113 element(s)');
     expect(r.stdout).toContain('82 node(s)');
@@ -94,8 +264,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(r.stdout).toMatch(/library elements\s+3\d{4}/);
   }, 90_000);
 
-  it('--json emits {ok, file, <named payload>} and nothing else', () => {
-    const r = run(['stats', UAV, '--json']);
+  it('--json emits {ok, file, <named payload>} and nothing else', async () => {
+    const r = await run(['stats', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       ok: boolean;
@@ -111,10 +281,10 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.stats.libraryElements).toBeGreaterThan(30_000);
   }, 90_000);
 
-  it('requirements reports 2 of 2 covered, not 2 of 26', () => {
+  it('requirements reports 2 of 2 covered, not 2 of 26', async () => {
     // The defect this command was blocked on: counting the bundled library's
     // requirements called a fully-covered model 7.7% covered.
-    const r = run(['requirements', UAV, '--json']);
+    const r = await run(['requirements', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       requirements: {
@@ -138,7 +308,7 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.requirements.rows.every((x) => x.satisfied)).toBe(true);
     expect(body.requirements.rows[0].satisfiedBy).toContain('uav');
 
-    const human = run(['requirements', UAV]);
+    const human = await run(['requirements', UAV]);
     expect(human.stdout).toContain('2 of 2');
     expect(human.stdout).toContain('EnduranceRequirement');
     // The shipped example tags nothing, so the divisor is untouched and the
@@ -175,12 +345,12 @@ describe('L7 — sysprose reporting command', () => {
    * LIST is the mirror of that: the reader would see a `prose or prompt` count
    * and have no way to find out which statement it was about.
    */
-  it('lists every kind by default, labels the ones the ratio leaves out', () => {
+  it('lists every kind by default, labels the ones the ratio leaves out', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-kind-'));
     try {
       const file = join(dir, 'kinds.sysml');
       writeFileSync(file, KINDS_MODEL);
-      const r = run(['requirements', file, '--json']);
+      const r = await run(['requirements', file, '--json']);
       expect(r.code).toBe(0);
       const { body } = payload<{
         requirements: {
@@ -214,7 +384,7 @@ describe('L7 — sysprose reporting command', () => {
       // on — on one column, while its neighbours named the same element.
       expect(body.requirements.rows.map((x) => x.satisfiedBy)).toEqual([['v'], ['v'], []]);
 
-      const human = run(['requirements', file]);
+      const human = await run(['requirements', file]);
       expect(human.stdout).toContain('1 of 1');
       expect(human.stdout).toContain('2 statement(s) tagged prose or prompt');
       expect(human.stdout).toMatch(/note.*prose/);
@@ -232,13 +402,13 @@ describe('L7 — sysprose reporting command', () => {
    * many of how many statements are in front of them, so a filtered list cannot
    * be mistaken for the whole one.
    */
-  it('requirements --kind shows one kind, and refuses a kind that is not one', () => {
+  it('requirements --kind shows one kind, and refuses a kind that is not one', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-kind-'));
     try {
       const file = join(dir, 'kinds.sysml');
       writeFileSync(file, KINDS_MODEL);
 
-      const prompt = run(['requirements', file, '--kind', 'prompt', '--json']);
+      const prompt = await run(['requirements', file, '--kind', 'prompt', '--json']);
       expect(prompt.code).toBe(0);
       const { body } = payload<{
         requirements: {
@@ -254,11 +424,11 @@ describe('L7 — sysprose reporting command', () => {
       expect(body.requirements.total).toBe(1);
       expect(body.requirements.satisfied).toBe(1);
 
-      const req = run(['requirements', file, '--kind=requirement', '--json']);
+      const req = await run(['requirements', file, '--kind=requirement', '--json']);
       const only = payload<{ requirements: { rows: Array<{ name: string }> } }>(req);
       expect(only.body.requirements.rows.map((x) => x.name)).toEqual(['maxMass']);
 
-      const human = run(['requirements', file, '--kind', 'prose']);
+      const human = await run(['requirements', file, '--kind', 'prose']);
       expect(human.code).toBe(0);
       expect(human.stdout).toContain('showing 1 of 3 statement(s)');
       expect(human.stdout).toContain('note');
@@ -268,7 +438,7 @@ describe('L7 — sysprose reporting command', () => {
       expect(human.stdout).toContain('prompts --element');
 
       // An unknown kind is refused, not defaulted.
-      const bad = run(['requirements', file, '--kind', 'notes']);
+      const bad = await run(['requirements', file, '--kind', 'notes']);
       expect(bad.code).toBe(2);
       expect(bad.stderr).toContain('unknown --kind');
       expect(bad.stderr).toContain('requirement, prose, prompt');
@@ -277,7 +447,7 @@ describe('L7 — sysprose reporting command', () => {
       // check is wired into `precheckArgs` and not left to the report. Only an
       // unreadable path can show the order: against a file that exists, a
       // post-load check would satisfy the case above just as well.
-      const early = run(['requirements', join(dir, 'nope.sysml'), '--kind', 'notes']);
+      const early = await run(['requirements', join(dir, 'nope.sysml'), '--kind', 'notes']);
       expect(early.code).toBe(2);
       expect(early.stderr).toContain('unknown --kind');
       expect(early.stderr).not.toContain('cannot read');
@@ -294,7 +464,7 @@ describe('L7 — sysprose reporting command', () => {
    * the case is deliberately the indirect one: the prompt is written inside a
    * definition and asked for from a part typed by it.
    */
-  it('prompts finds the guidance written on what an element is', () => {
+  it('prompts finds the guidance written on what an element is', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-prompt-'));
     try {
       const file = join(dir, 'guidance.sysml');
@@ -313,7 +483,7 @@ describe('L7 — sysprose reporting command', () => {
 `,
       );
 
-      const r = run(['prompts', file, '--element', 'e', '--json']);
+      const r = await run(['prompts', file, '--element', 'e', '--json']);
       expect(r.code).toBe(0);
       const { keys, body } = payload<{
         prompts: {
@@ -338,7 +508,7 @@ describe('L7 — sysprose reporting command', () => {
       expect(applied.distance).toBe(1);
       expect(applied.attachedTo.declaredName).toBe('Engine');
 
-      const human = run(['prompts', file, '--element', 'e']);
+      const human = await run(['prompts', file, '--element', 'e']);
       expect(human.code).toBe(0);
       expect(human.stdout).toContain('1 prompt(s) apply');
       expect(human.stdout).toContain('Check the fuel line');
@@ -346,13 +516,13 @@ describe('L7 — sysprose reporting command', () => {
 
       // An element nothing was written about says so, rather than reporting a
       // prompt from somewhere else in the model.
-      const none = run(['prompts', file, '--element', 'w']);
+      const none = await run(['prompts', file, '--element', 'w']);
       expect(none.code).toBe(0);
       expect(none.stdout).toContain('0 prompt(s)');
       expect(none.stdout).not.toContain('fuel line');
 
       // The element is the question; without it there is nothing to answer.
-      const bare = run(['prompts', file]);
+      const bare = await run(['prompts', file]);
       expect(bare.code).toBe(2);
       expect(bare.stderr).toContain('needs --element');
     } finally {
@@ -360,10 +530,10 @@ describe('L7 — sysprose reporting command', () => {
     }
   }, 180_000);
 
-  it('connectivity reports 15 ports, 9 connections and 14 connected', () => {
+  it('connectivity reports 15 ports, 9 connections and 14 connected', async () => {
     // 0 connected (a filter with no lift) and 37 ports (no filter at all) are
     // the two wrong answers this figure has had.
-    const r = run(['connectivity', UAV, '--json']);
+    const r = await run(['connectivity', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       connectivity: {
@@ -383,7 +553,7 @@ describe('L7 — sysprose reporting command', () => {
       'UAVSurveillanceSystem::DataLink::antenna',
     ]);
 
-    const human = run(['connectivity', UAV]);
+    const human = await run(['connectivity', UAV]);
     expect(human.stdout).toContain('15 port(s)');
     expect(human.stdout).toContain('14 connected');
     expect(human.stdout).toContain('antenna');
@@ -393,13 +563,13 @@ describe('L7 — sysprose reporting command', () => {
     expect(human.stdout).toContain('AirVehicle::radio :: antenna');
   }, 120_000);
 
-  it('never reassures and contradicts itself in the same connectivity report', () => {
+  it('never reassures and contradicts itself in the same connectivity report', async () => {
     // `examples/vehicle.sysml` writes its ports on the `part def`s and its
     // connections inside `part vehicle : Vehicle`. This report used to print
     // "every declared port is wired" and then list three of those same ports
     // as dangling — one of the two halves wrong, and no way for a reader to
     // tell which.
-    const wired = run(['connectivity', resolve(process.cwd(), 'examples/vehicle.sysml')]);
+    const wired = await run(['connectivity', resolve(process.cwd(), 'examples/vehicle.sysml')]);
     expect(wired.code).toBe(0);
     expect(wired.stdout).toContain('every declared port is wired');
     expect(wired.stdout).not.toContain('unconnected port usages');
@@ -423,7 +593,7 @@ describe('L7 — sysprose reporting command', () => {
 }
 `,
       );
-      const r = run(['connectivity', file]);
+      const r = await run(['connectivity', file]);
       expect(r.code).toBe(0);
       // Two dangling ends of two DIFFERENT declared ports, and the line says
       // that. "2 usage(s) of one" would be a fresh false claim in the line
@@ -456,7 +626,7 @@ describe('L7 — sysprose reporting command', () => {
 }
 `,
       );
-      const o = run(['connectivity', outside]);
+      const o = await run(['connectivity', outside]);
       expect(o.code).toBe(0);
       expect(o.stdout).toContain('L::a1 :: p');
       expect(o.stdout).toContain('L::a2 :: p');
@@ -483,7 +653,7 @@ describe('L7 — sysprose reporting command', () => {
 }
 `,
       );
-      const n = run(['connectivity', nested]);
+      const n = await run(['connectivity', nested]);
       expect(n.code).toBe(0);
       expect(n.stdout).not.toContain('unconnected port usages');
       expect(n.stdout).toContain('2 occurrence(s) answered per declaration, not per instance');
@@ -492,8 +662,8 @@ describe('L7 — sysprose reporting command', () => {
     }
   }, 240_000);
 
-  it('elements lists the reader\'s model, not the tool\'s re-derived copies', () => {
-    const r = run(['elements', UAV, '--json']);
+  it('elements lists the reader\'s model, not the tool\'s re-derived copies', async () => {
+    const r = await run(['elements', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{ elements: Array<{ id: string; qualifiedName: string; metaclass: string }> }>(r);
     expect(keys).toEqual(['elements', 'file', 'ok']);
@@ -513,11 +683,11 @@ describe('L7 — sysprose reporting command', () => {
     // The same figure the element census reports, from the subcommand that
     // computes it independently: a listing that disagrees with `stats` is the
     // defect, whichever of the two moved.
-    const stats = run(['stats', UAV, '--json']);
+    const stats = await run(['stats', UAV, '--json']);
     const st = payload<{ stats: { byMetaclass: Record<string, number> } }>(stats);
     expect(st.body.stats.byMetaclass.PortUsage).toBe(15);
 
-    const human = run(['elements', UAV]);
+    const human = await run(['elements', UAV]);
     expect(human.stdout).toContain('80 element(s)');
     expect(human.stdout).toContain('14 re-derived element(s)');
 
@@ -527,7 +697,9 @@ describe('L7 — sysprose reporting command', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     try {
       const out = join(dir, 'elements.txt');
-      const w = run(['elements', '-', '--include-library', '--out', out], 'package P { part def A; }\n');
+      // Spawned, alone in this case: it is fed on stdin and it writes a file,
+      // which are two things about the PROCESS rather than about the listing.
+      const w = spawnCli(['elements', '-', '--include-library', '--out', out], 'package P { part def A; }\n');
       expect(w.code).toBe(0);
       expect(w.stdout).toContain('Wrote');
       const written = readFileSync(out, 'utf8');
@@ -545,7 +717,7 @@ describe('L7 — sysprose reporting command', () => {
     // report at ~64 KiB AND still exit 0: unparseable JSON reported as a clean
     // answer. `--include-library` is the documented way to ask for a payload
     // that large, so it is the one that has to survive the trip.
-    const r = run(['elements', '-', '--include-library', '--json'], 'package P { part def A; }\n');
+    const r = spawnCli(['elements', '-', '--include-library', '--json'], 'package P { part def A; }\n');
     expect(r.code).toBe(0);
     expect(r.stdout.length).toBeGreaterThan(1_000_000);
     const body = JSON.parse(r.stdout) as { ok: boolean; elements: unknown[] };
@@ -553,8 +725,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.elements.length).toBeGreaterThan(20_000);
   }, 180_000);
 
-  it('trace names its axes and lists the links it found', () => {
-    const r = run(['trace', UAV, '--json']);
+  it('trace names its axes and lists the links it found', async () => {
+    const r = await run(['trace', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       trace: {
@@ -585,7 +757,7 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.trace.links).toHaveLength(2);
     expect(body.trace.unlinkedColumns).toEqual([]);
 
-    const human = run(['trace', UAV]);
+    const human = await run(['trace', UAV]);
     expect(human.stdout).toContain('2 link(s)');
     // The axes are printed, because a matrix whose rows are a guess is unreadable.
     expect(human.stdout).toContain('PartUsage');
@@ -593,7 +765,7 @@ describe('L7 — sysprose reporting command', () => {
     expect(human.stdout).toContain('uav');
   }, 120_000);
 
-  it('every walk-based report prints the typings it cannot follow', () => {
+  it('every walk-based report prints the typings it cannot follow', async () => {
     // The user-visible half of the omission counter, which nothing pinned: all
     // three figures could be hard-coded to 0 and the suite stayed green. They
     // are the whole point of the counter — a reader who sees "nothing
@@ -603,7 +775,7 @@ describe('L7 — sysprose reporting command', () => {
     // The figures are measurements of `examples/uav-isr.sysml`: 13 attributes
     // are typed by an ISQ quantity kind, which the library binder deliberately
     // leaves without a `FeatureTyping`; three of them name `ISQ::MassValue`.
-    const matrix = run([
+    const matrix = await run([
       'trace', UAV, '--relation', 'satisfy',
       '--from', 'AttributeUsage', '--to', 'AttributeUsage', '--json',
     ]);
@@ -617,7 +789,7 @@ describe('L7 — sysprose reporting command', () => {
     expect(mBody.trace.rows).toHaveLength(16);
     expect(mBody.trace.unresolvedTypings).toBe(13);
     expect(mBody.trace.unresolvedTypings).toBeLessThanOrEqual(mBody.trace.rows.length);
-    const matrixText = run([
+    const matrixText = await run([
       'trace', UAV, '--relation', 'satisfy',
       '--from', 'AttributeUsage', '--to', 'AttributeUsage',
     ]);
@@ -625,13 +797,13 @@ describe('L7 — sysprose reporting command', () => {
 
     // Asked about a TYPE, the walk finds no edge — and says how many written
     // typings name it anyway.
-    const used = run(['where-used', UAV, '--element', 'ISQBase::MassValue']);
+    const used = await run(['where-used', UAV, '--element', 'ISQBase::MassValue']);
     expect(used.code).toBe(0);
     expect(used.stdout).toContain('nothing references it');
     expect(used.stdout).toContain('3 declared type(s) this walk cannot follow');
 
     // And asked about one of those attributes, it counts its own.
-    const prompts = run([
+    const prompts = await run([
       'prompts', UAV, '--element', 'UAVSurveillanceSystem::AirVehicle::mtow',
     ]);
     expect(prompts.code).toBe(0);
@@ -674,7 +846,7 @@ describe('L7 — sysprose reporting command', () => {
     ];
 
     for (const e of expected) {
-      const r = run(['trace', '-', '--relation', e.rel, '--json'], model);
+      const r = spawnCli(['trace', '-', '--relation', e.rel, '--json'], model);
       expect(r.code, `${e.rel} must report`).toBe(0);
       const { body } = payload<{
         trace: {
@@ -695,22 +867,22 @@ describe('L7 — sysprose reporting command', () => {
     }
   }, 300_000);
 
-  it('an axis override naming a metaclass the model has none of exits 2', () => {
+  it('an axis override naming a metaclass the model has none of exits 2', async () => {
     // The auto-derived axes refuse this shape; the manual override must too.
     // `--from PartUsages` (a plausible typo) otherwise reports 0 links over 0
     // rows and exits 0, which is indistinguishable from the honest answer.
-    const r = run(['trace', UAV, '--from', 'PartUsages']);
+    const r = await run(['trace', UAV, '--from', 'PartUsages']);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('--from names a metaclass this model has none of');
     // The refusal says what the relation DOES link, so the reader can fix it.
     expect(r.stderr).toContain('PartUsage to RequirementDefinition');
 
-    const ok = run(['trace', UAV, '--from', 'PartUsage', '--json']);
+    const ok = await run(['trace', UAV, '--from', 'PartUsage', '--json']);
     expect(ok.code).toBe(0);
   }, 120_000);
 
-  it('where-used walks as far as --depth says and stops', () => {
-    const one = run(['where-used', UAV, '--element', 'AirVehicle', '--json']);
+  it('where-used walks as far as --depth says and stops', async () => {
+    const one = await run(['where-used', UAV, '--element', 'AirVehicle', '--json']);
     expect(one.code).toBe(0);
     const { keys, body } = payload<{
       whereUsed: {
@@ -725,22 +897,22 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.whereUsed.impacted).toHaveLength(3);
     expect(body.whereUsed.truncated).toBe(true);
 
-    const two = run(['where-used', UAV, '--element=AirVehicle', '--depth=2', '--json']);
+    const two = await run(['where-used', UAV, '--element=AirVehicle', '--depth=2', '--json']);
     expect(two.code).toBe(0);
     const deep = payload<{ whereUsed: { impacted: unknown[]; truncated: boolean } }>(two);
     expect(deep.body.whereUsed.impacted).toHaveLength(5);
     expect(deep.body.whereUsed.truncated).toBe(false);
 
-    const human = run(['where-used', UAV, '--element', 'AirVehicle', '--depth', '2']);
+    const human = await run(['where-used', UAV, '--element', 'AirVehicle', '--depth', '2']);
     expect(human.stdout).toContain('5 element(s)');
     expect(human.stdout).toContain('EnduranceRequirement');
   }, 180_000);
 
-  it('an ambiguous element name exits 2 and lists the candidates the reader wrote', () => {
+  it('an ambiguous element name exits 2 and lists the candidates the reader wrote', async () => {
     // `powerIn` names 10 elements, 5 of them the tool's own usage-scoped
     // copies. Offering all 10 would ask the reader to choose between ids that
     // are not in their file.
-    const r = run(['where-used', UAV, '--element', 'powerIn']);
+    const r = await run(['where-used', UAV, '--element', 'powerIn']);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('ambiguous');
     expect(r.stderr).toContain('UAVSurveillanceSystem::FlightController::powerIn');
@@ -748,14 +920,14 @@ describe('L7 — sysprose reporting command', () => {
     expect(candidates).toHaveLength(5);
   }, 90_000);
 
-  it('an element name that matches nothing exits 2', () => {
-    const r = run(['where-used', UAV, '--element', 'NoSuchThing']);
+  it('an element name that matches nothing exits 2', async () => {
+    const r = await run(['where-used', UAV, '--element', 'NoSuchThing']);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('no element');
   }, 90_000);
 
-  it('orphans reports the two definitions the example never uses', () => {
-    const r = run(['orphans', UAV, '--json']);
+  it('orphans reports the two definitions the example never uses', async () => {
+    const r = await run(['orphans', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       orphans: {
@@ -769,7 +941,7 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.orphans.definitionsExamined).toBe(14);
     expect(body.orphans.packagesSkipped).toBe(1);
 
-    const human = run(['orphans', UAV]);
+    const human = await run(['orphans', UAV]);
     expect(human.stdout).toContain('FlyMission');
     expect(human.stdout).toContain('2 of 14');
   }, 120_000);
@@ -784,14 +956,14 @@ describe('L7 — sysprose reporting command', () => {
     try {
       const odd = join(dir, 'model.notsysml');
       writeFileSync(odd, 'package P {\n    part def A;\n    part a : A;\n}\n');
-      const named = run(['stats', odd]);
+      const named = spawnCli(['stats', odd]);
       expect(named.code).toBe(0);
       expect(named.stderr).toContain('import/wrong-extension');
       expect(named.stderr).toContain('1 warning(s)');
       // A warning is not a finding about the MODEL, so the report still stands.
       expect(named.stdout).toContain('4 element(s)');
 
-      const piped = run(['stats', '-'], 'package P {\n    part def A;\n    part a : A;\n}\n');
+      const piped = spawnCli(['stats', '-'], 'package P {\n    part def A;\n    part a : A;\n}\n');
       expect(piped.code).toBe(0);
       expect(piped.stderr).not.toContain('wrong-extension');
       expect(piped.stderr).toBe('');
@@ -802,14 +974,14 @@ describe('L7 — sysprose reporting command', () => {
   }, 120_000);
 
   it('a model that does not parse exits 1 with a degraded banner and reports what parsed', () => {
-    const r = run(['stats', `${FIX}/L2-extra-closing-brace/input.sysml`]);
+    const r = spawnCli(['stats', `${FIX}/L2-extra-closing-brace/input.sysml`]);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('degraded');
     // The report is still produced: what survived error recovery is usually
     // exactly what the reader wants to see.
     expect(r.stdout).toContain('2 element(s)');
 
-    const j = run(['stats', `${FIX}/L2-extra-closing-brace/input.sysml`, '--json']);
+    const j = spawnCli(['stats', `${FIX}/L2-extra-closing-brace/input.sysml`, '--json']);
     expect(j.code).toBe(1);
     const { keys, body } = payload<{
       ok: boolean;
@@ -824,7 +996,7 @@ describe('L7 — sysprose reporting command', () => {
   }, 120_000);
 
   it('a model with no elements exits 2 rather than reporting an empty success', () => {
-    const r = run(['stats', '-'], '// nothing here\n');
+    const r = spawnCli(['stats', '-'], '// nothing here\n');
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('no elements');
   }, 90_000);
@@ -835,7 +1007,7 @@ describe('L7 — sysprose reporting command', () => {
     // report` with every diagnostic thrown away — a broken file reported as an
     // empty one, and the exit code (2, usage/IO) blaming the reader's command
     // line for the file's contents.
-    const r = run(['stats', '-'], '#$%^&\n');
+    const r = spawnCli(['stats', '-'], '#$%^&\n');
     expect(r.code).toBe(1);
     expect(r.stderr).not.toContain('no elements');
     expect(r.stderr).toContain('degraded');
@@ -844,33 +1016,33 @@ describe('L7 — sysprose reporting command', () => {
   }, 90_000);
 
   it('rejects an unknown option, an unknown subcommand and a missing subcommand', () => {
-    const opt = run(['stats', UAV, '--wat']);
+    const opt = spawnCli(['stats', UAV, '--wat']);
     expect(opt.code).toBe(2);
     expect(opt.stderr).toContain('unknown option');
 
-    const sub = run(['metrics', UAV]);
+    const sub = spawnCli(['metrics', UAV]);
     expect(sub.code).toBe(2);
     expect(sub.stderr).toContain('unknown subcommand');
 
-    const none = run([]);
+    const none = spawnCli([]);
     expect(none.code).toBe(2);
     expect(none.stderr).toContain('Usage');
 
     // One model per run: two files are two namespaces, and one report over
     // both would be a figure true of neither.
-    const two = run(['stats', UAV, resolve(process.cwd(), 'examples/vehicle.sysml')]);
+    const two = spawnCli(['stats', UAV, resolve(process.cwd(), 'examples/vehicle.sysml')]);
     expect(two.code).toBe(2);
     expect(two.stderr).toContain('expected one file');
 
     // An unknown relation is refused rather than defaulted to `satisfy`, which
     // would answer a question nobody asked.
-    const rel = run(['trace', UAV, '--relation', 'nope']);
+    const rel = spawnCli(['trace', UAV, '--relation', 'nope']);
     expect(rel.code).toBe(2);
     expect(rel.stderr).toContain('unknown --relation');
   }, 180_000);
 
   it('rejects a flag whose value is missing, rather than reading it as NaN', () => {
-    const r = run(['where-used', UAV, '--element', 'AirVehicle', '--depth']);
+    const r = spawnCli(['where-used', UAV, '--element', 'AirVehicle', '--depth']);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('missing value');
   }, 90_000);
@@ -880,20 +1052,20 @@ describe('L7 — sysprose reporting command', () => {
     // listing can honour it: the analysis reports exclude the library by
     // construction and say so in their own `libraryExcluded` figure. Accepting
     // the flag and ignoring it would be the silent answer.
-    const r = run(['stats', UAV, '--include-library']);
+    const r = spawnCli(['stats', UAV, '--include-library']);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('unknown option');
     expect(r.stderr).toContain('stats');
   }, 90_000);
 
   it('exits 2 when the file cannot be read, and reports nothing', () => {
-    const r = run(['stats', `${FIX}/does-not-exist.sysml`]);
+    const r = spawnCli(['stats', `${FIX}/does-not-exist.sysml`]);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('cannot read');
   }, 90_000);
 
   it('prints help for the command and for one subcommand', () => {
-    const top = run(['--help']);
+    const top = spawnCli(['--help']);
     expect(top.code).toBe(0);
     expect(top.stdout).toContain('Usage');
     for (const name of [
@@ -939,7 +1111,7 @@ describe('L7 — sysprose reporting command', () => {
     }
     expect(top.stdout).toContain('each carry a contract of their own');
 
-    const sub = run(['where-used', '--help']);
+    const sub = spawnCli(['where-used', '--help']);
     expect(sub.code).toBe(0);
     expect(sub.stdout).toContain('--depth');
   }, 120_000);
@@ -948,7 +1120,7 @@ describe('L7 — sysprose reporting command', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     try {
       const out = join(dir, 'nested', 'stats.json');
-      const r = run(['stats', UAV, '--json', '--out', out]);
+      const r = spawnCli(['stats', UAV, '--json', '--out', out]);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain(out);
       const written = JSON.parse(readFileSync(out, 'utf8')) as { stats: { totalElements: number } };
@@ -964,7 +1136,7 @@ describe('L7 — sysprose reporting command', () => {
       // Writing to a directory reached the top-level handler and printed
       // `internal error` with a JavaScript stack, telling the reader the tool
       // is broken when their argument is.
-      const r = run(['stats', UAV, '--out', dir]);
+      const r = spawnCli(['stats', UAV, '--out', dir]);
       expect(r.code).toBe(2);
       expect(r.stderr).toContain('cannot write');
       expect(r.stderr).not.toContain('internal error');
@@ -979,19 +1151,59 @@ describe('L7 — sysprose reporting command', () => {
     // which outranked the grammar the rest of the line obeys: after `--` a
     // `-h` is a positional, and `--element --help` is a missing value. Both
     // were answered with the help text and exit 0.
-    const afterDoubleDash = run(['stats', UAV, '--', '-h']);
+    const afterDoubleDash = spawnCli(['stats', UAV, '--', '-h']);
     expect(afterDoubleDash.code).toBe(2);
     expect(afterDoubleDash.stderr).toContain('expected one file');
 
-    const asAValue = run(['where-used', UAV, '--element', '--help']);
+    const asAValue = spawnCli(['where-used', UAV, '--element', '--help']);
     expect(asAValue.code).toBe(2);
     expect(asAValue.stderr).toContain('missing value for --element');
   }, 120_000);
 
+  it('runs when its own path goes through a symlink, instead of silently doing nothing', () => {
+    // THE GUARD THAT DECIDES WHETHER THE COMMAND RUNS AT ALL, at the only
+    // boundary that can see it. `scripts/sysprose.ts` calls `runMain` only when
+    // it was RUN — otherwise importing it here would execute the command with
+    // vitest's argv — and the first way that was written compared
+    // `resolve(process.argv[1])` with `resolve(fileURLToPath(import.meta.url))`.
+    // The loader resolves symlinks in a module URL and argv keeps them, so an
+    // invocation through a symlinked directory read as an import and the
+    // process did NOTHING: no report, no diagnostic, exit 0, on a path whose
+    // contract is 2. That is the outcome `scripts/lib/exit.ts` calls the one
+    // that must be impossible, and no in-process case can see it, because in
+    // process the guard is not consulted at all.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-link-'));
+    try {
+      const link = join(dir, 'repo');
+      symlinkSync(process.cwd(), link);
+      const linked = join(link, 'scripts', 'sysprose.ts');
+
+      const r = spawnSync('npx', ['tsx', linked, 'stats', UAV], {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      expect(r.status, 'the entry guard read a symlinked path as an import').toBe(0);
+      expect(r.stdout, 'the command exited 0 having printed nothing at all').toContain(
+        '113 element(s)',
+      );
+
+      // And the half that a silent pass would have hidden: a refusal is still
+      // a refusal down the same path.
+      const missing = spawnSync('npx', ['tsx', linked, 'stats', `${FIX}/does-not-exist.sysml`], {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      expect(missing.status, 'a file that cannot be read exited 0 through a symlinked entry').toBe(2);
+      expect(missing.stderr).toContain('cannot read');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   /* ── the verification lane: two report commands, no solver ────────────── */
 
-  it('contracts inventories the two requirements of the shipped example', () => {
-    const r = run(['contracts', UAV]);
+  it('contracts inventories the two requirements of the shipped example', async () => {
+    const r = await run(['contracts', UAV]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('2 contract(s) on 1 subject(s)');
     expect(r.stdout).toContain('2 guarantee(s) in QF_LRA, 0 in QF_NRA, 0 unsupported');
@@ -1006,8 +1218,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(r.stdout).not.toMatch(/\bproved\b|\bsatisfied\b|\bconsistent\b/);
   }, 90_000);
 
-  it('contracts --json publishes under `contracts`, beside ok and file', () => {
-    const r = run(['contracts', UAV, '--json']);
+  it('contracts --json publishes under `contracts`, beside ok and file', async () => {
+    const r = await run(['contracts', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       contracts: {
@@ -1048,8 +1260,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(endurance.satisfiedBy.map((x) => x.declaredName)).toEqual(['uav']);
   }, 90_000);
 
-  it('obligations reports two things to show over an axiom set of bindings', () => {
-    const r = run(['obligations', UAV, '--json']);
+  it('obligations reports two things to show over an axiom set of bindings', async () => {
+    const r = await run(['obligations', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       obligations: {
@@ -1077,7 +1289,7 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.obligations.refusedByReason).toEqual({});
   }, 90_000);
 
-  it('obligations --missing lists only what this lane would not decide', () => {
+  it('obligations --missing lists only what this lane would not decide', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'missing.sysml');
     writeFileSync(
@@ -1094,7 +1306,7 @@ describe('L7 — sysprose reporting command', () => {
 `,
     );
     try {
-      const r = run(['obligations', file, '--missing']);
+      const r = await run(['obligations', file, '--missing']);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain('showing the 2 row(s) this lane would not decide');
       expect(r.stdout).toContain('(no constraint body)');
@@ -1102,7 +1314,7 @@ describe('L7 — sysprose reporting command', () => {
       // The refused relation is LISTED with the gate that refused it, never
       // dropped: a relation missing from a worklist reads as one that holds.
       expect(r.stdout).toContain('dimension-clash');
-      const json = run(['obligations', file, '--missing', '--json']);
+      const json = await run(['obligations', file, '--missing', '--json']);
       const { body } = payload<{
         obligations: { missing: number; missingOnly: boolean; refusedByReason: Record<string, number> };
       }>(json);
@@ -1120,7 +1332,8 @@ describe('L7 — sysprose reporting command', () => {
   /* ── property-draft / property-check (§3.3) ────────────────────────────── */
 
   /**
-   * The two rows §3.0 promises a CLI case each, at the process boundary.
+   * The two rows §3.0 promises a CLI case each, asserted on the text the
+   * command prints (`run`, in this process — see the file header).
    *
    * These are the two subcommands an agent meets first — drafting comes before
    * proving — and the whole value of both is that the sentence in the terminal
@@ -1129,8 +1342,8 @@ describe('L7 — sysprose reporting command', () => {
    * that ran and found nothing to say; every assertion below is one a missing
    * arm would fail.
    */
-  it('property-draft prints the skeleton, the dictionary and the fields it cannot encode', () => {
-    const r = run(['property-draft', UAV, '--element', 'MassRequirement']);
+  it('property-draft prints the skeleton, the dictionary and the fields it cannot encode', async () => {
+    const r = await run(['property-draft', UAV, '--element', 'MassRequirement']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('UAVSurveillanceSystem::MassRequirement');
     expect(r.stdout).toContain('subject   uav : AirVehicle (declared)');
@@ -1150,8 +1363,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(r.stdout).toContain('meaning is not checked; read the back-translation.');
   }, 90_000);
 
-  it('property-draft --json publishes under `propertyDraft`, beside ok and file', () => {
-    const r = run([
+  it('property-draft --json publishes under `propertyDraft`, beside ok and file', async () => {
+    const r = await run([
       'property-draft',
       UAV,
       '--element',
@@ -1188,8 +1401,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.propertyDraft.notice).toBe('meaning is not checked; read the back-translation.');
   }, 90_000);
 
-  it('property-check accepts a clause and says where it goes', () => {
-    const r = run([
+  it('property-check accepts a clause and says where it goes', async () => {
+    const r = await run([
       'property-check',
       UAV,
       '--element',
@@ -1211,8 +1424,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(r.stdout).toContain('meaning is not checked; read the back-translation.');
   }, 90_000);
 
-  it('property-check refuses a temporal field at gate 0, and a bare name at gate 2', () => {
-    const temporal = run([
+  it('property-check refuses a temporal field at gate 0, and a bare name at gate 2', async () => {
+    const temporal = await run([
       'property-check',
       UAV,
       '--element',
@@ -1225,7 +1438,7 @@ describe('L7 — sysprose reporting command', () => {
     expect(temporal.stdout).toContain('verification/temporal-field-unencodable');
     expect(temporal.stdout).toContain('gate 1  parses                         not-run');
 
-    const bare = run([
+    const bare = await run([
       'property-check',
       UAV,
       '--element',
@@ -1244,8 +1457,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.propertyCheck.expected).toContain('uav.endurance');
   }, 120_000);
 
-  it('property-check reports the gap rather than a pass when there is no solver', () => {
-    const r = run(
+  it('property-check reports the gap rather than a pass when there is no solver', async () => {
+    const r = await run(
       [
         'property-check',
         UAV,
@@ -1255,7 +1468,6 @@ describe('L7 — sysprose reporting command', () => {
         'uav.mtow <= uav.mtow',
         '--json',
       ],
-      undefined,
       NO_Z3,
     );
     expect(r.code).toBe(0);
@@ -1269,8 +1481,8 @@ describe('L7 — sysprose reporting command', () => {
     expect(body.propertyCheck.code).toBe('verification/nontriviality-unchecked');
   }, 90_000);
 
-  it('property-draft carries the shipped authoring prompts, and both rows refuse a bad REF', () => {
-    const prompts = run([
+  it('property-draft carries the shipped authoring prompts, and both rows refuse a bad REF', async () => {
+    const prompts = await run([
       'property-draft',
       resolve(process.cwd(), 'examples/contract-authoring-prompts.sysml'),
       '--element',
@@ -1281,13 +1493,13 @@ describe('L7 — sysprose reporting command', () => {
     expect(prompts.stdout).toContain('Name the subject in every path a clause reads');
 
     // A REF naming something that states no contract is refused BY NAME, exit 2.
-    const notARequirement = run(['property-draft', UAV, '--element', 'AirVehicle']);
+    const notARequirement = await run(['property-draft', UAV, '--element', 'AirVehicle']);
     expect(notARequirement.code).toBe(2);
     expect(notARequirement.stderr).toContain('not a requirement or a case with an objective');
 
     // And `--clause` is the whole of the second command: a run without it is a
     // usage error raised before the model is even read.
-    const noClause = run(['property-check', UAV, '--element', 'MassRequirement']);
+    const noClause = await run(['property-check', UAV, '--element', 'MassRequirement']);
     expect(noClause.code).toBe(2);
     expect(noClause.stderr).toContain('`--clause TEXT` is the clause to judge');
   }, 120_000);
@@ -1300,7 +1512,7 @@ describe('L7 — sysprose reporting command', () => {
    * a model this lane cannot reach. The prose-only row beside it is the case
    * that sentence really belongs to.
    */
-  it('contracts tells a usage that inherits its clauses from a requirement with none', () => {
+  it('contracts tells a usage that inherits its clauses from a requirement with none', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'usage.sysml');
     writeFileSync(
@@ -1316,12 +1528,12 @@ describe('L7 — sysprose reporting command', () => {
 `,
     );
     try {
-      const r = run(['contracts', file]);
+      const r = await run(['contracts', file]);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain('no clause of its own: the clauses are on its definition P::MassLimit');
       expect(r.stdout).toContain('no formal clause: prose only, nothing to encode');
       expect(r.stdout).toContain('1 contract(s) carry no formal clause');
-      const missing = run(['obligations', file, '--missing']);
+      const missing = await run(['obligations', file, '--missing']);
       expect(missing.stdout).toContain('showing the 1 row(s) this lane would not decide, of 3');
       // `no-formal-clause` is not a gate refusal — nothing refused the body,
       // there is no body — so it is not printed under a heading that says one
@@ -1341,7 +1553,7 @@ describe('L7 — sysprose reporting command', () => {
    * `P::Elsewhere`, and an exclusion census counting statements the reader did
    * not ask about.
    */
-  it('--element narrows the diagnostics and the exclusion census too', () => {
+  it('--element narrows the diagnostics and the exclusion census too', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'scope.sysml');
     writeFileSync(
@@ -1359,18 +1571,18 @@ describe('L7 — sysprose reporting command', () => {
 `,
     );
     try {
-      const whole = run(['contracts', file]);
+      const whole = await run(['contracts', file]);
       expect(whole.stdout).toContain('verification/nonstandard-clause-location');
       expect(whole.stdout).toContain('1 statement(s) tagged prose or prompt left out');
 
-      const scoped = run(['contracts', file, '--element', 'P::Scoped']);
+      const scoped = await run(['contracts', file, '--element', 'P::Scoped']);
       expect(scoped.code).toBe(0);
       expect(scoped.stdout).toContain('scoped to P::Scoped');
       expect(scoped.stdout).toContain('P::Scoped::Inner');
       expect(scoped.stdout).not.toContain('verification/');
       expect(scoped.stdout).toContain('0 statement(s) tagged prose or prompt left out');
 
-      const obligations = run(['obligations', file, '--element', 'P::Scoped']);
+      const obligations = await run(['obligations', file, '--element', 'P::Scoped']);
       expect(obligations.stdout).not.toContain('verification/');
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1384,7 +1596,7 @@ describe('L7 — sysprose reporting command', () => {
    * id, and an ambiguous bare name — which exits 2 with the candidates rather
    * than reporting on the first match.
    */
-  it('--element resolves a qualified name, a short id, and refuses an ambiguous one', () => {
+  it('--element resolves a qualified name, a short id, and refuses an ambiguous one', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'refs.sysml');
     writeFileSync(
@@ -1399,7 +1611,7 @@ describe('L7 — sysprose reporting command', () => {
 `,
     );
     try {
-      const byQualified = run(['contracts', file, '--element', 'P::Second', '--json']);
+      const byQualified = await run(['contracts', file, '--element', 'P::Second', '--json']);
       expect(byQualified.code).toBe(0);
       const q = payload<{ contracts: { total: number; contracts: Array<{ shortId: string }> } }>(
         byQualified,
@@ -1407,12 +1619,12 @@ describe('L7 — sysprose reporting command', () => {
       expect(q.body.contracts.total).toBe(1);
       expect(q.body.contracts.contracts[0].shortId).toBe('R2');
 
-      const byShortId = run(['obligations', file, '--element', 'R1', '--json']);
+      const byShortId = await run(['obligations', file, '--element', 'R1', '--json']);
       expect(byShortId.code).toBe(0);
       const sid = payload<{ obligations: { byRole: { obligation: number } } }>(byShortId);
       expect(sid.body.obligations.byRole.obligation).toBe(1);
 
-      const ambiguous = run(['contracts', file, '--element', 'm']);
+      const ambiguous = await run(['contracts', file, '--element', 'm']);
       expect(ambiguous.code).toBe(2);
       expect(ambiguous.stderr).toContain('is ambiguous');
       expect(ambiguous.stderr).toContain('P::Sys::m');
@@ -1422,7 +1634,7 @@ describe('L7 — sysprose reporting command', () => {
       // reports is about the reader's model and excludes the library, so
       // scoping to a library element would print an inventory of zero that
       // reads exactly like a model with none.
-      const library = run(['contracts', file, '--element', 'Requirements::RequirementCheck']);
+      const library = await run(['contracts', file, '--element', 'Requirements::RequirementCheck']);
       expect(library.code).toBe(2);
       expect(library.stderr).toContain('bundled standard-library element');
     } finally {
@@ -1438,7 +1650,7 @@ describe('L7 — sysprose reporting command', () => {
    * four things §3.12 lets it say, and `npm run check` over the same file says
    * none of them.
    */
-  it('contracts --keywords inventories the vocabulary, and check says none of it', () => {
+  it('contracts --keywords inventories the vocabulary, and check says none of it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-kw-'));
     const file = join(dir, 'vocabulary.sysml');
     writeFileSync(
@@ -1456,12 +1668,12 @@ package P {
 `,
     );
     try {
-      const quiet = run(['contracts', file]);
+      const quiet = await run(['contracts', file]);
       expect(quiet.code).toBe(0);
       expect(quiet.stdout).not.toContain('keywords:');
       expect(quiet.stdout).not.toContain('verification/foreign-keyword');
 
-      const r = run(['contracts', file, '--keywords']);
+      const r = await run(['contracts', file, '--keywords']);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain('keywords: 3 use(s) of 3 distinct keyword(s)');
       expect(r.stdout).toContain('nothing here changes an obligation');
@@ -1489,7 +1701,7 @@ package P {
       expect(checked.status).toBe(0);
       expect(checked.stdout).not.toContain('verification/');
 
-      const json = run(['contracts', file, '--keywords', '--json']);
+      const json = await run(['contracts', file, '--keywords', '--json']);
       const { body } = payload<{
         contracts: {
           keywordsAsked: boolean;
@@ -1513,7 +1725,7 @@ package P {
    * has to. The inventory says whose vocabulary it is; it does not report the
    * tag it acted on as a tag that names nothing.
    */
-  it('contracts --keywords calls #prose its own, in a file that declares no package', () => {
+  it('contracts --keywords calls #prose its own, in a file that declares no package', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-kw-'));
     const file = join(dir, 'statements.sysml');
     writeFileSync(
@@ -1526,7 +1738,7 @@ package P {
 `,
     );
     try {
-      const r = run(['contracts', file, '--keywords']);
+      const r = await run(['contracts', file, '--keywords']);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain('1 statement(s) tagged prose or prompt left out');
       expect(r.stdout).toContain(
@@ -1547,7 +1759,7 @@ package P {
    * own line — the rule §3.9 states as "never contribute a keyword-derived
    * premise or guarantee without printing the keyword on that line".
    */
-  it('obligations reads a foreign clause keyword only under --from-keywords', () => {
+  it('obligations reads a foreign clause keyword only under --from-keywords', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-kw-'));
     const file = join(dir, 'foreign.sysml');
     writeFileSync(
@@ -1562,7 +1774,7 @@ package P {
 `,
     );
     try {
-      const off = run(['obligations', file, '--json']);
+      const off = await run(['obligations', file, '--json']);
       expect(off.code).toBe(0);
       const shut = payload<{
         obligations: {
@@ -1576,7 +1788,7 @@ package P {
       expect(shut.body.obligations.obligations.some((o) => o.provenance !== undefined)).toBe(false);
       expect(shut.body.obligations.obligations.filter((o) => o.source === 'keyword')).toEqual([]);
 
-      const on = run(['obligations', file, '--from-keywords']);
+      const on = await run(['obligations', file, '--from-keywords']);
       expect(on.code).toBe(0);
       expect(on.stdout).toContain('reading third-party #precondition / #postcondition');
       expect(on.stdout).toContain('2 row(s) filed by a keyword, each naming it');
@@ -1593,7 +1805,7 @@ package P {
       expect(on.stdout).toContain('what is stored, never what is true');
       expect(on.stdout).not.toMatch(/\bproved\b|\bsatisfied\b|\bconsistent\b/);
 
-      const onJson = run(['obligations', file, '--from-keywords', '--json']);
+      const onJson = await run(['obligations', file, '--from-keywords', '--json']);
       const opened = payload<{
         obligations: {
           fromKeywords: boolean;
@@ -1627,7 +1839,7 @@ package P {
 }
 `,
       );
-      const narrowed = run(['obligations', encodable, '--missing', '--from-keywords']);
+      const narrowed = await run(['obligations', encodable, '--missing', '--from-keywords']);
       expect(narrowed.code).toBe(0);
       expect(narrowed.stdout).toContain('showing the 1 row(s) this lane would not decide, of 3');
       expect(narrowed.stdout).toContain('1 row(s) filed by a keyword, each naming it');
@@ -1650,7 +1862,7 @@ package P {
    * and it is forced with `SYSPROSE_NO_Z3` because this machine HAS the solver.
    */
   it('verify exits 0 at the model’s values and 2 with no solver, on the same file', () => {
-    const lit = run(['verify', UAV, '--engine', 'literal']);
+    const lit = spawnCli(['verify', UAV, '--engine', 'literal']);
     expect(lit.code).toBe(0);
     // The INCONCLUSIVE count leads (§2): a reader scanning one line must see
     // the undecided figure before the green one.
@@ -1665,7 +1877,7 @@ package P {
 
     // The solver, on the same file: the one place in this repository where
     // `proved` may be printed, and it says what it stood on.
-    const smt = run(['verify', UAV, '--engine', 'auto']);
+    const smt = spawnCli(['verify', UAV, '--engine', 'auto']);
     expect(smt.code, 'the shipped example does not verify').toBe(0);
     expect(smt.stdout).toContain('0 inconclusive, 2 discharged, 0 refuted');
     expect(smt.stdout).toContain('negation-unsat under a satisfiable axiom set');
@@ -1674,18 +1886,18 @@ package P {
       'assumptions satisfiable',
     );
 
-    const auto = run(['verify', UAV, '--engine', 'auto'], undefined, NO_Z3);
+    const auto = spawnCli(['verify', UAV, '--engine', 'auto'], undefined, NO_Z3);
     expect(auto.code, 'a missing solver must never be a green build').toBe(2);
     expect(auto.stdout).toContain('verification/tool-absent');
     expect(auto.stdout, 'the reader is not told what to run instead').toContain('--engine literal');
     expect(auto.stdout, 'a row claimed `proved` with no solver').not.toMatch(/\bproved:/);
 
-    const forgiven = run(['verify', UAV, '--engine', 'auto', '--allow-inconclusive'], undefined, NO_Z3);
+    const forgiven = spawnCli(['verify', UAV, '--engine', 'auto', '--allow-inconclusive'], undefined, NO_Z3);
     expect(forgiven.code, '--allow-inconclusive must not lower an absent solver').toBe(2);
   }, 300_000);
 
   /**
-   * The two flags this commit adds, at the process boundary.
+   * The two flags this commit adds, asserted on what the command prints.
    *
    * Both are pinned for what they DO NOT do as much as for what they do:
    * `--timeout` is refused rather than repaired when it is not a budget,
@@ -1695,30 +1907,30 @@ package P {
    * which is the one property a flag that sounds like it decides something has
    * to be shown not to.
    */
-  it('verify --timeout is refused when it is not a budget, and --strict-vacuity is loud and inert', () => {
+  it('verify --timeout is refused when it is not a budget, and --strict-vacuity is loud and inert', async () => {
     const vacuous = `${FIXV}/models/premises-unsatisfiable.sysml`;
 
-    const plain = run(['verify', vacuous, '--engine', 'smt']);
+    const plain = await run(['verify', vacuous, '--engine', 'smt']);
     expect(plain.code, 'a vacuous obligation is undecided, which is exit 2').toBe(2);
     expect(plain.stdout).toContain('verification/vacuous');
     expect(plain.stdout, 'the flag was not asked for and the tool acted as if it had been').not.toContain(
       'verification/vacuous-property',
     );
 
-    const strict = run(['verify', vacuous, '--engine', 'smt', '--strict-vacuity']);
+    const strict = await run(['verify', vacuous, '--engine', 'smt', '--strict-vacuity']);
     expect(strict.code, '--strict-vacuity moved the exit code').toBe(plain.code);
     expect(strict.stdout).toContain('verification/vacuous-property');
     expect(strict.stdout).toContain('changes no exit code');
 
     // A budget that is honoured, printed in the header so a reader can see the
     // bound every `unknown` below it would have been reached under.
-    const budgeted = run(['verify', UAV, '--engine', 'smt', '--timeout', '9000']);
+    const budgeted = await run(['verify', UAV, '--engine', 'smt', '--timeout', '9000']);
     expect(budgeted.code).toBe(0);
     expect(budgeted.stdout).toContain('at 9000 ms per check');
     expect(budgeted.stdout).toContain('timeout 9000 ms');
 
     for (const bad of ['0', 'forever', '1e999']) {
-      const r = run(['verify', UAV, '--engine', 'smt', '--timeout', bad]);
+      const r = await run(['verify', UAV, '--engine', 'smt', '--timeout', bad]);
       expect(r.code, `--timeout ${bad} was accepted`).toBe(2);
       expect(r.stderr).toContain('--timeout must be a positive number of milliseconds');
       expect(r.stderr, 'the refusal does not say why there is no "off"').toContain('no timeout');
@@ -1728,26 +1940,26 @@ package P {
     // having no value at all. Pinned rather than glossed — it is still exit 2
     // and still a usage error, and a parser change that made `-1` reach the
     // budget check would be a change worth noticing here.
-    const negative = run(['verify', UAV, '--engine', 'smt', '--timeout', '-1']);
+    const negative = await run(['verify', UAV, '--engine', 'smt', '--timeout', '-1']);
     expect(negative.code, '--timeout -1 was accepted').toBe(2);
     expect(negative.stderr).toContain('missing value for --timeout');
   }, 300_000);
 
   /**
-   * `--free` at the process boundary: the flag that changes what a verdict
+   * `--free` at the command's own surface: the flag that changes what a verdict
    * MEANS, and the two ways it must refuse rather than mislead.
    */
-  it('verify --free reports a design the model admits, refuses a one-sided domain, and refuses a name that means nothing', () => {
+  it('verify --free reports a design the model admits, refuses a one-sided domain, and refuses a name that means nothing', async () => {
     const oneSided = `${FIXV}/models/free-one-sided.sysml`;
     const admitted = `${FIXV}/models/free-two-sided-refutable.sysml`;
 
-    const unbounded = run(['verify', oneSided, '--engine', 'smt', '--free', 'uav.cruisePower']);
+    const unbounded = await run(['verify', oneSided, '--engine', 'smt', '--free', 'uav.cruisePower']);
     expect(unbounded.code, 'an unconfined free variable must not be green').toBe(2);
     expect(unbounded.stdout).toContain('verification/free-variable-unbounded');
     expect(unbounded.stdout).toMatch(/unbounded (above|below)/);
     expect(unbounded.stdout, 'a fabricated counterexample was printed').not.toMatch(/refuted:/);
 
-    const design = run(['verify', admitted, '--engine', 'smt', '--free', 'uav.cruisePower']);
+    const design = await run(['verify', admitted, '--engine', 'smt', '--free', 'uav.cruisePower']);
     expect(design.code, 'a design the model admits is never exit 1').toBe(2);
     expect(design.stdout).toContain('design admitted by the model, not a violation of it');
     expect(design.stdout).toContain('witness:');
@@ -1755,7 +1967,7 @@ package P {
     // verdict at the model's own values.
     expect(design.stdout).toContain('with uav.cruisePower released');
 
-    const misspelt = run(['verify', admitted, '--engine', 'smt', '--free', 'uav.cruisePowr']);
+    const misspelt = await run(['verify', admitted, '--engine', 'smt', '--free', 'uav.cruisePowr']);
     expect(misspelt.code, 'a --free that named nothing still printed a verdict').toBe(2);
     expect(misspelt.stderr).toContain('--free names nothing in this model');
     // AND IT READS AS A USAGE ERROR, not as a crash. It reached the terminal as
@@ -1778,7 +1990,7 @@ package P {
     // `subject uav` both declare the name — so it is refused one rule earlier,
     // by the uniqueness check below. Both refusals are honest and the bare
     // spelling would test the wrong one.
-    const inert = run(['verify', admitted, '--engine', 'smt', '--free', 'AdmittedByDesign::uav']);
+    const inert = await run(['verify', admitted, '--engine', 'smt', '--free', 'AdmittedByDesign::uav']);
     expect(inert.code, 'a --free that released nothing still printed a verdict').toBe(2);
     expect(inert.stderr).toContain('which no relation in this model reads');
     expect(inert.stderr, 'the refusal does not say what could be freed instead').toContain(
@@ -1786,7 +1998,7 @@ package P {
     );
     expect(inert.stdout, 'a verdict was printed under a bound nobody released').not.toContain('proved:');
     // The bare spelling of the same name: refused too, by the other rule.
-    const bare = run(['verify', admitted, '--engine', 'smt', '--free', 'uav']);
+    const bare = await run(['verify', admitted, '--engine', 'smt', '--free', 'uav']);
     expect(bare.code, 'a bare --free naming two elements printed a verdict').toBe(2);
     expect(bare.stderr).toContain('names 2 elements of this model');
     expect(bare.stdout, 'a verdict was printed under a bound nobody released').not.toContain('proved:');
@@ -1795,7 +2007,7 @@ package P {
     // to whichever the model walk reached first: `--free` is documented as
     // taking "a feature name unique in scope", and uniqueness is a promise the
     // resolver has to be able to check.
-    const ambiguous = run(['verify', `${FIXV}/models/ambiguous-name.sysml`, '--engine', 'smt', '--free', 'mass']);
+    const ambiguous = await run(['verify', `${FIXV}/models/ambiguous-name.sysml`, '--engine', 'smt', '--free', 'mass']);
     expect(ambiguous.code, 'an ambiguous --free was resolved silently').toBe(2);
     expect(ambiguous.stderr).toContain('names 2 elements of this model');
     expect(ambiguous.stderr, 'the candidates are not named').toContain('AmbiguousName::Wing::mass');
@@ -1806,7 +2018,7 @@ package P {
     // nothing confines from above is `free-variable-unbounded`; reading exit 0
     // as "accepted" would make the control pass for the wrong reason on a
     // model that happened to bound its features and fail on one that did not.
-    const unique = run([
+    const unique = await run([
       'verify', `${FIXV}/models/ambiguous-name.sysml`, '--engine', 'smt',
       '--free', 'AmbiguousName::Wing::mass',
     ]);
@@ -1816,11 +2028,11 @@ package P {
     );
   }, 300_000);
 
-  it('verify --json publishes a top-level verdict block, and --record writes the evidence', () => {
+  it('verify --json publishes a top-level verdict block, and --record writes the evidence', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     try {
       const out = join(dir, 'nested', 'uav.json');
-      const r = run(['verify', UAV, '--engine', 'literal', '--json', '--record', out]);
+      const r = await run(['verify', UAV, '--engine', 'literal', '--json', '--record', out]);
       expect(r.code).toBe(0);
       const { keys, body } = payload<{
         verdict: { discharged: number; violated: number; inconclusive: number; designAdmitted: number; exitCode: number };
@@ -1854,7 +2066,7 @@ package P {
       // schema is `additionalProperties: false` on both definitions, so a
       // field added to the report or to a row without a schema entry fails
       // here rather than reaching a consumer undocumented.
-      const smt = run(['verify', UAV, '--engine', 'smt', '--json']);
+      const smt = await run(['verify', UAV, '--engine', 'smt', '--json']);
       expect(smt.code, 'the shipped example stopped proving under the solver').toBe(0);
       const smtBody = payload<{ verify: { results: Array<{ claim: string }> } }>(smt).body;
       expect(validate(smtBody), `--engine smt: ${ajv.errorsText(validate.errors)}`).toBe(true);
@@ -1885,20 +2097,20 @@ package P {
     }
   }, 120_000);
 
-  it('verify refuses a mistyped engine and --free on the engine that cannot honour it', () => {
-    const bad = run(['verify', UAV, '--engine', 'nope']);
+  it('verify refuses a mistyped engine and --free on the engine that cannot honour it', async () => {
+    const bad = await run(['verify', UAV, '--engine', 'nope']);
     expect(bad.code).toBe(2);
     expect(bad.stderr).toContain('unknown --engine');
 
     // Accepted-and-ignored would print `holds-at-values` under a bound the
     // evidence record then claimed was in force.
-    const freed = run(['verify', UAV, '--engine', 'literal', '--free', 'UAV::AirVehicle::cruisePower']);
+    const freed = await run(['verify', UAV, '--engine', 'literal', '--free', 'UAV::AirVehicle::cruisePower']);
     expect(freed.code).toBe(2);
     expect(freed.stderr).toContain('--free is an SMT-engine option');
   }, 120_000);
 
-  it('verify exits 1 on a refutation and 2 on a degraded model', () => {
-    const refuted = run(['verify', `${FIXV}/models/refuted-at-values.sysml`, '--engine', 'literal']);
+  it('verify exits 1 on a refutation and 2 on a degraded model', async () => {
+    const refuted = await run(['verify', `${FIXV}/models/refuted-at-values.sysml`, '--engine', 'literal']);
     // 1 means REFUTED here, which is the opposite of what 1 means for every
     // reporting subcommand — the reason `verify` carries its own contract.
     expect(refuted.code).toBe(1);
@@ -1916,7 +2128,7 @@ package P {
           '    requirement def R { subject a : A; require constraint { a.m <= 2.0 } }\n' +
           '    part def ?? ;\n}\n',
       );
-      const degraded = run(['verify', broken, '--engine', 'literal']);
+      const degraded = await run(['verify', broken, '--engine', 'literal']);
       expect(degraded.code).toBe(2);
       expect(degraded.stderr).toContain('nothing is judged over half a model');
     } finally {
@@ -1924,7 +2136,7 @@ package P {
     }
   }, 180_000);
 
-  it('verify --record refuses a model that did not load cleanly, and writes nothing', () => {
+  it('verify --record refuses a model that did not load cleanly, and writes nothing', async () => {
     // §3.10 makes the refusal explicit for the write path, and this is where it
     // has teeth: a record is the DURABLE artefact — it outlives the process
     // status, which was the only honest signal — and one written here said
@@ -1942,13 +2154,13 @@ package P {
           '    part def ?? ;\n}\n',
       );
       const out = join(dir, 'rec.json');
-      const r = run(['verify', broken, '--engine', 'literal', '--record', out]);
+      const r = await run(['verify', broken, '--engine', 'literal', '--record', out]);
       expect(r.code).toBe(2);
       expect(r.stderr).toContain('--record refuses a model that did not load cleanly');
       expect(existsSync(out), 'a record was written over half a model').toBe(false);
 
       // Without --record the same file still reports, and still exits 2.
-      const plain = run(['verify', broken, '--engine', 'literal']);
+      const plain = await run(['verify', broken, '--engine', 'literal']);
       expect(plain.code).toBe(2);
       expect(plain.stderr).toContain('nothing is judged over half a model');
     } finally {
@@ -1956,7 +2168,7 @@ package P {
     }
   }, 180_000);
 
-  it('verify exits 2 over a model that states no obligation, under every engine', () => {
+  it('verify exits 2 over a model that states no obligation, under every engine', async () => {
     // The hole this closes: `exitCodeOf` read the rows alone, so an `auto` run
     // with no solver over a model with no requirements printed "no solver ran
     // … this run is exit 2" and exited 0. The printed sentence and the process
@@ -1972,7 +2184,7 @@ package P {
       // With NO SOLVER: the run says "exit 2" and must exit 2, which is where
       // the hole was. Forced with `SYSPROSE_NO_Z3` — the sentence about a
       // missing solver is only reachable when one is missing.
-      const absent = run(['verify', file, '--engine', 'auto'], undefined, NO_Z3);
+      const absent = await run(['verify', file, '--engine', 'auto'], NO_Z3);
       expect(absent.code, 'no solver, nothing verified, and the build went green').toBe(2);
       expect(absent.stdout).toContain('this run is exit 2');
       expect(absent.stdout).toContain('this model states no obligation at all');
@@ -1980,16 +2192,16 @@ package P {
       // And WITH one: a solver that ran and had nothing to decide is the same
       // answer. Exit 0 says every obligation was discharged; a model that
       // states none has been shown nothing, and that is true of every engine.
-      const auto = run(['verify', file, '--engine', 'auto']);
+      const auto = await run(['verify', file, '--engine', 'auto']);
       expect(auto.code, 'a solver ran, decided nothing, and the build went green').toBe(2);
       expect(auto.stdout).toContain('this model states no obligation at all');
 
-      const lit = run(['verify', file, '--engine', 'literal']);
+      const lit = await run(['verify', file, '--engine', 'literal']);
       expect(lit.code, 'nothing was discharged, so nothing is green').toBe(2);
 
       // And the payload agrees with the process, which is the one thing an
       // automation cannot recover from.
-      const json = run(['verify', file, '--engine', 'auto', '--json'], undefined, NO_Z3);
+      const json = await run(['verify', file, '--engine', 'auto', '--json'], NO_Z3);
       const { body } = payload<{ verdict: { exitCode: number } }>(json);
       expect(body.verdict.exitCode).toBe(json.code);
       expect(body.verdict.exitCode).toBe(2);
@@ -2003,8 +2215,17 @@ package P {
     // finding about the model — and it is the reason both subcommands share the
     // third exit contract. What differs is the subject of the finding: `verify`
     // refutes one obligation, this one says no design at all could meet the set.
+    //
+    // SPAWNED, and the only `consistency` case that is. Its text is an unsat
+    // CORE — a subset z3 chose — and a core is not canonical: measured, this
+    // model's two members come back in the other order in a warm process than
+    // in a fresh one, which is why the bridge case at the end of this file asks
+    // its `consistency` row with the solver switched off. That exemption would
+    // leave the solver-bearing rendering of this subcommand crossing no process
+    // boundary anywhere in the suite, so this case keeps its process. The
+    // assertions are membership rather than order, which is what lets it.
     const conflict = `${FIXV}/models/consistency-conflict.sysml`;
-    const r = run(['consistency', conflict]);
+    const r = spawnCli(['consistency', conflict]);
     expect(r.code, 'a requirement set nothing can satisfy went green').toBe(1);
     expect(r.stdout).toContain('1 inconsistent, 0 inconclusive, 0 consistent');
     expect(r.stdout).toContain('verification/inconsistent-requirements');
@@ -2018,13 +2239,13 @@ package P {
     expect(r.stdout).toContain('a conflicting subset');
     expect(r.stdout, 'a core was called minimal with no deletion loop').not.toContain('minimal');
 
-    const reduced = run(['consistency', conflict, '--minimize']);
+    const reduced = spawnCli(['consistency', conflict, '--minimize']);
     expect(reduced.code).toBe(1);
     expect(reduced.stdout).toContain('a minimal conflicting subset');
-  }, 180_000);
+  }, 240_000);
 
-  it('consistency --json publishes a top-level verdict block that agrees with the process', () => {
-    const r = run(['consistency', UAV, '--with-values', '--json']);
+  it('consistency --json publishes a top-level verdict block that agrees with the process', async () => {
+    const r = await run(['consistency', UAV, '--with-values', '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       verdict: { consistent: number; inconsistent: number; inconclusive: number; exitCode: number };
@@ -2055,18 +2276,18 @@ package P {
 
     // And without the flag the file's own numbers are released, which the
     // report states rather than leaving a reader to infer.
-    const released = run(['consistency', UAV, '--json']);
+    const released = await run(['consistency', UAV, '--json']);
     expect(released.code).toBe(0);
     const other = payload<{ consistency: { released: string[] } }>(released).body;
     expect(other.consistency.released).toContain('UAVSurveillanceSystem::AirVehicle::mtow');
   }, 240_000);
 
-  it('consistency decides nothing with no solver, and --allow-inconclusive does not lower it', () => {
+  it('consistency decides nothing with no solver, and --allow-inconclusive does not lower it', async () => {
     // The honest-absence path, forced with the switch the §5 CI job uses.
     // There is no second engine to fall back to here: whether a requirement set
     // is satisfiable is not a question the model's own values can answer.
     for (const extra of [[], ['--allow-inconclusive']]) {
-      const r = run(['consistency', UAV, ...extra], undefined, NO_Z3);
+      const r = await run(['consistency', UAV, ...extra], NO_Z3);
       expect(r.code, `--allow-inconclusive lowered an absent solver (${extra.join(' ') || 'no flag'})`).toBe(2);
       expect(r.stdout).toContain('verification/tool-absent');
       expect(r.stdout).toContain('no solver ran');
@@ -2077,9 +2298,9 @@ package P {
     }
   }, 240_000);
 
-  it('refine proves the power-budget decomposition and prints the γ census', () => {
+  it('refine proves the power-budget decomposition and prints the γ census', async () => {
     const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
-    const r = run(['refine', budget, '--via', 'composition']);
+    const r = await run(['refine', budget, '--via', 'composition']);
     expect(r.code, 'the shipped decomposition stopped refining').toBe(0);
     expect(r.stdout).toContain('0 not refined, 0 vacuous, 0 inconclusive, 1 refined');
     // γ IS PRINTED, AND SO IS WHAT IT REFUSED. A verdict without the census is a
@@ -2102,7 +2323,7 @@ package P {
 
   it('refine --json publishes a top-level verdict block that agrees with the process', () => {
     const bare = `${FIXV}/models/refinement-bare-connection.sysml`;
-    const r = run(['refine', bare, '--json']);
+    const r = spawnCli(['refine', bare, '--json']);
     expect(r.code, 'a decomposition with no encoded equality went green').toBe(1);
     const { keys, body } = payload<{
       verdict: {
@@ -2137,15 +2358,15 @@ package P {
     ).toContain('verification/unconnected-assumption');
 
     // The opt-in changes the answer, so the flag says so on the process too.
-    const opted = run(['refine', bare, '--connections-as-equalities']);
+    const opted = spawnCli(['refine', bare, '--connections-as-equalities']);
     expect(opted.code).toBe(0);
     expect(opted.stdout).toContain('`--connections-as-equalities` read bare `connect` edges');
   }, 240_000);
 
-  it('refine reports a vacuous contract set as inconclusive, and no flag lowers it', () => {
+  it('refine reports a vacuous contract set as inconclusive, and no flag lowers it', async () => {
     const siblings = `${FIXV}/models/refinement-contradictory-siblings.sysml`;
     for (const extra of [[], ['--allow-inconclusive']]) {
-      const r = run(['refine', siblings, ...extra]);
+      const r = await run(['refine', siblings, ...extra]);
       expect(r.code, `--allow-inconclusive laundered a vacuity (${extra.join(' ') || 'no flag'})`).toBe(2);
       expect(r.stdout).toContain('verification/contract-set-vacuous');
       expect(r.stdout).toContain('cannot hold together');
@@ -2153,13 +2374,13 @@ package P {
     }
   }, 240_000);
 
-  it('refine refuses a --via outside the four families, and a --element that names nothing', () => {
+  it('refine refuses a --via outside the four families, and a --element that names nothing', async () => {
     const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
     // A FAMILY THE MODEL STATES NOTHING IN is not a usage error and not a green
     // build either: the power-budget example states a decomposition and no
     // derivation, so `--via derive` says exactly that and exits 2, where exit 0
     // would claim every chain in the file was shown to refine.
-    const derive = run(['refine', budget, '--via', 'derive']);
+    const derive = await run(['refine', budget, '--via', 'derive']);
     expect(derive.code).toBe(2);
     expect(derive.stdout).toContain('states no `derive` chain this lane can read');
     // AND IT PRINTS NO γ CENSUS. γ is a wiring question and a `derive` edge
@@ -2170,13 +2391,13 @@ package P {
       derive.stdout,
       'a derivation-only run printed the connection census',
     ).not.toContain('γ, the connection assertion');
-    const nonsense = run(['refine', budget, '--via', 'sideways']);
+    const nonsense = await run(['refine', budget, '--via', 'sideways']);
     expect(nonsense.code).toBe(2);
     expect(nonsense.stderr).toContain('--via must be one of');
 
     // And a REF that resolves but names no decomposition is refused BY NAME
     // rather than reported as a file that states no architecture.
-    const empty = run(['refine', budget, '--element', 'UAVPowerBudget::BatteryPack::outputVoltage']);
+    const empty = await run(['refine', budget, '--element', 'UAVPowerBudget::BatteryPack::outputVoltage']);
     expect(empty.code).toBe(2);
     expect(empty.stderr).toContain('names no decomposition in this file');
     expect(
@@ -2187,7 +2408,7 @@ package P {
     // …and the refusal follows `--via`, because a `--via derive` run never read
     // a `satisfy` edge: advice to write one is advice about a different
     // question than the one that was asked.
-    const emptyChain = run([
+    const emptyChain = await run([
       'refine',
       `${FIXV}/models/derivation-conjoins.sysml`,
       '--via',
@@ -2203,11 +2424,12 @@ package P {
     ).not.toContain('satisfy R by sys;');
 
     // AND ITS `--help` PUBLISHES ITS OWN CONTRACT, at the process boundary
-    // where a reader actually meets it. `verify`'s paragraph is written in
-    // terms of the file's VALUES — "with every feature at its model value", "a
-    // relation not evaluable at the model's values", a `--free` clause — and a
+    // where a reader actually meets it — spawned for that reason, like every
+    // other `--help` in this file. `verify`'s paragraph is written in terms of
+    // the file's VALUES — "with every feature at its model value", "a relation
+    // not evaluable at the model's values", a `--free` clause — and a
     // refinement obligation reads none of them.
-    const help = run(['refine', '--help']);
+    const help = spawnCli(['refine', '--help']);
     expect(help.code).toBe(0);
     expect(help.stdout).toContain('every decomposition or derivation chain the --via family reads');
     // …and it names every family `--via` accepts, so no reader meets an exit-1
@@ -2220,10 +2442,10 @@ package P {
     expect(help.stdout).toContain('there is no --free here');
   }, 240_000);
 
-  it('refine decides nothing with no solver, and --allow-inconclusive does not lower it', () => {
+  it('refine decides nothing with no solver, and --allow-inconclusive does not lower it', async () => {
     const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
     for (const extra of [[], ['--allow-inconclusive']]) {
-      const r = run(['refine', budget, ...extra], undefined, NO_Z3);
+      const r = await run(['refine', budget, ...extra], NO_Z3);
       expect(r.code, `--allow-inconclusive lowered an absent solver (${extra.join(' ') || 'no flag'})`).toBe(2);
       expect(r.stdout).toContain('verification/tool-absent');
       expect(r.stdout).toContain('no solver ran');
@@ -2234,14 +2456,14 @@ package P {
     }
   }, 240_000);
 
-  it('refine reads a derivation chain with the orientation the mapper stores', () => {
-    // THE ORIENTATION, AT THE PROCESS BOUNDARY. `derive requirement D from R`
+  it('refine reads a derivation chain with the orientation the mapper stores', async () => {
+    // THE ORIENTATION, AS THE COMMAND REPORTS IT. `derive requirement D from R`
     // stores R on the source end, so R is the parent — and the same file read
     // the other way up does not refine. A build with the orientation reversed
     // would print "refined" here rather than failing, which is why both
     // directions are run.
     const chain = `${FIXV}/models/derivation-conjoins.sysml`;
-    const r = run(['refine', chain, '--via', 'derive']);
+    const r = await run(['refine', chain, '--via', 'derive']);
     expect(r.code, 'a chain the file states was not shown to refine').toBe(0);
     expect(r.stdout).toContain('1 derivation chain(s) over 3 contract(s)');
     expect(r.stdout).toContain('DerivationConjoins::TotalMass via derive — refined');
@@ -2256,7 +2478,7 @@ package P {
     // And the chain that is NOT a refinement is exit 1, with its own code and a
     // witness beside it.
     const stronger = `${FIXV}/models/derivation-stronger-assumption.sysml`;
-    const bad = run(['refine', stronger, '--via', 'derive']);
+    const bad = await run(['refine', stronger, '--via', 'derive']);
     expect(bad.code).toBe(1);
     expect(bad.stdout).toContain('verification/derivation-not-refinement');
     expect(bad.stdout).toContain('assumes no more: DerivationStrongerAssumption::BodyMass  refuted');
@@ -2269,7 +2491,7 @@ package P {
     // that plainly states a 25 kg limit — and the line says which clauses were
     // axioms, every time, rather than once in a header.
     const uav = `${FIXV}/models/bounds-uav.sysml`;
-    const open = run(['bounds', uav, '--measure', 'uav.mtow', '--free', 'all']);
+    const open = spawnCli(['bounds', uav, '--measure', 'uav.mtow', '--free', 'all']);
     expect(open.code, 'a proved unboundedness is a decided answer').toBe(0);
     expect(open.stdout).toContain('unbounded above');
     expect(open.stdout).toContain('`require` and `assume` clauses excluded');
@@ -2278,7 +2500,7 @@ package P {
       /unbounded above[\s\S]{0,400}?\n\s+at /,
     );
 
-    const folded = run([
+    const folded = spawnCli([
       'bounds',
       uav,
       '--measure',
@@ -2294,8 +2516,20 @@ package P {
   }, 240_000);
 
   it('bounds prints a nonlinear bound as a bound, exits 2, and names the other optimiser', () => {
+    // SPAWNED, and the only case here that spawns for a reason about MEMORY.
+    // This is the one run in this file that hands z3 a NONLINEAR optimisation,
+    // and an nlsat search over exact rationals has no bound on what it will
+    // allocate. In its own process that is a run that takes what it takes and
+    // gives it back. Sharing one `Z3Context` with forty other runs, it is not:
+    // measured on this tree, the same argv answered in 200 ms from a fresh
+    // context and, in a process that had already solved its way through this
+    // file, drove `mpq_manager::rat_lt` into a 4.2 GB heap request that the
+    // 32-bit WASM module cannot serve. z3 then aborts, the promise never
+    // settles, this case times out, and every solver-bearing case AFTER it
+    // fails too — seven of them, in the run that showed it. So this one keeps
+    // its process, where a blow-up costs one case instead of the file.
     const uav = `${FIXV}/models/bounds-uav.sysml`;
-    const r = run([
+    const r = spawnCli([
       'bounds',
       uav,
       '--measure',
@@ -2314,7 +2548,7 @@ package P {
 
     // …and the JSON payload publishes a verdict block that agrees with the
     // process, under a contract with no exit 1 in it.
-    const json = run([
+    const json = spawnCli([
       'bounds',
       uav,
       '--measure',
@@ -2339,23 +2573,25 @@ package P {
     ]);
   }, 240_000);
 
-  it('bounds refuses a missing --measure, an unknown --sense, and publishes its own contract', () => {
+  it('bounds refuses a missing --measure, an unknown --sense, and publishes its own contract', async () => {
     const uav = `${FIXV}/models/bounds-uav.sysml`;
-    const none = run(['bounds', uav]);
+    const none = await run(['bounds', uav]);
     expect(none.code).toBe(2);
     expect(none.stderr).toContain('--measure names the feature to bound and is required');
-    const sense = run(['bounds', uav, '--measure', 'uav.mtow', '--sense', 'sideways']);
+    const sense = await run(['bounds', uav, '--measure', 'uav.mtow', '--sense', 'sideways']);
     expect(sense.code).toBe(2);
     expect(sense.stderr).toContain('--sense must be one of min, max, both');
     // A REF that names nothing is refused by name rather than reported as a
     // model with nothing to bound.
-    const missing = run(['bounds', uav, '--measure', 'uav.nosuchthing']);
+    const missing = await run(['bounds', uav, '--measure', 'uav.nosuchthing']);
     expect(missing.code).toBe(2);
     expect(missing.stderr).toContain('--measure names nothing in this model');
 
     // ITS `--help` PUBLISHES ITS OWN CONTRACT, and that contract has no exit 1:
-    // this subcommand reports what the axioms admit and judges nothing.
-    const help = run(['bounds', '--help']);
+    // this subcommand reports what the axioms admit and judges nothing. Spawned,
+    // like every other `--help` here: the usage text is the one output a reader
+    // reaches for when nothing else works, so it is asserted off the program.
+    const help = spawnCli(['bounds', '--help']);
     expect(help.code).toBe(0);
     expect(help.stdout).toContain('every bound asked for was DECIDED');
     expect(help.stdout).toContain('There is no exit 1');
@@ -2364,14 +2600,14 @@ package P {
     );
   }, 240_000);
 
-  it('bounds stands a row down where a refused axiom reaches the objective', () => {
-    // AT THE PROCESS BOUNDARY, because this is the row a reader acts on: an
+  it('bounds stands a row down where a refused axiom reaches the objective', async () => {
+    // AT THE COMMAND'S SURFACE, because this is the row a reader acts on: an
     // axiom nothing asserted widens the space the bound was computed over, so
     // the answer is looser than the model's — and "unbounded above" over a file
     // that plainly states a 9 m ceiling is exactly the sentence §3.7 forbids,
     // arriving through a silence instead of through a claim.
     const model = `${FIXV}/models/bounds-refused-axiom.sysml`;
-    const near = run([
+    const near = await run([
       'bounds',
       model,
       '--measure',
@@ -2389,7 +2625,7 @@ package P {
     // The same refusal, out of reach of the other tank's objective: it can move
     // neither the bound nor whether one exists, so the row is decided and the
     // refusal is listed.
-    const far = run([
+    const far = await run([
       'bounds',
       model,
       '--measure',
@@ -2402,9 +2638,9 @@ package P {
     expect(far.stdout).toContain('1 relation(s) refused by a gate');
   }, 240_000);
 
-  it('bounds decides nothing with no solver, and still names the measure', () => {
+  it('bounds decides nothing with no solver, and still names the measure', async () => {
     const uav = `${FIXV}/models/bounds-uav.sysml`;
-    const r = run(['bounds', uav, '--measure', 'uav.mtow', '--sense', 'both'], undefined, NO_Z3);
+    const r = await run(['bounds', uav, '--measure', 'uav.mtow', '--sense', 'both'], NO_Z3);
     expect(r.code).toBe(2);
     expect(r.stdout).toContain('verification/tool-absent');
     expect(r.stdout).toContain('no solver ran');
@@ -2414,7 +2650,7 @@ package P {
 
   it('fault-tree names the single point of failure and prints the order it was found under', () => {
     const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
-    const r = run(['fault-tree', budget]);
+    const r = spawnCli(['fault-tree', budget]);
     // A DECOMPOSITION THAT REFINES CAN STILL HAVE FOUR SINGLE POINTS OF
     // FAILURE, and this file is the demonstration: `refine` exits 0 on it two
     // cases above, and this exits 1 on the same bytes.
@@ -2430,9 +2666,9 @@ package P {
     expect(r.stdout, 'a contract-level fault tree quoted a probability').not.toContain('probability of');
   }, 240_000);
 
-  it('fault-tree --json publishes a top-level verdict block that agrees with the process', () => {
+  it('fault-tree --json publishes a top-level verdict block that agrees with the process', async () => {
     const redundant = `${FIXV}/models/fault-tree-redundant.sysml`;
-    const r = run(['fault-tree', redundant, '--json']);
+    const r = await run(['fault-tree', redundant, '--json']);
     expect(r.code).toBe(1);
     const { keys, body } = payload<{
       verdict: {
@@ -2480,7 +2716,7 @@ package P {
 
     // The same model at order 1 finds the single point and says nothing about
     // the pair — a bounded absence is not an absence.
-    const bounded = run(['fault-tree', redundant, '--max-order', '1']);
+    const bounded = await run(['fault-tree', redundant, '--max-order', '1']);
     expect(bounded.code).toBe(1);
     expect(bounded.stdout).toContain('up to order 1');
     expect(bounded.stdout, 'a run bounded at order 1 named an order-2 set').not.toContain(
@@ -2488,11 +2724,11 @@ package P {
     );
   }, 240_000);
 
-  it('fault-tree refuses a state machine with the pointer, and a --max-order that is not a bound', () => {
+  it('fault-tree refuses a state machine with the pointer, and a --max-order that is not a bound', async () => {
     // THE TWO SAFETY LANES STAY APART, at the surface a person meets them. An
     // empty cut-set list over a machine reads as a behaviour with no failure
     // mode, so the command refuses by name and points at the other lane.
-    const machine = run(['fault-tree', UAV, '--element', 'FlightModes']);
+    const machine = await run(['fault-tree', UAV, '--element', 'FlightModes']);
     expect(machine.code).toBe(2);
     expect(machine.stderr).toContain('contract-level fault trees do not cover behaviour');
     expect(machine.stderr).toContain('check-behaviour');
@@ -2500,16 +2736,16 @@ package P {
 
     // A bound that is not a bound is an answer about the command line, and it
     // arrives before the model is parsed.
-    const bad = run(['fault-tree', UAV, '--max-order', 'two']);
+    const bad = await run(['fault-tree', UAV, '--max-order', 'two']);
     expect(bad.code).toBe(2);
     expect(bad.stderr).toContain('--max-order must be a whole number');
-    const zero = run(['fault-tree', UAV, '--max-order', '0']);
+    const zero = await run(['fault-tree', UAV, '--max-order', '0']);
     expect(zero.code).toBe(2);
   }, 240_000);
 
-  it('fault-tree reports a vacuous contract set, and decides nothing with no solver', () => {
+  it('fault-tree reports a vacuous contract set, and decides nothing with no solver', async () => {
     const siblings = `${FIXV}/models/refinement-contradictory-siblings.sysml`;
-    const vacuous = run(['fault-tree', siblings]);
+    const vacuous = await run(['fault-tree', siblings]);
     expect(vacuous.code, 'a vacuity was laundered into an answer').toBe(2);
     expect(vacuous.stdout).toContain('verification/contract-set-vacuous');
     expect(vacuous.stdout).toContain('contract set vacuous');
@@ -2518,7 +2754,7 @@ package P {
     );
 
     const budget = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
-    const absent = run(['fault-tree', budget], undefined, NO_Z3);
+    const absent = await run(['fault-tree', budget], NO_Z3);
     expect(absent.code).toBe(2);
     expect(absent.stdout).toContain('verification/tool-absent');
     expect(absent.stdout).toContain('no solver ran');
@@ -2530,7 +2766,7 @@ package P {
     // a run that enumerated nothing must not attribute an order bound to a
     // source the reader did not use.
     expect(absent.stdout).toContain('order bound 2, from the default');
-    const boundedAbsent = run(['fault-tree', budget, '--max-order', '1'], undefined, NO_Z3);
+    const boundedAbsent = await run(['fault-tree', budget, '--max-order', '1'], NO_Z3);
     expect(boundedAbsent.code).toBe(2);
     expect(boundedAbsent.stdout).toContain('order bound 1, from --max-order');
     expect(
@@ -2539,14 +2775,14 @@ package P {
     ).not.toContain('order bound 2, from the default');
   }, 240_000);
 
-  it('consistency --subject narrows by what the reader typed, and refuses a REF that selects nothing', () => {
+  it('consistency --subject narrows by what the reader typed, and refuses a REF that selects nothing', async () => {
     // THREE SPELLINGS A READER REACHES FOR, and the promise they rest on: "a
     // type answers for its subtypes". The type no contract names, and the part
     // usage the file writes after `subject` — which every row of this report
     // prints beside the type — both have to select the set the guide says they
     // select, and the conformance test underneath them inverts silently.
     const model = `${FIXV}/models/consistency-subtype.sysml`;
-    const air = run(['consistency', model, '--subject', 'ConsistencySubtype::AirVehicle']);
+    const air = await run(['consistency', model, '--subject', 'ConsistencySubtype::AirVehicle']);
     expect(air.code).toBe(0);
     expect(air.stdout).toContain('4 requirement(s) on 1 subject(s)');
     expect(air.stdout).toContain('subject ConsistencySubtype::AirVehicle');
@@ -2554,7 +2790,7 @@ package P {
       'subject ConsistencySubtype::Vehicle',
     );
 
-    const usage = run(['consistency', model, '--subject', 'ConsistencySubtype::uav']);
+    const usage = await run(['consistency', model, '--subject', 'ConsistencySubtype::uav']);
     expect(usage.code).toBe(0);
     expect(usage.stdout).toContain('subject ConsistencySubtype::AirVehicle');
 
@@ -2563,7 +2799,7 @@ package P {
     // printing that because a `--subject` matched none of them would be a false
     // statement about the reader's model in the one place they came for a true
     // one.
-    const empty = run(['consistency', model, '--subject', 'ConsistencySubtype::Vehicle::mass']);
+    const empty = await run(['consistency', model, '--subject', 'ConsistencySubtype::Vehicle::mass']);
     expect(empty.code).toBe(2);
     expect(empty.stderr).toContain('is not the subject of any requirement in this file');
     expect(
@@ -2572,14 +2808,14 @@ package P {
     ).not.toContain('this model states no requirement set at all');
   }, 180_000);
 
-  it('consistency refuses a budget that is not one and a subject that names nothing', () => {
-    const badCore = run(['consistency', UAV, '--max-core', '0']);
+  it('consistency refuses a budget that is not one and a subject that names nothing', async () => {
+    const badCore = await run(['consistency', UAV, '--max-core', '0']);
     expect(badCore.code).toBe(2);
     expect(badCore.stderr).toContain('--max-core must be a positive whole number');
     expect(badCore.stderr, 'a usage error was reported as a tool defect').not.toContain(
       'internal error',
     );
-    const badSubject = run(['consistency', UAV, '--subject', 'NoSuchThing']);
+    const badSubject = await run(['consistency', UAV, '--subject', 'NoSuchThing']);
     expect(badSubject.code).toBe(2);
     expect(badSubject.stderr).toContain('no element matches `NoSuchThing`');
   }, 180_000);
@@ -2591,14 +2827,14 @@ package P {
       writeFileSync(model, readFileSync(UAV, 'utf8'));
       const records = join(dir, 'evidence.json');
 
-      const recorded = run(['verify', model, '--engine', 'literal', '--record', records]);
+      const recorded = spawnCli(['verify', model, '--engine', 'literal', '--record', records]);
       expect(recorded.code).toBe(0);
       expect(existsSync(records)).toBe(true);
 
       // ATTACHING DOES NOT WRITE THE INPUT. The updated model is on stdout and
       // the file is untouched until `--out` says otherwise — the one property
       // that lets a reader run this command to see what it would do.
-      const dry = run(['evidence-attach', model, '--from', records]);
+      const dry = spawnCli(['evidence-attach', model, '--from', records]);
       expect(dry.code).toBe(0);
       expect(dry.stdout).toContain('@SysproseVerification::Evidence');
       expect(dry.stderr).toContain('was NOT changed');
@@ -2606,7 +2842,7 @@ package P {
         readFileSync(UAV, 'utf8'),
       );
 
-      const attached = run(['evidence-attach', model, '--from', records, '--out', model]);
+      const attached = spawnCli(['evidence-attach', model, '--from', records, '--out', model]);
       expect(attached.code).toBe(0);
       expect(attached.stderr).toContain('2 record(s) attached to 2 element(s)');
       expect(attached.stderr).toContain('2 verdict facet(s) written');
@@ -2619,13 +2855,13 @@ package P {
         'attribute verdict = "pass"',
       );
 
-      const fresh = run(['evidence-status', model]);
+      const fresh = spawnCli(['evidence-status', model]);
       expect(fresh.code).toBe(0);
       expect(fresh.stdout).toContain('0 stale, 2 current, 0 unrecorded');
       expect(fresh.stdout).toContain('`holds-at-values` is never shown as `proved`');
 
       // Re-attaching the same records says nothing new and writes nothing.
-      const again = run(['evidence-attach', model, '--from', records]);
+      const again = spawnCli(['evidence-attach', model, '--from', records]);
       expect(again.stderr).toContain('0 record(s) attached');
       expect(again.stderr).toContain('2 already present');
 
@@ -2633,7 +2869,7 @@ package P {
       // was reached over — reported by `evidence-status` AND by the ordinary
       // checker, which is what the next person to open the file runs.
       writeFileSync(model, written.replace('18.5 [kg]', '19.5 [kg]'));
-      const stale = run(['evidence-status', model]);
+      const stale = spawnCli(['evidence-status', model]);
       expect(stale.code).toBe(0);
       expect(stale.stdout).toContain('2 stale, 0 current');
       expect(stale.stdout).toMatch(/slice: UAVSurveillanceSystem::/);
@@ -2645,13 +2881,13 @@ package P {
 
       // And the facet goes off with the carrier, or the detach would leave a
       // verdict with nothing behind it.
-      const detached = run(['evidence-detach', model, '--out', model]);
+      const detached = spawnCli(['evidence-detach', model, '--out', model]);
       expect(detached.code).toBe(0);
       expect(detached.stderr).toContain('2 verdict facet(s) cleared');
       const bare = readFileSync(model, 'utf8');
       expect(bare).not.toContain('SysproseVerification::Evidence');
       expect(bare).not.toContain('attribute verdict =');
-      expect(run(['evidence-status', model]).stdout).toContain(
+      expect(spawnCli(['evidence-status', model]).stdout).toContain(
         'nothing in this file states a verdict or carries a record',
       );
     } finally {
@@ -2659,8 +2895,8 @@ package P {
     }
   }, 300_000);
 
-  it('evidence-attach refuses a missing --from, a file that is not records, and a degraded model', () => {
-    const noFrom = run(['evidence-attach', UAV]);
+  it('evidence-attach refuses a missing --from, a file that is not records, and a degraded model', async () => {
+    const noFrom = await run(['evidence-attach', UAV]);
     expect(noFrom.code).toBe(2);
     expect(noFrom.stderr).toContain('--from PATH is required');
     // Refused BEFORE the library is bound: a run that parsed 38 761 elements to
@@ -2671,7 +2907,7 @@ package P {
     try {
       const notRecords = join(dir, 'notes.json');
       writeFileSync(notRecords, JSON.stringify([{ verdict: 'pass' }]));
-      const bad = run(['evidence-attach', UAV, '--from', notRecords]);
+      const bad = await run(['evidence-attach', UAV, '--from', notRecords]);
       expect(bad.code).toBe(2);
       expect(bad.stderr).toContain('does not hold evidence records this tool wrote');
       expect(bad.stderr).toContain('docs/schemas/evidence-record.schema.json');
@@ -2681,7 +2917,7 @@ package P {
 
       const notJson = join(dir, 'notes.txt');
       writeFileSync(notJson, 'these are my notes');
-      expect(run(['evidence-attach', UAV, '--from', notJson]).stderr).toContain('is not JSON');
+      expect((await run(['evidence-attach', UAV, '--from', notJson])).stderr).toContain('is not JSON');
 
       // A model that did not load cleanly is never written back: serializing a
       // salvaged model over somebody's source is a lossy rewrite of it.
@@ -2689,7 +2925,7 @@ package P {
       writeFileSync(broken, 'package P {\n    part def A;\n    part a : A;\n    part def ?? ;\n}\n');
       const records = join(dir, 'ev.json');
       writeFileSync(records, '[]');
-      const degraded = run(['evidence-attach', broken, '--from', records]);
+      const degraded = await run(['evidence-attach', broken, '--from', records]);
       expect(degraded.code).toBe(2);
       expect(degraded.stderr).toContain('refuses a model that did not load cleanly');
     } finally {
@@ -2697,7 +2933,7 @@ package P {
     }
   }, 300_000);
 
-  it('evidence-status names a verdict with nothing behind it, and one that overstates', () => {
+  it('evidence-status names a verdict with nothing behind it, and one that overstates', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     try {
       // A verdict somebody typed. INFO, not a defect: a verdict reached by
@@ -2711,7 +2947,7 @@ package P {
           '        metadata RequirementMetadata {\n            attribute verdict = "pass";\n        }\n' +
           '    }\n}\n',
       );
-      const unrecorded = run(['evidence-status', claimed, '--json']);
+      const unrecorded = await run(['evidence-status', claimed, '--json']);
       expect(unrecorded.code).toBe(0);
       const { body } = payload<{
         evidenceStatus: { unrecorded: number; overstated: number; rows: Array<{ code?: string }> };
@@ -2725,8 +2961,8 @@ package P {
       const model = join(dir, 'uav.sysml');
       writeFileSync(model, readFileSync(UAV, 'utf8'));
       const records = join(dir, 'ev.json');
-      expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(0);
-      expect(run(['evidence-attach', model, '--from', records, '--out', model]).code).toBe(0);
+      expect((await run(['verify', model, '--engine', 'literal', '--record', records])).code).toBe(0);
+      expect((await run(['evidence-attach', model, '--from', records, '--out', model])).code).toBe(0);
       // The FACET, not the carrier's own summary cell of the same name — the
       // record has to keep saying `inconclusive` or this case would be a file
       // that agrees with itself.
@@ -2737,7 +2973,7 @@ package P {
           '$1"pass"',
         ),
       );
-      const overstated = run(['evidence-status', model]);
+      const overstated = await run(['evidence-status', model]);
       expect(overstated.stdout).toContain('overstated');
       expect(overstated.stdout).toContain('verification/verdict-overstates-evidence');
       expect(overstated.stdout).toContain('`pass` is written for `proved` alone');
@@ -2746,7 +2982,7 @@ package P {
     }
   }, 300_000);
 
-  it('evidence-attach PRINTS every verdict it moves, and every record it could not place', () => {
+  it('evidence-attach PRINTS every verdict it moves, and every record it could not place', async () => {
     // THE SENTENCE THE SECTION IS WRITTEN AROUND: a `fail` is never replaced by
     // a `pass` WITHOUT THE DIFF BEING PRINTED. The in-memory `AttachReport`
     // carries the change; nothing asserted that the command renders it, so both
@@ -2764,7 +3000,7 @@ package P {
       const refuted = join(dir, 'refuted.json');
       // A refuted obligation exits 1 under the judging contract — a decided
       // negative, which is exactly what this case needs.
-      expect(run(['verify', model, '--engine', 'literal', '--record', refuted]).code).toBe(1);
+      expect((await run(['verify', model, '--engine', 'literal', '--record', refuted])).code).toBe(1);
       const first = JSON.parse(readFileSync(refuted, 'utf8')) as Array<{
         claim: string;
         verdict: string;
@@ -2772,7 +3008,7 @@ package P {
       }>;
       expect(first[0].claim).toBe('refuted');
 
-      const attached = run(['evidence-attach', model, '--from', refuted, '--out', model]);
+      const attached = await run(['evidence-attach', model, '--from', refuted, '--out', model]);
       expect(attached.code).toBe(0);
       expect(readFileSync(model, 'utf8')).toContain('attribute verdict = "fail"');
 
@@ -2783,7 +3019,7 @@ package P {
         proved,
         JSON.stringify([{ ...first[0], claim: 'proved', verdict: 'pass', engine: 'smt' }]),
       );
-      const moved = run(['evidence-attach', model, '--from', proved, '--out', model]);
+      const moved = await run(['evidence-attach', model, '--from', proved, '--out', model]);
       expect(moved.code).toBe(0);
       expect(moved.stderr).toContain('verdict fail → pass');
       expect(moved.stderr).toContain('(claim refuted → proved)');
@@ -2792,7 +3028,7 @@ package P {
         'a refutation was replaced by a pass and the command said nothing about it',
       ).toContain('a refutation is being replaced by a pass');
       // The refutation is still in the file: evidence accumulates.
-      expect(run(['evidence-status', model, '--json']).stdout).toContain('"records": 2');
+      expect((await run(['evidence-status', model, '--json'])).stdout).toContain('"records": 2');
 
       // AND A RECORD THIS MODEL CANNOT CARRY IS NAMED, not silently dropped.
       const elsewhere = join(dir, 'elsewhere.json');
@@ -2802,7 +3038,7 @@ package P {
           { ...first[0], obligation: { ...first[0].obligation, requirement: 'Other::notHere' } },
         ]),
       );
-      const skipped = run(['evidence-attach', model, '--from', elsewhere]);
+      const skipped = await run(['evidence-attach', model, '--from', elsewhere]);
       expect(skipped.code).toBe(0);
       expect(skipped.stderr).toContain(`skipped ${first[0].obligation.clause}`);
       expect(skipped.stderr).toContain('no element of this model is called `Other::notHere`');
@@ -2813,7 +3049,7 @@ package P {
     }
   }, 300_000);
 
-  it('a requirement with two obligations carries the worst of them, whichever order they are written in', () => {
+  it('a requirement with two obligations carries the worst of them, whichever order they are written in', async () => {
     // The facet used to come from the LAST record in file order, so the same
     // evidence over the same design wrote `fail` one way round and something
     // weaker the other — a verdict that was a function of the source layout.
@@ -2834,8 +3070,8 @@ package P {
         const model = join(dir, `${name}.sysml`);
         writeFileSync(model, head + clauses + tail);
         const records = join(dir, `${name}.json`);
-        expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(1);
-        const attached = run(['evidence-attach', model, '--from', records, '--out', model]);
+        expect((await run(['verify', model, '--engine', 'literal', '--record', records])).code).toBe(1);
+        const attached = await run(['evidence-attach', model, '--from', records, '--out', model]);
         expect(attached.code).toBe(0);
         expect(attached.stderr).toContain('2 record(s) attached to 1 element(s)');
         expect(attached.stderr).toContain('1 verdict facet(s) written');
@@ -2847,7 +3083,7 @@ package P {
           /metadata RequirementMetadata \{\s*attribute verdict = "fail"/.test(written),
           `${name}: the requirement's facet is not the worst of its obligations`,
         ).toBe(true);
-        const status = run(['evidence-status', model]);
+        const status = await run(['evidence-status', model]);
         expect(status.stdout, name).toContain('claim `refuted`, verdict `fail`');
         expect(status.stdout, name).toContain('the weakest of 2 obligations');
       }
@@ -2856,7 +3092,7 @@ package P {
     }
   }, 300_000);
 
-  it('evidence-attach refuses a record whose stated verdict does not follow from its claim', () => {
+  it('evidence-attach refuses a record whose stated verdict does not follow from its claim', async () => {
     // `verdict` and `claim` are two independent enumerations in the schema, so
     // `{"claim":"holds-at-values","verdict":"pass"}` is valid against it and is
     // still a laundered claim. Copying the record's own verdict through wrote
@@ -2866,7 +3102,7 @@ package P {
       const model = join(dir, 'uav.sysml');
       writeFileSync(model, readFileSync(UAV, 'utf8'));
       const records = join(dir, 'ev.json');
-      expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(0);
+      expect((await run(['verify', model, '--engine', 'literal', '--record', records])).code).toBe(0);
       const parsed = JSON.parse(readFileSync(records, 'utf8')) as Array<{
         claim: string;
         verdict: string;
@@ -2875,7 +3111,7 @@ package P {
       const laundered = join(dir, 'laundered.json');
       writeFileSync(laundered, JSON.stringify([{ ...parsed[0], verdict: 'pass' }]));
 
-      const refused = run(['evidence-attach', model, '--from', laundered, '--out', model]);
+      const refused = await run(['evidence-attach', model, '--from', laundered, '--out', model]);
       expect(refused.code).toBe(2);
       expect(refused.stderr).toContain('says `pass` over the claim `holds-at-values`');
       expect(refused.stderr).toContain('`pass` is written for `proved` alone');
@@ -2888,15 +3124,15 @@ package P {
     }
   }, 300_000);
 
-  it('verify --case judges one verification case, and the method gate decides the run', () => {
-    // The L7 case §3.0 promises per new REF flag, at the process boundary where
-    // a reader meets it. The example ships three cases on purpose: one
+  it('verify --case judges one verification case, and the method gate decides the run', async () => {
+    // The L7 case §3.0 promises per new REF flag, asserted on the report a
+    // reader meets. The example ships three cases on purpose: one
     // `analyze`, one `test`, one `kind = (analyze, test)`.
     const VER = resolve(process.cwd(), 'examples/uav-isr-verification.sysml');
 
     // THE WHOLE FILE. Every obligation in it is discharged — the header says so
     // — and the run is still 2, because a case in it was never judged.
-    const all = run(['verify', VER, '--engine', 'literal']);
+    const all = await run(['verify', VER, '--engine', 'literal']);
     expect(all.code, 'an unjudged case did not reach the exit code').toBe(2);
     expect(all.stdout).toContain('0 inconclusive, 3 discharged, 0 refuted');
     expect(all.stdout).toContain('3 verification case(s): 2 pass, 0 fail, 1 inconclusive');
@@ -2905,7 +3141,7 @@ package P {
     // ONE CASE, JUDGED. The report is narrowed to the obligations of the
     // requirement it verifies; the other two requirements are still in the
     // model, and the axioms they stand on are still in force.
-    const one = run(['verify', VER, '--engine', 'literal', '--case', 'enduranceAnalysis']);
+    const one = await run(['verify', VER, '--engine', 'literal', '--case', 'enduranceAnalysis']);
     expect(one.code).toBe(0);
     expect(one.stdout).toContain('uav.endurance >= 45.0 [min]');
     expect(one.stdout, 'a narrowed report showed another case’s obligation').not.toContain(
@@ -2919,7 +3155,7 @@ package P {
     // THE METHOD GATE, and the flag that does not reach it. Exit 2 both ways,
     // and 1 is not among them: an unjudged case is not a refutation.
     for (const extra of [[], ['--allow-inconclusive']]) {
-      const bench = run(['verify', VER, '--engine', 'literal', '--case', 'massBench', ...extra]);
+      const bench = await run(['verify', VER, '--engine', 'literal', '--case', 'massBench', ...extra]);
       expect(bench.code, `--case massBench ${extra.join(' ')}`).toBe(2);
       expect(bench.stdout).toContain('verification/method-not-performed');
       expect(bench.stdout).toContain(
@@ -2928,17 +3164,17 @@ package P {
     }
 
     // THE MIXED CASE, judged on the analyze part and saying so.
-    const mixed = run(['verify', VER, '--engine', 'literal', '--case', 'linkQualification']);
+    const mixed = await run(['verify', VER, '--engine', 'literal', '--case', 'linkQualification']);
     expect(mixed.code).toBe(0);
     expect(mixed.stdout).toContain('test not performed by this tool');
 
     // A REF THAT IS NOT A CASE is refused BY NAME rather than answered as a run
     // over the whole model, and the refusal lists what the file does have.
-    const notACase = run(['verify', VER, '--engine', 'literal', '--case', 'MassRequirement']);
+    const notACase = await run(['verify', VER, '--engine', 'literal', '--case', 'MassRequirement']);
     expect(notACase.code).toBe(2);
     expect(notACase.stderr).toContain('which is not a verification case');
     expect(notACase.stderr).toContain('UAVSurveillanceVerification::massBench');
-    const missing = run(['verify', VER, '--engine', 'literal', '--case', 'NoSuchCase']);
+    const missing = await run(['verify', VER, '--engine', 'literal', '--case', 'NoSuchCase']);
     expect(missing.code).toBe(2);
 
     // AND IT IS IN THE REPRODUCIBLE COMMAND, for the same reason `--free` is:
@@ -2947,7 +3183,7 @@ package P {
     try {
       const records = join(dir, 'endurance.json');
       expect(
-        run(['verify', VER, '--engine', 'literal', '--case', 'enduranceAnalysis', '--record', records]).code,
+        (await run(['verify', VER, '--engine', 'literal', '--case', 'enduranceAnalysis', '--record', records])).code,
       ).toBe(0);
       const parsed = JSON.parse(readFileSync(records, 'utf8')) as Array<{
         producedBy: string;
@@ -2967,8 +3203,8 @@ package P {
     }
   }, 300_000);
 
-  it('record then attach writes the verdict facet and the standard method annotation', () => {
-    // The pipeline of §3.4 at the process boundary. The case here states NO
+  it('record then attach writes the verdict facet and the standard method annotation', async () => {
+    // The pipeline of §3.4, asserted on what the run prints. The case here states NO
     // method, so the attach writes `@VerificationCases::VerificationMethod
     // { kind = analyze; }` onto it — the one standard slot this lane writes,
     // so the file says which method the verdict was reached under instead of
@@ -2999,9 +3235,9 @@ package P {
         ].join('\n'),
       );
       const records = join(dir, 'evidence.json');
-      expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(0);
+      expect((await run(['verify', model, '--engine', 'literal', '--record', records])).code).toBe(0);
 
-      const attached = run(['evidence-attach', model, '--from', records, '--out', model]);
+      const attached = await run(['evidence-attach', model, '--from', records, '--out', model]);
       expect(attached.code).toBe(0);
       // Nothing is written silently: the annotation is announced on stderr,
       // beside every record and every verdict the attach placed.
@@ -3022,7 +3258,7 @@ package P {
       // are, `evidence-attach` invalidates inside one command the evidence it
       // has just attached: the saved file is born `validation/stale-evidence`.
       // Greping the bytes cannot see that; only asking the tool can.
-      const status = run(['evidence-status', model]);
+      const status = await run(['evidence-status', model]);
       expect(status.code).toBe(0);
       expect(status.stdout, 'the attach wrote a file its own status calls stale').toContain(
         '0 stale, 1 current, 0 unrecorded',
@@ -3042,7 +3278,7 @@ package P {
       // `attachEvidence`, whose own report knows nothing about cases — so a
       // `--json` body carrying that report alone would state a verdict the
       // artefact beside it does not contain.
-      const asJson = run(['evidence-attach', model, '--from', records, '--json']);
+      const asJson = await run(['evidence-attach', model, '--from', records, '--json']);
       expect(asJson.code).toBe(0);
       const { body } = payload<{
         evidenceAttach: {
@@ -3064,18 +3300,18 @@ package P {
 
       // Idempotent from the second save: the case now DECLARES a method, so a
       // second attach does not stack a second annotation on it.
-      const again = run(['evidence-attach', model, '--from', records, '--out', model]);
+      const again = await run(['evidence-attach', model, '--from', records, '--out', model]);
       expect(again.code).toBe(0);
       expect(again.stderr).not.toContain('declared no method');
       expect(
         readFileSync(model, 'utf8').match(/@VerificationCases::VerificationMethod/g)?.length,
       ).toBe(1);
-      expect(run(['evidence-status', model]).stdout).toContain('0 stale, 1 current');
+      expect((await run(['evidence-status', model])).stdout).toContain('0 stale, 1 current');
 
       // ATTACH THEN DETACH IS AN INVERSE, annotation included: a tool-authored
       // sentence about the METHOD that no command removed would outlive every
       // claim it was written beside.
-      const detached = run(['evidence-detach', model, '--out', model]);
+      const detached = await run(['evidence-detach', model, '--out', model]);
       expect(detached.code).toBe(0);
       expect(detached.stderr).toContain('RecordThenAttach::massAnalysis');
       expect(readFileSync(model, 'utf8')).not.toContain('VerificationMethod');
@@ -3085,7 +3321,7 @@ package P {
     }
   }, 300_000);
 
-  it('the method gate reads every spelling of `kind`, including an inherited one', () => {
+  it('the method gate reads every spelling of `kind`, including an inherited one', async () => {
     // FOUR PARSE-CLEAN SPELLINGS OF ONE SENTENCE, and the gate has to read all
     // of them, because the arm that JUDGES is the one a case falls into when no
     // method is found. Measured on this file before the reader was widened:
@@ -3132,12 +3368,12 @@ package P {
         ].join('\n'),
       );
       // The file itself is well formed — this is a gate defect, not a parse one.
-      const parsed = run(['stats', model]);
+      const parsed = await run(['stats', model]);
       expect(parsed.code).toBe(0);
       expect(parsed.stderr).not.toContain('error(s)');
 
       for (const name of ['bareMetadata', 'typedMetadata', 'inheritedMethod']) {
-        const r = run(['verify', model, '--engine', 'literal', '--case', name]);
+        const r = await run(['verify', model, '--engine', 'literal', '--case', name]);
         expect(r.code, `${name} was judged over a method this tool does not perform`).toBe(2);
         expect(r.stdout).toContain('verification/method-not-performed');
         expect(r.stdout).toContain('inconclusive: method is test');
@@ -3150,7 +3386,7 @@ package P {
     }
   }, 300_000);
 
-  it('a case over two requirements writes each one its own verdict facet', () => {
+  it('a case over two requirements writes each one its own verdict facet', async () => {
     // THE FACET IS ABOUT ONE REQUIREMENT; THE CASE VERDICT IS A ROLL-UP OVER A
     // SET. Writing the case's word onto each member made the file contradict
     // itself: `WidthLimit` carried `@Evidence { claim = "holds-at-values";
@@ -3190,8 +3426,8 @@ package P {
       const records = join(dir, 'evidence.json');
       // The case is `fail` — one of its two requirements is refuted at the
       // model's values — and that is exit 1.
-      expect(run(['verify', model, '--engine', 'literal', '--record', records]).code).toBe(1);
-      expect(run(['evidence-attach', model, '--from', records, '--out', model]).code).toBe(0);
+      expect((await run(['verify', model, '--engine', 'literal', '--record', records])).code).toBe(1);
+      expect((await run(['evidence-attach', model, '--from', records, '--out', model])).code).toBe(0);
 
       const text = readFileSync(model, 'utf8');
       const block = (name: string): string => {
@@ -3215,8 +3451,8 @@ package P {
     }
   }, 300_000);
 
-  it('reach walks FlightModes and names the choice the simulator hides', () => {
-    const r = run(['reach', UAV]);
+  it('reach walks FlightModes and names the choice the simulator hides', async () => {
+    const r = await run(['reach', UAV]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('1 state machine(s)');
     expect(r.stdout).toContain('FlightModes');
@@ -3232,8 +3468,8 @@ package P {
     expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
   }, 90_000);
 
-  it('reach --json publishes under `reach`, with the semantic profile beside the figures', () => {
-    const r = run(['reach', UAV, '--json']);
+  it('reach --json publishes under `reach`, with the semantic profile beside the figures', async () => {
+    const r = await run(['reach', UAV, '--json']);
     expect(r.code).toBe(0);
     const { keys, body } = payload<{
       reach: {
@@ -3280,8 +3516,8 @@ package P {
     ]);
   }, 90_000);
 
-  it('reach --max-configs suppresses both absence lists rather than shrinking them', () => {
-    const r = run(['reach', UAV, '--max-configs', '2', '--json']);
+  it('reach --max-configs suppresses both absence lists rather than shrinking them', async () => {
+    const r = await run(['reach', UAV, '--max-configs', '2', '--json']);
     expect(r.code).toBe(0);
     const { body } = payload<{
       reach: {
@@ -3310,14 +3546,14 @@ package P {
     );
   }, 90_000);
 
-  it('reach withholds every absence over a guard it could not evaluate, and says why', () => {
+  it('reach withholds every absence over a guard it could not evaluate, and says why', async () => {
     // The defect at the surface a person uses. `GuardProbe::Ctrl` never values
     // `mode`, so `if mode == 3` decides nothing — and this command used to print
     // `exhaustive` beside three absence findings about it. The two machines
     // below it in the same file are the controls: `= 4` is a guard that is
     // genuinely false and keeps every finding, `= 3` fires.
     const probe = resolve(process.cwd(), `${FIXV}/models/guard-undetermined.sysml`);
-    const r = run(['reach', probe]);
+    const r = await run(['reach', probe]);
     // A warning does not move a report command's exit code.
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('3 state machine(s), 2 walked to exhaustion');
@@ -3343,14 +3579,14 @@ package P {
     expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
   }, 90_000);
 
-  it('reach walks a succession between two states, and counts it', () => {
+  it('reach walks a succession between two states, and counts it', async () => {
     // THE DEFECT AT THE SURFACE A PERSON USES. `SuccMix::Ctrl::Modes` writes
     // `first active then done;` in plain sight beside a `transition`, and this
     // command used to print `exhaustive`, `1 of 1 transition(s) fired`, `done`
     // unreachable and `active` with no way out — two absence claims about an
     // edge the walk did not follow. Both spellings are one relation now.
     const mixed = resolve(process.cwd(), `${FIXV}/models/succession-mixed.sysml`);
-    const r = run(['reach', mixed]);
+    const r = await run(['reach', mixed]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('2 state machine(s), 2 walked to exhaustion');
     const ctrl = r.stdout.slice(
@@ -3368,13 +3604,13 @@ package P {
     expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
   }, 90_000);
 
-  it('reach --json publishes the producer census: every edge walked or refused', () => {
+  it('reach --json publishes the producer census: every edge walked or refused', async () => {
     // The durable half. Four readers found four ways the retained relation
     // differed from the machine; the census is the fifth found by a test
     // instead — every edge under the machine lands in a bucket, and the
     // `unaccounted` bucket refuses the machine rather than shrinking a list.
     const mixed = resolve(process.cwd(), `${FIXV}/models/succession-mixed.sysml`);
-    const r = run(['reach', mixed, '--json']);
+    const r = await run(['reach', mixed, '--json']);
     expect(r.code).toBe(0);
     const { body } = payload<{
       reach: {
@@ -3406,13 +3642,13 @@ package P {
     for (const row of ctrl.census.rows) expect(row.reason.length).toBeGreaterThan(20);
   }, 90_000);
 
-  it('reach says a purely succession-wired file declares no machine, and claims nothing', () => {
+  it('reach says a purely succession-wired file declares no machine, and claims nothing', async () => {
     // The message this fix must not quietly replace. `stateMachinesIn` reads
     // "owns a TransitionUsage", so this file has no machine of this tool's —
     // and saying so is an answer about what was looked for, not an absence
     // claim about a graph.
     const only = resolve(process.cwd(), `${FIXV}/models/succession-only.sysml`);
-    const r = run(['reach', only]);
+    const r = await run(['reach', only]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('0 state machine(s), 0 walked to exhaustion');
     expect(r.stdout).toContain(
@@ -3425,7 +3661,7 @@ package P {
     expect(r.stdout).not.toContain('no way out   ');
   }, 90_000);
 
-  it('check-behaviour will not pass a property over a guard it could not evaluate', () => {
+  it('check-behaviour will not pass a property over a guard it could not evaluate', async () => {
     // THE SAME DEFECT ONE LANE OVER, and the worse half of it: `reach`
     // withholding its lists while this command printed `pass`, `exhaustive` and
     // exit 0 over the SAME machine in the SAME file made the tool contradict
@@ -3433,7 +3669,7 @@ package P {
     // read the fifth condition off one walk result.
     const probe = resolve(process.cwd(), `${FIXV}/models/guard-undetermined.sysml`);
     const pattern = 'pattern=absence, scope=globally, p=state hazard';
-    const undecided = run([
+    const undecided = await run([
       'check-behaviour',
       probe,
       '--element',
@@ -3461,7 +3697,7 @@ package P {
     // THE CONTROL, in the same file: `mode = 4` decides the guard false, so
     // `hazard` really is never entered and the pass is earned. A fix that
     // withheld here would have replaced a wrong claim with silence.
-    const decided = run([
+    const decided = await run([
       'check-behaviour',
       probe,
       '--element',
@@ -3474,42 +3710,42 @@ package P {
     expect(decided.stdout).toContain('exhaustive under {maxConfigs 10000');
   }, 90_000);
 
-  it('reach reports a file with no machine at all, and exits 0 doing it', () => {
+  it('reach reports a file with no machine at all, and exits 0 doing it', async () => {
     // NOT a usage error. Nothing was misused and nothing failed to load: the
     // file simply declares no machine, which is a fact about the model and the
     // report's answer to the question. `reach` carries `exitContract: 'report'`
     // and two of the shipped examples are this shape, so exiting 2 would break
     // a `set -e` walk over a directory of models on files that are fine.
     const noMachine = resolve(process.cwd(), 'examples/uav-isr-verification.sysml');
-    const r = run(['reach', noMachine]);
+    const r = await run(['reach', noMachine]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('0 state machine(s)');
     expect(r.stdout).toContain('declares no element that owns a transition');
 
-    const j = run(['reach', noMachine, '--json']);
+    const j = await run(['reach', noMachine, '--json']);
     expect(j.code).toBe(0);
     const { body } = payload<{ reach: { machines: unknown[]; totals: { machines: number } } }>(j);
     expect(body.reach.machines).toEqual([]);
     expect(body.reach.totals.machines).toBe(0);
   }, 90_000);
 
-  it('reach refuses a --max-configs that is not a bound, and a REF that holds no machine', () => {
-    const bad = run(['reach', UAV, '--max-configs', 'lots']);
+  it('reach refuses a --max-configs that is not a bound, and a REF that holds no machine', async () => {
+    const bad = await run(['reach', UAV, '--max-configs', 'lots']);
     expect(bad.code).toBe(2);
     expect(bad.stderr).toContain('--max-configs');
 
-    const noMachine = run(['reach', UAV, '--element', 'EnduranceRequirement']);
+    const noMachine = await run(['reach', UAV, '--element', 'EnduranceRequirement']);
     expect(noMachine.code).toBe(2);
     expect(noMachine.stderr).toContain('no state machine');
   }, 90_000);
 
-  it('check-behaviour refutes a property on FlightModes, with the witness the simulator hides', () => {
+  it('check-behaviour refutes a property on FlightModes, with the witness the simulator hides', async () => {
     // THE FINDING ON THIS MACHINE, from the other side. `reach` says two
     // completion transitions are enabled at `autonomous` and the simulator
     // takes the first, so `failsafe` is never entered in simulation. Here the
     // same fact is a REFUTATION: the model admits a run that reaches it, and
     // the witness is that run.
-    const r = run([
+    const r = spawnCli([
       'check-behaviour',
       UAV,
       '--element',
@@ -3528,8 +3764,8 @@ package P {
     expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
   }, 90_000);
 
-  it('check-behaviour --json publishes under `behaviour`, with a verdict beside it', () => {
-    const r = run([
+  it('check-behaviour --json publishes under `behaviour`, with a verdict beside it', async () => {
+    const r = await run([
       'check-behaviour',
       UAV,
       '--element',
@@ -3580,8 +3816,8 @@ package P {
     ]);
   }, 90_000);
 
-  it('check-behaviour never passes a liveness pattern, and says why', () => {
-    const r = run([
+  it('check-behaviour never passes a liveness pattern, and says why', async () => {
+    const r = await run([
       'check-behaviour',
       UAV,
       '--element',
@@ -3597,7 +3833,7 @@ package P {
     expect(r.stdout).not.toContain('PASS');
   }, 90_000);
 
-  it('check-behaviour exits 2 on a vacuity, with --strict-vacuity and without it', () => {
+  it('check-behaviour exits 2 on a vacuity, with --strict-vacuity and without it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-behaviour-'));
     const file = join(dir, 'vacuous.sysml');
     // `stuck` is declared and nothing reaches it, so "absence of `manual` after
@@ -3625,8 +3861,8 @@ package P {
 `,
     );
     try {
-      const plain = run(['check-behaviour', file, '--element', 'M']);
-      const strict = run(['check-behaviour', file, '--element', 'M', '--strict-vacuity']);
+      const plain = await run(['check-behaviour', file, '--element', 'M']);
+      const strict = await run(['check-behaviour', file, '--element', 'M', '--strict-vacuity']);
       // BOTH SPELLINGS, so the flag cannot quietly acquire exit semantics §2
       // does not give it: it raises the row to an error and changes nothing else.
       expect(plain.code).toBe(2);
@@ -3643,8 +3879,8 @@ package P {
     }
   }, 120_000);
 
-  it('check-behaviour exits 2 on a pattern outside the catalogue, and on a missing --element', () => {
-    const unknown = run([
+  it('check-behaviour exits 2 on a pattern outside the catalogue, and on a missing --element', async () => {
+    const unknown = await run([
       'check-behaviour',
       UAV,
       '--element',
@@ -3658,19 +3894,19 @@ package P {
 
     // `--element` has no default, and the refusal says why rather than
     // reporting on every machine in the file.
-    const noElement = run(['check-behaviour', UAV]);
+    const noElement = await run(['check-behaviour', UAV]);
     expect(noElement.code).toBe(2);
     expect(noElement.stderr).toContain('--element REF is required');
 
     // A reference that holds no machine is refused BY NAME, the same way
     // `reach --element` refuses one.
-    const noMachine = run(['check-behaviour', UAV, '--element', 'EnduranceRequirement']);
+    const noMachine = await run(['check-behaviour', UAV, '--element', 'EnduranceRequirement']);
     expect(noMachine.code).toBe(2);
     expect(noMachine.stderr).toContain('no state machine');
 
     // And a machine that states nothing to decide is exit 2, not exit 0: a run
     // that checked nothing has not passed.
-    const nothing = run(['check-behaviour', UAV, '--element', 'FlightModes']);
+    const nothing = await run(['check-behaviour', UAV, '--element', 'FlightModes']);
     expect(nothing.code).toBe(2);
     expect(nothing.stdout).toContain('states no property');
 
@@ -3679,19 +3915,19 @@ package P {
     // gave: dropped, the run would report on the carriers alone and look like a
     // clean sweep. The row it lands as says which of the reader's properties
     // was not checked.
-    const blank = run(['check-behaviour', UAV, '--element', 'FlightModes', '--pattern', '']);
+    const blank = await run(['check-behaviour', UAV, '--element', 'FlightModes', '--pattern', '']);
     expect(blank.code).toBe(2);
     expect(blank.stdout).toContain('verification/malformed-property');
     expect(blank.stdout).toContain('no fields at all');
     expect(blank.stdout).not.toContain('states no property');
   }, 210_000);
 
-  it('--no-library skips binding and still reports the file', () => {
+  it('--no-library skips binding and still reports the file', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
     const file = join(dir, 'nolib.sysml');
     writeFileSync(file, 'package P {\n    part def A;\n    part a : A;\n}\n');
     try {
-      const r = run(['stats', file, '--no-library', '--json']);
+      const r = await run(['stats', file, '--no-library', '--json']);
       expect(r.code).toBe(0);
       const { body } = payload<{ stats: { libraryElements: number; totalElements: number } }>(r);
       expect(body.stats.libraryElements).toBe(0);
@@ -3700,4 +3936,214 @@ package P {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 90_000);
+
+  /* ── the bridge: the function and the program are the same command ─────── */
+
+  /**
+   * THE ONE PIECE OF MUTABLE STATE THESE CASES SHARE, AND THE GUARD ON IT.
+   *
+   * The library JSON is shared read-only and every run builds its own `Model`,
+   * so the models are not the hazard. The solver is: `src/semantics/smt/
+   * z3-bridge.ts` caches ONE `Z3Context` for the life of the process, on
+   * purpose — initialising the WASM module costs ~340 ms and every case here
+   * would pay it — and a context accumulates whatever was asserted into it. A
+   * witness is a point the solver CHOSE and an unsat core is a subset it chose,
+   * so both can legitimately move with what the context solved before, and
+   * measured, they do: between a fresh process and a warm one a `consistency`
+   * witness flipped sign, its core came back the other way round, and a
+   * `fault-tree` witness field read 660.5 against 661.
+   *
+   * That is a property of the solver rather than of this file, and no case here
+   * asserts a solver-chosen VALUE. But it makes the ORDER of the cases in this
+   * file load-bearing, which nothing else would notice: a future case that
+   * asserted a witness would pass where it was written and fail when a case was
+   * inserted above it. So the constraint is stated as a case. Two subcommands
+   * whose text carries a solver choice are run twice in a row, in this process,
+   * and required to print the same bytes both times. It is green today; if it
+   * ever is not, the answer is not to reorder the file — it is that a rendering
+   * this tool publishes is not reproducible, and the encoder has to canonicalise
+   * what it prints rather than echo what z3 returned.
+   */
+  it('a report that carries a solver choice prints the same bytes the second time in one process', async () => {
+    for (const argv of [
+      ['consistency', `${FIXV}/models/consistency-conflict.sysml`],
+      ['fault-tree', resolve(process.cwd(), 'examples/uav-power-budget.sysml')],
+    ]) {
+      const first = await run(argv);
+      const second = await run(argv);
+      expect(second.stdout, `a warmed solver context moved this report — ${argv[0]}`).toBe(
+        first.stdout,
+      );
+      expect(second.stderr, `stderr moved on the second call — ${argv[0]}`).toBe(first.stderr);
+      expect(second.code, `the exit code moved on the second call — ${argv[0]}`).toBe(first.code);
+      // Worth nothing over a run that decided nothing: both of these are
+      // findings, and a finding is what carries the witness.
+      expect(first.code, `${argv[0]} stopped reporting a finding here`).toBe(1);
+    }
+  }, 300_000);
+
+  /**
+   * THE CASE THAT MAKES THE SPLIT HONEST.
+   *
+   * Every `run(…)` case above asserts what the command prints while calling
+   * `main` on this process. That is only worth something if calling `main` and
+   * running the binary produce the same run — so here the same argv goes both
+   * ways, for a sample that covers EVERY subcommand (the coverage is asserted,
+   * not eyeballed: a twenty-third subcommand fails this case until it has a row
+   * here), and the two are required to agree byte for byte on stdout, on stderr
+   * and on the number.
+   *
+   * What it would catch: output that depends on how the module was entered
+   * (`process.argv[1]`, `import.meta`, a stream that is a TTY on one path), a
+   * subcommand whose dispatch arm only exists on the script path, a report that
+   * carries state from an earlier run in the same process — this case runs LAST,
+   * after every other in-process case in this file, against a process that
+   * starts clean, so a model or a cache leaking between runs shows up here as a
+   * diff. Without it the split is a coverage loss dressed as a speed win.
+   *
+   * The rows are chosen to be deterministic and to span the exit codes as well
+   * as the subcommands: a report (0), a refutation (1), a usage refusal (2) and
+   * an absent solver (2).
+   *
+   * TWO THINGS CANNOT BE COMPARED BYTE FOR BYTE, and both are properties of
+   * what is being run rather than of how it was entered.
+   *
+   * The first is anything z3 CHOSE. A witness is *a* point and an unsat core is
+   * *a* subset; neither is canonical, and both move with what the solver's
+   * context solved before them — measured here, a `consistency` witness went
+   * from `cruisePower = 1` in a fresh process to `-1` in one that had already
+   * run two proofs, its conflicting subset came back in the other order, and a
+   * `fault-tree` witness field read 660.5 against 661. Since the whole point of
+   * this file's in-process cases is that they SHARE a process, a row whose text
+   * embeds such a choice would fail here for a reason this case is not about.
+   * Those rows therefore ask their question with `SYSPROSE_NO_Z3` set, where
+   * every byte of the run is this tool's own. That exemption is only affordable
+   * because each of the two SUBCOMMANDS it applies to keeps a spawned case with
+   * the solver ON — `consistency exits 1 on a requirement set nothing can
+   * satisfy` and `fault-tree names the single point of failure` — so the
+   * rendering these
+   * rows cannot compare still crosses a process boundary somewhere in this
+   * file. Membership, not order, is what those two cases assert, which is what
+   * lets them live with a core the solver may hand back either way round. A
+   * third subcommand whose text embedded a solver choice could NOT simply be
+   * switched off here; it would need a spawned case of its own first.
+   *
+   * The second is a `--json` payload,
+   * because element ids are fresh UUIDs on every load (the plan's §1.1 defect
+   * D3) and two loads of one file therefore never write the same bytes — in the
+   * same process either. Measured here: with the 36-character ids blanked, two
+   * loads agree exactly, for every subcommand's payload. So the `--json` rows
+   * are compared with the ids blanked and are marked as such, and every row that
+   * is compared strictly is a rendering that carries no id.
+   */
+  it('the same argv, called and spawned, prints the same bytes and the same code', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-bridge-'));
+    try {
+      // `evidence-attach` needs records to attach, and both invocations must
+      // read the SAME ones: a record carries the moment it was made.
+      const model = join(dir, 'uav.sysml');
+      writeFileSync(model, readFileSync(UAV, 'utf8'));
+      const records = join(dir, 'evidence.json');
+      expect((await run(['verify', model, '--engine', 'literal', '--record', records])).code).toBe(0);
+
+      const BUDGET = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
+      const BEHAVIOUR = ['--element', 'FlightModes', '--pattern', 'pattern=absence, scope=globally, p=state failsafe'];
+      /**
+       * One row: the argv, and how to read it.
+       *
+       * The subcommand is NOT a field. It was, and a hand-typed label is
+       * exactly the wrong thing to key a coverage claim on: a row labelled
+       * `consistency` whose argv ran `stats` would satisfy the check below and
+       * the byte comparison both, leaving "every subcommand is bridged" true
+       * only of the labels. It is read off `argv[0]`, which is what ran.
+       */
+      interface Row {
+        argv: string[];
+        env?: Record<string, string>;
+        /** Compare with element ids blanked — for `--json` only; see above. */
+        idBlind?: boolean;
+      }
+      const sample: Row[] = [
+        { argv: ['stats', UAV] },
+        { argv: ['elements', UAV] },
+        { argv: ['requirements', UAV] },
+        { argv: ['requirements', UAV, '--json'], idBlind: true },
+        { argv: ['trace', UAV, '--relation', 'satisfy'] },
+        { argv: ['connectivity', UAV] },
+        { argv: ['where-used', UAV, '--element', 'AirVehicle', '--depth', '2'] },
+        { argv: ['orphans', UAV] },
+        { argv: ['prompts', UAV, '--element', 'AirVehicle'] },
+        { argv: ['contracts', UAV] },
+        { argv: ['obligations', UAV] },
+        { argv: ['property-draft', UAV, '--element', 'MassRequirement'] },
+        {
+          argv: ['property-check', UAV, '--element', 'MassRequirement', '--clause', 'uav.mtow <= 25.0 [kg]'],
+        },
+        { argv: ['verify', UAV, '--engine', 'literal'] },
+        // The SMT path, the payload an automation reads, and the tool-absent
+        // path are three runs of one subcommand and all three are bridged: the
+        // last is the one that must exit 2 identically both ways.
+        { argv: ['verify', UAV, '--engine', 'auto'] },
+        { argv: ['verify', UAV, '--engine', 'auto', '--json'], idBlind: true },
+        { argv: ['verify', UAV, '--engine', 'smt'], env: NO_Z3 },
+        // Solver-chosen text — see the note above: with z3 on, this model's
+        // conflicting subset comes back in a different ORDER in a warm process
+        // than in a fresh one. The z3-on rendering is pinned at the process
+        // boundary by the spawned `consistency` case above.
+        {
+          argv: ['consistency', `${FIXV}/models/consistency-conflict.sysml`],
+          env: NO_Z3,
+        },
+        { argv: ['refine', BUDGET] },
+        {
+          argv: ['bounds', `${FIXV}/models/bounds-uav.sysml`, '--measure', 'uav.mtow', '--sense', 'both'],
+        },
+        // A usage refusal, where the whole answer is on stderr.
+        { argv: ['bounds', UAV] },
+        // Solver-chosen text again: every cut set is printed with the witness
+        // that confirmed it, and one field of that witness measured 660.5 in a
+        // fresh process and 661 in a warm one. The solver-bearing rendering is
+        // pinned at the process boundary by the spawned `fault-tree` case above.
+        { argv: ['fault-tree', BUDGET], env: NO_Z3 },
+        { argv: ['evidence-status', UAV] },
+        { argv: ['evidence-attach', model, '--from', records] },
+        { argv: ['evidence-detach', UAV] },
+        { argv: ['reach', UAV] },
+        { argv: ['check-behaviour', UAV, ...BEHAVIOUR] },
+      ];
+
+      // Every subcommand this tool ships, or this case is not the bridge it says
+      // it is.
+      expect([...new Set(sample.map((r) => r.argv[0]))].sort()).toEqual(
+        COMMANDS.map((c) => c.name).sort(),
+      );
+
+      /** A fresh UUID per load is not a difference between the two runs. */
+      const blank = (s: string, on: boolean): string =>
+        on ? s.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>') : s;
+
+      const codes = new Set<number>();
+      for (const { argv, env, idBlind = false } of sample) {
+        const label = `${argv[0]}: ${argv.slice(1).join(' ')}${idBlind ? ' (ids blanked)' : ''}`;
+        const called = await run(argv, env);
+        const spawned = spawnCli(argv, undefined, env);
+        expect(blank(spawned.stdout, idBlind), `stdout differs between the call and the run — ${label}`).toBe(
+          blank(called.stdout, idBlind),
+        );
+        expect(blank(spawned.stderr, idBlind), `stderr differs between the call and the run — ${label}`).toBe(
+          blank(called.stderr, idBlind),
+        );
+        expect(spawned.code, `exit code differs between the call and the run — ${label}`).toBe(
+          called.code,
+        );
+        codes.add(spawned.code);
+      }
+      // The sample is worth nothing if every row is a clean report: the number
+      // `main` returns has to be the number the process exits with for the
+      // codes that MEAN something too.
+      expect([...codes].sort()).toEqual([0, 1, 2]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 900_000);
 });

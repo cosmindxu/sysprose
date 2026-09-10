@@ -44,7 +44,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isMainModule } from './lib/is-main';
 import { checkText, type CheckReport } from '../src/text/check';
 import { loadModelText } from '../src/text/load';
 import { propertyCheck, propertyDraft, type PropertyCheckReport } from '../src/api/index';
@@ -509,17 +509,14 @@ async function verificationSuite(opts: Options): Promise<number> {
 /**
  * Only when this file was RUN.
  *
- * The same guard `scripts/gen-cli-reference.ts` uses, for the same reason: the
+ * The same guard `scripts/gen-cli-reference.ts` uses, and now the same shared
+ * implementation (`scripts/lib/is-main.ts`), for the same reason: the
  * suite that keeps this bench honest imports `parseArgs` and `propertyCases`, and
  * an import that spent a `claude` call as a side effect would be untestable by
  * construction — which is how the whole `--suite verification` half shipped with
  * no test at all.
  */
-const runAsScript =
-  process.argv[1] !== undefined &&
-  resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
-
-if (runAsScript) {
+if (isMainModule(import.meta.url)) {
   main().then(
     (c) => process.exit(c),
     (e: unknown) => {

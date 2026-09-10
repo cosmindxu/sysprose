@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 113 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 116 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -1254,9 +1254,81 @@ of inventing one. It is declarative because the help text is rendered from the
 same specs the parser reads, which is what keeps a flag from existing without
 being documented.
 
-`test/campaign/cli.sysprose.test.ts` spawns the real script the way the
-checker's contract test does and pins the exit code, the JSON key set and the
-figures. The figures are the point: `requirements` reporting 2 of 2 rather than
+`test/campaign/cli.sysprose.test.ts` pins the exit code, the JSON key set and
+the figures, and it asks each case which of those it is really asserting. A
+case about the PROGRAM — the exit status a shell reads, `-` on stdin, a payload
+larger than a pipe buffer, an unknown flag or subcommand, a file that cannot be
+read or written, every `--help`, an invocation whose own path runs through a
+symlink, and one end-to-end run for each of the seven exit contracts — spawns
+`npx tsx scripts/sysprose.ts` the way the checker's
+contract test does. A case about the TEXT the command prints calls the same
+`main` in process, which is why `scripts/sysprose.ts` exports it and runs it
+only when it was run as a script. The reason for the split is measured, by
+counting the processes the file actually starts rather than the places it says
+to start one: 240 spawns, each paying a node, a tsx transform and a bind of the
+38 761-element library, were 787 s of a 790 s gate — every other suite ran in
+parallel underneath this one file, so the gate's wall clock WAS this file, and
+every commit after it paid the bill. 82 are left.
+Nothing was deleted to buy that back: the same sentences are asserted from the
+same models, and the equality the split rests on is itself a case — a sample
+covering every subcommand, all 22 (the coverage is asserted off each row's
+`argv[0]`, so a row cannot claim a subcommand it did not run), put through both
+paths and required to agree byte for byte on stdout and stderr and on the
+number, which is how a report that only prints correctly when the module was
+entered as a script would be caught.
+
+Two limits of that case are worth stating rather than hiding. A `--json`
+payload cannot be compared byte for byte at all, because element ids are fresh
+UUIDs on every load (they agree exactly once the ids are blanked, measured for
+every subcommand's payload). And a report that embeds something z3 CHOSE — the
+witness under a cut set, the conflicting subset behind an inconsistency — is not
+comparable either, because neither is canonical and both move with what the
+solver's context solved before them: measured, a witness value flipped sign, two
+core members swapped places, and a cut-set witness read 660.5 against 661,
+between a fresh process and a warm one. That is the solver's non-determinism
+rather than a difference between calling and spawning, so those two rows ask
+their question with the solver switched off. The price of that exemption is
+paid where it is taken: `consistency` and `fault-tree` are the two subcommands
+it applies to, and each keeps a spawned case with the solver ON — asserting
+MEMBERSHIP of a core rather than its order, which is what lets a spawned case
+live with a subset the solver may hand back either way round — so the rendering
+the bridge cannot compare still crosses a process boundary. A third subcommand
+whose text carried a solver choice could not simply be switched off there; it
+would need a spawned case of its own first.
+
+The same non-determinism is why one `Z3Context`, cached for the life of the
+process, is the one piece of mutable state the in-process cases share, and why
+that is stated as a case rather than as a comment: two subcommands whose text
+carries a solver choice are run twice in a row and required to print the same
+bytes both times. Nothing here asserts a solver-chosen value, so nothing is red
+today — but the ORDER of the cases in this file became load-bearing the moment
+they stopped each getting a fresh process, and this is where that shows up if it
+ever starts to matter.
+
+Sharing that context costs memory as well as determinism, and the bill arrived
+before this commit landed. The one run in the file that hands z3 a NONLINEAR
+optimisation answered in 200 ms against a fresh context; against a context that
+had already worked through the rest of the file it drove z3's rational
+arithmetic into a 4.2 GB heap request, which a 32-bit WASM module cannot serve.
+z3 aborted, the promise never settled, that case timed out, and every
+solver-bearing case after it failed — seven of them. So the rule is written down
+where it applies: a run whose solver work is unbounded keeps its own process,
+where a blow-up costs one case instead of the file. It is the same reasoning as
+the rest of the split, arriving from the other side: a subprocess is not only
+what proves the program, it is also what contains it.
+
+The entry guard gets a case of the same kind, for the same reason:
+`scripts/sysprose.ts` decides whether to run by comparing
+`process.argv[1]` with its own module URL, the loader resolves symlinks in one
+and not the other, and the first version of that comparison made an invocation
+through a symlinked directory print nothing and exit 0 — a silent pass, which
+`scripts/lib/exit.ts` calls the one outcome that must be impossible. It is a
+guard no in-process case can see, since in process it is never consulted, so a
+spawned case runs the command through a symlink; the comparison itself moved to
+`scripts/lib/is-main.ts`, shared with the two other scripts that had written it
+the same wrong way.
+
+The figures are the point: `requirements` reporting 2 of 2 rather than
 2 of 26, and `connectivity` reporting 14 connected ports rather than 0, are the
 two defects the previous commits removed, pinned again at the surface a person
 actually uses — routing either subcommand back at an unfiltered population fails
@@ -1831,12 +1903,14 @@ two transcripts of one command; a document-wide first-match scan is not.
 
 The transcripts' WORDING is pinned too, and separately. Comparing figures cannot
 see it: the note on a `[-]` row could be reworded to say the row IS counted and
-every figure would still agree. `scripts/sysprose.ts` cannot be imported to get
-at those sentences — it calls `runMain` at module scope, so importing it would
-run the CLI — so the guard reads the literals out of the file as text and
-requires the guide to quote them. That still splits the claim in two: what a
-report says about a model, and the words it says it in, are checked here; how it
-lays a line out, by the L7 CLI suite.
+every figure would still agree. So the guard reads the literals out of
+`scripts/sysprose.ts` as text and requires the guide to quote them. That still
+splits the claim in two: what a report says about a model, and the words it says
+it in, are checked here; how it lays a line out, by the L7 CLI suite. The guard
+took that shape because the file could not be imported at all — it ran the CLI
+on import — which stopped being true when the L7 suite stopped spawning it; the
+scrape is now a choice about where the rendering is asserted rather than the
+only option, and it is left where it is.
 
 The honesty basis is stated in the guide itself rather than left in a commit
 message. The published specification has no enumeration of statement kinds: its
