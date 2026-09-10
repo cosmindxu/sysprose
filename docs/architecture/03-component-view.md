@@ -164,7 +164,7 @@ Editor, Toolbar, Bottom Panel, Collaborate panel, command palette.
 bypassing the `collab/` abstraction; and reaches past `@diagram/index` into
 `@xyflow/react` for ~12 primitives (`08 §C`).
 
-### `semantics/` — KerML semantics engine (37 files: 28 top-level plus `engines/` and `mc/`) — *undocumented layer*
+### `semantics/` — KerML semantics engine (38 files: 28 top-level plus `engines/` and `mc/`) — *undocumented layer*
 **Responsibility:** inheritance & effective features, conformance, name
 resolution, a self-contained expression evaluator, units/dimensions,
 parametric solver, action/state execution.

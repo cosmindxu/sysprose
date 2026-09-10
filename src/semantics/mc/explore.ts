@@ -81,6 +81,9 @@ import {
   type StepInput,
 } from './config';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
+// One definition of "may this absence be stated", read by this file and by
+// `./patterns`, so the two cannot drift apart again.
+import { publishabilityOf } from './publishable';
 // The same reader the step relation uses to decide an edge carries an item, so
 // the census can say WHY that edge is not in the relation in the relation's own
 // terms rather than in a sentence of its own.
@@ -1173,31 +1176,29 @@ function boundSentence(hit: BoundHit): string {
 /**
  * Walk one machine and turn the walk into rows.
  *
- * The four conditions of §3.8 are computed here and nowhere else: exhaustive,
- * no completion budget spent, every named trigger offered, no unsupported
- * construct. All four — and the fifth this tool learned the hard way, that
- * every guard the walk consulted decided something — or the absence lists are
- * empty.
+ * The four conditions of §3.8 — exhaustive, no completion budget spent, every
+ * named trigger offered, no unsupported construct — and the fifth this tool
+ * learned the hard way, that every guard the walk consulted decided something,
+ * are `publishabilityOf(walk).decreasingOk` in `./publishable`. THEY ARE NOT
+ * COMPUTED HERE ANY MORE, and that is the repair: this function and
+ * `checkProperty` each carried their own copy, each with a comment saying the
+ * other must not be deleted alone, and they drifted apart anyway.
  */
 function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): MachineReach {
   const walk = exploreMachine(model, machine.id, opts);
-  // Third of §3.8's four conditions, and it is a DEFENSIVE one: `exploreMachine`
-  // offers the whole alphabet at every configuration it dequeues, including the
-  // opening one, so this holds by construction today and can only go false if
-  // that changes — a walk that started filtering the inputs it offers would
-  // silently narrow what "unreachable" means. Kept, and named, rather than
-  // deleted: it costs one pass over a handful of strings and it is the only
-  // thing standing between such a change and a shrunk claim printed as a full
-  // one.
-  const alphabetOffered = walk.bounds.alphabet.every((t) => walk.offered.has(t));
   // The fifth condition, named on its own because it gates one MORE list than
   // the other four do. A guard the walk could not evaluate is not a guard that
   // is false, so nothing this walk saw establishes that a transition is never
   // enabled, that a state is never entered — or that a configuration has no way
   // out, which is the same absence read over one configuration's outgoing edges.
   const guardsDecided = walk.undeterminedGuards.length === 0;
-  const publishable =
-    walk.exhaustive && alphabetOffered && walk.unsupported.length === 0 && guardsDecided;
+  // THE CONJUNCTION ITSELF LIVES IN ONE PLACE NOW. It used to be written out
+  // here and again in `checkProperty`, with a comment in each saying the other
+  // must not be deleted alone — and the two DID drift apart for exactly one
+  // commit. `decreasingOk` is those same four conjuncts, in the same order, over
+  // the same walk; `guardsDecided` stays local because the deadlock row below
+  // is gated on it ALONE and reads it separately.
+  const publishable = publishabilityOf(walk).decreasingOk;
 
   const states = machineStates(model, machine.id);
   const transitions = walkableTransitions(model, machine.id);

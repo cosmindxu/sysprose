@@ -4328,6 +4328,41 @@ are listed — each is real — with *minimality not established* on the row and
 the word dropped from the head sentence. Neither the green path nor that
 sentence had a case before this pass; both do now.
 
+**The publishability conjunction has one definition, and the claims this lane
+may make are data a test walks.** The rule that governs every absence claim used
+to be written out twice — a local `publishable` in `reachOne` and a local
+`exhaustive` in `checkProperty`, each with a comment saying the other must not
+be deleted alone — and the two DID drift apart for one commit, `reach`
+withholding its lists over an undecided guard while `check-behaviour` printed
+`pass` over the same machine. Both now read `publishabilityOf`
+(`src/semantics/mc/publishable.ts`), and nothing about any published sentence
+moved: the refactor's gate was a byte-for-byte differential of `reach`,
+`check-behaviour` and `checkProperty` over every model in the tree carrying a
+machine, and a per-machine table of what `reach` printed beforehand is pinned in
+the suite so a moved sentence is a named failure. **There are two conjunctions
+and not one**, which is the part worth recording: the claims that ship — a state
+nobody enters, a transition nobody fires — get *smaller* as edges are added, so
+a walk that offers more edges than the machine grants cannot invent one, and
+they read `decreasingOk`; the claims about to be added (*nothing here is
+inescapable*) get *easier* to state as edges are added, and a single boolean
+covering both would have emptied a sound `verification/unreachable-state`
+finding out of a shipped command on the first machine carrying a dwell
+transition. That machine is API-only — `accept after(n)` is a parse error, so no
+`.sysml` in this repository can exhibit it — and it is built through
+`ModelFactory` in the suite for exactly that reason. Beside the predicate,
+`ABSENCE_CLAIMS` and `WITNESS_CLAIMS` record, per claim, which gate it reads,
+which way it moves as edges are added, what is published instead when the gate
+fails, and where it is composed if it is composed anywhere yet; the reflection
+suite is what makes *a claim added without a condition*, *a witness row reading
+a bound* and *an increasing row wired to the decreasing conjunction* red tests
+rather than review comments. Three conditions the registers state are not yet
+enforced anywhere but the register: A0's leaf-wise strengthening, the exactness
+gate's two missing producers, and the guard fixture that separates the shipped
+*"consulted and decided nothing"* reading from the narrower *"no declared
+value"* one — the corpus has one guarded model and both readings agree on it, so
+until that fixture lands the only thing telling them apart is a synthetic row in
+the suite.
+
 ## 5. Phase status
 
 - **Phase 1 — done.** The contract, `checkText`, the CLI, the fixture corpus,

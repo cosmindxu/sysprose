@@ -51,7 +51,10 @@
  * apart for exactly one commit, `reach` withholding its lists over an
  * undetermined guard while `check-behaviour` printed `pass` and `exhaustive`
  * over the same machine, and the repair was to read the fifth condition off the
- * same walk result rather than to recompute it.
+ * same walk result rather than to recompute it. The repair is now structural:
+ * the conjunction itself is `publishabilityOf` in `./publishable`, this file and
+ * `reachOne` both call it, and the only thing this one adds is the
+ * product-search conjunct it passes in.
  */
 
 import type { ElementId, ElementRecord, Model } from '@core/index';
@@ -99,6 +102,8 @@ import {
   type UnsupportedConstruct,
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
+// One definition of "may this absence be stated", shared with `reachOne`.
+import { publishabilityOf } from './publishable';
 
 /* ───────────────────────────── the catalogue ────────────────────────────── */
 
@@ -1175,13 +1180,6 @@ export function checkProperty(
       witness: [],
     };
   }
-  // Third of §3.8's four conditions, and DEFENSIVE — the same guard, for the
-  // same reason, that `reachOne` keeps: `exploreMachine` offers the whole
-  // alphabet at every configuration it dequeues, including the opening one, so
-  // this holds by construction today and can only go false if that changes.
-  // Deleting it here while `reachOne` keeps it would leave two readings of what
-  // "exhaustive" means, which is the one thing this lane cannot afford.
-  const alphabetOffered = walk.bounds.alphabet.every((t) => walk.offered.has(t));
   // The FIFTH condition, and it is `reachOne`'s: a guard the walk consulted and
   // could not evaluate is not a guard that is false. A property no bad prefix
   // violated over a graph some of whose edges were never decided is
@@ -1192,8 +1190,14 @@ export function checkProperty(
   // over the same machine was the tool contradicting itself on one file.
   const guardsDecided = walk.undeterminedGuards.length === 0;
   const found = search(model, machineId, property, bounds);
-  const exhaustive =
-    walk.exhaustive && alphabetOffered && found.boundHit === 'none' && guardsDecided;
+  // ONE DEFINITION, in `./publishable`, and this is the reader that adds the
+  // product-search conjunct: `found.boundHit === 'none'` becomes
+  // `Publishability.searchComplete`, which is a field only a claim that ran a
+  // search HAS — a walk-only claim gets no value there rather than `false`,
+  // which would print "bound exhausted" about a bound nobody hit. The
+  // `unsupported` conjunct the predicate also carries is vacuous by the time
+  // control reaches here: the early return above already refused the machine.
+  const exhaustive = publishabilityOf(walk, found).decreasingOk;
   const boundHit = found.boundHit !== 'none' ? found.boundHit : walk.boundHit;
   const qualification = exhaustive
     ? `exhaustive under ${boundsSentence(bounds)}`

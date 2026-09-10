@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3000 passed / 0 failed / 0 skipped** across **145 files** + **128 E2E** across **78 spec files** = **3128 green** (measured 2026-09-10) |
+| Full automated suite | **3029 passed / 0 failed / 0 skipped** across **146 files** + **128 E2E** across **78 spec files** = **3157 green** (measured 2026-09-10) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -937,6 +937,24 @@ property or an atom that names nothing is `inconclusive` ⇒ exit 2. A **fail**
 does not need exhaustion, and the asymmetry is deliberate: a bound can hide a
 violation and can never invent one.
 
+**Those five conditions have exactly one definition, and the claims this lane
+makes are a list a test can walk.** `publishabilityOf` in
+`src/semantics/mc/publishable.ts` is the conjunction both `reach` and
+`check-behaviour` read — the same four conjuncts off the same walk, plus the
+product-search conjunct only the second of them has, which is a field a
+walk-only claim does not carry rather than a `false` it would print "bound
+exhausted" from. Beside it sits `walkIsExact`, a second and stricter predicate
+for a different kind of claim and one nothing in the tool reads yet: an absence
+list gets **smaller** as edges are added, so a walk that offers more edges than
+the machine grants cannot invent one, while *"nothing here is inescapable"* gets
+**easier** to state as edges are added and the same over-approximation falsifies
+it. Two registers, `ABSENCE_CLAIMS` and `WITNESS_CLAIMS`, record which of the two
+each claim reads, which way it moves as edges are added, and what is published
+instead when its condition fails; `test/unit/semantics.mc.publishable.test.ts`
+asserts the wiring by reflection, so a claim added without a condition is a
+failing test rather than a review comment. Nothing about the standard is claimed
+by any of this: it is a record of what THIS tool's walk may and may not say.
+
 **The declared deviation of §8.1 extends to this command, in the same words.** A
 property whose antecedent never holds is `vacuous` ⇒ inconclusive ⇒ exit 2, not
 true — the two antecedents this engine detects are a scope no explored run opens
@@ -1022,7 +1040,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3000 pass / 0 skip, 145 files)
+# Full unit + integration + conformance suite (3029 pass / 0 skip, 146 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

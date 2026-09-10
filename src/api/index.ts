@@ -372,6 +372,31 @@ export type {
 } from '../semantics/mc/config';
 export { SEMANTIC_PROFILE, profileLines } from '../semantics/mc/profile';
 export type { ProfileField } from '../semantics/mc/profile';
+// May this absence be stated? One predicate for the claims that shrink as edges
+// are added, one gate for the claims that grow, and the two registers of what
+// this lane claims — through the same door as the walk itself, because an agent
+// that can read a verdict should be able to read the condition it was published
+// under.
+export {
+  ABSENCE_CLAIMS,
+  BOUND_FAMILY,
+  WITNESS_CLAIMS,
+  publishabilityOf,
+  walkIsExact,
+} from '../semantics/mc/publishable';
+export type {
+  AbsenceClaim,
+  ClaimId,
+  Exactness,
+  ExactnessWalk,
+  FailedClause,
+  Polarity,
+  ProducerRef,
+  Publishability,
+  PublishabilityWalk,
+  WalkRequires,
+  WitnessClaim,
+} from '../semantics/mc/publishable';
 // Safety patterns over that graph (plan §3.8), through the same door and for
 // the same reason: `check-behaviour` is a rendering of `behaviourReport`, and a
 // checker an agent could only reach by spawning a CLI is not an in-process API.
