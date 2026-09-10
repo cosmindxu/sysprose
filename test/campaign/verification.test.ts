@@ -79,7 +79,7 @@ import {
   type VerifyEngineOption,
   type VerifyReport,
 } from '@api/index';
-import { findCommand } from '../../scripts/lib/sysprose-spec';
+import { findCommand, flagsFor } from '../../scripts/lib/sysprose-spec';
 import {
   behaviourLaneRefusal,
   checkBounds,
@@ -103,6 +103,7 @@ import {
   runVerificationCases,
   writeVerdict,
 } from '@semantics/index';
+import { parsePropertyText } from '@semantics/mc/patterns';
 import { loadZ3, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
 import { serializeModel } from '@text/serializer';
@@ -3740,7 +3741,11 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     ).toBeDefined();
     const withCommand = behaviourLaneRefusal('P::FlightModes', 'check-behaviour');
     expect(withCommand).toContain('is a state machine; contract-level fault trees do not cover behaviour');
-    expect(withCommand).toContain('check-behaviour <file> --element P::FlightModes --from-keywords');
+    // RE-RECORDED, deliberately: this line pinned `--from-keywords`, a flag
+    // `check-behaviour` does not declare and never will. The pointer names
+    // `--pattern` now, and the case below reads every printed invocation back
+    // against the command table so the substring cannot drift off it again.
+    expect(withCommand).toContain('check-behaviour <file> --element P::FlightModes --pattern');
     const fallback = behaviourLaneRefusal('P::FlightModes', null);
     expect(
       fallback,
@@ -3765,6 +3770,253 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     // And the predicate the CLI branches on names the metaclass a machine is.
     expect(isBehaviouralElement({ eClass: 'StateUsage' } as never)).toBe(true);
     expect(isBehaviouralElement({ eClass: 'PartUsage' } as never)).toBe(false);
+  });
+
+  it('every command a printed sentence names exists, with the flags it names', () => {
+    // THE CLASS, NOT THE INSTANCE. The refusal above once pointed a reader at
+    // `check-behaviour … --from-keywords`, and that flag is declared on
+    // `obligations` alone: a reader who pasted the sentence got
+    // `unknown option: --from-keywords` and exit 2 from the very command the
+    // tool had just told them to run. Nothing went red, because no guard read a
+    // printed invocation against the table the parser and `--help` are both
+    // rendered from — so the instance was fixed here and the CLASS is closed
+    // here too.
+    //
+    // WHAT THIS WALK COVERS, exactly, because the sentence above is a promise
+    // and an absence claim is only worth the walk behind it: every
+    // `npm run sysprose -- …` line and every backticked `<subcommand> --flag`
+    // reference spelled LITERALLY in a `.ts` or `.tsx` source under `src/` or
+    // `scripts/`, plus the state-machine refusal rendered. It does not read
+    // `.md`, and it cannot read a subcommand assembled out of parts at runtime.
+    // Three parts, because none of them can see the others:
+    //
+    //  1. the refusal RENDERED, which is the form a user meets — a source scan
+    //     cannot read it at all, because its subcommand is a `${…}` and its
+    //     flags sit in a later template chunk with no `npm run sysprose` in
+    //     front of them;
+    //  2. every literal `npm run sysprose -- …`, checked the way `parseArgs`
+    //     would parse it, because that is a line somebody PASTES;
+    //  3. every backticked `<subcommand> --flag` reference, checked for
+    //     EXISTENCE only. That form is how this codebase names a flag in prose
+    //     (`verify --record`, `obligations --missing`), not a pasteable line, so
+    //     a value flag standing there with no value is correct English rather
+    //     than a defect. It is by far the commonest of the three, and the typo
+    //     that started all of this would have been invisible without it.
+    interface Invocation {
+      /** The subcommand, or `null` where the source spells a placeholder. */
+      command: string | null;
+      /** Everything after it, in order — the flags and their values. */
+      rest: string[];
+      where: string;
+    }
+
+    // Stops at the quote that closes the string it is written in, so a template
+    // chunk contributes what it actually spells and never runs on into prose —
+    // EXCEPT for a balanced `"…"` run, which is a shell-quoted flag value. The
+    // pointer this commit rewrote carries one (`--pattern "pattern=absence, …"`)
+    // and a scanner that stopped at its opening quote would report the flag as
+    // valueless: it would go red on the only spelling that runs, and green on
+    // the metavariable that does not. Sources here are single-quoted or
+    // template strings, so a `"` in one is printed text rather than a delimiter.
+    const INVOCATION = /npm run sysprose -- ((?:"[^"\n]*"|[^\n`'"])*)/g;
+
+    /** A backticked `<subcommand> --flag …` reference, the bare prose form. */
+    const BARE = /`([a-z][a-z-]*)([^`\n]*--[a-zA-Z][^`\n]*)`/g;
+
+    /** Split on spaces, but a `"…"` run is ONE token: it is one flag value. */
+    const tokenise = (raw: string): string[] =>
+      (raw.trim().match(/"[^"]*"|\S+/g) ?? [])
+        // A template chunk ends on an ESCAPED backtick, so the source carries a
+        // trailing backslash that no reader ever sees. Drop it and nothing else.
+        .map((t) => t.replace(/\\+$/, ''))
+        .filter(Boolean);
+
+    function invocationsIn(text: string, where: string): Invocation[] {
+      const out: Invocation[] = [];
+      for (const m of text.matchAll(INVOCATION)) {
+        const tokens = tokenise(m[1]);
+        const head = tokens[0];
+        // `<subcommand>`, `${cmd.name}` and the bare `--help` of the top-level
+        // usage line name no command: they are the shapes of an invocation
+        // rather than one, and there is nothing to look up.
+        const placeholder =
+          head === undefined ||
+          head.startsWith('-') ||
+          head.startsWith('<') ||
+          head.includes('${');
+        out.push({ command: placeholder ? null : head, rest: tokens.slice(1), where });
+      }
+      return out;
+    }
+
+    /** The table `parseArgs` and `--help` are both rendered from, keyed as argv. */
+    function flagKeys(
+      command: string,
+      where: string,
+    ): Map<string, ReturnType<typeof flagsFor>[number]> {
+      const cmd = findCommand(command);
+      expect(
+        cmd,
+        `${where} sends a reader to \`npm run sysprose -- ${command}\`, which is not a subcommand`,
+      ).toBeDefined();
+      const byKey = new Map<string, ReturnType<typeof flagsFor>[number]>();
+      for (const flag of flagsFor(cmd!)) {
+        byKey.set(`--${flag.name}`, flag);
+        // A SHORT ALIAS IS A FLAG TOO: `-h` is one, and a scan that skipped
+        // single-dash tokens would let `-z` through on a line that answers
+        // `unknown option: -z`.
+        if (flag.short) byKey.set(`-${flag.short}`, flag);
+      }
+      return byKey;
+    }
+
+    /** Does this token name a flag of that command at all? Nothing more. */
+    function checkFlagExists(command: string, token: string, where: string): void {
+      const key = token.split('=')[0];
+      expect(
+        flagKeys(command, where).get(key),
+        `${where} names \`${key}\` on \`${command}\`, which does not accept it — a reader who pastes this gets \`unknown option: ${key}\``,
+      ).toBeDefined();
+    }
+
+    /**
+     * The whole check for a pasteable line: it names a row, and only flags of
+     * that row, and every flag it names is spelled the way `parseArgs` reads.
+     *
+     * The three clauses below are `parseArgs`'s own (scripts/lib/args.ts): a
+     * value flag whose next token starts with `-` is a MISSING value rather
+     * than a value, `-` alone is stdin and the one exception, and a boolean
+     * flag with an `=` on it is refused outright. A guard looser than the
+     * parser passes lines the parser rejects, which is the failure this whole
+     * case exists to make impossible.
+     */
+    function checkAgainstTheTable(inv: Invocation): void {
+      const byKey = flagKeys(inv.command!, inv.where);
+      inv.rest.forEach((token, i) => {
+        if (!token.startsWith('-') || token === '-') return;
+        const key = token.split('=')[0];
+        const flag = byKey.get(key);
+        expect(
+          flag,
+          `${inv.where} names \`${key}\` on \`${inv.command}\`, which does not accept it — a reader who pastes this gets \`unknown option: ${key}\``,
+        ).toBeDefined();
+        if (flag!.kind === 'boolean') {
+          expect(
+            token.includes('='),
+            `${inv.where} prints \`${key}=…\`, and the parser answers \`--${flag!.name} takes no value\``,
+          ).toBe(false);
+          return;
+        }
+        // AND THE PASTED LINE HAS TO RUN. `parseArgs` rejects a value flag with
+        // nothing after it, and rejects a following option as its value.
+        if (token.includes('=')) return;
+        const next = inv.rest[i + 1];
+        expect(
+          next !== undefined && (!next.startsWith('-') || next === '-'),
+          `${inv.where} prints \`${key}\` with no value; the parser answers \`missing value for --${flag!.name}\``,
+        ).toBe(true);
+      });
+    }
+
+    // ── part one: the refusal, rendered ─────────────────────────────────────
+    const pointer = invocationsIn(
+      behaviourLaneRefusal('P::FlightModes', 'check-behaviour'),
+      'the state-machine refusal',
+    );
+    expect(
+      pointer.map((i) => i.command),
+      'the refusal no longer points at a subcommand, so the check below reads nothing',
+    ).toEqual(['check-behaviour']);
+    expect(
+      pointer[0].rest.filter((t) => t.startsWith('--')),
+      'the refusal names no flag, so the flag clause of this check is vacuous',
+    ).not.toEqual([]);
+    // AND THE VALUE IS ONE THE COMMAND CAN READ, which a table lookup cannot
+    // tell you. The pointer once printed `--pattern SPEC`: the flag exists, the
+    // metavariable is a token, every check above is happy — and the pasted line
+    // still exited 2 with `verification/malformed-property`, because
+    // `parsePropertyText` reads a property as `key=value` fields and `SPEC` is
+    // none. So the printed value is handed to the reader `check-behaviour`
+    // itself decides it with. It is shell-quoted because it holds spaces: three
+    // bare words would reach the command as three arguments.
+    const printedPattern = pointer[0].rest[pointer[0].rest.indexOf('--pattern') + 1];
+    expect(
+      printedPattern !== undefined &&
+        printedPattern.startsWith('"') &&
+        printedPattern.endsWith('"'),
+      'the printed --pattern value is not one shell-quoted argument — or the tokeniser split it',
+    ).toBe(true);
+    expect(
+      parsePropertyText(printedPattern!.slice(1, -1), 'flag').ok,
+      'the pointer prints a --pattern value the command answers verification/malformed-property to',
+    ).toBe(true);
+    for (const inv of pointer) checkAgainstTheTable(inv);
+    // The fallback build names no command at all, which is the whole point of
+    // it, so it contributes no invocation to check.
+    expect(
+      invocationsIn(behaviourLaneRefusal('P::FlightModes', null), 'the fallback refusal'),
+      'the fallback names a subcommand this build may not ship',
+    ).toEqual([]);
+
+    // ── part two: every literal invocation the tool can print ───────────────
+    // `.tsx` AS WELL AS `.ts`, because the widest printed surface is the app:
+    // `src/ui/panels/Properties.tsx` renders a `npm run sysprose -- verify …`
+    // line into the Evidence panel, and a walk that stopped at `.ts` would have
+    // published a claim about the repository while never opening the file that
+    // shows a command to the most readers.
+    const sources = (dir: string): string[] => {
+      const out: string[] = [];
+      for (const entry of readdirSync(root(dir), { withFileTypes: true })) {
+        const p = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) out.push(...sources(p));
+        else if (/\.tsx?$/.test(entry.name)) out.push(p);
+      }
+      return out;
+    };
+    const files = [...sources('src'), ...sources('scripts')];
+    const named: Invocation[] = [];
+    for (const file of files) {
+      named.push(...invocationsIn(read(file), file).filter((i) => i.command !== null));
+    }
+    // NON-VACUITY, because a regex that matched nothing would pass everything.
+    // Measured on this tree: 24 literal invocations naming 11 distinct
+    // subcommands and carrying 17 flag tokens between them; the floors are well
+    // under all three, so an ordinary edit to a hint does not move them and a
+    // broken scan does. The third floor is not redundant: nine of the 24
+    // invocations carry no flag at all, so deleting every flag from every hint
+    // would leave both counts above their floors with nothing checked.
+    expect(named.length, 'the source scan found almost no invocations — the pattern stopped matching').toBeGreaterThanOrEqual(15);
+    expect(
+      new Set(named.map((i) => i.command)).size,
+      'the source scan resolved almost no distinct subcommands',
+    ).toBeGreaterThanOrEqual(8);
+    expect(
+      named.flatMap((i) => i.rest.filter((t) => t.startsWith('--'))).length,
+      'the source scan reads invocations but no longer reads a single flag on one',
+    ).toBeGreaterThanOrEqual(10);
+    for (const inv of named) checkAgainstTheTable(inv);
+
+    // ── part three: the bare `subcommand --flag` references in prose ────────
+    // EXISTENCE ONLY, and deliberately. `verify --record` in a sentence names a
+    // flag; it is not a line anybody pastes, so demanding a value after it
+    // would go red on correct prose. What it does catch is the species that
+    // started this: a flag named on a command that does not declare it.
+    const bare: { command: string; token: string; where: string }[] = [];
+    for (const file of files) {
+      for (const m of read(file).matchAll(BARE)) {
+        if (findCommand(m[1]) === undefined) continue;
+        for (const token of tokenise(m[2])) {
+          if (token.startsWith('--')) bare.push({ command: m[1], token, where: file });
+        }
+      }
+    }
+    // Measured: 46 such references across `src/` and `scripts/`, which is twice
+    // what the prefixed form spells — this is the tool's dominant printed shape.
+    expect(
+      bare.length,
+      'the bare-reference scan found almost nothing — the pattern stopped matching',
+    ).toBeGreaterThanOrEqual(25);
+    for (const ref of bare) checkFlagExists(ref.command, ref.token, ref.where);
   });
 
   withZ3('the enumeration is deterministic: two runs produce identical JSON', async () => {

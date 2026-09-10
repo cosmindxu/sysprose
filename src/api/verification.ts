@@ -277,8 +277,10 @@ export interface KeywordUse {
  * "third-party" and "names nothing" would ask the reader to decide which of the
  * two this tool acted on. The alias table wins that tie: for `#Exception` the
  * tool DOES know what the file meant, and saying only that it names nothing
- * would hide the reading that `obligations --from-keywords` and (later)
- * `check-behaviour --from-keywords` would act on.
+ * would hide the reading that `obligations --from-keywords` acts on. There is no
+ * behavioural twin of that flag to promise here: the keyword lane feeds
+ * `obligations`, and `check-behaviour` takes its claim from `--pattern` or from
+ * the machine's own carriers.
  *
  * Resolution wins over the shipped vocabulary in the other direction: a model
  * that declares its own `metadata def <exceptional>` in its own package is

@@ -329,6 +329,34 @@ export function isBehaviouralElement(el: ElementRecord): boolean {
  * cover behaviour. **The refusal and the exit code are unchanged either way** —
  * only the sentence moves.
  *
+ * THE FLAG IS RESOLVED TOO, and it was not always. The sentence used to name
+ * `--from-keywords`, which is declared on `obligations` and on nothing else, so
+ * a reader who pasted the pointer got `unknown option: --from-keywords` and
+ * exit 2 from the command this message had just sent them to — a refusal that
+ * refuses twice. It names `--pattern` instead: the flag that says which property
+ * to decide.
+ *
+ * AND IT SPELLS A VALUE, not the metavariable. `SPEC` parses as a flag the
+ * command accepts, so a table lookup is happy with it — and the run still exits
+ * 2, because `parsePropertyText` reads a property as `key=value` fields and
+ * `SPEC` is none, so the pasted line answers `verification/malformed-property`
+ * and decides nothing. That is the same defect one step further on: an
+ * unpasteable pointer with a different error code on the end of it. The value
+ * here is the one `check-behaviour` itself prints when a machine states no
+ * property, so the two sentences a reader meets spell the flag the same way.
+ * Measured: pasting this line at `examples/uav-isr.sysml` exits 1 with a
+ * refutation and a witness trace, where `--pattern SPEC` exited 2 having read
+ * nothing.
+ *
+ * `test/campaign/verification.test.ts` reads every `npm run sysprose --`
+ * invocation, and every backticked `<subcommand> --flag` reference, spelled
+ * literally in a `.ts` or `.tsx` source under `src/` or `scripts/` — plus this
+ * refusal rendered, which no source scan can see, since its subcommand is a
+ * `${…}` — back against the command table. That is what closes the class rather
+ * than this one instance of it. It is not a claim about text this repository
+ * does not spell: a subcommand assembled at runtime out of parts is outside
+ * that walk, and so is anything printed from a `.md`.
+ *
  * What may never happen in either build is an empty cut-set list over a
  * machine. "0 cut sets" reads as "no combination of failures breaks this",
  * which about a behaviour this command never looked at is the loudest false
@@ -346,8 +374,9 @@ export function behaviourLaneRefusal(
   return behaviourCommand === null
     ? head
     : `${head} The behavioural lane is \`npm run sysprose -- ${behaviourCommand} <file> --element ` +
-      `${qualifiedName} --from-keywords\`, which walks the configuration graph and decides the ` +
-      'safety patterns the machine carries.';
+      `${qualifiedName} --pattern "pattern=absence, scope=globally, p=state failsafe"\`, which ` +
+      'walks the configuration graph and decides the safety patterns the machine carries, beside ' +
+      'the one spelled there.';
 }
 
 /* ──────────────────────── the fault hypothesis carrier ───────────────────── */

@@ -4300,7 +4300,27 @@ And it never answers a **state machine** with an empty cut-set list: a
 emitted only when `findCommand` resolves that row, so a build shipping this
 command without phase 4 prints "this element is a state machine; contract-level
 fault trees do not cover behaviour" instead of advertising a subcommand `--help`
-does not list. Measured on the shipped power-budget example: `refine` exits 0
+does not list. **The FLAG beside it is resolved on the same terms, and it was
+not always:** the pointer named `--from-keywords`, which is declared on
+`obligations` and nowhere else, so the sentence sent a reader to
+`unknown option: --from-keywords` and a second exit 2 from the command it had
+just recommended. It names `--pattern` now, spelled with a value the command can
+actually read — `pattern=absence, scope=globally, p=state failsafe`, the one
+`check-behaviour` itself prints when a machine states no property. The
+metavariable `SPEC` would have passed a table lookup and still exited 2, on
+`verification/malformed-property` instead: a property is read as `key=value`
+fields and `SPEC` is none, so an unpasteable pointer would have survived with a
+different code on the end of it. Pasted at `examples/uav-isr.sysml` the sentence
+now exits 1 with a refutation and a witness trace. And the class is closed
+rather than the instance: a case parses every `npm run sysprose -- …` line, and
+every backticked `<subcommand> --flag` reference, spelled literally in a `.ts` or
+`.tsx` source under `src/` or `scripts/` — plus this refusal rendered, which no
+source scan can read, since its subcommand is interpolated — back into a
+subcommand and its flags, and looks each one up in the command table the parser
+and `--help` are both rendered from. What that walk does not read is said with
+it: `.md` prose, and any invocation assembled out of parts at runtime.
+
+Measured on the shipped power-budget example: `refine` exits 0
 and this exits 1 with FOUR single points of failure, because each load's draw is
 bounded by its own guarantee and by nothing else. **Recorded against §4 of the
 plan:** that section expects `{radio}` NOT to be a cut set there, and on the
