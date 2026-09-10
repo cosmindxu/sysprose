@@ -386,6 +386,147 @@ describe('analytics — connectivity when one definition is used twice', () => {
       [ids.n1, ids.pa],
       [ids.n2, ids.pb],
     ]);
+    // The two lists are answering at different granularities, and they agree:
+    // both declared ports are wired in one of their occurrences, so there is
+    // nothing for the report to confess. This is the shape the fix had to keep
+    // — collapsing the occurrence key would have emptied the list above.
+    expect(c.unreconciledPorts).toEqual([]);
+  });
+
+  it('wires every usage from a connection written in the definition', () => {
+    // `part def T { in port a; out port b; connection connect a to b; }` binds
+    // the DECLARATIONS: no usage-scoped copies exist, and the endpoints are
+    // owned by `T` itself. An occurrence walk that only ever looked for the
+    // part usage as the owner called both ends of every `T` dangling while the
+    // declaration-level half of the same report called both ports wired — the
+    // same contradiction as the usage-scoped case, one level up. A connection
+    // in the definition wires the port in every usage of it.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const nodeDef = f.partDef('Node');
+    const a = f.port('a', nodeDef.id, { direction: 'in' });
+    const b = f.port('b', nodeDef.id, { direction: 'out' });
+    f.port('lonely', nodeDef.id, { direction: 'in' });
+    f.connect(a.id, b.id, { ownerId: nodeDef.id });
+    f.part('t1', pkg.id, nodeDef.id);
+    f.part('t2', pkg.id, nodeDef.id);
+
+    const c = connectivityReport(model);
+    expect(c.portCount).toBe(3);
+    expect(c.unconnectedPorts.map((p) => p.declaredName)).toEqual(['lonely']);
+    // `lonely` is dangling in BOTH usages and named per usage; `a` and `b` are
+    // wired in both and named in neither.
+    expect(c.unconnectedPortUsages.map((o) => `${o.part.declaredName}.${o.port.declaredName}`)).toEqual([
+      't1.lonely',
+      't2.lonely',
+    ]);
+    expect(c.unreconciledPorts).toEqual([]);
+  });
+
+  it('says so when the two granularities cannot be reconciled', () => {
+    // The guard behind the two lists. A connector endpoint that is an implicit
+    // copy with no `Redefinition` back to the port it stands for — the lift
+    // chain broken, which is how this report has failed before — marks the
+    // DECLARATION connected through the copy's own edge while no occurrence of
+    // it can be matched. Rather than print a "wired" headline over a dangling
+    // list, or drop the row to make the two agree, the report names the port it
+    // cannot answer for.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const nodeDef = f.partDef('Node');
+    const p = f.port('p', nodeDef.id, { direction: 'in' });
+    const sink = f.partDef('Sink');
+    const q = f.port('q', sink.id, { direction: 'out' });
+    f.part('t', pkg.id, nodeDef.id);
+    f.part('s', pkg.id, sink.id);
+    // A stray copy of `p`, owned by nothing the occurrence walk reaches.
+    const stray = model.create('PartUsage', {
+      declaredName: 'stray',
+      ownerId: pkg.id,
+      attrs: { implicit: true },
+    });
+    const copy = model.create('PortUsage', {
+      declaredName: 'p',
+      ownerId: stray.id,
+      attrs: { implicit: true, direction: 'in' },
+    });
+    model.create('Redefinition', { ownerId: copy.id, source: [copy.id], target: [p.id] });
+    // Written inside `Sink`, so its own end `q` is wired in every usage of
+    // `Sink` and the only unreconciled port is the one with the broken chain.
+    f.connect(q.id, copy.id, { ownerId: sink.id });
+
+    const c = connectivityReport(model);
+    // Declaration-level: `p` is wired, through the copy that redefines it.
+    expect(c.unconnectedPorts).toEqual([]);
+    // Per usage: `t`'s `p` is not, because nothing the walk can see wires it.
+    expect(c.unconnectedPortUsages.map((o) => `${o.part.declaredName}.${o.port.declaredName}`)).toEqual([
+      't.p',
+    ]);
+    // And the report says which port the two readings disagree about, instead
+    // of leaving a reader to diff the lists.
+    expect(c.unreconciledPorts.map((x) => x.id)).toEqual([p.id]);
+    // `q` is wired at both granularities and is not in the confession.
+    expect(c.unreconciledPorts.map((x) => x.id)).not.toContain(q.id);
+  });
+
+  it('does not wire every usage from a connector end reaching the definition from outside', () => {
+    // `connection c connect A::p to B::q;` at PACKAGE scope names features of
+    // two definitions. One two-ended connector cannot wire three instance ends,
+    // and nothing in the model says which usage of `A` was meant — so it wires
+    // no occurrence, and the report says the two readings disagree rather than
+    // reporting every usage of `A` as wired. Wiring every usage here is the
+    // false ALL-CLEAR this report exists to not produce: the dangling list
+    // empties and the reader is told there is nothing to look at.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('L');
+    const aDef = f.partDef('A');
+    const p = f.port('p', aDef.id, { direction: 'out' });
+    const bDef = f.partDef('B');
+    const q = f.port('q', bDef.id, { direction: 'in' });
+    const a1 = f.part('a1', pkg.id, aDef.id);
+    const a2 = f.part('a2', pkg.id, aDef.id);
+    const b1 = f.part('b1', pkg.id, bDef.id);
+    f.connect(p.id, q.id, { ownerId: pkg.id });
+
+    const c = connectivityReport(model);
+    expect(c.unconnectedPorts).toEqual([]);
+    expect(c.unconnectedPortUsages.map((o) => [o.part.id, o.port.id])).toEqual([
+      [a1.id, p.id],
+      [a2.id, p.id],
+      [b1.id, q.id],
+    ]);
+    expect(c.unreconciledPorts.map((x) => x.id)).toEqual([p.id, q.id]);
+    // Nothing here is coarser than an instance path: every occurrence stands
+    // for exactly one end.
+    expect(c.sharedOccurrences).toBe(0);
+  });
+
+  it('counts the occurrences it cannot answer per instance', () => {
+    // `part def Rig { part e : Engine; }` used twice has TWO `e.p` ends and one
+    // occurrence: `Rig::e` is the only `e` the author wrote, and the per-usage
+    // copies exist only where a connection names one. Wiring either end clears
+    // the single row, so an empty dangling list here does not mean nothing is
+    // unwired — and the report publishes the number rather than let the empty
+    // list read as a decided absence.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    const engine = f.partDef('Engine');
+    f.port('p', engine.id, { direction: 'out' });
+    const rig = f.partDef('Rig');
+    f.part('e', rig.id, engine.id);
+    f.part('v1', pkg.id, rig.id);
+
+    // One usage of `Rig`: `Rig::e` stands for exactly one end, and the report
+    // claims nothing it cannot see. This is why the shipped examples are quiet.
+    expect(connectivityReport(model).sharedOccurrences).toBe(0);
+
+    // A second usage doubles the ends without adding an occurrence.
+    f.part('v2', pkg.id, rig.id);
+    expect(connectivityReport(model).sharedOccurrences).toBe(1);
   });
 });
 

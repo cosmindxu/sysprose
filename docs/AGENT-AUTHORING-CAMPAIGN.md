@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 109 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 110 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -1013,6 +1013,52 @@ moves `connectedPortCount`; hard-coding any exclusion count to zero, dropping
 the de-duplication, or rewriting the recorded endpoints to the lifted ones each
 move an assertion too, which is what makes them tripwires rather than
 comments.
+
+**One report, one reading of what a port occurrence is.** The per-usage half
+shipped keyed differently from the declaration-level half, and on
+`examples/vehicle.sysml` the two contradicted each other in the same six lines:
+"every declared port is wired", then three of those same ports listed as
+dangling. An occurrence is a (part usage, declared port) pair, and both halves of
+that key have to be normalised the same way. The port half already was — lifted
+through its `Redefinition` onto the declaration. The PART half was the raw owner
+of the endpoint, which for a connection written inside `part vehicle : Vehicle`
+is the usage-scoped copy `vehicle::engine`, while the occurrence walk holds the
+declaration `Vehicle::engine`. Lifting both closes it. One level up the same
+reading was missing again: a `connection` written inside the `part def` that owns
+both ports names ports owned by the DEFINITION, and it wires them in every usage
+of it, so an occurrence is now matched against the scopes it inherits its port
+from — the usage and its type closure, the same closure that decided the
+occurrence exists at all. That match is on the scope the connection SPEAKS FOR,
+not merely on the endpoint's owner: a connector end that reaches a definition's
+own port from outside it — `connection c connect A::p to B::q;` at package scope
+— says nothing about which usage of `A` was meant, and one two-ended connector
+cannot wire three instance ends. Reading it as definition-scoped turned the
+false-positive into a false ALL-CLEAR, which is the worse of the two. The UAV
+example hid all of this, because it writes its connections in the definition and
+uses each part definition exactly once. What the fix must NOT do is flatten the
+distinction: `part n1 : Node; part n2 : Node; connect n1.b to n2.a;` still names
+`n1.a` and `n2.b`, and `AirVehicle::radio.antenna` is still the one dangling end
+on the UAV example.
+
+Three things guard it, because "the halves agree" is a claim and not a hope.
+`unreconciledPorts` names any port the declaration-level walk calls wired while
+every one of its occurrences is dangling — the two readings disagreeing about one
+port — so a residual mismatch is confessed in one sentence rather than left to a
+reader diffing two lists, and a row is never dropped to make the lists line up.
+The reassurance "every declared port is wired" is not printed above a non-empty
+dangling list, not even as a substring of a longer line: where both readings hold
+at once, which is exactly the reuse shape, the terminal says "each declared port
+is wired in some usage; N end(s) across M port(s) are not", and the headline
+count beside it names which granularity its own zero belongs to. And
+`sharedOccurrences` counts the occurrences this walk cannot answer per instance:
+a part nested in a definition used twice has two ends and ONE occurrence, so
+wiring either end clears the row and the other has nowhere to appear. That is a
+granularity the report does not have rather than a fact about the model, and it
+is published for the same reason the excluded counts are — an empty dangling list
+must not read as a decided absence. Pinned at the report in
+`test/integration/pipeline.api.test.ts` and `test/unit/api.analytics.test.ts`,
+and at the terminal a reader actually uses in
+`test/campaign/cli.sysprose.test.ts`.
 
 **Two questions the reporting surface could not answer: what is unused, and what
 a change reaches.** Every report so far counts or tabulates the model. Neither

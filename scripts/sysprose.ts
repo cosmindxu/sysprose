@@ -926,9 +926,16 @@ function reportTrace(model: Model, name: string, args: ParsedArgs): Report {
 
 function reportConnectivity(model: Model, name: string): Report {
   const c = connectivityReport(model);
+  const danglingPortCount = new Set(c.unconnectedPortUsages.map((o) => o.port.id)).size;
   const text = [
     `${name}: ${c.portCount} port(s), ${c.connectionCount} connection(s), ${c.connectedPortCount} connected, ` +
-      `${c.unconnectedPorts.length} unconnected`,
+      // The headline counts DECLARATIONS. Printing a bare `0 unconnected` above
+      // a list of dangling ends says the same contradictory thing the prose
+      // reassurance used to, in numbers, so when the two readings differ the
+      // headline names which it is counting and gives the other alongside.
+      (c.unconnectedPorts.length === 0 && c.unconnectedPortUsages.length > 0
+        ? `0 unconnected declaration(s), ${c.unconnectedPortUsages.length} unconnected end(s)`
+        : `${c.unconnectedPorts.length} unconnected`),
     ...listOrNone(
       'connections',
       c.connections.map(
@@ -938,17 +945,49 @@ function reportConnectivity(model: Model, name: string): Report {
       ),
       'no connections',
     ),
-    ...listOrNone(
-      'unconnected ports',
-      c.unconnectedPorts.map((p) => p.qualifiedName || p.id),
-      'every declared port is wired',
-    ),
+    // "Every declared port is wired" is a reassurance, and it may not stand
+    // next to a list of dangling ends — not even as a substring, or a reader
+    // grepping the transcript still finds it there. When both readings have
+    // content the replacement line says which is which: every declaration is
+    // wired SOMEWHERE, and these ends are not. It counts ends and the ports
+    // they belong to separately, because two dangling ends are routinely two
+    // different ports and saying "usages of one" would be a fresh false claim
+    // in the very line added to stop one.
+    ...(c.unconnectedPorts.length === 0 && c.unconnectedPortUsages.length > 0
+      ? [
+          `  each declared port is wired in some usage; ${c.unconnectedPortUsages.length} ` +
+            `end(s) across ${danglingPortCount} port(s) are not`,
+        ]
+      : listOrNone(
+          'unconnected ports',
+          c.unconnectedPorts.map((p) => p.qualifiedName || p.id),
+          'every declared port is wired',
+        )),
     ...(c.unconnectedPortUsages.length > 0
       ? [
           '  unconnected port usages (a port is dangling per usage, not per declaration)',
           ...c.unconnectedPortUsages.map(
             (o) => `    ${o.part.qualifiedName || label(o.part)} :: ${label(o.port)}`,
           ),
+        ]
+      : []),
+    // Printed whether or not anything dangled, and especially when nothing did:
+    // this is the count of ends the walk cannot tell apart, so an empty
+    // dangling list above it is not the same as "nothing is unwired".
+    ...(c.sharedOccurrences > 0
+      ? [
+          `  ${c.sharedOccurrences} occurrence(s) answered per declaration, not per instance — ` +
+            'their part is copied into 2 or more usages, so one wire there covers ends ' +
+            'this walk cannot tell apart',
+        ]
+      : []),
+    // The two readings disagreed about the same port. Say it in one sentence
+    // rather than print two lists and let the reader work out which is wrong.
+    ...(c.unreconciledPorts.length > 0
+      ? [
+          `  cannot reconcile the two lists for ${c.unreconciledPorts.length} port(s) — wired ` +
+            'per declaration, dangling in every usage: ' +
+            c.unreconciledPorts.map((p) => p.qualifiedName || p.id).join(', '),
         ]
       : []),
     `  ${c.implicitResolved} endpoint(s) lifted onto the port they redefine; ` +

@@ -387,7 +387,110 @@ describe('L7 — sysprose reporting command', () => {
     expect(human.stdout).toContain('15 port(s)');
     expect(human.stdout).toContain('14 connected');
     expect(human.stdout).toContain('antenna');
+    // The UAV example writes its connections inside the part DEFINITION, so
+    // its two halves agreed even while the report's key was wrong. This is the
+    // control for the case below, and the reason the defect shipped.
+    expect(human.stdout).toContain('AirVehicle::radio :: antenna');
   }, 120_000);
+
+  it('never reassures and contradicts itself in the same connectivity report', () => {
+    // `examples/vehicle.sysml` writes its ports on the `part def`s and its
+    // connections inside `part vehicle : Vehicle`. This report used to print
+    // "every declared port is wired" and then list three of those same ports
+    // as dangling — one of the two halves wrong, and no way for a reader to
+    // tell which.
+    const wired = run(['connectivity', resolve(process.cwd(), 'examples/vehicle.sysml')]);
+    expect(wired.code).toBe(0);
+    expect(wired.stdout).toContain('every declared port is wired');
+    expect(wired.stdout).not.toContain('unconnected port usages');
+
+    // And the shape the per-usage list exists for is untouched: one definition
+    // used twice, one end of each usage wired. Both DECLARED ports are wired
+    // somewhere, so the declaration-level list is empty — and the headline says
+    // so at the granularity it is true at, rather than reassuring the reader
+    // above a list that disagrees with it.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-conn-'));
+    try {
+      const file = join(dir, 'reuse.sysml');
+      writeFileSync(
+        file,
+        `package Reuse {
+    port def PP;
+    part def Node { in port a : PP; out port b : PP; }
+    part n1 : Node;
+    part n2 : Node;
+    connection link connect n1.b to n2.a;
+}
+`,
+      );
+      const r = run(['connectivity', file]);
+      expect(r.code).toBe(0);
+      // Two dangling ends of two DIFFERENT declared ports, and the line says
+      // that. "2 usage(s) of one" would be a fresh false claim in the line
+      // added to stop one.
+      expect(r.stdout).toContain('each declared port is wired in some usage; 2 end(s) across 2 port(s) are not');
+      expect(r.stdout).toContain('Reuse::n1 :: a');
+      expect(r.stdout).toContain('Reuse::n2 :: b');
+      // Not merely "not on its own line": the forbidden reassurance is not a
+      // SUBSTRING of this transcript, so a grep over a saved log cannot find it
+      // sitting above a list of dangling ends either.
+      expect(r.stdout).not.toContain('every declared port is wired');
+      // Nor does the headline say `0 unconnected` above that same list.
+      expect(r.stdout).toContain('0 unconnected declaration(s), 2 unconnected end(s)');
+
+      // A connector end that reaches a definition's own port from OUTSIDE the
+      // definition says nothing about which usage was meant, so it wires no
+      // occurrence — and the report states the disagreement between its two
+      // readings instead of reporting every usage of `A` as wired.
+      const outside = join(dir, 'outside.sysml');
+      writeFileSync(
+        outside,
+        `package L {
+    port def PP;
+    part def A { out port p : PP; }
+    part def B { in port q : PP; }
+    part a1 : A;
+    part a2 : A;
+    part b1 : B;
+    connection c connect A::p to B::q;
+}
+`,
+      );
+      const o = run(['connectivity', outside]);
+      expect(o.code).toBe(0);
+      expect(o.stdout).toContain('L::a1 :: p');
+      expect(o.stdout).toContain('L::a2 :: p');
+      expect(o.stdout).toContain('L::b1 :: q');
+      expect(o.stdout).toContain(
+        'cannot reconcile the two lists for 2 port(s) — wired per declaration, dangling in every usage',
+      );
+
+      // And where the walk is coarser than an instance path it says so, even —
+      // especially — when nothing dangled: `Rig` is used twice, its nested
+      // parts occur once in this walk, and wiring `v1`'s ends leaves `v2`'s
+      // with no row to appear on. An empty list here must not read as "nothing
+      // is unwired".
+      const nested = join(dir, 'nested.sysml');
+      writeFileSync(
+        nested,
+        `package P {
+    port def PP;
+    part def Engine { out port p : PP; }
+    part def Sink { in port q : PP; }
+    part def Rig { part e : Engine; part s : Sink; }
+    part v1 : Rig { connect e.p to s.q; }
+    part v2 : Rig;
+}
+`,
+      );
+      const n = run(['connectivity', nested]);
+      expect(n.code).toBe(0);
+      expect(n.stdout).not.toContain('unconnected port usages');
+      expect(n.stdout).toContain('2 occurrence(s) answered per declaration, not per instance');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
 
   it('elements lists the reader\'s model, not the tool\'s re-derived copies', () => {
     const r = run(['elements', UAV, '--json']);

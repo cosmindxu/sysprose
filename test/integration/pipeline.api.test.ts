@@ -5,7 +5,7 @@
  * the OMG-shaped constraint-tree query engine (by metaclass, by name, numeric
  * attribute path, composite and/or, substring) and the pure analytics functions
  * (countByMetaclass, requirementSatisfaction, whereUsed, modelMetrics,
- * orphanReport, impactClosure).
+ * orphanReport, impactClosure, connectivityReport).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -13,6 +13,7 @@ import { parseModel } from '@text/index';
 import {
   ModelApi,
   evaluateQuery,
+  connectivityReport,
   countByMetaclass,
   impactClosure,
   isUserElement,
@@ -227,5 +228,30 @@ describe('pipeline: Parse → impact closure across a wire', () => {
       '1 FeatureTyping PP',
     ]);
     expect(closure.implicitExcluded).toBe(0);
+  });
+});
+
+describe('pipeline: Parse → connectivity', () => {
+  it('agrees with itself about what is wired on examples/vehicle.sysml', () => {
+    // The example writes its ports on the `part def`s and its connections
+    // inside the `part vehicle : Vehicle` USAGE, so every endpoint the mapper
+    // records is a usage-scoped copy owned by a usage-scoped PART copy. The two
+    // halves of this report used to normalise that differently — the port half
+    // lifted onto the declaration, the part half kept the raw owner — so the
+    // report said "every declared port is wired" and then listed three of those
+    // same ports as dangling. Nobody can act on a report that contradicts
+    // itself, so the halves are keyed the same way and this is the pin.
+    const c = connectivityReport(model);
+    expect(c.portCount).toBe(4);
+    expect(c.connectionCount).toBe(2);
+    expect(c.connectedPortCount).toBe(4);
+    expect(c.unconnectedPorts).toEqual([]);
+    expect(
+      c.unconnectedPortUsages.map((o) => `${o.part.qualifiedName}.${o.port.declaredName}`),
+    ).toEqual([]);
+    // And the two granularities are reconcilable, so the report has nothing to
+    // confess: every port the declaration-level answer calls wired is wired in
+    // at least one occurrence.
+    expect(c.unreconciledPorts).toEqual([]);
   });
 });

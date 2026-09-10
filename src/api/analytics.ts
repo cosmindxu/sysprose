@@ -1285,7 +1285,14 @@ export interface ConnectivityReport {
    */
   unconnectedPorts: ElementRef[];
   /**
-   * Every (part usage, declared port) pair with nothing wired to it.
+   * The (part usage, declared port) pairs this walk found with nothing wired to
+   * them — every one it can see, at the granularity it sees them.
+   *
+   * NOT a complete list of dangling ends, and it must not be read as one:
+   * occurrences are enumerated per part USAGE the user wrote, not per instance
+   * path, so a nested part inside a definition used twice contributes ONE
+   * occurrence for two ends. Wiring either end clears the pair. When that can
+   * be happening, {@link sharedOccurrences} says how often.
    *
    * `unconnectedPorts` cannot answer this on its own: when one `part def` is
    * used twice, connecting one usage's port marks the DECLARATION connected,
@@ -1296,8 +1303,52 @@ export interface ConnectivityReport {
    * Occurrences come from each part usage's types (and their supertypes), plus
    * any port the part usage declares itself. A port on a definition that is
    * never used has no occurrence and appears only in `unconnectedPorts`.
+   *
+   * An occurrence counts as wired when a connection names its port in ANY of
+   * the scopes it inherits the port from — the usage, or the definition (or
+   * supertype) the port is declared on — with both halves of the key normalised
+   * the same way, through {@link liftImplicitEndpoint}. Reading the two halves
+   * differently is what made `examples/vehicle.sysml` list three wired ends as
+   * dangling: a connection written inside `part vehicle : Vehicle` names
+   * usage-scoped copies of the PART as well as of the port, so the wired set was
+   * keyed on `vehicle::engine` while this list was keyed on `Vehicle::engine`.
+   * Ignoring the inherited scopes has the same effect one level up, on a
+   * `connection` written inside the `part def` that owns both ports.
    */
   unconnectedPortUsages: PortOccurrence[];
+  /**
+   * Declared ports this report cannot answer for at both granularities at once.
+   *
+   * A port here is counted CONNECTED by the declaration-level walk while every
+   * one of its occurrences is dangling — the two halves contradicting each
+   * other about the same port. That is not a fact about the model, it is this
+   * function failing to reconcile its own two readings, and it is named in one
+   * place rather than left to a reader to spot by diffing two lists. A port
+   * with no occurrence at all (declared on a definition nothing uses, or on a
+   * constraint definition) is not a contradiction and is not listed.
+   *
+   * The opposite direction cannot arise: a wired occurrence marks its lifted
+   * port connected through the same set, so an occurrence cannot be wired while
+   * its declaration is not.
+   */
+  unreconciledPorts: ElementRef[];
+  /**
+   * Occurrences in {@link unconnectedPortUsages}' population that stand for
+   * more than one instance end, so this report cannot separate them.
+   *
+   * A part usage nested in a definition is copied into every usage of that
+   * definition, and the copies are implicit — the occurrence walk sees the one
+   * declaration. `part def Rig { part e : Engine; } part v1 : Rig { connect
+   * e.p to …; } part v2 : Rig;` has two `e.p` ends, one wired and one not, and
+   * one occurrence covering both: wiring `v1`'s clears the row and `v2`'s
+   * dangling end has nowhere to appear.
+   *
+   * Zero means every occurrence stands for exactly one end and the per-usage
+   * list is as complete as it reads. Non-zero means it is not, and the number
+   * is published for the same reason the excluded counts are: a question this
+   * walk could not decide must not be served as a decided absence.
+   */
+  sharedOccurrences: number;
   connections: Array<{
     connection: ElementRef;
     /**
@@ -1383,29 +1434,71 @@ function liftImplicitEndpoint(model: Model, id: ElementId): ElementId {
  * plus any port the part usage declares itself. Library ports are skipped by
  * the same predicate as everywhere else, so walking into the implicit library
  * supertypes every `part def` gets costs a traversal, not rows.
+ *
+ * Each occurrence carries the SCOPES it was found through — the usage itself
+ * and its type closure, in walk order. An occurrence inherits its port from
+ * those scopes, so it inherits the connections written in them too, and the
+ * caller needs the same list to decide whether an end is wired. Without it a
+ * `connection` written inside the `part def` that owns both ports wires the
+ * declarations and NO usage, so every usage of that definition read as dangling
+ * while the declaration-level half of the same report called the ports wired.
  */
-function portOccurrences(model: Model): Array<{ part: ElementRecord; port: ElementRecord }> {
-  const out: Array<{ part: ElementRecord; port: ElementRecord }> = [];
+interface PortOccurrenceRecord {
+  part: ElementRecord;
+  port: ElementRecord;
+  scopes: ElementId[];
+}
+
+/**
+ * The scopes an element inherits its members from: itself, then its types and
+ * their supertypes in walk order, cycle-guarded.
+ *
+ * One walk used twice, deliberately. `portOccurrences` collects a part usage's
+ * ports from these scopes, and `connectivityReport` asks the same question of a
+ * connection's owner to decide which scope that connection may wire. Computing
+ * them differently is how the two halves of one report end up meaning two
+ * things.
+ */
+function scopeClosure(model: Model, id: ElementId): ElementId[] {
+  const scopes: ElementId[] = [id];
+  const seen = new Set<ElementId>([id]);
+  const queue = model.typesOf(id);
+  while (queue.length > 0) {
+    const type = queue.shift()!;
+    if (seen.has(type.id)) continue;
+    seen.add(type.id);
+    scopes.push(type.id);
+    queue.push(...model.typesOf(type.id));
+  }
+  return scopes;
+}
+
+/**
+ * A definition a usage can INSTANTIATE.
+ *
+ * `isDefinition` counts `Package` and `LibraryPackage`, and a package is a
+ * namespace: its members exist once, no matter how many usages sit beside them.
+ * Both places below multiply or gate on "how many usages of this definition
+ * exist", and a package would answer that question with a number that means
+ * nothing.
+ */
+function isInstantiableDefinition(eClass: string): boolean {
+  return isDefinition(eClass) && eClass !== 'Package' && eClass !== 'LibraryPackage';
+}
+
+function portOccurrences(model: Model): PortOccurrenceRecord[] {
+  const out: PortOccurrenceRecord[] = [];
   for (const part of model.ofKind('PartUsage')) {
     if (!isUserElement(model, part)) continue;
+    const scopes = scopeClosure(model, part.id);
     const seenPorts = new Set<ElementId>();
-    const collect = (ownerId: ElementId): void => {
-      for (const child of model.children(ownerId)) {
+    for (const scope of scopes) {
+      for (const child of model.children(scope)) {
         if (child.eClass !== 'PortUsage' || !isUserElement(model, child)) continue;
         if (seenPorts.has(child.id)) continue;
         seenPorts.add(child.id);
-        out.push({ part, port: child });
+        out.push({ part, port: child, scopes });
       }
-    };
-    collect(part.id);
-    const seenTypes = new Set<ElementId>([part.id]);
-    const queue = model.typesOf(part.id);
-    while (queue.length > 0) {
-      const type = queue.shift()!;
-      if (seenTypes.has(type.id)) continue;
-      seenTypes.add(type.id);
-      collect(type.id);
-      queue.push(...model.typesOf(type.id));
     }
   }
   return out;
@@ -1429,6 +1522,11 @@ function portOccurrences(model: Model): Array<{ part: ElementRecord; port: Eleme
  * b.p` between two usages of one definition read as a self-edge on the
  * definition's port; reporting only the raw form leaves ids in the list that
  * are absent from the inventory, which is unusable to a caller joining the two.
+ *
+ * The declaration-level and the per-usage answers are two readings of ONE walk,
+ * so they are keyed identically — part and port both lifted — and the report
+ * checks that they agree ({@link ConnectivityReport.unreconciledPorts}) instead
+ * of publishing two lists and leaving the reader to find the contradiction.
  */
 export function connectivityReport(model: Model): ConnectivityReport {
   const portCandidates = model.ofKind('PortUsage');
@@ -1441,39 +1539,143 @@ export function connectivityReport(model: Model): ConnectivityReport {
   const connections = connectionCandidates.filter((c) => isUserElement(model, c));
 
   const connectedPortIds = new Set<string>();
-  // Which OCCURRENCE each endpoint wires up, keyed `<part usage> NUL <declared
+  // Which OCCURRENCE each endpoint wires up, keyed `<scope> NUL <declared
   // port>`: the lifted id alone cannot say which of a definition's usages the
   // endpoint belonged to, and that is exactly what a dangling end is.
+  //
+  // The scope is the LIFTED OWNER of the endpoint feature — the part usage the
+  // endpoint copy hangs under, normalised through the same lift as the port so
+  // both halves of the key mean one thing. When that owner is a DEFINITION the
+  // endpoint IS the definition's own feature, and naming it does not say which
+  // usage of the definition was meant; it wires every usage only when the
+  // connection is written inside that definition's own scope (`part def B { in
+  // port q; connect ... to q; }`), which is what `writtenIn` below decides. A
+  // connector end that reaches a definition's feature from OUTSIDE — `connect
+  // A::p to B::q` at package scope — wires no occurrence at all, and
+  // `unreconciledPorts` is where the report says so, rather than reporting
+  // every usage of `A` as wired on the strength of one two-ended connector.
   const OCC = '\u0000';
   const wiredOccurrences = new Set<string>();
   let implicitResolved = 0;
-  const lift = (ids: readonly ElementId[]): ElementId[] =>
+  const lift = (ids: readonly ElementId[], writtenIn: ReadonlySet<ElementId>): ElementId[] =>
     ids.map((id) => {
       const lifted = liftImplicitEndpoint(model, id);
       if (lifted !== id) implicitResolved++;
       connectedPortIds.add(lifted);
+      // The PART half is lifted exactly like the port half. A connection
+      // written inside a part usage — `part vehicle : Vehicle { connect
+      // engine.fuelOut to fuelIn; }` — names a usage-scoped copy of the port
+      // under a usage-scoped copy of the PART, so the raw owner is
+      // `vehicle::engine` while `portOccurrences` walks declarations and holds
+      // `Vehicle::engine`. Normalising one half and not the other made every
+      // wired end of that example turn up in the dangling list, under a
+      // headline that called the very same ports wired.
       const owner = model.get(id)?.ownerId;
-      if (owner != null) wiredOccurrences.add(`${owner}${OCC}${lifted}`);
+      if (owner != null) {
+        const scope = liftImplicitEndpoint(model, owner);
+        const scopeEl = model.get(scope);
+        if (scopeEl == null || !isInstantiableDefinition(scopeEl.eClass) || writtenIn.has(scope)) {
+          wiredOccurrences.add(`${scope}${OCC}${lifted}`);
+        }
+      }
       return lifted;
     });
   const endpoints = connections.map((c) => {
     const source = [...(c.source ?? [])];
     const target = [...(c.target ?? [])];
+    // The scopes this connection speaks for: its own lifted owner, and whatever
+    // that owner inherits from — a connection written in `part def B :> A0` may
+    // wire a port `A0` declares, and it wires it in every usage of `B`.
+    const writtenIn = new Set<ElementId>(
+      c.ownerId == null ? [] : scopeClosure(model, liftImplicitEndpoint(model, c.ownerId)),
+    );
     return {
       connection: ref(model, c),
       source,
       target,
-      sourcePorts: lift(source),
-      targetPorts: lift(target),
+      sourcePorts: lift(source, writtenIn),
+      targetPorts: lift(target, writtenIn),
     };
   });
 
   const unconnectedPorts = ports
     .filter((p) => !connectedPortIds.has(p.id))
     .map((p) => ref(model, p));
-  const unconnectedPortUsages = portOccurrences(model)
-    .filter((o) => !wiredOccurrences.has(`${o.part.id}${OCC}${o.port.id}`))
+  const occurrences = portOccurrences(model);
+  // An occurrence is wired by a connection written in ANY scope it inherits the
+  // port from — the usage itself, or the definition (or supertype) the port is
+  // declared on — because a connection in the definition wires every usage of
+  // it. This is the same closure `portOccurrences` used to decide the
+  // occurrence exists at all: one walk, one reading of what an occurrence is.
+  const isWired = (o: PortOccurrenceRecord): boolean =>
+    o.scopes.some((scope) => wiredOccurrences.has(`${scope}${OCC}${o.port.id}`));
+  const unconnectedPortUsages = occurrences
+    .filter((o) => !isWired(o))
     .map((o) => ({ part: ref(model, o.part), port: ref(model, o.port) }));
+
+  // The two granularities have to be reconcilable, and the check is cheap
+  // enough to run rather than to trust: a port the declaration-level walk calls
+  // wired must be wired in at least one of its occurrences. When it is not, the
+  // two lists disagree about the same port and the report says so once —
+  // dropping a row to make them line up would be inventing an answer.
+  const wiredOccurrenceCounts = new Map<ElementId, number>();
+  for (const o of occurrences) {
+    const wired = isWired(o) ? 1 : 0;
+    wiredOccurrenceCounts.set(o.port.id, (wiredOccurrenceCounts.get(o.port.id) ?? 0) + wired);
+  }
+  const unreconciledPorts = ports
+    .filter((p) => connectedPortIds.has(p.id) && wiredOccurrenceCounts.get(p.id) === 0)
+    .map((p) => ref(model, p));
+
+  // How many occurrences this walk cannot answer per instance. A nested `part e
+  // : Engine` declared inside a `part def` used twice exists twice at runtime,
+  // but `portOccurrences` walks the part usages the AUTHOR wrote and sees one —
+  // `Rig::e` — standing for both ends. Wiring either end marks that single
+  // occurrence wired, and the other, genuinely dangling, has no row to appear
+  // on. Counting the implicit copies would not find it: a usage-scoped copy is
+  // materialised only where a connection names one, so the unwired usage — the
+  // interesting one — has no copy at all.
+  //
+  // So it is counted structurally: how many instances of the occurrence's part
+  // the model implies, by multiplying up the containment chain. That is a
+  // granularity this report does not have, not a fact about the model, and it
+  // is published for the same reason the excluded counts are — an empty
+  // dangling list must not read as "nothing is unwired" when the walk could not
+  // have seen the dangling end.
+  const usagesOfType = new Map<ElementId, ElementId[]>();
+  for (const part of model.ofKind('PartUsage')) {
+    if (!isUserElement(model, part)) continue;
+    for (const scope of scopeClosure(model, part.id)) {
+      if (scope === part.id) continue;
+      const known = usagesOfType.get(scope);
+      if (known) known.push(part.id);
+      else usagesOfType.set(scope, [part.id]);
+    }
+  }
+  const multiplicities = new Map<ElementId, number>();
+  const multiplicityOf = (id: ElementId, onPath: Set<ElementId>): number => {
+    const cached = multiplicities.get(id);
+    if (cached != null) return cached;
+    // A containment cycle is a broken model, not a multiplier: stop at one
+    // rather than let the walk inflate the number it is about to publish.
+    if (onPath.has(id)) return 1;
+    onPath.add(id);
+    const owner = model.get(id)?.ownerId;
+    const ownerEl = owner == null ? undefined : model.get(owner);
+    let n = 1;
+    if (ownerEl != null && isInstantiableDefinition(ownerEl.eClass)) {
+      n = 0;
+      for (const user of usagesOfType.get(ownerEl.id) ?? []) n += multiplicityOf(user, onPath);
+    } else if (ownerEl != null && ownerEl.eClass === 'PartUsage') {
+      n = multiplicityOf(ownerEl.id, onPath);
+    }
+    onPath.delete(id);
+    multiplicities.set(id, n);
+    return n;
+  };
+  const sharedOccurrences = occurrences.filter(
+    (o) => multiplicityOf(o.part.id, new Set<ElementId>()) > 1,
+  ).length;
 
   const candidates = [...portCandidates, ...connectionCandidates];
   return {
@@ -1482,6 +1684,8 @@ export function connectivityReport(model: Model): ConnectivityReport {
     connectedPortCount: ports.filter((p) => connectedPortIds.has(p.id)).length,
     unconnectedPorts,
     unconnectedPortUsages,
+    unreconciledPorts,
+    sharedOccurrences,
     connections: endpoints,
     libraryExcluded: candidates.filter(isLibrary).length,
     implicitExcluded: candidates.filter((e) => !isLibrary(e) && !isUserElement(model, e)).length,

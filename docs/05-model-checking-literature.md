@@ -221,7 +221,7 @@ Industrial corroboration that this is a high-yield check: Seligman & Schubert ch
 
 **The engineering question.** Every consumer in the ISR example takes `powerIn`. Is every one actually reached from `battery.powerOut` — and, harder, does every declared input actually influence some output?
 
-**What is and is not there.** `connectivityReport` (`src/api/analytics.ts`:1433) is a **port inventory**: it counts user ports, lifts implicit endpoints, and flags ports no connection endpoint reaches (15 ports, 14 connected, 1 dangling on the UAV example). It answers "is anything unwired". It cannot answer condition 2 — a port can be wired and still influence nothing.
+**What is and is not there.** `connectivityReport` (`src/api/analytics.ts`:1531) is a **port inventory**: it counts user ports, lifts implicit endpoints, and flags ports no connection endpoint reaches (15 ports, 14 connected, 1 dangling on the UAV example). It answers "is anything unwired". It cannot answer condition 2 — a port can be wired and still influence nothing.
 
 **Mapping.** Transposed to a part with `in` and `out` ports: conditions 1 and 2 are immediately meaningful, and neither is expressible today. `connectorEndsOf`, `bindingEquivalenceClasses`, `itemFlowsOf` and `propagateValues` (`src/semantics/connectors.ts`) already compute the value-flow relation the dependency template needs. Note the design axis this book states explicitly (**book pp.153-154**): SPARK requires an engineer-written `DERIVES` annotation and checks it; STAD *derives* the template and needs no annotation. Sysprose should be on the STAD side — derive it, ship no new vocabulary.
 
