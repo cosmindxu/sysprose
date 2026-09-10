@@ -62,6 +62,7 @@
 import type { ElementId, ElementRecord, Model } from '@core/index';
 import type { Diagnostic } from '@validation/types';
 import {
+  CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
   hashConfig,
   initialConfig,
@@ -80,6 +81,10 @@ import {
   type StepInput,
 } from './config';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
+// The same reader the step relation uses to decide an edge carries an item, so
+// the census can say WHY that edge is not in the relation in the relation's own
+// terms rather than in a sentence of its own.
+import { payloadOf } from '../connectors';
 
 /* ─────────────────────────────── the codes ──────────────────────────────── */
 
@@ -270,6 +275,13 @@ export interface ExploreResult {
   deadlocks: readonly DeadlockRow[];
   unsupported: readonly UnsupportedConstruct[];
   /**
+   * Every edge under the machine, each accounted for — see {@link edgeCensus}.
+   *
+   * Computed BEFORE the walk and published whether or not the walk ran, because
+   * its `unaccounted` bucket is one of the reasons a walk does not run.
+   */
+  census: EdgeCensus;
+  /**
    * Every transition whose guard was consulted and decided nothing, once each.
    *
    * A walk with one of these saw the whole graph its step relation admits and
@@ -348,16 +360,57 @@ export function machineStates(model: Model, machineId: ElementId): ElementRecord
 }
 
 /**
+ * Every node some configuration's stack can hold — read from the relation, not
+ * from a metaclass.
+ *
+ * WHAT PUTS A NODE ON THE STACK, exactly. `initialConfig` (`./config.ts`) enters
+ * `initialSubstate(machineId)` and cascades, which pushes `StateUsage`s; after
+ * that, `stepConfig` pushes whatever the transition it fired TARGETS, whatever
+ * that target's metaclass is. So the stack holds the machine's states, plus
+ * everything the relation can land the walk on from one — a `decide` node
+ * between two states, an action a transition enters. `stepCandidates` then
+ * offers every relation edge leaving any stack member, so those nodes' outgoing
+ * edges are walked as surely as a state's.
+ *
+ * WHY IT IS A CLOSURE AND NOT `eClass === 'StateUsage'`. That test was the old
+ * reading, and it was wrong in both directions at once: it EXCLUDED the edges
+ * leaving a `decide` node the walk demonstrably traverses (they were counted
+ * `unaccounted` and refused the machine), and it INCLUDED an edge leaving the
+ * machine ROOT, which `initialConfig` never pushes — so a `transition outer then
+ * b` inside `state outer` was published `dead` on an exhaustive walk, a finding
+ * the census invented rather than the walk finding it.
+ *
+ * The seed is {@link machineStates} and not the state HIERARCHY: a state nothing
+ * enters is still a state whose outgoing edge the walk would offer if it got
+ * there, and reporting that edge `dead` is a finding about the machine. Only the
+ * structurally un-standable nodes are left out.
+ */
+function stackNodes(model: Model, machineId: ElementId): ReadonlySet<ElementId> {
+  const on = new Set<ElementId>(machineStates(model, machineId).map((s) => s.id));
+  const edges = regionTransitions(model, machineId);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const e of edges) {
+      const from = e.source![0];
+      const to = e.target![0];
+      if (!on.has(from) || on.has(to)) continue;
+      on.add(to);
+      grew = true;
+    }
+  }
+  return on;
+}
+
+/**
  * The transitions the walk could ever offer — the census `dead` is read against.
  *
- * NOT every `TransitionUsage` in the machine. {@link enabledTransitions} offers
- * a transition only when its source is a state on the ACTIVE STACK, and the
- * stack holds `StateUsage`s: the cascade enters `initialSubstate`, which reads
- * `directStates`, which filters on that metaclass. So a transition leaving a
- * control node is structurally un-offerable, and counting it in the census
+ * NOT every edge in the relation. {@link enabledTransitions} offers an edge only
+ * when its source is on the ACTIVE STACK, so an edge leaving a node no
+ * configuration can stand on is structurally un-offerable, and counting it here
  * would put it in `dead` on every exhaustive walk — a finding invented by the
  * census rather than found by the walk, in a lane whose whole claim is that an
- * over-approximation can only SHRINK an absence claim.
+ * over-approximation can only SHRINK an absence claim. {@link stackNodes} is
+ * what "can stand on" means, computed rather than guessed at from a metaclass.
  *
  * The one that matters in practice is the `initial start; transition start ->
  * idle;` edge every hand-written machine has. It is not un-fired: it is
@@ -368,23 +421,248 @@ export function machineStates(model: Model, machineId: ElementId): ElementRecord
  * the same reason.
  */
 export function walkableTransitions(model: Model, machineId: ElementId): readonly ElementRecord[] {
-  return regionTransitions(model, machineId).filter(
-    (t) => model.get(t.source![0])?.eClass === 'StateUsage',
-  );
+  const on = stackNodes(model, machineId);
+  return regionTransitions(model, machineId).filter((t) => on.has(t.source![0]));
+}
+
+/* ───────────────────────────── the producer census ───────────────────────── */
+
+/**
+ * What became of one edge under a machine.
+ *
+ * `unaccounted` is the failure bucket and the whole point of the census: an edge
+ * that could carry this machine's control token, that the walk can stand on an
+ * end of, and that the relation does not hold. It is empty on every machine this
+ * engine walks, because a row in it REFUSES the machine
+ * ({@link unsupportedConstructs}) — so the bucket is a test failure and a
+ * run-time refusal at once, never a silent shrinking of an absence list.
+ */
+export type EdgeAccount =
+  | 'walked'
+  | 'opening'
+  | 'refused'
+  | 'off-stack'
+  | 'not-a-step'
+  | 'unaccounted';
+
+/** One edge under a machine, and the sentence that says what became of it. */
+export interface EdgeCensusRow {
+  id: ElementId;
+  eClass: string;
+  qualifiedName: string;
+  account: EdgeAccount;
+  /** Why it is in that bucket — one sentence, in the report's own words. */
+  reason: string;
+}
+
+/** Every edge-bearing element under a machine, each in exactly one bucket. */
+export interface EdgeCensus {
+  /** Rows counted, which is `rows.length` and the sum of {@link counts}. */
+  total: number;
+  rows: readonly EdgeCensusRow[];
+  counts: Readonly<Record<EdgeAccount, number>>;
+  /** The rows in the failure bucket. Empty on every machine that is walked. */
+  unaccounted: readonly EdgeCensusRow[];
+}
+
+/**
+ * Every edge under the machine, accounted for as walked or refused with a code.
+ *
+ * WHY A CENSUS AND NOT ANOTHER MECHANISM. Four readers have now found four
+ * distinct ways the relation the walk retains differs from the machine an
+ * author wrote: dwell labels over-approximating, the cooperative environment
+ * over-approximating, an undetermined guard under-approximating, and an edge
+ * kind simply absent from the relation. Enumerating the mechanisms has failed
+ * four times, and the fifth would be found the same way — by a reader, after a
+ * report had already published an absence over it. So the question is inverted,
+ * in the same spirit as the verification lane's relation census
+ * (`test/integration/verification.differential.test.ts`): the edges are counted
+ * WITHOUT asking the walk, and every one of them has to land in a bucket that
+ * says what became of it. An edge the walk neither follows nor refuses lands in
+ * `unaccounted`, which fails a test and refuses the machine.
+ *
+ * A census taken from the thing it audits could not see the thing it exists to
+ * catch, so the domain is read off the model — every descendant carrying an
+ * endpoint — and not off {@link regionTransitions}.
+ *
+ * THE BUCKETS, and why each is not `unaccounted`:
+ *
+ *  - `not-a-step` — the metaclass is outside {@link CONTROL_EDGE_KINDS}: it is a
+ *    fact ABOUT the states, not a step BETWEEN them. `state idle : Base;` is a
+ *    `FeatureTyping` between two elements, `state s5 :> s4;` a `Subsetting`,
+ *    `connect a to b;` a `ConnectionUsage`, and none of them ever carries the
+ *    control token — the relation being blind to them costs no absence claim.
+ *    This bucket exists because the census's first reading did not have it and
+ *    refused every machine whose states are typed, which is mainstream notation.
+ *  - `walked` — in the step relation, leaving a node some configuration's stack
+ *    can hold ({@link stackNodes}): every configuration standing there offers
+ *    it. This bucket IS {@link walkableTransitions}, and the transition census
+ *    the report prints.
+ *  - `opening` — in the step relation, leaving an `InitialNode`: `initialState`
+ *    (`./config.ts`) READS it to decide where the machine opens and no step
+ *    ever fires it. It is deliberately out of the walkable total — counting an
+ *    edge the walk cannot reach would report it dead on every exhaustive walk,
+ *    a finding invented by the census rather than found by the walk.
+ *  - `refused` — an {@link UnsupportedConstruct} already names it, so the
+ *    machine is not walked at all and no absence is published over it.
+ *  - `off-stack` — NEITHER end is a node the walk can stand on, computed as the
+ *    {@link stackNodes} closure rather than read off a metaclass. A `do`
+ *    action's own control flow is under the machine and is not an edge of it; an
+ *    edge leaving the machine root is fired by `runHierMachine` outside the
+ *    region relation, on a parallel machine this engine refuses before it
+ *    starts. The metaclass reading this replaced was not merely imprecise, it
+ *    was a hole: a `SuccessionFlow` between two ACTIONS the walk enters from a
+ *    state fell through it into `off-stack` and the machine was published
+ *    `exhaustive` over an edge nothing had followed — the very claim the census
+ *    was built to make impossible.
+ */
+export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
+  const relation = new Set(regionTransitions(model, machineId).map((t) => t.id));
+  const refusedIds = new Set(danglingTransitions(model, machineId).map((t) => t.id));
+  const onStack = stackNodes(model, machineId);
+  const rows: EdgeCensusRow[] = [];
+  const nameOf = (id: ElementId | undefined): string =>
+    id === undefined ? 'nothing' : `\`${model.qualifiedName(id) || id}\``;
+
+  for (const el of model.descendants(machineId)) {
+    const from = el.source?.[0];
+    const to = el.target?.[0];
+    if (from === undefined && to === undefined) continue; // not an edge at all
+    const row = (account: EdgeAccount, reason: string): void => {
+      rows.push({
+        id: el.id,
+        eClass: el.eClass,
+        qualifiedName: model.qualifiedName(el.id) || el.id,
+        account,
+        reason,
+      });
+    };
+    const sourceKind = from === undefined ? undefined : model.get(from)?.eClass;
+    if (!CONTROL_EDGE_KINDS.has(el.eClass)) {
+      row(
+        'not-a-step',
+        `\`${el.eClass}\` is not a metaclass that sequences behaviour — it states something ABOUT ` +
+          'these elements rather than a step between them, so no run of this machine ever carries ' +
+          'the control token along it and the relation is complete without it',
+      );
+    } else if (refusedIds.has(el.id)) {
+      row(
+        'refused',
+        'it names no source or no target, so the walk refuses this machine by name rather than ' +
+          'counting the edge dead on a technicality',
+      );
+    } else if (relation.has(el.id) && sourceKind === 'InitialNode') {
+      row(
+        'opening',
+        '`initialState` reads it to decide where the machine opens; no step fires it, and counting ' +
+          'it as walkable would report it dead on every exhaustive walk',
+      );
+    } else if (relation.has(el.id) && onStack.has(from!)) {
+      row(
+        'walked',
+        `it is in the step relation and leaves ${nameOf(from)}, which a configuration's stack can ` +
+          'hold, so every configuration standing there offers it',
+      );
+    } else if (from === machineId) {
+      row(
+        'off-stack',
+        'it leaves the machine root, which `initialConfig` never pushes onto a stack — it opens the ' +
+          'machine at the root\u2019s initial substate, so nothing this walk stands on is the root ' +
+          'itself, and the interpreter fires such an edge only as the orthogonal join of a parallel ' +
+          'machine, which is refused before this walk starts',
+      );
+    } else if (
+      (from === undefined || !onStack.has(from)) &&
+      (to === undefined || !onStack.has(to))
+    ) {
+      row(
+        'off-stack',
+        `neither ${nameOf(from)} nor ${nameOf(to)} is a node this walk can stand on — the stack is ` +
+          'seeded from the machine\u2019s states and grows only along this relation — so no step of it ' +
+          'could traverse this edge whatever the walk did',
+      );
+    } else {
+      row(
+        'unaccounted',
+        `\`${el.eClass}\` carries a control token, this walk can stand on ${nameOf(
+          onStack.has(from!) ? from : to,
+        )}, and the step relation does not hold this edge` +
+          (payloadOf(el) === undefined
+            ? ''
+            : `: it carries the payload \`${payloadOf(el)}\`, and this relation models no payload`),
+      );
+    }
+  }
+
+  const counts: Record<EdgeAccount, number> = {
+    walked: 0,
+    opening: 0,
+    refused: 0,
+    'off-stack': 0,
+    'not-a-step': 0,
+    unaccounted: 0,
+  };
+  for (const r of rows) counts[r.account]++;
+  return {
+    total: rows.length,
+    rows,
+    counts,
+    unaccounted: rows.filter((r) => r.account === 'unaccounted'),
+  };
+}
+
+/**
+ * Step edges under the machine that do not name both of their ends.
+ *
+ * {@link CONTROL_EDGE_KINDS} and not `TransitionUsage` alone. `first busy then
+ * nowhere;` is the same mistake as `transition busy then nowhere;` written the
+ * other way round, and while this filter still said `TransitionUsage` the two
+ * spellings got two different answers: the transition got
+ * `transition-without-endpoints` and its `Give it both endpoints.`, and the
+ * succession fell into `unaccounted` and was refused with a sentence telling its
+ * author to write it as a succession, which is what they had written. Two
+ * filters that must agree are two filters that will drift — the comment
+ * `STEP_EDGE_KINDS` carries — and this was that drift, one function away.
+ *
+ * Read twice — once by {@link edgeCensus}, to put them in the `refused` bucket,
+ * and once by {@link unsupportedConstructs}, which is what actually refuses
+ * them — and defined once so the two cannot disagree about which edges those
+ * are.
+ */
+function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[] {
+  return model
+    .descendants(machineId)
+    .filter(
+      (e) =>
+        CONTROL_EDGE_KINDS.has(e.eClass) &&
+        (e.source?.[0] === undefined || e.target?.[0] === undefined),
+    );
 }
 
 /**
  * The constructs this engine refuses, checked BEFORE the walk.
  *
- * All three are §3.8's own list. `attrs.parallel` and `attrs.history` are
+ * The first three are §3.8's own list. `attrs.parallel` and `attrs.history` are
  * reachable only through the API — `sysml.langium` has no keyword for either —
  * so a machine using them was built by a program, and exploring it as though it
  * were an ordinary machine would report an interleaving this engine does not
  * perform and a history it does not resume. A transition missing an endpoint
  * cannot fire at all, and a walk that ignored it would count it dead on a
  * technicality rather than on a semantics.
+ *
+ * The fourth is not a construct anybody enumerated, and that is its point. It
+ * is whatever the {@link edgeCensus} could not account for: an edge that
+ * touches this machine's states and that the relation does not follow. §3.8's
+ * list was written by reading the code, which is how an edge kind came to be
+ * missing from it — so the last entry is generated FROM the model rather than
+ * from a list, and a kind nobody thought about refuses the machine instead of
+ * quietly shrinking its absence lists.
  */
-function unsupportedConstructs(model: Model, machineId: ElementId): UnsupportedConstruct[] {
+function unsupportedConstructs(
+  model: Model,
+  machineId: ElementId,
+  census: EdgeCensus,
+): UnsupportedConstruct[] {
   const out: UnsupportedConstruct[] = [];
   const machine = model.get(machineId);
   if (machine && (isTruthy(machine.attrs.parallel) || isTruthy(machine.attrs.isParallel))) {
@@ -411,20 +689,29 @@ function unsupportedConstructs(model: Model, machineId: ElementId): UnsupportedC
       break;
     }
   }
-  const dangling = model
-    .descendants(machineId)
-    .filter(
-      (e) =>
-        e.eClass === 'TransitionUsage' &&
-        (e.source?.[0] === undefined || e.target?.[0] === undefined),
-    );
-  for (const tr of dangling) {
+  for (const tr of danglingTransitions(model, machineId)) {
     out.push({
       construct: 'transition-without-endpoints',
       detail:
-        'a transition names no source or no target, so no run can fire it and no walk can say ' +
+        'a step edge names no source or no target, so no run can fire it and no walk can say ' +
         'whether it would have. Give it both endpoints.',
       elementId: tr.id,
+    });
+  }
+  // The detail is the census ROW'S OWN sentence, not a fixed one. A single
+  // hardcoded remedy told the author of `first busy then nowhere;` to write it
+  // as a succession — which is what they had written — and the same words would
+  // have been printed over every other way an edge can go unaccounted. What a
+  // reader can act on is why THIS edge is not in the relation, so that is what
+  // is printed.
+  for (const row of census.unaccounted) {
+    out.push({
+      construct: 'edge-not-walked',
+      detail:
+        `\`${row.qualifiedName}\` is an edge of this machine the walk does not follow: ${row.reason}. ` +
+        'The configuration graph is missing an edge the machine has, so no absence over it would be ' +
+        'a claim about the machine as written.',
+      elementId: row.id,
     });
   }
   return out;
@@ -482,7 +769,8 @@ export function exploreMachine(
     maxCompletion: Math.max(0, opts.maxCompletion ?? MAX_COMPLETION),
     alphabet: machineAlphabet(model, machineId),
   };
-  const unsupported = unsupportedConstructs(model, machineId);
+  const census = edgeCensus(model, machineId);
+  const unsupported = unsupportedConstructs(model, machineId, census);
   const reachable = new Set<ElementId>();
   const fired = new Set<ElementId>();
   const offered = new Set<string>();
@@ -512,6 +800,7 @@ export function exploreMachine(
       nondeterminism,
       deadlocks,
       unsupported,
+      census,
       undeterminedGuards: [],
     };
   }
@@ -653,6 +942,7 @@ export function exploreMachine(
     nondeterminism,
     deadlocks,
     unsupported,
+    census,
     undeterminedGuards: [...undeterminedGuards.values()],
   };
 }
@@ -783,6 +1073,15 @@ export interface MachineReach {
    */
   deadlocks: readonly DeadlockRow[];
   unsupported: readonly UnsupportedConstruct[];
+  /**
+   * Every edge under this machine, walked or refused — see {@link edgeCensus}.
+   *
+   * Published on `--json` and not in the text block, because it is the kill
+   * MEASUREMENT for a whole class of defect rather than a finding a reader acts
+   * on: what a reader acts on is the refusal an `unaccounted` row produces,
+   * which is already a `verification/behaviour-unsupported-construct` row above.
+   */
+  census: EdgeCensus;
   /** The guards this walk consulted and could not evaluate. Never `false`. */
   undeterminedGuards: readonly UndeterminedGuardRow[];
   /** True when the two absence lists were withheld — by a bound, or by an undecided guard. */
@@ -959,6 +1258,7 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     // choice is read at, and that CAN invent a row — so `exploreMachine`
     // declines to record one there, and what survives to here was found at a
     // level nothing inside was withheld from.
+    census: walk.census,
     nondeterminism: walk.nondeterminism,
     // Gated on the guards ALONE, not on `publishable`. A deadlock row says one
     // configuration the walk REACHED had no enabled edge out, and a bound

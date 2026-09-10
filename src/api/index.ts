@@ -328,6 +328,7 @@ export {
   GUARD_UNDETERMINED_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
   UNREACHABLE_STATE_CODE,
+  edgeCensus,
   exploreMachine,
   machineAlphabet,
   machineStates,
@@ -338,6 +339,9 @@ export {
 export type {
   BoundHit,
   DeadlockRow,
+  EdgeAccount,
+  EdgeCensus,
+  EdgeCensusRow,
   ExploreBounds,
   ExploreOptions,
   ExploreResult,

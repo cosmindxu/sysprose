@@ -329,7 +329,49 @@ const CASES: Case[] = [
   },
   { name: 'after(5) before the dwell', build: buildTimer, steps: [{ advance: 3 }] },
   { name: 'after(5) once the dwell is met', build: buildTimer, steps: [{ advance: 3 }, { advance: 3 }] },
+  // THE EDGE KIND THAT WAS IN ONE READER AND NOT THE OTHER. `first active then
+  // done;` is a succession between two states, and a machine that mixes it with
+  // a `transition` is the shape on which the explorer and the simulator walked
+  // different graphs while this file stayed green — because both readers were
+  // built from their own filter and both filters said `TransitionUsage`. They
+  // now read ONE relation (`regionTransitions`), and this case is what fails if
+  // either grows its own again: the flat path is a genuinely independent driver,
+  // so a relation widened on one side only diverges here on the first step.
+  { name: 'a succession between two states, mixed with a transition', build: buildSuccessionMix, steps: [] },
+  { name: 'the same machine driven by a trigger it does not name', build: buildSuccessionMix, steps: ['go'] },
+  { name: 'a succession that closes a completion cycle', build: buildSuccessionLoop, steps: [] },
 ];
+
+/**
+ * `idle -> active` as a transition, `active -> done` as a succession.
+ *
+ * Both are trigger-less, so the opening completion chase drives the whole
+ * machine and the two drivers have to agree about an edge kind, not only about
+ * an order.
+ */
+function buildSuccessionMix(): { model: Model; machineId: ElementId } {
+  const m = new Model();
+  const f = new ModelFactory(m);
+  const sm = f.stateDef('SuccMix');
+  const idle = f.state('idle', sm.id);
+  const active = f.state('active', sm.id);
+  const done = f.state('done', sm.id);
+  f.transition(idle.id, active.id, { ownerId: sm.id });
+  f.succession(active.id, done.id, sm.id);
+  return { model: m, machineId: sm.id };
+}
+
+/** The same, with the succession closing the cycle instead of ending it. */
+function buildSuccessionLoop(): { model: Model; machineId: ElementId } {
+  const m = new Model();
+  const f = new ModelFactory(m);
+  const sm = f.stateDef('SuccLoop');
+  const idle = f.state('idle', sm.id);
+  const active = f.state('active', sm.id);
+  f.transition(idle.id, active.id, { ownerId: sm.id });
+  f.succession(active.id, idle.id, sm.id);
+  return { model: m, machineId: sm.id };
+}
 
 function buildHistory(history: boolean): { model: Model; machineId: ElementId } {
   const m = new Model();
@@ -537,5 +579,26 @@ describe('stepConfig never mutates its input', () => {
     const next = stepConfig(model, opening.config, enabled[0]);
     // `start` leaves `off`, which the next configuration is not in.
     expect(() => stepConfig(model, next.config, enabled[0])).toThrow(/another configuration/);
+  });
+});
+
+describe('the edge kind a differential alone cannot see', () => {
+  /**
+   * A differential is green when BOTH drivers ignore the same edge, which is
+   * exactly how a succession under a state machine stayed invisible to this
+   * file while `reach` published two absence findings over it. Agreement is
+   * necessary and is not sufficient: what the two agree ON has to be asserted
+   * too, so the case above is paired with a statement about the RESULT.
+   */
+  it('both drivers traverse `first active then done`, rather than both ignoring it', () => {
+    const { model, machineId } = buildSuccessionMix();
+    const res = runStateMachine(model, machineId, []);
+    expect(
+      res.visited.map((id) => model.get(id)!.declaredName),
+      'the succession is not walked: the machine stops at `active`',
+    ).toEqual(['idle', 'active', 'done']);
+    expect(res.fired).toHaveLength(2);
+    expect(model.get(res.fired[1].transitionId)!.eClass).toBe('Succession');
+    expectAgreement('succession mix', res, foldRun(model, machineId, []));
   });
 });

@@ -3343,6 +3343,88 @@ package P {
     expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
   }, 90_000);
 
+  it('reach walks a succession between two states, and counts it', () => {
+    // THE DEFECT AT THE SURFACE A PERSON USES. `SuccMix::Ctrl::Modes` writes
+    // `first active then done;` in plain sight beside a `transition`, and this
+    // command used to print `exhaustive`, `1 of 1 transition(s) fired`, `done`
+    // unreachable and `active` with no way out — two absence claims about an
+    // edge the walk did not follow. Both spellings are one relation now.
+    const mixed = resolve(process.cwd(), `${FIXV}/models/succession-mixed.sysml`);
+    const r = run(['reach', mixed]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('2 state machine(s), 2 walked to exhaustion');
+    const ctrl = r.stdout.slice(
+      r.stdout.indexOf('SuccMix::Ctrl::Modes'),
+      r.stdout.indexOf('SuccMix::Loop::Modes'),
+    );
+    expect(ctrl).toContain('3 of 3 state(s) reachable; 2 of 2 transition(s) fired, 0 dead');
+    expect(ctrl, 'a state behind a succession is not an absent state').not.toContain(
+      'unreachable  ',
+    );
+    // `done` really has no way out and is not marked final: the row that
+    // survives is the one the whole graph supports, and `active`'s is gone.
+    expect(r.stdout).toContain('no way out   SuccMix::Ctrl::Modes::done');
+    expect(r.stdout).not.toContain('no way out   SuccMix::Ctrl::Modes::active');
+    expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
+  }, 90_000);
+
+  it('reach --json publishes the producer census: every edge walked or refused', () => {
+    // The durable half. Four readers found four ways the retained relation
+    // differed from the machine; the census is the fifth found by a test
+    // instead — every edge under the machine lands in a bucket, and the
+    // `unaccounted` bucket refuses the machine rather than shrinking a list.
+    const mixed = resolve(process.cwd(), `${FIXV}/models/succession-mixed.sysml`);
+    const r = run(['reach', mixed, '--json']);
+    expect(r.code).toBe(0);
+    const { body } = payload<{
+      reach: {
+        machines: Array<{
+          machine: { qualifiedName: string };
+          transitions: { total: number; fired: number };
+          census: {
+            total: number;
+            counts: Record<string, number>;
+            rows: Array<{ eClass: string; account: string; reason: string }>;
+            unaccounted: unknown[];
+          };
+        }>;
+      };
+    }>(r);
+    const ctrl = body.reach.machines.find(
+      (m) => m.machine.qualifiedName === 'SuccMix::Ctrl::Modes',
+    )!;
+    expect(ctrl.census.total).toBe(2);
+    expect(ctrl.census.unaccounted).toEqual([]);
+    expect(ctrl.census.counts.walked).toBe(2);
+    // The census and the published transition total are the same fact read two
+    // ways: an edge that is walked is an edge the `dead` list is read against.
+    expect(ctrl.transitions.total).toBe(ctrl.census.counts.walked);
+    expect(ctrl.census.rows.map((row) => row.eClass).sort()).toEqual([
+      'Succession',
+      'TransitionUsage',
+    ]);
+    for (const row of ctrl.census.rows) expect(row.reason.length).toBeGreaterThan(20);
+  }, 90_000);
+
+  it('reach says a purely succession-wired file declares no machine, and claims nothing', () => {
+    // The message this fix must not quietly replace. `stateMachinesIn` reads
+    // "owns a TransitionUsage", so this file has no machine of this tool's —
+    // and saying so is an answer about what was looked for, not an absence
+    // claim about a graph.
+    const only = resolve(process.cwd(), `${FIXV}/models/succession-only.sysml`);
+    const r = run(['reach', only]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('0 state machine(s), 0 walked to exhaustion');
+    expect(r.stdout).toContain(
+      'this file declares no element that owns a transition, so there is no configuration graph to walk',
+    );
+    // `0 walked to exhaustion` is the header's own count; what must not appear
+    // is a walk that called ITSELF exhaustive, and any absence under it.
+    expect(r.stdout).not.toContain('exhaustive under');
+    expect(r.stdout).not.toContain('unreachable  ');
+    expect(r.stdout).not.toContain('no way out   ');
+  }, 90_000);
+
   it('check-behaviour will not pass a property over a guard it could not evaluate', () => {
     // THE SAME DEFECT ONE LANE OVER, and the worse half of it: `reach`
     // withholding its lists while this command printed `pass`, `exhaustive` and

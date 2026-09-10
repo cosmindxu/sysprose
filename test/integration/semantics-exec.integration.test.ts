@@ -14,7 +14,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
+import { loadModelText } from '@text/load';
 import { parseModel } from '@text/index';
 import { ModelApi, SysmlApiServer, executionReport } from '@api/index';
 import { validate } from '@validation/index';
@@ -102,6 +105,50 @@ describe('semantics-exec — executionReport / REST /analytics/execution', () =>
       byName(model, 'red').id,
     ]);
   });
+
+  /*
+   * A MIXED MACHINE IS IN BOTH LISTS, and that is what the surface now says.
+   *
+   * `executionReport` splits the model by what an element OWNS — a succession
+   * makes an action flow, a transition makes a state machine — and its contract
+   * used to state the two sets were disjoint in practice. `first active then
+   * done;` between two states makes them overlap, and the step relation now
+   * reads that succession as the completion transition it is, so the state
+   * machine's run traverses it. Nothing pinned either half, on a surface the
+   * REST `/analytics/execution` route and the UI Simulate affordance both read.
+   */
+  it('lists a machine that mixes transitions and successions in both halves', async () => {
+    const path = 'test/fixtures/verification/models/succession-mixed.sysml';
+    const loaded = await loadModelText(readFileSync(resolve(process.cwd(), path), 'utf8'), {
+      fileName: path,
+    });
+    const mixed = loaded.model!;
+    const report = executionReport(mixed);
+
+    const flow = report.actionFlows.find((f) => f.action.qualifiedName === 'SuccMix::Ctrl::Modes')!;
+    expect(flow, 'the succession makes it an action flow too').toBeDefined();
+    expect(flow.successionCount).toBe(1);
+    // The token walk finds no action node to run, so it reports no steps —
+    // true, and not the whole answer about this element.
+    expect(flow.steps).toEqual([]);
+
+    const machine = report.stateMachines.find(
+      (m) => m.stateMachine.qualifiedName === 'SuccMix::Ctrl::Modes',
+    )!;
+    expect(machine).toBeDefined();
+    // The run walks idle → active → done: the succession is a step of it.
+    expect(machine.visited.map((id) => mixed.get(id)!.declaredName)).toEqual([
+      'idle',
+      'active',
+      'done',
+    ]);
+    expect(machine.firedCount).toBe(2);
+    // `transitionCount` counts what the element directly OWNS as a
+    // `TransitionUsage`, which is one of the two edges — the walkable census
+    // `reach` publishes is the figure that counts both, and they are different
+    // questions asked by different surfaces.
+    expect(machine.transitionCount).toBe(1);
+  }, 90_000);
 
   it('exposes the same report over the REST facade (200 + JSON shape)', () => {
     const server = new SysmlApiServer(model);

@@ -1733,6 +1733,64 @@ guard sits strictly inside it, and reported everywhere else.
 graph missing an edge nothing decided is `inconclusive` (exit 2), never `pass`
 and never `vacuous`, and its row is the same `verification/guard-undetermined`.
 
+**Both spellings of an edge are one edge.** Between two states the notation
+offers `transition idle then active;` and `first active then done;`, and a
+machine may mix them in one body:
+
+```sysml
+state def Modes {
+    state idle;
+    state active;
+    state done;
+    transition idle then active;
+    first active then done;
+}
+```
+
+The walk follows both. It did not always: the step relation held
+`TransitionUsage` alone, so the succession was in no configuration and in no
+census, and the report called itself `exhaustive` while printing `1 of 1
+transition(s) fired`, `done` unreachable and `active` a state with no way out —
+two absence claims about an edge nothing had followed. A succession between two
+states carries neither trigger nor payload, so it is read as what it is: a
+completion transition. What stays outside is an edge with a PAYLOAD — a
+`SuccessionFlow`, or a succession carrying an item, which this tool already
+reads as the same thing — because the walk models no payload; it refuses the
+machine rather than walking a graph it knows is short of an edge.
+
+**Every edge under a machine is walked, or refused by name.** That is a census,
+published on `--json` under `census`, and it is the durable half of the fix
+above. Four readers found four different ways the relation the walk retains
+differed from the machine somebody wrote, so the question is now asked the other
+way round: each edge-bearing element under the machine lands in exactly one
+bucket — `walked` (in the relation, leaving a node some configuration's stack
+can hold), `opening` (read by the machine's opening and never fired), `refused`
+(an unsupported construct names it), `off-stack` (neither end is a node the walk
+can stand on — a `do` action's own flow is under the machine and is not an edge
+of it), `not-a-step` (the element sequences nothing: `state idle : Base;` is a
+typing between two elements, `connect a to b;` a connection, and no run ever
+carries the control token along either) — and anything left over is
+`unaccounted`, which is a test failure *and* a refusal:
+`verification/behaviour-unsupported-construct` with the construct
+`edge-not-walked`, no absence list, and no `exhaustive`. The row names the edge
+and says why the relation does not hold it, so a spelling that sequences
+behaviour and that this engine cannot walk can no longer shrink a claim in
+silence.
+
+Which nodes a configuration's stack can hold is *computed*, not guessed from a
+metaclass: the machine's states, plus everything the relation can land the walk
+on from one. So the edges leaving a `decide` node between two states are walked
+and counted, and an edge leaving the machine ROOT — which the walk never stands
+on, because it opens at the root's initial substate — is neither counted nor
+reported dead.
+
+One thing the fix deliberately did not move: a state definition that owns **no**
+`TransitionUsage` at all is still not one of this tool's machines, and `reach`
+says so — *this file declares no element that owns a transition, so there is no
+configuration graph to walk*. That is an answer about what was looked for, not
+an absence claim about a graph: nothing is called unreachable and nothing is
+called exhaustive.
+
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither
 marked final nor a `done` node — a reading of one machine under one alphabet,
@@ -2319,6 +2377,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A narrow encodable fragment** | Only single-valued scalar features with ScalarValues typing are encoded. Multiplicity > 1, chains through unresolved typings, strings, enums, `null`, `%` and variable exponents are `verification/unsupported-construct` — inconclusive, with the construct named. Ordering on °C is encoded in kelvin; arithmetic on °C is refused, exactly as the numeric surface refuses it. |
 | **A bounded behaviour walk** | The in-process engine decides the finite abstraction it exhaustively explored, and says so: a `pass` needs the whole configuration graph, a `fail` does not. There is no event pool and no deferred events, completion chasing stops at 64, and `after(n)` is a discrete clock, not dense time. |
 | **A guard nothing values is not a guard that is false** | `transition idle if mode == 3 then hazard;` over an `attribute mode : Integer;` with no value is a question this tool does not decide. `reach` withholds that machine's unreachable, dead and no-way-out lists, prints `undetermined under {…}` instead of `exhaustive`, and raises `verification/guard-undetermined` naming the guard and the names nothing valued — give the feature a value (`= 3`) and the walk decides it. `check-behaviour` shares the gate and reports `inconclusive` (exit 2) rather than `pass` or `vacuous`. A hidden-choice row stays where the withheld guard is beside it — two transitions enabled at once is an existential claim, and removing a candidate next to them can only shrink it — and is withheld where the withheld guard is strictly inside it, because that moves which level the choice is read at. |
+| **An edge kind the walk does not follow refuses the machine** | Between two states, `transition a then b;` and `first a then b;` are one edge and both are walked; an edge carrying a PAYLOAD (a `SuccessionFlow`, or a succession with an item) is one this relation models nothing of, and is not. Every edge-bearing element under a machine is accounted for by a census (`--json`, under `census`) as walked, read by the opening, refused, with neither end a node the walk can stand on, or as no step at all (a typing, a subsetting, a `connect` — facts about the states rather than steps between them) — and anything left over refuses the machine (`edge-not-walked`) rather than shrinking its unreachable, dead and no-way-out lists. A state definition owning no `TransitionUsage` at all is still not one of this tool's machines, and `reach` says so instead of walking it. |
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 

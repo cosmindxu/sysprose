@@ -184,8 +184,15 @@ export interface ItemFlowInfo {
   target: ElementId | undefined;
 }
 
-/** The payload item/type of a flow, read from its usual attribute slots. */
-function payloadOf(el: ElementRecord): string | undefined {
+/**
+ * The payload item/type of a flow, read from its usual attribute slots.
+ *
+ * Exported because the state-machine step relation (`./mc/config.ts`) asks the
+ * same question for the opposite reason: an edge that carries an item is an item
+ * flow HERE and is not a step the relation can model THERE, and a second reading
+ * of "does this edge carry a payload" would let the two drift.
+ */
+export function payloadOf(el: ElementRecord): string | undefined {
   const raw =
     el.attrs.payload ?? el.attrs.item ?? el.attrs.ofPayload ?? el.attrs.payloadType ?? el.attrs.itemType;
   return typeof raw === 'string' && raw.trim() !== '' ? raw : undefined;

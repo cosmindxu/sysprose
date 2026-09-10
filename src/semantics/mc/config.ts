@@ -37,6 +37,11 @@
 import { type ElementId, type ElementRecord, type Model, isUsage } from '@core/index';
 import { parseExpr, evaluate, type ExprNode } from '../expr';
 import { scopeFor, type Scope } from '../evaluate-model';
+// The ONE reader of an edge's payload in this codebase: `itemFlowsOf` uses it to
+// decide that a `Succession` with an item is a succession flow, and the step
+// relation uses it to decide that such an edge is not a step it can model. Two
+// readings of "does this edge carry an item" would be two semantics.
+import { payloadOf } from '../connectors';
 // Type-only, and erased by `isolatedModules`: the two record shapes an
 // interpreter run publishes are declared beside `runStateMachine` because they
 // are its result type, and importing them as types keeps this module free of a
@@ -47,6 +52,68 @@ import type { PerformedAction, StateFire } from '../execute';
 
 /** Edge metaclasses that carry an action flow's control token. */
 export const SUCCESSION_KINDS = new Set(['Succession', 'SuccessionFlow']);
+
+/**
+ * The edge metaclasses the state-machine step relation follows.
+ *
+ * WHY `Succession` IS HERE. The notation offers two spellings for one thing
+ * between two states — `transition idle then active;` maps to a
+ * `TransitionUsage`, and `first active then done;` maps to a `Succession`
+ * (`src/text/langium/map-to-model.ts`) — and a machine may mix them in one
+ * body. A relation built out of the first spelling alone put the second in no
+ * configuration, in no transition census and in no report, while the walk still
+ * called itself exhaustive: `done` was published unreachable and `active`
+ * published as a state with no way out, over an edge nothing had followed. A
+ * succession between two states carries neither trigger nor payload, so it is
+ * read as what it is — a completion transition — and both readers of this
+ * relation now see it.
+ *
+ * WHY `SuccessionFlow` IS NOT — and why a PAYLOAD, not a metaclass, is what
+ * decides it. A succession flow carries an ITEM between two pins as well as the
+ * control token, and this relation models no payload. Following it would be
+ * inventing a semantics; ignoring it silently is the defect above. So it is
+ * neither: `edgeCensus` (`./explore.ts`) accounts for it as an edge the walk
+ * does not follow, and the machine is refused rather than walked. The same
+ * reasoning applies to the SAME object written the other way round — this
+ * codebase already reads a `Succession` carrying a payload as a succession flow
+ * (`../connectors.ts`, `itemFlowsOf`) — so {@link regionTransitions} asks
+ * `payloadOf`, and a metaclass test alone would have walked one of the two
+ * spellings of an edge whose payload it cannot model.
+ *
+ * ONE SET, TWO READERS. `runRegion` in `../execute.ts` used to filter the
+ * descendants itself; it now takes {@link regionTransitions} like everything
+ * else, because two filters that must agree are two filters that will drift —
+ * and drift here is invisible to a differential, which stays green while BOTH
+ * drivers ignore the same edge.
+ */
+export const STEP_EDGE_KINDS: ReadonlySet<string> = new Set(['TransitionUsage', 'Succession']);
+
+/**
+ * Every metaclass that SEQUENCES BEHAVIOUR — the census's domain (`./explore.ts`).
+ *
+ * NOT "every element under the machine that carries endpoints", which is what
+ * the census first read and which refused `state idle : Base;`. A model is full
+ * of endpoint-carrying elements that are facts ABOUT states rather than steps
+ * BETWEEN them — a `FeatureTyping`, a `Subsetting`, a `Redefinition`, a
+ * `Disjoining`, a `connect`, an `allocate`, a `satisfy` — and the step relation
+ * being blind to every one of them costs no absence claim, because none of them
+ * ever carries the machine's control token. Refusing a machine for one of them
+ * withholds the whole report over a relationship that was never a step.
+ *
+ * The teeth are on this side of the line instead: a member of THIS family that
+ * the relation does not hold — a spelling it does not read, a payload it cannot
+ * model, an endpoint it cannot resolve — is `unaccounted`, fails the census
+ * test and refuses the machine. `test/unit/semantics.mc.reach.test.ts` pins the
+ * classification against `ALL_METACLASSES`, so a metaclass added to the
+ * metamodel later cannot join the model without someone deciding which side of
+ * this line it falls on.
+ */
+export const CONTROL_EDGE_KINDS: ReadonlySet<string> = new Set([
+  'TransitionUsage',
+  'Succession',
+  'SuccessionFlow',
+  'TransitionFeature',
+]);
 
 /** A store-aware {@link Scope}: the store (by name) shadows the static scope. */
 export function storeScope(store: ReadonlyMap<string, unknown>, scope: Scope): Scope {
@@ -288,8 +355,22 @@ export function regionScope(model: Model, regionId: ElementId): Scope {
 }
 
 /**
- * Every transition inside a region that has both endpoints, in declaration
+ * Every step edge inside a region that has both endpoints, in declaration
  * order — which is the order the first-enabled tie-break is taken in.
+ *
+ * {@link STEP_EDGE_KINDS}, not `TransitionUsage` alone: a succession between
+ * two states is the same edge written the other way round, and a relation that
+ * held only one of the two spellings made the walk publish absences about the
+ * other. Edges whose source is not a state on the active stack — an
+ * `InitialNode`'s opening edge, a `do` action's own control flow — are still in
+ * this list and inert in it: {@link stepCandidates} offers only what leaves the
+ * stack, and `walkableTransitions` (`./explore.ts`) censuses only the same.
+ *
+ * A PAYLOAD DISQUALIFIES AN EDGE whatever it is spelled as. `payloadOf` is the
+ * same reader `itemFlowsOf` uses, so an edge this relation drops for carrying an
+ * item is exactly an edge the flow machinery already calls an item flow; the
+ * census then accounts for it as one the walk does not follow and the machine is
+ * refused rather than walked over a token whose payload nothing here models.
  */
 export function regionTransitions(model: Model, regionId: ElementId): readonly ElementRecord[] {
   const cache = cacheFor(model);
@@ -299,7 +380,10 @@ export function regionTransitions(model: Model, regionId: ElementId): readonly E
     .descendants(regionId)
     .filter(
       (e) =>
-        e.eClass === 'TransitionUsage' && e.source?.[0] !== undefined && e.target?.[0] !== undefined,
+        STEP_EDGE_KINDS.has(e.eClass) &&
+        e.source?.[0] !== undefined &&
+        e.target?.[0] !== undefined &&
+        payloadOf(e) === undefined,
     );
   cache.transitions.set(regionId, list);
   return list;

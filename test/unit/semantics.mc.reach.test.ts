@@ -36,14 +36,19 @@ import {
   GUARD_UNDETERMINED_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
   UNREACHABLE_STATE_CODE,
+  edgeCensus,
   exploreMachine,
   reachReport,
   stateMachinesIn,
   walkableTransitions,
 } from '../../src/semantics/mc/explore';
+import { ALL_METACLASSES } from '../../src/core/metamodel';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
 import {
+  CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
+  STEP_EDGE_KINDS,
+  SUCCESSION_KINDS,
   hashConfig,
   initialConfig,
   stepCandidates,
@@ -1099,5 +1104,488 @@ describe('a completion CYCLE is not a completion bound', () => {
     expect(runStateMachine(over.model, over.machineId, []).completionBudgetHit).toBe(true);
     expect(exploreMachine(over.model, over.machineId).boundHit).toBe('completion');
     expect(exploreMachine(over.model, over.machineId).exhaustive).toBe(false);
+  });
+});
+
+/* ─────────── an edge kind the walk skips is not an edge it may ignore ────── */
+
+/**
+ * The defect this gate closes, and the durable half beside it.
+ *
+ * `SuccMix::Ctrl::Modes` mixes the two edge kinds the notation offers between
+ * states — `transition idle then active;` and `first active then done;`. The
+ * step relation used to filter `TransitionUsage` alone, so the succession was
+ * in no configuration, in no census and in no report — and the walk still
+ * called itself `exhaustive` while publishing `done` unreachable and `active` a
+ * state with no way out. Two absence claims about an edge nothing followed.
+ *
+ * `Loop` is the positive control: its succession closes a cycle, so a walk that
+ * merely COUNTED the edge without following it would still deadlock at
+ * `active`. And `Ctrl` keeps a no-way-out row at `done` afterwards, because
+ * `done` really has no outgoing edge of either kind — the row that survives is
+ * the one the whole graph supports.
+ */
+describe('a succession between two states is an edge of the machine', () => {
+  const MIXED = 'test/fixtures/verification/models/succession-mixed.sysml';
+  let report: ReturnType<typeof reachReport>;
+  beforeAll(async () => {
+    const loaded = await loadModelText(read(MIXED), { fileName: MIXED });
+    report = reachReport(loaded.model!);
+  }, 90_000);
+
+  const machine = (owner: string) =>
+    report.machines.find((m) => m.machine.qualifiedName === `SuccMix::${owner}::Modes`)!;
+
+  it('counts the succession in the transition census', () => {
+    const ctrl = machine('Ctrl');
+    expect(ctrl, `${MIXED} no longer declares SuccMix::Ctrl::Modes`).toBeDefined();
+    expect(ctrl.transitions.total, 'the succession is not in the census the walk reports').toBe(2);
+    expect(ctrl.transitions.fired).toBe(2);
+    expect(ctrl.transitions.dead).toEqual([]);
+  });
+
+  it('walks it, so nothing behind it is called unreachable', () => {
+    const ctrl = machine('Ctrl');
+    expect(ctrl.exhaustive).toBe(true);
+    expect(ctrl.states.reachable.map((s) => s.name).sort()).toEqual(['active', 'done', 'idle']);
+    expect(ctrl.states.unreachable, '`done` is behind a succession, not absent').toEqual([]);
+    expect(report.diagnostics.filter((d) => d.code === UNREACHABLE_STATE_CODE)).toEqual([]);
+    expect(report.diagnostics.filter((d) => d.code === DEAD_TRANSITION_CODE)).toEqual([]);
+  });
+
+  it('keeps the no-way-out row the whole graph does support, and only that one', () => {
+    // `active` had one because the walk could not see the edge leaving it;
+    // `done` has one because it genuinely has none. Naming both would be as
+    // wrong as naming neither.
+    const ctrl = machine('Ctrl');
+    expect(ctrl.deadlocks.map((d) => d.leaf.name)).toEqual(['done']);
+    const rows = report.diagnostics.filter((d) => d.code === DEADLOCK_CODE);
+    expect(rows.map((d) => d.elementName)).toEqual(['SuccMix::Ctrl::Modes::done']);
+  });
+
+  it('the control: a succession that closes a cycle leaves nothing absent at all', () => {
+    const loop = machine('Loop');
+    expect(loop.exhaustive).toBe(true);
+    expect(loop.states.reachable.map((s) => s.name).sort()).toEqual(['active', 'idle']);
+    expect(loop.states.unreachable).toEqual([]);
+    expect(loop.transitions).toMatchObject({ total: 2, fired: 2 });
+    expect(loop.deadlocks, 'the succession was counted but not followed').toEqual([]);
+  });
+
+  it('a machine that owns no transition at all is still answered the same way', async () => {
+    // The honest message this fix must not quietly replace: `stateMachinesIn`
+    // reads "owns a TransitionUsage", so a purely succession-wired state
+    // definition is not one of this tool's machines and nothing is walked or
+    // claimed about it.
+    const ONLY = 'test/fixtures/verification/models/succession-only.sysml';
+    const loaded = await loadModelText(read(ONLY), { fileName: ONLY });
+    const r = reachReport(loaded.model!);
+    expect(r.machines).toEqual([]);
+    expect(r.diagnostics).toEqual([]);
+  }, 90_000);
+});
+
+/* ─────────────────────────── the producer census ────────────────────────── */
+
+/**
+ * EVERY EDGE UNDER THE MACHINE IS ACCOUNTED FOR, or a test fails.
+ *
+ * Four readers have now found four different ways the relation the walk retains
+ * differs from the machine an author wrote — dwell labels over-approximating,
+ * the cooperative environment over-approximating, an undetermined guard
+ * under-approximating, and an edge kind simply absent. Enumerating the
+ * mechanisms has failed four times, so this is the census in the same spirit as
+ * the verification lane's relation census (`test/integration/verification.
+ * differential.test.ts`): the edges are counted WITHOUT asking the walk, and
+ * each one has to land in a bucket that says what became of it. An edge kind
+ * nobody thought about lands in `unaccounted`, which fails here AND refuses the
+ * machine at run time — it can no longer shrink an absence list in silence.
+ */
+describe('the producer census: every edge is walked, or refused with a code', () => {
+  it('accounts for every edge of every machine in the shipped examples', async () => {
+    for (const path of ['examples/uav-isr.sysml', 'examples/vehicle.sysml', 'examples/views-tour.sysml']) {
+      const loaded = await loadModelText(read(path), { fileName: path });
+      const model = loaded.model!;
+      const machines = stateMachinesIn(model);
+      expect(machines.length, `${path} declares no machine`).toBeGreaterThan(0);
+      for (const m of machines) {
+        const census = edgeCensus(model, m.id);
+        expect(census.unaccounted, `${path}: ${m.declaredName}`).toEqual([]);
+        expect(census.rows).toHaveLength(census.total);
+        // The published transition census IS the walked bucket, read two ways.
+        expect(census.counts.walked).toBe(walkableTransitions(model, m.id).length);
+      }
+    }
+  }, 90_000);
+
+  it('puts a succession under a machine in the walked bucket', async () => {
+    const MIXED = 'test/fixtures/verification/models/succession-mixed.sysml';
+    const loaded = await loadModelText(read(MIXED), { fileName: MIXED });
+    const model = loaded.model!;
+    const ctrl = stateMachinesIn(model).find(
+      (m) => model.qualifiedName(m.id) === 'SuccMix::Ctrl::Modes',
+    )!;
+    const census = edgeCensus(model, ctrl.id);
+    expect(census.total).toBe(2);
+    expect(census.counts.walked).toBe(2);
+    expect(census.rows.map((r) => r.eClass).sort()).toEqual(['Succession', 'TransitionUsage']);
+    expect(census.unaccounted).toEqual([]);
+  }, 90_000);
+
+  it('an edge kind neither walked nor refused fails the census AND refuses the machine', () => {
+    // Constructed through the API because no surface syntax produces one: a
+    // `SuccessionFlow` between two states carries a payload the step relation
+    // does not model, and it is exactly the shape this gate is for.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Payload');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, trigger: 'go' });
+    const flow = m.create('SuccessionFlow', {
+      ownerId: sm.id,
+      source: [b.id],
+      target: [a.id],
+    });
+
+    const census = edgeCensus(m, sm.id);
+    expect(census.total).toBe(2);
+    expect(census.unaccounted.map((r) => r.id)).toEqual([flow.id]);
+    expect(census.unaccounted[0].reason).toMatch(/the step relation does not hold this edge/i);
+
+    // And the walk refuses the machine rather than publishing an absence over a
+    // graph it knows is missing an edge.
+    const walk = exploreMachine(m, sm.id);
+    expect(walk.exhaustive).toBe(false);
+    expect(walk.unsupported.map((u) => u.construct)).toEqual(['edge-not-walked']);
+    const only = reachReport(m).machines[0];
+    expect(only.exhaustive).toBe(false);
+    expect(only.states.unreachable).toEqual([]);
+    expect(only.transitions.dead).toEqual([]);
+    expect(only.deadlocks).toEqual([]);
+    expect(only.qualification).not.toContain('exhaustive');
+    const finding = reachReport(m).diagnostics.find((d) => d.code === BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(finding!.severity).toBe('info');
+    expect(finding!.message).toContain('is not explored');
+  });
+
+  it('the initial node’s edge is accounted for as read, never as walkable', () => {
+    // The one edge a walk cannot reach and must not count: `initialState` reads
+    // it to decide where the machine opens and no step ever fires it. It is in
+    // the census with a reason, and out of the walkable total — undoing that
+    // would report it dead on every exhaustive walk.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Opens');
+    const start = m.create('InitialNode', { declaredName: 'start', ownerId: sm.id });
+    const idle = f.state('idle', sm.id);
+    const busy = f.state('busy', sm.id);
+    const open = f.transition(start.id, idle.id, { ownerId: sm.id });
+    f.transition(idle.id, busy.id, { ownerId: sm.id, trigger: 'go' });
+
+    const census = edgeCensus(m, sm.id);
+    expect(census.total).toBe(2);
+    expect(census.unaccounted).toEqual([]);
+    expect(census.rows.find((r) => r.id === open.id)!.account).toBe('opening');
+    expect(walkableTransitions(m, sm.id).map((t) => t.id)).not.toContain(open.id);
+    expect(reachReport(m).machines[0].transitions.total).toBe(1);
+  });
+
+  /*
+   * THE DOMAIN, and the four ways the first reading of it was wrong.
+   *
+   * A census that counted "every descendant carrying an endpoint" counted a
+   * `FeatureTyping`, a `Subsetting`, a `Disjoining` and a `ConnectionUsage` —
+   * and, finding none of them in the step relation, refused the machine and
+   * withheld the whole report. `state idle : Base;` is mainstream notation that
+   * parses with no diagnostic at all, and the machine walked correctly before
+   * the census existed, so the census was inventing a refusal rather than
+   * catching a blind spot. None of those four ever carries the control token:
+   * the relation is COMPLETE without them, which is what `not-a-step` says.
+   */
+  it('a typed, subsetted, connected or disjoint state is not an edge the walk is missing', async () => {
+    const src =
+      'package NotAStep {\n' +
+      '    state def Base;\n' +
+      '    part def C {\n' +
+      '        state def M {\n' +
+      '            state idle : Base;\n' +
+      '            state active :> Base;\n' +
+      '            state other;\n' +
+      '            connect idle to active;\n' +
+      '            disjoint active from other;\n' +
+      '            transition idle then active;\n' +
+      '            transition active then other;\n' +
+      '        }\n' +
+      '    }\n' +
+      '}\n';
+    const loaded = await loadModelText(src, { fileName: 'not-a-step.sysml' });
+    expect(loaded.report.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const model = loaded.model!;
+    const machine = stateMachinesIn(model)[0];
+
+    const census = edgeCensus(model, machine.id);
+    expect(
+      census.rows.filter((r) => r.account === 'not-a-step').map((r) => r.eClass).sort(),
+    ).toEqual(['ConnectionUsage', 'Disjoining', 'FeatureTyping', 'Subsetting']);
+    expect(census.unaccounted).toEqual([]);
+    expect(census.counts.walked).toBe(2);
+
+    // And the report is a report, not a refusal.
+    const only = reachReport(model).machines[0];
+    expect(only.exhaustive).toBe(true);
+    expect(only.unsupported).toEqual([]);
+    expect(only.transitions.total).toBe(2);
+    expect(only.states.reachable.map((r) => r.name).sort()).toEqual(['active', 'idle', 'other']);
+  }, 90_000);
+
+  /*
+   * A REDEFINITION reaches the same bucket, and is built through the API
+   * because `:>>` needs an inherited feature to redefine. The four above are
+   * what the notation produces; this is the one a program produces.
+   */
+  it('a redefinition between two states is accounted for without refusing the machine', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Redef');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, trigger: 'go' });
+    const redef = m.create('Redefinition', { ownerId: a.id, source: [a.id], target: [b.id] });
+
+    const census = edgeCensus(m, sm.id);
+    expect(census.rows.find((r) => r.id === redef.id)!.account).toBe('not-a-step');
+    expect(census.unaccounted).toEqual([]);
+    expect(reachReport(m).machines[0].exhaustive).toBe(true);
+  });
+
+  /*
+   * THE STACK IS NOT A METACLASS. `stepConfig` pushes whatever the transition it
+   * fired TARGETS, so a `decide` node between two states goes on the stack and
+   * `stepCandidates` offers the edges leaving it — the walk demonstrably
+   * traverses them. A census that read "leaves a `StateUsage`" called those
+   * edges unaccounted and refused a machine the walk handles perfectly, while
+   * the report it withheld had been correct at the commit before.
+   */
+  it('a step edge leaving a control node between two states is walked, not refused', async () => {
+    const src =
+      'package Fork {\n' +
+      '    part def Ctrl {\n' +
+      '        state def Modes {\n' +
+      '            state idle;\n' +
+      '            state active;\n' +
+      '            state done;\n' +
+      '            decide pick;\n' +
+      '            transition idle then pick;\n' +
+      '            transition pick then active;\n' +
+      '            transition pick then done;\n' +
+      '        }\n' +
+      '    }\n' +
+      '}\n';
+    const loaded = await loadModelText(src, { fileName: 'fork.sysml' });
+    expect(loaded.report.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const model = loaded.model!;
+    const machine = stateMachinesIn(model)[0];
+
+    const census = edgeCensus(model, machine.id);
+    expect(census.counts.unaccounted).toBe(0);
+    expect(census.counts.walked).toBe(3);
+    expect(census.counts.walked).toBe(walkableTransitions(model, machine.id).length);
+
+    const only = reachReport(model).machines[0];
+    expect(only.exhaustive).toBe(true);
+    expect(only.states.reachable.map((r) => r.name).sort()).toEqual(['active', 'done', 'idle']);
+    expect(only.transitions.total).toBe(3);
+    expect(only.transitions.fired).toBe(3);
+    expect(only.transitions.dead).toEqual([]);
+  }, 90_000);
+
+  /*
+   * THE OTHER DIRECTION OF THE SAME ERROR. `initialConfig` opens the machine at
+   * the ROOT'S initial substate, so nothing the walk stands on is the root
+   * itself — and an edge leaving it was counted walkable because its source was
+   * a `StateUsage`, then reported `dead` on an exhaustive walk. That is a
+   * finding the census invented rather than the walk finding it, which is the
+   * exact hazard the walkable census exists to avoid.
+   */
+  it('an edge leaving the machine root is accounted for and never reported dead', async () => {
+    const src =
+      'package Root {\n' +
+      '    part def C {\n' +
+      '        state def M {\n' +
+      '            state outer {\n' +
+      '                state a;\n' +
+      '                state b;\n' +
+      '                transition a then b;\n' +
+      '                transition outer then b;\n' +
+      '            }\n' +
+      '        }\n' +
+      '    }\n' +
+      '}\n';
+    const loaded = await loadModelText(src, { fileName: 'root.sysml' });
+    expect(loaded.report.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const model = loaded.model!;
+    const machine = stateMachinesIn(model)[0];
+    expect(model.qualifiedName(machine.id)).toBe('Root::C::M::outer');
+
+    const census = edgeCensus(model, machine.id);
+    const rootEdge = census.rows.find((r) => r.account === 'off-stack')!;
+    expect(rootEdge.reason).toContain('leaves the machine root');
+    expect(census.unaccounted).toEqual([]);
+
+    const only = reachReport(model).machines[0];
+    expect(only.exhaustive).toBe(true);
+    expect(only.transitions.total).toBe(1);
+    expect(only.transitions.dead).toEqual([]);
+    expect(
+      reachReport(model).diagnostics.filter((d) => d.code === DEAD_TRANSITION_CODE),
+    ).toEqual([]);
+  }, 90_000);
+
+  /*
+   * THE TEETH, PLACED WHERE THEY CAN ACTUALLY BITE.
+   *
+   * The `SuccessionFlow` case above puts the un-followed edge between two
+   * STATES, and a census that bucketed by metaclass passed it while leaving a
+   * hole one step to the left: the same edge between two ACTIONS the walk
+   * enters from a state was filed `off-stack` — "neither end is a state of this
+   * machine" — and the machine was published `exhaustive` with a deadlock row,
+   * over an edge nothing had followed. Which is the first MUST-NEVER, inside
+   * the mechanism written to close it. `off-stack` now means neither end is a
+   * node the walk can STAND ON, which is computed from the relation.
+   */
+  it('an unfollowed edge between two non-state ends is caught, not filed off-stack', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Hole');
+    const idle = f.state('idle', sm.id);
+    const a = f.action('a', sm.id);
+    const b = f.action('b', sm.id);
+    // The walk enters `a` from a state, so `a` is on the stack — and an edge
+    // leaving it is an edge of this machine however its ends are spelled.
+    f.transition(idle.id, a.id, { ownerId: sm.id, trigger: 'go' });
+    const flow = m.create('SuccessionFlow', { ownerId: sm.id, source: [a.id], target: [b.id] });
+
+    const census = edgeCensus(m, sm.id);
+    expect(census.unaccounted.map((r) => r.id)).toEqual([flow.id]);
+    expect(census.counts['off-stack']).toBe(0);
+
+    const only = reachReport(m).machines[0];
+    expect(only.exhaustive).toBe(false);
+    expect(only.unsupported.map((u) => u.construct)).toEqual(['edge-not-walked']);
+    expect(only.deadlocks).toEqual([]);
+    expect(only.qualification).not.toContain('exhaustive');
+  });
+
+  /*
+   * TWO SPELLINGS OF ONE MISTAKE GET ONE ANSWER. `first busy then nowhere;` and
+   * `transition busy then nowhere;` are the same missing endpoint, and while the
+   * dangling filter still said `TransitionUsage` the succession was refused with
+   * a sentence telling its author to write it as a succession — which is what
+   * they had written.
+   */
+  it('a succession missing an endpoint is refused like a transition missing one', async () => {
+    const body = (edge: string): string =>
+      'package Dangle {\n' +
+      '    part def C {\n' +
+      '        state def M {\n' +
+      '            state idle;\n' +
+      '            state busy;\n' +
+      '            transition idle then busy;\n' +
+      `            ${edge}\n` +
+      '        }\n' +
+      '    }\n' +
+      '}\n';
+    for (const edge of ['first busy then nowhere;', 'transition busy then nowhere;']) {
+      const loaded = await loadModelText(body(edge), { fileName: 'dangle.sysml' });
+      const only = reachReport(loaded.model!).machines[0];
+      expect(only.unsupported.map((u) => u.construct), edge).toEqual([
+        'transition-without-endpoints',
+      ]);
+      expect(only.unsupported[0].detail, edge).toContain('Give it both endpoints.');
+      expect(only.exhaustive, edge).toBe(false);
+      expect(only.states.unreachable, edge).toEqual([]);
+    }
+  }, 90_000);
+
+  /*
+   * A PAYLOAD, NOT A METACLASS, IS WHAT THE RELATION CANNOT MODEL. This codebase
+   * already reads a `Succession` carrying an item as a succession flow
+   * (`itemFlowsOf`), so a metaclass test walked one of the two spellings of the
+   * same object and published `exhaustive` over it, while two shipped documents
+   * said a payload-carrying edge is refused.
+   */
+  it('a payload turns a succession into an edge the relation refuses', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Payload');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, trigger: 'go' });
+    const carrying = m.create('Succession', {
+      ownerId: sm.id,
+      source: [b.id],
+      target: [a.id],
+      attrs: { payload: 'Cargo' },
+    });
+
+    const census = edgeCensus(m, sm.id);
+    expect(census.unaccounted.map((r) => r.id)).toEqual([carrying.id]);
+    expect(census.unaccounted[0].reason).toContain('models no payload');
+    const only = reachReport(m).machines[0];
+    expect(only.exhaustive).toBe(false);
+    expect(only.transitions.dead).toEqual([]);
+    expect(only.deadlocks).toEqual([]);
+
+    // The control: the SAME edge without the payload is walked, so what is
+    // refused is the payload and not the spelling.
+    const plain = new Model();
+    const pf = new ModelFactory(plain);
+    const psm = pf.stateDef('Plain');
+    const pa = pf.state('a', psm.id);
+    const pb = pf.state('b', psm.id);
+    pf.transition(pa.id, pb.id, { ownerId: psm.id, trigger: 'go' });
+    plain.create('Succession', { ownerId: psm.id, source: [pb.id], target: [pa.id] });
+    expect(edgeCensus(plain, psm.id).counts).toMatchObject({ walked: 2, unaccounted: 0 });
+    expect(reachReport(plain).machines[0].exhaustive).toBe(true);
+  });
+
+  /*
+   * THE DOMAIN IS PINNED TO THE METAMODEL, not to a list somebody remembered to
+   * update. `Succession` went missing from the step relation in the first place
+   * because a metaclass that sequences behaviour was never classified as one, so
+   * a metaclass ADDED to this build cannot arrive without someone deciding which
+   * side of the line it falls on: this goes red until they do.
+   */
+  it('every metaclass this build knows that sequences behaviour is in the census domain', () => {
+    const sequencing = ALL_METACLASSES.filter((k) => /Transition|Succession/.test(k));
+    expect([...CONTROL_EDGE_KINDS].sort()).toEqual([...sequencing].sort());
+    // And the relation can never follow an edge the census does not classify:
+    // that gap is exactly how an edge escapes both the walk and the refusal.
+    for (const k of [...STEP_EDGE_KINDS, ...SUCCESSION_KINDS]) {
+      expect(CONTROL_EDGE_KINDS.has(k), k).toBe(true);
+    }
+  });
+
+  it('an edge with no end in the machine’s states is accounted for, not counted against it', () => {
+    // A `do` action's own flow lives under the machine and is not an edge of
+    // it: no configuration's stack ever holds an action node, so no step of
+    // this relation could traverse it. Accounted for by name rather than
+    // filtered away silently.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('WithAction');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, trigger: 'go' });
+    const body = f.action('body', a.id);
+    const step1 = f.action('step1', body.id);
+    const step2 = f.action('step2', body.id);
+    const inner = f.succession(step1.id, step2.id, body.id);
+
+    const census = edgeCensus(m, sm.id);
+    expect(census.unaccounted).toEqual([]);
+    expect(census.rows.find((r) => r.id === inner.id)!.account).toBe('off-stack');
+    expect(reachReport(m).machines[0].exhaustive).toBe(true);
   });
 });

@@ -60,6 +60,7 @@ import {
   isTruthy,
   leafOf,
   literalValueOf,
+  regionTransitions,
   runStatePhase,
   seedStore,
   stepConfig,
@@ -892,9 +893,16 @@ export interface StateRunResult {
 /**
  * Drive the state machine rooted at `stateId` against `triggers`. Starts at the
  * initial state (an InitialNode's successor, else the first contained
- * StateUsage). For each trigger, fires the first enabled TransitionUsage
- * (trigger matches + guard true) leaving the current state, moving to its
- * target. Deterministic; bounded by `triggers.length`.
+ * StateUsage). For each trigger, fires the first enabled STEP EDGE (trigger
+ * matches + guard true) leaving the current state, moving to its target.
+ * Deterministic; bounded by `triggers.length`.
+ *
+ * A step edge is a `TransitionUsage` or a `Succession` between two states —
+ * `STEP_EDGE_KINDS` in `./mc/config.ts`. The notation writes the same edge both
+ * ways (`transition idle then active;` and `first active then done;`) and a
+ * machine may mix them in one body; reading only the first spelling stopped
+ * this interpreter at a state the model plainly leaves, and made every absence
+ * `reach` published over such a machine a claim about an edge nothing followed.
  */
 export function runStateMachine(
   model: Model,
@@ -977,10 +985,16 @@ function runRegion(
   const declIndex = new Map<ElementId, number>();
   desc.forEach((e, i) => declIndex.set(e.id, i));
 
-  const transitions = desc
-    .filter((e) => e.eClass === 'TransitionUsage')
-    .filter((e) => e.source?.[0] !== undefined && e.target?.[0] !== undefined)
-    .sort((a, b) => (declIndex.get(a.id) ?? 0) - (declIndex.get(b.id) ?? 0));
+  // THE SAME LIST THE CHECKER READS, and not a second filter that agrees with
+  // it today. This path used to build its own — `TransitionUsage` with both
+  // endpoints, in descendant order — which is exactly what `regionTransitions`
+  // returns, minus the succession edges it was missing. Two filters over one
+  // relation is how the simulator and the explorer came to walk different
+  // graphs while the differential between them stayed green: a differential
+  // cannot see an edge BOTH readers ignore. The declaration-order sort is gone
+  // with the duplicate because `model.descendants` already yields that order,
+  // which is the order `declIndex` was built from.
+  const transitions = regionTransitions(model, regionId);
 
   const scope = combinedScope(model, region);
   const visited: ElementId[] = [];
@@ -1033,7 +1047,7 @@ function runRegion(
 function chaseCompletion(
   model: Model,
   start: ElementId,
-  transitions: ElementRecord[],
+  transitions: readonly ElementRecord[],
   store: Map<string, unknown>,
   scope: Scope,
   performed: PerformedAction[],

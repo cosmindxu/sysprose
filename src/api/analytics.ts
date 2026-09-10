@@ -2053,8 +2053,16 @@ function isFlowNode(el: ElementRecord): boolean {
  *    against the distinct trigger alphabet discovered on its transitions (in
  *    declaration order), a deterministic "exercise every trigger" run.
  *
- * The two sets are disjoint in practice (action bodies use successions, state
- * machines use transitions). Library content is excluded.
+ * THE TWO SETS OVERLAP where a machine mixes the two spellings, and a mixed
+ * machine is legal notation: `transition idle then active; first active then
+ * done;` in one body owns a succession AND a transition, so it is listed as an
+ * action flow (whose token walk finds no action to run and reports no steps)
+ * and as a state machine (which now traverses both edges, because the step
+ * relation reads a trigger-less, payload-free succession between two states as
+ * the completion transition it is — `src/semantics/mc/config.ts`). Both rows are
+ * true of it; neither is the whole answer. The sentence that stood here said
+ * they were disjoint, which stopped being true the day the relation grew the
+ * second spelling. Library content is excluded.
  */
 export function executionReport(model: Model): ExecutionReport {
   const actionFlows: ActionFlowRun[] = [];

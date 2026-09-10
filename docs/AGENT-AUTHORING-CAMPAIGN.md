@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 110 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 113 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -3632,6 +3632,54 @@ offered every input at, so a deadlock found under a bound is still one that was
 found, while an undetermined guard is an edge out nothing decided. Measured: no
 `.sysml` in this repository carries a transition guard, so no golden in the
 corpus moved.
+
+**Every edge the machine has is walked, or the walk says which it did not.**
+The same species again, through the last door a bound does not cover: an edge
+kind the relation simply did not hold. `transition idle then active;` and
+`first active then done;` are the two spellings the notation offers between two
+states — a `TransitionUsage` and a `Succession` — and a machine may mix them in
+one body. `regionTransitions` filtered the first alone, so on a mixed machine
+the succession was in no configuration, in no census and in no report, and
+`reach` printed `exhaustive`, `1 of 1 transition(s) fired`, `done` unreachable
+and `active` with no way out. Two absence claims about an edge nothing followed,
+over a ten-line model with no diagnostics of its own. A succession between two
+states carries neither trigger nor payload, so it is read as what it is — a
+completion transition — and `STEP_EDGE_KINDS` now holds both spellings.
+`runRegion`, the interpreter's flat path, no longer builds its own filter but
+reads the SAME relation: two filters that must agree are two filters that will
+drift, and this drift was invisible to the differential gate, which stays green
+while BOTH drivers ignore the same edge. The differential's new cases assert the
+result as well as the agreement for exactly that reason.
+
+The durable half is a producer census, in the spirit of the verification lane's
+relation census. Four readers have now found four distinct ways the retained
+relation differs from the machine an author wrote — dwell labels
+over-approximating, the cooperative environment over-approximating, an
+undetermined guard under-approximating, and now an edge kind absent — and
+enumerating mechanisms has failed four times. So the question is inverted:
+`edgeCensus` counts every edge-bearing element under the machine WITHOUT asking
+the walk, and each one lands in exactly one bucket — `walked`, `opening` (read
+by `initialState` and never fired, which is why it stays out of the walkable
+total), `refused`, `off-stack` (neither end is a node the walk can STAND on: a
+`do` action's own control flow is under the machine and is not an edge of it),
+`not-a-step` (the element sequences nothing — `state idle : Base;` is a typing,
+`connect a to b;` a connection, and no run carries the control token along
+either) — with anything left over in `unaccounted`. That bucket fails a test AND
+refuses the machine: `verification/behaviour-unsupported-construct` with the
+construct `edge-not-walked` and the row's own reason, no absence list, no
+`exhaustive`. An edge carrying a PAYLOAD is the first member — this relation
+models none — and an edge kind nobody has thought of yet is the point. Both
+halves of that bucketing are computed rather than read off a metaclass, because
+the first reading of them was wrong in both directions at once: it refused every
+machine whose states are typed, and it blessed an edge leaving the machine root
+that no configuration can offer, publishing it `dead` on an exhaustive walk. The
+census is published on `--json` under `census` and is the honest
+kill-measurement for the whole class. What did NOT move: a state definition owning no `TransitionUsage`
+at all is still not one of this tool's machines, and `reach` still answers *this
+file declares no element that owns a transition* rather than walking it — an
+answer about what was looked for, not an absence claim about a graph. Measured:
+`reach` output is byte-identical on all six shipped examples, because none of
+them mixes the two edge kinds.
 
 **A safety property is a claim you make about a machine, and
 `check-behaviour` judges it.** `reach` reports; this one decides. A property is
