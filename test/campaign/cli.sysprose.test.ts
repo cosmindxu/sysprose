@@ -1265,6 +1265,122 @@ describe('L7 — sysprose reporting command', () => {
     expect(endurance.satisfiedBy.map((x) => x.declaredName)).toEqual(['uav']);
   }, 90_000);
 
+  /**
+   * The one shape no file in this repository writes, which is why the probe is
+   * written to a temporary directory rather than added to the corpus: a
+   * requirement definition that specialises another and writes a clause of its
+   * own. Before this landed the child's row showed ONE clause where two apply
+   * and said nothing about the second.
+   *
+   * `run(…)` because what is asserted is the TEXT the command prints.
+   */
+  it('contracts says where the second of two clauses came from', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-inherit-'));
+    const file = join(dir, 'spec-inherit.sysml');
+    writeFileSync(
+      file,
+      `package SpecInherit {
+    part def Vehicle {
+        attribute mass : ISQ::MassValue;
+        attribute topSpeed : ISQ::SpeedValue;
+    }
+    requirement def MassLimit {
+        subject v : Vehicle;
+        require constraint { v.mass <= 1500 [kg] }
+    }
+    requirement def StrictMassLimit :> MassLimit {
+        require constraint { v.topSpeed <= 60 [m/s] }
+    }
+}
+`,
+    );
+    try {
+      const r = await run(['contracts', file]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('2 guarantee(s): 1 declared, 1 inherited from SpecInherit::MassLimit');
+      expect(r.stdout).toContain('require v.mass <= 1500 [kg]  [QF_LRA — linear real arithmetic] (inherited)');
+      // The variables line is the contract's OWN — it feeds the encoder's
+      // input and an inherited clause's names are not in it — so on a row that
+      // shows an inherited clause the label says which reading it is.
+      expect(r.stdout).toContain('variables declared v.topSpeed (parameter)');
+      expect(r.stdout).toContain('variables v.mass (parameter)');
+      // The disclosure is not a second filing: the model-wide count is of the
+      // clause BODIES the file writes, and it does not move.
+      expect(r.stdout).toContain('2 guarantee(s) in QF_LRA, 0 in QF_NRA, 0 unsupported');
+      // …and a child that wrote a clause is never told its clauses are
+      // somewhere else, which is the sentence this row used to have to borrow.
+      expect(r.stdout).not.toContain('no clause of its own');
+
+      const j = await run(['contracts', file, '--json']);
+      const { body } = payload<{
+        contracts: {
+          clauseInheritance: {
+            contractsWithInheritedClauses: number;
+            byEdgeKind: Record<string, number>;
+            namedClausesMasked: number;
+            anonymousClausesInherited: number;
+          };
+        };
+      }>(j);
+      expect(body.contracts.clauseInheritance).toEqual({
+        contractsWithInheritedClauses: 1,
+        byEdgeKind: { Subclassification: 1, FeatureTyping: 0 },
+        namedClausesMasked: 0,
+        anonymousClausesInherited: 1,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  /**
+   * A chain of three, which is the shape one attribution for the whole row
+   * gets wrong. `C :> B :> A` inherits A's assumption and B's guarantee, and
+   * naming the row's whole inherited-from set on each line would print
+   * `1 inherited from Q::B, Q::A` above a clause only one of them wrote — a
+   * report naming an element that did not write the sentence beneath it.
+   */
+  it('contracts names the element that wrote each inherited clause, not the whole chain', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-chain-'));
+    const file = join(dir, 'chain.sysml');
+    writeFileSync(
+      file,
+      `package Q {
+    part def Sys { attribute a; attribute b; attribute c; }
+    requirement def A { subject u : Sys; assume constraint { u.a > 0.0 } }
+    requirement def B :> A { require constraint { u.b <= 1.0 } }
+    requirement def C :> B { require constraint { u.c <= 2.0 } }
+}
+`,
+    );
+    try {
+      const r = await run(['contracts', file]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('1 assumption(s): 0 declared, 1 inherited from Q::A');
+      expect(r.stdout).toContain('2 guarantee(s): 1 declared, 1 inherited from Q::B');
+      expect(r.stdout, 'a count of 1 was attributed to two elements').not.toContain(
+        'inherited from Q::B, Q::A',
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  /**
+   * The census as a measurement of the shipped example, not of a probe: the
+   * flagship writes no inherited clause at all, and the number that says so is
+   * what a feature reasoning OVER an inherited clause has to be argued
+   * against.
+   */
+  it('contracts --json reports the shipped example inherits no clause', async () => {
+    const r = await run(['contracts', UAV, '--json']);
+    expect(r.code).toBe(0);
+    const { body } = payload<{
+      contracts: { clauseInheritance: { contractsWithInheritedClauses: number } };
+    }>(r);
+    expect(body.contracts.clauseInheritance.contractsWithInheritedClauses).toBe(0);
+  }, 90_000);
+
   it('obligations reports two things to show over an axiom set of bindings', async () => {
     const r = await run(['obligations', UAV, '--json']);
     expect(r.code).toBe(0);

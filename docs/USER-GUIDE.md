@@ -550,8 +550,8 @@ ever says a requirement holds.
 
 `contracts` is the inventory. For each requirement it prints the subject it is
 about, what it **assumes**, what it **guarantees**, which `satisfy`, `verify`,
-`derive` and `refine` statements name it, the variables its clauses read with
-their units, and the arithmetic **fragment** each clause lands in — linear
+`derive` and `refine` statements name it, the variables the clauses it **wrote**
+read with their units, and the arithmetic **fragment** each clause lands in — linear
 (`QF_LRA`), nonlinear (`QF_NRA`) or not encodable at all. A case with an
 `objective { assume … require … }` is a contract too: that is the standard's own
 home for a behaviour's precondition and postcondition, and it is why Sysprose
@@ -597,6 +597,48 @@ A `requirement massOk : MassLimit;` usage owns no clause of its own — the
 `require constraint` is on the definition it applies. `contracts` says so on the
 usage's row and files the clause once, on the definition; it is not counted as
 prose-only, and it does not appear under `--missing`.
+
+A requirement that specialises another and writes a clause **as well** is the
+other half of that shape, and it is the one where a reader can be shown less
+than applies. `requirement def StrictMassLimit :> MassLimit { require constraint
+{ v.topSpeed <= 60 [m/s] } }` promises what it wrote *and* what `MassLimit`
+wrote, so the row lists both and marks the second:
+
+```console
+$ npm run sysprose -- contracts spec-inherit.sysml
+  ...
+  SpecInherit::StrictMassLimit  [RequirementDefinition]
+    subject v : Vehicle (inherited)
+    require v.topSpeed <= 60 [m/s]  [QF_LRA — linear real arithmetic]
+    2 guarantee(s): 1 declared, 1 inherited from SpecInherit::MassLimit
+    require v.mass <= 1500 [kg]  [QF_LRA — linear real arithmetic] (inherited)
+    no satisfy, verify, derive or refine statement names it
+    variables declared v.topSpeed (parameter)
+  ...
+```
+
+The `(inherited)` is the same word the `subject` line has always carried, and it
+is a **disclosure, not a filing**: the inherited clause is still filed once, on
+the element whose body holds it, so the worklist, the obligation digests and the
+evidence keys are exactly what they were. The element **named** on the count
+line is the one that wrote the clauses of that role — down a chain of three, an
+inherited `assume` and an inherited `require` come from two different places and
+each line says its own. `variables` reads `variables declared` on such a row for
+the same reason: that list is the encoder's input and it holds what this
+requirement wrote, not what the clause above it reads.
+
+Only a clause some contract in the same report **files** is disclosed. A general
+type the report left out — a `#prose` statement, or a case clause written
+outside an `objective` — has no row of its own, so its body is shown on nobody
+else's either. A case that specialises another **does** disclose the parent's
+`objective` clauses, because that is where a case's clauses are filed.
+
+`contracts --json` carries the census beside the inventory — `clauseInheritance`
+counts the contracts that inherit a clause, split by whether the author wrote
+`:>` (`Subclassification`) or `:` (`FeatureTyping`), plus how many distinct
+inherited clauses are anonymous and how many named ones a nearer **clause**
+masks. Every example this repository ships, and every model in its test corpus,
+reads zero on all four.
 
 `obligations --missing` is the one to run first on a real requirement set. It
 narrows the listing to exactly the rows this lane would **not** decide even with

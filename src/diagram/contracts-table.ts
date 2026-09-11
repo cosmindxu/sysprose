@@ -112,6 +112,7 @@ export function buildContractsTable(model: Model): ContractsTableModel {
     assumptions: contract.assumptions.map(clauseCell),
     guarantees: contract.guarantees.map(clauseCell),
     inheritedFrom: contract.clausesInheritedFrom.map((r) => r.qualifiedName),
+    inheritedClauses: contract.inheritedClauses.length,
     refused: contract.unsupported.map((u) => ({
       expression: u.expression,
       reason: u.reason,

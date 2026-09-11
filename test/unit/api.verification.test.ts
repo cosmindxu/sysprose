@@ -31,12 +31,14 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import type { Model } from '@core/index';
 import { parseModel } from '@text/index';
 import { isUserElement } from '@api/index';
-import { contractReport, obligationsReport } from '@api/index';
+import { contractReport, obligationDigest, obligationsReport } from '@api/index';
 import {
+  clauseInheritanceCensus,
   contractsOf,
   contractOf,
   isUserModelElement,
@@ -861,6 +863,386 @@ describe('what the reports never say, and what they always exclude', () => {
       const theirs = model.all().filter((el) => isUserElement(model, el)).map((e) => e.id);
       expect(mine, `${path}: the two user-element filters disagree`).toEqual(theirs);
     }
+  }, 60_000);
+});
+
+/**
+ * The clause a child did not write, and the count of who writes one.
+ *
+ * `contracts` has always printed `(inherited)` for the SUBJECT of a
+ * requirement that takes its definition's. It withheld the same word for
+ * CLAUSES: a child that wrote one clause and inherited another was shown one
+ * clause where two apply, with nothing on the row to say the second existed.
+ * The cases below are written against that asymmetry from both sides — the
+ * disclosure appears, and NOTHING else moves: not the model-wide clause
+ * counts, not the worklist, not an obligation digest, and not the two rows
+ * that already said where a bodiless usage's clauses are filed.
+ *
+ * The census beside them is the deliverable rather than decoration. It is the
+ * number that says whether any modeller writes this shape at all, and it is
+ * asserted at 0 over every shipped example so a later feature that would only
+ * ever answer for inherited clauses has to justify itself against a
+ * measurement rather than against an intuition.
+ */
+describe('a clause the element did not write is disclosed, and never filed twice', () => {
+  /** The probe, in the two spellings whose digests must agree. */
+  const probe = (mass: string, speed: string) => `package SpecInherit {
+    part def Vehicle {
+        attribute mass : ISQ::MassValue;
+        attribute topSpeed : ISQ::SpeedValue;
+    }
+    requirement def MassLimit {
+        subject v : Vehicle;
+        require constraint { v.mass <= ${mass} }
+    }
+    requirement def StrictMassLimit :> MassLimit {
+        require constraint { v.topSpeed <= ${speed} }
+    }
+}`;
+  const UNITS = probe('1500 [kg]', '60 [m/s]');
+  const BARE = probe('1500.0', '60.0');
+
+  it('lists the inherited clause on the child, beside the one the child wrote', async () => {
+    const model = await load(UNITS);
+    const child = contractsOf(model).find((c) => c.qualifiedName === 'SpecInherit::StrictMassLimit')!;
+    // What the child wrote is still exactly what the child wrote.
+    expect(child.guarantees.map((g) => g.expression)).toEqual(['v.topSpeed <= 60 [m/s]']);
+    expect(child.guarantees.map((g) => g.origin)).toEqual(['declared']);
+    // …and the clause it did not write is disclosed rather than withheld.
+    expect(child.inheritedClauses.map((g) => g.expression)).toEqual(['v.mass <= 1500 [kg]']);
+    expect(child.inheritedClauses.map((g) => g.origin)).toEqual(['inherited']);
+    expect(child.inheritedClauses.map((g) => g.role)).toEqual(['require']);
+    expect(child.clausesInheritedFrom.map((d) => d.qualifiedName)).toEqual(['SpecInherit::MassLimit']);
+    // The disclosure is not a second filing: the model-wide clause census
+    // counts the two bodies this file writes, not three.
+    const r = contractReport(model);
+    expect(r.guaranteesQfLra).toBe(2);
+    expect(r.assumptions).toBe(0);
+    expect(r.noFormalClause).toBe(0);
+  }, 60_000);
+
+  it('files nothing new — one obligation per body, on the element that holds it', async () => {
+    const model = await load(UNITS);
+    const shown = obligationsOf(model).filter((o) => o.role === 'obligation');
+    expect(shown.map((o) => [o.requirement?.qualifiedName, o.expression])).toEqual([
+      ['SpecInherit::MassLimit', 'v.mass <= 1500 [kg]'],
+      ['SpecInherit::StrictMassLimit', 'v.topSpeed <= 60 [m/s]'],
+    ]);
+    expect(obligationsReport(model).missing).toBe(0);
+  }, 60_000);
+
+  /**
+   * The digest is over the SI-lowered normal form, so the two spellings of one
+   * relation are one obligation identity. Asserted here because the disclosure
+   * above is exactly the point at which a reader might expect an inherited
+   * clause to acquire an identity of its own on the child — it does not, and
+   * an evidence record keyed on one of these would otherwise be written into
+   * the other element's braces.
+   */
+  it('moves no obligation digest: both spellings of the probe hash the same', async () => {
+    const digests = async (text: string) => {
+      const model = await load(text);
+      return obligationsOf(model)
+        .filter((o) => o.role === 'obligation')
+        .map((o) => obligationDigest({
+          node: o.node,
+          vars: o.vars,
+          expression: o.expression,
+          element: o.element,
+        }));
+    };
+    const withUnits = await digests(UNITS);
+    const bare = await digests(BARE);
+    expect(withUnits).toHaveLength(2);
+    expect(bare).toEqual(withUnits);
+  }, 60_000);
+
+  it('counts the shape by the edge family the author wrote it with', async () => {
+    const model = await load(UNITS);
+    const census = clauseInheritanceCensus(model, contractsOf(model));
+    expect(census.contractsWithInheritedClauses).toBe(1);
+    expect(census.byEdgeKind.Subclassification).toBe(1);
+    expect(census.byEdgeKind.FeatureTyping).toBe(0);
+    // The shipped `require constraint { … }` idiom builds an ANONYMOUS clause,
+    // which no name can mask — so redefinition of a clause is inexpressible in
+    // this spelling however many clauses it inherits.
+    expect(census.anonymousClausesInherited).toBe(1);
+    expect(census.namedClausesMasked).toBe(0);
+  }, 60_000);
+
+  it('reads a usage’s applied definition as the other edge family', async () => {
+    const model = await load(`package P {
+    part def Sys { attribute mass; }
+    requirement def MassLimit {
+        subject u : Sys;
+        require constraint { u.mass <= 25.0 }
+    }
+    requirement r : MassLimit;
+}`);
+    const census = clauseInheritanceCensus(model, contractsOf(model));
+    expect(census.contractsWithInheritedClauses).toBe(1);
+    expect(census.byEdgeKind.FeatureTyping).toBe(1);
+    expect(census.byEdgeKind.Subclassification).toBe(0);
+  }, 60_000);
+
+  /**
+   * Masking is by `declaredName`, so it fires only where both clauses are
+   * NAMED — and the count exists to say how rare that is. A named clause on
+   * the child hides the parent's, and the hidden one is absent from the
+   * inherited list for the same reason it is absent from every other reading
+   * of the type.
+   */
+  it('counts a named clause a nearer one masks, and does not list it as inherited', async () => {
+    const model = await load(`package P {
+    part def Sys { attribute mass; }
+    requirement def MassLimit {
+        subject u : Sys;
+        require constraint massOk { u.mass <= 25.0 }
+    }
+    requirement def StrictMassLimit :> MassLimit {
+        require constraint massOk { u.mass <= 10.0 }
+    }
+}`);
+    const contracts = contractsOf(model);
+    const child = contracts.find((c) => c.qualifiedName === 'P::StrictMassLimit')!;
+    expect(child.guarantees.map((g) => g.expression)).toEqual(['u.mass <= 10.0']);
+    expect(child.inheritedClauses).toEqual([]);
+    const census = clauseInheritanceCensus(model, contracts);
+    expect(census.namedClausesMasked).toBe(1);
+    expect(census.contractsWithInheritedClauses).toBe(0);
+  }, 60_000);
+
+  /**
+   * The census as a measurement, not as a description. Every example this
+   * repository ships reads 0 — which is the number a feature that could only
+   * ever answer for an inherited clause has to be argued against.
+   */
+  it('reads 0 on every shipped example', async () => {
+    for (const path of [
+      'examples/contract-authoring-prompts.sysml',
+      'examples/uav-isr-verification.sysml',
+      'examples/uav-isr.sysml',
+      'examples/uav-power-budget.sysml',
+      'examples/vehicle.sysml',
+      'examples/views-tour.sysml',
+    ]) {
+      const model = await load(read(path), path);
+      const census = clauseInheritanceCensus(model, contractsOf(model));
+      expect(census, `${path} inherits a clause`).toEqual({
+        contractsWithInheritedClauses: 0,
+        byEdgeKind: { Subclassification: 0, FeatureTyping: 0 },
+        namedClausesMasked: 0,
+        anonymousClausesInherited: 0,
+      });
+    }
+  }, 180_000);
+
+  /**
+   * The other half of the same claim, and the half a fixture can break without
+   * anybody noticing: the census is 0 over the WHOLE corpus, not only over the
+   * six examples the previous case walks. A fixture that inherits a clause
+   * would open a held feature's release gate silently; here it fails loudly
+   * instead.
+   */
+  it('reads 0 over every model in the corpus, not only the examples', async () => {
+    const files = execFileSync(
+      'find',
+      ['examples', 'test/fixtures', '-name', '*.sysml'],
+      { encoding: 'utf8' },
+    )
+      .trim()
+      .split('\n')
+      .sort();
+    expect(files.length).toBeGreaterThan(100);
+    let read_ = 0;
+    for (const path of files) {
+      // A handful of L0 fixtures are deliberately not SysML at all — the case
+      // IS that they do not load. Counted rather than silently passed over, so
+      // this never becomes an assertion over an empty set.
+      const { model } = await loadModelText(read(path), { fileName: path });
+      if (!model) continue;
+      read_ += 1;
+      const census = clauseInheritanceCensus(model, contractsOf(model));
+      expect(
+        [
+          census.contractsWithInheritedClauses,
+          census.namedClausesMasked,
+          census.anonymousClausesInherited,
+        ],
+        `${path} inherits a clause`,
+      ).toEqual([0, 0, 0]);
+    }
+    expect(read_).toBeGreaterThan(files.length - 10);
+  }, 600_000);
+
+  /**
+   * A chain of three, which is where one attribution for the whole row goes
+   * wrong: `C :> B :> A` inherits A's assumption and B's guarantee, and a line
+   * saying either came from "B, A" names an element that did not write the
+   * clause printed beneath it.
+   */
+  it('attributes each inherited clause to the element that wrote THAT clause', async () => {
+    const model = await load(`package Q {
+    part def Sys { attribute a; attribute b; attribute c; }
+    requirement def A { subject u : Sys; assume constraint { u.a > 0.0 } }
+    requirement def B :> A { require constraint { u.b <= 1.0 } }
+    requirement def C :> B { require constraint { u.c <= 2.0 } }
+}`);
+    const c = contractsOf(model).find((x) => x.qualifiedName === 'Q::C')!;
+    expect(
+      c.inheritedClauses.map((x) => [x.role, x.expression, x.inheritedFrom?.qualifiedName]),
+    ).toEqual([
+      // Effective-feature order: the nearer general type first.
+      ['require', 'u.b <= 1.0', 'Q::B'],
+      ['assume', 'u.a > 0.0', 'Q::A'],
+    ]);
+    // The row-level set is still the distinct owners, and it is the union of
+    // the two — which is exactly why it cannot stand in for either.
+    expect(c.clausesInheritedFrom.map((d) => d.qualifiedName)).toEqual(['Q::B', 'Q::A']);
+    // A clause disclosed twice down the chain is still ONE anonymous clause.
+    expect(clauseInheritanceCensus(model, contractsOf(model))).toEqual({
+      contractsWithInheritedClauses: 2,
+      byEdgeKind: { Subclassification: 2, FeatureTyping: 0 },
+      namedClausesMasked: 0,
+      anonymousClausesInherited: 2,
+    });
+  }, 60_000);
+
+  /**
+   * The disclosure is a promise that the clause is filed somewhere, so it is
+   * made only about an element whose own contract files it. A `#prose` general
+   * type files nothing — the author said it binds nothing and the same report
+   * counts it under "left out" — and publishing its body on a child's row
+   * would show a clause the run files ZERO times.
+   */
+  it('says nothing about a clause on a general type the run left out', async () => {
+    const model = await load(`package V {
+    part def Sys { attribute m; }
+    #prose requirement def Draft { subject u : Sys; require constraint { u.m <= 30.0 } }
+    requirement def Real :> Draft { require constraint { u.m >= 1.0 } }
+}`);
+    const contracts = contractsOf(model);
+    const child = contracts.find((c) => c.qualifiedName === 'V::Real')!;
+    expect(child.inheritedClauses).toEqual([]);
+    expect(child.clausesInheritedFrom).toEqual([]);
+    // Every clause disclosed anywhere is filed exactly once, and the one on the
+    // `#prose` statement is filed nowhere — so it is disclosed nowhere either.
+    expect(
+      obligationsOf(model)
+        .filter((o) => o.role === 'obligation')
+        .map((o) => o.expression),
+    ).toEqual(['u.m >= 1.0']);
+    expect(clauseInheritanceCensus(model, contracts).contractsWithInheritedClauses).toBe(0);
+  }, 60_000);
+
+  /**
+   * The same gate on the case side: a case's contract is read out of its
+   * `objective` alone, so an `assume` written straight in a case body is filed
+   * by no contract — the general type has no row in the report at all — and a
+   * child must not publish it as an inherited promise.
+   */
+  it('says nothing about a case clause outside an objective, which no contract files', async () => {
+    const model = await load(`package U {
+    part def Sys { attribute alt; }
+    use case def Parent { subject s : Sys; require constraint { s.alt > 0.0 } }
+    use case def Child :> Parent { objective { require constraint { s.alt < 100.0 } } }
+}`);
+    const contracts = contractsOf(model);
+    expect(contracts.map((c) => c.qualifiedName)).toEqual(['U::Child']);
+    expect(contracts[0].inheritedClauses).toEqual([]);
+    expect(clauseInheritanceCensus(model, contracts).contractsWithInheritedClauses).toBe(0);
+  }, 60_000);
+
+  /**
+   * And the case shape that IS filed. A case's clauses live inside its
+   * `objective`, so the walk has to descend one level into an inherited
+   * objective rather than stopping at it — otherwise `case def Child :> Parent`
+   * keeps the very asymmetry this disclosure closes, on a row whose `subject`
+   * line already prints `(inherited)`.
+   */
+  it('discloses a clause inherited through a case objective', async () => {
+    const model = await load(`package S {
+    part def Sys { attribute alt; }
+    use case def Parent { subject s : Sys; objective { require constraint { s.alt > 0.0 } } }
+    use case def Child :> Parent { objective { require constraint { s.alt < 100.0 } } }
+}`);
+    const contracts = contractsOf(model);
+    const child = contracts.find((c) => c.qualifiedName === 'S::Child')!;
+    expect(child.guarantees.map((g) => g.expression)).toEqual(['s.alt < 100.0']);
+    expect(
+      child.inheritedClauses.map((g) => [g.expression, g.via, g.inheritedFrom?.qualifiedName]),
+    ).toEqual([['s.alt > 0.0', 'objective', 'S::Parent']]);
+    // Read where its AUTHOR wrote it, and filed once — on the parent case.
+    expect(
+      obligationsOf(model)
+        .filter((o) => o.role === 'obligation')
+        .map((o) => [o.requirement?.qualifiedName, o.expression]),
+    ).toEqual([
+      ['S::Parent', 's.alt > 0.0'],
+      ['S::Child', 's.alt < 100.0'],
+    ]);
+    expect(clauseInheritanceCensus(model, contracts).contractsWithInheritedClauses).toBe(1);
+  }, 60_000);
+
+  /**
+   * `namedClausesMasked` is the number §3.4b's release gate is read off, so it
+   * counts only what that gate could then check: one CLAUSE redefining
+   * another. An `attribute` claiming a clause's name hides it from every
+   * reading of the type, but redefines no promise.
+   */
+  it('does not count a clause an attribute hides as a redefinition', async () => {
+    const model = await load(`package W {
+    part def Sys { attribute m; }
+    requirement def A { subject u : Sys; require constraint massOk { u.m <= 30.0 } }
+    requirement def B :> A { attribute massOk; require constraint { u.m >= 1.0 } }
+}`);
+    expect(clauseInheritanceCensus(model, contractsOf(model)).namedClausesMasked).toBe(0);
+  }, 60_000);
+
+  /** …and one masking is one masking, however many descendants can see it. */
+  it('counts a masking once, not once per descendant that sees it', async () => {
+    const model = await load(`package X {
+    part def Sys { attribute m; }
+    requirement def A { subject u : Sys; require constraint massOk { u.m <= 30.0 } }
+    requirement def B :> A { require constraint massOk { u.m <= 20.0 } }
+    requirement def C :> B { require constraint { u.m >= 1.0 } }
+}`);
+    expect(clauseInheritanceCensus(model, contractsOf(model)).namedClausesMasked).toBe(1);
+  }, 60_000);
+
+  /**
+   * The report must not contradict itself in one block. `contracts` now lists
+   * an inherited guarantee on the row, and a finding four lines below saying
+   * the same element "guarantees nothing" is the second half of a
+   * contradiction printed on the default text path with no flag.
+   */
+  it('never says an element guarantees nothing on a row that shows an inherited guarantee', async () => {
+    const model = await load(`package P {
+    part def Sys { attribute mass; attribute power; }
+    requirement def Base { subject s : Sys; require constraint { s.mass <= 25.0 } }
+    requirement def Child :> Base { assume constraint { s.power > 0.0 } }
+}`);
+    const r = contractReport(model);
+    const child = r.contracts.find((c) => c.qualifiedName === 'P::Child')!;
+    expect(child.guarantees).toEqual([]);
+    expect(child.inheritedClauses.map((c) => c.role)).toEqual(['require']);
+    expect(r.diagnostics.map((d) => d.code)).not.toContain('verification/contract-no-guarantee');
+  }, 60_000);
+
+  /** …and still says it where nothing, written or inherited, is guaranteed. */
+  it('still says an element guarantees nothing when it inherits none either', async () => {
+    const model = await load(`package P {
+    part def Sys { attribute power; }
+    requirement def Base { subject s : Sys; assume constraint { s.power > 0.0 } }
+    requirement def Child :> Base { assume constraint { s.power < 99.0 } }
+}`);
+    const r = contractReport(model);
+    expect(
+      r.diagnostics
+        .filter((d) => d.code === 'verification/contract-no-guarantee')
+        .map((d) => d.elementName)
+        .sort(),
+    ).toEqual(['P::Base', 'P::Child']);
   }, 60_000);
 });
 

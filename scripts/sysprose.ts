@@ -1147,12 +1147,61 @@ function subjectLine(subject: ContractSubject | null): string {
 
 /** One clause, with the fragment it lands in or the gate that refused it. */
 function clauseLines(clause: ContractClause): string[] {
+  // The word the subject line has always printed, now printed for a clause as
+  // well: a reader shown two clauses having written one must be able to see
+  // which of them this element promised, on the clause's own line rather than
+  // by counting a summary above it.
+  const origin = clause.origin === 'inherited' ? ' (inherited)' : '';
   const head = `    ${clause.role.padEnd(7)} ${clause.expression}`;
   if (clause.encodable === true) {
-    return [`${head}  [${FRAGMENT_LABEL[clause.fragment]}]`];
+    return [`${head}  [${FRAGMENT_LABEL[clause.fragment]}]${origin}`];
   }
   const refusal: Refusal = clause.encodable;
-  return [head, `      not encodable (${refusal.reason}): ${refusal.detail}`];
+  return [`${head}${origin}`, `      not encodable (${refusal.reason}): ${refusal.detail}`];
+}
+
+/**
+ * The clauses a contract inherits, under the count that says how many of the
+ * clauses now on the row it actually wrote.
+ *
+ * Empty for a contract that wrote none: {@link emptyClauseLine} already says
+ * where that one's clauses are filed, and saying it twice in two spellings
+ * would read as two different facts. This block is for the other shape — a
+ * child that wrote one clause and inherited another — which was shown one
+ * clause where two apply, with nothing on the row to say the second existed.
+ *
+ * The count is per ROLE, because an inherited `assume` and an inherited
+ * `require` are different promises and a reader adding them together learns
+ * nothing about either — and the elements named on each line are the owners of
+ * THAT role's inherited clauses, never the row's whole inherited-from set. On
+ * `C :> B :> A` where A wrote the assumption and B the guarantee, one shared
+ * attribution would say `1 inherited from B, A` twice, which names an element
+ * that did not write the clause on the line beneath it — the exact sentence
+ * this disclosure exists to make true.
+ */
+function inheritedClauseLines(contract: Contract): string[] {
+  if (contract.inheritedClauses.length === 0) return [];
+  if (contract.assumptions.length + contract.guarantees.length === 0) return [];
+  const out: string[] = [];
+  for (const [role, noun, declared] of [
+    ['assume', 'assumption', contract.assumptions.length],
+    ['require', 'guarantee', contract.guarantees.length],
+  ] as const) {
+    const inherited = contract.inheritedClauses.filter((c) => c.role === role);
+    if (inherited.length === 0) continue;
+    const where: string[] = [];
+    for (const clause of inherited) {
+      const owner = clause.inheritedFrom;
+      const name = owner ? owner.qualifiedName || label(owner) : '';
+      if (name !== '' && !where.includes(name)) where.push(name);
+    }
+    out.push(
+      `    ${declared + inherited.length} ${noun}(s): ${declared} declared, ` +
+        `${inherited.length} inherited from ${where.join(', ')}`,
+    );
+    out.push(...inherited.flatMap(clauseLines));
+  }
+  return out;
 }
 
 /**
@@ -1280,27 +1329,41 @@ function reportContracts(model: Model, name: string, args: ParsedArgs): Report {
             : '  this model declares no requirement and no case objective',
         ]
       : []),
-    ...r.contracts.flatMap((c) => [
-      `  ${c.qualifiedName}${c.shortId ? ` (${c.shortId})` : ''}  [${c.eClass}]`,
-      `    subject ${subjectLine(c.subject)}`,
-      ...(c.assumptions.length + c.guarantees.length === 0
-        ? [emptyClauseLine(c)]
-        : [...c.assumptions, ...c.guarantees].flatMap(clauseLines)),
-      ...edgeLines(c),
-      ...(c.variables.length > 0
-        ? [
-            `    variables ${c.variables
-              .map(
-                (v) =>
-                  `${v.path} (${v.role}${v.unit ? `, ${v.unit}` : ''}${
-                    v.siFactor === 1 && v.siOffset === 0 ? '' : `, SI ×${v.siFactor}`
-                  })`,
-              )
-              .join(', ')}`,
-          ]
-        : []),
-      ...(c.keywords.length > 0 ? [`    keywords ${c.keywords.map((k) => `#${k}`).join(' ')}`] : []),
-    ]),
+    ...r.contracts.flatMap((c) => {
+      const inheritedShown = inheritedClauseLines(c);
+      return [
+        `  ${c.qualifiedName}${c.shortId ? ` (${c.shortId})` : ''}  [${c.eClass}]`,
+        `    subject ${subjectLine(c.subject)}`,
+        ...(c.assumptions.length + c.guarantees.length === 0
+          ? [emptyClauseLine(c)]
+          : [...c.assumptions, ...c.guarantees].flatMap(clauseLines)),
+        ...inheritedShown,
+        ...edgeLines(c),
+        // The label says `declared` exactly on a row that also SHOWS an
+        // inherited clause. `Contract.variables` is the encoder's input and
+        // stays scoped to the clauses this element wrote — widening it would
+        // put names the element never wrote into a verdict's input — but under
+        // a clause reading `v.mass`, a bare `variables v.topSpeed` reads as the
+        // row's whole reading and is short by one name. Rows with nothing
+        // inherited print what they always printed, because on those the
+        // unqualified word is exact.
+        ...(c.variables.length > 0
+          ? [
+              `    variables${inheritedShown.length > 0 ? ' declared' : ''} ${c.variables
+                .map(
+                  (v) =>
+                    `${v.path} (${v.role}${v.unit ? `, ${v.unit}` : ''}${
+                      v.siFactor === 1 && v.siOffset === 0 ? '' : `, SI ×${v.siFactor}`
+                    })`,
+                )
+                .join(', ')}`,
+            ]
+          : []),
+        ...(c.keywords.length > 0
+          ? [`    keywords ${c.keywords.map((k) => `#${k}`).join(' ')}`]
+          : []),
+      ];
+    }),
     `  ${guarantees} guarantee(s) and ${r.assumptions} assumption(s) in total; ` +
       `${r.noFormalClause} contract(s) carry no formal clause`,
     `  ${r.nonNormativeExcluded} statement(s) tagged prose or prompt left out; ` +

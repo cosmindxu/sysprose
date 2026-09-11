@@ -83,7 +83,15 @@ function Row({
         ))}
         {row.inheritedFrom.length > 0 && (
           <div className="contract-inherited" data-testid="contract-inherited">
-            clauses filed on {row.inheritedFrom.join(', ')}
+            {/* Two different facts, and the row used to state the first about
+                both. A contract that wrote NO clause has its clauses filed
+                elsewhere; a contract that wrote one and inherited another has
+                clauses in both places, and telling that reader their clauses
+                are filed on the definition would be false about the clause in
+                front of them. */}
+            {row.assumptions.length + row.guarantees.length === 0
+              ? `clauses filed on ${row.inheritedFrom.join(', ')}`
+              : `${row.inheritedClauses} more clause(s) inherited from ${row.inheritedFrom.join(', ')}`}
           </div>
         )}
       </td>

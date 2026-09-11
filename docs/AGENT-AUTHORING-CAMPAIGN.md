@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 118 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 121 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -2466,7 +2466,10 @@ only, nothing to encode" would be false about a requirement with a constraint
 body and would inflate `--missing`, the one figure that measures how much of a
 model this lane cannot reach. `Contract.clausesInheritedFrom` names where the
 clause actually is, and the row reads "no clause of its own: the clauses are on
-its definition P::MassLimit". (2) `discharged` and `stale` are
+its definition P::MassLimit". (Superseded in part: the clauses are not folded
+into the usage's own lists, and never will be, but they are no longer WITHHELD
+from the reader — see "A clause a child did not write is disclosed" below.)
+(2) `discharged` and `stale` are
 declared in the status vocabulary and never produced: both are read back from an
 attached evidence record, and the record is commit 3. (3) `temporal` is declared
 in the fragment vocabulary and never produced: no clause body can carry a timing
@@ -4420,6 +4423,60 @@ whole reason it is published before anything is built on it: no narrowing at all
 on `uav-isr` (4 core axioms of a 4-axiom footprint, and those four are already in
 its golden as witness symbols), and 24 footprint axioms to 9 core axioms across
 the six obligations of `uav-power-budget`.
+
+**A clause a child did not write is disclosed, and the shape is counted rather
+than assumed.** `contracts` has always printed `(inherited)` for the SUBJECT a
+requirement takes from its definition; it withheld the same word for CLAUSES,
+because `clausesInheritedFrom` was populated only for an element that wrote no
+clause of its own. So `requirement def StrictMassLimit :> MassLimit`, which
+writes one clause and inherits another, was shown ONE clause where two apply
+with nothing on the row to say the second existed — a verdict named after the
+child reporting a subset of the child. The list is now built unconditionally,
+every clause carries `origin: 'declared' | 'inherited'` and — where it was
+inherited — the element that wrote it, and the row reads
+`2 guarantee(s): 1 declared, 1 inherited from SpecInherit::MassLimit` above the
+inherited body. The attribution is per CLAUSE and not per row, because a chain
+of three inherits its assumption from one element and its guarantee from
+another, and one shared attribution would name an element that did not write the
+line beneath it. A case is read the way its own contract is read — through its
+`objective` — so `case def Child :> Parent` discloses the parent's objective
+clauses rather than showing one clause where two apply. And only a clause some
+contract in the same run FILES is disclosed at all: a `#prose` general type, or
+a clause written in a case body outside its `objective`, is filed by nobody, and
+publishing its body on a child's row would have shown a clause the same report
+says it left out. `verification/contract-no-guarantee` is no longer filed
+against an element whose row now lists an inherited guarantee — the finding says
+there is nothing to show, and after the disclosure that would have been the
+second half of a contradiction printed in one block. It is a DISCLOSURE and not
+a filing: inherited clauses are
+deliberately kept out of `Contract.assumptions` / `Contract.guarantees`, because
+the clause's body lives in the general type and the general type's own contract
+files it — folding it into the child would file one constraint twice and would
+make the child's guarantee true by the tool's own bookkeeping wherever the child
+never restated it. Measured, nothing downstream moves: the worklist, the
+obligation digests (identical across the `[kg]` and bare-`Real` spellings of the
+same probe, because the digest is over the SI-lowered normal form) and the
+evidence keys are what they were, and the app's Contracts view is the one place
+whose behaviour changes — its `clauses filed on X` note was true only of a
+contract that wrote none, and it now says `N more clause(s) inherited from X`
+for one that wrote some. **The number that says whether anybody writes this
+shape ships with it:** `contracts --json` carries `clauseInheritance`
+(`contractsWithInheritedClauses`, `byEdgeKind` split into `Subclassification`
+and `FeatureTyping`, `namedClausesMasked`, `anonymousClausesInherited`), and it
+reads **0, 0/0, 0, 0** on all six shipped examples **and on every model in the
+test corpus**, which a case walks file by file rather than describing. The
+masking count is the sharp one, and it is the number a held feature's release
+gate is read off, so it counts only a CLAUSE redefining a CLAUSE and counts one
+masking once however many descendants can see it — an `attribute` that claims a
+clause's name hides it from every reading of the type but redefines no promise,
+and a gate opened by that shape would have found nothing to check.
+`anonymousClausesInherited` is likewise a count of clauses and not of
+disclosures. `effectiveFeatures` masks by `declaredName` and the shipped
+`require constraint { … }` idiom builds an ANONYMOUS clause, so on the corpus as
+it stands one clause redefining another is not expressible at all — which is why
+no diagnostic was added here. A `verification/inherited-clause-not-read` code
+would have fired on zero models in the tree while costing a catalogue bump; the
+disclosure costs less and says more.
 
 ## 5. Phase status
 

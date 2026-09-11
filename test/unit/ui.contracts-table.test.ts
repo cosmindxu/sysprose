@@ -167,6 +167,30 @@ describe('ContractsTable — the states nothing else renders', () => {
     expect(notes.join(' ')).toContain('MassLimit');
   });
 
+  /**
+   * The same note, on the contract the previous case is not about. A child
+   * that wrote a clause and inherited another has clauses in BOTH places, and
+   * `clauses filed on …` would be false about the one on the row.
+   */
+  it('says a clause is inherited IN ADDITION, rather than filed elsewhere', () => {
+    const { view } = mount(`package P {
+    part def Sys { attribute mass; attribute topSpeed; }
+    requirement def MassLimit {
+        subject u : Sys;
+        require constraint { u.mass <= 25.0 }
+    }
+    requirement def StrictMassLimit :> MassLimit {
+        require constraint { u.topSpeed <= 60.0 }
+    }
+}`);
+    const notes = view.getAllByTestId('contract-inherited').map((n) => n.textContent!);
+    const child = notes.find((n) => n.includes('MassLimit'))!;
+    expect(child).toContain('1 more clause(s) inherited from P::MassLimit');
+    expect(child, 'a child that wrote a clause was told its clauses are elsewhere').not.toContain(
+      'clauses filed on',
+    );
+  });
+
   it('shows the #keywords written on a contract', () => {
     const { view } = mount(`package P {
     metadata def <flag> Flag;

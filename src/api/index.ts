@@ -271,6 +271,7 @@ export type {
 // door — could otherwise not type either argument or walk either row without a
 // deep import into the semantics layer.
 export type {
+  ClauseInheritanceCensus,
   Contract,
   ContractClause,
   ContractRef,

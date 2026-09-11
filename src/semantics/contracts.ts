@@ -41,7 +41,13 @@
  * arguments.
  */
 
-import { REQUIREMENT_KINDS, type ElementId, type ElementRecord, type Model } from '@core/index';
+import {
+  REQUIREMENT_KINDS,
+  isTypingSpecialization,
+  type ElementId,
+  type ElementRecord,
+  type Model,
+} from '@core/index';
 import { evaluate, type ExprNode } from './expr';
 import { effectiveFeatures, generalizationsOf } from './inheritance';
 import {
@@ -197,6 +203,27 @@ export interface ContractClause {
   role: 'assume' | 'require';
   /** Where the author wrote it: on the requirement, or inside a case objective. */
   via: 'requirement' | 'objective';
+  /**
+   * Whether THIS element wrote the clause, or a general type it specialises did.
+   *
+   * The same word {@link ContractSubject.origin} already uses, for the same
+   * reason: a reader shown two clauses having written one has to be able to see
+   * which of them this element promised. An `inherited` clause is disclosed and
+   * never filed — it reaches the worklist once, on the element whose body holds
+   * it, and {@link Contract.inheritedClauses} is the list it is disclosed from.
+   */
+  origin: 'declared' | 'inherited';
+  /**
+   * The element whose body holds this clause, when it is not the contract's own.
+   *
+   * Present exactly when `origin === 'inherited'`, and carried per CLAUSE
+   * rather than only per contract because a chain of three states two
+   * different facts: `C :> B :> A` inherits A's assumption and B's guarantee,
+   * and a reader told both came from "B, A" has been given a sentence that is
+   * false of each of them. {@link Contract.clausesInheritedFrom} remains the
+   * distinct set over the whole row; this is the attribution of one line.
+   */
+  inheritedFrom?: ContractRef;
   /** The body as written, before any lowering. */
   expression: string;
   /** The body with every `[unit]` literal lowered to SI, or `null` when unreadable. */
@@ -248,13 +275,36 @@ export interface Contract {
   derivedFrom: ContractRef[];
   refinedBy: ContractRef[];
   verifiedBy: ContractRef[];
+  /**
+   * The variables the clauses this element DECLARED read — never the ones an
+   * inherited clause reads.
+   *
+   * Scoped that way deliberately, and the scope is named here because the row
+   * displays both kinds of clause: this list feeds the encoder's input and the
+   * bounds surface, so widening it to an inherited clause's variables would
+   * put names into a verdict's input that the element never wrote. Every
+   * renderer therefore has to say `declared` when it prints it, or a reader
+   * takes a shorter list for the row's whole reading.
+   */
   variables: ContractVariable[];
+  /**
+   * The weakest fragment that admits every clause this element DECLARED.
+   *
+   * Same scope as {@link Contract.variables}, and for the same reason — an
+   * inherited clause is disclosed, not encoded, so it neither widens nor
+   * narrows what this element's own worklist rows land in.
+   */
   fragment: Fragment;
   /**
-   * Every relation a gate refused: the branchable `reason` an agent switches
-   * on, and the `detail` sentence a person reads. Both, and under the same key
-   * names {@link ContractClause.encodable} uses — one payload that spelled
-   * `reason` two different ways would make the word mean two things.
+   * Every relation a gate refused, among the ones this element DECLARED: the
+   * branchable `reason` an agent switches on, and the `detail` sentence a
+   * person reads. Both, and under the same key names
+   * {@link ContractClause.encodable} uses — one payload that spelled `reason`
+   * two different ways would make the word mean two things.
+   *
+   * Scoped like {@link Contract.variables}: an inherited clause a gate refused
+   * is listed with its refusal on the general type's own row, where it is
+   * filed, and appears here on no other.
    */
   unsupported: Array<{ expression: string; reason: RefusalReason; detail: string }>;
   /**
@@ -269,8 +319,67 @@ export interface Contract {
    * filed once, on the definition; this names where a reader will find them.
    */
   clausesInheritedFrom: ContractRef[];
+  /**
+   * The clauses this element inherits and did not write, read but never filed.
+   *
+   * Deliberately NOT folded into {@link Contract.assumptions} /
+   * {@link Contract.guarantees}, and the reason is the one the worklist is
+   * built on: an inherited clause's body lives in the general type, so the
+   * general type's own contract files it, and folding it here would file one
+   * constraint twice — and would make a guarantee obligation on the child true
+   * by the tool's own bookkeeping wherever the child never restated it. What
+   * the fold WOULD have bought is disclosure, and disclosure is what this list
+   * is: every member carries `origin: 'inherited'`, and
+   * {@link Contract.clausesInheritedFrom} names the elements they came from.
+   */
+  inheritedClauses: ContractClause[];
   /** The `#keyword`s on the declaration, exactly as written. */
   keywords: string[];
+}
+
+/**
+ * How much clause inheritance a model actually practises.
+ *
+ * A feature that cannot report on its own usefulness is not finished: this is
+ * the number that says whether disclosing an inherited clause answers anything
+ * a modeller writes, and whether a check OVER an inherited clause would ever
+ * have a subject. It counts what is written and judges none of it.
+ *
+ * `byEdgeKind` is keyed on the specialization family of the FIRST hop from the
+ * contract towards the element that holds the clause — `requirement r : Def;`
+ * is a `FeatureTyping`, `requirement def Child :> Parent` a `Subclassification`
+ * — because those two shapes mean different things to a reader and a census
+ * that added them together could not tell them apart. Both keys are always
+ * present, at 0 when nothing inherits that way; a hop of any other family gets
+ * a key of its own rather than being dropped into neither.
+ */
+export interface ClauseInheritanceCensus {
+  /** Contracts that inherit at least one clause they did not write. */
+  contractsWithInheritedClauses: number;
+  /** Those contracts again, counted once per distinct first-hop family. */
+  byEdgeKind: Record<string, number>;
+  /**
+   * Named inherited clauses masked by a nearer feature of the same name.
+   *
+   * Masking is by `declaredName` ({@link effectiveFeatures}), and the shipped
+   * `require constraint { … }` idiom builds an ANONYMOUS clause, for which it
+   * can never fire. This is the count that says whether redefinition of a
+   * clause is expressible in a corpus at all — so it counts only a CLAUSE
+   * masking a CLAUSE, and counts one masking once however many descendants can
+   * see it. An `attribute massOk` that happens to claim a clause's name hides
+   * the clause from every reading of the type, but no promise was redefined by
+   * it, and a gate read off this number would have been opened by a shape it
+   * could not then check.
+   */
+  namedClausesMasked: number;
+  /**
+   * Distinct inherited clauses written with no name, which nothing can redefine.
+   *
+   * Counted once per CLAUSE and not once per disclosure: a clause two levels
+   * up is disclosed on every descendant, and a count that added those together
+   * would exceed the number of anonymous clauses the model contains.
+   */
+  anonymousClausesInherited: number;
 }
 
 /* ───────────────────────────── small helpers ─────────────────────────────── */
@@ -925,6 +1034,7 @@ function readClause(
   role: 'assume' | 'require',
   via: 'requirement' | 'objective',
   memo: DerivationMemo,
+  origin: 'declared' | 'inherited' = 'declared',
 ): ContractClause {
   const raw = typeof el.attrs.expression === 'string' ? el.attrs.expression : '';
   const reading = readRelation(model, el, raw, memo);
@@ -934,6 +1044,7 @@ function readClause(
     ...(el.declaredName !== undefined ? { declaredName: el.declaredName } : {}),
     role,
     via,
+    origin,
     expression: raw,
     node: reading.node,
     variables: reading.variables,
@@ -975,32 +1086,253 @@ function clausesOf(
 }
 
 /**
- * The definitions an element inherits `assume` / `require` clauses from.
+ * The distinct definitions a set of inherited clauses is filed on, in the order
+ * the clauses were read.
  *
- * Read for the one thing this module refuses to do with them: a usage does not
- * re-file its definition's clauses, because the definition is a user element
- * with a contract of its own and filing both would put one clause in the
- * worklist twice. What the usage MUST NOT be reported as is a requirement with
- * nothing to encode — `requirement massOk : MassLimit;` is the idiomatic way to
- * apply a requirement, it is what a `satisfy` names, and calling it prose-only
- * would inflate `--missing`, which is the figure that measures how much of a
- * model this lane cannot reach.
+ * Read for the one thing this module refuses to do with them: an element does
+ * not re-file the clauses it inherits, because the element that holds them is a
+ * user element with a contract of its own and filing both would put one clause
+ * in the worklist twice. What such an element MUST NOT be reported as is a
+ * requirement with nothing to encode — `requirement massOk : MassLimit;` is the
+ * idiomatic way to apply a requirement, it is what a `satisfy` names, and
+ * calling it prose-only would inflate `--missing`, which is the figure that
+ * measures how much of a model this lane cannot reach.
  */
-function inheritedClauseOwners(model: Model, el: ElementRecord): ContractRef[] {
+function distinctOwners(model: Model, inherited: readonly InheritedClause[]): ContractRef[] {
   const out: ContractRef[] = [];
   const seen = new Set<ElementId>();
-  for (const feature of effectiveFeatures(model, el.id)) {
-    if (feature.ownerId === el.id) continue;
-    if (clauseRole(feature) === undefined) continue;
-    if (typeof feature.attrs.expression !== 'string' || feature.attrs.expression.trim() === '') {
-      continue;
-    }
-    const owner = feature.ownerId != null ? model.get(feature.ownerId) : undefined;
-    if (!owner || seen.has(owner.id)) continue;
-    seen.add(owner.id);
-    out.push(ref(model, owner));
+  for (const fact of inherited) {
+    if (seen.has(fact.owner.id)) continue;
+    seen.add(fact.owner.id);
+    out.push(ref(model, fact.owner));
   }
   return out;
+}
+
+/**
+ * The bucket a general type reached through no readable typing edge falls in.
+ *
+ * Unreachable on every model measured, and kept anyway: {@link firstHopFamilies}
+ * and {@link effectiveFeatures} walk the same closure today, so an owner that
+ * contributed a feature is always a key in the map. It is a defence against
+ * those two walks diverging later, and a census that quietly dropped a count
+ * would be worse than one that names a family it cannot classify.
+ */
+const UNCLASSIFIED_EDGE = 'Unclassified';
+
+/** One clause an element inherits: the clause, who holds it, and how it arrives. */
+interface InheritedClause {
+  clause: ElementRecord;
+  role: 'assume' | 'require';
+  /** Where the author wrote it: in the general type's body, or in its objective. */
+  via: 'requirement' | 'objective';
+  /**
+   * The element whose OWN contract files this clause — the requirement whose
+   * body holds it, or the case whose objective does. Never the intervening
+   * `objective` element, which is not a contract and files nothing.
+   */
+  owner: ElementRecord;
+  /**
+   * The specialization family of the FIRST hop from the element towards
+   * `owner`, or `Unclassified` when the owner is reachable through no typing
+   * edge this walk can see — a general type contributed some other way, named
+   * as such rather than filed under a family it did not use.
+   */
+  edgeKind: string;
+}
+
+/**
+ * Does `owner`'s own contract file the clauses in the body named by `via`?
+ *
+ * The gate on the whole disclosure, and it exists because a disclosure is a
+ * promise about where the reader will find the clause filed. `contractsOf`
+ * does not read every element that can hold a clause: a `#prose` requirement
+ * is dropped because the author said it binds nothing, a library or re-derived
+ * element is not the user's own, and a case's contract is read out of its
+ * `objective` alone — so an `assume` written straight in a case body is filed
+ * by nobody. Publishing one of those on a child's row as an inherited clause
+ * would show a body the same report says it left out, and would name it as
+ * filed somewhere it is not.
+ */
+function filesOwnClauses(
+  model: Model,
+  owner: ElementRecord,
+  via: 'requirement' | 'objective',
+): boolean {
+  if (!isUserModelElement(model, owner)) return false;
+  if (via === 'objective') return CASE_KINDS.has(owner.eClass);
+  return REQUIREMENT_SET.has(owner.eClass) && !isNonNormativeStatement(model, owner.id);
+}
+
+/**
+ * The clauses an element inherits and does not own, in effective-feature order.
+ *
+ * Read through {@link effectiveFeatures} rather than off the generalization
+ * list directly, so a clause a nearer feature masks by name is absent here for
+ * the same reason it is absent from every other reading of the type — one
+ * masking rule, not two.
+ *
+ * A case is read the way {@link clausesOf} reads one: its clauses live inside
+ * an `objective`, which is itself the inherited feature, so the walk descends
+ * one level into an inherited objective rather than stopping at it. Without
+ * that hop `case def Child :> Parent` would be shown one clause where two
+ * apply — exactly the asymmetry this disclosure exists to close — while its
+ * `subject` line two rows above already printed `(inherited)`.
+ */
+function inheritedClauseFacts(model: Model, el: ElementRecord): InheritedClause[] {
+  const out: InheritedClause[] = [];
+  const firstHop = firstHopFamilies(model, el.id);
+  const take = (
+    clause: ElementRecord,
+    role: 'assume' | 'require',
+    via: 'requirement' | 'objective',
+    owner: ElementRecord,
+  ): void => {
+    if (typeof clause.attrs.expression !== 'string' || clause.attrs.expression.trim() === '') return;
+    if (!filesOwnClauses(model, owner, via)) return;
+    out.push({ clause, role, via, owner, edgeKind: firstHop.get(owner.id) ?? UNCLASSIFIED_EDGE });
+  };
+  for (const feature of effectiveFeatures(model, el.id)) {
+    if (feature.ownerId === el.id) continue;
+    const owner = feature.ownerId != null ? model.get(feature.ownerId) : undefined;
+    if (!owner) continue;
+    const role = clauseRole(feature);
+    if (role !== undefined) {
+      take(feature, role, 'requirement', owner);
+      continue;
+    }
+    if (feature.eClass !== CLAUSE_KIND || feature.attrs.requirementRole !== 'objective') continue;
+    for (const child of model.children(feature.id)) {
+      const childRole = clauseRole(child);
+      if (childRole === undefined) continue;
+      take(child, childRole, 'objective', owner);
+    }
+    // `objective { alt > 0.0 }` states the check itself rather than naming a
+    // clause for it, and {@link clausesOf} files it as the case's guarantee.
+    // A child that inherits such an objective inherits that guarantee.
+    take(feature, 'require', 'objective', owner);
+  }
+  return out;
+}
+
+/**
+ * For every general type of `id`, the specialization family of the first hop
+ * taken to reach it.
+ *
+ * The walk is the one {@link generalizationsOf} takes — breadth-first over the
+ * typing relationships — carrying the family of the edge that left the starting
+ * element, so a clause two hops up is still reported under the shape the AUTHOR
+ * wrote at the top: `requirement r : Def` is a `FeatureTyping` however deep
+ * `Def`'s own specialization chain runs. First arrival wins, which is the
+ * nearest hop under a breadth-first order.
+ */
+function firstHopFamilies(model: Model, id: ElementId): Map<ElementId, string> {
+  const out = new Map<ElementId, string>();
+  const queue: Array<{ id: ElementId; family: string }> = [];
+  const seen = new Set<ElementId>([id]);
+  for (const rel of model.relationshipsFrom(id)) {
+    if (!isTypingSpecialization(rel.eClass)) continue;
+    for (const target of rel.target ?? []) {
+      if (seen.has(target) || !model.get(target)) continue;
+      seen.add(target);
+      out.set(target, rel.eClass);
+      queue.push({ id: target, family: rel.eClass });
+    }
+  }
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const general of model.typesOf(cur.id)) {
+      if (seen.has(general.id)) continue;
+      seen.add(general.id);
+      out.set(general.id, cur.family);
+      queue.push({ id: general.id, family: cur.family });
+    }
+  }
+  return out;
+}
+
+/**
+ * The named clauses of `el`'s general types that a nearer CLAUSE masks, each
+ * with the clause that masks it.
+ *
+ * {@link effectiveFeatures} drops a feature exactly when a more specific one
+ * has claimed its `declaredName`, so a named clause on a general type that is
+ * absent from the effective set was masked. The masker is returned with it for
+ * two reasons, and both are about the number being read as a gate. It has to
+ * be a clause: an `attribute massOk` claims the name just as effectively, but
+ * no promise was redefined and a check opened on that count would find nothing
+ * to check. And it identifies the masking EVENT, so the same one seen from
+ * three descendants counts once — {@link clauseInheritanceCensus} de-duplicates
+ * on the pair.
+ */
+function maskedInheritedClauses(
+  model: Model,
+  el: ElementRecord,
+): Array<{ masked: ElementRecord; masker: ElementRecord }> {
+  const effective = effectiveFeatures(model, el.id);
+  const present = new Set(effective.map((f) => f.id));
+  const out: Array<{ masked: ElementRecord; masker: ElementRecord }> = [];
+  for (const general of generalizationsOf(model, el.id)) {
+    for (const feature of model.children(general.id)) {
+      if (feature.declaredName === undefined) continue;
+      if (clauseRole(feature) === undefined) continue;
+      if (typeof feature.attrs.expression !== 'string' || feature.attrs.expression.trim() === '') {
+        continue;
+      }
+      if (present.has(feature.id)) continue;
+      // Own features come first out of `effectiveFeatures`, then the nearer
+      // general types, so the first survivor of that name is the masker.
+      const masker = effective.find((f) => f.declaredName === feature.declaredName);
+      if (!masker || clauseRole(masker) === undefined) continue;
+      out.push({ masked: feature, masker });
+    }
+  }
+  return out;
+}
+
+/**
+ * {@link ClauseInheritanceCensus} over a set of contracts already read.
+ *
+ * Over the CONTRACTS rather than over the model, so the figures are scoped
+ * exactly the way every other figure in the report that carries them is: a
+ * census taken over the whole model beside a listing taken over one package
+ * answers two questions in one block.
+ */
+export function clauseInheritanceCensus(
+  model: Model,
+  contracts: readonly Contract[],
+): ClauseInheritanceCensus {
+  const byEdgeKind: Record<string, number> = { Subclassification: 0, FeatureTyping: 0 };
+  let contractsWithInheritedClauses = 0;
+  // Both de-duplicated across the whole inventory, because a clause two levels
+  // up is disclosed on every descendant and one masking is visible from every
+  // descendant below it: these two fields are counts of CLAUSES and of masking
+  // EVENTS, and a per-contract sum would report more of each than the model
+  // holds. §3.4b's release gate is read off `namedClausesMasked`.
+  const maskings = new Set<string>();
+  const anonymous = new Set<ElementId>();
+  for (const contract of contracts) {
+    const el = model.get(contract.id);
+    if (!el) continue;
+    for (const { masked, masker } of maskedInheritedClauses(model, el)) {
+      maskings.add(`${masked.id}\u0000${masker.id}`);
+    }
+    const facts = inheritedClauseFacts(model, el);
+    if (facts.length === 0) continue;
+    contractsWithInheritedClauses += 1;
+    for (const fact of facts) {
+      if (fact.clause.declaredName === undefined) anonymous.add(fact.clause.id);
+    }
+    for (const family of new Set(facts.map((f) => f.edgeKind))) {
+      byEdgeKind[family] = (byEdgeKind[family] ?? 0) + 1;
+    }
+  }
+  return {
+    contractsWithInheritedClauses,
+    byEdgeKind,
+    namedClausesMasked: maskings.size,
+    anonymousClausesInherited: anonymous.size,
+  };
 }
 
 /** The weakest fragment that admits every clause of a contract. */
@@ -1035,7 +1367,7 @@ export function contractsOf(model: Model): Contract[] {
     if (isRequirement && isNonNormativeStatement(model, el.id)) continue;
     const clauses = clausesOf(model, el, memo);
     if (isCase && clauses.length === 0) continue;
-    out.push(assemble(model, el, clauses, isCase));
+    out.push(assemble(model, el, clauses, isCase, memo));
   }
   return out;
 }
@@ -1046,7 +1378,9 @@ function assemble(
   el: ElementRecord,
   clauses: ContractClause[],
   isCase: boolean,
+  memo: DerivationMemo,
 ): Contract {
+  const inherited = inheritedClauseFacts(model, el);
   const variables: ContractVariable[] = [];
   const seen = new Set<string>();
   for (const c of clauses) {
@@ -1082,7 +1416,24 @@ function assemble(
         reason: (c.encodable as Refusal).reason,
         detail: (c.encodable as Refusal).detail,
       })),
-    clausesInheritedFrom: clauses.length === 0 ? inheritedClauseOwners(model, el) : [],
+    // Unconditionally, where it once answered only for an element that wrote no
+    // clause of its own. A child that writes one clause and inherits another
+    // was shown one clause where two apply, with nothing on the row to say so —
+    // and the same block has always printed `(inherited)` for the SUBJECT, so
+    // the disclosure idiom was the tool's own and was withheld from clauses
+    // alone. Nothing downstream files more work for it: every consumer that
+    // counts obligations tests emptiness FIRST, and the clause is filed once,
+    // on the element whose body holds it.
+    clausesInheritedFrom: distinctOwners(model, inherited),
+    // `fact.via` and not `isCase`: an inherited clause is read where its AUTHOR
+    // wrote it, which is the same reading `clausesOf` gives the general type's
+    // own row. And the owner is carried per clause, because a chain of three
+    // inherits from two different elements and one shared attribution would be
+    // false of both lines.
+    inheritedClauses: inherited.map((fact) => ({
+      ...readClause(model, fact.clause, fact.role, fact.via, memo, 'inherited'),
+      inheritedFrom: ref(model, fact.owner),
+    })),
     keywords: keywordsOnDeclaration(el),
   };
 }

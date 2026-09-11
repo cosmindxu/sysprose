@@ -158,6 +158,33 @@ describe('buildContractsTable on the shapes a real requirement set is full of', 
     expect(def!.inheritedFrom).toEqual([]);
   });
 
+  /**
+   * The other shape, and the one the row could not previously state: a child
+   * that WRITES a clause and inherits another. `inheritedFrom` alone reads as
+   * "the clauses are filed over there", which is false about the clause the
+   * child wrote — so the count that splits the sentence in two is carried
+   * beside it.
+   */
+  it('counts the clauses a contract inherits beside the ones it wrote', async () => {
+    const model = await load(`package P {
+    part def Sys { attribute mass; attribute topSpeed; }
+    requirement def MassLimit {
+        subject u : Sys;
+        require constraint { u.mass <= 25.0 }
+    }
+    requirement def StrictMassLimit :> MassLimit {
+        require constraint { u.topSpeed <= 60.0 }
+    }
+}`);
+    const table = buildContractsTable(model);
+    const child = table.rows.find((r) => r.qualifiedName === 'P::StrictMassLimit')!;
+    expect(child.guarantees.map((g) => g.expression)).toEqual(['u.topSpeed <= 60.0']);
+    expect(child.inheritedFrom).toEqual(['P::MassLimit']);
+    expect(child.inheritedClauses).toBe(1);
+    // The summary counts the bodies the model writes, not the disclosures.
+    expect(table.summary.guarantees).toBe(2);
+  });
+
   it('shows a refused relation with the reason, rather than dropping it', async () => {
     const model = await load(`package P {
     part def Sys { attribute label : String; attribute mass; }

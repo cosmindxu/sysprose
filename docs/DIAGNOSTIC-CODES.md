@@ -428,7 +428,7 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** info
 - **Source:** verification
-- **Fires when:** A requirement states assumptions and guarantees nothing, so its contract has nothing to show.
+- **Fires when:** A requirement states assumptions, guarantees nothing and inherits no guarantee either, so its contract has nothing to show. A requirement that inherits a `require` clause from a general type is not reported here: the clause applies to it and `contracts` lists it on its row.
 - **Hint given:** Add a `require constraint { … }` stating what the requirement guarantees, or read the assumptions as context rather than as an obligation.
 
 ### `verification/nonstandard-clause-location`

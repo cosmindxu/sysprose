@@ -460,7 +460,7 @@ const CODES = [
     code: 'verification/contract-no-guarantee',
     source: 'verification',
     severity: 'info',
-    when: 'A requirement states assumptions and guarantees nothing, so its contract has nothing to show.',
+    when: 'A requirement states assumptions, guarantees nothing and inherits no guarantee either, so its contract has nothing to show. A requirement that inherits a `require` clause from a general type is not reported here: the clause applies to it and `contracts` lists it on its row.',
     hint: 'Add a `require constraint { … }` stating what the requirement guarantees, or read the assumptions as context rather than as an obligation.',
   },
   {

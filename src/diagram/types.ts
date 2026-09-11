@@ -672,15 +672,38 @@ export interface ContractRow {
   assumptions: ContractClauseCell[];
   guarantees: ContractClauseCell[];
   /**
-   * The definitions whose clauses this usage inherits but does not own.
+   * The definitions whose clauses this contract inherits but did not write.
    *
    * A `requirement r : MassLimit;` owns no clause and is NOT "prose only"; the
-   * row says where its clauses are filed instead of reading as empty.
+   * row says where its clauses are filed instead of reading as empty. A
+   * contract that wrote clauses of its own may inherit more, and the two are
+   * different sentences — see {@link ContractRow.inheritedClauses}.
    */
   inheritedFrom: string[];
-  /** Relations a gate refused, with the reason each was refused for. */
+  /**
+   * How many clauses this contract inherits and did not write.
+   *
+   * The number that splits the note above in two. `clauses filed on X` is true
+   * only of a contract that wrote NONE; a contract that wrote one and
+   * inherited another is shown two clauses' worth of promises and the row has
+   * to say so rather than claim its clauses live elsewhere.
+   */
+  inheritedClauses: number;
+  /**
+   * Relations a gate refused among the clauses this contract DECLARED, with
+   * the reason each was refused for.
+   *
+   * Scoped exactly as `Contract.unsupported` is, and named here because the
+   * row may carry {@link ContractRow.inheritedClauses} beside it: a clause the
+   * gates refused on a general type is counted on that type's own row, where
+   * it is filed, and on no other. Widening either figure would report one
+   * refusal on every descendant of the element that wrote it.
+   */
   refused: Array<{ expression: string; reason: string; detail: string }>;
-  /** The weakest fragment that admits every clause of the contract. */
+  /**
+   * The weakest fragment that admits every clause this contract DECLARED —
+   * same scope as {@link ContractRow.refused}, and for the same reason.
+   */
   fragment: string;
   /** The `#keyword`s on the declaration, exactly as written. */
   keywords: string[];

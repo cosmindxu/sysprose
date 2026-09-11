@@ -40,8 +40,10 @@
 import type { ElementId, ElementRecord, Model } from '@core/index';
 import type { Diagnostic } from '@validation/types';
 import {
+  clauseInheritanceCensus,
   contractsOf,
   isUserModelElement,
+  type ClauseInheritanceCensus,
   type Contract,
   type ContractRef,
   type ContractSubject,
@@ -210,6 +212,16 @@ export interface ContractReport {
   guaranteesUnsupported: number;
   /** How many assumptions the whole inventory carries. */
   assumptions: number;
+  /**
+   * How much clause inheritance the model in scope actually practises.
+   *
+   * `--json` only, and inside this payload rather than beside it. It answers
+   * the question the disclosure raises and does not settle: a reader now sees
+   * where a second clause came from, and this says how often anybody writes
+   * that shape — which is what a feature that could only ever REASON about an
+   * inherited clause has to be argued against.
+   */
+  clauseInheritance: ClauseInheritanceCensus;
   /** How many requirement-shaped statements were dropped as `#prose` / `#prompt`. */
   nonNormativeExcluded: number;
   /** Bundled standard-library requirements left out of every figure above. */
@@ -440,6 +452,7 @@ export function contractReport(model: Model, opts: ContractReportOptions = {}): 
     guaranteesQfNra: guarantees.filter((g) => g.fragment === 'qf-nra').length,
     guaranteesUnsupported: guarantees.filter((g) => g.encodable !== true).length,
     assumptions: contracts.reduce((n, c) => n + c.assumptions.length, 0),
+    clauseInheritance: clauseInheritanceCensus(model, contracts),
     nonNormativeExcluded: requirementShaped.filter(
       (el) => isUserModelElement(model, el) && isNonNormativeStatement(model, el.id),
     ).length,
@@ -693,7 +706,16 @@ function verificationFindings(
         hint: `The relation is listed with its reason rather than dropped; nothing is claimed about it. Rewrite it inside the fragment, or expect \`${refusal.reason}\` in the \`obligations --missing\` histogram.`,
       });
     }
-    if (contract.assumptions.length > 0 && contract.guarantees.length === 0) {
+    // …and inherits none. The row four lines above this finding may now list a
+    // guarantee the element did not write, and telling that reader the element
+    // "guarantees nothing" would contradict the disclosure printed over it in
+    // the same report. The finding is about a contract with nothing to show;
+    // an inherited guarantee is something to show, filed on the general type.
+    if (
+      contract.assumptions.length > 0 &&
+      contract.guarantees.length === 0 &&
+      !contract.inheritedClauses.some((c) => c.role === 'require')
+    ) {
       add({
         severity: 'info',
         message: `"${contract.declaredName ?? contract.qualifiedName}" assumes ${contract.assumptions.length} thing(s) and guarantees nothing, so there is nothing to show.`,
