@@ -20,6 +20,13 @@ import {
   isTypingSpecialization,
 } from '@core/index';
 import {
+  CONNECTOR_KINDS,
+  bindingEquivalenceClasses,
+  connectorEndsOf,
+  generalizationsOf,
+  isConnector,
+  isKindOf,
+  itemFlowsOf,
   checkConstraints,
   checkConstraintsNumeric,
   isNonNormativeStatement,
@@ -40,6 +47,10 @@ import {
 // imports the multi-MB standard-library JSON, and this module is on the app's
 // synchronous entry graph (see the note at the top of `src/library/index.ts`).
 import { resolveDeclaredTypeName } from '@library/resolve';
+// The ONE correct reading of a port's direction in this tree — declared or
+// inherited, with net conjugation — imported rather than re-derived: a second
+// reading is how two commands come to disagree about what an `in` port is.
+import { portFacets } from '@validation/rules-connection';
 import { dimEqual, dimToString } from '@semantics/units';
 import { dimensionalFacets, evaluateQuantity } from '@semantics/units-eval';
 
@@ -1690,6 +1701,506 @@ export function connectivityReport(model: Model): ConnectivityReport {
     libraryExcluded: candidates.filter(isLibrary).length,
     implicitExcluded: candidates.filter((e) => !isLibrary(e) && !isUserElement(model, e)).length,
     implicitResolved,
+  };
+}
+
+/* ─────────────────────────── Signature census ───────────────────────────── */
+
+/**
+ * Base metaclasses that model a BEHAVIOUR a part could own.
+ *
+ * The transposed dependency template — "this part's `in` port may be used
+ * inside it to obtain that `out` port" — is intra-procedure in its source, and
+ * a part with no body has nothing to compute one from. This set is how the
+ * census asks whether any part in the model has a body at all.
+ *
+ * Matched with {@link isKindOf} and NOT by equality, because the canonical way
+ * a part owns a behaviour in this notation is `perform action` / `exhibit
+ * state`, which map to `PerformActionUsage` and `ExhibitStateUsage` — subtypes
+ * of the kinds below, and invisible to an exact-match set. A census that read
+ * the two most idiomatic bodies in the language as "no body at all" would be
+ * publishing its own blind spot as a measurement of the corpus.
+ */
+const BEHAVIOUR_BASE_KINDS: readonly string[] = [
+  'ActionUsage',
+  'ActionDefinition',
+  'StateUsage',
+  'StateDefinition',
+  'CalculationUsage',
+  'CalculationDefinition',
+];
+
+/** Does `eClass` model a behaviour — itself, or as a subtype of one? */
+const ownsBehaviour = (eClass: string): boolean =>
+  BEHAVIOUR_BASE_KINDS.some((k) => isKindOf(eClass, k));
+
+/**
+ * Base metaclasses whose directed features are PARAMETERS, not boundary ports.
+ *
+ * `constraint def EnduranceRule { in cap : …; in p : …; }` declares two `in`
+ * features that the port inventory counts as ports, because that is what the
+ * graph says they are. They are parameters of a constraint, and a census that
+ * did not say so would let a port inventory be read as a system boundary — on
+ * `examples/views-tour.sysml` four of six "ports", and all four the report
+ * calls unconnected.
+ *
+ * Matched with {@link isKindOf} for the same reason as
+ * {@link BEHAVIOUR_BASE_KINDS}: `assert constraint`, `satisfy requirement`,
+ * `concern` and `viewpoint` are all subtypes of the kinds below and all own
+ * parameters, and an exact-match set would label theirs as ports.
+ */
+const PARAMETER_OWNER_BASE_KINDS: readonly string[] = [
+  'ConstraintUsage',
+  'ConstraintDefinition',
+  'RequirementUsage',
+  'RequirementDefinition',
+  'CalculationUsage',
+  'CalculationDefinition',
+];
+
+/** Does `eClass` own PARAMETERS rather than boundary ports? */
+const ownsParameters = (eClass: string): boolean =>
+  PARAMETER_OWNER_BASE_KINDS.some((k) => isKindOf(eClass, k));
+
+/**
+ * The direction a port really carries, conjugation applied.
+ *
+ * Read through {@link portFacets} and nowhere else: `attrs.direction` alone
+ * misses an inherited direction and misses conjugation entirely, so `~T` reads
+ * as its own opposite. `inout` is not flipped — it is both directions already.
+ */
+function effectiveDirection(model: Model, id: ElementId): 'in' | 'out' | 'inout' | undefined {
+  const facets = portFacets(model, id);
+  if (facets?.direction === undefined) return undefined;
+  const declared = facets.direction;
+  if (declared === 'inout') return 'inout';
+  if (declared !== 'in' && declared !== 'out') return undefined;
+  if (!facets.conjugated) return declared;
+  return declared === 'in' ? 'out' : 'in';
+}
+
+/**
+ * Is this feature directed — on its own declaration, or on one it redefines?
+ *
+ * {@link portFacets} is the only correct reading of a PORT's direction, and it
+ * answers `undefined` for anything that is not a `PortUsage`. The features
+ * inside a `port def` are attributes and items, so the same question has to be
+ * asked of them directly, and it is asked the same WAY — declared here, or
+ * inherited through the generalization closure. Reading `attrs.direction` alone
+ * would miss `port def RR :> PP { attribute :>> a; }`, where `a` carries `PP`'s
+ * direction and declares none of its own.
+ *
+ * Conjugation does not enter: a `~` flips the directions a port USAGE carries,
+ * and this counts features on the definition side, where there is no usage to
+ * conjugate.
+ */
+function featureIsDirected(model: Model, id: ElementId): boolean {
+  const el = model.get(id);
+  if (el === undefined) return false;
+  if (typeof el.attrs.direction === 'string') return true;
+  return generalizationsOf(model, id).some((g) => typeof g.attrs.direction === 'string');
+}
+
+/**
+ * What this model holds that a signature reading could be built from.
+ *
+ * WHY IT IS A CENSUS AND NOT A CHECK. The consistency conditions it measures
+ * for — does every `in` port influence some `out` port, does every `out` port
+ * depend on some `in` port — presuppose a dependency relation INSIDE a part,
+ * and the connector graph is the composition of such relations across part
+ * boundaries rather than any part's own. Whether that relation exists in real
+ * models is a question about the models, so it is measured before it is
+ * answered: a check that fires on every port of every model reports nothing,
+ * and this census is what would say so.
+ *
+ * WHAT IT IS NOT. No field here is named for a dependency and none is derived
+ * from one. A `connect` is a structural fact; it is not a guarantee that
+ * anything is transported, and reading it as value flow is a refusal this tool
+ * already makes elsewhere.
+ */
+export interface SignatureCensus {
+  /**
+   * Parts that declare a directed port, own an internal part, AND wire the two
+   * together.
+   *
+   * The shape a dependency template could be derived from: a boundary, and
+   * something behind it that the boundary actually reaches. The wiring is part
+   * of the question and not a refinement of it — a part whose boundary port is
+   * wired only to the OUTSIDE, over internal parts it never touches, offers a
+   * template exactly as empty as a part with no internal structure at all
+   * (`examples/views-tour.sysml`'s `Drone` is that part, measured).
+   *
+   * Counted on the element that DECLARES the pair, so one structure is counted
+   * once — a usage of a definition is the same part, and counting both would
+   * report two templates where the model offers one.
+   */
+  partsWithBoundaryPortsAndInternalParts: number;
+  /** Parts (usages and definitions) in the user's model — the denominator. */
+  parts: number;
+  /**
+   * Connectors whose two ends are ports of the SAME part: an intra-part relation.
+   *
+   * Decided on the RAW connector ends, never on their lifted form: two usages
+   * of one `part def` lift onto the same declared port, so `connect a1.o to
+   * a2.i` between two distinct parts would read as a relation inside one. That
+   * substitution is the definition-edge collapse the endpoint materialisation
+   * exists to prevent, and this is the field §3.7b's release gate is read off.
+   */
+  sameOwnerPortRelations: number;
+  /**
+   * Directed features a `port def` holds — a signature on the port itself.
+   *
+   * Counts FEATURES, not port definitions: one `port def` with three directed
+   * features contributes three. Declared on the feature or inherited by it.
+   */
+  directedFeaturesInPortDefs: number;
+  /** Parts that own a behaviour, and therefore have a body to read a template from. */
+  partsOwningBehaviour: number;
+  /** Item/object flows the user wrote: a `connect` that does state a payload. */
+  userItemFlows: number;
+  /** Binding equivalence classes touching the user's model. */
+  nonLibraryBindingClasses: number;
+  /** Ports in the inventory that are parameters of a constraint, not boundary ports. */
+  constraintParametersCountedAsPorts: number;
+  /** Ports that are `inout`, counted once here and once in EACH of the two below. */
+  inoutPorts: number;
+  /** Ports readable as an import (`in`), an `inout` port among them. */
+  importPorts: number;
+  /** Ports readable as an export (`out`), the same `inout` port among them. */
+  exportPorts: number;
+  /**
+   * Connector metaclasses in `CONNECTOR_KINDS` that `CONNECTION_KINDS` omits.
+   *
+   * `connectivityReport` reads the graph through `CONNECTION_KINDS` while
+   * `isConnector` accepts `CONNECTOR_KINDS`, and the delta is a fact about this
+   * tool that a reader of the inventory would otherwise have to find by diffing
+   * two source files. Computed from those two sets, so aligning THEM empties
+   * this row rather than leaving a stale list behind.
+   *
+   * It compares two sets, and says so: other, narrower lists of connector kinds
+   * exist in this tree (`connection-compatibility` walks three, the diagram
+   * regrouper seven), and emptying this row would not reconcile them.
+   */
+  connectorKindsOutsideTheWalk: string[];
+  /** Elements of those kinds in the user's model — how much the delta costs HERE. */
+  connectorElementsOutsideTheWalk: number;
+  /**
+   * Declared connections whose every end lifts onto a port the inventory counts.
+   *
+   * The word a reader expects here is reserved by this lane's claims guard and
+   * is not used: a connection between two counted ports is a structural fact
+   * about the inventory, and saying anything stronger about what the connection
+   * achieves is the claim this census exists not to make.
+   */
+  connectionsBetweenCountedPorts: number;
+  /**
+   * Is the port graph free of directed cycles — `null` when undecidable here?
+   *
+   * `false` withholds {@link longestDirectedChain}: the longest simple path in
+   * a cyclic graph is not something this walk decides, and a number it could
+   * not decide must not be published as one it did.
+   *
+   * `null` says the question itself could not be put. The graph's nodes are
+   * port OCCURRENCES as `connectivityReport` enumerates them, and when
+   * `ConnectivityReport.sharedOccurrences` is non-zero an occurrence stands for
+   * more than one instance end — so two distinct ends could be merged into one
+   * node and invent a cycle, or a chain, that no instance of the model has.
+   * Rather than publish either, both fields go silent.
+   */
+  portGraphAcyclic: boolean | null;
+  /**
+   * The longest chain of connectors between two port occurrences, or `null`.
+   *
+   * `null` means that no port reaches another, that the graph has a cycle, or
+   * that the graph could not be read per occurrence at all —
+   * {@link portGraphAcyclic} is which. A chain of connectors, and nothing more:
+   * the hops are edges somebody drew, not transfers anybody promised.
+   *
+   * Both ends are OCCURRENCES — a part occurrence and the port declared on it
+   * — never bare declarations, because a chain over declarations composes edges
+   * that meet only on paper. `part s : Src; part h1 : Hub; part h2 : Hub; part
+   * k : Snk;` with `s.o -> h1.p` and `h2.p -> k.i` has two 1-hop chains, and a
+   * graph keyed on declared ports would report one 2-hop chain from `s` to `k`
+   * that no wire in the model joins.
+   *
+   * And the chain never composes THROUGH a part: an `in` occurrence and an
+   * `out` occurrence of one part are two nodes with no edge between them,
+   * because the relation that would join them is the intra-part dependency this
+   * whole census exists to report the absence of.
+   */
+  longestDirectedChain: { from: PortEnd; to: PortEnd; hops: number } | null;
+}
+
+/** One end of a chain: the port, and the occurrence of the part it sits on. */
+export interface PortEnd {
+  /** The part occurrence (or, for a port declared on a definition, that type). */
+  owner: ElementRef;
+  /** The declared port the inventory counts. */
+  port: ElementRef;
+}
+
+/**
+ * Measure {@link SignatureCensus} over `model`.
+ *
+ * The report is a parameter so the caller that already has one does not pay for
+ * a second walk, and so the census is measured on the SAME inventory the
+ * command printed — a census of one walk beside the numbers of another would
+ * be two answers under one heading.
+ */
+export function signatureCensus(
+  model: Model,
+  report: ConnectivityReport = connectivityReport(model),
+): SignatureCensus {
+  const ports = model.ofKind('PortUsage').filter((p) => isUserElement(model, p));
+  const parts = [...model.ofKind('PartUsage'), ...model.ofKind('PartDefinition')].filter((p) =>
+    isUserElement(model, p),
+  );
+
+  // Which declared ports each connection joins, as the inventory lifted them.
+  // Used twice below, so it is built once: the boundary/internal wiring test
+  // and the per-occurrence graph both ask what a connection reaches.
+  const liftedEnds = report.connections.map((c) => ({
+    from: new Set<ElementId>(c.sourcePorts),
+    to: new Set<ElementId>(c.targetPorts),
+  }));
+  const meets = (a: ReadonlySet<ElementId>, b: ReadonlySet<ElementId>): boolean => {
+    for (const id of a) if (b.has(id)) return true;
+    return false;
+  };
+
+  let partsWithBoundaryPortsAndInternalParts = 0;
+  let partsOwningBehaviour = 0;
+  for (const part of parts) {
+    const boundary = new Set<ElementId>();
+    const internalParts: ElementId[] = [];
+    let behaviour = false;
+    for (const child of model.children(part.id)) {
+      if (!isUserElement(model, child)) continue;
+      if (child.eClass === 'PortUsage' && effectiveDirection(model, child.id) !== undefined) {
+        boundary.add(child.id);
+      }
+      if (child.eClass === 'PartUsage') internalParts.push(child.id);
+      if (ownsBehaviour(child.eClass)) behaviour = true;
+    }
+    if (behaviour) partsOwningBehaviour++;
+    if (boundary.size === 0 || internalParts.length === 0) continue;
+    // The ports the internal parts offer — their own, and the ones their types
+    // declare, which is where `part engine : Engine` keeps `Engine::fuelOut`.
+    const internalPorts = new Set<ElementId>();
+    for (const inner of internalParts) {
+      for (const scope of scopeClosure(model, inner)) {
+        for (const child of model.children(scope)) {
+          if (child.eClass === 'PortUsage' && isUserElement(model, child)) internalPorts.add(child.id);
+        }
+      }
+    }
+    const wired = liftedEnds.some(
+      (e) =>
+        (meets(e.from, boundary) && meets(e.to, internalPorts)) ||
+        (meets(e.to, boundary) && meets(e.from, internalPorts)),
+    );
+    if (wired) partsWithBoundaryPortsAndInternalParts++;
+  }
+
+  let sameOwnerPortRelations = 0;
+  for (const el of model.all()) {
+    if (!isUserElement(model, el) || !isConnector(el)) continue;
+    const rawEnds = connectorEndsOf(model, el.id);
+    if (rawEnds.length !== 2) continue;
+    // The LIFT decides what the ends are — it is the reading the inventory
+    // counts ports by — and the RAW ends decide whose they are. Lifting the
+    // owner too would read `connect a1.o to a2.i` across two usages of one
+    // `part def` as a relation inside a single part, because both usages lift
+    // onto the same declared port: the definition-edge collapse the endpoint
+    // copies exist to prevent. Both halves of the mapping are kept.
+    const [a, b] = rawEnds.map((id) => model.get(liftImplicitEndpoint(model, id)));
+    if (a === undefined || b === undefined) continue;
+    if (a.eClass !== 'PortUsage' || b.eClass !== 'PortUsage') continue;
+    const ownerA = model.get(rawEnds[0])?.ownerId ?? undefined;
+    const ownerB = model.get(rawEnds[1])?.ownerId ?? undefined;
+    if (ownerA !== undefined && ownerA === ownerB) sameOwnerPortRelations++;
+  }
+
+  let directedFeaturesInPortDefs = 0;
+  for (const def of model.ofKind('PortDefinition')) {
+    if (!isUserElement(model, def)) continue;
+    for (const child of model.children(def.id)) {
+      if (isUserElement(model, child) && featureIsDirected(model, child.id)) {
+        directedFeaturesInPortDefs++;
+      }
+    }
+  }
+
+  const userItemFlows = itemFlowsOf(model).filter((f) => {
+    const el = model.get(f.id);
+    return el !== undefined && isUserElement(model, el);
+  }).length;
+  const nonLibraryBindingClasses = bindingEquivalenceClasses(model).filter((cls) =>
+    cls.some((id) => {
+      const el = model.get(id);
+      return el !== undefined && isUserElement(model, el);
+    }),
+  ).length;
+
+  let constraintParametersCountedAsPorts = 0;
+  let inoutPorts = 0;
+  let importPorts = 0;
+  let exportPorts = 0;
+  for (const port of ports) {
+    const owner = port.ownerId == null ? undefined : model.get(liftImplicitEndpoint(model, port.ownerId));
+    if (owner !== undefined && ownsParameters(owner.eClass)) {
+      constraintParametersCountedAsPorts++;
+    }
+    // An `inout` port is an import AND an export. It is the port any signature
+    // reading gets wrong first, in both directions, so it is counted once each
+    // way here rather than assigned to whichever side was tested.
+    const direction = effectiveDirection(model, port.id);
+    if (direction === 'inout') {
+      inoutPorts++;
+      importPorts++;
+      exportPorts++;
+    } else if (direction === 'in') importPorts++;
+    else if (direction === 'out') exportPorts++;
+  }
+
+  // The port graph, at the granularity a wire actually has: one node per port
+  // OCCURRENCE — the pair `(part occurrence, declared port)` keyed exactly as
+  // `connectivityReport` keys its wired set — and one edge per (source, target)
+  // pair of a connection whose ends both lift onto counted ports. A connection
+  // whose ends are parts, items or attributes lands on no edge of this graph,
+  // and `connectionsBetweenCountedPorts` says so rather than contributing a
+  // phantom edge.
+  //
+  // Keying the nodes on the DECLARED port instead would publish chains that no
+  // instance of the model has: two usages of one `part def` lift onto one node,
+  // so two connections that touch different usages meet there and compose. It
+  // also invents cycles — `connect n1.p to n2.p` between two usages of one
+  // definition becomes a self-loop on the definition's port. Both were measured
+  // on two-part models before this was written.
+  const counted = new Set<ElementId>(ports.map((p) => p.id));
+  const NODE = ' ';
+  const nodeOf = new Map<string, { owner: ElementId; port: ElementId }>();
+  const edges = new Map<string, string[]>();
+  const nodes = new Set<string>();
+  // The occurrence a raw endpoint belongs to, or `undefined` when it has no
+  // owner to belong to. Both halves are lifted the same way, which is the
+  // normalisation `unconnectedPortUsages` depends on.
+  const endNode = (rawId: ElementId, lifted: ElementId): string | undefined => {
+    if (!counted.has(lifted)) return undefined;
+    const owner = model.get(rawId)?.ownerId;
+    if (owner == null) return undefined;
+    const scope = liftImplicitEndpoint(model, owner);
+    const key = `${scope}${NODE}${lifted}`;
+    if (!nodeOf.has(key)) nodeOf.set(key, { owner: scope, port: lifted });
+    return key;
+  };
+  let connectionsBetweenCountedPorts = 0;
+  for (const c of report.connections) {
+    const from = c.sourcePorts;
+    const to = c.targetPorts;
+    if (
+      from.length > 0 &&
+      to.length > 0 &&
+      from.every((id) => counted.has(id)) &&
+      to.every((id) => counted.has(id))
+    ) {
+      connectionsBetweenCountedPorts++;
+    }
+    // `source`/`sourcePorts` are index-aligned: the raw end and what it lifted
+    // onto. The raw end is what says WHICH usage was wired.
+    const sources = from.map((lifted, i) => endNode(c.source[i]!, lifted));
+    const targets = to.map((lifted, i) => endNode(c.target[i]!, lifted));
+    for (const a of sources) {
+      if (a === undefined) continue;
+      for (const b of targets) {
+        if (b === undefined) continue;
+        nodes.add(a);
+        nodes.add(b);
+        const outgoing = edges.get(a);
+        if (outgoing) outgoing.push(b);
+        else edges.set(a, [b]);
+      }
+    }
+  }
+
+  // Kahn's order, then one pass of dynamic programming over it. The longest
+  // SIMPLE path is NP-hard on a general graph and linear on an acyclic one, so
+  // the cyclic case is reported as undecided rather than searched: linear work,
+  // never exponential.
+  const indegree = new Map<string, number>();
+  for (const n of nodes) indegree.set(n, 0);
+  for (const [, outgoing] of edges) {
+    for (const b of outgoing) indegree.set(b, (indegree.get(b) ?? 0) + 1);
+  }
+  const queue = [...nodes].filter((n) => (indegree.get(n) ?? 0) === 0);
+  const order: string[] = [];
+  while (queue.length > 0) {
+    const n = queue.shift()!;
+    order.push(n);
+    for (const b of edges.get(n) ?? []) {
+      const left = (indegree.get(b) ?? 0) - 1;
+      indegree.set(b, left);
+      if (left === 0) queue.push(b);
+    }
+  }
+  // An occurrence that stands for more than one instance end merges ends this
+  // graph would have to keep apart, so neither the cycle answer nor the chain
+  // is this walk's to give. `sharedOccurrences` is the report's own measure of
+  // exactly that, and it is the gate rather than a second guess at it.
+  const readablePerOccurrence = report.sharedOccurrences === 0;
+  const portGraphAcyclic = readablePerOccurrence ? order.length === nodes.size : null;
+  let longest: { from: string; to: string; hops: number } | null = null;
+  if (portGraphAcyclic === true) {
+    const hops = new Map<string, number>();
+    const start = new Map<string, string>();
+    for (const n of order) {
+      if (!hops.has(n)) hops.set(n, 0);
+      if (!start.has(n)) start.set(n, n);
+      for (const b of edges.get(n) ?? []) {
+        const through = (hops.get(n) ?? 0) + 1;
+        if (through > (hops.get(b) ?? 0)) {
+          hops.set(b, through);
+          start.set(b, start.get(n)!);
+        }
+      }
+    }
+    for (const n of order) {
+      const reached = hops.get(n) ?? 0;
+      if (reached > 0 && (longest === null || reached > longest.hops)) {
+        longest = { from: start.get(n)!, to: n, hops: reached };
+      }
+    }
+  }
+  const endRef = (key: string): PortEnd => {
+    const { owner, port } = nodeOf.get(key)!;
+    return { owner: ref(model, model.get(owner)!), port: ref(model, model.get(port)!) };
+  };
+
+  const outsideKinds = [...CONNECTOR_KINDS].filter((k) => !CONNECTION_KINDS.has(k));
+  const outside = new Set(outsideKinds);
+
+  return {
+    partsWithBoundaryPortsAndInternalParts,
+    parts: parts.length,
+    sameOwnerPortRelations,
+    directedFeaturesInPortDefs,
+    partsOwningBehaviour,
+    userItemFlows,
+    nonLibraryBindingClasses,
+    constraintParametersCountedAsPorts,
+    inoutPorts,
+    importPorts,
+    exportPorts,
+    connectorKindsOutsideTheWalk: outsideKinds,
+    connectorElementsOutsideTheWalk: model
+      .all()
+      .filter((el) => isUserElement(model, el) && outside.has(el.eClass)).length,
+    connectionsBetweenCountedPorts,
+    portGraphAcyclic,
+    longestDirectedChain:
+      longest === null
+        ? null
+        : { from: endRef(longest.from), to: endRef(longest.to), hops: longest.hops },
   };
 }
 

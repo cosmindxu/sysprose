@@ -30,8 +30,23 @@ import { DIMENSIONLESS, dimEqual, resolveUnit, type Dimension } from './units';
 
 /* ─────────────────────────── connector ends ──────────────────────────── */
 
-/** Metaclasses that are connectors (carry two or more connected features). */
-const CONNECTOR_KINDS = new Set([
+/**
+ * Metaclasses that are connectors (carry two or more connected features).
+ *
+ * Exported because it is WIDER than `CONNECTION_KINDS`, the set the
+ * connectivity inventory walks (`src/api/analytics.ts`), and the delta —
+ * `BindingConnector` and `ItemFlow` — is a fact about this tool rather than
+ * about any model. The signature census publishes that delta as a row computed
+ * from THESE TWO sets, so aligning them retires the row instead of leaving a
+ * hand-written list of kinds behind in a second file.
+ *
+ * Two sets, and only two: narrower lists of connector kinds live elsewhere for
+ * their own reasons — `connection-compatibility` walks the three it can judge a
+ * direction on, the diagram regrouper the seven it can draw — and emptying the
+ * census row would not reconcile those. The row measures the inventory's walk
+ * against this one, which is the pair a reader of the inventory is affected by.
+ */
+export const CONNECTOR_KINDS: ReadonlySet<string> = new Set([
   'Connector',
   'ConnectionUsage',
   'InterfaceUsage',

@@ -667,6 +667,159 @@ describe('L7 — sysprose reporting command', () => {
     }
   }, 240_000);
 
+  /**
+   * `--signature` — the census of §3.7a, and the two hard constraints on it.
+   *
+   * The default first line is regexed by four `docs-counts` claims and the
+   * `--json` top level is pinned by the case above, so a census that landed
+   * beside the payload — or a flag that changed the answer rather than
+   * measuring the question — breaks a reader who never passed the flag. Both
+   * are asserted here rather than assumed.
+   */
+  it('connectivity --signature measures the question without moving the answer', async () => {
+    const plain = await run(['connectivity', UAV, '--json']);
+    const signed = await run(['connectivity', UAV, '--signature', '--json']);
+    expect(plain.code).toBe(0);
+    expect(signed.code).toBe(0);
+    interface Conn {
+      portCount: number;
+      connectionCount: number;
+      connectedPortCount: number;
+      unconnectedPorts: Array<{ qualifiedName: string }>;
+      unconnectedPortUsages: unknown[];
+      unreconciledPorts: unknown[];
+      sharedOccurrences: number;
+      implicitResolved: number;
+      census?: { signature: Record<string, unknown> };
+    }
+    const before = payload<{ connectivity: Conn }>(plain);
+    const after = payload<{ connectivity: Conn }>(signed);
+    // A census at the TOP level breaks `['connectivity','file','ok']` on
+    // contact, which is why it lands inside the payload object.
+    expect(before.keys).toEqual(['connectivity', 'file', 'ok']);
+    expect(after.keys).toEqual(['connectivity', 'file', 'ok']);
+    expect(before.body.connectivity.census).toBeUndefined();
+
+    // Element ids are fresh per load, so the two payloads are compared on the
+    // figures rather than on the references — the census must move none of them.
+    const figures = (c: Conn) => ({
+      portCount: c.portCount,
+      connectionCount: c.connectionCount,
+      connectedPortCount: c.connectedPortCount,
+      unconnected: c.unconnectedPorts.map((p) => p.qualifiedName),
+      unconnectedUsages: c.unconnectedPortUsages.length,
+      unreconciled: c.unreconciledPorts.length,
+      shared: c.sharedOccurrences,
+      implicitResolved: c.implicitResolved,
+    });
+    expect(figures(after.body.connectivity)).toEqual(figures(before.body.connectivity));
+    expect(after.body.connectivity.census!.signature).toMatchObject({
+      partsWithBoundaryPortsAndInternalParts: 0,
+      parts: 14,
+      sameOwnerPortRelations: 0,
+      directedFeaturesInPortDefs: 0,
+      partsOwningBehaviour: 0,
+      userItemFlows: 0,
+      nonLibraryBindingClasses: 0,
+      constraintParametersCountedAsPorts: 0,
+      inoutPorts: 1,
+      importPorts: 10,
+      exportPorts: 6,
+      connectorKindsOutsideTheWalk: ['BindingConnector', 'ItemFlow'],
+      connectorElementsOutsideTheWalk: 0,
+      connectionsBetweenCountedPorts: 9,
+      portGraphAcyclic: true,
+    });
+
+    const plainText = await run(['connectivity', UAV]);
+    const signedText = await run(['connectivity', UAV, '--signature']);
+    const firstLine = (s: string) => s.split('\n')[0];
+    // Byte-identical, both ways: this line is the one four documents quote.
+    expect(firstLine(plainText.stdout)).toMatch(
+      /: 15 port\(s\), 9 connection\(s\), 14 connected, 1 unconnected$/,
+    );
+    expect(firstLine(signedText.stdout)).toBe(firstLine(plainText.stdout));
+    expect(signedText.stdout).toContain('9 of 9 declared connection(s) join two counted ports');
+    // Both ends name a part OCCURRENCE and the port on it, never a bare declared
+    // port: the chain's nodes are occurrences, and a declared port would read as
+    // a claim about every usage of the part that declares it.
+    expect(signedText.stdout).toContain(
+      'UAVSurveillanceSystem::AirVehicle::battery :: powerOut -> ' +
+        'UAVSurveillanceSystem::AirVehicle::flightComputer :: powerIn in 1 hop(s)',
+    );
+    // Printed on EVERY verdict this mode reaches, findings or not: a structural
+    // fact is not a dependency, and the line that says so is not conditional.
+    expect(signedText.stdout).toContain(
+      'structural only — a `connect` is not a guarantee that anything is transported',
+    );
+    // The flag reports. It reaches no verdict and it spends no exit code.
+    expect(signedText.code).toBe(0);
+    expect(plainText.stdout).not.toContain('structural only');
+    expect(plainText.stdout).not.toContain('join two counted ports');
+  }, 120_000);
+
+  it('the signature census never contradicts the inventory it is measured on', async () => {
+    // The `c37eb00` baseline, re-run rather than re-reported: the three false
+    // danglers on `examples/vehicle.sysml` were an enumeration defect that is
+    // already fixed, and this case asserts it did not come back — under the new
+    // flag as well as without it.
+    const vehicle = resolve(process.cwd(), 'examples/vehicle.sysml');
+    const v = payload<{
+      connectivity: { unconnectedPortUsages: unknown[]; unreconciledPorts: unknown[] };
+    }>(await run(['connectivity', vehicle, '--signature', '--json']));
+    expect(v.body.connectivity.unconnectedPortUsages).toEqual([]);
+    expect(v.body.connectivity.unreconciledPorts).toEqual([]);
+
+    // And the invariant rather than the instance: no output of this command, on
+    // any shipped example, with or against the flag, reassures the reader that
+    // every declared port is wired while listing ends that are not.
+    const examples = [
+      'contract-authoring-prompts',
+      'uav-isr-verification',
+      'uav-isr',
+      'uav-power-budget',
+      'vehicle',
+      'views-tour',
+    ];
+    for (const name of examples) {
+      const file = resolve(process.cwd(), `examples/${name}.sysml`);
+      for (const argv of [
+        ['connectivity', file],
+        ['connectivity', file, '--signature'],
+      ]) {
+        const r = await run(argv);
+        expect(r.code, `${argv.join(' ')}`).toBe(0);
+        expect(
+          r.stdout.includes('every declared port is wired') &&
+            r.stdout.includes('unconnected port usages'),
+          `${name} reassures above a list of dangling ends`,
+        ).toBe(false);
+      }
+    }
+  }, 240_000);
+
+  it('the census says what the port inventory of `views-tour` really holds', async () => {
+    const file = resolve(process.cwd(), 'examples/views-tour.sysml');
+    const r = payload<{
+      connectivity: {
+        portCount: number;
+        unconnectedPorts: Array<{ qualifiedName: string }>;
+        census: { signature: { constraintParametersCountedAsPorts: number } };
+      };
+    }>(await run(['connectivity', file, '--signature', '--json']));
+    // 4 of 6 "ports" are `in cap` / `in p` constraint parameters, and all four
+    // ports reported unconnected are those parameters. The census is what keeps
+    // the inventory from reading as a boundary.
+    expect(r.body.connectivity.portCount).toBe(6);
+    expect(r.body.connectivity.census.signature.constraintParametersCountedAsPorts).toBe(4);
+    expect(r.body.connectivity.unconnectedPorts.map((p) => p.qualifiedName)).toEqual([
+      'DroneDemo::EnduranceRule::cap',
+      'DroneDemo::EnduranceRule::p',
+      'DroneDemo::enduranceHolds::cap',
+      'DroneDemo::enduranceHolds::p',
+    ]);
+  }, 120_000);
+
   it('elements lists the reader\'s model, not the tool\'s re-derived copies', async () => {
     const r = await run(['elements', UAV, '--json']);
     expect(r.code).toBe(0);
@@ -4437,6 +4590,10 @@ package P {
         { argv: ['requirements', UAV, '--json'], idBlind: true },
         { argv: ['trace', UAV, '--relation', 'satisfy'] },
         { argv: ['connectivity', UAV] },
+        // The census rides on the same walk and prints two more lines; bridged
+        // beside the default path because every assertion about those lines is
+        // made in-process, and this row is what keeps that reading honest.
+        { argv: ['connectivity', UAV, '--signature'] },
         { argv: ['where-used', UAV, '--element', 'AirVehicle', '--depth', '2'] },
         { argv: ['orphans', UAV] },
         { argv: ['prompts', UAV, '--element', 'AirVehicle'] },

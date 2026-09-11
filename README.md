@@ -117,7 +117,7 @@ with the function that control runs.
 | What is in it? | **Grid** view (`tb-view-grid` → `buildGrid`) | `npm run sysprose -- elements model.sysml` | `buildGrid` — `src/diagram/grid.ts` |
 | Are the requirements covered, and by what? | **Requirements** view (`tb-view-requirements` → `buildRequirementsTable`) | `npm run sysprose -- requirements model.sysml` | `requirementSatisfaction` — `src/api/analytics.ts`; `buildRequirementsTable` — `src/diagram/requirements-table.ts` |
 | What satisfies, allocates or verifies what? | **Allocation** view (`tb-view-allocation` → `buildAllocationMatrix`) † | `npm run sysprose -- trace model.sysml --relation satisfy` | `traceabilityMatrix` — `src/api/analytics.ts` |
-| Which ports are wired, and which dangle? | **Interconnection** view (`tb-view-interconnection` → `buildInterconnection`) † | `npm run sysprose -- connectivity model.sysml` | `connectivityReport` — `src/api/analytics.ts` |
+| Which ports are wired, and which dangle? | **Interconnection** view (`tb-view-interconnection` → `buildInterconnection`) † | `npm run sysprose -- connectivity model.sysml [--signature]` | `connectivityReport`, `signatureCensus` — `src/api/analytics.ts` |
 | What breaks if I change this element? | Properties → *Used by* (`prop-used-by` → `whereUsed`), *Impact graph* (`prop-impact` → `neighboursOf`) † | `npm run sysprose -- where-used model.sysml --element X` | `impactClosure` — `src/api/analytics.ts` |
 | What did I declare and never use? | — no view yet | `npm run sysprose -- orphans model.sysml` | `orphanReport` — `src/api/analytics.ts` |
 | What guidance applies to this element? | — no view yet | `npm run sysprose -- prompts model.sysml --element X` | `promptsFor` — `src/api/analytics.ts` |

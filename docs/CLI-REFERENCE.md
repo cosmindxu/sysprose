@@ -181,9 +181,11 @@ Computed by `traceabilityMatrix (src/api/analytics.ts)`. With `--json` the answe
 npm run sysprose -- connectivity <file.sysml|-> [options]
 ```
 
-_No flags of its own._
+| Flag | What it does | Default |
+|---|---|---|
+| `--signature` | Also measure what a signature reading could be built from — structural facts only, never a verdict | — |
 
-Computed by `connectivityReport (src/api/analytics.ts)`. With `--json` the answer is published under `connectivity`, beside `ok` and `file`.
+Computed by `connectivityReport + signatureCensus (src/api/analytics.ts)`. With `--json` the answer is published under `connectivity`, beside `ok` and `file`.
 
 **Exit codes.** 0 clean · 1 the model did not load cleanly (the report is of what parsed) · 2 usage/IO error.
 

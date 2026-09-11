@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 121 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 124 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -4516,6 +4516,59 @@ from the machine's alphabet and therefore ranges over the relation the alphabet
 itself is read from. Scoping both to the narrower set left an `after(n)` label
 whose edge leaves the machine root sitting in the difference, which named the
 environment clause on a machine that carries no environment trigger at all.
+
+**The question is measured before it is answered: `connectivity --signature`.**
+Two consistency conditions over a part's declared signature — does every `in`
+port influence some `out` port, does every `out` port depend on some `in` one —
+were specified and are **not built**, because the relation they read is
+intra-part and the connector graph is the composition of such relations ACROSS
+part boundaries rather than any part's own. Rather than assert that, the tool now
+measures it. `connectivity --signature --json` carries
+`census.signature`, and on all six shipped examples every candidate source of an
+intra-part relation reads **0**: connectors joining two ports of one part 0,
+directed features held by a `port def` 0, parts owning a behaviour **0 of 14** on
+`uav-isr`, user-written item flows 0 there, binding classes 0 there. Exactly one
+part in the whole tree declares a boundary port, owns internal parts and wires
+the two together — `Vehicle` — and it is degenerate: one `in` port, two internal
+parts, and no `out` port at all, so it offers no in→out template to read.
+(`views-tour`'s `Drone` declares a boundary port over an internal part and counts
+0: its port is wired to the ground station, never to the `battery` behind it, and
+a boundary that reaches nothing inside is as empty a template as no internal
+structure at all.) With nothing to derive a template from, a condition-1/2 check would
+flag **100 % of ports on every model in the tree**, and a check that fires on
+everything reports nothing. So the conditions stay unbuilt and
+`docs/CONFORMANCE.md` §8.7 records the limit rather than leaving silence to read
+as coverage. Two further rows are the point as much as the release gate. The
+first says what the port inventory really holds: on `views-tour`, **4 of 6**
+"ports" are `in cap` / `in p` constraint parameters, and all four ports the
+report calls unconnected are those parameters — a port inventory presented as a
+boundary is the mistake this row exists to stop. The second surfaces a defect in
+`connectivity`'s own walk rather than inheriting it: the inventory reads the
+graph through `CONNECTION_KINDS` (8 kinds) while `isConnector` accepts
+`CONNECTOR_KINDS` (10), and the delta — `BindingConnector` and `ItemFlow` — is
+published as `connectorKindsOutsideTheWalk`, computed from the two sets so that
+aligning them retires the row. **A flag is not a subcommand and moves no count
+guard**: `COMMANDS.length` stays 22, `RULES.length` stays 25, the `--json` top
+level stays `['connectivity','file','ok']` with the census INSIDE the payload,
+and `uav-isr`'s `15 port(s), 9 connection(s), 14 connected, 1 unconnected` first
+line is asserted byte-identical with the flag and without it. What the text path
+gains is two lines: how many declared connections join two counted ports and how
+far the connector graph reaches, and — on every verdict the mode reaches,
+findings or not — *structural only — a `connect` is not a guarantee that anything
+is transported*. That chain is read **per port occurrence**, naming a part
+occurrence and the port on it at each end; a graph keyed on declared ports
+collapses two usages of one `part def` onto one node and then reports chains
+composed of wires that never meet and cycles a two-part model does not have, and
+where even the occurrence reading cannot separate two ends
+(`sharedOccurrences` non-zero) both the cycle answer and the chain are withheld. The mode reports; it
+reaches no verdict and spends no exit code, which is also why this is a
+`connectivity` mode and never a validation rule (a rule would break the six
+examples' 0/0/0 guard on contact). The three false danglers `examples/vehicle.sysml`
+once printed are **not** this commit's finding — they were an enumeration defect
+fixed ahead of this lane — and the cases here assert that fixed baseline
+(`unconnectedPortUsages` empty, `unreconciledPorts` empty, and no output on any
+example that reassures *every declared port is wired* above a list of dangling
+ends) rather than reporting somebody else's fix as new.
 
 ## 5. Phase status
 

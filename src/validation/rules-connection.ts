@@ -46,7 +46,18 @@ function qualifiedLabel(model: Model, el: ElementRecord): string {
   return parts.join('::');
 }
 
-interface PortFacets {
+/**
+ * What a connector end tells us once its prototype chain is followed.
+ *
+ * Exported with {@link portFacets} because it is the ONE correct reading of a
+ * port's direction in this tree, and a second reading is how two commands come
+ * to disagree about what an `in` port is: `attrs.direction` alone misses the
+ * direction a usage inherits from its prototype and misses conjugation
+ * entirely, so `~PowerPort` reads as its own opposite. The signature census in
+ * `src/api/analytics.ts` asks the same question for the opposite reason — it
+ * counts imports and exports rather than judging a pair — and it asks it here.
+ */
+export interface PortFacets {
   el: ElementRecord;
   /** Declared on the end or inherited from its prototype; undefined if never declared. */
   direction?: string;
@@ -56,8 +67,8 @@ interface PortFacets {
   defs: ElementRecord[];
 }
 
-/** What a connector end tells us once its prototype chain is followed. */
-function portFacets(model: Model, id: ElementId): PortFacets | undefined {
+/** The facets of the port `id` names, or `undefined` when it names no port. */
+export function portFacets(model: Model, id: ElementId): PortFacets | undefined {
   const el = model.get(id);
   if (!el || el.eClass !== 'PortUsage') return undefined;
   let direction = typeof el.attrs.direction === 'string' ? el.attrs.direction : undefined;

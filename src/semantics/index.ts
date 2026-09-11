@@ -94,6 +94,7 @@ export {
   type SimOptions,
 } from './simulate';
 export {
+  CONNECTOR_KINDS,
   connectorEndsOf,
   isConnector,
   isBindingEdge,

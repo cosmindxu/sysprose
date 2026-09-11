@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Model, ModelFactory, buildSampleModel } from '@core/index';
+import { loadModelText } from '@text/load';
 import {
   ModelApi,
   countByMetaclass,
@@ -13,6 +16,8 @@ import {
   connectivityReport,
   constraintReport,
   promptsFor,
+  signatureCensus,
+  type SignatureCensus,
 } from '@api/index';
 import { setStatementKind } from '@semantics/index';
 
@@ -1189,5 +1194,514 @@ describe('analytics — a declared type the walk cannot follow is COUNTED', () =
       traceabilityMatrix(model, 'AttributeUsage', 'AttributeDefinition', 'FeatureTyping')
         .unresolvedTypings,
     ).toBe(0);
+  });
+});
+
+/**
+ * The signature census — §3.7a of `docs/06-model-checking-implementation-plan.md`.
+ *
+ * WHY IT IS PINNED RATHER THAN SAMPLED. The census exists to decide whether the
+ * two transposable consistency conditions have a customer in real models, and a
+ * release condition read off a number nothing guards is a decision made on a
+ * guess. Every field is measured on all six shipped examples here, so a commit
+ * that moves one has to say so — and §3.7b is released or retired by
+ * `partsWithBoundaryPortsAndInternalParts` in particular.
+ *
+ * IT MEASURES STRUCTURE AND NOTHING ELSE. A `connect` is not a guarantee that
+ * anything is transported, so no field here is named for a dependency and the
+ * longest directed chain is a chain of connectors, not of value flow.
+ */
+describe('analytics — the signature census', () => {
+  const EXAMPLES = [
+    'contract-authoring-prompts',
+    'uav-isr-verification',
+    'uav-isr',
+    'uav-power-budget',
+    'vehicle',
+    'views-tour',
+  ] as const;
+
+  const models = new Map<string, Model>();
+
+  beforeAll(async () => {
+    for (const name of EXAMPLES) {
+      const { model } = await loadModelText(
+        readFileSync(resolve(process.cwd(), `examples/${name}.sysml`), 'utf8'),
+        { fileName: `${name}.sysml` },
+      );
+      models.set(name, model as Model);
+    }
+  }, 180_000);
+
+  /** `part occurrence :: port`, the granularity the chain's nodes really have. */
+  const endName = (e: { owner: { qualifiedName: string }; port: { declaredName?: string } }) =>
+    `${e.owner.qualifiedName} :: ${e.port.declaredName}`;
+
+  /** The census with its two chain ends flattened onto their names. */
+  const pinnable = (c: SignatureCensus) => ({
+    ...c,
+    longestDirectedChain:
+      c.longestDirectedChain === null
+        ? null
+        : {
+            from: endName(c.longestDirectedChain.from),
+            to: endName(c.longestDirectedChain.to),
+            hops: c.longestDirectedChain.hops,
+          },
+  });
+
+  const EMPTY = {
+    partsWithBoundaryPortsAndInternalParts: 0,
+    parts: 0,
+    sameOwnerPortRelations: 0,
+    directedFeaturesInPortDefs: 0,
+    partsOwningBehaviour: 0,
+    userItemFlows: 0,
+    nonLibraryBindingClasses: 0,
+    constraintParametersCountedAsPorts: 0,
+    inoutPorts: 0,
+    importPorts: 0,
+    exportPorts: 0,
+    connectorKindsOutsideTheWalk: ['BindingConnector', 'ItemFlow'],
+    connectorElementsOutsideTheWalk: 0,
+    connectionsBetweenCountedPorts: 0,
+    portGraphAcyclic: true as boolean | null,
+    longestDirectedChain: null as null | { from: string; to: string; hops: number },
+  };
+
+  const PINNED: Record<string, ReturnType<typeof pinnable>> = {
+    'contract-authoring-prompts': { ...EMPTY, parts: 6 },
+    'uav-isr-verification': { ...EMPTY, parts: 6 },
+    'uav-isr': {
+      ...EMPTY,
+      parts: 14,
+      inoutPorts: 1,
+      importPorts: 10,
+      exportPorts: 6,
+      connectionsBetweenCountedPorts: 9,
+      longestDirectedChain: {
+        from: 'UAVSurveillanceSystem::AirVehicle::battery :: powerOut',
+        to: 'UAVSurveillanceSystem::AirVehicle::flightComputer :: powerIn',
+        hops: 1,
+      },
+    },
+    'uav-power-budget': { ...EMPTY, parts: 9, userItemFlows: 1, nonLibraryBindingClasses: 1 },
+    vehicle: {
+      ...EMPTY,
+      parts: 6,
+      partsWithBoundaryPortsAndInternalParts: 1,
+      importPorts: 2,
+      exportPorts: 2,
+      connectionsBetweenCountedPorts: 2,
+      longestDirectedChain: {
+        from: 'VehicleModel::Vehicle::engine :: fuelOut',
+        to: 'VehicleModel::vehicle :: fuelIn',
+        hops: 1,
+      },
+    },
+    'views-tour': {
+      ...EMPTY,
+      parts: 8,
+      // `Drone` declares an `in port link` AND owns `part battery`, and still
+      // counts 0: the port is wired to the GROUND STATION, never to `battery`,
+      // which has no port at all. A boundary that reaches nothing behind it
+      // offers exactly the same template as no internal structure — which is
+      // why §5's row says "internal parts WIRED to them" and this field means
+      // it.
+      userItemFlows: 1,
+      constraintParametersCountedAsPorts: 4,
+      importPorts: 5,
+      exportPorts: 1,
+      connectionsBetweenCountedPorts: 1,
+      longestDirectedChain: {
+        from: 'DroneDemo::station :: link',
+        to: 'DroneDemo::drone :: link',
+        hops: 1,
+      },
+    },
+  };
+
+  for (const name of EXAMPLES) {
+    it(`is pinned on examples/${name}.sysml`, () => {
+      expect(pinnable(signatureCensus(models.get(name)!))).toEqual(PINNED[name]);
+    });
+  }
+
+  it('reads the dependency-template question as unanswerable on this corpus', () => {
+    // The measurement §3.7b is held behind: exactly one part in the whole tree
+    // declares boundary ports, owns internal parts AND wires the two together,
+    // and it is degenerate — `Vehicle` has one `in` port, two internal parts and
+    // no `out` port at all, so there is no in→out template to derive from it.
+    const withBoth = EXAMPLES.filter(
+      (n) => signatureCensus(models.get(n)!).partsWithBoundaryPortsAndInternalParts > 0,
+    );
+    expect(withBoth).toEqual(['vehicle']);
+    for (const name of EXAMPLES) {
+      const c = signatureCensus(models.get(name)!);
+      // Every candidate source of an intra-part relation reads zero, which is
+      // the whole finding: there is nothing in these models to read a
+      // dependency template from.
+      expect([c.sameOwnerPortRelations, c.directedFeaturesInPortDefs, c.partsOwningBehaviour]).toEqual([0, 0, 0]);
+    }
+  });
+
+  it('counts an `inout` port once in import and once in export', () => {
+    const c = signatureCensus(models.get('uav-isr')!);
+    const report = connectivityReport(models.get('uav-isr')!);
+    expect(c.inoutPorts).toBe(1);
+    // `DataLink::antenna` is `inout`, and it stands in BOTH readings: import
+    // plus export counts it twice over an inventory of 15. It is also the one
+    // genuinely dangling port the report already names, which is why it is the
+    // port any signature reading gets wrong first.
+    expect(c.importPorts + c.exportPorts - c.inoutPorts).toBe(report.portCount);
+    expect(report.unconnectedPorts.map((p) => p.qualifiedName)).toEqual([
+      'UAVSurveillanceSystem::DataLink::antenna',
+    ]);
+  });
+
+  it('labels a constraint parameter as a parameter rather than as a port', () => {
+    const model = models.get('views-tour')!;
+    const c = signatureCensus(model);
+    const report = connectivityReport(model);
+    // 4 of the 6 "ports" on `views-tour` are `in cap` / `in p` constraint
+    // parameters, and all four ports the report calls unconnected are those
+    // parameters. A census that did not say so would publish a port inventory
+    // as a boundary.
+    expect(report.portCount).toBe(6);
+    expect(c.constraintParametersCountedAsPorts).toBe(4);
+    expect(report.unconnectedPorts.map((p) => p.qualifiedName)).toEqual([
+      'DroneDemo::EnduranceRule::cap',
+      'DroneDemo::EnduranceRule::p',
+      'DroneDemo::enduranceHolds::cap',
+      'DroneDemo::enduranceHolds::p',
+    ]);
+  });
+
+  it('names the connector kinds its own walk does not enumerate', () => {
+    // `connectivityReport` reads the graph through `CONNECTION_KINDS` (8 kinds)
+    // while `isConnector` accepts `CONNECTOR_KINDS` (10). The delta is surfaced
+    // as a census row rather than inherited in silence — and it is computed
+    // from the two sets, so aligning them retires the row instead of leaving a
+    // hand-written list behind.
+    for (const name of EXAMPLES) {
+      expect(signatureCensus(models.get(name)!).connectorKindsOutsideTheWalk).toEqual([
+        'BindingConnector',
+        'ItemFlow',
+      ]);
+    }
+  });
+
+  it('reads a conjugated port as the direction it really carries', async () => {
+    // `attrs.direction` alone is the WRONG reading and it is wrong silently:
+    // `in port p : ~PP` declares `in` and carries `out`, because conjugating the
+    // port type flips its directions. Nothing on the six shipped examples is
+    // conjugated, so without this case the census could read the raw attribute
+    // and every pin above would still be green — which is how one command comes
+    // to disagree with `connection-compatibility` about what an `in` port is.
+    const { model } = await loadModelText(
+      `package Conj {
+    port def PP;
+    part def A { in port p : ~PP; out port q : PP; }
+    part a : A;
+}
+`,
+      { fileName: 'conj.sysml' },
+    );
+    const c = signatureCensus(model as Model);
+    expect(c.importPorts).toBe(0);
+    expect(c.exportPorts).toBe(2);
+    expect(c.inoutPorts).toBe(0);
+  });
+
+  it('withholds the longest chain on a graph with a cycle rather than guessing one', async () => {
+    // The longest simple path is linear on an acyclic graph and NP-hard on a
+    // general one, so the cyclic case is REPORTED and not searched: a number
+    // this walk could not decide must not be published as one it did. Every
+    // shipped example is acyclic, so without this case the gate would never be
+    // exercised in either direction.
+    const cyclic = `package Loop {
+    port def PP;
+    part def A { out port p : PP; in port r : PP; }
+    part def B { in port q : PP; out port s : PP; }
+    part a : A;
+    part b : B;
+    connection f connect a.p to b.q;
+    connection g connect b.s to a.r;
+    connection h connect a.r to a.p;
+`;
+    const { model: looped } = await loadModelText(
+      `${cyclic}    connection i connect b.q to b.s;
+}
+`,
+      { fileName: 'loop.sysml' },
+    );
+    const round = signatureCensus(looped as Model);
+    expect(round.portGraphAcyclic).toBe(false);
+    expect(round.longestDirectedChain).toBeNull();
+
+    // The same model one connection short is a chain, and the chain is reported
+    // — so `null` above is the cycle and not an empty graph.
+    const { model: open } = await loadModelText(`${cyclic}}
+`, { fileName: 'open.sysml' });
+    const straight = signatureCensus(open as Model);
+    expect(straight.portGraphAcyclic).toBe(true);
+    expect(straight.longestDirectedChain?.hops).toBe(3);
+    expect(endName(straight.longestDirectedChain!.from)).toBe('Loop::b :: s');
+    expect(endName(straight.longestDirectedChain!.to)).toBe('Loop::b :: q');
+  });
+
+  it('does not compose a chain out of two wires that never meet', async () => {
+    // The nodes of this graph are port OCCURRENCES, and they have to be: with
+    // one node per DECLARED port, `Hub::p` is a single node, so `s.o -> h1.p`
+    // and `h2.p -> k.i` meet there and compose into a 2-hop chain from `s` to
+    // `k`. No wire in the model joins them — `h1` and `h2` are different parts
+    // — and nothing else in the report contradicts the claim, so it would ship
+    // as a measured fact about the reader's model.
+    const { model } = await loadModelText(
+      `package Chain2 {
+    port def PP;
+    part def Hub { inout port p : PP; }
+    part def Src { out port o : PP; }
+    part def Snk { in port i : PP; }
+    part s : Src;
+    part h1 : Hub;
+    part h2 : Hub;
+    part k : Snk;
+    connection c1 connect s.o to h1.p;
+    connection c2 connect h2.p to k.i;
+}
+`,
+      { fileName: 'chain2.sysml' },
+    );
+    const c = signatureCensus(model as Model);
+    expect(c.connectionsBetweenCountedPorts).toBe(2);
+    expect(c.portGraphAcyclic).toBe(true);
+    expect(c.longestDirectedChain?.hops).toBe(1);
+    expect(endName(c.longestDirectedChain!.from)).toBe('Chain2::s :: o');
+    expect(endName(c.longestDirectedChain!.to)).toBe('Chain2::h1 :: p');
+  });
+
+  it('does not compose a chain THROUGH a part it has no dependency for', async () => {
+    // `a1.o -> a2.i` and `a2.o -> a3.i` is a 2-hop pipeline only if something
+    // inside `a2` carries `i` to `o`, and the absence of exactly that relation
+    // is what this census exists to report. So the graph has two 1-hop chains,
+    // and the number the text line prints says 1.
+    const { model } = await loadModelText(
+      `package Pipeline {
+    port def PP;
+    part def A { out port o : PP; in port i : PP; }
+    part a1 : A;
+    part a2 : A;
+    part a3 : A;
+    connection c1 connect a1.o to a2.i;
+    connection c2 connect a2.o to a3.i;
+}
+`,
+      { fileName: 'pipeline.sysml' },
+    );
+    const c = signatureCensus(model as Model);
+    expect(c.sameOwnerPortRelations).toBe(0);
+    expect(c.longestDirectedChain?.hops).toBe(1);
+  });
+
+  it('does not read two usages of one part definition as one port', async () => {
+    // Every end of this model is lifted onto a port `Node::p` declares once, so
+    // a graph keyed on the lifted id sees a SELF-LOOP and calls a two-part model
+    // cyclic — and the text path then tells the reader their model has a
+    // directed cycle it does not have.
+    const { model } = await loadModelText(
+      `package Peers {
+    port def BusPort;
+    part def Node { inout port p : BusPort; }
+    part n1 : Node;
+    part n2 : Node;
+    connection link connect n1.p to n2.p;
+}
+`,
+      { fileName: 'peers.sysml' },
+    );
+    const c = signatureCensus(model as Model);
+    expect(c.portGraphAcyclic).toBe(true);
+    expect(c.longestDirectedChain?.hops).toBe(1);
+    expect(endName(c.longestDirectedChain!.from)).toBe('Peers::n1 :: p');
+    expect(endName(c.longestDirectedChain!.to)).toBe('Peers::n2 :: p');
+  });
+
+  it('counts a connector across two usages of one definition as no intra-part relation', async () => {
+    // `sameOwnerPortRelations` is the field §3.7b's release gate is read off, so
+    // the direction of an error here matters: comparing the LIFTED owners makes
+    // `connect a1.o to a2.i` — two distinct parts — read as a relation inside
+    // one, and two lines of SysML would release a held feature. The raw ends say
+    // whose ports they are; the lift only says which ports they are.
+    const { model } = await loadModelText(
+      `package Twin {
+    port def PP;
+    part def A { out port o : PP; in port i : PP; }
+    part a1 : A;
+    part a2 : A;
+    connection c1 connect a1.o to a2.i;
+}
+`,
+      { fileName: 'twin.sysml' },
+    );
+    expect(signatureCensus(model as Model).sameOwnerPortRelations).toBe(0);
+
+    // And the other direction: a connector written inside one part, between two
+    // of its own ports, IS the intra-part relation and is counted.
+    const { model: inside } = await loadModelText(
+      `package Rigged {
+    port def PP;
+    part def Rig { in port a : PP; out port b : PP; connect a to b; }
+    part rig : Rig;
+}
+`,
+      { fileName: 'rigged.sysml' },
+    );
+    expect(signatureCensus(inside as Model).sameOwnerPortRelations).toBe(1);
+  });
+
+  it('reads `perform action` and `exhibit state` as a body the part owns', async () => {
+    // The canonical way a part owns a behaviour in this notation is `perform
+    // action` / `exhibit state`, which map to `PerformActionUsage` and
+    // `ExhibitStateUsage`. Matching metaclasses by equality misses both, and
+    // `partsOwningBehaviour` — quoted as measured in `docs/CONFORMANCE.md` — then
+    // reports the census's own blind spot as a fact about the corpus. Nothing in
+    // the six examples declares either form, so only this case can see it.
+    const { model } = await loadModelText(
+      `package Beh {
+    action def Fly;
+    state def Modes;
+    part def Controller {
+        perform action fly : Fly;
+        exhibit state modes : Modes;
+    }
+}
+`,
+      { fileName: 'beh.sysml' },
+    );
+    expect(signatureCensus(model as Model).partsOwningBehaviour).toBe(1);
+  });
+
+  it('labels a parameter of a `viewpoint def` as a parameter too', async () => {
+    // `constraint`, `requirement` and `calculation` are the base kinds, but the
+    // notation subtypes them — `concern`, `viewpoint`, `assert constraint`,
+    // `satisfy requirement` — and every one of those owns parameters, not
+    // boundary ports. Matching metaclasses by equality labels a `viewpoint def`'s
+    // `in cap` as a port of a system boundary, which is the exact misreading
+    // this field exists to stop.
+    const { model } = await loadModelText(
+      `package Vp {
+    attribute def Cap;
+    viewpoint def V { in cap : Cap; }
+    viewpoint v : V;
+}
+`,
+      { fileName: 'vp.sysml' },
+    );
+    const c = signatureCensus(model as Model);
+    expect(connectivityReport(model as Model).portCount).toBe(1);
+    expect(c.constraintParametersCountedAsPorts).toBe(1);
+  });
+
+  it('reads a directed feature a `port def` inherits rather than restates', async () => {
+    // `attribute :>> a` redeclares a feature whose direction lives on the port
+    // definition it redefines. Reading `attrs.direction` off the child alone
+    // under-reads it — the same class of mistake as reading a port's direction
+    // without its prototype chain.
+    const { model } = await loadModelText(
+      `package Inh {
+    port def PP { in attribute a : ScalarValues::Real; }
+    port def RR :> PP { attribute :>> a; }
+    part def Q { in port p : RR; }
+}
+`,
+      { fileName: 'inh.sysml' },
+    );
+    // Two features, not two port definitions: the field counts features.
+    expect(signatureCensus(model as Model).directedFeaturesInPortDefs).toBe(2);
+  });
+
+  it('withholds the graph entirely when one occurrence stands for two ends', async () => {
+    // `Rig::n` is declared once and instantiated twice, so the occurrence graph
+    // would merge two distinct ends into one node — and this model is exactly
+    // the shape where that invents a self-loop. `sharedOccurrences` is the
+    // report's own measure of that, and it gates both fields rather than letting
+    // either be published from a graph that could not separate the ends.
+    const { model } = await loadModelText(
+      `package Sh {
+    port def PP;
+    part def Node { inout port p : PP; }
+    part def Rig { part n : Node; }
+    part r1 : Rig;
+    part r2 : Rig;
+    connection c connect r1.n.p to r2.n.p;
+}
+`,
+      { fileName: 'sh.sysml' },
+    );
+    expect(connectivityReport(model as Model).sharedOccurrences).toBeGreaterThan(0);
+    const c = signatureCensus(model as Model);
+    expect(c.portGraphAcyclic).toBeNull();
+    expect(c.longestDirectedChain).toBeNull();
+    // The connection count is a per-connection fact and is answerable either
+    // way, so it is still reported.
+    expect(c.connectionsBetweenCountedPorts).toBe(1);
+  });
+
+  it('is not vacuous: every field it reports zero for can be non-zero', async () => {
+    // FOUR fields read 0 on every shipped example — `sameOwnerPortRelations`,
+    // `directedFeaturesInPortDefs`, `partsOwningBehaviour` and
+    // `connectorElementsOutsideTheWalk` — and `partsWithBoundaryPortsAndInternalParts`
+    // reads 0 on five of the six. A census whose fields COULD not move would be
+    // a row of constants dressed as a measurement, so each is moved by a witness.
+    const { model } = await loadModelText(
+      `package Wit {
+    port def PP { in attribute payload : ScalarValues::Real; }
+    part def Rig {
+        in port a : PP;
+        out port b : PP;
+        part inner : Leaf;
+        action work;
+        connect a to b;
+        connect a to inner.q;
+    }
+    part def Leaf { in port q : PP; }
+    part rig : Rig;
+}
+`,
+      { fileName: 'wit.sysml' },
+    );
+    const c = signatureCensus(model as Model);
+    // The boundary port `a` is wired to `inner.q`, so the internal structure is
+    // reachable from the boundary and the part counts.
+    expect(c.partsWithBoundaryPortsAndInternalParts).toBe(1);
+    expect(c.sameOwnerPortRelations).toBe(1);
+    expect(c.directedFeaturesInPortDefs).toBe(1);
+    expect(c.partsOwningBehaviour).toBe(1);
+    expect(c.importPorts).toBe(2);
+    expect(c.exportPorts).toBe(1);
+
+    // `connectorElementsOutsideTheWalk` is the one field no `.sysml` input can
+    // move: the textual mapper emits neither `ItemFlow` nor `BindingConnector`,
+    // so a witness for it has to be built through the model API — which is a
+    // path the app's own palette uses. Built here rather than left asserted as 0
+    // forever, because this row is what says what the 8-vs-10 delta COSTS a
+    // model, and a row that can only ever read 0 says nothing.
+    const built = new Model();
+    const f = new ModelFactory(built);
+    const pkg = f.pkg('Delta');
+    const def = f.partDef('Rig', pkg.id);
+    const p = f.port('p', def.id, { direction: 'out' });
+    const q = f.port('q', def.id, { direction: 'in' });
+    f.connect(p.id, q.id, { eClass: 'ItemFlow', ownerId: def.id });
+    f.connect(p.id, q.id, { eClass: 'BindingConnector', ownerId: def.id });
+    const delta = signatureCensus(built);
+    expect(delta.connectorElementsOutsideTheWalk).toBe(2);
+    // And what it costs: the inventory's own walk sees neither of them, so both
+    // ports read as unconnected while two connectors join them.
+    const report = connectivityReport(built);
+    expect(report.connectionCount).toBe(0);
+    expect(report.portCount).toBe(2);
+    expect(report.connectedPortCount).toBe(0);
   });
 });

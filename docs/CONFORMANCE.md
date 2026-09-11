@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3102 passed / 0 failed / 0 skipped** across **147 files** + **128 E2E** across **78 spec files** = **3230 green** (measured 2026-09-10) |
+| Full automated suite | **3126 passed / 0 failed / 0 skipped** across **147 files** + **128 E2E** across **78 spec files** = **3254 green** (measured 2026-09-10) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -1116,6 +1116,69 @@ skeletons, evidence JSON — leaves the model alone and lands in the terminal or
 in a file. No command in this lane edits a requirement's text, a constraint or a
 value.
 
+### 8.7 `connectivity --signature` — what the census measures, and the two conditions it does not transpose
+
+**It measures structure, and it calls it structure.** `--signature` adds a census
+to `connectivity`: how many parts declare a directed port, own an internal part
+and wire the two together, how many connectors join two ports of the same part,
+how many directed features `port def`s hold, how many parts own a behaviour, how many
+item flows and binding classes the user wrote, how many of the "ports" in the
+inventory are constraint parameters, how many ports are `inout`, and how far the
+connector graph reaches. Every one of those is a fact about what the model
+*declares*. **A `connect` is not a guarantee that anything is transported**, and
+no field here is named for a dependency or derived from one; the text path prints
+*"structural only — a `connect` is not a guarantee that anything is
+transported"* on every verdict the mode reaches, findings or not. The flag
+reaches no verdict and spends no exit code: `connectivity` reports.
+
+**Consistency conditions 1 and 2 are not evaluated, and 3 and 4 are not
+transposed.** The consistency conditions this census measures for read a
+dependency relation *inside* a part — "this `in` port may be used within it to
+obtain that `out` port". **There is no intra-part dependency relation in these
+models to derive a template from, so conditions 1 and 2 are not evaluated**, and
+conditions 3 and 4 are not transposed at all: both presuppose a procedure
+*activation* — an entry at which an output is undefined and an order over which
+it becomes defined — and a part is a continuously existing structure with no
+entry. Measured on the shipped corpus rather than assumed: across all six
+examples, connectors joining two ports of one part read **0**, directed features
+held by a `port def` read **0**, and parts owning a behaviour read **0 of 14** on
+`examples/uav-isr.sysml`. Exactly **one** part in the whole tree declares a
+boundary port, owns internal parts and wires the two together — `Vehicle` on
+`examples/vehicle.sysml` — and it is degenerate: one `in` port, two internal
+parts, and no `out` port at all, so there is no in→out template to read off it.
+`Drone` on `examples/views-tour.sysml` declares a boundary port over an internal
+part too and counts **0**, because its port is wired to the ground station and
+never to the part behind it: a boundary that reaches nothing inside offers the
+same empty template as no internal structure at all. Silence here would read as
+coverage, which is why the limit is recorded rather than left out.
+
+**The two granularities are this tool's reading, and are kept apart.**
+`unconnectedPorts` answers per DECLARATION — a port declared on a `part def` used
+three times is one entry, and it leaves the list as soon as any one usage is
+wired — while `unconnectedPortUsages` answers per port OCCURRENCE, which is the
+granularity a dangling end actually has. Neither is the specification's: the
+notation defines a port, not a report, and the split is Sysprose's answer to the
+fact that collapsing the two hid real dangling ends. They are never mixed in one
+sentence, and `unreconciledPorts` is the report's own standing check that the two
+readings agree about the same port rather than two lists left for a reader to
+diff. The census inherits both readings unchanged and adds a third figure of the
+same kind — the connector metaclasses the inventory's own walk does not
+enumerate (`BindingConnector` and `ItemFlow`), published as a row rather than
+left to be found by diffing two source files.
+
+**The chain is read per occurrence, and is withheld where it cannot be.** The
+longest directed chain `--signature` prints names a part occurrence and the port
+on it at each end (`… :: fuelOut`), because its graph has one node per port
+occurrence and not one per declared port. Keyed on declarations, two usages of
+one `part def` collapse onto one node, and the walk then publishes chains that
+compose two wires meeting only on paper and cycles a two-part model does not
+have. Where even the occurrence reading cannot separate two ends — which is
+exactly what `ConnectivityReport.sharedOccurrences` counts — the cycle answer and
+the chain are both withheld rather than guessed. And the chain never composes
+*through* a part: an `in` and an `out` occurrence of one part are two nodes with
+no edge between them, because the relation that would join them is the intra-part
+dependency this census reports the absence of.
+
 ---
 
 ## Mapping to OMG conformance statements — and the honest gaps
@@ -1153,7 +1216,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3102 pass / 0 skip, 147 files)
+# Full unit + integration + conformance suite (3126 pass / 0 skip, 147 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

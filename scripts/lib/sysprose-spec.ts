@@ -430,10 +430,19 @@ export const COMMANDS: readonly CommandSpec[] = [
   {
     name: 'connectivity',
     question: 'Which ports are wired, and which are left dangling?',
-    backedBy: 'connectivityReport (src/api/analytics.ts)',
+    // Two functions, because `--signature` adds a MEASUREMENT to the report
+    // rather than a second report: the census is computed on the very
+    // inventory the command printed, and the README credits both.
+    backedBy: 'connectivityReport + signatureCensus (src/api/analytics.ts)',
     payloadKey: 'connectivity',
     exitContract: 'report',
-    flags: [],
+    flags: [
+      {
+        name: 'signature',
+        kind: 'boolean',
+        doc: 'Also measure what a signature reading could be built from — structural facts only, never a verdict',
+      },
+    ],
   },
   {
     name: 'where-used',

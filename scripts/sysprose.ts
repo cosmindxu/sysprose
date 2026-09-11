@@ -90,6 +90,7 @@ import {
   behaviourLaneRefusal,
   boundsReport,
   connectivityReport,
+  signatureCensus,
   CONTRACT_LEVEL_NOTE,
   consistencyReport,
   contractReport,
@@ -144,6 +145,7 @@ import {
   type PropertyDraftReport,
   type BehaviourReport,
   type MachineReach,
+  type PortEnd,
   type PropertyVerdict,
   type ReachReport,
   type VerificationCaseVerdict,
@@ -928,8 +930,31 @@ function reportTrace(model: Model, name: string, args: ParsedArgs): Report {
   return { json: payload, text };
 }
 
-function reportConnectivity(model: Model, name: string): Report {
+/**
+ * `connectivity`, and `--signature` — the CENSUS, not a second report.
+ *
+ * The flag measures what a signature reading could be built from and prints
+ * what that measurement says about THIS model; it reaches no verdict, moves no
+ * figure the default path prints, and spends no exit code. Two constraints hold
+ * it there: the first line stays byte-identical (four documented figures are
+ * read off it) and the `--json` top level stays `connectivity`/`file`/`ok`, so
+ * the census lands INSIDE the payload object rather than beside it.
+ */
+/**
+ * One end of the chain, printed as the OCCURRENCE it is.
+ *
+ * `Model::vehicle::engine :: fuelOut`, in the same shape the `unconnected port
+ * usages` block already uses — because the chain's nodes are occurrences, and a
+ * bare declared port would read as a claim about every usage of the part.
+ */
+function portEnd(end: PortEnd): string {
+  const owner = end.owner.qualifiedName || end.owner.id;
+  return `${owner} :: ${end.port.declaredName ?? end.port.qualifiedName}`;
+}
+
+function reportConnectivity(model: Model, name: string, signature: boolean): Report {
   const c = connectivityReport(model);
+  const census = signature ? signatureCensus(model, c) : undefined;
   const danglingPortCount = new Set(c.unconnectedPortUsages.map((o) => o.port.id)).size;
   const text = [
     `${name}: ${c.portCount} port(s), ${c.connectionCount} connection(s), ${c.connectedPortCount} connected, ` +
@@ -996,8 +1021,29 @@ function reportConnectivity(model: Model, name: string): Report {
       : []),
     `  ${c.implicitResolved} endpoint(s) lifted onto the port they redefine; ` +
       `${c.libraryExcluded} library and ${c.implicitExcluded} re-derived candidate(s) excluded`,
+    // The census itself is `--json`-only and costs the text path nothing; what
+    // the text path gets is the reading the numbers came from, and the sentence
+    // that says what a connector is NOT. That sentence is printed on every
+    // verdict this mode reaches, findings or not: a `connect` is a structural
+    // fact, and the one line a reader might quote it out of context by is the
+    // line that has to carry the caveat.
+    ...(census === undefined
+      ? []
+      : [
+          `  ${census.connectionsBetweenCountedPorts} of ${c.connectionCount} declared connection(s) join two counted ports; ` +
+            (census.longestDirectedChain !== null
+              ? `${portEnd(census.longestDirectedChain.from)} -> ` +
+                `${portEnd(census.longestDirectedChain.to)} in ` +
+                `${census.longestDirectedChain.hops} hop(s)`
+              : census.portGraphAcyclic === null
+                ? 'no chain is reported: an occurrence here stands for more than one end'
+                : census.portGraphAcyclic
+                  ? 'no port reaches another'
+                  : 'the port graph has a directed cycle, so no longest chain is reported'),
+          '  structural only — a `connect` is not a guarantee that anything is transported',
+        ]),
   ].join('\n');
-  return { json: c, text };
+  return { json: census === undefined ? c : { ...c, census: { signature: census } }, text };
 }
 
 /** The element `where-used` was asked about, or a refusal. Shared with the precheck. */
@@ -3519,7 +3565,7 @@ async function buildReport(
     case 'trace':
       return reportTrace(model, name, args);
     case 'connectivity':
-      return reportConnectivity(model, name);
+      return reportConnectivity(model, name, flagGiven(args, 'signature'));
     case 'where-used':
       return reportWhereUsed(model, name, args);
     case 'orphans':
