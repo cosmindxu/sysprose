@@ -64,6 +64,7 @@ import type { Diagnostic } from '@validation/types';
 import {
   CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
+  afterDuration,
   hashConfig,
   initialConfig,
   isFinalState,
@@ -292,6 +293,98 @@ export interface ExploreResult {
    * never established — only "the guard did not evaluate".
    */
   undeterminedGuards: readonly UndeterminedGuardRow[];
+  /**
+   * The successor relation the walk already computed, kept instead of discarded.
+   *
+   * `successors[i]` holds the node numbers of the configurations reachable from
+   * configuration `i` in ONE innermost-level step — one entry per `stepConfig`
+   * call the walk made from `i`, so a target reached under two different inputs
+   * appears twice. That multiplicity is the honest figure: the memory cost of
+   * this field is exactly one integer per step the walk took anyway.
+   *
+   * NO EDGE POINTS AT A CONFIGURATION A BOUND REFUSED. A target dropped at the
+   * completion, depth or configuration gate is not a node, so it has no number
+   * and nothing can name it; {@link ExploreResult.openFrontier} is how a reader
+   * learns that such a target existed.
+   *
+   * AN EDGE INTO AN ALREADY-SEEN CONFIGURATION IS RECORDED AT THE REVISIT PRUNE,
+   * BESIDE the edge into a newly admitted one: the relation is the UNION of the
+   * two sites, and the prune is the half the field's honesty turns on. Recording
+   * ONLY at the admission point retains the BFS SPANNING TREE — `nodes - 1`
+   * edges, acyclic by construction on every machine in this repository — which
+   * would make a component pass name a bottom component on
+   * `examples/uav-isr.sysml` that does not exist: of the five edges on
+   * `FlightModes`, the admission point supplies three (the tree) and the prune
+   * supplies the two cycle-closing ones (`autonomous -> manual`,
+   * `failsafe -> standby`).
+   *
+   * INTERNED TO INTEGERS, in BFS discovery order, which depends only on model
+   * structure because {@link hashConfig} sorts store and history by name. The
+   * hash itself never leaves the walk: element ids are fresh per load, so a
+   * configuration hash means nothing outside one process and is published
+   * nowhere.
+   */
+  successors: readonly (readonly number[])[];
+  /**
+   * The ACTIVE STACK per node number — not the leaf.
+   *
+   * One state spans many configurations, and a composite sits on the stack of
+   * every configuration inside it, so `stack.includes(p)` is the correct target
+   * predicate for a `state` atom. Retaining it is what lets a later reader ask
+   * the question the atom kind asks rather than a hand-written approximation
+   * of it.
+   */
+  configStates: readonly (readonly ElementId[])[];
+  /**
+   * The ACTIVE LEAF per node number — `leafOf(config)`, `null` where there is
+   * none.
+   *
+   * NOT redundant with {@link ExploreResult.configStates}: a `state` atom is
+   * read as `config.stack.includes(...)` and a `node` atom as
+   * `leafOf(config) === ...`, and every StateUsage in the machine is admitted as
+   * a node, composites included — so the two readings DIVERGE on any composite
+   * state. Measured on one walk, one atom spelled two ways: `node degraded`
+   * never holds and `state degraded` holds in one step. Retaining both arrays is
+   * what keeps two readers from disagreeing about one atom.
+   */
+  configLeaves: readonly (ElementId | null)[];
+  /**
+   * This walk did not see the graph whole. Equals `!exhaustive`, asserted.
+   *
+   * NOT `boundHit !== 'none'`, which reads `false` on the unsupported-construct
+   * early return above — `configs: 0, exhaustive: false, boundHit: 'none'` — and
+   * would let a reader publish an absence over an EMPTY relation on the one
+   * machine class this engine refuses to walk.
+   */
+  openFrontier: boolean;
+  /**
+   * Every walkable transition of this machine for which `afterDuration` is
+   * defined — a numeric `attrs.after` OR an `after(n)` trigger string.
+   *
+   * THE TRANSITION SET, NOT AN ALPHABET SUBSET. A transition carrying only
+   * `attrs.after` is a COMPLETION transition: it contributes no label at all, so
+   * a version of this field scoped to alphabet contributors reads EMPTY on a
+   * machine every edge of which is a dwell — which is the one machine the field
+   * exists to catch. Non-empty means the walk offers a dwell at every
+   * configuration and advances no clock, so every escape and every witness in it
+   * may be an artefact of a wait the interpreter would never grant.
+   */
+  timedTransitions: ReadonlySet<ElementId>;
+  /**
+   * The dwell labels that reached {@link ExploreBounds.alphabet}. GATES NOTHING.
+   *
+   * Its only reader is the `alphabet` minus `timedLabels` subtraction that says
+   * whether a non-empty alphabet is real triggers or all dwells — which decides
+   * which of two sentences a withheld claim prints, and nothing else.
+   *
+   * SCOPED TO `regionTransitions`, NOT to the narrower `walkableTransitions`
+   * that {@link ExploreResult.timedTransitions} ranges over, and the two domains
+   * differ for a reason: `machineAlphabet` reads the region relation, so a dwell
+   * leaving a node no configuration stands on still contributes its label to the
+   * alphabet. Subtracting the walkable-scoped set would leave that label in the
+   * difference and call it a named environment trigger.
+   */
+  timedLabels: ReadonlySet<string>;
 }
 
 /* ───────────────────────── refs and small readers ───────────────────────── */
@@ -727,6 +820,15 @@ interface Frontier {
   depth: number;
   /** Consecutive completion steps taken to reach this configuration. */
   completionRun: number;
+  /**
+   * This configuration's node number — its position in BFS discovery order.
+   *
+   * Carried on the queue rather than looked up, because the successor relation
+   * is recorded from the DEQUEUED end: an edge is `succ[here.index].push(to)`,
+   * and re-hashing `here.config` to find `here.index` would pay the walk's
+   * single most expensive operation again per edge.
+   */
+  index: number;
 }
 
 /*
@@ -774,6 +876,38 @@ export function exploreMachine(
   };
   const census = edgeCensus(model, machineId);
   const unsupported = unsupportedConstructs(model, machineId, census);
+  // The dwell census, off the MODEL rather than off the walk, so it reads the
+  // same on a machine this engine refuses to walk as on one it explores: a
+  // transition is timed because of what it says, not because of what the walk
+  // did with it. The set is the TRANSITIONS, and `timedLabels` is only what
+  // reached the alphabet — a transition carrying a numeric `attrs.after` and no
+  // trigger is a completion transition and contributes no label at all, which is
+  // why the two are separate fields and why the gate reads the first.
+  //
+  // THE TWO FIELDS RANGE OVER DIFFERENT RELATIONS, ON PURPOSE, because each is
+  // read against a different thing. `timedTransitions` is the gate's producer
+  // and asks *does the walk offer a dwell at a configuration*, so it is scoped
+  // to `walkableTransitions` — the edges a configuration's stack can hold.
+  // `timedLabels` is only ever SUBTRACTED FROM `bounds.alphabet`, which
+  // `machineAlphabet` computes over `regionTransitions`, so it is scoped to that
+  // same relation: a subtraction whose two sides range over different domains
+  // reports the difference as a named trigger. Measured on a machine every
+  // trigger of which is a dwell and one of whose dwell edges leaves the machine
+  // ROOT — `off-stack` in the census, so the machine is walked rather than
+  // refused: with `timedLabels` scoped to the walkable set, `after(99)` survives
+  // the subtraction and the exactness gate prints the ENVIRONMENT sentence,
+  // *"nothing here establishes that an environment would supply them"*, about a
+  // machine that names no environment trigger at all. The gate's verdict is the
+  // same either way — this decides which sentence a withheld claim carries.
+  const walkable = new Set(walkableTransitions(model, machineId).map((t) => t.id));
+  const timedTransitions = new Set<ElementId>();
+  const timedLabels = new Set<string>();
+  for (const tr of regionTransitions(model, machineId)) {
+    if (afterDuration(tr) === undefined) continue;
+    if (walkable.has(tr.id)) timedTransitions.add(tr.id);
+    const label = triggerLabelOf(tr);
+    if (label !== '') timedLabels.add(label);
+  }
   const reachable = new Set<ElementId>();
   const fired = new Set<ElementId>();
   const offered = new Set<string>();
@@ -805,6 +939,17 @@ export function exploreMachine(
       unsupported,
       census,
       undeterminedGuards: [],
+      // NOTHING WAS WALKED, so the relation is empty — and `openFrontier` is
+      // `true` because `exhaustive` above is `false`, not because a bound was
+      // hit. `boundHit` is `'none'` on this path, which is exactly why the field
+      // is defined as the negation of `exhaustive` and never as a test on
+      // `boundHit`.
+      successors: [],
+      configStates: [],
+      configLeaves: [],
+      openFrontier: true,
+      timedTransitions,
+      timedLabels,
     };
   }
 
@@ -822,8 +967,16 @@ export function exploreMachine(
   if (machineEl) seedStore(model, machineEl, seeded);
   const opening = initialConfig(model, machineId, { store: seeded });
   for (const v of opening.effects.visited) reachable.add(v);
-  const seen = new Set<string>([hashConfig(opening.config)]);
-  const queue: Frontier[] = [{ config: opening.config, depth: 0, completionRun: 0 }];
+  // A MAP, not a set: the value is the configuration's node number, which is
+  // what interns the hash away. `Map.size` is `Set.size`, so the configuration
+  // bound below reads exactly as it did.
+  const seen = new Map<string, number>([[hashConfig(opening.config), 0]]);
+  // One row per node, grown at the admission point so `succ.length` and
+  // `seen.size` stay equal.
+  const succ: number[][] = [[]];
+  const configStates: (readonly ElementId[])[] = [opening.config.stack];
+  const configLeaves: (ElementId | null)[] = [leafOf(opening.config)];
+  const queue: Frontier[] = [{ config: opening.config, depth: 0, completionRun: 0, index: 0 }];
   let boundHit: BoundHit = 'none';
   let depth = 0;
   const nondetSeen = new Set<string>();
@@ -899,7 +1052,18 @@ export function exploreMachine(
         const next = stepConfig(model, here.config, choice);
         for (const v of next.effects.visited) reachable.add(v);
         const key = hashConfig(next.config);
-        if (seen.has(key)) continue;
+        // THE REVISIT EDGE IS RECORDED HERE, BEFORE THE PRUNE, and then the
+        // prune happens exactly as it always did. The admission point below
+        // records the other half; this is the one line the retained relation's
+        // honesty turns on, because recording ONLY there would keep the BFS
+        // SPANNING TREE, which is acyclic by construction on every machine in
+        // this repository, and the two edges this site contributes on
+        // `FlightModes` are precisely the cycle-closing ones.
+        const known = seen.get(key);
+        if (known !== undefined) {
+          succ[here.index].push(known);
+          continue;
+        }
 
         const run = input.kind === 'completion' ? here.completionRun + 1 : 0;
         // `>`, not `>=`: the interpreter's chase fires `maxCompletion`
@@ -924,20 +1088,38 @@ export function exploreMachine(
           boundHit = 'configs';
           continue;
         }
-        seen.add(key);
-        queue.push({ config: next.config, depth: here.depth + 1, completionRun: run });
+        // AFTER the three bound gates, so no edge points at a configuration a
+        // bound refused: such a target is never given a number, and nothing in
+        // the relation can name it.
+        const to = seen.size;
+        seen.set(key, to);
+        succ.push([]);
+        succ[here.index].push(to);
+        configStates.push(next.config.stack);
+        configLeaves.push(leafOf(next.config));
+        queue.push({
+          config: next.config,
+          depth: here.depth + 1,
+          completionRun: run,
+          index: to,
+        });
       }
     }
 
     if (!anyEnabled) recordDeadlock(model, here, deadlockSeen, deadlocks);
   }
 
+  // ONE SOURCE for the two fields that must agree. `openFrontier` is the
+  // NEGATION of `exhaustive` and is written as one here so it cannot drift into
+  // a test on `boundHit`, which reads `false` on the unsupported early return
+  // above.
+  const exhaustive = boundHit === 'none';
   return {
     machineId,
     bounds,
     configs: seen.size,
     depth,
-    exhaustive: boundHit === 'none',
+    exhaustive,
     boundHit,
     reachable,
     fired,
@@ -947,6 +1129,12 @@ export function exploreMachine(
     unsupported,
     census,
     undeterminedGuards: [...undeterminedGuards.values()],
+    successors: succ,
+    configStates,
+    configLeaves,
+    openFrontier: !exhaustive,
+    timedTransitions,
+    timedLabels,
   };
 }
 

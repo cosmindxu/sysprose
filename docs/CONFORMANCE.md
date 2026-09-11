@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3074 passed / 0 failed / 0 skipped** across **146 files** + **128 E2E** across **78 spec files** = **3202 green** (measured 2026-09-10) |
+| Full automated suite | **3102 passed / 0 failed / 0 skipped** across **147 files** + **128 E2E** across **78 spec files** = **3230 green** (measured 2026-09-10) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -1025,6 +1025,30 @@ asserts the wiring by reflection, so a claim added without a condition is a
 failing test rather than a review comment. Nothing about the standard is claimed
 by any of this: it is a record of what THIS tool's walk may and may not say.
 
+**The walk retains the successor relation it computes, and the relation is the
+one reachability was computed from.** `exploreMachine` produced an edge for every
+step it took and discarded it; it now keeps it, as integer node numbers in
+breadth-first discovery order, together with the active state stack and the
+active leaf of each configuration. Four things about that record are worth
+stating, because each of them is a way the same field could have been dishonest.
+It is over **innermost-level steps only** — the profile's priority rule says an
+inner enabled transition beats an outer one, so a configuration reached by firing
+a beaten transition is one no run of this reading enters, and it is not a node.
+It holds **no edge into a configuration a bound refused**: such a configuration is
+never numbered, and `openFrontier` — the negation of `exhaustive`, never a test on
+which bound was hit — is how a reader learns one existed. An edge into a
+configuration the walk has already seen is recorded at the revisit prune,
+**beside** the edge into a newly admitted one, so the relation is the union of
+the two sites; recording **only** at the admission point would retain the
+breadth-first spanning tree, which has one edge fewer than it has nodes and no
+cycle at all, and the two edges the prune contributes on
+`examples/uav-isr.sysml` are exactly the ones that close that machine's cycles.
+And it is **interned to integers**: a configuration hash is built from element
+ids, which are fresh on every load, so no hash string reaches a report, a digest
+or a JSON payload. Nothing reads the relation yet — no
+diagnostic, no verdict, no report row — and the gate for the commit that added it
+was that every row `reach` publishes on the shipped examples is unchanged.
+
 **The declared deviation of §8.1 extends to this command, in the same words.** A
 property whose antecedent never holds is `vacuous` ⇒ inconclusive ⇒ exit 2, not
 true — the two antecedents this engine detects are a scope no explored run opens
@@ -1129,7 +1153,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3074 pass / 0 skip, 146 files)
+# Full unit + integration + conformance suite (3102 pass / 0 skip, 147 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

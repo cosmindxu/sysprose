@@ -325,6 +325,15 @@ export type {
 // an in-process API in those words — a checker that could only be reached by
 // spawning a CLI is not one — and `reachReport` because it is what the `reach`
 // subcommand is a rendering of.
+//
+// `ExploreResult` now carries the SUCCESSOR RELATION the walk computed, interned
+// to integers in breadth-first discovery order, together with the active stack
+// and the active leaf per node. `walkableTransitions` and `afterDuration` are
+// exported beside it because they are what `timedTransitions` ranges over: a
+// caller holding that set cannot say what it means without them. Its sibling
+// `timedLabels` needs no such export — it ranges over the same relation
+// `bounds.alphabet` does, and `bounds` is on the result already, which is the
+// whole point of the two fields being scoped differently.
 export {
   BEHAVIOUR_CODES,
   BEHAVIOUR_UNSUPPORTED_CODE,
@@ -343,6 +352,7 @@ export {
   reachReport,
   stateMachinesIn,
   transitionLabel,
+  walkableTransitions,
 } from '../semantics/mc/explore';
 export type {
   BoundHit,
@@ -365,9 +375,11 @@ export type {
 export {
   MAX_COMPLETION,
   advanceClock,
+  afterDuration,
   enabledTransitions,
   hashConfig,
   initialConfig,
+  isCompletion,
   leafOf,
   stepConfig,
 } from '../semantics/mc/config';

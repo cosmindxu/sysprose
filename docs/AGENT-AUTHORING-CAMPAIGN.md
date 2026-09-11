@@ -4478,6 +4478,45 @@ no diagnostic was added here. A `verification/inherited-clause-not-read` code
 would have fired on zero models in the tree while costing a catalogue bump; the
 disclosure costs less and says more.
 
+**The walk keeps the relation it computes, and the line that decides whether the
+record is honest is where the edge is written down.** `exploreMachine` walked the
+configuration graph, produced a successor for every step, and threw each one away;
+it now retains them as integer node numbers in breadth-first discovery order,
+with the active stack and the active leaf of each configuration beside them. The
+retained record is over innermost-level steps only, holds no edge into a
+configuration a bound refused, and never publishes a configuration hash — hashes
+are built from element ids, which are fresh on every load. **The edge into a
+configuration the walk has already seen is recorded at the revisit prune, beside
+the edge into a newly admitted one**, and that is the whole of it: recording
+*only* at the admission point keeps the breadth-first spanning tree, which has
+one edge fewer than it has nodes and is acyclic by construction on every machine
+in this repository, and the two edges the prune contributes on
+`examples/uav-isr.sysml` are precisely the cycle-closing ones — so a later
+component pass would name a bottom component of a machine that leaves it. That
+regression has a named test rather than a comment, and so does the second one: `openFrontier` is the negation of
+`exhaustive` and not a test on `boundHit`, because the unsupported-construct
+early return explores nothing, names no bound, and would otherwise read as a walk
+that saw a graph whole. **Nothing reads any of it in this pass** — no diagnostic,
+no verdict, no report row — and the gate was that every row `reach` publishes on
+the six shipped examples is deep-equal to what it published before, pinned in the
+suite as a pasted table rather than asserted in prose. Five models arrive with it:
+`latch.sysml`, the one file in the tree that names a trigger, and the `trapguard`
+trio plus `trapguard-typed.sysml`, which are what separate *a guard the walk could
+not decide* from *a guard the model decided against*. The fourth of those is the
+only model in the repository on which the shipped reading and the narrower *"no
+declared value"* reading disagree: `mode` has a declared value and `not mode`
+still decides nothing, because a boolean operator over a number is not false. A
+timed machine is not among them — `accept after(n)` does not parse, so a dwell
+transition is API-only, and that parse fact is now asserted so it cannot rot back
+in as an assumption. The two dwell fields the same pass records **range over
+different relations, and the difference is measured rather than incidental**:
+`timedTransitions` asks whether the walk offers a dwell at a configuration, so it
+is the transitions a stack can hold, while `timedLabels` is only ever subtracted
+from the machine's alphabet and therefore ranges over the relation the alphabet
+itself is read from. Scoping both to the narrower set left an `after(n)` label
+whose edge leaves the machine root sitting in the difference, which named the
+environment clause on a machine that carries no environment trigger at all.
+
 ## 5. Phase status
 
 - **Phase 1 — done.** The contract, `checkText`, the CLI, the fixture corpus,

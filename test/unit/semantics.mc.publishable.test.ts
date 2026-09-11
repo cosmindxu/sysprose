@@ -650,29 +650,6 @@ describe('the registers are data, and every column is asserted', () => {
 
 /* ═══════════ the exactness gate, and the regression it must not cause ═══════════ */
 
-/**
- * The gate's argument, assembled from a walk plus the two fields that arrive
- * with the successor-relation commit.
- *
- * `timedTransitions` is the TRANSITION set and not an alphabet subset, which is
- * the whole of clause (b): a transition carrying only `attrs.after` is a
- * completion transition, contributes no label, and a clause scoped to alphabet
- * contributors reads empty on a machine every edge of which is a dwell.
- */
-function exactnessWalk(model: Model, machineId: ElementId, walk: ExploreResult): ExactnessWalk {
-  const timed = walkableTransitions(model, machineId).filter(
-    (tr) => afterDuration(tr) !== undefined,
-  );
-  const labels = new Set(
-    timed.map((tr) => String(tr.attrs?.trigger ?? '')).filter((l) => l.length > 0),
-  );
-  return {
-    ...walk,
-    timedTransitions: new Set(timed.map((tr) => tr.id)),
-    timedLabels: labels,
-  };
-}
-
 /** `failsafe ⇄ failsafeHold` on dwells, with an escape nothing takes. */
 function twoDwellMachine(): { model: Model; machineId: ElementId } {
   const m = new Model();
@@ -723,7 +700,11 @@ describe('a timed machine keeps its decreasing claims and loses its increasing o
 
   it('`walkIsExact` is FALSE on the same walk, and names the time clause', () => {
     const walk = exploreMachine(model, machineId);
-    const gate = walkIsExact(exactnessWalk(model, machineId, walk), walk.bounds);
+    // THE REAL WALK, not a fabricated argument. This test used to assemble the
+    // gate's two dwell fields itself, because they did not exist on
+    // `ExploreResult` — they ship now, so the assertion below reaches the
+    // SHIPPED producers and a regression in either of them lands here.
+    const gate = walkIsExact(walk, walk.bounds);
     // The walk finished inside every bound and refused nothing, so the FIRST
     // half of the gate holds — which is exactly why a bound flag would not have
     // caught this machine.

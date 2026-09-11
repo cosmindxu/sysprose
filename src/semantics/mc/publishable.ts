@@ -11,11 +11,14 @@
  * `check-behaviour` printed `pass` over the same machine — and the repair was to
  * read the same fields off the same walk. Two readers were survivable; the
  * verification lane adds five more, so the conjunction is lifted here and both
- * shipped readers now call it. Nothing else reads this module yet: the gate on
- * the increasing side is wired in a later commit, and two of its producers
- * (`timedTransitions`, `timedLabels`) do not exist on `ExploreResult` yet. That
- * is deliberate — a refactor whose gate is *"not one published sentence moved"*
- * only proves something while nothing new consumes it.
+ * shipped readers now call it. Nothing PUBLISHED reads the increasing side yet:
+ * its gate is wired into a report in a later commit. Its two remaining
+ * producers — `timedTransitions` and `timedLabels` — arrived with the commit
+ * that retains the successor relation, so `ExploreResult` satisfies
+ * {@link ExactnessWalk} structurally and `walkIsExact` is called on a real walk
+ * in this tree's tests. That the gate itself still prints nothing is deliberate:
+ * a refactor whose gate is *"not one published sentence moved"* only proves
+ * something while nothing new consumes it.
  *
  * WHY THERE ARE TWO CONJUNCTIONS AND NOT ONE. Publishability is not one
  * property, and a single `ok` would have shipped a regression on behaviour that
@@ -201,10 +204,13 @@ export type FailedClause = 'bound' | 'unsupported' | 'environment' | 'time' | 's
 /**
  * What {@link walkIsExact} reads out of a walk.
  *
- * Two of these fields do not exist on `ExploreResult` yet — `timedTransitions`
- * and `timedLabels` arrive with the commit that retains the successor relation —
- * which is why the argument is structural and why nothing in the tree calls this
- * function outside its own tests today.
+ * EVERY `ExploreResult` SATISFIES THIS. `timedTransitions` and `timedLabels`
+ * ship with the commit that retains the successor relation, so
+ * `walkIsExact(walk, walk.bounds)` on a real walk is a call this tree makes.
+ * The argument stays STRUCTURAL for the same reason
+ * {@link PublishabilityWalk}'s does: `checkProperty` (`./patterns`) hands the
+ * predicate the PRODUCT-SEARCH result, which is not an `ExploreResult`, and a
+ * test exercising one clause should not have to fabricate every other field.
  */
 export interface ExactnessWalk extends PublishabilityWalk {
   readonly boundHit: BoundHit;
@@ -219,9 +225,14 @@ export interface ExactnessWalk extends PublishabilityWalk {
    */
   readonly timedTransitions: ReadonlySet<ElementId>;
   /**
-   * The alphabet members those transitions contributed. GATES NOTHING. Its only
-   * reader is the `alphabet ∖ timedLabels` subtraction that decides whether a
-   * non-empty alphabet is real triggers or all dwells.
+   * The dwell labels that reached the alphabet. GATES NOTHING. Its only reader
+   * is the `alphabet ∖ timedLabels` subtraction that decides whether a non-empty
+   * alphabet is real triggers or all dwells — so its producer must range over
+   * the SAME relation the alphabet does (`regionTransitions`), which is a WIDER
+   * one than {@link ExactnessWalk.timedTransitions}'. A producer scoped to the
+   * narrower set leaves an off-stack dwell's label in the difference, and
+   * {@link walkIsExact} then names the environment clause on a machine whose
+   * every trigger is a dwell.
    */
   readonly timedLabels: ReadonlySet<string>;
 }
