@@ -880,6 +880,67 @@ exit code not at all. Vacuity is inconclusive and exits 2 with the flag and
 without it. Use it when a vacuity is something you want a build log to shout
 about rather than something to scroll past.
 
+**`--why` names the axioms the solver's own answer stood on — and says what
+that is not.** When z3 answers `unsat` it can hand back an *unsat core*: the
+subset of the labelled assertions that is enough, on its own, for the
+contradiction. `verify --engine smt --why` prints that set under each `proved`
+row, member by member, with the kind each one was asserted under:
+
+```console
+$ npm run sysprose -- verify examples/uav-isr.sysml --engine smt --why
+  UAVSurveillanceSystem::EnduranceRequirement  uav.endurance >= 45.0 [min]
+    proved: A ∧ P ∧ ¬G unsat, QF_NRA, 4 fixed / 0 free, timeout 5000 ms; assumptions satisfiable
+    why: the core names 4 of this model’s 12 axiom(s), 1 side condition(s) and the goal — 6 label(s) in all
+      axiom UAVSurveillanceSystem::AirVehicle::cruisePower
+      axiom UAVSurveillanceSystem::AirVehicle::endurance
+      axiom UAVSurveillanceSystem::AirVehicle::usableEnergyFraction
+      axiom UAVSurveillanceSystem::BatteryPack::capacity
+      goal UAVSurveillanceSystem::EnduranceRequirement::«ConstraintUsage»
+      side UAVSurveillanceSystem::AirVehicle::endurance — a non-zero divisor or base the ENCODING asserts, not a fact the model states
+    the set z3 returned is sufficient, not minimal: an axiom listed here may not have been needed, and an axiom NOT listed may still carry the claim
+```
+
+**Read that last line before you read the list.** A core is *a* sufficient
+reason, picked by the solver — not the set of facts your requirement depends on.
+Give a model three ways to settle one requirement and it will name one of them:
+with `mtow = 18.5 [kg]` capped at both 20 and 22, the core for `mtow <= 25.0
+[kg]` names the **22** — the weakest of the three — and never mentions the value
+your file actually binds. Deleting an axiom that is not in the core can therefore
+break the proof, and that is why this tool will not print "the axioms this proof
+depends on" over a core, and why `minimal` is a word only `consistency
+--minimize` earns: that one runs a deletion loop, and this runs none.
+
+The `side` member is worth knowing about. Where a relation divides by something
+your model can vary, the encoding asserts the divisor is non-zero — an
+assumption *it* added, not a fact you wrote — and labels it with the name of the
+row it guards. So the same qualified name can appear twice in one core, once as
+an axiom and once as a side condition, and both are real.
+
+`--why` decides nothing: the claim, the code and the exit status are identical
+with the flag and without it, and nothing it prints reaches the evidence record.
+Only a `proved` row's core is published here — a point evaluation asks no solver
+anything — and a run that reached no proof says so rather than printing nothing.
+Two other cores are printed by this tool and neither is one of these: the one
+under `verification/inconsistent-axioms` is about the whole file's axiom set, and
+the one under `verification/vacuous` is about that obligation's premises. Both
+appear inside the sentence that reports them, because they answer other
+questions.
+
+With `--json`, each obligation carries the core itself — on every run, with the
+flag and without it, since the flag gates the display and not the field — plus an
+axiom census: `modelAxioms` (every axiom row this run gathered, whether the
+encoder took it or refused it), `footprintAxioms` (the rows this obligation's
+read-closure kept, refused ones included, so a kept row can assert nothing),
+`scriptAxioms` (what those rows actually asserted, side conditions included) and
+`coreAxioms`. Read `coreAxioms` against `footprintAxioms`: that is the pair that
+says how far the solver's answer narrowed the read-closure the encoder already
+applies. The two other numbers do not bracket each other — `scriptAxioms` is 5
+against a footprint of 4 on the endurance obligation above, where an axiom
+divides by a variable and the encoding asserts the divisor as well, and it is 1
+against a footprint of 2 on a model whose read-closure kept an axiom the encoder
+refused. And nothing in the payload repeats the sufficiency sentence: a consumer
+that renders these members carries it itself.
+
 **What is inconclusive, and what a flag may forgive.**
 
 | The row says | What happened | `--allow-inconclusive`? |

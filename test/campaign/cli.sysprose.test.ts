@@ -82,6 +82,9 @@ import { join, resolve } from 'node:path';
 // inventory is that it resolves the text this tool ships, and a hand-copied
 // package in a test resolves whatever the copy says.
 import { SYSPROSE_VERIFICATION_LIBRARY } from '@semantics/index';
+// The caveat that has to stand beside a printed core, imported rather than
+// retyped: a copy of it in a test asserts the copy.
+import { CORE_SUFFICIENCY_NOTE } from '@api/index';
 
 const CLI = resolve(process.cwd(), 'scripts/sysprose.ts');
 /** The checker, spawned by the one case that has to prove it says nothing. */
@@ -162,11 +165,13 @@ function capture(sink: string[]): typeof process.stdout.write {
  * The exception, and it is deliberate on the other side too: the SOLVER. One
  * `Z3Context` is cached for the life of the process (`src/semantics/smt/
  * z3-bridge.ts`), so a witness or an unsat core — both of them points the
- * solver CHOSE — can move with what it solved before. Nothing here asserts such
- * a value, and the case above the bridge (`a report that carries a solver
- * choice prints the same bytes the second time in one process`) is what says so
- * out loud, so a future case that started depending on the order of this file
- * fails there rather than in a witness assertion.
+ * solver CHOSE — can move with what it solved before. No IN-PROCESS case here
+ * asserts such a value; the two `--why` cases do assert core members, and both
+ * of them therefore reach the solver through a spawned process, which is a
+ * fresh context every time. The case above the bridge (`a report that carries a
+ * solver choice prints the same bytes the second time in one process`) is what
+ * says so out loud, so a future case that started depending on the order of
+ * this file fails there rather than in a witness assertion.
  *
  * That shared context also has a MEMORY consequence, and it is the reason one
  * more case spawns. A nonlinear optimisation allocates without a bound, and one
@@ -1943,6 +1948,252 @@ package P {
     const negative = await run(['verify', UAV, '--engine', 'smt', '--timeout', '-1']);
     expect(negative.code, '--timeout -1 was accepted').toBe(2);
     expect(negative.stderr).toContain('missing value for --timeout');
+  }, 300_000);
+
+  /**
+   * `--why`: the unsat core the verify path has computed since the lane shipped
+   * and thrown away, and the two things that make printing it honest.
+   *
+   * THE TRAP THIS CASE IS BUILT AROUND, and it is the reason the flagship
+   * example alone would say the feature does nothing: on `uav-isr` the core
+   * EQUALS the syntactic footprint the engine already narrows to — 4 of 4 — so
+   * a measurement taken there and nowhere else concludes the solver narrowed
+   * nothing. It narrows on `uav-power-budget`, measured here as an aggregate,
+   * and that number is what a later commit's staleness scope is gated on.
+   *
+   * The three things asserted for what they must NOT say:
+   *  · the `side:` member is present beside the axiom it SHARES A NAME WITH, so
+   *    a display filtered to `axiom:` or deduplicated by qualified name loses a
+   *    real proof dependency and this case goes red;
+   *  · the sufficiency caveat prints on every block, because a core is A
+   *    sufficient reason and not the set the claim depends on;
+   *  · the words "depends on" never appear — the measured hazard is the
+   *    FALSE-NEGATIVE one (`three-reasons` below names the weakest of three
+   *    sufficient axioms and does not name the model's own value at all), and
+   *    the sentence that would state it is banned here rather than reviewed for
+   *    later.
+   */
+  it('verify --why names the core, keeps the side condition, and never calls it what the proof depends on', async () => {
+    const plain = await run(['verify', UAV, '--engine', 'smt']);
+    const why = await run(['verify', UAV, '--engine', 'smt', '--why']);
+    // DISPLAY ONLY: the flag decides nothing, so the code and every claim word
+    // are the ones the same run reaches without it.
+    expect(why.code, '--why moved the exit code').toBe(plain.code);
+    expect(why.stdout).toContain('0 inconclusive, 2 discharged, 0 refuted');
+    expect(plain.stdout, 'the core was named without being asked for').not.toContain('    why:');
+
+    // R-UAV-001's core is SIX labels: four axioms, the goal, and the side
+    // condition on the divisor of `capacity * fraction / cruisePower`.
+    expect(why.stdout).toContain('the core names 4 of this model’s 12 axiom(s)');
+    expect(why.stdout).toContain('6 label(s) in all');
+    for (const axiom of [
+      'axiom UAVSurveillanceSystem::AirVehicle::cruisePower',
+      'axiom UAVSurveillanceSystem::AirVehicle::endurance',
+      'axiom UAVSurveillanceSystem::AirVehicle::usableEnergyFraction',
+      'axiom UAVSurveillanceSystem::BatteryPack::capacity',
+      'goal UAVSurveillanceSystem::EnduranceRequirement::«ConstraintUsage»',
+    ]) {
+      expect(why.stdout, `${axiom} is not in the core this run printed`).toContain(axiom);
+    }
+    // The member a name-keyed dedupe drops: it carries the SAME qualified name
+    // as the axiom two assertions above, and it is an assumption the encoding
+    // added rather than a fact the model states.
+    expect(why.stdout, 'the side condition was filtered or deduplicated away').toContain(
+      'side UAVSurveillanceSystem::AirVehicle::endurance',
+    );
+    expect(why.stdout).toContain('not a fact the model states');
+    // R-UAV-002, on the same run: one axiom of the same twelve.
+    expect(why.stdout).toContain('the core names 1 of this model’s 12 axiom(s)');
+    expect(why.stdout).toContain('axiom UAVSurveillanceSystem::AirVehicle::mtow');
+
+    expect(why.stdout, 'a core was printed with no caveat beside it').toContain(
+      CORE_SUFFICIENCY_NOTE,
+    );
+    expect(why.stdout, 'the word this lane reserves for a deletion loop').not.toContain(
+      'minimal core',
+    );
+    expect(why.stdout, 'a core was published as what the proof depends on').not.toMatch(
+      /depends? on|depend on/,
+    );
+
+    // THREE SUFFICIENT REASONS, ONE CHOSEN. `mtow` is bound at 18.5 and capped
+    // at 20 and at 22; the core names the 22 — the weakest of the three — and
+    // does not name the model's own value at all. That is the measurement the
+    // false-negative sentence would contradict, and it is pinned here so a
+    // later commit cannot write it.
+    const three = await run(['verify', `${FIXV}/models/three-reasons.sysml`, '--engine', 'smt', '--why']);
+    expect(three.code).toBe(0);
+    expect(three.stdout).toContain('axiom ThreeReasons::MassLimit::mtowCapB');
+    expect(three.stdout, 'the core named more than the one reason z3 chose').not.toContain('mtowCapA');
+    expect(three.stdout, 'the model’s own value is not in this core').not.toContain(
+      'axiom ThreeReasons::Airframe::mtow',
+    );
+    expect(three.stdout).toContain(CORE_SUFFICIENCY_NOTE);
+
+    // SHOWN, NEVER RECORDED. The claim line is what every evidence record
+    // copies verbatim, and a core is a value the SOLVER chose: measured, this
+    // model's endurance core is six labels in a fresh process and five inside a
+    // loaded worker. So the `proved:` lines are asserted byte-identical with
+    // the flag and without it, and asserted to name no core at all — that is
+    // the promise that two runs over an unchanged file write the same record,
+    // held at the one place this commit could have broken it.
+    const provedLines = (out: string): string[] =>
+      out.split('\n').filter((l) => l.trimStart().startsWith('proved:'));
+    expect(provedLines(why.stdout), 'a claim line moved under a display flag').toEqual(
+      provedLines(plain.stdout),
+    );
+    expect(provedLines(why.stdout)).toHaveLength(2);
+    for (const line of provedLines(why.stdout)) {
+      expect(line, 'the core reached the claim line, and from there every evidence record').not.toContain(
+        'core',
+      );
+    }
+
+    // A run that reaches no proof says why the flag showed nothing, rather
+    // than printing nothing and reading as a flag the tool ignored.
+    const literal = await run(['verify', UAV, '--engine', 'literal', '--why']);
+    expect(literal.code).toBe(0);
+    expect(literal.stdout).toContain('--why named nothing: no row here is `proved`');
+
+    // AND IT IS A SENTENCE ABOUT A PROOF, not an absence claim about the run.
+    // This lane computes three cores and prints two of them on rows of their
+    // own: step 0's under `verification/inconsistent-axioms`, about the whole
+    // file's axiom set, and step 2's under `verification/vacuous`, about one
+    // obligation's premises. The earlier wording said "no row in this run
+    // carried an unsat core" directly above a row that carried one — an
+    // absence the same output contradicted two lines below it.
+    const inconsistent = await run([
+      'verify',
+      `${FIXV}/models/inconsistent-axioms.sysml`,
+      '--engine',
+      'smt',
+      '--why',
+    ]);
+    expect(inconsistent.code).toBe(2);
+    expect(
+      inconsistent.stdout,
+      'the run published an absence its own next line contradicts',
+    ).not.toContain('no row in this run carried an unsat core');
+    expect(inconsistent.stdout).toContain('core: axiom:InconsistentAxioms::Airframe::mtow');
+    expect(inconsistent.stdout).toContain('`verification/inconsistent-axioms` is step 0’s');
+
+    const vacuous = await run([
+      'verify',
+      `${FIXV}/models/premises-unsatisfiable.sysml`,
+      '--engine',
+      'smt',
+      '--why',
+    ]);
+    expect(vacuous.stdout, 'the run published an absence its own next line contradicts').not.toContain(
+      'no row in this run carried an unsat core',
+    );
+    expect(vacuous.stdout).toContain('core: axiom:PremisesUnsatisfiable::Pump::flow');
+    expect(vacuous.stdout).toContain('`verification/vacuous` is step 2’s');
+
+    // A model that states no obligation has nothing to say this about, and the
+    // sentence is gated on a run that has rows for that reason.
+    const empty = await run([
+      'verify',
+      `${FIXV}/models/no-obligations.sysml`,
+      '--engine',
+      'smt',
+      '--why',
+    ]);
+    expect(empty.stdout).toContain('this model states no obligation at all');
+    expect(empty.stdout, 'a run with no rows explained why a core was missing from them').not.toContain(
+      '--why named nothing',
+    );
+  }, 300_000);
+
+  /**
+   * The census `--why` is instrumentation for, and the byte-stability its
+   * ordering rests on.
+   *
+   * The three numbers are read from `--json` and nowhere else (§2.5): a census
+   * is a field inside the payload, never a sentence on the text path. What they
+   * decide is whether a core-scoped staleness check is worth building, and the
+   * answer is per model rather than per tool — 24 footprint axioms narrowing to
+   * 9 core axioms over the six obligations of `uav-power-budget`, against no
+   * narrowing at all on `uav-isr`.
+   *
+   * TWO PROCESSES, because the ordering of a core is a set's and z3's own order
+   * for it was MEASURED to move between a solo run and a loaded suite. The
+   * engine sorts it for exactly that reason, and this is the assertion that
+   * says the sort is load-bearing rather than decorative.
+   */
+  it('verify --json carries the axiom census, and two processes print the same core bytes', () => {
+    const BUDGET = resolve(process.cwd(), 'examples/uav-power-budget.sysml');
+    const json = spawnCli(['verify', BUDGET, '--engine', 'smt', '--json']);
+    expect(json.code).toBe(0);
+    const body = JSON.parse(json.stdout) as {
+      verify: {
+        results: Array<{
+          claim: string;
+          expression: string;
+          clause: { qualifiedName: string };
+          premises: unknown[];
+          core: string[];
+          axiomCensus: { modelAxioms: number; footprintAxioms: number; scriptAxioms: number; coreAxioms: number } | null;
+        }>;
+      };
+    };
+    const rows = body.verify.results;
+    expect(rows).toHaveLength(6);
+    const footprint = rows.reduce((n, r) => n + (r.axiomCensus?.footprintAxioms ?? 0), 0);
+    const core = rows.reduce((n, r) => n + (r.axiomCensus?.coreAxioms ?? 0), 0);
+    expect(footprint, 'the footprint census moved').toBe(24);
+    expect(core, 'the core census moved — the narrowing this lane is gated on').toBe(9);
+    for (const r of rows) {
+      expect(r.claim).toBe('proved');
+      expect(r.axiomCensus?.modelAxioms, 'the denominator is the model’s axiom count').toBe(10);
+      // Sorted, and asserted to be: an unsorted core is a golden that tests the
+      // worker pool.
+      expect([...r.core].sort(), 'the core reached the payload unsorted').toEqual(r.core);
+    }
+
+    // THE TWO ROWS THE NARROWING IS ACTUALLY MADE OF, pinned one at a time.
+    // The aggregate above is a sum, and a sum survives a regression that moves
+    // two rows in opposite directions — so the two rows this feature is
+    // measured by are named, and named by what identifies them rather than by
+    // position. `BatterySupply` states TWO obligations under one qualified
+    // name, which is why the expression is what picks this one out.
+    const battery = rows.find((r) => r.expression === 'b.outputVoltage >= 22.0 [V]');
+    expect(battery, 'the BatterySupply obligation the narrowing was measured on is gone').toBeDefined();
+    expect(battery?.axiomCensus).toEqual({
+      modelAxioms: 10,
+      footprintAxioms: 5,
+      scriptAxioms: 5,
+      coreAxioms: 1,
+    });
+
+    // A PREMISE IS LOAD-BEARING AND ABSENT. `ComputerDraw` assumes a bus
+    // voltage and its core names one axiom and the goal — no premise — while
+    // the check that separates `proved` from `vacuous` is a check on that very
+    // premise. The reader is told so rather than left to conclude the proof did
+    // not use it. Asserted on the ROW, because the sentence prints on three of
+    // the six and so pins none of them on its own.
+    const computer = rows.find((r) => r.clause.qualifiedName.includes('ComputerDraw'));
+    expect(computer, 'the ComputerDraw obligation is gone').toBeDefined();
+    expect(computer?.premises.length, 'the row that carries a premise no longer carries one').toBe(1);
+    expect(computer?.axiomCensus).toEqual({
+      modelAxioms: 10,
+      footprintAxioms: 6,
+      scriptAxioms: 6,
+      coreAxioms: 1,
+    });
+    expect(
+      computer?.core.filter((label) => label.startsWith('premise:')),
+      'a premise reached this core — the measurement the non-vacuity sentence stands on has moved',
+    ).toEqual([]);
+
+    const text = spawnCli(['verify', BUDGET, '--engine', 'smt', '--why']);
+    expect(text.code).toBe(0);
+    expect(text.stdout).toContain('the core names no premise');
+    expect(text.stdout).toContain('separates `proved` from `vacuous`');
+
+    const again = spawnCli(['verify', BUDGET, '--engine', 'smt', '--why']);
+    expect(again.stdout, 'two processes printed different core bytes').toBe(text.stdout);
+    expect(again.code).toBe(text.code);
   }, 300_000);
 
   /**

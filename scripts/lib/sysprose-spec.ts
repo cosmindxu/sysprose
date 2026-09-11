@@ -635,6 +635,11 @@ export const COMMANDS: readonly CommandSpec[] = [
         kind: 'boolean',
         doc: 'Raise a vacuous obligation from an info line to verification/vacuous-property, an error. It does NOT change the exit code: vacuity is inconclusive and exits 2 with the flag and without it',
       },
+      {
+        name: 'why',
+        kind: 'boolean',
+        doc: 'Name the members of the unsat core the solver returned for each `proved` row — the axioms, the goal, and the side conditions the encoding added, sorted. The set is SUFFICIENT and not minimal: an axiom listed may not have been needed, and an axiom NOT listed may still carry the claim, so it is not "the axioms this proof depends on". It decides nothing and moves no exit code. Only a proof has a core this flag prints; the cores shown under verification/inconsistent-axioms and verification/vacuous answer other questions and print inside their own sentences with or without it',
+      },
     ],
   },
   // The second subcommand that judges, and it judges a DIFFERENT question:

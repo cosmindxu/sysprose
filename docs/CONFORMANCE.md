@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3030 passed / 0 failed / 0 skipped** across **146 files** + **128 E2E** across **78 spec files** = **3158 green** (measured 2026-09-10) |
+| Full automated suite | **3053 passed / 0 failed / 0 skipped** across **146 files** + **128 E2E** across **78 spec files** = **3181 green** (measured 2026-09-10) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -583,6 +583,76 @@ Inside Sysprose the write path holds — the same fixture through the same clien
 against our own server keeps all of it — so the boundary is the reader, not the
 writer. The digest also catches model edits, **not a hand-edited record**.
 
+### 8.3a `--why` — an unsat core is a sufficient reason, and it is shown rather than recorded
+
+`verify … --engine smt --why` names the members of the unsat core the solver
+returned for each `proved` row: the axioms, the goal, and the side conditions the
+encoding added, each with the kind it was asserted under. Three things about it
+belong here rather than in a release note.
+
+**It is not the set of assumptions the claim depends on, and the tool never says
+it is.** A core is *a* sufficient reason, chosen by the solver. Measured on
+`test/fixtures/verification/models/three-reasons.sysml`, where `mtow` is bound at
+18.5 kg and capped at 20 and at 22: the core for `mtow <= 25.0 [kg]` names
+`mtowCapB` — the **weakest** of the three sufficient facts — and does not name
+the model's own value at all, and swapping the two caps' declaration order does
+not move the pick. So an axiom listed may not have been needed and an axiom
+**not** listed may still carry the claim; that sentence prints beside every core
+the command names, and the words *depends on* appear on no `--why` line.
+
+**A side condition is kept, and it shares its name with an axiom.** The encoding
+asserts a non-zero divisor where a relation divides by a variable, labelled with
+the qualified name of the row it guards. On `examples/uav-isr.sysml` the
+endurance proof's core carries both `axiom:…AirVehicle::endurance` and
+`side:…AirVehicle::endurance`, so a display filtered to axioms — or one
+deduplicating by qualified name — would drop a real dependency of that proof.
+
+**It is displayed and counted, never recorded.** No evidence record carries a
+core and `schemas/evidence-record.schema.json` is unchanged, because the
+membership of a core is the solver's choice and not a property of the model.
+**What was measured, stated as the observation it is:** on
+`examples/uav-isr.sysml`, one file and one seed, the endurance proof's core is
+six labels in a fresh process, and five — the same four axioms and the goal,
+without the side condition — when the same obligation is judged inside a test
+worker running the whole verdict corpus of
+`test/campaign/verification.test.ts`. What differs between those two runs is not
+established: a probe that repeats the same call, and one that judges every model
+in that corpus first, both return the six in one process. The observation is
+what this section rests on; the mechanism behind it is not offered. Both cores
+are sufficient, neither is wrong, and a record quoting either would break the
+promise that two runs over an unchanged file write byte-identical evidence. That
+is also why **this commit's three `proved` fixture goldens did not move**,
+against its own plan entry, which asked for their `detail` to be re-recorded with
+the core in it: the plan's ordering decision is that a core is displayed and not
+recorded, and `detail` is copied verbatim into every evidence record, so writing
+one there would have recorded it through the back door and made the golden a
+golden over solver state. What `--json` does carry, per
+obligation, is the axiom census `{modelAxioms, footprintAxioms, scriptAxioms,
+coreAxioms}` — how far the answer narrowed, which is a question about a model and
+is worth asking of one before any feature is built on it. Measured today: no
+narrowing at all on `examples/uav-isr.sysml` (4 core axioms of a 4-axiom
+footprint), and 24 footprint axioms to 9 core axioms over the six obligations of
+`examples/uav-power-budget.sysml`. The census is four numbers rather than the
+three the plan named, because a published numerator with no denominator cannot
+be read, and because `scriptAxioms` and `footprintAxioms` do not bracket each
+other in either direction: a kept row that divides by a variable asserts twice,
+and a kept row the encoder refused asserts nothing. `coreAxioms` is read against
+`footprintAxioms`.
+
+**And the member list itself is in the `--json` payload on every run**, with the
+flag and without it — the flag gates the text display, not the field. The
+sufficiency sentence is printed under every core on the text path; in the payload
+it exists only as the field's description in
+`docs/schemas/verify-report.schema.json`, so a consumer that renders these
+members carries that sentence itself.
+
+The flag decides nothing. The claim word, the code and the exit status of a run
+are the same with it and without it — and a run that reached no proof says so in
+a sentence about proofs, because two other cores in this lane print on rows of
+their own: the one under `verification/inconsistent-axioms` is about the whole
+file's axiom set and the one under `verification/vacuous` is about one
+obligation's premises.
+
 ### 8.3b `property-check` — what the five gates establish, and what they do not
 
 `property-draft` and `property-check` stand **before** the engines: they judge a
@@ -988,6 +1058,7 @@ standard annotation plus tags that are visibly this tool's.
 | `VerificationCases::VerificationMethod` and `VerificationMethodKind` | The gate of §8.2b: a case without `analyze` in its list is not judged at all |
 | `VerificationCases::VerdictKind` literals | **Mirrored as strings** in the values the `verdict` facet may take. It is not a `VerdictKind` reference and does not pretend to be (§8.2). |
 | Any `#keyword` over a `metadata def`, ours or a third party's | Inventoried with what it resolves to, and never acted on by accident (§7) |
+| `@SysproseVerification::FaultHypothesis { maxOrder = N; }` | **Read, never authored** — a tag of this tool's own that a reviewer writes, carrying an ASSUMPTION and never a result: how many independent contract failures are credible at once. The bound it states overrides the built-in one, and a carrier this tool cannot read is reported as provenance rather than passed off as a default (§8.3d) |
 
 **Written — one standard annotation, and three tags that are this tool's.**
 
@@ -997,6 +1068,24 @@ standard annotation plus tags that are visibly this tool's.
 | `metadata RequirementMetadata { attribute verdict = "…"; }` | **Tool-local.** `RequirementMetadata` has 0 occurrences in Part 1; the identifier resolves to nothing, and the value is an unbound quoted string | §8.2 |
 | `@SysproseVerification::Evidence { … }` | **Tool-local**, §7.27 annotating metadata over a `metadata def` this tool ships as text | §8.3, and the interop measurement in §6.1 |
 | `@SysproseVerification::PropertyPattern { … }`, `metadata def <exceptional> ExceptionalOutcome` | **Tool-local**, the same mechanism, and named as an extension everywhere they appear | §7, §8.5 |
+
+**What a carrier BODY may say, and the one spelling it may not.** A vocabulary is
+a `metadata def` *and* the cells its annotation body carries, and the second half
+is as hard to withdraw as the first, so the shapes are recorded here and pinned in
+`test/unit/semantics.keywords.test.ts` rather than left to be discovered by
+whoever writes the next carrier. A set is **one cell holding a `;`-delimited
+list**, and the delimiter with the spacing around it comes back from a save
+byte-identical. **Both spellings of a cell are read**: the ordinary §7.27
+annotation body `{ maxOrder = 2; }`, which the parser stores as a keyword-less
+`ReferenceUsage`, and `{ attribute maxOrder = 2; }`. A carrier this tool sees and
+cannot read is reported as **provenance** — the run says a carrier is present and
+was not read — instead of being attributed to a default, because the bound is the
+same number either way and the sentence about where it came from is not. The
+spelling that is **not** available is the repeated same-named cell:
+`validation/duplicate-name` files an error on each sibling, so a file spelled that
+way cannot appear in any model that passes `npm run check` — and a command handed
+one prints the errors above its report and exits non-zero, reporting on what
+parsed rather than reading the repeated cells as a set.
 
 Everything else the lane produces — verdict lines, SMT-LIB, Othello, SMV, Lean
 skeletons, evidence JSON — leaves the model alone and lands in the terminal or
@@ -1040,7 +1129,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3030 pass / 0 skip, 146 files)
+# Full unit + integration + conformance suite (3053 pass / 0 skip, 146 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

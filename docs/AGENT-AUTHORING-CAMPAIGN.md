@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 116 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 118 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -4382,6 +4382,44 @@ gate's two missing producers, and the guard fixture that separates the shipped
 value"* one — the corpus has one guarded model and both readings agree on it, so
 until that fixture lands the only thing telling them apart is a synthetic row in
 the suite.
+
+**The unsat core the verify path had in hand and threw away, and the two things
+that had to be true before it could be shown.** Every `proved` row is an `unsat`
+answer, and z3 returns a CORE with one: the labelled assertions that are enough
+on their own for the contradiction. `axioms-inconsistent` and `vacuous` have
+printed theirs since the lane shipped; the `proved` path read the field and
+dropped it, and `verify --why` is what hands it to a reader. Two conditions come
+with it, and neither is decoration. **The sufficiency caveat prints beside every
+core**, because a core is *a* sufficient reason rather than the set the claim
+stands on: measured on `three-reasons.sysml`, with `mtow` bound at 18.5 and
+capped at both 20 and 22, the core names `mtowCapB` — the weakest of the three —
+and never the value the file binds, and swapping the caps' declaration order does
+not move the pick. So an axiom that is NOT in a core may still carry the claim,
+which is the reading that would cost somebody a proof, and the sentence *the
+axioms this proof depends on* is banned rather than reviewed for later. **And the
+`side:` member is kept**: where a relation divides by a variable the encoding
+asserts a non-zero divisor, labelled with the qualified name of the row it
+guards, so `examples/uav-isr.sysml`'s endurance proof carries `axiom:…endurance`
+and `side:…endurance` in one six-label core — a display filtered to `axiom:`, or
+one deduplicating by qualified name, drops a real dependency of that proof.
+
+**A core is not put in the evidence record, and the reason is a measurement
+rather than a preference.** The membership of a core is the solver's choice, not
+a property of the model: the same file, the same seed and the same check give six
+labels in a fresh process and five — the same four axioms and the goal, without
+the side condition — when the obligation is judged inside a test worker running
+the whole L8 verdict corpus. What differs between the two is not established and
+is not claimed here; the observation is what the decision rests on.
+Both are sufficient and neither is wrong, but a record quoting either would break
+the promise that two runs over an unchanged file write byte-identical evidence,
+and a golden verdict quoting one would test the worker pool rather than this
+tool. So the core is displayed by a flag and counted in `--json`, where the axiom
+census `{modelAxioms, footprintAxioms, scriptAxioms, coreAxioms}` says how far
+the answer narrowed. That number is per MODEL and not per tool, which is the
+whole reason it is published before anything is built on it: no narrowing at all
+on `uav-isr` (4 core axioms of a 4-axiom footprint, and those four are already in
+its golden as witness symbols), and 24 footprint axioms to 9 core axioms across
+the six obligations of `uav-power-budget`.
 
 ## 5. Phase status
 

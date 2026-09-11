@@ -701,3 +701,45 @@ describe('the keyword vocabulary section', () => {
     }
   });
 });
+
+/**
+ * §"`--why` names the axioms the solver's own answer stood on" — the same rule
+ * as the vocabulary section above, applied to the one console transcript in
+ * this guide that a solver produces.
+ *
+ * WHY IT NEEDS ITS OWN GUARD. The block was hand-typed once and the typing was
+ * wrong by one byte: `this model's` with an ASCII apostrophe where the command
+ * emits `this model’s`. Nothing caught it, because a transcript is prose to
+ * every other check in this file. So the lines are held against the L7 case
+ * that runs `verify --engine smt --why` over the same example and asserts those
+ * exact strings — a renderer change reddens the campaign case, and this one
+ * then reddens until the guide is brought with it.
+ *
+ * The sufficiency caveat is deliberately NOT in this list: the campaign case
+ * asserts it through the exported `CORE_SUFFICIENCY_NOTE` rather than as a
+ * literal, which is the stronger check of the two and the reason a literal
+ * cross-check of that line would be a check on a copy.
+ */
+describe('the `--why` transcript', () => {
+  const CAMPAIGN = read('test/campaign/cli.sysprose.test.ts');
+
+  it('is the output the command really produces', () => {
+    const lines = [
+      'the core names 4 of this model’s 12 axiom(s)',
+      'axiom UAVSurveillanceSystem::AirVehicle::cruisePower',
+      'axiom UAVSurveillanceSystem::AirVehicle::endurance',
+      'axiom UAVSurveillanceSystem::AirVehicle::usableEnergyFraction',
+      'axiom UAVSurveillanceSystem::BatteryPack::capacity',
+      'goal UAVSurveillanceSystem::EnduranceRequirement::«ConstraintUsage»',
+      'side UAVSurveillanceSystem::AirVehicle::endurance',
+      'not a fact the model states',
+    ];
+    for (const line of lines) {
+      expect(GUIDE, `the guide no longer shows: ${line}`).toContain(line);
+      expect(
+        CAMPAIGN,
+        `nothing asserts the command prints: ${line} — the transcript is unbacked`,
+      ).toContain(line);
+    }
+  });
+});

@@ -647,7 +647,14 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
   },
   {
     id: 'A12',
-    claim: 'no simulation relation exists',
+    // The label IS the sentence §3.6 permits, and the scope is part of it. Drop
+    // the trailing clause and what remains is the form `claims.test.ts`
+    // reserves: unqualified, it reads as a claim about the two machines
+    // themselves rather than about the comparison this walk could actually
+    // make, over the labels they share. Caught by the widened guard the first
+    // time this register and that guard met — including on the comment that
+    // first tried to explain it by spelling the banned form out.
+    claim: 'no simulation relation exists over the common labels',
     feature: 'stutter-simulation between an abstract machine and its refinement (§3.6)',
     polarity: 'increasing',
     polarityNote: 'an extra edge in the child makes the search fail more easily',

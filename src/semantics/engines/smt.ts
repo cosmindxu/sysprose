@@ -106,6 +106,42 @@ import {
  */
 export const FREE_DOMAIN_BOUND = 1e12;
 
+/**
+ * The sentence that has to stand beside every printed unsat core, and the
+ * reason the core is worth printing at all only with it.
+ *
+ * An unsat core is A sufficient reason, chosen by the solver, and it is not the
+ * set of assumptions the claim depends on. MEASURED on a model with
+ * `mtow = 18.5`, `mtowCapA {mtow <= 20}` and `mtowCapB {mtow <= 22}` all in
+ * scope: z3's core for `mtow <= 25.0 [kg]` is `{axiom:…mtowCapB, goal:…}` — as
+ * small as any sufficient set could be here, naming the WEAKEST of the three
+ * reasons, and not naming the model's own value at all. Swapping the two caps'
+ * declaration order did not move the pick. So both false readings are live, and the dangerous one
+ * is the second: an axiom absent from a core may still carry the claim.
+ *
+ * It is not the word `minimal` either, and that word is reserved: `consistency
+ * --minimize` runs a deletion loop and is what earns it. Nothing here deletes.
+ */
+export const CORE_SUFFICIENCY_NOTE =
+  'the set z3 returned is sufficient, not minimal: an axiom listed here may not have been ' +
+  'needed, and an axiom NOT listed may still carry the claim';
+
+/** `axiom:Foo::bar#2` → `{ kind: 'axiom', name: 'Foo::bar' }`. */
+export function coreLabelParts(label: string): { kind: string; name: string } {
+  const at = label.indexOf(':');
+  if (at < 0) return { kind: '', name: label };
+  // The `#2` suffix is `encodeScript`'s own disambiguation of two assertions
+  // that mangled to one label — an artefact of the script, not part of any
+  // name — so it is dropped for display and the member is still counted once
+  // per occurrence by every caller that counts.
+  return { kind: label.slice(0, at), name: label.slice(at + 1).replace(/#\d+$/, '') };
+}
+
+/** How many members of a core carry this label kind. */
+export function coreCount(core: readonly string[], kind: string): number {
+  return core.filter((label) => coreLabelParts(label).kind === kind).length;
+}
+
 /** What this engine concluded about one obligation. */
 export type SmtOutcome =
   /** `A ∧ P ∧ ¬G` unsat, `A ∧ P` sat, axioms sat. The only claim word that is a proof. */
@@ -128,6 +164,37 @@ export type SmtOutcome =
   | 'unsupported'
   /** The relation cannot be read at all, or the solver refused our own script. Never forgiven. */
   | 'not-evaluable';
+
+/**
+ * How many axioms this obligation's proof was drawn from, offered from, asked
+ * with, and answered from — the four numbers `--why` reads and `--json`
+ * publishes.
+ *
+ * It is a CENSUS and not a claim: it says how far the solver's own answer
+ * narrowed the model's axiom set for this row, and nothing about which of them
+ * the requirement depends on. The narrowing is what decides whether a
+ * core-scoped staleness check is worth building at all, and it cannot be
+ * decided by reasoning — measured, `examples/uav-isr.sysml` narrows not at all
+ * (the core equals the footprint on both of its obligations) while
+ * `examples/uav-power-budget.sysml` narrows on five of its six, 24 footprint
+ * axioms to 9 core axioms in total.
+ *
+ * `scriptAxioms` counts ASSERTIONS and `footprintAxioms` counts ROWS, which is
+ * why they are two numbers: an axiom whose body divides by a variable is
+ * asserted twice — once as itself, once as the side condition the encoding adds
+ * — and a reader comparing `coreAxioms` against the wrong one of the two would
+ * read a narrowing that did not happen.
+ */
+export interface AxiomCensus {
+  /** Every axiom row this run encoded from the model — the denominator. */
+  modelAxioms: number;
+  /** The axiom rows this obligation's read-closure kept — see {@link relevantAxioms}. */
+  footprintAxioms: number;
+  /** The assertions those rows put in the script, side conditions included. */
+  scriptAxioms: number;
+  /** How many `axiom:` labels the solver's own unsat core named. 0 where none did. */
+  coreAxioms: number;
+}
 
 /** What this engine holds about one obligation, and everything the report prints. */
 export interface SmtJudgement {
@@ -153,6 +220,46 @@ export interface SmtJudgement {
   logic: string;
   /** How many solver checks this row cost, including its share of step 0. */
   checks: number;
+  /**
+   * The `:named` labels of the NEGATION check's unsat core, sorted.
+   *
+   * Populated on `proved` and empty everywhere else, because that is the only
+   * outcome whose core is about this obligation's proof: `axioms-inconsistent`
+   * carries step 0's core (a property of the whole file) and `vacuous` carries
+   * step 2's (a property of the premises), and both of those print their own
+   * core in {@link detail} already. Three cores under one field name would be
+   * three different claims read as one.
+   *
+   * Sorted for the reason {@link coreSentence} is sorted: z3's ordering of a
+   * SET carries no meaning and was measured to move with worker-pool
+   * contention, so a golden over the unsorted form tests the pool.
+   *
+   * AND ITS MEMBERSHIP MOVES TOO, which is why nothing in {@link detail} quotes
+   * it and why no golden verdict pins it. Measured on `examples/uav-isr.sysml`,
+   * one model, one tool, one seed: the endurance proof's core is SIX labels in a
+   * fresh process and FIVE — the same four axioms and the goal, without the side
+   * condition — when the same obligation is judged inside a test worker running
+   * the whole verdict corpus of `test/campaign/verification.test.ts`. WHY the
+   * two runs differ is NOT established, and no mechanism is asserted here: a
+   * probe repeating the call, and one judging every model of that corpus first,
+   * both return the six in one process. The observation is what this comment
+   * rests on. Both cores are sufficient reasons and neither is wrong; a `detail`
+   * string quoting either would put a solver's choice into the evidence record,
+   * whose byte-identity across two runs over an unchanged file is a promise this
+   * lane makes. It is printed by `verify --why`, which is a display on a spawned
+   * run, and counted in {@link AxiomCensus}, which is `--json`.
+   *
+   * The set is SUFFICIENT, never minimal — see {@link CORE_SUFFICIENCY_NOTE},
+   * which is the sentence anything printing this field has to print with it.
+   */
+  core: readonly string[];
+  /**
+   * The four axiom counts, or `null` where no script was built for this row.
+   *
+   * `null` rather than four zeroes: a row the encoder refused never had a
+   * script, and "0 axioms in the script" is a measurement, not an absence.
+   */
+  axiomCensus: AxiomCensus | null;
 }
 
 /** One judged row: the worklist row, and what this engine made of it. */
@@ -528,6 +635,11 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     witness: [] as WitnessValue[],
     logic: '',
     checks: 0,
+    // Both filled in below the point where a script exists to measure. A row
+    // that never reached one keeps these: no core, and no census rather than a
+    // census of zeroes.
+    core: [] as readonly string[],
+    axiomCensus: null as AxiomCensus | null,
   };
 
   // Nothing to ask a solver about.
@@ -662,6 +774,16 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   }));
   const assumed = [...axiomAssertions, ...premiseAssertions, ...goalSides];
   const bound = (kind: SmtJudgement['boundKind'], detail: string) => ({ boundKind: kind, boundDetail: detail });
+  // The census, from the point a script exists to take it over. `core` is
+  // passed in rather than read from a variable because only one branch below
+  // has one: everything else reports the same three numbers with `coreAxioms`
+  // at 0, which is what "no core was named here" looks like as a measurement.
+  const census = (core: readonly string[] = []): AxiomCensus => ({
+    modelAxioms: input.axioms.length,
+    footprintAxioms: axioms.length,
+    scriptAxioms: axiomAssertions.length,
+    coreAxioms: coreCount(core, 'axiom'),
+  });
 
   // STEP 0's answer, read here so every obligation reports it.
   if (input.consistency.status === 'unsat') {
@@ -669,6 +791,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       ...base,
       ...point,
       outcome: 'axioms-inconsistent',
+      axiomCensus: census(),
       checks: 1,
       detail:
         'the axiom set is unsatisfiable, so nothing can be proved from it: a proof from a ' +
@@ -684,6 +807,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       ...base,
       ...point,
       outcome: input.consistency.status === 'unknown' ? 'timeout' : 'not-evaluable',
+      axiomCensus: census(),
       checks: 1,
       detail:
         input.consistency.status === 'unknown'
@@ -696,7 +820,17 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   }
 
   let checks = 1;
-  const logic = scriptOf(variables, [...assumed, { kind: 'goal', name: nameOf(row.row), term: notTerm(goal.term) }], context).logic;
+  // ONE encoding of the negation script, read for its logic line here and sent
+  // to the solver at step 1 below. It was encoded twice — the same arguments,
+  // the same bytes — and the second copy was there only to be checked; a core
+  // read back from a script this function did not keep would be labels nothing
+  // in it could be matched against.
+  const negationScript = scriptOf(
+    variables,
+    [...assumed, { kind: 'goal', name: nameOf(row.row), term: notTerm(goal.term) }],
+    context,
+  );
+  const logic = negationScript.logic;
 
   // THE TWO-SIDED RULE, before the negation check and blocking it. Only over
   // the freed features this obligation's own context reads: a feature released
@@ -712,6 +846,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
         ...base,
         ...point,
         outcome: 'free-unbounded',
+        axiomCensus: census(),
         checks,
         logic,
         detail:
@@ -730,10 +865,10 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   }
 
   // STEP 1: is the negation satisfiable?
-  const negation = await input.backend.check(
-    scriptOf(variables, [...assumed, { kind: 'goal', name: nameOf(row.row), term: notTerm(goal.term) }], context).text,
-    { timeoutMs: input.timeoutMs, variables: variables.map((v) => v.qualifiedName) },
-  );
+  const negation = await input.backend.check(negationScript.text, {
+    timeoutMs: input.timeoutMs,
+    variables: variables.map((v) => v.qualifiedName),
+  });
   checks += 1;
 
   if (negation.status === 'unknown') {
@@ -741,6 +876,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       ...base,
       ...point,
       outcome: 'timeout',
+      axiomCensus: census(),
       checks,
       logic,
       detail:
@@ -755,6 +891,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       ...base,
       ...point,
       outcome: 'not-evaluable',
+      axiomCensus: census(),
       checks,
       logic,
       detail:
@@ -776,6 +913,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
         ...base,
         ...point,
         outcome: 'vacuous',
+        axiomCensus: census(),
         checks,
         logic,
         detail:
@@ -790,6 +928,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
         ...base,
         ...point,
         outcome: 'timeout',
+        axiomCensus: census(),
         checks,
         logic,
         detail:
@@ -807,6 +946,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     );
     checks += 1;
     const tautology = alone.status === 'unsat';
+    const core = sortedCore(negation.core);
     return {
       ...base,
       ...point,
@@ -815,6 +955,8 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       checks,
       logic,
       witness: antecedent.witness,
+      core,
+      axiomCensus: census(core),
       detail:
         `A ∧ P ∧ ¬G unsat, ${logic}, ` +
         `${variables.length - countFree(variables)} fixed / ${countFree(variables)} free, ` +
@@ -844,6 +986,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       ...base,
       ...point,
       outcome: 'witness-unconfirmed',
+      axiomCensus: census(),
       checks,
       logic,
       witness,
@@ -874,6 +1017,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       ...base,
       ...point,
       outcome: 'witness-unconfirmed',
+      axiomCensus: census(),
       checks,
       logic,
       witness,
@@ -893,6 +1037,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       ...base,
       ...point,
       outcome: 'design-admitted',
+      axiomCensus: census(),
       checks,
       logic,
       witness,
@@ -912,6 +1057,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     ...base,
     ...point,
     outcome: 'refuted',
+    axiomCensus: census(),
     checks,
     logic,
     witness,
@@ -1012,7 +1158,12 @@ function solverSentence(backend: Z3Backend): string {
  * the set is sorted before it is printed and the diff is about behaviour again.
  */
 function coreSentence(core: readonly string[]): string {
-  return [...core].sort().join(', ');
+  return sortedCore(core).join(', ');
+}
+
+/** The same sort, as the SET it is — see {@link coreSentence} for why it exists. */
+function sortedCore(core: readonly string[]): readonly string[] {
+  return [...core].sort();
 }
 
 /** How many of these variables the caller released. */

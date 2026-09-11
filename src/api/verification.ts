@@ -74,6 +74,7 @@ import {
   freeableFeatures,
   judgeBySmt,
   resolveFreeFeatures,
+  type AxiomCensus,
   type SmtOutcome,
 } from '../semantics/engines/smt';
 import { DEFAULT_TIMEOUT_MS, loadZ3, type Z3Load } from '../semantics/smt/z3-bridge';
@@ -144,6 +145,22 @@ import {
 // The gate codes, so the whole lane's vocabulary is one set. `./property`
 // imports nothing from here, so the edge is one-way.
 import { PROPERTY_CODE_SET } from './property';
+
+/**
+ * The unsat core's vocabulary, through this door rather than around it.
+ *
+ * The engine owns these — it is what reads a core back out of the solver — and
+ * the CLI, the app and a test all reach them here, so the caveat that has to
+ * stand beside a printed core exists exactly once and the suite pins the
+ * shipped bytes rather than a copy of them. A second copy of that sentence is a
+ * second sentence to keep true.
+ */
+export {
+  CORE_SUFFICIENCY_NOTE,
+  coreCount,
+  coreLabelParts,
+} from '../semantics/engines/smt';
+export type { AxiomCensus } from '../semantics/engines/smt';
 
 /* ─────────────────────────── the contract report ─────────────────────────── */
 
@@ -898,6 +915,26 @@ export interface ObligationVerdict {
    * about a design. False for every row that was not proved.
    */
   tautology: boolean;
+  /**
+   * The `:named` labels of the unsat core the solver returned for THIS proof,
+   * sorted — `verify --why` is what prints them.
+   *
+   * Empty for every row that is not `proved`, and for the literal engine, which
+   * asks no solver anything. What it is NOT is the set of axioms the claim
+   * depends on: see {@link CORE_SUFFICIENCY_NOTE}, the sentence that has to be
+   * printed with it, and note that a `side:` member shares its qualified name
+   * with the axiom it guards — a reader deduplicating by name loses a real
+   * proof dependency.
+   */
+  core: readonly string[];
+  /**
+   * The four axiom counts behind that core, or `null` where no script was built.
+   *
+   * `--json` only on the text path: it is a census, and §2.5's rule is that a
+   * feature reports on its own usefulness inside the payload rather than in a
+   * sentence nobody can aggregate.
+   */
+  axiomCensus: AxiomCensus | null;
 }
 
 /** What a run came to, with the arithmetic behind its exit code. */
@@ -1546,6 +1583,8 @@ async function judge(input: {
         strictVacuity,
         witness: judgement.witness,
         tautology: judgement.tautology,
+        core: judgement.core,
+        axiomCensus: judgement.axiomCensus,
       });
     });
   }
@@ -1618,6 +1657,8 @@ function toVerdict(
     strictVacuity: boolean;
     witness?: WitnessValue[];
     tautology?: boolean;
+    core?: readonly string[];
+    axiomCensus?: AxiomCensus | null;
   },
 ): ObligationVerdict {
   const discharged = DISCHARGES[input.engine].has(input.claim);
@@ -1644,6 +1685,12 @@ function toVerdict(
     bindings: input.bindings,
     witness: input.witness ?? [],
     tautology: input.tautology ?? false,
+    // A row nobody asked a solver about has no core and no census, and the two
+    // defaults say that differently on purpose: an empty core is what "the
+    // solver named none" looks like, and a null census is what "there was no
+    // script to count" looks like. Zeroes would be a measurement of neither.
+    core: input.core ?? [],
+    axiomCensus: input.axiomCensus ?? null,
   };
 }
 

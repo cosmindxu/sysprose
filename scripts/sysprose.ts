@@ -93,6 +93,9 @@ import {
   CONTRACT_LEVEL_NOTE,
   consistencyReport,
   contractReport,
+  CORE_SUFFICIENCY_NOTE,
+  coreCount,
+  coreLabelParts,
   countUnfollowedTypings,
   detachEvidence,
   evidenceStatus,
@@ -1716,8 +1719,91 @@ function caseLines(c: VerificationCaseVerdict): string[] {
   ];
 }
 
+/**
+ * What `--why` adds under one row: the members of the core, and its caveat.
+ *
+ * ONLY A `proved` ROW HAS ONE, and that is the honest scope of this flag rather
+ * than a gap in it. The two other cores this lane computes are answers to other
+ * questions — step 0's is about the whole file's axiom set and step 2's about
+ * one obligation's premises — and both already print inside the sentence that
+ * reports them, so lifting all three under one heading would file three claims
+ * as one.
+ *
+ * THREE THINGS THE RENDERING HAS TO GET RIGHT, each of them a way a reader ends
+ * up believing something the core does not say:
+ *
+ *  1. **The `side:` member is kept.** A side condition is an assumption the
+ *     ENCODING added — a divisor it asserts non-zero — and it is labelled with
+ *     the qualified name of the row it guards, so it shares that name with an
+ *     axiom. Measured on `examples/uav-isr.sysml`: the endurance proof's core is
+ *     six labels, one of which is `side:…AirVehicle::endurance` beside
+ *     `axiom:…AirVehicle::endurance`. A display filtered to `axiom:` drops a
+ *     real proof dependency, and one deduplicating by qualified name drops the
+ *     same one — so members are grouped by KIND AND NAME together, and a
+ *     repeated pair is counted rather than collapsed.
+ *  2. **The caveat prints on every one of these blocks** ({@link
+ *     CORE_SUFFICIENCY_NOTE}). A core is a sufficient reason the solver chose,
+ *     not the set the claim depends on, and the false reading that matters is
+ *     the negative one: an axiom that is NOT here may still carry the claim.
+ *  3. **A core with no premise in it says nothing about the premises.** The
+ *     check that separates `proved` from `vacuous` is a check ON the premises,
+ *     and measured, premises are routinely absent from the cores of the proofs
+ *     that stand on them — so a reader who sees none is told why rather than
+ *     left to conclude the proof did not use them.
+ */
+function whyLines(v: ObligationVerdict): string[] {
+  if (v.core.length === 0) {
+    // The caveat stands here too, and it is not decoration on an empty list:
+    // its second half — an axiom NOT listed may still carry the claim — is the
+    // whole of what a reader may conclude from a proof whose solver named no
+    // core at all.
+    return v.claim === 'proved'
+      ? ['    why: no core: the solver named none for this check', `    ${CORE_SUFFICIENCY_NOTE}`]
+      : [];
+  }
+  const axioms = coreCount(v.core, 'axiom');
+  const sides = coreCount(v.core, 'side');
+  const premises = coreCount(v.core, 'premise');
+  const goals = coreCount(v.core, 'goal');
+  // The denominator is the MODEL's axiom count, and it is printed only where
+  // the census measured one. "4 of 4" assembled from the numerator would be a
+  // fraction this run never took, and it reads as no narrowing at all.
+  const census = v.axiomCensus;
+  // Grouped in the order the labels are sorted in, which puts the kinds in
+  // alphabetical order — axiom, goal, premise, side — and is stable across
+  // processes for the reason the sort exists at all.
+  const groups = new Map<string, { kind: string; name: string; times: number }>();
+  for (const label of v.core) {
+    const { kind, name } = coreLabelParts(label);
+    const key = `${kind} ${name}`;
+    const seen = groups.get(key);
+    if (seen === undefined) groups.set(key, { kind, name, times: 1 });
+    else seen.times += 1;
+  }
+  return [
+    `    why: the core names ${axioms}${census !== null ? ` of this model’s ${census.modelAxioms}` : ''} axiom(s)` +
+      `${premises > 0 ? `, ${premises} premise(s)` : ''}` +
+      `${sides > 0 ? `, ${sides} side condition(s)` : ''}` +
+      `${goals > 0 ? ' and the goal' : ''} — ${v.core.length} label(s) in all`,
+    ...[...groups.values()].map(
+      (g) =>
+        `      ${g.kind} ${g.name}${g.times > 1 ? ` (×${g.times})` : ''}` +
+        (g.kind === 'side'
+          ? ' — a non-zero divisor or base the ENCODING asserts, not a fact the model states'
+          : ''),
+    ),
+    ...(v.premises.length > 0 && premises === 0
+      ? [
+          '    the core names no premise; the non-vacuity step stands on the premises separately, ' +
+            'and it is the check that separates `proved` from `vacuous`',
+        ]
+      : []),
+    `    ${CORE_SUFFICIENCY_NOTE}`,
+  ];
+}
+
 /** One judged obligation, as a person reads it. */
-function verdictLines(v: ObligationVerdict): string[] {
+function verdictLines(v: ObligationVerdict, why: boolean): string[] {
   const id = v.shortId ? ` (${v.shortId})` : '';
   const where = v.requirement?.qualifiedName ?? v.clause.qualifiedName;
   const what = v.expression === '' ? '(no constraint body)' : v.expression;
@@ -1729,6 +1815,10 @@ function verdictLines(v: ObligationVerdict): string[] {
     // holds of every model, so it is evidence about arithmetic rather than
     // about this design.
     ...(v.tautology ? ['    tautology: true of every model, so it says nothing about this one'] : []),
+    // ASKED FOR BY NAME, and printed under the claim it is about. It is a
+    // display and nothing else: the same run prints the same claim, the same
+    // code and the same exit status with the flag and without it.
+    ...(why ? whyLines(v) : []),
     // The solver's own witness, in the magnitudes the file stores — for the two
     // claims it is the ARGUMENT for. A proof also carries one (step 2's
     // non-vacuity model), and printing every symbol of it under every proved
@@ -1782,6 +1872,7 @@ async function reportVerify(
   }
   const timeoutMs = verifyTimeout(args);
   const strictVacuity = flagGiven(args, 'strict-vacuity');
+  const why = flagGiven(args, 'why');
   const only = verifyCase(model, args);
   // A `--free` spelling this model cannot honour is a problem with what was
   // ASKED, and it is re-raised as one. `verifyModel` refuses it from the API's
@@ -1872,6 +1963,31 @@ async function reportVerify(
               : ''),
         ]
       : []),
+    // WHY THE FLAG NAMED NOTHING, when it named nothing. A flag that asked for
+    // something and printed no line reads as a flag the tool ignored, and the
+    // reason is worth one sentence: a point evaluation, an absent solver and a
+    // run that proved nothing all reach no proof, and a core about a proof is
+    // the only core this flag prints.
+    //
+    // IT IS NOT AN ABSENCE CLAIM ABOUT THE RUN, and the earlier wording was
+    // one. This lane computes three cores, and two of them print on rows this
+    // sentence can stand above: step 0's, under `verification/inconsistent-
+    // axioms`, is about the whole file's axiom set, and step 2's, under
+    // `verification/vacuous`, is about one obligation's premises. Saying "no
+    // row in this run carried an unsat core" over either of those is a
+    // published absence the same output contradicts two lines below, so the
+    // sentence names what it is about — a proof — and names the other two.
+    // It is also gated on a run that HAS rows: a model stating no obligation
+    // has nothing to say this about.
+    ...(why && r.results.length > 0 && r.results.every((v) => v.claim !== 'proved')
+      ? [
+          '  --why named nothing: no row here is `proved`, and the core this flag prints is a ' +
+            'core about a proof. A core shown under `verification/inconsistent-axioms` is step ' +
+            '0’s, about the whole file’s axiom set, and one under `verification/vacuous` is step ' +
+            '2’s, about that obligation’s premises — each prints inside the sentence that ' +
+            'reports it',
+        ]
+      : []),
     ...(r.results.length === 0
       ? [
           only !== undefined
@@ -1880,7 +1996,7 @@ async function reportVerify(
             : '  this model states no obligation at all — there was nothing to verify, ' +
               'which is exit 2: exit 0 means every obligation was discharged, and none was',
         ]
-      : r.results.flatMap(verdictLines)),
+      : r.results.flatMap((v) => verdictLines(v, why))),
     // The cases LAST, under the obligations they stand on, because a case
     // verdict is a roll-up of rows the reader has just read. A model that
     // declares none prints nothing here rather than a zero: "0 verification

@@ -4,7 +4,7 @@
  * `#keyword` vocabulary is read and preserved losslessly, and it changes
  * nothing unless a command asked it to.**
  *
- * Three groups of cases, and each of them is a measurement rather than a
+ * Four groups of cases, and each of them is a measurement rather than a
  * restatement of the code:
  *
  *  - **The interoperability ratchet.** Six host declarations × seven keyword
@@ -26,28 +26,49 @@
  *    because the second is measured producing three
  *    `ref/unresolved-specialization` warnings and a body the serializer
  *    rewrites. Both shapes are pinned — the one we ship by its byte-identical
- *    round trip, the one we do not by its warnings — so nobody swaps them.
+ *    round trip, the one we do not by its warnings — so nobody swaps them. The
+ *    round trip is over EVERY definition the package text declares rather than
+ *    the ones somebody typed into this file, so a definition added later
+ *    inherits the ratchet, and the doc string's count word has to move with it.
+ *  - **The cell shapes a carrier body may hold.** A vocabulary is a `metadata
+ *    def` AND what its annotation body may say, and the second half is just as
+ *    hard to withdraw: a set as one `;`-delimited cell (delimiter and spacing
+ *    byte-identical, and it splits back into its members), both spellings of a
+ *    cell read, a carrier seen and not read reported as provenance rather than
+ *    as a default — and the repeated same-named spelling pinned as REFUSED,
+ *    because `validation/duplicate-name` makes it fail this tool's own check.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { parseModel, serializeModel } from '@text/index';
 import { checkText } from '@text/check';
 import { loadModelText } from '@text/load';
 import type { Model } from '@core/index';
 import {
+  DEFAULT_MAX_ORDER,
+  EVIDENCE_DEFINITION,
   EXCEPTIONAL_DEFINITION,
   EXCEPTIONAL_KEYWORD,
   EXCEPTIONAL_QUALIFIED_KEYWORD,
   FOREIGN_KEYWORD_ALIASES,
+  PROPERTY_PATTERN_DEFINITION,
   STATEMENT_KIND_PACKAGE,
   SYSPROSE_KEYWORD_PACKAGES,
   SYSPROSE_VERIFICATION_LIBRARY,
   SYSPROSE_VERIFICATION_PACKAGE,
+  faultTreeCensus,
   foreignKeyword,
   hasKeyword,
   keywordsOf,
   resolveKeyword,
   statementKindOf,
 } from '@semantics/index';
+// `FAULT_HYPOTHESIS_DEFINITION` is the one definition constant the semantics
+// barrel does not re-export — `fault-tree.ts` imports it from the module
+// directly — so this file does the same rather than widening the barrel for a
+// test. Measured: the other three come through `@semantics/index`.
+import { FAULT_HYPOTHESIS_DEFINITION } from '@semantics/verification-vocabulary';
 
 /** The one element a snippet declares, by name. */
 const byName = (model: Model, name: string) => {
@@ -63,6 +84,55 @@ function parsed(text: string): Model {
   expect(errors.map((d) => `${d.code} ${d.message}`)).toEqual([]);
   return p.model;
 }
+
+/** The declaration head every `metadata def` opens with, whatever follows its name. */
+const DEFINITION_HEAD = /^\s*metadata def (?:<([A-Za-z_][\w]*)>\s+)?([A-Za-z_][\w]*)\s*[;{:]/gm;
+
+/**
+ * Read the definitions out of a package text.
+ *
+ * A definition HEAD, not a whole bare line: `metadata def X;` is the spelling
+ * every definition shipped today uses, but a `metadata def X { … }` with a body
+ * or a `metadata def X :> Base;` with a specialization declares one just as
+ * much — and a reader that matched the bare line only would let either through
+ * with the count word and the round trip both still green, which is a ratchet
+ * that releases exactly when somebody writes something new. Named and exercised
+ * below on both shapes rather than trusted.
+ */
+const definitionsIn = (text: string): { name: string; shortName?: string }[] =>
+  [...text.matchAll(new RegExp(DEFINITION_HEAD.source, DEFINITION_HEAD.flags))].map((m) => ({
+    name: m[2],
+    ...(m[1] !== undefined ? { shortName: m[1] } : {}),
+  }));
+
+/**
+ * Every `metadata def` the shipped package declares, read out of the text.
+ *
+ * PARSED, NOT HAND-LISTED, and that is the whole point of this constant. The
+ * round trip below used to be checked against the four definitions somebody
+ * typed into it; a fifth added to the export would have shipped with no ratchet
+ * over it at all, and the shape of the failure — a definition that does not come
+ * back the way it went in — is exactly the one a user meets by pasting the
+ * package into their own file. Deriving the list from the export means the
+ * commit that adds a definition inherits the ratchet instead of having to
+ * remember it.
+ */
+const SHIPPED_DEFINITIONS: readonly { name: string; shortName?: string }[] =
+  definitionsIn(SYSPROSE_VERIFICATION_LIBRARY);
+
+/** The count words a package doc string may open with, lower-cased. */
+const COUNT_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
 
 describe('the shipped verification vocabulary', () => {
   it('ships one keyword over one metadata definition, in one package', () => {
@@ -100,6 +170,126 @@ describe('the shipped verification vocabulary', () => {
   });
 
   /**
+   * The ratchet over EVERY definition, not the ones somebody remembered.
+   *
+   * A later commit of the model-checking plan extends this package rather than
+   * declaring a second one, so the set this test walks is meant to grow — and it
+   * grows without anybody editing this file, which is the difference between a
+   * ratchet and a checklist.
+   */
+  it('declares every definition it parses out to as a MetadataDefinition', () => {
+    const model = parsed(SYSPROSE_VERIFICATION_LIBRARY);
+    expect(
+      SHIPPED_DEFINITIONS.length,
+      'no `metadata def` was parsed out of the package — the reader, not the package, is broken',
+    ).toBeGreaterThan(0);
+    for (const def of SHIPPED_DEFINITIONS) {
+      const el = byName(model, def.name);
+      expect(el.eClass, `${def.name} is not a MetadataDefinition`).toBe('MetadataDefinition');
+      // A short name is what §7.27.4 makes a `#keyword` out of, so a definition
+      // that grew one silently would ship a keyword nobody decided to ship.
+      expect(el.declaredShortName ?? undefined, `${def.name}'s short name moved`).toBe(
+        def.shortName,
+      );
+    }
+    // The exported constants are a SUBSET of what the package declares: a
+    // definition whose export was deleted is caught here rather than by whatever
+    // module imported it.
+    const names = SHIPPED_DEFINITIONS.map((d) => d.name);
+    for (const exported of [
+      EXCEPTIONAL_DEFINITION,
+      EVIDENCE_DEFINITION,
+      PROPERTY_PATTERN_DEFINITION,
+      FAULT_HYPOTHESIS_DEFINITION,
+    ]) {
+      expect(names, `${exported} is exported but not declared in the package`).toContain(exported);
+    }
+  });
+
+  /**
+   * The count word in the doc string is a claim about the package, and it drifts.
+   *
+   * *"Four definitions …"* and *"All four are Sysprose extensions"* are the two
+   * halves of one sentence a reader takes at face value, and a fifth definition
+   * added without touching them leaves the package telling its own reader the
+   * wrong number. This is that edit made mechanical: the commit that adds a
+   * definition goes red here until the word moves with it.
+   */
+  it('opens its doc string with a count word that matches the definitions it declares', () => {
+    const opens = /doc \/\* (\w+) definitions /.exec(SYSPROSE_VERIFICATION_LIBRARY);
+    expect(opens, 'the package doc string no longer opens with a count word').not.toBeNull();
+    expect(
+      COUNT_WORDS[opens![1].toLowerCase()],
+      `\`${opens![1]}\` is not a count word this test can read`,
+    ).toBe(SHIPPED_DEFINITIONS.length);
+
+    const closes = /All (\w+) are Sysprose extensions/.exec(SYSPROSE_VERIFICATION_LIBRARY);
+    expect(closes, 'the doc string no longer closes by counting the extensions').not.toBeNull();
+    expect(
+      COUNT_WORDS[closes![1].toLowerCase()],
+      `\`All ${closes![1]}\` disagrees with the ${SHIPPED_DEFINITIONS.length} definitions declared`,
+    ).toBe(SHIPPED_DEFINITIONS.length);
+  });
+
+  /**
+   * The ratchet's own reader, on the shapes it is NOT shown today.
+   *
+   * Both tests above are only as good as {@link definitionsIn}: a definition the
+   * reader cannot see is a definition with no round trip over it AND a count
+   * word that stays green while the package grows — the two failures the ratchet
+   * exists to prevent, arriving together and silently. Every declaration shape
+   * the notation allows is exercised here, on the package text itself, so the
+   * reader is measured rather than believed.
+   */
+  it('reads a definition declared with a body or a specialization, not only a bare one', () => {
+    const grown = (decl: string): number =>
+      definitionsIn(SYSPROSE_VERIFICATION_LIBRARY.replace(/\n\}$/, `\n    ${decl}\n}`)).length;
+    const base = SHIPPED_DEFINITIONS.length;
+    for (const decl of [
+      'metadata def FifthBare;',
+      'metadata def FifthWithBody { attribute k = 1; }',
+      'metadata def FifthSpecializing :> ExceptionalOutcome;',
+      'metadata def FifthTrailing; ',
+      'metadata def <fifth> FifthShort;',
+    ]) {
+      expect(grown(decl), `a definition the ratchet cannot see: ${decl}`).toBe(base + 1);
+    }
+    // …and the short name still travels with the name it was declared beside,
+    // which is what turns a definition into a `#keyword` (§7.27.4).
+    expect(
+      definitionsIn(
+        SYSPROSE_VERIFICATION_LIBRARY.replace(/\n\}$/, '\n    metadata def <fifth> FifthShort;\n}'),
+      ).at(-1),
+    ).toEqual({ name: 'FifthShort', shortName: 'fifth' });
+  });
+
+  /**
+   * A definition nothing reads still has to come back the way it went in.
+   *
+   * The ratchet is about the NOTATION, not about this tool's readers: a
+   * `metadata def` with no consumer anywhere in the codebase is exactly the
+   * shape a third party's vocabulary has, and the promise §7 makes is that it
+   * survives being opened and saved here.
+   */
+  it('round-trips a definition this tool has no reader for', async () => {
+    const extended = SYSPROSE_VERIFICATION_LIBRARY.replace(
+      /\n\}$/,
+      '\n    metadata def NothingReadsThis;\n}',
+    );
+    expect(extended, 'the package text no longer ends the way this edit assumes').not.toBe(
+      SYSPROSE_VERIFICATION_LIBRARY,
+    );
+    const model = parsed(extended);
+    expect(serializeModel(model)).toBe(extended);
+    const report = await checkText(extended, { library: 'full' });
+    expect(
+      report.summary,
+      report.diagnostics.map((d) => `${d.severity} ${d.code} ${d.message}`).join('\n'),
+    ).toMatchObject({ errors: 0, warnings: 0 });
+    expect(byName(model, 'NothingReadsThis').eClass).toBe('MetadataDefinition');
+  });
+
+  /**
    * The shape we deliberately do NOT ship, pinned by what it costs.
    *
    * `ParametersOfInterestMetadata` writes `<moe>` and `<mop>` as
@@ -126,6 +316,168 @@ describe('the shipped verification vocabulary', () => {
     // the serializer's own order.
     expect(serializeModel(parseModel(semantic).model)).not.toBe(semantic);
   });
+});
+
+/**
+ * The CELL shapes a carrier body may hold, pinned before anything ships one.
+ *
+ * A `metadata def` is only half of a vocabulary; the other half is what its
+ * annotation body may say, and every one of the shapes below is a commitment
+ * this tool cannot withdraw once a user has written a file with it. Three of
+ * them are measurements about the notation and one is a measurement about this
+ * tool's own validator, and all four are recorded here rather than discovered by
+ * the commit that first depends on them:
+ *
+ *  - **A set-valued cell is ONE cell holding a delimited list.** The delimiter
+ *    and the spacing around it survive a save byte-identically, and the value
+ *    splits back into the members it was written from.
+ *  - **The repeated same-named spelling is NOT available**, and that is a fact
+ *    about this tool rather than about the notation: the parser accepts
+ *    `attribute fair = "…"; attribute fair = "…";`, and `validation/duplicate-name`
+ *    then files an ERROR on each sibling, so the file fails `npm run check`
+ *    (`CHECK_EXIT_CODES`: 1 for a file with findings). A vocabulary spelled that
+ *    way could never appear in a model that passes this tool's own check, and a
+ *    reader built to collect repeated cells would be reading a shape the tool
+ *    calls malformed. Named here so the spelling cannot come back.
+ *  - **Both cell spellings are read.** `{ maxOrder = 2; }` is the ordinary §7.27
+ *    annotation body and the parser stores it as a keyword-less `ReferenceUsage`;
+ *    `{ attribute maxOrder = 2; }` is the other. A reader that saw only the
+ *    second would silently replace a bound somebody wrote with a default.
+ *  - **A carrier seen and not read is PROVENANCE, never a default.** The bound is
+ *    the same number either way; the sentence about where it came from is not,
+ *    and that sentence is the whole reason the carrier exists.
+ *
+ * The last two go through `faultTreeCensus`, which is the solverless half of the
+ * fault-tree command: it reads the carrier and claims nothing, so the vocabulary
+ * half of that lane is pinned here without a solver in the room.
+ */
+describe('the carrier cell shapes, and the one this tool refuses', () => {
+  /** A carrier body holding a set as one `;`-delimited cell. */
+  const DELIMITED = `package SetValuedCell {
+    metadata def SetValuedProbe;
+    state def Modes {
+        @SetValuedProbe {
+            attribute members = "state autonomous; trigger abort";
+        }
+    }
+}`;
+
+  /** The same set, spelled as repeated same-named cells. */
+  const REPEATED = `package SetValuedCell {
+    metadata def SetValuedProbe;
+    state def Modes {
+        @SetValuedProbe {
+            attribute members = "state autonomous";
+            attribute members = "trigger abort";
+        }
+    }
+}`;
+
+  it('keeps a `;`-delimited cell byte-identical, and splits it into its members', async () => {
+    const model = parsed(DELIMITED);
+    // The delimiter AND the spacing around it: a save that normalised `; ` to
+    // `;` would move every member of every set already written in a user's file.
+    expect(serializeModel(model), 'a delimited cell did not come back as written').toBe(DELIMITED);
+    const report = await checkText(DELIMITED, { library: 'full' });
+    expect(
+      report.summary,
+      report.diagnostics.map((d) => `${d.severity} ${d.code} ${d.message}`).join('\n'),
+    ).toMatchObject({ errors: 0, warnings: 0 });
+
+    const cell = model.all().find((e) => e.declaredName === 'members');
+    expect(cell, 'no cell named `members`').toBeDefined();
+    expect(cell!.eClass).toBe('AttributeUsage');
+    const raw = String(cell!.attrs.value);
+    const text = raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
+    expect(text).toBe('state autonomous; trigger abort');
+    // The split is a statement about the NOTATION and not about a reader: there
+    // is no splitting reader at this commit — it arrives with the fairness
+    // carrier — so this line records what the delimited spelling has to mean for
+    // that reader to be writable, beside the byte-identity above that is the
+    // half with teeth today. Nothing here is under test but the value.
+    expect(text.split(';').map((s) => s.trim())).toEqual(['state autonomous', 'trigger abort']);
+  }, 60_000);
+
+  it('fails the check on repeated same-named cells, with `validation/duplicate-name`', async () => {
+    // The parser is not the gate here — this text parses. The gate is the
+    // validator, and it is the reason the delimited cell above is the spelling
+    // a set-valued carrier gets.
+    expect(parseModel(REPEATED).diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+
+    const report = await checkText(REPEATED, { library: 'full' });
+    const duplicates = report.diagnostics.filter((d) => d.code === 'validation/duplicate-name');
+    expect(
+      duplicates.length,
+      `repeated same-named cells were not refused:\n${report.diagnostics
+        .map((d) => `${d.severity} ${d.code} ${d.message}`)
+        .join('\n')}`,
+    ).toBe(2);
+    expect(duplicates.every((d) => d.severity === 'error')).toBe(true);
+    expect(duplicates[0].message).toContain('"members"');
+    // Errors are what makes `npm run check` exit 1 on this file, which is the
+    // sentence this case exists to keep true.
+    expect(report.summary.errors, 'a file with this carrier still passes the check').toBeGreaterThan(
+      0,
+    );
+  }, 60_000);
+
+  /* ── both cell spellings, and the provenance of a cell nobody could read ── */
+
+  const REDUNDANT = 'test/fixtures/verification/models/fault-tree-redundant.sysml';
+
+  /** The fixture with a fault-hypothesis carrier written onto the top event. */
+  const carrying = (cell: string | null): string => {
+    const base = readFileSync(resolve(process.cwd(), REDUNDANT), 'utf8');
+    const body =
+      cell === null
+        ? base
+        : base.replace(
+            '    requirement def MissionPower {',
+            `    requirement def MissionPower {\n        @${SYSPROSE_VERIFICATION_PACKAGE}::${FAULT_HYPOTHESIS_DEFINITION} { ${cell} }`,
+          );
+    expect(cell === null || body !== base, 'the carrier was not inserted').toBe(true);
+    return `${SYSPROSE_VERIFICATION_LIBRARY}\n\n${body}`;
+  };
+
+  /** The order bound and its provenance, taken with no solver in the room. */
+  const bound = (cell: string | null): { maxOrder: number; source: string } => {
+    const group = faultTreeCensus(parsed(carrying(cell)), {}, {
+      code: 'verification/tool-absent',
+      detail: 'no solver was available',
+    }).groups[0];
+    expect(group, 'the fixture no longer yields a decomposition to census').toBeDefined();
+    return { maxOrder: group.maxOrder, source: group.maxOrderSource };
+  };
+
+  it('reads the order bound in both cell spellings, keyword-less included', () => {
+    // §7.27 annotation bodies are ordinarily written WITHOUT the keyword, and
+    // that spelling is the one the documentation shows, so it is the one a
+    // reader is most likely to have typed.
+    for (const cell of ['maxOrder = 2;', 'attribute maxOrder = 2;']) {
+      expect(bound(cell), `\`${cell}\` was not read`).toEqual({ maxOrder: 2, source: 'carrier' });
+    }
+    // …and with a value that is NOT the default, so the number itself proves the
+    // read rather than coinciding with it.
+    for (const cell of ['maxOrder = 1;', 'attribute maxOrder = 1;']) {
+      expect(bound(cell), `\`${cell}\` was not read`).toEqual({ maxOrder: 1, source: 'carrier' });
+    }
+  }, 60_000);
+
+  it('reports a carrier it could not read as provenance, never as a default', () => {
+    // The bound falls back — there is nothing else it could do — but the SOURCE
+    // does not: a run that said "from the default" over a file that states an
+    // assumption would attribute that assumption to nobody.
+    expect(bound('attribute maxOrder = "two";')).toEqual({
+      maxOrder: DEFAULT_MAX_ORDER,
+      source: 'carrier-unreadable',
+    });
+    expect(bound('maxOrder = "two";')).toEqual({
+      maxOrder: DEFAULT_MAX_ORDER,
+      source: 'carrier-unreadable',
+    });
+    // And a model carrying nothing is the only thing that reads `default`.
+    expect(bound(null)).toEqual({ maxOrder: DEFAULT_MAX_ORDER, source: 'default' });
+  }, 60_000);
 });
 
 /**

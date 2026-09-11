@@ -276,6 +276,23 @@
         "tautology": {
           "type": "boolean",
           "description": "`check(¬G)` alone was unsat: the goal is true of every model, so it is honestly proved and says nothing about THIS design. Always false from the literal engine, which never proves anything."
+        },
+        "core": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The `:named` labels of the unsat core the solver returned for THIS proof, sorted, each `kind:qualifiedName` over the kinds `axiom`, `premise`, `goal` and `side`. Non-empty only on a `proved` row; `verify --why` is what prints it. It is a SUFFICIENT reason the solver chose and NOT the set of assumptions the claim depends on — an axiom listed may not have been needed, and an axiom not listed may still carry the claim — and its membership is the solver's own choice rather than a property of the model, which is why no evidence record carries one. A `side:` member is an assumption the ENCODING added (a non-zero divisor) and shares its qualified name with the axiom it guards, so a consumer keying on the name alone loses it. It is present on EVERY `--json` payload, with `--why` and without it — the flag gates the text display and not the field — so a consumer that renders these members carries the sufficiency sentence itself: on the text path the tool prints it under every core, and here it exists only in this description."
+        },
+        "axiomCensus": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["modelAxioms", "footprintAxioms", "scriptAxioms", "coreAxioms"],
+          "description": "How far this obligation's answer narrowed the model's axiom set, or `null` where no script was built for the row — four zeroes would be a measurement, and there was none. `coreAxioms` is read against `footprintAxioms`, and equal means the solver narrowed nothing beyond the read-closure the encoder already applies; a `coreAxioms` BELOW `footprintAxioms` is not by itself solver narrowing, because a kept row the encoder refused asserts nothing and can never be named.",
+          "properties": {
+            "modelAxioms": { "type": "integer", "minimum": 0, "description": "Every axiom row this run gathered from the model, whether the encoder took it or refused it — the denominator `--why` prints." },
+            "footprintAxioms": { "type": "integer", "minimum": 0, "description": "The axiom rows this obligation's read-closure kept. It INCLUDES rows the encoder refused, which are carried so a refutation can be judged against the whole context and which put no assertion in the script." },
+            "scriptAxioms": { "type": "integer", "minimum": 0, "description": "The assertions those kept rows actually put in the script, side conditions included. So it exceeds `footprintAxioms` wherever a kept axiom divides by a variable (measured: 5 against a footprint of 4 on `examples/uav-isr.sysml`'s endurance obligation) and falls below it wherever a kept axiom was refused (measured: 1 against 2 on `test/fixtures/verification/models/refused-axiom-relevant.sysml`)." },
+            "coreAxioms": { "type": "integer", "minimum": 0, "description": "How many `axiom:` labels the solver's own unsat core named. 0 wherever none did — including every row that is not `proved`." }
+          }
         }
       }
     }

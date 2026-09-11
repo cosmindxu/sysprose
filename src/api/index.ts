@@ -95,6 +95,12 @@ export {
   refinementReport,
   verifyModel,
   ALLOW_INCONCLUSIVE_CODES,
+  // The unsat core's vocabulary: the caveat `--why` prints beside every core it
+  // names, and the two readers of a `kind:qualifiedName` label. An in-process
+  // caller rendering a core needs all three, or it writes the sentence again.
+  CORE_SUFFICIENCY_NOTE,
+  coreCount,
+  coreLabelParts,
   INCONSISTENT_REQUIREMENTS_CODE,
   VERIFICATION_CODES,
   VERIFICATION_ERROR_CODES,
@@ -102,6 +108,7 @@ export {
   VerifyOptionError,
 } from './verification';
 export type {
+  AxiomCensus,
   BoundsReport,
   BoundsReportOptions,
   FaultTreeReport,

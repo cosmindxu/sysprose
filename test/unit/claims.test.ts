@@ -104,9 +104,22 @@ const NEGATION = /\b(not|never|no|non|without|isn't|aren't|nor|neither)\b/i;
  * Is this match defused by a negation? Either just before it ("we are NOT
  * conformant") or inside the matched span itself ("it is *not* a certified …",
  * where the match starts at "it is" and swallows the negation).
+ *
+ * THE IN-SPAN HALF IS TURNED OFF FOR AN ABSENCE CLAIM, and that asymmetry is the
+ * point of the third argument. For every positive form, a negation inside the
+ * span means the sentence disclaims rather than claims — *"it is not certified"*
+ * — and defusing it is what keeps the disclaimers this project wants writable.
+ * For the absence claims of the model-checking lane the negation IS the claim:
+ * *"this design has no cut set"*, *"the design is not covered"*, *"there is no
+ * simulation relation"*. Measured before the flag existed, all three were defused
+ * unconditionally, so a form written for any of them fired on nothing at all —
+ * a guard that cannot go red is not a guard. The look-back half is kept for every
+ * form, whatever its polarity, so *"we do not claim there is no cut set"* is still
+ * read as the disclaimer it is.
  */
-function negated(before: string, matched: string): boolean {
-  return new RegExp(`${NEGATION.source}[\\s\\S]{0,40}$`, 'i').test(before) || NEGATION.test(matched);
+function negated(before: string, matched: string, negativeIsTheClaim = false): boolean {
+  const lookBack = new RegExp(`${NEGATION.source}[\\s\\S]{0,40}$`, 'i').test(before);
+  return lookBack || (!negativeIsTheClaim && NEGATION.test(matched));
 }
 
 /** A document the guard reads: a path, and its lines. */
@@ -150,8 +163,19 @@ const TREE: Doc[] = FILES.map((file) => ({
 const ALLOWANCE_BEFORE = 16;
 const ALLOWANCE_AFTER = 80;
 
-/** Scan `docs` for `pattern`, returning un-negated hits. */
-function scanDocs(docs: readonly Doc[], pattern: RegExp, allow: RegExp[] = []): Hit[] {
+/**
+ * Scan `docs` for `pattern`, returning un-negated hits.
+ *
+ * `negativeIsTheClaim` travels with the FORM rather than with the pattern,
+ * because it is a statement about what the sentence means and not about what the
+ * regular expression matches — see {@link negated}.
+ */
+function scanDocs(
+  docs: readonly Doc[],
+  pattern: RegExp,
+  allow: RegExp[] = [],
+  negativeIsTheClaim = false,
+): Hit[] {
   const hits: Hit[] = [];
   for (const { file, lines } of docs) {
     lines.forEach((text, i) => {
@@ -162,7 +186,7 @@ function scanDocs(docs: readonly Doc[], pattern: RegExp, allow: RegExp[] = []): 
       while ((m = re.exec(text)) !== null) {
         // Look back across the previous line too — claims wrap.
         const before = prev + ' ' + text.slice(0, m.index);
-        if (negated(before, m[0])) continue;
+        if (negated(before, m[0], negativeIsTheClaim)) continue;
         const at = prev.length + 1 + m.index;
         const window = joined.slice(
           Math.max(0, at - ALLOWANCE_BEFORE),
@@ -177,13 +201,23 @@ function scanDocs(docs: readonly Doc[], pattern: RegExp, allow: RegExp[] = []): 
 }
 
 /** Scan the whole repository. */
-function scan(pattern: RegExp, allow: RegExp[] = []): Hit[] {
-  return scanDocs(TREE, pattern, allow);
+function scan(pattern: RegExp, allow: RegExp[] = [], negativeIsTheClaim = false): Hit[] {
+  return scanDocs(TREE, pattern, allow, negativeIsTheClaim);
 }
 
 /** Scan one planted document, written here rather than committed to the tree. */
-function scanText(text: string, pattern: RegExp, allow: RegExp[] = []): Hit[] {
-  return scanDocs([{ file: 'planted.md', lines: text.split('\n') }], pattern, allow);
+function scanText(
+  text: string,
+  pattern: RegExp,
+  allow: RegExp[] = [],
+  negativeIsTheClaim = false,
+): Hit[] {
+  return scanDocs(
+    [{ file: 'planted.md', lines: text.split('\n') }],
+    pattern,
+    allow,
+    negativeIsTheClaim,
+  );
 }
 
 const show = (hits: Hit[]): string =>
@@ -255,8 +289,8 @@ describe('the disclaimers that make the above honest are present', () => {
  *
  * The obvious guard is a word list — ban `verified`, `correct`, `safe`, `proved`,
  * `consistent` — and it is unusable here. Replicating the walk above over its own
- * scan set, case-sensitively and whole-word, the tree already contains 104 `safe`,
- * 61 `correct` and 42 `verified` in ordinary prose, plus 301 `proved` and 131
+ * scan set, case-sensitively and whole-word, the tree already contains 105 `safe`,
+ * 63 `correct` and 45 `verified` in ordinary prose, plus 302 `proved` and 132
  * `consistent` that are identifiers, verdict vocabulary, or sentences ABOUT the
  * vocabulary ("`pass` is written for `proved` alone"). A bare-word gate would open
  * red on several hundred pre-existing lines that claim nothing, and the only way
@@ -268,16 +302,31 @@ describe('the disclaimers that make the above honest are present', () => {
  * the word. The unscoped copula form (`is|are|was|were|has been|have been` +
  * `verified|correct|safe`) was measured over the same scan set and fires on 21
  * pre-existing lines, none of them a claim about this tool; the subject-scoped
- * form fires on 0 of them. All five forms below measure 0 across the tree, which
- * is the budget this commit was written to.
+ * form fires on 0 of them. EVERY form below measures 0 across the tree, which is
+ * the budget this file is written to and the budget each new form is admitted
+ * under.
  *
- * EVERY ONE OF THOSE FIGURES WAS RE-MEASURED IN THIS COMMIT, over this tree's own
- * 696-file scan set, not carried forward from the plan document's count at
- * `f1cd587` — the tree grew by a fifth between the two, and a measurement quoted
- * from an older tree is exactly the kind of number this project's docs guard
- * exists to catch. No assertion depends on them — they are here so the next
- * person can tell whether the subject-scoping is still buying what it cost, and
- * re-measure with the same walk if it looks as though it is not.
+ * EVERY ONE OF THOSE FIGURES WAS RE-MEASURED, over this tree's own 699-file scan
+ * set, not carried forward from the plan document's count at `f1cd587` — the tree
+ * grew by a fifth between the two, and a measurement quoted from an older tree is
+ * exactly the kind of number this project's docs guard exists to catch. No
+ * assertion depends on them — they are here so the next person can tell whether
+ * the subject-scoping is still buying what it cost, and re-measure with the same
+ * walk if it looks as though it is not.
+ *
+ * AND THE SCOPING IS A DECISION, NOT A HABIT — the model-checking vocabulary is
+ * where that stopped being obvious, so the measurement that settled it is written
+ * down. Reserving the BARE phrases, with the in-span defusal already turned off
+ * (see {@link negated}), reads 23 hits for `no cut set`, 3 for `not covered`, 2
+ * for `recoverable` and 0 for `no simulation relation` — 28 lines that claim
+ * nothing, ten of them inside `src/semantics/fault-tree.ts` and THREE of those the
+ * command's own honest bounded verdict strings. The only allowance that clears
+ * those three also defuses the sentence the form exists to reserve, so a
+ * bare-phrase form fails in one direction or the other and there is no third
+ * setting. The five forms that ship instead are subject- or shape-scoped, carry
+ * two allowances between them, and measure 0 each — and each is asserted to fire
+ * on its planted sentence below, because a form that is planted and does not fire
+ * is a guard nobody has.
  *
  * THE PRICE, RECORDED RATHER THAN HIDDEN — the complete list of what still slips
  * through, each one measured by planting the sentence and watching nothing fire:
@@ -297,6 +346,19 @@ describe('the disclaimers that make the above honest are present', () => {
  *      against the corpus" within 80
  *      characters after a real claim still defuses it. Narrowing the reach trades
  *      this against splitting qualifiers that wrap.
+ *   5. **A negation standing in front of an ABSENCE claim.** The look-back half
+ *      of {@link negated} is kept for every form whatever its polarity, and it
+ *      reaches 40 characters back — across the previous line. For the three
+ *      forms flagged `negativeIsTheClaim` it is the only defusal left, so an
+ *      UNRELATED negation that close in front of an absence sentence hides it:
+ *      this lane's own `higher orders not explored` note (`fault-tree.ts`,
+ *      `ORDERS_NOT_EXPLORED_NOTE`) is printed beside every bounded absence and
+ *      is exactly such a negation, and so is *"no solver was available"* in
+ *      front of a coverage sentence. Turning the look-back off for these forms
+ *      would take the disclaimer with it — *"we do not claim there is no cut
+ *      set"* is the sentence it keeps writable — so the price is paid rather
+ *      than removed, and it is EXECUTED on planted sentences below beside the
+ *      halves that do fire.
  *
  * What does NOT slip through any more, and used to: an adverb or `proven` between
  * the copula and the adjective ("the requirement is formally verified", "the tool
@@ -308,7 +370,7 @@ describe('the disclaimers that make the above honest are present', () => {
  * word; the MUST-NEVER list in `docs/04-formal-verification-plan.md` is the rule,
  * and this is its machine-checkable half.
  */
-const SUBJECT = String.raw`(?:sysprose|(?:the|this|that|these|those|our)\s+(?:tools?|models?|propert(?:y|ies)|requirements?|obligations?|proofs?|clauses?|verdicts?|results?|architectures?|systems?))`;
+const SUBJECT = String.raw`(?:sysprose|(?:the|this|that|these|those|our)\s+(?:tools?|models?|machines?|designs?|state\s+machines?|runs?|propert(?:y|ies)|requirements?|obligations?|proofs?|clauses?|verdicts?|results?|architectures?|systems?))`;
 
 /** The copulas a claim is made with. */
 const COPULA = String.raw`(?:is|are|was|were|has been|have been)`;
@@ -332,8 +394,24 @@ const GAP = String.raw`(?:(?:\w+ly|proven)\s+)?`;
  *
  * `what` is the sentence a reader would have written; it is printed on failure so
  * the message names the rule rather than the regex.
+ *
+ * `negativeIsTheClaim` is the fourth field and the one that needs a reason. Every
+ * form above it is a POSITIVE claim, so a negation anywhere near the match is the
+ * disclaimer this guard wants to keep — {@link negated} defuses it and that is
+ * right. The absence claims are the other polarity: *"this design has no cut set"*
+ * and *"the design is not covered"* ARE the sentences being reserved, and the
+ * words that make them absence claims (`no`, `not`) sit inside the matched span.
+ * A form that leaves the in-span defusal on cannot fire on its own subject —
+ * measured at 0 hits on every planted sentence for all three — so the flag turns
+ * that half off and keeps the look-back half, which is what still defuses
+ * *"we do not claim there is no cut set"*.
  */
-const RESERVED_FORMS: Array<{ what: string; pattern: RegExp; allow: RegExp[] }> = [
+const RESERVED_FORMS: Array<{
+  what: string;
+  pattern: RegExp;
+  allow: RegExp[];
+  negativeIsTheClaim?: true;
+}> = [
   {
     what: 'a subject of ours is verified / correct / safe',
     pattern: new RegExp(String.raw`\b${SUBJECT}\s+${COPULA}\s+${GAP}(verified|correct|safe)\b`, 'i'),
@@ -384,12 +462,76 @@ const RESERVED_FORMS: Array<{ what: string; pattern: RegExp; allow: RegExp[] }> 
       /(#'?(Exception|Observable|precondition|postcondition)'?\b[^.\n]{0,40}\b(standard|SysML ?v2|conformant)\b|\b(standard|SysML ?v2|conformant)\b[^.\n]{0,40}#'?(Exception|Observable|precondition|postcondition)'?\b)/i,
     allow: [],
   },
+  /* ── the model-checking vocabulary, reserved before anything can print it ── */
+  {
+    what: 'a subject of ours is guaranteed, or guaranteed to reach somewhere',
+    // A behavioural walk answers over the runs it SAW. `guaranteed` is the word
+    // for a modality that holds on every run of the machine, and the only walk
+    // that earns it is one whose graph was seen whole — so the bare adjective,
+    // and the promise-shaped `guaranteed to reach`, are both reserved for the
+    // sentence that carries the warrant with it.
+    pattern: new RegExp(
+      String.raw`\b${SUBJECT}\s+${COPULA}\s+${GAP}guaranteed\b` +
+        String.raw`|\bguaranteed to (?:reach|enter|hold|terminate)\b`,
+      'i',
+    ),
+    allow: [],
+  },
+  {
+    what: 'a subject of ours is covered, uncovered or not covered',
+    // `covered` / `not covered` is the one pair in this lane whose NEGATIVE half
+    // is a decided answer rather than a disclaimer, which is exactly why the
+    // in-span defusal is turned off for it: *"the design is not covered"* is the
+    // claim, and a reader would quote it as one.
+    pattern: new RegExp(
+      String.raw`\b${SUBJECT}\s+${COPULA}\s+${GAP}(?:covered|not covered|uncovered)\b`,
+      'i',
+    ),
+    allow: [],
+    negativeIsTheClaim: true,
+  },
+  {
+    what: 'a subject of ours is recoverable, or always recovers',
+    // Reverse reachability to a named state answers over the configurations the
+    // walk reached. `recoverable` said of the machine itself is the universal
+    // sentence (`AG EF p`), and it is unearned on any walk that stopped early.
+    pattern: new RegExp(
+      String.raw`\b${SUBJECT}\s+${COPULA}\s+${GAP}recoverable\b` +
+        String.raw`|\b(?:can|will) always recover\b`,
+      'i',
+    ),
+    allow: [],
+  },
+  {
+    what: 'a design has no cut set, with no order bound beside it',
+    // A cut-set enumeration is BOUNDED by construction — it runs to an order the
+    // model or a flag names — so an absence is only ever an absence *up to* that
+    // order. The allowance is the bound: the honest sentence carries it, and the
+    // sentence this form reserves is the one that dropped it.
+    pattern: new RegExp(
+      String.raw`(?:\b${SUBJECT}\s+(?:has|have|had|contains|holds)|\bthere\s+(?:is|are))\s+no cut sets?\b` +
+        String.raw`|\b${SUBJECT}\s+${COPULA}\s+${GAP}(?:free of cut sets|cut-set-free)\b`,
+      'i',
+    ),
+    allow: [/up to order/i],
+    negativeIsTheClaim: true,
+  },
+  {
+    what: 'there is no simulation relation, without saying over which labels',
+    // A simulation search is over the labels the two machines SHARE. "No
+    // simulation relation" said without that scope is a claim about the machines
+    // rather than about the pairs the search enumerated, so the scope travels
+    // with the word — the same shape the `consistent` form uses.
+    pattern: /\bno simulation relation\b/i,
+    allow: [/over the common labels/i],
+    negativeIsTheClaim: true,
+  },
 ];
 
 describe('the verification lane reserves sentence forms, not words', () => {
   for (const form of RESERVED_FORMS) {
     it(`no file says ${form.what}`, () => {
-      const hits = scan(form.pattern, form.allow);
+      const hits = scan(form.pattern, form.allow, form.negativeIsTheClaim);
       expect(hits, `reserved sentence form — ${form.what}:${show(hits)}`).toEqual([]);
     });
   }
@@ -397,7 +539,9 @@ describe('the verification lane reserves sentence forms, not words', () => {
 
 describe('the guard itself, verified against planted sentences', () => {
   const fires = (text: string): boolean =>
-    RESERVED_FORMS.some((f) => scanText(text, f.pattern, f.allow).length > 0);
+    RESERVED_FORMS.some(
+      (f) => scanText(text, f.pattern, f.allow, f.negativeIsTheClaim).length > 0,
+    );
 
   it('fires on a planted claim and not on its negation', () => {
     expect(fires('The model is verified by z3.'), 'a planted claim slipped through').toBe(true);
@@ -469,6 +613,147 @@ describe('the guard itself, verified against planted sentences', () => {
     expect(fires('The walk is cycle-safe, so a cycle costs one revisit.')).toBe(false);
     expect(fires('The Verified By column lists what verifies the requirement.')).toBe(false);
     expect(fires('The exported file was verified against the in-process solver.')).toBe(false);
+  });
+
+  /* ── the model-checking vocabulary: both halves of every pair, executed ── */
+
+  it('fires on a machine or a design as the subject', () => {
+    // The widening this commit makes, asserted on the sentence that motivated
+    // it: every noun the behavioural lane talks about — a machine, a design, a
+    // run — was outside the subject list, so the most quotable claim the lane
+    // could print walked straight past the guard that shipped before it.
+    expect(fires('The machine is safe to enter failsafe.')).toBe(true);
+    expect(fires('The design is verified.')).toBe(true);
+    expect(fires('The state machine is proved.')).toBe(true);
+    expect(fires('These runs are correct.')).toBe(true);
+  });
+
+  it('fires on a guarantee, bare or promised', () => {
+    expect(fires('The machine is guaranteed.')).toBe(true);
+    expect(fires('This design is guaranteed to reach failsafe.')).toBe(true);
+    // The promise-shaped half, on a SUBJECT-LESS sentence — the only shape that
+    // reaches the second alternative, and the one §2.6 names as walking past the
+    // guard that shipped before this commit. Deleting `guaranteed to (reach|…)`
+    // turns this line red and nothing else in the file.
+    expect(
+      fires('Every run is guaranteed to reach failsafe.'),
+      'the promise-shaped alternative is unreachable — no sentence exercises it',
+    ).toBe(true);
+    expect(fires('Execution is guaranteed to terminate.')).toBe(true);
+  });
+
+  it('fires on `not covered` as a claim, and leaves the scorecard sentence alone', () => {
+    expect(fires('The design is not covered.')).toBe(true);
+    expect(fires('The model is covered.')).toBe(true);
+    // The third spelling of the same claim, which no other line reaches.
+    expect(fires('The design is uncovered.')).toBe(true);
+    // THE PRICE, item 5, executed: an unrelated negation within the look-back
+    // window in front of the sentence defuses it, and for this form the
+    // look-back is the only defusal left. This is the shape a report prints.
+    expect(
+      fires('No solver was available. The design is not covered.'),
+      'the look-back defusal stopped applying to an absence form',
+    ).toBe(false);
+    // `docs/CONFORMANCE.md`'s own opening — naming what a suite does and does
+    // not reach is the disclaimer, and it has no subject of ours in front of it.
+    expect(
+      fires('It states, candidly, what is and is not covered. Every pillar is a suite.'),
+      'the conformance scorecard’s own sentence was read as a claim',
+    ).toBe(false);
+  });
+
+  it('fires on `recoverable` as a claim, and leaves `recoverable from` alone', () => {
+    expect(fires('The machine is recoverable.')).toBe(true);
+    expect(fires('The design can always recover.')).toBe(true);
+    // `src/api/analytics.ts`'s sentence: a PATH is recoverable FROM something,
+    // which is a fact about a data structure and not a modality about a machine.
+    expect(
+      fires('…know what the guidance is attached to, and the whole path is recoverable from'),
+      '`recoverable from` is not a behavioural claim',
+    ).toBe(false);
+  });
+
+  it('fires on an unbounded absence of a cut set, and not on the bounded one', () => {
+    expect(fires('This design has no cut set.')).toBe(true);
+    expect(fires('There is no cut set.')).toBe(true);
+    expect(fires('The design is free of cut sets.')).toBe(true);
+    // The other verbs and the plural `there are`, each of which is its own
+    // alternative in the pattern and reached by no other line here.
+    expect(fires('These designs have no cut set.')).toBe(true);
+    expect(fires('The design contains no cut sets.')).toBe(true);
+    expect(fires('There are no cut sets.')).toBe(true);
+    // The bound is the allowance, so `fault-tree`'s own shipped verdict strings
+    // — the honest bounded absence — stay printable, in both spellings.
+    expect(fires('The design has no cut set up to order 2.')).toBe(false);
+    expect(
+      fires('4 basic event(s); no cut set was found up to order 2 and the baseline held'),
+      'the command’s own bounded verdict string was reserved out from under it',
+    ).toBe(false);
+    expect(fires('no cut set up to order 1 — higher orders not explored')).toBe(false);
+    // …and the SCOPING, not the allowance, is what keeps the composed halves of
+    // that string printable: neither carries a subject, so neither is a claim
+    // about a design even before the bound is looked for.
+    expect(fires('basic event(s); no cut set was found ')).toBe(false);
+    expect(fires('No cut set is claimed and none is ruled out.')).toBe(false);
+    // …and the look-back half of the defusal survives the flag, which is the
+    // half that keeps a disclaimer about the sentence printable.
+    expect(fires('We do not claim that this design has no cut set.')).toBe(false);
+    // THE PRICE, item 5, executed on this lane's OWN note: `higher orders not
+    // explored` in front of an unbounded absence defuses it, on the same line
+    // and across a line break, because the look-back cannot tell that negation
+    // apart from the disclaimer above. Recorded, not hidden.
+    expect(
+      fires('higher orders not explored. This design has no cut set.'),
+      'the look-back defusal stopped applying to an absence form',
+    ).toBe(false);
+    expect(
+      fires('4 basic event(s); no cut set — higher orders not explored\nThis design has no cut set.'),
+      'the look-back reaches across the previous line, and that is the price',
+    ).toBe(false);
+  });
+
+  it('fires on a bare no-simulation-relation, and not on the scoped one', () => {
+    expect(fires('There is no simulation relation between them.')).toBe(true);
+    expect(
+      fires('no simulation relation exists over the common labels {idle, active}: the pair fails'),
+      'the scoped sentence is the one this lane is allowed to print',
+    ).toBe(false);
+  });
+
+  /**
+   * The widening, priced.
+   *
+   * `SUBJECT` gained four nouns in this commit. The `GAP` widening before it was
+   * landed the same way — measured at 0 additional hits rather than assumed free
+   * — and this asserts the same thing by construction instead of by a number in a
+   * comment: every form that shipped BEFORE the widening finds exactly what it
+   * found with the narrower list. A noun added later that collides with ordinary
+   * prose turns this red beside the form it collided with.
+   */
+  it('costs the three forms that shipped before it 0 additional hits', () => {
+    const NARROW = String.raw`(?:sysprose|(?:the|this|that|these|those|our)\s+(?:tools?|models?|propert(?:y|ies)|requirements?|obligations?|proofs?|clauses?|verdicts?|results?|architectures?|systems?))`;
+    const BEFORE = [
+      'a subject of ours is verified / correct / safe',
+      'a subject of ours is proved, with no warrant beside it',
+      'a subject of ours is consistent, without saying over what',
+    ];
+    const older = RESERVED_FORMS.filter((f) => BEFORE.includes(f.what));
+    expect(older, 'a form this measurement is about was renamed').toHaveLength(BEFORE.length);
+    for (const form of older) {
+      const narrowSrc = form.pattern.source.split(SUBJECT).join(NARROW);
+      // Without this, the measurement dies quietly: a form that stopped
+      // interpolating {@link SUBJECT} verbatim makes the split a no-op, and the
+      // comparison below then compares a pattern with itself and passes forever.
+      expect(
+        narrowSrc,
+        `SUBJECT is no longer spliced into this pattern verbatim, so the narrowing does nothing: ${form.what}`,
+      ).not.toBe(form.pattern.source);
+      const narrow = new RegExp(narrowSrc, form.pattern.flags);
+      expect(
+        scan(form.pattern, form.allow, form.negativeIsTheClaim).length,
+        `the widened subject list cost hits on: ${form.what}`,
+      ).toBe(scan(narrow, form.allow, form.negativeIsTheClaim).length);
+    }
   });
 });
 
