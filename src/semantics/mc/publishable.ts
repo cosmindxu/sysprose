@@ -618,18 +618,34 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
   {
     id: 'A9',
     claim: 'current within this proof’s scope',
-    feature: 'staleness scoped to a proof core (§3.3b)',
+    feature: 'staleness scoped to a proof footprint (§3.3b)',
     polarity: 'not-a-walk',
     polarityNote: 'a set of global solver facts, not a fact about any configuration graph',
     walkRequires: null,
+    // THE FIRST CONJUNCT IS THE FOOTPRINT AND NOT THE CORE, and the substitution
+    // was measured rather than preferred: commit 10 recorded the unsat core's
+    // MEMBERSHIP moving with solver-context warmth, and an evidence record is
+    // promised byte-identical across two runs over an unchanged file, so nothing
+    // derived from the core may be stored. The footprint is the encoder's own
+    // read-closure computed from the MODEL, it is what the core is a subset of,
+    // and it is reproducible. The last two conjuncts are the GOAL, which no
+    // digest of the proof's CONTEXT reaches: measured, editing the clause
+    // itself left all four of the plan's conjuncts unmoved. They are two
+    // because the record's own key digest is blind to units by design — so a
+    // relabelled clause stays matchable to its record — and relabelling the
+    // feature a clause reads from `[kg]` to `[t]` turns `proved` into
+    // `refuted`. Every row digest in the scope therefore carries the relation
+    // AND the scale it is read at.
     alsoRequires: [
-      'core digest unmoved',
+      'footprint content digest unmoved',
       'footprint membership unmoved',
       'axiom-set digest unmoved',
       'premise-row digest unmoved',
+      'the clause’s own obligation digest unmoved',
+      'the clause read at the same scale',
     ],
-    otherwise: '`stale`, or the two-tier sentence',
-    producedBy: null,
+    otherwise: '`stale`, naming every part that moved',
+    producedBy: { file: 'src/api/evidence.ts', symbol: 'scopedStaleness' },
   },
   {
     id: 'A10',

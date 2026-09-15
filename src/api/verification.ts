@@ -136,6 +136,7 @@ import {
   VERDICT_OVERSTATES_EVIDENCE_CODE,
   modelVersionOf,
   obligationDigest,
+  proofScopeOf,
   recordEvidence,
   verdictFor,
   type EvidenceBound,
@@ -143,6 +144,7 @@ import {
   type EvidenceRecord,
   type EvidenceVerdict,
   type ModelVersion,
+  type ProofScope,
 } from './evidence';
 // The gate codes, so the whole lane's vocabulary is one set. `./property`
 // imports nothing from here, so the edge is one-way.
@@ -1427,6 +1429,17 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
     modelVersion,
     records: recordEvidence({
       rows: results.map((r) => ({
+        // WHAT THIS PROOF STOOD ON, recorded for the SMT engine and for nothing
+        // else. A `holds-at-values` row read the model's numbers at one point;
+        // it has no axiom set, no non-vacuity step and therefore no scope a
+        // later edit could be tested against, and writing one would invite a
+        // reader to scope a point evaluation's staleness to a proof structure it
+        // never had. A run the solver never answered (`toolAbsent`) is the same
+        // case. The row is found by clause id in the worklist this run judged,
+        // so the footprint is the one the run carried, `--free` included.
+        ...(engine === 'smt' && !toolAbsent
+          ? scopeFor(model, rows, r.clause.id, freed?.qualifiedNames)
+          : {}),
         obligation: {
           requirement: r.requirement?.qualifiedName ?? null,
           shortId: r.shortId,
@@ -1625,6 +1638,29 @@ async function judge(input: {
       strictVacuity,
     });
   });
+}
+
+/**
+ * The `proofScope` field for one judged row, or nothing when there is no row.
+ *
+ * A SPREADABLE HELPER rather than an inline ternary because the absence case is
+ * real: `--case` narrows the reported rows AFTER judging, and a clause id that
+ * names no row in the worklist must produce a record with NO scope rather than
+ * a scope over some other obligation. Silence is the honest answer; the record
+ * then reads under the whole-model comparison, which is what a record with no
+ * scope has always read under.
+ */
+function scopeFor(
+  model: Model,
+  rows: readonly Obligation[],
+  clauseId: ElementId,
+  free: ReadonlySet<string> | undefined,
+): { proofScope?: ProofScope } {
+  const row = rows.find((r) => r.role === 'obligation' && r.element.id === clauseId);
+  if (row === undefined) return {};
+  return {
+    proofScope: proofScopeOf(model, row, { rows, ...(free !== undefined ? { free } : {}) }),
+  };
 }
 
 /**

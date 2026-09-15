@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3126 passed / 0 failed / 0 skipped** across **147 files** + **128 E2E** across **78 spec files** = **3254 green** (measured 2026-09-10) |
+| Full automated suite | **3142 passed / 0 failed / 0 skipped** across **147 files** + **128 E2E** across **78 spec files** = **3270 green** (measured 2026-09-16) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -433,6 +433,128 @@ be written into the file is `pass` only where every obligation was `proved`. So 
 green `--engine literal` run over a passing case writes `inconclusive`, and the
 report prints the difference on its own line.
 
+### 8.2c Staleness is scoped to what a proof stood on, and the schema grew one optional property
+
+`validation/stale-evidence` used to compare one number: a digest over the whole
+user model. Every edit anywhere moved it, so every record in the file went stale
+on every edit — including edits no proof in the file could read. An
+`--engine smt` record now carries a `proofScope`, and the checker compares that.
+
+**What is in it, and what each part catches.** The **footprint** — the axiom rows
+the clause's read-closure reaches, each with its relation in normal form — by
+NAME and by DIGEST, so both an axiom that changed what it says and an axiom that
+newly entered the closure are visible. A digest over the whole **axiom set**,
+which is what the run's single consistency check stood on: `proved` means *the
+negation is unsatisfiable under a satisfiable axiom set*, and one added `assert`
+can void every proof in a file, including proofs whose footprint never touches
+it. A digest over the requirement's own **premises**, which is what the
+non-vacuity check stood on and what separates `proved` from `vacuous`. And a
+digest over the **goal** — the clause itself — because all three of the others
+are about a proof's CONTEXT and none of them is about what was to be shown;
+beside it the checker reads the clause's own `obligationDigest`, which every
+record has carried since the lane shipped. The scope also records the
+RESOLVED `--free` set every part was computed under: `flags` keeps the spellings
+a person typed, and a recomputation reading those would drop different rows and
+report an untouched file as stale.
+
+**Every row digest carries the SCALE, not only the relation.** The digest a
+record is KEYED by (`obligation.obligationDigest`) canonicalises the expression
+tree and keeps the magnitude the file writes, with the declared unit nowhere in
+it — which is right for a key, because a record has to stay matchable to its
+clause across a relabel. It is wrong for a scope. Measured on
+`examples/uav-isr.sysml`, editing `capacity : ISQ::EnergyValue = 640.0 [Wh]` to
+`640.0 [J]` leaves the node `capacity == 640` byte-identical while the solver
+reads a quantity 3600 times smaller, and the endurance obligation goes from
+`proved` to `refuted`; the same holds for `18.5 [kg]` → `18.5 [t]` on the mass
+proof and for `35.0 [W]` → `35.0 [kW]` on `examples/uav-power-budget.sysml`. So
+each row in the scope is digested over its relation AND each variable's unit,
+affine SI map and declared sort, plus whether the unit gates granted the
+relation a scale at all. A scope built on the key digest alone said nothing
+about any of those three edits, which is the one thing §3.3b's MUST-NEVER list
+forbids: a scoped verdict reading current over a record whose obligation no
+longer holds.
+
+**Two of the four parts enrich the sentence and never change the verdict.** The
+axiom-set digest is taken over EVERY axiom row's (name, normal form) pair, and
+the footprint is a subset of those same rows digested the same way — so a
+footprint member that changed what it says necessarily moves the axiom-set
+digest too, and a member can only enter or leave the read-closure if some axiom,
+premise or goal digest already moved. `stale` therefore reduces to *axiom set,
+premises or goal moved*. The footprint parts are what let a finding NAME the
+axiom a reader has to re-read, and they are in the census for the same reason;
+the narrowing this feature buys comes entirely from the edits that touch no
+axiom at all, which on `examples/uav-isr.sysml` is eight of nineteen.
+
+**Measured, on the two shipped examples.** `examples/uav-isr.sysml`, 19 single
+edits against two proofs: **eight** move the whole-model digest and nothing
+either proof reads — a declaration with no value, a doc line, a state, an action,
+a part definition, a string facet, a renamed connection, a prose requirement —
+and the records stay put where the old comparison called all sixteen readings
+stale. The other eleven are reported, and the table in
+`test/campaign/verification.test.ts` states which parts each of them moved. On that model every one of the twelve axioms is a feature-value binding,
+so **any numeric edit anywhere moves the axiom-set digest** — that is the price
+of the third part, and it is visible in the table rather than hidden in a
+sentence. `examples/uav-power-budget.sysml`, nine edits against six proofs, is
+where the premise digest earns its place: raising one `assume constraint {
+fc.supplyVoltage >= 20.0 [V] }` to `>= 200.0 [V]` moves no axiom, no footprint
+member and no symbol, and takes the obligation from `proved` to `vacuous`. The
+first three digests all read unmoved; the premise digest is what stops the record
+reading *current within this proof's scope* over a proof the tool itself calls
+vacuous.
+
+**The unsat core is not what is recorded, and the substitution is the point.**
+§3.3b of the implementation plan asked for a digest over the core. §8.3a's
+measurement below is why it is not: the core's membership moves with solver-context
+warmth, and a record is promised byte-identical across two runs over an unchanged
+file. The footprint is computed from the MODEL by the encoder's own relevance
+walk, is a pure function of it, and is what the core is a subset of. That the two
+walks agree is not assumed: `footprintOf` is asserted **set-equal** to the
+engine's own `relevantAxioms` over every model in the verification corpus and
+every shipped example — 58 models, 107 obligations compared and 11 whose goal the
+encoder refused, which never had a closure taken over them at all. The twin is a
+re-implementation, not a shared function: the rule that reads it is synchronous
+and reachable from the browser bundle, so it has to model the encoder's REFUSAL
+discipline as well as its symbol walk — a refused axiom is carried by the
+closure rather than pruned by it. The corpus therefore carries a model whose
+axiom the encoder refuses on a sort it cannot encode
+(`footprint-non-proposition.sysml`), so that half of the agreement is tested
+rather than taken on trust. The equality is held by that test; it is not a
+property of the code's shape.
+
+**The word `current` is never the scoped verdict.** A scope that did not move
+reads *current within this proof's scope*, and the clause naming what that scope
+was is part of the sentence; bare `current` is said only of a record with NO
+scope, where it means what it has always meant — the record was taken over this
+model. The checker is silent where nothing in the scope moved;
+`npm run check -- <file> --json` publishes the reading per live record, inside
+the file's report object rather than beside it — `{scoped, matched,
+wholeModelMoved, footprintContentMoved, footprintMembershipMoved, axiomSetMoved,
+premisesMoved, obligationMoved}` and the sentence. `matched` is `false` where a
+record carries a scope this model states no obligation to recompute it against —
+the clause was deleted, or two anonymous clauses share one qualified name — and
+the comparison falls back to the whole model, saying so in its own sentence. That census is the instrument for a question
+no single run can answer: whether the extra digests earn their keep is a rate
+over edits, and one check sees one model version.
+
+**`evidence-status` is unchanged, and answers a different question.** It reports
+whether a record was taken over THIS model — a fact about the file. The checker
+reports whether the edit could have reached the proof. Both are true at once, and
+a file where the first says `stale` and the second says nothing is a file where
+something moved and no proof in it could have read what moved.
+
+**One-directional forward incompatibility, stated as the measured fact it is.**
+`docs/schemas/evidence-record.schema.json` gains `proofScope` as an **optional**
+property; the `schema` const stays `sysprose-evidence/1`, so every record written
+before this build still validates and `recordOfCarrier` still reads every carrier
+in the wild. The other direction does not hold: the schema is compiled with
+`additionalProperties: false` at every level in two places — the corpus test and
+`loadRecords` in `scripts/sysprose.ts`, which refuses the **whole** attach if any
+record fails — so a record written by this build is refused by `evidence-attach`
+on any build before it. A model file's `pattern` value can be edited back; a
+written record cannot be un-written on a build that will not read it. Records
+written by `--engine literal` carry no `proofScope` at all, and they are read
+under the whole-model comparison they were written under.
+
 ### 8.3 What the engines may and may not claim
 
 `--engine literal` evaluates the model's own feature values through the same
@@ -562,8 +684,10 @@ a `pass`, and every verdict a run moved is printed with both claims.
 **A verdict that outlived its model is a warning on the ordinary path.**
 `validation/stale-evidence` fires from `npm run check`, not only from the
 verification lane, because the next person to open the file runs the checker. It
-names the requirement's slice — the declarations to re-read — and states on every
-finding that a whole-model digest cannot say WHICH element moved. Two further
+names the requirement's slice — the declarations to re-read — and, for a record
+that carries no proof scope, states on every finding that a whole-model digest
+cannot say WHICH element moved. For a record that does carry one it names what
+moved (§8.2c) and is silent where nothing in the proof's scope did. Two further
 states are reported by name and never silently: a `verdict` facet with no record
 behind it (`verification/claimed-without-evidence`, info — a verdict reached by
 inspection is ordinary requirements management) and a `verdict = "pass"` over a
@@ -608,8 +732,11 @@ endurance proof's core carries both `axiom:…AirVehicle::endurance` and
 deduplicating by qualified name — would drop a real dependency of that proof.
 
 **It is displayed and counted, never recorded.** No evidence record carries a
-core and `schemas/evidence-record.schema.json` is unchanged, because the
-membership of a core is the solver's choice and not a property of the model.
+core and `schemas/evidence-record.schema.json` has no property one could be
+written into, because the membership of a core is the solver's choice and not a
+property of the model. (The schema has since grown one optional property, and it
+is the *footprint* — the model-level walk the core is a subset of. §8.2c says
+what that is and why the substitution was the honest one.)
 **What was measured, stated as the observation it is:** on
 `examples/uav-isr.sysml`, one file and one seed, the endurance proof's core is
 six labels in a fresh process, and five — the same four axioms and the goal,
@@ -1216,7 +1343,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3126 pass / 0 skip, 147 files)
+# Full unit + integration + conformance suite (3142 pass / 0 skip, 147 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

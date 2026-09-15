@@ -65,6 +65,8 @@ import {
   faultTreeVerdict,
   canonicalElements,
   consistencyReport,
+  evidenceScopeCensus,
+  footprintOf,
   detachEvidence,
   evidenceStatus,
   isUserElement,
@@ -103,10 +105,13 @@ import {
   runVerificationCases,
   writeVerdict,
 } from '@semantics/index';
+import { obligationsOf } from '@semantics/obligations';
 import { parsePropertyText } from '@semantics/mc/patterns';
 import { loadZ3, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
-import { serializeModel } from '@text/serializer';
+import { serializeElement, serializeModel } from '@text/serializer';
+import { RULES_BY_ID } from '@validation/rules';
+import { encodedFootprint } from '@semantics/engines/smt';
 
 const root = (p: string) => resolve(process.cwd(), p);
 const read = (p: string) => readFileSync(root(p), 'utf8');
@@ -4308,4 +4313,771 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
       else process.env.SYSPROSE_NO_Z3 = before;
     }
   });
+});
+
+/**
+ * §3.3b — staleness scoped to what provably cannot affect the proof.
+ *
+ * WHAT THIS CORPUS IS FOR. `validation/stale-evidence` used to compare one
+ * number: a digest over the whole user model. Every edit anywhere moved it, so
+ * every record in the file went stale on every edit — including edits that
+ * cannot reach the proof at all. The comparison is now scoped to what the proof
+ * actually stood on, and the two halves of that claim are what these cases pin:
+ * a proof SURVIVES an edit that provably cannot affect it, and it does NOT
+ * survive one that voids it through a mechanism the footprint alone does not
+ * see.
+ *
+ * THE SWEEPS ARE THE MEASUREMENT, and they are written as tables rather than as
+ * prose because the number that justifies the extra digests — how often the
+ * scoped reading disagrees with the whole-model one — is a property of a corpus
+ * of edits and of nothing smaller. Every row states what it expects of all six
+ * conjuncts, so a change that makes one of them fire more widely reddens here
+ * instead of quietly shrinking the feature to the whole-model answer it
+ * replaced.
+ *
+ * ONE SOLVER RUN PER MODEL, not one per edit. The record is written once over
+ * the base model and then judged against each edited model by a comparison that
+ * is solver-free by construction (`ValidationRule.run` is synchronous). That is
+ * also why the sweeps do not meet the probe-hygiene limit the plan warns about —
+ * the WASM worker aborted after ~130 judged variants in one process while this
+ * feature was being measured: the whole block asks it for a handful of runs,
+ * one per model it records over plus the two that check a verdict after an
+ * edit, and the twenty-eight edited models are judged without it.
+ */
+describe('L8 — staleness scoped to what provably cannot affect the proof', () => {
+  /** The reader's own roots as text — what `evidence-attach --out` writes. */
+  const userText = (model: Model): string =>
+    model
+      .rootIds()
+      .filter((id) => model.get(id)?.attrs.isLibrary !== true)
+      .map((id) => serializeElement(model, id, 0))
+      .join('\n\n');
+
+  async function parsed(text: string, name: string): Promise<Model> {
+    const { model, report } = await loadModelText(text, { fileName: name });
+    expect(
+      report.diagnostics.filter((d) => d.severity === 'error').map((d) => d.message),
+      `${name} must parse`,
+    ).toEqual([]);
+    if (!model) throw new Error(`${name} produced no model`);
+    return model;
+  }
+
+  /**
+   * A model with SMT evidence attached, as text — the input every edit starts
+   * from.
+   *
+   * The evidence is attached first and the edit applied after, because that is
+   * the order a reader meets this in: the record is in the file, and then
+   * somebody changes something.
+   */
+  async function recorded(file: string): Promise<{ text: string; report: VerifyReport }> {
+    const source = read(file);
+    const model = await parsed(source, file);
+    const report = await verifyModel(model, { engine: 'smt', sourceText: source });
+    expect(report.engine, `${file} did not reach the solver`).toBe('smt');
+    expect(
+      report.records.every((r) => r.proofScope !== undefined),
+      'an SMT record was written with no proof scope',
+    ).toBe(true);
+    attachEvidence(model, report.records);
+    return { text: userText(model), report };
+  }
+
+  /** What one edit did to one record, in the six conjuncts and the finding count. */
+  interface Reading {
+    requirement: string;
+    wholeModelMoved: boolean;
+    footprintContentMoved: boolean;
+    footprintMembershipMoved: boolean;
+    axiomSetMoved: boolean;
+    premisesMoved: boolean;
+    obligationMoved: boolean;
+  }
+
+  async function applyEdit(base: string, from: string, to: string, name: string) {
+    expect(base.includes(from), `${name}: the anchor \`${from}\` is not in the file`).toBe(true);
+    const model = await parsed(base.replace(from, to), name);
+    const census = evidenceScopeCensus(model);
+    return {
+      findings: RULES_BY_ID.get('stale-evidence')!.run(model).length,
+      readings: census.map((c) => ({
+        requirement: c.requirement,
+        wholeModelMoved: c.wholeModelMoved,
+        footprintContentMoved: c.footprintContentMoved,
+        footprintMembershipMoved: c.footprintMembershipMoved,
+        axiomSetMoved: c.axiomSetMoved,
+        premisesMoved: c.premisesMoved,
+        obligationMoved: c.obligationMoved,
+      })) as Reading[],
+      census,
+    };
+  }
+
+  /** `.` for unmoved, the letter for moved — the table below is readable this way. */
+  const flags = (r: Reading): string =>
+    [
+      r.wholeModelMoved ? 'w' : '.',
+      r.footprintContentMoved ? 'c' : '.',
+      r.footprintMembershipMoved ? 'm' : '.',
+      r.axiomSetMoved ? 'a' : '.',
+      r.premisesMoved ? 'p' : '.',
+      r.obligationMoved ? 'o' : '.',
+    ].join('');
+
+  const shortName = (q: string): string => q.split('::').slice(-1)[0];
+
+  /**
+   * The model-level footprint IS the encoder's, over every model in the corpus.
+   *
+   * The whole design rests on this: the staleness rule is synchronous and
+   * reachable from the browser bundle, so it computes the read-closure over
+   * `Obligation` rows with no encoding — and a re-derivation that drifted from
+   * the encoder's own `relevantAxioms` would scope a proof's staleness to
+   * axioms the proof did not stand on. Set equality, not cardinality: two
+   * closures of the same size over different axioms is exactly the failure a
+   * count would miss. No solver runs — `relevantAxioms` is syntactic.
+   */
+  it('footprintOf is set-equal to the encoder’s own relevance walk, corpus-wide', async () => {
+    const seen = new Set<string>();
+    let compared = 0;
+    let refused = 0;
+    // Every model the corpus names, under the `--free` set its own case
+    // declares, plus every shipped example — the corpus models are small by
+    // design (each pins one verdict), and the examples are where a proof has
+    // enough context for the closure to be interesting at all.
+    const targets: Array<{ model: string; free?: string[] }> = [
+      ...caseNames.map(
+        (name) => JSON.parse(read(`test/fixtures/verification/${name}/meta.json`)) as Meta,
+      ),
+      ...readdirSync(root('examples'))
+        .filter((f) => f.endsWith('.sysml'))
+        .map((f) => ({ model: `examples/${f}` })),
+      ...readdirSync(root('test/fixtures/verification/models'))
+        .filter((f) => f.endsWith('.sysml'))
+        .map((f) => ({ model: `test/fixtures/verification/models/${f}` })),
+    ];
+    for (const meta of targets) {
+      if (seen.has(meta.model)) continue;
+      seen.add(meta.model);
+      const model = await modelFor(meta.model);
+      const rows = obligationsOf(model);
+      const free = new Set<string>(meta.free ?? []);
+      for (const row of rows) {
+        if (row.role !== 'obligation') continue;
+        const encoded = encodedFootprint(rows, row, free);
+        // A row the encoder refused never had a script and never had a closure
+        // taken over it — `null` here is the same distinction `AxiomCensus`
+        // makes by being null rather than four zeroes.
+        if (encoded === null) {
+          refused++;
+          continue;
+        }
+        compared++;
+        expect(
+          [...footprintOf(model, row, { rows, free })].sort(),
+          `${meta.model} — ${row.element.qualifiedName}`,
+        ).toEqual([...encoded].sort());
+      }
+    }
+    // A sweep that compared nothing would be green for the wrong reason.
+    expect(compared, 'no obligation in the corpus reached the comparison').toBeGreaterThan(60);
+    expect(seen.size, 'the corpus lost its models').toBeGreaterThan(30);
+    expect(refused, 'every model in the corpus encoded — the refusal path went untested').toBeGreaterThan(0);
+  }, 240_000);
+
+  /**
+   * THE SWEEP on `examples/uav-isr.sysml`: 19 edits against two proofs.
+   *
+   * The first eight are edits the proofs cannot see — a declaration with no
+   * value, a doc line, a state, an action, a part definition, a string facet, a
+   * renamed connection, a prose requirement. Under the whole-model digest all
+   * sixteen readings were stale; here none of them is, and that is the feature.
+   *
+   * The next eight move an axiom. Every one of them moves the AXIOM-SET digest
+   * too, and that is not a defect in the scope: on this model all twelve axioms
+   * are feature-value bindings, `proved` means *negation unsat under a
+   * SATISFIABLE axiom set*, and the satisfiability of the axiom set is a
+   * property of the file rather than of any one proof. The price is visible in
+   * this table instead of hidden in a sentence.
+   *
+   * The last three are the ones each of the other conjuncts exists for:
+   * `packFloor` ENTERS the endurance proof's footprint while nothing already in
+   * it moved, `powerCap` is invisible to the mass proof's footprint and voids it
+   * through STEP 0 anyway, and an edit to the mass clause ITSELF moves no part
+   * of the proof's context at all.
+   */
+  withZ3('the uav-isr sweep: 19 edits, two proofs, and what each one moved', async () => {
+    const { text: base } = await recorded('examples/uav-isr.sysml');
+    // The baseline: the file as the records were written over it.
+    const unedited = await parsed(base, 'uav-isr-attached');
+    expect(
+      RULES_BY_ID.get('stale-evidence')!.run(unedited),
+      'the file the records were written over is already stale',
+    ).toEqual([]);
+
+    const SWEEP: Array<{ name: string; from: string; to: string; expect: Record<string, string> }> = [
+      {
+        name: 'an attribute with no value',
+        from: 'part def DataLink {',
+        to: 'part def DataLink {\n        attribute txPower : ISQ::PowerValue;',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w.....' },
+      },
+      {
+        name: 'a doc line',
+        from: 'that separates the light category',
+        to: 'that separates the LIGHT category',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w.....' },
+      },
+      {
+        name: 'a new state',
+        from: 'state failsafe;',
+        to: 'state failsafe;\n        state ferry;',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w.....' },
+      },
+      {
+        name: 'a new action',
+        from: 'action land;',
+        to: 'action land;\n        action loiter;',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w.....' },
+      },
+      {
+        name: 'a new part definition',
+        from: 'part def BatteryPack {',
+        to: 'part def SpareBay {\n        attribute bays : Real;\n    }\n\n    part def BatteryPack {',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w.....' },
+      },
+      {
+        name: 'a string facet on a requirement',
+        from: 'attribute id = "R-UAV-002"',
+        to: 'attribute id = "R-UAV-002A"',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w.....' },
+      },
+      {
+        name: 'a renamed connection',
+        from: 'connection powerToGimbal',
+        to: 'connection gimbalPower',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w.....' },
+      },
+      {
+        name: 'a prose requirement with no clause',
+        from: 'satisfy EnduranceRequirement by uav;',
+        to: 'requirement def NoiseRequirement {\n        doc /* The vehicle shall be quiet. */\n    }\n\n    satisfy EnduranceRequirement by uav;',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w.....' },
+      },
+      {
+        name: 'the pack capacity, which the endurance proof reads',
+        from: 'capacity : ISQ::EnergyValue = 640.0 [Wh]',
+        to: 'capacity : ISQ::EnergyValue = 700.0 [Wh]',
+        expect: { EnduranceRequirement: 'wc.a..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'the take-off mass, which the mass proof reads',
+        from: 'mtow : ISQ::MassValue = 18.5 [kg]',
+        to: 'mtow : ISQ::MassValue = 19.5 [kg]',
+        expect: { EnduranceRequirement: 'w..a..', MassRequirement: 'wc.a..' },
+      },
+      {
+        name: 'the usable-energy fraction',
+        from: 'usableEnergyFraction : Real = 0.8',
+        to: 'usableEnergyFraction : Real = 0.75',
+        expect: { EnduranceRequirement: 'wc.a..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'the cruise power',
+        from: 'cruisePower : ISQ::PowerValue = 650.0 [W]',
+        to: 'cruisePower : ISQ::PowerValue = 700.0 [W]',
+        expect: { EnduranceRequirement: 'wc.a..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'the derived endurance equation',
+        from: 'battery.capacity * usableEnergyFraction / cruisePower',
+        to: 'battery.capacity * usableEnergyFraction / (cruisePower + 0.0)',
+        expect: { EnduranceRequirement: 'wc.a..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'a literal neither proof reads (the loop rate)',
+        from: 'loopRate : ISQ::FrequencyValue = 400.0 [Hz]',
+        to: 'loopRate : ISQ::FrequencyValue = 500.0 [Hz]',
+        expect: { EnduranceRequirement: 'w..a..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'a literal neither proof reads (the data-link range)',
+        from: 'range : ISQ::LengthValue = 25.0 [km]',
+        to: 'range : ISQ::LengthValue = 30.0 [km]',
+        expect: { EnduranceRequirement: 'w..a..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'a literal neither proof reads (the gimbal mass)',
+        from: 'mass : ISQ::MassValue = 1.2 [kg]',
+        to: 'mass : ISQ::MassValue = 1.5 [kg]',
+        expect: { EnduranceRequirement: 'w..a..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'packFloor — a new axiom that ENTERS the endurance footprint',
+        from: 'satisfy EnduranceRequirement by uav;',
+        to: 'assert constraint packFloor { uav.battery.capacity >= 100.0 [Wh] }\n\n    satisfy EnduranceRequirement by uav;',
+        expect: { EnduranceRequirement: 'w.ma..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'powerCap — a new axiom the mass footprint never touches, which voids it through STEP 0',
+        from: 'satisfy EnduranceRequirement by uav;',
+        to: 'assert constraint powerCap { uav.cruisePower <= 100.0 [W] }\n\n    satisfy EnduranceRequirement by uav;',
+        expect: { EnduranceRequirement: 'w.ma..', MassRequirement: 'w..a..' },
+      },
+      {
+        name: 'the mass clause itself',
+        from: 'uav.mtow <= 25.0 [kg]',
+        to: 'uav.mtow <= 24.0 [kg]',
+        expect: { EnduranceRequirement: 'w.....', MassRequirement: 'w....o' },
+      },
+    ];
+    expect(SWEEP.length, 'the sweep is 19 edits').toBe(19);
+
+    for (const edit of SWEEP) {
+      const { findings, readings } = await applyEdit(base, edit.from, edit.to, edit.name);
+      const actual: Record<string, string> = {};
+      for (const r of readings) actual[shortName(r.requirement)] = flags(r);
+      expect(actual, edit.name).toEqual(edit.expect);
+      // The finding count follows from the table: a requirement is reported
+      // exactly when something in its own proof's scope moved.
+      const stale = Object.values(edit.expect).filter((f) => f.slice(1) !== '.....').length;
+      expect(findings, `${edit.name}: findings`).toBe(stale);
+    }
+
+    // THE HEADLINE, stated as a number rather than as a sentence: eight of the
+    // nineteen edits move the whole-model digest and nothing this proof stood
+    // on, and under the comparison this commit replaces all sixteen of those
+    // readings were stale.
+    const untouched = SWEEP.filter((e) => Object.values(e.expect).every((f) => f === 'w.....'));
+    expect(untouched.length).toBe(8);
+  }, 600_000);
+
+  /**
+   * THE SWEEP on `examples/uav-power-budget.sysml`: nine edits, six proofs.
+   *
+   * This model is the one the extra digests were measured on — six obligations,
+   * 24 footprint axioms against 10 model axioms, so two thirds of what the
+   * whole-model comparison treats as relevant provably is not. Its ninth edit is
+   * the one §3.3b exists for: a PREMISE moved, no axiom did, and the obligation
+   * the record covers is `vacuous` from that point on.
+   */
+  withZ3('the uav-power-budget sweep: nine edits, six proofs, and the premise that voids one', async () => {
+    const { text: base } = await recorded('examples/uav-power-budget.sysml');
+    const unedited = await parsed(base, 'uav-power-budget-attached');
+    expect(
+      RULES_BY_ID.get('stale-evidence')!.run(unedited),
+      'the file the records were written over is already stale',
+    ).toEqual([]);
+
+    const CLEAN = {
+      PowerBudget: 'w.....',
+      BatterySupply: 'w.....',
+      ComputerDraw: 'w.....',
+      PropulsionDraw: 'w.....',
+      RadioDraw: 'w.....',
+    };
+    const SWEEP: Array<{ name: string; from: string; to: string; expect: Record<string, string[]> }> = [
+      {
+        name: 'a doc line',
+        from: 'The pack, seen through its bus terminals.',
+        to: 'The pack, seen through its terminals.',
+        expect: {
+          PowerBudget: ['w.....'],
+          BatterySupply: ['w.....', 'w.....'],
+          ComputerDraw: ['w.....'],
+          PropulsionDraw: ['w.....'],
+          RadioDraw: ['w.....'],
+        },
+      },
+      {
+        name: 'an attribute with no value',
+        from: 'part def DataLink {',
+        to: 'part def DataLink {\n        attribute antennaGain : Real;',
+        expect: {
+          PowerBudget: ['w.....'],
+          BatterySupply: ['w.....', 'w.....'],
+          ComputerDraw: ['w.....'],
+          PropulsionDraw: ['w.....'],
+          RadioDraw: ['w.....'],
+        },
+      },
+      {
+        name: 'the computer’s draw, which two proofs read',
+        from: 'draw : ISQ::PowerValue = 12.0 [W]',
+        to: 'draw : ISQ::PowerValue = 13.0 [W]',
+        expect: {
+          PowerBudget: ['wc.a..'],
+          BatterySupply: ['w..a..', 'w..a..'],
+          ComputerDraw: ['wc.a..'],
+          PropulsionDraw: ['w..a..'],
+          RadioDraw: ['w..a..'],
+        },
+      },
+      {
+        name: 'the pack’s available power',
+        from: 'availablePower : ISQ::PowerValue = 720.0 [W]',
+        to: 'availablePower : ISQ::PowerValue = 700.0 [W]',
+        expect: {
+          PowerBudget: ['wc.a..'],
+          BatterySupply: ['w..a..', 'wc.a..'],
+          ComputerDraw: ['w..a..'],
+          PropulsionDraw: ['w..a..'],
+          RadioDraw: ['w..a..'],
+        },
+      },
+      {
+        name: 'the bus voltage, which the three load proofs reach through the wiring',
+        from: 'outputVoltage : ISQ::ElectricPotentialValue = 24.0 [V]',
+        to: 'outputVoltage : ISQ::ElectricPotentialValue = 23.0 [V]',
+        expect: {
+          PowerBudget: ['w..a..'],
+          BatterySupply: ['wc.a..', 'w..a..'],
+          ComputerDraw: ['wc.a..'],
+          PropulsionDraw: ['wc.a..'],
+          RadioDraw: ['w..a..'],
+        },
+      },
+      {
+        name: 'the radio’s draw',
+        from: 'draw : ISQ::PowerValue = 35.0 [W]',
+        to: 'draw : ISQ::PowerValue = 36.0 [W]',
+        expect: {
+          PowerBudget: ['wc.a..'],
+          BatterySupply: ['w..a..', 'w..a..'],
+          ComputerDraw: ['w..a..'],
+          PropulsionDraw: ['w..a..'],
+          RadioDraw: ['wc.a..'],
+        },
+      },
+      {
+        name: 'the computer’s own clause',
+        from: 'fc.draw <= 15.0 [W]',
+        to: 'fc.draw <= 16.0 [W]',
+        expect: {
+          PowerBudget: ['w.....'],
+          BatterySupply: ['w.....', 'w.....'],
+          ComputerDraw: ['w....o'],
+          PropulsionDraw: ['w.....'],
+          RadioDraw: ['w.....'],
+        },
+      },
+      {
+        name: 'the propulsion premise',
+        from: 'p.supplyVoltage >= 20.0 [V]',
+        to: 'p.supplyVoltage >= 21.0 [V]',
+        expect: {
+          PowerBudget: ['w.....'],
+          BatterySupply: ['w.....', 'w.....'],
+          ComputerDraw: ['w.....'],
+          PropulsionDraw: ['w...p.'],
+          RadioDraw: ['w.....'],
+        },
+      },
+      {
+        // THE STEP-2 CASE. Same feature, same symbols, no axiom touched — and
+        // the obligation this record covers is `vacuous` from here on. The
+        // three digests the plan's draft shipped all read unmoved, and the
+        // sentence they would have printed is `current within this proof's
+        // scope` over a proof the tool itself calls vacuous.
+        name: 'the computer premise, raised past the bus voltage',
+        from: 'fc.supplyVoltage >= 20.0 [V]',
+        to: 'fc.supplyVoltage >= 200.0 [V]',
+        expect: {
+          PowerBudget: ['w.....'],
+          BatterySupply: ['w.....', 'w.....'],
+          ComputerDraw: ['w...p.'],
+          PropulsionDraw: ['w.....'],
+          RadioDraw: ['w.....'],
+        },
+      },
+    ];
+    expect(SWEEP.length, 'the sweep is nine edits').toBe(9);
+    expect(Object.keys(CLEAN).length, 'five requirements carry records').toBe(5);
+
+    for (const edit of SWEEP) {
+      const { findings, readings } = await applyEdit(base, edit.from, edit.to, edit.name);
+      const actual: Record<string, string[]> = {};
+      for (const r of readings) (actual[shortName(r.requirement)] ??= []).push(flags(r));
+      expect(actual, edit.name).toEqual(edit.expect);
+      const stale = Object.values(edit.expect).filter((fs) =>
+        fs.some((f) => f.slice(1) !== '.....'),
+      ).length;
+      expect(findings, `${edit.name}: findings`).toBe(stale);
+    }
+
+    // AND THE OTHER HALF OF THE PREMISE CASE, in the same run so the fixture
+    // pins the two together: the obligation really has gone vacuous. A scoped
+    // verdict that read `current` here would be an absence claim over a proof
+    // this tool no longer makes.
+    const ninth = SWEEP[8];
+    const editedText = base.replace(ninth.from, ninth.to);
+    const editedModel = await parsed(editedText, 'uav-power-budget-premise-edit');
+    const after = await verifyModel(editedModel, { engine: 'smt', sourceText: editedText });
+    const computer = after.results.filter(
+      (v) => v.requirement?.qualifiedName === 'UAVPowerBudget::ComputerDraw',
+    );
+    expect(computer.map((v) => v.claim)).toEqual(['vacuous']);
+    expect(computer[0].code).toBe('verification/vacuous');
+    expect(after.vacuous).toBe(1);
+  }, 600_000);
+
+  /**
+   * A UNIT RELABEL IS AN EDIT THE SCOPE HAS TO SEE, on both sweep models.
+   *
+   * IT IS THE ONE CLASS NEITHER SWEEP CONTAINS. Every loud row above changes a
+   * decimal, a declaration or a clause bound, and every quiet row states no
+   * relation at all — so both tables would stay green on a scope that digested
+   * relations and ignored the scale they are read at. That scope existed: the
+   * first build took each row's normal form with `obligationDigest`, which
+   * canonicalises the expression tree and keeps the magnitude the FILE writes.
+   * `capacity == 640` is byte-identical whether the declaration says `[Wh]` or
+   * `[J]`, so all six conjuncts read unmoved, `check` said nothing, and
+   * `verify` on the same file said `refuted`. That is §3.3b's MUST-NEVER:
+   * a scoped verdict reading current over a record whose obligation no longer
+   * holds.
+   *
+   * Both halves are asserted in the same run, the way the STEP-2 row pins
+   * `vacuous` beside its premise edit: the conjunct that must move, and the
+   * verdict that really did.
+   */
+  withZ3('a unit relabel moves the scope, and the verdict with it', async () => {
+    const CASES: Array<{
+      file: string;
+      name: string;
+      from: string;
+      to: string;
+      expect: Record<string, string[]>;
+      refuted: string[];
+    }> = [
+      {
+        file: 'examples/uav-isr.sysml',
+        name: 'the battery pack’s capacity, relabelled from watt-hours to joules',
+        from: 'capacity : ISQ::EnergyValue = 640.0 [Wh]',
+        to: 'capacity : ISQ::EnergyValue = 640.0 [J]',
+        // The endurance proof READS the capacity, so its footprint digest
+        // moves; the mass proof does not, and is reported through STEP 0's
+        // axiom-set digest alone, exactly as it is for any other axiom edit.
+        expect: { EnduranceRequirement: ['wc.a..'], MassRequirement: ['w..a..'] },
+        refuted: ['UAVSurveillanceSystem::EnduranceRequirement'],
+      },
+      {
+        file: 'examples/uav-power-budget.sysml',
+        name: 'the radio’s draw, relabelled from watts to kilowatts',
+        from: 'draw : ISQ::PowerValue = 35.0 [W]',
+        to: 'draw : ISQ::PowerValue = 35.0 [kW]',
+        // `o` on the two proofs whose CLAUSE reads `radio.draw`: the relation
+        // tree is untouched and its key digest with it, so this is the goal
+        // digest and nothing else — the conjunct the record's own
+        // `obligationDigest` cannot supply.
+        expect: {
+          PowerBudget: ['wc.a.o'],
+          BatterySupply: ['w..a..', 'w..a..'],
+          ComputerDraw: ['w..a..'],
+          PropulsionDraw: ['w..a..'],
+          RadioDraw: ['wc.a.o'],
+        },
+        refuted: ['UAVPowerBudget::PowerBudget', 'UAVPowerBudget::RadioDraw'],
+      },
+    ];
+
+    for (const c of CASES) {
+      const { text: base } = await recorded(c.file);
+      expect(base.includes(c.from), `${c.name}: the anchor is not in the file`).toBe(true);
+      const editedText = base.replace(c.from, c.to);
+      const model = await parsed(editedText, c.name);
+      const actual: Record<string, string[]> = {};
+      for (const row of evidenceScopeCensus(model)) {
+        (actual[shortName(row.requirement)] ??= []).push(
+          flags({
+            requirement: row.requirement,
+            wholeModelMoved: row.wholeModelMoved,
+            footprintContentMoved: row.footprintContentMoved,
+            footprintMembershipMoved: row.footprintMembershipMoved,
+            axiomSetMoved: row.axiomSetMoved,
+            premisesMoved: row.premisesMoved,
+            obligationMoved: row.obligationMoved,
+          }),
+        );
+      }
+      expect(actual, c.name).toEqual(c.expect);
+      expect(
+        RULES_BY_ID.get('stale-evidence')!.run(model).length,
+        `${c.name}: every record in the file is stale after a unit relabel`,
+      ).toBe(Object.keys(c.expect).length);
+
+      // THE OTHER HALF: the verdict really did move. Without this the table
+      // above would only say the scope is noisy, not that it is right.
+      const after = await verifyModel(model, { engine: 'smt', sourceText: editedText });
+      expect(
+        after.results.filter((v) => v.claim === 'refuted').map((v) => v.requirement?.qualifiedName),
+        `${c.name}: the relabel did not move a verdict, so the case proves nothing`,
+      ).toEqual(c.refuted);
+    }
+  }, 600_000);
+
+  /**
+   * TWO AXIOM ROWS CAN SHARE ONE QUALIFIED NAME, and the comparison is a
+   * multiset because of it.
+   *
+   * An anonymous `bind` files as `UAVPowerBudget::PowerSystem::«BindingConnectorAsUsage»`,
+   * and this model states two of them — so four of the six recorded scopes list
+   * that name TWICE with two different digests. A comparison keyed by name
+   * through a `Map` collapses them, last one wins: deleting ONE bind then read
+   * as *`…«BindingConnectorAsUsage»` is in this proof's axiom footprint and
+   * moved*, an edit attributed to a row whose relation nobody had touched, on a
+   * proof (`ComputerDraw`) that never mentioned the deleted one. What actually
+   * happened is that a member LEFT, and that is what the reading has to say.
+   */
+  withZ3('a name two axioms share is compared as a multiset, not through a map', async () => {
+    const { text: base } = await recorded('examples/uav-power-budget.sysml');
+    const BIND =
+      'bind UAVPowerBudget::BatteryPack::outputVoltage = UAVPowerBudget::PropulsionUnit::supplyVoltage;';
+    expect(base.includes(BIND), 'the anchor is not in the attached file').toBe(true);
+
+    // The duplicate is a fact about the recorded scope, and the case is
+    // vacuous without it.
+    const model = await parsed(base, 'uav-power-budget-attached');
+    const dupes = evidenceScopeCensus(model);
+    expect(dupes.length).toBe(6);
+
+    const edited = await parsed(base.replace(BIND, ''), 'uav-power-budget-one-bind-deleted');
+    const actual: Record<string, string[]> = {};
+    for (const row of evidenceScopeCensus(edited)) {
+      (actual[shortName(row.requirement)] ??= []).push(
+        flags({
+          requirement: row.requirement,
+          wholeModelMoved: row.wholeModelMoved,
+          footprintContentMoved: row.footprintContentMoved,
+          footprintMembershipMoved: row.footprintMembershipMoved,
+          axiomSetMoved: row.axiomSetMoved,
+          premisesMoved: row.premisesMoved,
+          obligationMoved: row.obligationMoved,
+        }),
+      );
+    }
+    // `m` and not `c` everywhere the bind is in the footprint: a row left, and
+    // no surviving row says anything different from what it said.
+    expect(actual).toEqual({
+      PowerBudget: ['w..a..'],
+      BatterySupply: ['w.ma..', 'w..a..'],
+      ComputerDraw: ['w.ma..'],
+      PropulsionDraw: ['w.ma..'],
+      RadioDraw: ['w..a..'],
+    });
+    const computer = evidenceScopeCensus(edited).find(
+      (r) => r.requirement === 'UAVPowerBudget::ComputerDraw',
+    );
+    expect(computer?.sentence).toContain('left this proof’s axiom footprint');
+    expect(computer?.sentence, 'a surviving bind was reported as moved').not.toContain(
+      '«BindingConnectorAsUsage»` is in this proof’s axiom footprint and moved',
+    );
+  }, 600_000);
+
+  /**
+   * A record with no scope reads exactly as it did before this commit.
+   *
+   * `--engine literal` writes no scope — a point evaluation has no axiom set and
+   * no non-vacuity step — so its records keep the whole-model comparison they
+   * were written under, and the sentence is the one the L8 fixture and the
+   * USER-GUIDE quote. A fallback that quietly became the scoped reading would
+   * scope a claim to a proof structure that never existed.
+   */
+  it('a record with no proof scope keeps the whole-model sentence, verbatim', async () => {
+    const file = 'examples/uav-isr.sysml';
+    const source = read(file);
+    const model = await parsed(source, file);
+    const r = await verifyModel(model, { engine: 'literal', sourceText: source });
+    expect(
+      r.records.some((rec) => rec.proofScope !== undefined),
+      'a point evaluation recorded a proof scope',
+    ).toBe(false);
+    attachEvidence(model, r.records);
+    const edited = await parsed(
+      userText(model).replace('mtow : ISQ::MassValue = 18.5 [kg]', 'mtow : ISQ::MassValue = 19.5 [kg]'),
+      'uav-isr-literal-edited',
+    );
+    const diags = RULES_BY_ID.get('stale-evidence')!.run(edited);
+    expect(diags.length).toBeGreaterThan(0);
+    for (const d of diags) {
+      expect(d.message).toContain('the digest is over the whole model, so this tool cannot say');
+      expect(d.message, 'an unscoped record printed a scoped sentence').not.toContain(
+        'within this proof’s scope',
+      );
+    }
+    for (const row of evidenceScopeCensus(edited)) {
+      expect(row.scoped).toBe(false);
+      // Nothing was matched because nothing was scoped — `matched` is about a
+      // scope this model could not be compared against, which is a different
+      // fact and must not be confused with this one.
+      expect(row.matched).toBe(true);
+      expect(row.wholeModelMoved).toBe(true);
+      expect(row.sentence).toContain('carries no readable proof scope');
+    }
+  }, 240_000);
+
+  /**
+   * A `--free` record is current over the file it was written from.
+   *
+   * THE ONE WAY THIS FEATURE COULD FILE A WARNING ABOUT AN EDIT NOBODY MADE.
+   * `--free` drops the feature-value axioms that pin what it released, so the
+   * footprint and the axiom set are both taken under that set — and `flags.free`
+   * records the SPELLINGS a person typed (`uav.cruisePower`, a dotted path)
+   * rather than the qualified names they resolved to. A recomputation reading
+   * the spellings drops nothing, reports a larger footprint, and calls an
+   * untouched file stale. The resolved set is recorded in the scope for exactly
+   * that reason, and this is the case that fails without it.
+   */
+  withZ3('a record written under --free is current over the file it was written from', async () => {
+    const file = 'test/fixtures/verification/models/free-two-sided.sysml';
+    const source = read(file);
+    const model = await parsed(source, file);
+    const r = await verifyModel(model, {
+      engine: 'smt',
+      free: ['uav.cruisePower'],
+      sourceText: source,
+    });
+    expect(r.records.length).toBeGreaterThan(0);
+    for (const rec of r.records) {
+      // The spelling the reader typed, and the qualified name it resolved to:
+      // different strings, which is the whole hazard.
+      expect(rec.flags.free).toEqual(['uav.cruisePower']);
+      expect(rec.proofScope?.free).not.toEqual(['uav.cruisePower']);
+      expect(rec.proofScope?.free.every((q) => q.includes('::'))).toBe(true);
+    }
+    attachEvidence(model, r.records);
+    const reparsed = await parsed(userText(model), 'free-two-sided-attached');
+    expect(
+      RULES_BY_ID.get('stale-evidence')!.run(reparsed),
+      'a file nobody edited was reported stale',
+    ).toEqual([]);
+    for (const row of evidenceScopeCensus(reparsed)) {
+      expect(row.scoped).toBe(true);
+      expect(row.sentence).toContain('current within this proof’s scope');
+    }
+  }, 300_000);
+
+  /**
+   * The scope is a function of the model and of nothing else.
+   *
+   * An evidence record is promised byte-identical across two runs over an
+   * unchanged file, and this field is the one that could most easily break that
+   * promise: it is the reason the unsat CORE is not recorded here (its
+   * membership was measured to move with solver-context warmth) and the reason
+   * the footprint is. Two runs in one process is the cheap half of that check;
+   * the two-PROCESS half is in `test/campaign/cli.sysprose.test.ts`, where the
+   * same file is recorded twice and the bytes compared.
+   */
+  withZ3('the recorded scope is byte-identical across two runs of the same file', async () => {
+    const file = 'examples/uav-power-budget.sysml';
+    const source = read(file);
+    const first = await verifyModel(await parsed(source, file), { engine: 'smt', sourceText: source });
+    const second = await verifyModel(await parsed(source, file), { engine: 'smt', sourceText: source });
+    const scopes = (r: VerifyReport) => r.records.map((rec) => JSON.stringify(rec.proofScope));
+    expect(scopes(first)).toEqual(scopes(second));
+    // And it is not vacuously stable because it is empty.
+    expect(first.records.every((rec) => (rec.proofScope?.footprint.length ?? 0) > 0)).toBe(true);
+    const total = first.records.reduce((n, rec) => n + (rec.proofScope?.footprint.length ?? 0), 0);
+    expect(total, 'the measured footprint total on this model').toBe(24);
+  }, 300_000);
 });

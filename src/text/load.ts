@@ -52,6 +52,13 @@ import {
   retractResolvedSpecializationWarnings,
 } from './index';
 import type { ParseDiagnostic } from './types';
+// The one import this module makes of `src/api`, and it is the same edge
+// `src/validation/rules.ts` already declares: the staleness census is derived
+// from the evidence records the `stale-evidence` rule reads, and a second
+// reading of them here would be a second answer to "is this verdict still about
+// this model". Nothing cycles — `src/api` reaches back into `src/text` for
+// nothing at runtime.
+import { evidenceScopeCensus, type EvidenceScopeCensusRow } from '../api/evidence';
 import { renderHint } from './langium/diagnostic-codes';
 
 /** Options for {@link loadModelText} (and so for `checkText`). */
@@ -114,6 +121,36 @@ export interface CheckReport {
   elements: { count: number; roots: string[] };
   /** Element→source-span table (only when `includeRanges`). */
   ranges?: Record<ElementId, TextRange>;
+  /**
+   * The staleness census: one row per live evidence record, the conjuncts of
+   * the scoped comparison as booleans, and the sentence the checker reads them
+   * as (§3.3b).
+   *
+   * ABSENT on a file that carries no evidence record, which is almost every
+   * file — a census of nothing is not a measurement and an empty array in every
+   * report would be noise in every payload. It lands INSIDE the report rather
+   * than beside it, because `{ok, files}` is the check payload's whole shape
+   * and a sixth top-level key would break the consumers that pin it.
+   *
+   * WHY IT IS HERE AT ALL. A feature that cannot report on its own usefulness is
+   * not finished, and the quantity that decides whether the scoped comparison
+   * earns its keep is a RATE OVER EDITS — which no single run can see, since one
+   * check sees one model version. So the instrument is per record and per run,
+   * and the rate is an aggregation over recorded runs.
+   *
+   * IT IS COMPUTED ON EVERY LOAD, not only under `--json`, and that is a
+   * deliberate trade rather than an oversight. `checkText` has one payload and
+   * no flag that reaches this far, so gating the census would make the report's
+   * contents depend on an option no caller passes today — including the browser
+   * store, which loads through the same path. What it costs is a second walk of
+   * the carriers the `stale-evidence` rule already walked, and a second
+   * obligation worklist beside the rule's own: measured on
+   * `examples/uav-isr.sysml` with two SMT records attached, 2.5 ms against a
+   * 168 ms load. A file that carries no evidence pays nothing — the census
+   * returns on its first line, before the model digest or the worklist is
+   * built — and that is almost every file.
+   */
+  evidenceScope?: EvidenceScopeCensusRow[];
 }
 
 /** What {@link loadModelText} hands back. */
@@ -319,6 +356,7 @@ export async function loadModelText(
         reportedName,
         strict,
         ranges,
+        evidenceScopeCensus(model),
       ),
       ranges: parsed.ranges,
     };
@@ -343,6 +381,7 @@ function report(
   fileName: string | undefined,
   strict: boolean,
   ranges: Record<ElementId, TextRange> | undefined,
+  evidenceScope: EvidenceScopeCensusRow[] = [],
 ): CheckReport {
   const sorted = sortDiagnostics(diagnostics);
   const errors = sorted.filter((d) => d.severity === 'error').length;
@@ -357,5 +396,6 @@ function report(
     summary: { errors, warnings, infos },
     elements,
     ...(ranges ? { ranges } : {}),
+    ...(evidenceScope.length > 0 ? { evidenceScope } : {}),
   };
 }

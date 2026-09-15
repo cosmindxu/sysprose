@@ -3415,6 +3415,138 @@ package P {
     }
   }, 300_000);
 
+  /**
+   * The scoped staleness comparison, at the process boundary (§3.3b).
+   *
+   * THREE THINGS ONLY A PROCESS CAN BE WRONG ABOUT, and all three are here:
+   * that `verify --record` writes the same bytes twice from two cold processes
+   * — the promise a recorded proof scope could most easily break, which is why
+   * the solver's unsat CORE is displayed and never recorded; that `check` on a
+   * file carrying an SMT record says NOTHING after an edit no proof could have
+   * read; and that the census booleans reach `check --json` inside the report
+   * rather than beside it.
+   */
+  it('the scoped evidence comparison across processes: record twice, edit, and stay current', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'budget.sysml');
+      const source = readFileSync(resolve(process.cwd(), 'examples/uav-power-budget.sysml'), 'utf8');
+      writeFileSync(model, source);
+      const first = join(dir, 'first.json');
+      const second = join(dir, 'second.json');
+
+      const a = spawnCli(['verify', model, '--engine', 'smt', '--record', first]);
+      expect(a.code).toBe(0);
+      const b = spawnCli(['verify', model, '--engine', 'smt', '--record', second]);
+      expect(b.code).toBe(0);
+      // BYTE-IDENTICAL, from two cold processes over one unchanged file. A
+      // record carries no timestamp, and now carries a proof scope that is a
+      // function of the model alone.
+      expect(readFileSync(first, 'utf8'), 'two runs over one file wrote different records').toBe(
+        readFileSync(second, 'utf8'),
+      );
+      const records = JSON.parse(readFileSync(first, 'utf8')) as Array<{
+        claim: string;
+        proofScope?: { footprint: Array<{ axiom: string; digest: string }>; axiomSet: string; premises: string };
+      }>;
+      expect(records).toHaveLength(6);
+      expect(
+        records.reduce((n, r) => n + (r.proofScope?.footprint.length ?? 0), 0),
+        'the recorded footprint total',
+      ).toBe(24);
+
+      const attached = spawnCli(['evidence-attach', model, '--from', first, '--out', model]);
+      expect(attached.code).toBe(0);
+      expect(attached.stderr).toContain('record(s) attached');
+
+      const clean = spawnSync('npx', ['tsx', CHECK_CLI, model], { encoding: 'utf8' });
+      expect(clean.stdout, 'a freshly attached file was already stale').not.toContain(
+        'validation/stale-evidence',
+      );
+
+      // AN EDIT NO PROOF CAN READ: a declaration with no value states no
+      // axiom, so it enters no footprint, no axiom set and no premise. The
+      // whole-model digest moves and the checker says nothing — which is the
+      // whole of this commit, seen from the command line.
+      const written = readFileSync(model, 'utf8');
+      writeFileSync(
+        model,
+        written.replace('part def DataLink {', 'part def DataLink {\n        attribute antennaGain : Real;'),
+      );
+      const quiet = spawnSync('npx', ['tsx', CHECK_CLI, model], { encoding: 'utf8' });
+      expect(quiet.status, 'an unrelated declaration failed the check').toBe(0);
+      expect(quiet.stdout, 'an edit no proof could read was reported stale').not.toContain(
+        'validation/stale-evidence',
+      );
+
+      // AND THE CENSUS SAYS SO IN WORDS, inside the report object — `{ok,
+      // files}` is the payload's whole shape and a sixth top-level key would
+      // break the consumers that pin it.
+      const json = spawnSync('npx', ['tsx', CHECK_CLI, model, '--json'], { encoding: 'utf8' });
+      const payload = JSON.parse(json.stdout) as {
+        ok: boolean;
+        files: Array<{
+          evidenceScope?: Array<{
+            requirement: string;
+            scoped: boolean;
+            matched: boolean;
+            wholeModelMoved: boolean;
+            footprintContentMoved: boolean;
+            footprintMembershipMoved: boolean;
+            axiomSetMoved: boolean;
+            premisesMoved: boolean;
+            obligationMoved: boolean;
+            sentence: string;
+          }>;
+        }>;
+      };
+      expect(Object.keys(payload).sort(), 'the check payload grew a top-level key').toEqual([
+        'files',
+        'ok',
+      ]);
+      const census = payload.files[0].evidenceScope ?? [];
+      expect(census).toHaveLength(6);
+      for (const row of census) {
+        expect(row.scoped).toBe(true);
+        expect(row.matched, 'a recorded scope could not be matched to its clause').toBe(true);
+        expect(row.wholeModelMoved, 'the model digest did not move on an edit').toBe(true);
+        expect(row.footprintContentMoved).toBe(false);
+        expect(row.footprintMembershipMoved).toBe(false);
+        expect(row.axiomSetMoved).toBe(false);
+        expect(row.premisesMoved).toBe(false);
+        expect(row.obligationMoved).toBe(false);
+        expect(row.sentence).toContain('current within this proof’s scope');
+        // The MUST-NEVER: plain `current`. The claim is scoped and the words
+        // have to say so in the same breath.
+        expect(row.sentence, 'the scoped verdict printed the bare word').toMatch(
+          /^current within this proof/,
+        );
+      }
+
+      // THE OTHER DIRECTION, so the quiet above is not quiet about everything:
+      // raise one requirement's own assumption past the bus voltage and the
+      // obligation it covers is vacuous from there on. One finding, on one
+      // requirement, naming the premise check by what it decides.
+      writeFileSync(
+        model,
+        readFileSync(model, 'utf8').replace('fc.supplyVoltage >= 20.0 [V]', 'fc.supplyVoltage >= 200.0 [V]'),
+      );
+      const loud = spawnSync('npx', ['tsx', CHECK_CLI, model], { encoding: 'utf8' });
+      expect(loud.stdout).toContain('validation/stale-evidence');
+      expect(loud.stdout).toContain('UAVPowerBudget::ComputerDraw');
+      expect(loud.stdout).toContain('separated `proved` from `vacuous`');
+      expect(
+        (loud.stdout.match(/validation\/stale-evidence/g) ?? []).length,
+        'one premise edit reported more than one requirement',
+      ).toBe(1);
+      const vacuous = spawnCli(['verify', model, '--engine', 'smt']);
+      expect(vacuous.code, 'the obligation the record covers is vacuous, and the run says so').toBe(2);
+      expect(vacuous.stdout).toContain('vacuous');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 600_000);
+
   it('evidence-attach refuses a missing --from, a file that is not records, and a degraded model', async () => {
     const noFrom = await run(['evidence-attach', UAV]);
     expect(noFrom.code).toBe(2);

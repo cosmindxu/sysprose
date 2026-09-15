@@ -229,10 +229,15 @@ export {
   // library exclusion — and, since commit 7, the exclusion of what a
   // verification run itself wrote — is invisible to any assertion over the hash.
   canonicalElements,
+  // The scoped comparison (§3.3b): what a proof stood on, whether an edit could
+  // have moved it, and the per-record census `check --json` publishes.
+  evidenceScopeCensus,
   isEvidenceArtefact,
   modelVersionOf,
   obligationDigest,
+  proofScopeOf,
   recordEvidence,
+  scopedStaleness,
   sha256Hex,
   toolVersion,
   verdictFor,
@@ -260,12 +265,16 @@ export type {
   EvidenceClaim,
   EvidenceHolder,
   EvidenceRecord,
+  EvidenceScopeCensusRow,
   EvidenceSkip,
   EvidenceStatusReport,
   EvidenceStatusRow,
   EvidenceSummary,
   EvidenceVerdict,
   ModelVersion,
+  ProofScope,
+  ScopeAxiom,
+  ScopedStaleness,
   ToolVersion,
   VerdictChange,
 } from './evidence';
@@ -295,6 +304,11 @@ export type {
   ObligationSource,
   ObligationStatus,
 } from '../semantics/obligations';
+// The proof footprint (§3.3b): the read-closure over the worklist, computed at
+// the MODEL level so a synchronous, browser-reachable caller can ask for it —
+// and asserted set-equal to the SMT engine's own `relevantAxioms` over the
+// whole verification corpus, so the two cannot drift.
+export { axiomsOf, footprintOf, premisesOf } from '../semantics/obligations';
 // Verification cases (plan §3.4). `runVerificationCases` is what `verify` runs
 // over its own judged rows, and `writeVerdict` is the only thing in this lane
 // that puts a CASE verdict into a file — so both come through the barrel, which

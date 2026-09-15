@@ -440,8 +440,8 @@ const CODES = [
     code: 'validation/stale-evidence',
     source: 'validation',
     severity: 'warning',
-    when: 'An attached evidence record names a model digest that is no longer this model\u2019s: the file was edited after the verdict was recorded. The digest is over the whole user model, so the edit may be anywhere \u2014 the message names the requirement\u2019s own slice, which is what has to be re-read.',
-    hint: 'Re-run `npm run sysprose -- verify <file> --record evidence.json` and `evidence-attach`, or take the stale record off with `evidence-detach`. A stale record is never counted as discharged, and the verdict facet beside it stands on nothing until it is re-recorded.',
+    when: 'An attached evidence record no longer stands on this model. For a record that says what its proof stood on \u2014 what `--engine smt` writes \u2014 the comparison is SCOPED to that: the clause\u2019s own relation, the axiom rows its read-closure reaches, the axiom set the consistency check ran over, and its own premises. An edit that moves none of them is not reported here at all, and the sentence names every part that did move. For a record with no scope \u2014 `--engine literal`, or one written before the field existed \u2014 the comparison is a digest over the whole user model, so the edit may be anywhere; either way the message names the requirement\u2019s own slice, which is what has to be re-read.',
+    hint: 'Re-run `npm run sysprose -- verify <file> --record evidence.json` and `evidence-attach`, or take the stale record off with `evidence-detach`. A stale record is never counted as discharged, and the verdict facet beside it stands on nothing until it is re-recorded. `npm run check -- <file> --json` publishes, per record, which part of the proof\u2019s scope moved.',
   },
 
   /* ── formal verification (docs: docs/04-formal-verification-plan.md) ── */

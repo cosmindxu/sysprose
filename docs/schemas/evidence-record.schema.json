@@ -145,7 +145,52 @@
       "pattern": "^verification/[a-z-]+$",
       "description": "The catalogue code, for any claim that is not `proved` or `refuted`. See docs/DIAGNOSTIC-CODES.md."
     },
-    "detail": { "type": "string", "description": "The sentence the report printed." }
+    "detail": { "type": "string", "description": "The sentence the report printed." },
+    "proofScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["footprint", "axiomSet", "premises", "goal", "free"],
+      "description": "What this proof stood on, so a later edit can be tested against the PROOF rather than against the file. OPTIONAL, and one-directional: a record carrying it is refused by `evidence-attach` on any build older than the one that added it, because this schema is compiled with `additionalProperties: false` in two places. Written by `--engine smt` alone — a point evaluation has no axiom set and no non-vacuity step. Every part is computed from the MODEL and is a pure function of it: the solver's unsat core is NOT recorded here, because its membership was measured to move with solver-context warmth and a record is promised byte-identical across two runs over an unchanged file.",
+      "properties": {
+        "footprint": {
+          "type": "array",
+          "description": "The axiom rows this obligation's read-closure keeps, sorted by qualified name. The names carry membership — an axiom that ENTERED the footprint since the record was written invalidates the proof even though nothing it already named moved — and the digests carry content.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["axiom", "digest"],
+            "properties": {
+              "axiom": { "type": "string", "description": "The axiom row's qualified name. Never an element id." },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "description": "The row's relation in normal form AND the scale it is read at: the expression tree with every reference canonicalised to a qualified name, each variable's unit, affine SI map and declared sort, and whether the unit gates granted the relation a scale at all. It is NOT `obligation.obligationDigest`, which is the record's key and is deliberately blind to units so a record survives a relabel: `640.0 [Wh]` edited to `640.0 [J]` leaves that digest identical and turns a `proved` obligation `refuted`."
+              }
+            }
+          }
+        },
+        "axiomSet": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest over EVERY axiom row the run encoded — STEP 0's inputs. `proved` means negation unsat UNDER A SATISFIABLE AXIOM SET, and that second conjunct is a whole-model property no per-proof scope can capture: one added `assert` can make every proof in the file void."
+        },
+        "premises": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest over this obligation's own premise rows — STEP 2's inputs, the check that separates `proved` from `vacuous`. It is in none of the other parts: STEP 0's script is built from axioms alone and the read-closure returns axioms and never a premise."
+        },
+        "goal": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest over the CLAUSE THIS RECORD IS ABOUT, in the same form the footprint rows are digested in — the relation and the scale it is read at. None of the other three parts is about the goal: they are all about a proof's context. `obligation.obligationDigest` closes half the gap by moving when the relation changes; this closes the other half, because that digest is the record's key and is blind to units by design."
+        },
+        "free": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The features `--free` released, resolved to qualified names and sorted — the set every part above was computed under, and `[]` when nothing was released. `flags.free` cannot stand in for it: that records the spellings a person typed (a dotted path, or a bare name), and a recomputation that re-read them would drop different rows and call an unedited file stale."
+        }
+      }
+    }
   },
   "definitions": {
     "modelVersion": {

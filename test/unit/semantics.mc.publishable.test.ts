@@ -544,15 +544,18 @@ describe('the registers are data, and every column is asserted', () => {
         `function ${symbol}(`,
       );
     }
-    // SIX rows name a producer, and A0 is among them: `verification/deadlock`
+    // SEVEN rows name a producer, and A0 is among them: `verification/deadlock`
     // is machinery this register RECORDS rather than machinery it repairs. The
     // set is pinned so a feature landing without its row being wired is red.
+    // A9 joined it with the scoped staleness comparison (§3.3b), whose producer
+    // is a checker rule's reading and not a walk at all.
     expect(ALL_ROWS.filter((r) => r.producedBy !== null).map((r) => r.id)).toEqual([
       'A0',
       'A1',
       'A2',
       'A3',
       'A4',
+      'A9',
       'A14',
     ]);
   });

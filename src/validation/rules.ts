@@ -59,8 +59,11 @@ import {
   evidenceHolders,
   liveEvidence,
   modelVersionOf,
+  scopedStaleness,
   type EvidenceRecord,
+  type ScopedStaleness,
 } from '../api/evidence';
+import { obligationsOf, type Obligation } from '../semantics/obligations';
 import { impactClosure } from '../api/analytics';
 
 /* ───────────────────────────── small helpers ───────────────────────────── */
@@ -1230,17 +1233,40 @@ const unwritableNoteBody: ValidationRule = {
  * and the finding is about the FILE rather than about a requirement's truth,
  * which is why it files under `validation/` and not `verification/`.
  *
- * WHAT IT CAN AND CANNOT SAY, stated on every finding rather than assumed. The
- * comparison is a digest over the whole user model, so the rule knows THAT
- * something moved and can never know WHAT: it never saw the earlier model, only
- * its hash. Naming a slice is the honest half of the answer — these are the
- * elements a reader has to re-read before believing the record again — and the
- * message says the other half out loud instead of implying an attribution it
- * cannot make.
+ * WHAT IT CAN AND CANNOT SAY, stated on every finding rather than assumed. For
+ * a record with no proof scope the comparison is a digest over the whole user
+ * model, so the rule knows THAT something moved and can never know WHAT: it
+ * never saw the earlier model, only its hash. Naming a slice is the honest half
+ * of the answer — these are the elements a reader has to re-read before
+ * believing the record again — and the message says the other half out loud
+ * instead of implying an attribution it cannot make.
  *
- * The digest is not computed unless a carrier exists. It costs a canonical
- * serialisation of the user model, and every check of every file that has never
- * heard of evidence must not pay for it.
+ * AND FOR A RECORD THAT SAYS WHAT ITS PROOF STOOD ON, THE COMPARISON IS SCOPED
+ * TO THAT (§3.3b). An `--engine smt` record carries the axioms its read-closure
+ * reached, a digest over the axiom set the consistency check ran over, a digest
+ * over its own premises and one over the clause itself; with the clause's own
+ * key digest, which every record has always carried, that is the whole of what
+ * the proof stood on. An edit that moves none of them could not have changed
+ * the answer, and reporting it would train a reader to re-run `verify` after
+ * every unrelated edit until they stopped reading the warning at all — measured
+ * on `examples/uav-isr.sysml`, eight of nineteen edits move the whole-model
+ * digest and nothing any proof in the file reads. What the scope does NOT
+ * license is the word `current`: this rule says nothing where the scope did not
+ * move, and the sentence that says why is published per record in
+ * `check --json` (see `evidenceScopeCensus`), scoped in its own words.
+ *
+ * IT IS NOT THE SAME QUESTION `evidence-status` ANSWERS, and the two are meant
+ * to differ. That command reports whether the record was taken over THIS model —
+ * a fact about the file, which any edit changes — and this rule reports whether
+ * the edit could have reached the proof. A reader who sees `stale` there and
+ * silence here has been told both, and the census sentence is where the second
+ * one is written down.
+ *
+ * Nothing is computed unless a carrier exists: the digest costs a canonical
+ * serialisation of the user model and the scope costs the obligation worklist,
+ * and every check of every file that has never heard of evidence must pay for
+ * neither. The worklist is built at most once per file, and only when some
+ * record carries a scope.
  */
 /** How many slice members one finding names before it starts counting them. */
 const SLICE_NAMES = 8;
@@ -1254,6 +1280,12 @@ const staleEvidence: ValidationRule = {
     if (holders.length === 0) return [];
     const diag = diagBuilder(this.id, this.severity);
     const current = modelVersionOf(model).graph;
+    // The worklist, built AT MOST ONCE for the whole file and only when some
+    // record carries a proof scope. A file whose records were written by
+    // `--engine literal`, or by a build older than the scope field, never pays
+    // for it — and neither does a file with no evidence, which returned above.
+    let rows: readonly Obligation[] | undefined;
+    const worklist = (): readonly Obligation[] => (rows ??= obligationsOf(model));
     const out: Diagnostic[] = [];
     for (const holder of holders) {
       // ONE RECORD PER OBLIGATION, and only the live one. A requirement may
@@ -1264,11 +1296,26 @@ const staleEvidence: ValidationRule = {
       // verdict into five; reporting only the last carrier in file order would
       // miss a stale obligation whose clause happened to be written first.
       const live = liveEvidence(holder.records);
-      const stale: EvidenceRecord | undefined = live.find(
-        (r) => r.modelVersion.graph !== current,
-      );
-      if (stale === undefined) continue;
-      const last = stale;
+      // THE COMPARISON IS PER RECORD AND SCOPED WHERE THE RECORD SAYS WHAT ITS
+      // PROOF STOOD ON. A record written by `--engine smt` carries the axioms
+      // its read-closure reached, a digest over the axiom set the consistency
+      // check ran over, a digest over its own premises and one over the clause
+      // itself; an edit that moves none of them cannot have changed this
+      // proof's answer, and reporting it would train a reader to re-run
+      // `verify` after every unrelated edit until they stopped reading the
+      // warning at all. A record with no scope keeps the whole-model reading it
+      // was written under — see {@link scopedStaleness}.
+      const readings = live.map((r) => ({
+        record: r,
+        reading: scopedStaleness(r, model, {
+          graph: current,
+          ...(r.proofScope !== undefined ? { rows: worklist() } : {}),
+        }),
+      }));
+      const hit = readings.find(({ reading }) => reading.stale);
+      if (hit === undefined) continue;
+      const last: EvidenceRecord = hit.record;
+      const reading: ScopedStaleness = hit.reading;
       const slice = impactClosure(model, holder.id, EVIDENCE_SLICE_DEPTH).impacted.map(
         (i) => i.element.qualifiedName || i.element.id,
       );
@@ -1282,13 +1329,31 @@ const staleEvidence: ValidationRule = {
           ? 'nothing else in this model reaches it'
           : slice.slice(0, SLICE_NAMES).join(', ') +
             (slice.length > SLICE_NAMES ? `, \u2026 and ${slice.length - SLICE_NAMES} more` : '');
+      // THREE MESSAGES, because there are three different answers. A record
+      // whose scope was recomputed is told WHAT moved and that the comparison
+      // was narrow. A record that carries a scope this model has no row to
+      // recompute it against is told that, in the sentence
+      // {@link scopedStaleness} already wrote for it — printing the narrow
+      // tail there would claim a narrowing that did not happen. And a record
+      // with no scope keeps, verbatim, the whole-model sentence it was written
+      // under.
+      const opening =
+        `Evidence on ${holder.qualifiedName} was recorded over ${last.modelVersion.graph}; ` +
+        `this model is ${current}. The claim \`${last.claim}\``;
+      const reread = `Re-read this requirement\u2019s slice \u2014 ${named} \u2014 then re-run`;
       out.push(
         diag(
-          `Evidence on ${holder.qualifiedName} was recorded over ${last.modelVersion.graph}; ` +
-            `this model is ${current}. The claim \`${last.claim}\` no longer stands on the model ` +
-            `it was reached over. Re-read this requirement\u2019s slice \u2014 ${named} \u2014 then re-run ` +
-            '`verify --record` and `evidence-attach`; the digest is over the whole model, so this ' +
-            'tool cannot say which of them moved.',
+          reading.scoped && reading.matched
+            ? `${opening} no longer stands: ${reading.sentence}. ${reread} ` +
+              '`verify --record` and `evidence-attach`. The comparison is scoped to what ' +
+              'this proof stood on, so an edit elsewhere in the file is not reported here.'
+            : reading.scoped
+              ? `${opening} no longer stands on the model it was reached over: ` +
+                `${reading.sentence}. ${reread} \`verify --record\` and \`evidence-attach\`.`
+              : `${opening} no longer stands on the model ` +
+                `it was reached over. ${reread} ` +
+                '`verify --record` and `evidence-attach`; the digest is over the whole model, so this ' +
+                'tool cannot say which of them moved.',
           holder.id,
         ),
       );

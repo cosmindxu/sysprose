@@ -719,3 +719,271 @@ function bindAxiom(
     status: statusOf(reading.encodable),
   };
 }
+
+/* ─────────────────────────── the proof footprint ─────────────────────────── */
+
+/**
+ * Is this feature-value axiom the binding of a feature the caller released?
+ *
+ * HERE RATHER THAN IN AN ENGINE because three readers need it and one of them
+ * may not import an engine. It is a question about an {@link Obligation} row and
+ * a `--free` set, and nothing about SMT: `bounds` drops the same rows, the SMT
+ * engine drops the same rows, and {@link footprintOf} has to drop the same rows
+ * or the footprint it reports would name axioms the run did not carry. Two
+ * readings of one `--free` is how one command would answer over a design space
+ * another one bounded differently.
+ */
+export function isFreedValueAxiom(row: Obligation, free: ReadonlySet<string>): boolean {
+  if (free.has(row.element.qualifiedName)) return true;
+  return row.vars.some((v) => free.has(v.qualifiedName) && v.featureId === row.element.id);
+}
+
+/**
+ * The largest literal exponent the encoder expands into a product.
+ *
+ * DUPLICATED FROM `src/semantics/smt/encode.ts` rather than imported, and the
+ * two are held equal by the corpus equality test below: importing that module
+ * here would put the whole SMT encoder — every script-writing line of it — into
+ * the browser bundle through `src/ui/store.ts`, which is the cost §3.3b refuses
+ * to pay.
+ */
+const MAX_SCOPE_EXPONENT = 32;
+
+/** The two sorts a relation's terms carry, or a refusal. */
+type TwinSort = 'Real' | 'Bool' | undefined;
+
+/** The exponent as a literal number, or `undefined` — `x ^ -1` folds its sign. */
+function literalExponentOf(node: ExprNode): number | undefined {
+  if (node.kind === 'num') return node.value;
+  if (node.kind === 'unary' && (node.op === '-' || node.op === '+')) {
+    const inner = literalExponentOf(node.operand);
+    if (inner === undefined) return undefined;
+    return node.op === '-' ? -inner : inner;
+  }
+  return undefined;
+}
+
+/** The comparison operators, which take two numbers and give a proposition. */
+const TWIN_COMPARISONS = new Set(['<', '<=', '>', '>=']);
+
+/** The boolean connectives, which take two propositions and give one. */
+const TWIN_CONNECTIVES = new Set(['and', 'or', 'xor', 'implies']);
+
+/**
+ * The qualified names one row's relation READS, as the encoder would name them.
+ *
+ * The encoder pushes a symbol for every `ref` that resolves against the row's
+ * own variables, under either spelling — the dotted path the body writes
+ * (`uav.endurance`) or the qualified name (`UAVSurveillance::AirVehicle::endurance`)
+ * — and the qualified name is the symbol. This is that walk with no encoding:
+ * no scale map, no SMT term, and therefore nothing that could pull an SMT
+ * dependency into a caller that must stay synchronous and browser-safe.
+ *
+ * `undefined` back means THE ENCODER WOULD HAVE REFUSED THIS ROW, and a refused
+ * axiom is carried by the read-closure rather than pruned by it — so the two
+ * answers have to agree about WHICH rows are refused as well as about what the
+ * rest of them read. Getting that wrong in the pruning direction is how the
+ * twin under-reports a footprint: MEASURED, a first draft modelled only four of
+ * the encoder's refusal paths (unresolved name, `str`, `null`, a non-finite
+ * numeral) and pruned `assert constraint weird { trailer.mass }` — a body that
+ * is an arithmetic term and not a proposition — from a closure the encoder
+ * carried it in.
+ *
+ * SO IT TYPE-CHECKS THE BODY, in the encoder's own two sorts. Every refusal
+ * `src/semantics/smt/encode.ts` makes is either a fact about the ROW (no body,
+ * or the unit gates already refused it), a fact about a VARIABLE (a name no SMT
+ * symbol can carry, a boolean carrying a unit scale, a scale factor that is not
+ * finite and non-zero) or a SORT CLASH — and all three are readable off an
+ * {@link Obligation} row, because `encodeVariables` derives each variable's
+ * sort, factor and offset from `sortPerVar`, `siFactor`, `siOffset` and
+ * `scaled`, which the row carries. What the twin does NOT do is produce a
+ * term, a side condition, a nonlinearity reading or a refusal SENTENCE; it
+ * answers one question — refused or reads-these — and the corpus test holds it
+ * to the encoder's answer on every model the tree ships.
+ */
+function readsOf(row: Obligation): Set<string> | undefined {
+  // `encodeRow`'s own two pre-checks, in its order: a row with no readable body
+  // and a row the unit gates already refused never reach the relation walk.
+  if (row.node === null || row.encodable !== true) return undefined;
+  const bySpelling = new Map<string, ContractVariable>();
+  for (const v of row.vars) {
+    if (!bySpelling.has(v.path)) bySpelling.set(v.path, v);
+    if (!bySpelling.has(v.qualifiedName)) bySpelling.set(v.qualifiedName, v);
+  }
+  const reads = new Set<string>();
+  const sortOf = (v: ContractVariable): VarSort => row.sortPerVar[v.path] ?? 'Real';
+  /** `si = value·factor + offset`, or the identity where the gates granted none. */
+  const scaleOf = (v: ContractVariable): { factor: number; offset: number } =>
+    row.scaled ? { factor: v.siFactor, offset: v.siOffset } : { factor: 1, offset: 0 };
+
+  const walk = (n: ExprNode): TwinSort => {
+    switch (n.kind) {
+      // `numeral` refuses anything that is not a rational.
+      case 'num':
+        return Number.isFinite(n.value) ? 'Real' : undefined;
+      case 'bool':
+        return 'Bool';
+      // Neither a string nor a `null` has a numeric or boolean encoding.
+      case 'str':
+      case 'null':
+        return undefined;
+      case 'ref': {
+        const v = bySpelling.get(n.path.join('.'));
+        // `unresolved-name`: the body names nothing the encoder has a symbol for.
+        if (v === undefined) return undefined;
+        // `unparseable`: a qualified name carrying `|` or `\` cannot be quoted
+        // as an SMT symbol.
+        if (v.qualifiedName.includes('|') || v.qualifiedName.includes('\\')) return undefined;
+        reads.add(v.qualifiedName);
+        const { factor, offset } = scaleOf(v);
+        if (sortOf(v) === 'Bool') {
+          // A boolean carrying a unit scale is not a reading this lane has.
+          return factor !== 1 || offset !== 0 ? undefined : 'Bool';
+        }
+        // `unscalable`: a zero or non-finite factor would erase the variable
+        // from the relation rather than scale it.
+        if (!Number.isFinite(factor) || !Number.isFinite(offset) || factor === 0) return undefined;
+        return 'Real';
+      }
+      case 'unary': {
+        const operand = walk(n.operand);
+        if (operand === undefined) return undefined;
+        if (n.op === 'not') return operand === 'Bool' ? 'Bool' : undefined;
+        return operand === 'Real' ? 'Real' : undefined;
+      }
+      case 'binary': {
+        const op = n.op;
+        // `%` and a non-literal or oversized exponent are refused BEFORE their
+        // operands are walked, exactly as the encoder refuses them.
+        if (op === '%') return undefined;
+        if (op === '^') {
+          const k = literalExponentOf(n.right);
+          if (k === undefined || !Number.isInteger(k) || Math.abs(k) > MAX_SCOPE_EXPONENT) {
+            return undefined;
+          }
+          return walk(n.left) === 'Real' ? 'Real' : undefined;
+        }
+        const left = walk(n.left);
+        if (left === undefined) return undefined;
+        const right = walk(n.right);
+        if (right === undefined) return undefined;
+        if (op === '+' || op === '-' || op === '*') {
+          return left === 'Real' && right === 'Real' ? 'Real' : undefined;
+        }
+        if (op === '/') {
+          if (left !== 'Real' || right !== 'Real') return undefined;
+          // SMT-LIB leaves `x / 0` unspecified rather than undefined, so a
+          // literal-zero divisor is refused rather than guarded.
+          if (n.right.kind === 'num' && n.right.value === 0) return undefined;
+          return 'Real';
+        }
+        if (TWIN_COMPARISONS.has(op)) {
+          return left === 'Real' && right === 'Real' ? 'Bool' : undefined;
+        }
+        if (op === '==' || op === '=' || op === '!=') return left === right ? 'Bool' : undefined;
+        if (TWIN_CONNECTIVES.has(op)) {
+          return left === 'Bool' && right === 'Bool' ? 'Bool' : undefined;
+        }
+        return undefined;
+      }
+      case 'if': {
+        const cond = walk(n.cond);
+        if (cond !== 'Bool') return undefined;
+        const then = walk(n.then);
+        if (then === undefined) return undefined;
+        const other = walk(n.else);
+        if (other === undefined || other !== then) return undefined;
+        return then;
+      }
+    }
+  };
+
+  // `encodeRelation`'s last gate: a body that encodes to an arithmetic term is
+  // not a proposition, and there is nothing for a solver to decide about it.
+  return walk(row.node) === 'Bool' ? reads : undefined;
+}
+
+/**
+ * The axiom rows one obligation's proof can actually reach: its FOOTPRINT.
+ *
+ * THE MODEL-LEVEL TWIN of the SMT engine's own `relevantAxioms`. It is a
+ * RE-IMPLEMENTATION and not a shared function — it has to model the encoder's
+ * refusal discipline as well as its symbol walk, since a refused axiom is
+ * carried by the closure rather than pruned by it — so the two are held equal
+ * by a TEST rather than by construction: `test/campaign/verification.test.ts`
+ * runs them against each other over every model the tree ships and requires set
+ * equality, and the corpus carries a model whose axiom the encoder refuses on a
+ * sort it cannot encode (`test/fixtures/verification/models/footprint-non-proposition.sysml`)
+ * so the refusal half of the agreement is not taken on trust. Two things make
+ * the twin necessary rather than redundant. `relevantAxioms` is typed over SMT-ENCODED rows, whose
+ * type and constructor are both private to the engine, so a caller outside it
+ * has nothing it could pass. And the callers that need this answer — the
+ * staleness rule above all — run inside `ValidationRule.run`, which is
+ * synchronous and reachable from the browser bundle through `src/ui/store.ts`;
+ * routing them through the encoder would run half the verify pipeline on every
+ * `npm run check` of any file carrying an evidence record, and would put the
+ * SMT encoder in the bundle.
+ *
+ * WHAT THE CLOSURE IS. The symbols the goal reads, and the symbols its premises
+ * read, and then every axiom that reads any symbol reached, transitively, until
+ * nothing more is added. It is the encoder's own argument, unchanged: an axiom
+ * sharing no symbol with the reached set factorises out of `A ∧ P ∧ ¬G`, so
+ * dropping it changes neither satisfiability nor unsatisfiability.
+ *
+ * WHY THE PREMISES SEED IT AND ARE NEVER PRUNED: a premise that shares no
+ * symbol with the goal can still be unsatisfiable against an axiom, which is
+ * the vacuity this lane must not hide.
+ *
+ * WHAT IT IS NOT. It is not the unsat core — the core is a solver's choice,
+ * measured to move with context warmth (`SmtJudgement.core`), and nothing
+ * derived from it may be stored. The footprint is computed from the MODEL and
+ * is a function of it alone, which is what makes a digest over it reproducible.
+ */
+export function footprintOf(
+  model: Model,
+  obligation: Obligation,
+  opts: { rows?: readonly Obligation[]; free?: ReadonlySet<string> } = {},
+): ReadonlySet<ElementId> {
+  const rows = opts.rows ?? obligationsOf(model);
+  const free = opts.free ?? new Set<string>();
+  const axioms = axiomsOf(rows, free);
+  const premises = premisesOf(obligation, rows);
+  const reached = new Set<string>(readsOf(obligation) ?? []);
+  for (const p of premises) for (const s of readsOf(p) ?? []) reached.add(s);
+  const kept = new Set<ElementId>();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const a of axioms) {
+      if (kept.has(a.element.id)) continue;
+      const reads = readsOf(a);
+      // A refused axiom has no symbols to connect through; it is carried anyway,
+      // so the "a refutation needs the whole context" rule can still see it.
+      if (reads !== undefined && ![...reads].some((r) => reached.has(r))) continue;
+      kept.add(a.element.id);
+      for (const r of reads ?? []) reached.add(r);
+      grew = true;
+    }
+  }
+  return kept;
+}
+
+/** The premise rows filed under the same requirement as this obligation. */
+export function premisesOf(
+  obligation: Obligation,
+  rows: readonly Obligation[],
+): Obligation[] {
+  if (obligation.requirement === null) return [];
+  const id = obligation.requirement.id;
+  return rows.filter((r) => r.role === 'premise' && r.requirement?.id === id);
+}
+
+/** The axiom rows a run encodes — STEP 0's inputs, in the worklist's own order. */
+export function axiomsOf(
+  rows: readonly Obligation[],
+  free: ReadonlySet<string> = new Set<string>(),
+): Obligation[] {
+  return rows.filter(
+    (r) => r.role === 'axiom' && !(r.source === 'feature-value' && isFreedValueAxiom(r, free)),
+  );
+}

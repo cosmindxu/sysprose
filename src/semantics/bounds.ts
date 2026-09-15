@@ -83,9 +83,8 @@ import {
   type RefusalReason,
 } from './contracts';
 import { isLiteralValueAxiom } from './consistency';
-import { isFreedValueAxiom } from './engines/smt';
 import { evaluate } from './expr';
-import { obligationsOf, type Obligation } from './obligations';
+import { isFreedValueAxiom, obligationsOf, type Obligation } from './obligations';
 import {
   encodeRelation,
   encodeScript,

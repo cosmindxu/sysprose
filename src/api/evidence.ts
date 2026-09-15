@@ -40,6 +40,13 @@ import { PRODUCT_SLUG, PRODUCT_VERSION } from '../branding';
 import { FULL_LIBRARY_MANIFEST_COUNT } from '../library/full-library';
 import { type ExprNode } from '../semantics/expr';
 import { type ContractRef, type ContractVariable } from '../semantics/contracts';
+import {
+  axiomsOf,
+  footprintOf,
+  obligationsOf,
+  premisesOf,
+  type Obligation,
+} from '../semantics/obligations';
 import { PERFORMED_METHOD, VERIFICATION_METHOD_DEF } from '../semantics/verify';
 import {
   FAULTED_DECLARATION_REFUSAL,
@@ -509,6 +516,605 @@ function canonicalNode(node: ExprNode, vars: readonly ContractVariable[]): unkno
   return walk(node);
 }
 
+/* ───────────────────────── the proof scope, and staleness ────────────────── */
+
+/**
+ * One axiom row of a proof's footprint: what it is, and what it says.
+ *
+ * The NAME is how membership is compared — an axiom that entered or left the
+ * footprint is named by it — and the DIGEST is {@link scopeRowDigest} of the
+ * row, so an edit to what the axiom SAYS moves it while reformatting the file
+ * does not.
+ */
+export interface ScopeAxiom {
+  /** The axiom row's qualified name. Never an element id (D3). */
+  axiom: string;
+  /** {@link scopeRowDigest} of that row: its relation AND the scale it is read at. */
+  digest: string;
+}
+
+/**
+ * What a `proved` obligation actually stood on, recorded so that a later edit
+ * can be tested against THIS proof rather than against the file.
+ *
+ * WHY THE FOOTPRINT AND NOT THE CORE, which is what §3.3b of the plan asks for
+ * and what the field it names would have held. The unsat core is a solver's
+ * choice among sufficient reasons, and commit 10 MEASURED its membership moving
+ * with solver-context warmth — six labels from a fresh process, five from a
+ * worker that had already run many checks in one cached context, same model,
+ * same seed, both sufficient (see `SmtJudgement.core`). An evidence record is
+ * promised byte-identical across two runs over an unchanged file; a digest over
+ * a set z3 chooses nondeterministically cannot honour that promise, and a
+ * record that cannot be reproduced is a regression whatever else it buys. The
+ * FOOTPRINT ({@link footprintOf}) is computed from the MODEL by the encoder's
+ * own relevance walk, is a function of the model alone, and is what the core is
+ * a subset of. So the core stays what commit 10 made it — displayed by
+ * `verify --why`, counted in `--json`, never stored — and the three digests here
+ * are all model-derived.
+ *
+ * WHAT EACH PART CATCHES, and why no two of them are enough:
+ *
+ *  - `footprint` — the axiom rows this obligation's read-closure keeps, by name
+ *    and by normal form. An edit to a load-bearing axiom moves a digest; a new
+ *    axiom that reads a symbol this proof reaches changes the membership. The
+ *    second is KeY §9.3.1 made mechanical: *a specification cannot possibly talk
+ *    about memory entities which are only to be included in an extension*.
+ *  - `axiomSet` — a digest over EVERY axiom row the run encoded, which is STEP
+ *    0's input. `proved` means *negation unsat UNDER A SATISFIABLE AXIOM SET*,
+ *    and that second conjunct is a whole-model property: `smt.ts` checks the
+ *    satisfiability of every axiom once per run and every obligation stands on
+ *    that one answer. Measured on `uav-isr`: adding `assert constraint powerCap
+ *    { uav.cruisePower <= 100.0 [W] }` flips BOTH obligations to
+ *    `verification/inconsistent-axioms` — re-executed for this commit — including
+ *    `MassRequirement`, whose footprint is `{AirVehicle::mtow}` and never
+ *    touches `cruisePower`. No per-proof scope can see that; this digest can.
+ *  - `premises` — a digest over this obligation's own premise rows, which is
+ *    what STEP 2 asks about. STEP 2 is the check that separates `proved` from
+ *    `vacuous`, and it is in NONE of the other three: STEP 0's script is built
+ *    from axioms alone, and the read-closure returns axioms and never a premise.
+ *    Measured on `uav-power-budget`, one edit — `assume constraint {
+ *    fc.supplyVoltage >= 20.0 [V] }` to `>= 200.0 [V]` — takes `ComputerDraw`
+ *    from `proved` to `vacuous` while moving no axiom, no footprint member and
+ *    no symbol. Without this part the record would read *current within this
+ *    proof's scope* over a proof the tool itself now calls vacuous.
+ */
+export interface ProofScope {
+  /** The axiom rows the proof's read-closure kept, sorted by qualified name. */
+  footprint: ScopeAxiom[];
+  /** Digest over every axiom row the run encoded — STEP 0's inputs. */
+  axiomSet: string;
+  /** Digest over this obligation's premise rows — what STEP 2 stands on. */
+  premises: string;
+  /**
+   * {@link scopeRowDigest} of the GOAL — the clause the proof was about, read at
+   * the scale the run read it at.
+   *
+   * NONE OF THE OTHER THREE IS ABOUT THE GOAL, which is §3.3b's blind spot and
+   * not a small one: the section's four digests are all about a proof's
+   * CONTEXT. `obligation.obligationDigest`, which every record has always
+   * carried, closes half of it — an edit that changes the RELATION moves it.
+   * It does not close the other half, because it is the record's key and is
+   * deliberately blind to units so that a relabelled clause can still be matched
+   * to its record. MEASURED: `uav.mtow <= 25.0 [kg]` with `mtow` redeclared from
+   * `[kg]` to `[t]` keeps the same key and turns a `proved` obligation
+   * `refuted`. So the goal is digested here too, at its scale, and the two are
+   * read together.
+   */
+  goal: string;
+  /**
+   * The features `--free` released, RESOLVED, sorted — the set every part above
+   * was computed under. `[]` when nothing was released.
+   *
+   * IT IS HERE BECAUSE `flags.free` CANNOT STAND IN FOR IT. `flags` records the
+   * spellings a person typed (`uav.cruisePower`, a dotted path) and the run
+   * dropped axioms by the QUALIFIED NAMES those spellings resolved to; a
+   * recomputation that re-read the spellings would fail to drop the same rows,
+   * report a larger footprint and a different axiom set, and call a file stale
+   * that nobody had touched. The fail direction would have been the safe one —
+   * a record can only read MORE stale that way, never falsely current — but a
+   * warning on an unedited file is a warning a reader learns to ignore, which
+   * costs the honest ones too.
+   */
+  free: string[];
+}
+
+/** A digest over a set of rows in normal form: identity and content, sorted. */
+function rowSetDigest(rows: readonly ScopeAxiom[]): string {
+  const sorted = [...rows].sort((a, b) =>
+    a.axiom < b.axiom ? -1 : a.axiom > b.axiom ? 1 : a.digest < b.digest ? -1 : a.digest > b.digest ? 1 : 0,
+  );
+  return `sha256:${sha256Hex(canonicalJson(sorted))}`;
+}
+
+/**
+ * One row's normal form AS A SOLVER WOULD READ IT — the relation and the scale.
+ *
+ * IT IS NOT {@link obligationDigest}, AND THE DIFFERENCE IS A SOUNDNESS ONE.
+ * That digest is the record's KEY, and it is over the relation tree alone: a
+ * `ref` becomes a qualified name and a `num` stays the magnitude the file
+ * WRITES, with the unit nowhere in it. That is right for a key — the pair
+ * (clause, digest) has to survive a unit relabel so a record can still be
+ * matched to the clause it is about — and wrong for a scope. MEASURED on
+ * `examples/uav-isr.sysml`: `capacity : ISQ::EnergyValue = 640.0 [Wh]` edited to
+ * `640.0 [J]` leaves the node `capacity == 640` byte-identical and moves the
+ * axiom digest not at all, while the run goes from `1 discharged, 1 refuted`
+ * — the endurance proof flips from `proved` to `refuted` at `0.79 vs 2700 in T`.
+ * The same on `18.5 [kg]` → `18.5 [t]` and on `35.0 [W]` → `35.0 [kW]`. A scope
+ * that could not see those would have read `current within this proof's scope`
+ * over three refutations, which is the one thing §3.3b says it must never do.
+ *
+ * So the scope's digest carries the SCALE as well: each variable's unit, the
+ * affine map that lifts its stored magnitude into SI, and the sort the encoder
+ * declares it at — plus `scaled`, the gates' own answer to whether the relation
+ * is read in SI at all, which is not derivable from the variables (`range = 5.0
+ * [km]` against a bare `<= 10.0` has factor 1000 and is nevertheless read in
+ * kilometres). Between them that is every input the encoder turns a row into a
+ * term from, so two rows with the same scope digest encode to the same script.
+ */
+function scopeRowDigest(row: Obligation): string {
+  const relation =
+    row.node === null
+      ? { form: 'text', clause: row.element.qualifiedName, text: row.expression }
+      : { form: 'expr', node: canonicalNode(row.node, row.vars) };
+  // Sorted by qualified name and then by path: `row.vars` is in the order the
+  // body happens to read them, and a record is promised byte-identical over an
+  // unchanged file whatever order anything walked it in.
+  const scale = row.vars
+    .map((v) => ({
+      name: v.qualifiedName,
+      path: v.path,
+      unit: v.unit,
+      factor: v.siFactor,
+      offset: v.siOffset,
+      sort: row.sortPerVar[v.path] ?? 'Real',
+    }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return `sha256:${sha256Hex(canonicalJson({ relation, scale, scaled: row.scaled }))}`;
+}
+
+/** One row as the scope records it: its qualified name and its normal form. */
+function scopeAxiom(row: Obligation): ScopeAxiom {
+  return { axiom: row.element.qualifiedName, digest: scopeRowDigest(row) };
+}
+
+/**
+ * The scope one obligation's proof stands on, as a record can carry it.
+ *
+ * A PURE FUNCTION OF THE MODEL, which is the whole point: every part is
+ * recomputed from the model on the next run and compared, so nothing here may
+ * depend on a solver, on a clock, or on the order a worker pool happened to
+ * schedule anything.
+ *
+ * `rows` is accepted rather than recomputed because a file with twenty records
+ * would otherwise rebuild the worklist twenty times; `free` is accepted because
+ * `--free` drops feature-value axioms, and a scope that named them would report
+ * a footprint the run did not carry.
+ */
+export function proofScopeOf(
+  model: Model,
+  obligation: Obligation,
+  opts: { rows?: readonly Obligation[]; free?: ReadonlySet<string> } = {},
+): ProofScope {
+  const rows = opts.rows ?? obligationsOf(model);
+  const free = opts.free ?? new Set<string>();
+  const inFootprint = footprintOf(model, obligation, { rows, free });
+  const footprint = axiomsOf(rows, free)
+    .filter((r) => inFootprint.has(r.element.id))
+    .map(scopeAxiom)
+    .sort((a, b) => (a.axiom < b.axiom ? -1 : a.axiom > b.axiom ? 1 : 0));
+  return {
+    footprint,
+    axiomSet: rowSetDigest(axiomsOf(rows, free).map(scopeAxiom)),
+    premises: rowSetDigest(premisesOf(obligation, rows).map(scopeAxiom)),
+    goal: scopeRowDigest(obligation),
+    free: [...free].sort(),
+  };
+}
+
+/**
+ * What a scoped comparison found, and the sentence that goes with it.
+ *
+ * The five `…Moved` booleans are the conjuncts of absence claim **A9**
+ * (`src/semantics/mc/publishable.ts`); `wholeModelMoved` is the number beside
+ * them, and it is the one this feature exists to stop being the whole answer.
+ * They are published per record in the `--json` check payload, because a
+ * feature that cannot report on its own usefulness is not finished: the kill
+ * measurement for the extra digests is an aggregation over recorded runs, not a
+ * number any single run could hold.
+ *
+ * TWO OF THEM CANNOT CHANGE THE VERDICT, AND THE CENSUS IS WHERE THAT IS
+ * VISIBLE. `axiomSet` is a digest over every axiom row's (name, normal form)
+ * pair and the footprint is a subset of those same rows digested the same way,
+ * so `footprintContentMoved` implies `axiomSetMoved`; and a member can only
+ * enter or leave the read-closure if some axiom, premise or goal digest already
+ * moved, so `footprintMembershipMoved` implies one of the other three. `stale`
+ * reduces to `axiomSetMoved || premisesMoved || obligationMoved`. The footprint
+ * booleans are what let a finding NAME the axiom a reader has to re-read rather
+ * than say only that something in the file changed, and the narrowing this
+ * feature buys comes from the edits that touch no axiom at all.
+ */
+export interface ScopedStaleness {
+  /** Was a READABLE scope recorded at all? `false` for `--engine literal`, for
+   *  any record written before this field existed, and for a carrier whose
+   *  payload is too damaged to read one out — those fall back to the
+   *  whole-model comparison and print its sentence verbatim. */
+  scoped: boolean;
+  /**
+   * Was the recorded scope actually RECOMPUTED against a row of this model?
+   *
+   * `false` where a record carries a scope and this model states no obligation
+   * it can be matched to — the clause was deleted, or two anonymous clauses
+   * share one qualified name and no digest picks between them. It is a
+   * different fact from `scoped`, and conflating the two published `scoped:
+   * false` for a record that does carry a scope and printed *this record
+   * carries no proof scope* about one that does. Always `true` when `scoped`
+   * is `false`: there was nothing to match.
+   */
+  matched: boolean;
+  /** The record's model digest is not this model's: SOMETHING moved. */
+  wholeModelMoved: boolean;
+  /** An axiom in this proof's footprint changed what it says. */
+  footprintContentMoved: boolean;
+  /** An axiom entered or left this proof's footprint. */
+  footprintMembershipMoved: boolean;
+  /** STEP 0's inputs changed: the consistency answer every proof in this file
+   *  stands on was not the one that ran. */
+  axiomSetMoved: boolean;
+  /** STEP 2's inputs changed: the check that separated `proved` from `vacuous`
+   *  was not the one that ran. */
+  premisesMoved: boolean;
+  /**
+   * The CLAUSE ITSELF no longer states the relation it was recorded over.
+   *
+   * THE SIXTH BOOLEAN, and it is not decoration. §3.3b names four digests, all
+   * of them about the proof's CONTEXT — the axioms it reads, the axiom set the
+   * consistency check ran over, the premises the non-vacuity check ran over.
+   * None of them is about the goal. Measured on `examples/uav-isr.sysml`:
+   * editing `require constraint { uav.mtow <= 25.0 [kg] }` to `<= 24.0 [kg]`
+   * moves no axiom, no footprint member and no premise, so all four conjuncts
+   * read unmoved and the record reported `current within this proof's scope`
+   * over a requirement that now says something else. The unsat core the draft
+   * would have digested contains the `goal:` label and would have caught it;
+   * the footprint does not, so the goal is carried here instead.
+   *
+   * IT IS TWO COMPARISONS, not one, and both are needed. `obligation
+   * .obligationDigest` is in every record already and moves when the RELATION
+   * changes; {@link ProofScope.goal} moves when the SCALE changes, which the key
+   * digest is deliberately blind to so that a record survives a unit relabel and
+   * can still be matched to its clause. Measured: `<= 25.0 [kg]` → `<= 24.0
+   * [kg]` moves the first and not the second; redeclaring `mtow` from `[kg]` to
+   * `[t]` moves the second and not the first, and turns the same `proved`
+   * obligation `refuted`.
+   */
+  obligationMoved: boolean;
+  /** Any of the five. A record whose scope did not move is not re-verified. */
+  stale: boolean;
+  /** The sentence, from §3.3b's vocabulary. Never the bare word `current`. */
+  sentence: string;
+}
+
+/** How many footprint members one sentence names before it starts counting them. */
+const SCOPE_NAMES = 8;
+
+/** The A9 sentence: scoped, and saying so in the same breath. */
+const CURRENT_IN_SCOPE =
+  'current within this proof’s scope — the clause still states the relation it was recorded ' +
+  'over and still reads it at the same scale, no element in its axiom footprint moved, its ' +
+  'footprint is unchanged in membership, its premises are unchanged, and the model’s axiom set ' +
+  'is unchanged';
+
+/**
+ * The recorded scope, or `undefined` when the carrier does not hold a readable one.
+ *
+ * EVERY FIELD IS CHECKED, because {@link recordOfCarrier} deliberately does no
+ * schema validation: a carrier a person hand-wrote, or one from a future
+ * schema, reaches this rule as whatever JSON the file holds, and the rule is
+ * reached from `npm run check` — which loads a model — and from
+ * `safeValidate` in the browser store, which swallows a throw and returns NO
+ * diagnostics at all. MEASURED: an `@SysproseVerification::Evidence` carrier
+ * holding `{"schema":"sysprose-evidence/1","claim":"proved"}` and nothing else
+ * took `npm run check` from `OK — 0 error(s)` to `import/internal-error … 0
+ * element(s)` and exit 1, discarding every real diagnostic in the file, over a
+ * line somebody typed. {@link obligationKey} already guards this exact class
+ * and says so; this is the same guard at the two new reads.
+ *
+ * The fail direction is the safe one: an unreadable scope falls back to the
+ * whole-model comparison, which can only read MORE stale, never falsely current.
+ */
+function readableScope(record: EvidenceRecord): ProofScope | undefined {
+  const ob: Partial<EvidenceRecord['obligation']> | undefined = record.obligation;
+  if (typeof ob?.clause !== 'string' || typeof ob.obligationDigest !== 'string') return undefined;
+  const s: unknown = record.proofScope;
+  if (s === null || typeof s !== 'object' || Array.isArray(s)) return undefined;
+  const scope = s as Partial<ProofScope>;
+  if (
+    !Array.isArray(scope.footprint) ||
+    !scope.footprint.every(
+      (f: unknown) =>
+        f !== null &&
+        typeof f === 'object' &&
+        typeof (f as ScopeAxiom).axiom === 'string' &&
+        typeof (f as ScopeAxiom).digest === 'string',
+    ) ||
+    typeof scope.axiomSet !== 'string' ||
+    typeof scope.premises !== 'string' ||
+    typeof scope.goal !== 'string' ||
+    !Array.isArray(scope.free) ||
+    !scope.free.every((f: unknown) => typeof f === 'string')
+  ) {
+    return undefined;
+  }
+  return scope as ProofScope;
+}
+
+/**
+ * Is this record still about a proof the model would still reach?
+ *
+ * SIX CONJUNCTS — the four recorded parts, the clause's own key digest and the
+ * scale it is read at — AND A VERDICT FROM ANY SUBSET OF THEM IS FORBIDDEN:
+ * §3.3b's MUST-NEVER list says so of the four, and the last two are there
+ * because none of the four is about the goal (see
+ * {@link ScopedStaleness.obligationMoved}). The sentence names every part that
+ * moved rather than the first one, because a reader repairing one edit needs to
+ * know whether there is a second.
+ *
+ * WHAT IT NEVER SAYS. Plain `current`: the claim is scoped and the words say
+ * so. And *"this edit cannot affect the claim"*: UNSAT of a subset survives, so
+ * the negation stays unsat, but the non-vacuity precondition can still break —
+ * which is what the premise digest is for, and why it is a conjunct and not a
+ * footnote.
+ *
+ * A record with no readable scope gets `scoped: false` and nothing else: the
+ * caller prints the whole-model sentence it printed before this existed. That
+ * is not a degraded answer dressed up as a good one — it is the honest reading
+ * of a record that never recorded what its proof stood on, or of one whose
+ * carrier no longer says.
+ */
+export function scopedStaleness(
+  record: EvidenceRecord,
+  model: Model,
+  opts: { rows?: readonly Obligation[]; graph?: string } = {},
+): ScopedStaleness {
+  const graph = opts.graph ?? modelVersionOf(model).graph;
+  const wholeModelMoved = record.modelVersion?.graph !== graph;
+  const recorded = readableScope(record);
+  const none = {
+    footprintContentMoved: false,
+    footprintMembershipMoved: false,
+    axiomSetMoved: false,
+    premisesMoved: false,
+    obligationMoved: false,
+  };
+  if (recorded === undefined) {
+    return {
+      scoped: false,
+      matched: true,
+      wholeModelMoved,
+      ...none,
+      stale: wholeModelMoved,
+      sentence: '',
+    };
+  }
+  const rows = opts.rows ?? obligationsOf(model);
+  // The RESOLVED set the scope was computed under, off the scope itself — see
+  // {@link ProofScope.free} for why `flags.free` is the wrong source.
+  const free = new Set<string>(recorded.free);
+  // THE ROW THIS RECORD IS ABOUT, KEYED THE WAY THE SCHEMA SAYS A RECORD IS
+  // KEYED: the pair (clause, obligationDigest), digest first. The clause name is
+  // not a unique key — `require constraint { … }` builds an ANONYMOUS usage, so
+  // a requirement stating two of them files two rows under one qualified name
+  // (`UAVPowerBudget::BatterySupply::«ConstraintUsage»` twice, measured) — and a
+  // name-only lookup handed both records the first row, which then read the
+  // OTHER obligation's digest as an edit and reported a file nobody had touched
+  // as stale.
+  //
+  // So: a row whose digest matches is this record's obligation and its clause
+  // did not move. If none matches and exactly ONE row carries the name, the
+  // clause moved and that row is the one it moved to. If none matches and
+  // several carry the name, nothing here can say WHICH of them this record was
+  // about — the scope falls back to the whole-model comparison rather than
+  // attributing an edit to an obligation it may not be about.
+  const named = rows.filter(
+    (r) => r.role === 'obligation' && r.element.qualifiedName === record.obligation.clause,
+  );
+  const obligation =
+    named.find((r) => obligationDigest(r) === record.obligation.obligationDigest) ??
+    (named.length === 1 ? named[0] : undefined);
+  if (obligation === undefined) {
+    // The record carries a scope and this model has no row it can be about: the
+    // clause is gone, or two anonymous clauses under one name leave it
+    // ambiguous. The comparison that ran is therefore the whole-model one, and
+    // the sentence says which question was answered rather than reporting a
+    // scope nobody could recompute. `scoped` stays TRUE — the record does carry
+    // one — and `matched` is the fact that carries the difference.
+    return {
+      scoped: true,
+      matched: false,
+      wholeModelMoved,
+      ...none,
+      stale: wholeModelMoved,
+      sentence: wholeModelMoved
+        ? 'stale — this model states no obligation this record can be matched to, so its scope ' +
+          'could not be recomputed and the comparison is over the whole model'
+        : 'current over the whole model — this model states no obligation this record can be ' +
+          'matched to, so its scope could not be recomputed and nothing narrower was compared',
+    };
+  }
+  const now = proofScopeOf(model, obligation, { rows, free });
+  // THE FOOTPRINT IS COMPARED AS A MULTISET OF (name, digest) PAIRS, not through
+  // a map keyed by name. Two axiom rows can share one qualified name — an
+  // anonymous `bind` files as `UAVPowerBudget::PowerSystem::«BindingConnectorAsUsage»`
+  // and a model with two of them lists that name TWICE, measured on four of the
+  // six scopes `examples/uav-power-budget.sysml` records — and a map collapses
+  // them, last one wins. That made deleting ONE of two binds report the OTHER as
+  // *in this proof's footprint and moved*, an edit attributed to a row whose
+  // relation nobody had touched.
+  const byName = (list: readonly ScopeAxiom[]): Map<string, string[]> => {
+    const m = new Map<string, string[]>();
+    for (const f of list) m.set(f.axiom, [...(m.get(f.axiom) ?? []), f.digest].sort());
+    return m;
+  };
+  const before = byName(recorded.footprint);
+  const after = byName(now.footprint);
+  const allNames = [...new Set([...before.keys(), ...after.keys()])].sort();
+  const entered = allNames.filter((n) => (after.get(n)?.length ?? 0) > (before.get(n)?.length ?? 0));
+  const left = allNames.filter((n) => (before.get(n)?.length ?? 0) > (after.get(n)?.length ?? 0));
+  // MOVED is what changed while the membership held still: the same name, the
+  // same number of rows under it, and a different set of normal forms. A name
+  // whose COUNT changed is reported as entered or left instead, because saying
+  // that `x` MOVED about a row that was deleted is an attribution, not a reading.
+  const movedNames = allNames.filter(
+    (n) =>
+      (before.get(n)?.length ?? 0) === (after.get(n)?.length ?? 0) &&
+      canonicalJson(before.get(n) ?? []) !== canonicalJson(after.get(n) ?? []),
+  );
+  const axiomSetMoved = recorded.axiomSet !== now.axiomSet;
+  const premisesMoved = recorded.premises !== now.premises;
+  // BOTH READINGS OF THE GOAL. The key digest moves when the relation changes;
+  // the scope digest moves when the scale does — see
+  // {@link ScopedStaleness.obligationMoved}.
+  const obligationMoved =
+    record.obligation.obligationDigest !== obligationDigest(obligation) ||
+    recorded.goal !== now.goal;
+  const reasons: string[] = [];
+  // A finding that wraps for forty lines is a finding nobody finishes: the
+  // named members are truncated the way the slice is, and the count that
+  // follows says how many were left out rather than dropping them silently.
+  const names = (list: readonly string[], sentence: (n: string) => string): string[] => {
+    const shown = [...new Set(list)].slice(0, SCOPE_NAMES).map(sentence);
+    const total = new Set(list).size;
+    return total > SCOPE_NAMES ? [...shown, `… and ${total - SCOPE_NAMES} more like it`] : shown;
+  };
+  if (obligationMoved) {
+    reasons.push(
+      'the clause this record is about no longer states the relation it was recorded over, or no ' +
+        'longer reads it at the scale it was recorded at',
+    );
+  }
+  reasons.push(...names(movedNames, (n) => `\`${n}\` is in this proof’s axiom footprint and moved`));
+  reasons.push(
+    ...names(entered, (n) => `\`${n}\` entered this proof’s axiom footprint since the record was written`),
+  );
+  reasons.push(
+    ...names(left, (n) => `\`${n}\` left this proof’s axiom footprint since the record was written`),
+  );
+  if (axiomSetMoved) {
+    reasons.push(
+      'the model’s axiom set changed, so the consistency check every proof in this file stands ' +
+        'on was not the one that ran',
+    );
+  }
+  if (premisesMoved) {
+    reasons.push(
+      'this proof’s premises changed, so the satisfiable-assumptions check that separated ' +
+        '`proved` from `vacuous` was not the one that ran',
+    );
+  }
+  return {
+    scoped: true,
+    matched: true,
+    wholeModelMoved,
+    footprintContentMoved: movedNames.length > 0,
+    footprintMembershipMoved: entered.length > 0 || left.length > 0,
+    axiomSetMoved,
+    premisesMoved,
+    obligationMoved,
+    stale: reasons.length > 0,
+    sentence: reasons.length === 0 ? CURRENT_IN_SCOPE : `stale — ${reasons.join('; ')}`,
+  };
+}
+
+/** One record's row of the check payload's staleness census. */
+export interface EvidenceScopeCensusRow {
+  /** The requirement the record is filed on. */
+  requirement: string;
+  /** The clause the record is about, or `''` for a record too damaged to say. */
+  clause: string;
+  /** Did the record carry a readable proof scope at all? */
+  scoped: boolean;
+  /** Was that scope recomputed against a row of this model? See
+   *  {@link ScopedStaleness.matched}. */
+  matched: boolean;
+  wholeModelMoved: boolean;
+  footprintContentMoved: boolean;
+  footprintMembershipMoved: boolean;
+  axiomSetMoved: boolean;
+  premisesMoved: boolean;
+  obligationMoved: boolean;
+  /** The sentence the rule would print, or the whole-model reading for a
+   *  record that carries no scope. */
+  sentence: string;
+}
+
+/**
+ * The census `npm run check --json` publishes, one row per live record.
+ *
+ * PER RECORD AND PER RUN, which is the correction §3.3b makes to its own §5
+ * row: the quantity that decides whether the extra digests earn their keep is a
+ * RATE OVER EDITS, and one check sees one model version. So the instrument is
+ * the booleans in the payload and the rate is an aggregation over recorded
+ * runs — the same shape commit 8's trap census has.
+ *
+ * WHAT IT COSTS, AND WHO PAYS IT. Nothing on a file with no evidence:
+ * {@link evidenceHolders} answers empty on the first line and neither the
+ * worklist nor the model digest is built. A file that DOES carry records pays
+ * for the census on every `checkText`, `--json` or not, and pays it BESIDE the
+ * `stale-evidence` rule's own worklist rather than sharing one with it —
+ * measured on `examples/uav-isr.sysml` with two SMT records attached, 2.5 ms
+ * against a 168 ms load. The duplication is deliberate and is the cheaper of
+ * the two options: threading one worklist from here into `ValidationRule.run`
+ * would put a cache on the rule interface every rule would then be entitled to,
+ * and gating the census on a new load option would make the payload's contents
+ * depend on a flag that no consumer of `checkText` passes today.
+ */
+export function evidenceScopeCensus(model: Model): EvidenceScopeCensusRow[] {
+  const holders = evidenceHolders(model).filter((h) => h.records.length > 0);
+  if (holders.length === 0) return [];
+  const graph = modelVersionOf(model).graph;
+  let rows: readonly Obligation[] | undefined;
+  const out: EvidenceScopeCensusRow[] = [];
+  for (const holder of holders) {
+    for (const record of liveEvidence(holder.records)) {
+      if (record.proofScope !== undefined && rows === undefined) rows = obligationsOf(model);
+      const s = scopedStaleness(record, model, { graph, ...(rows ? { rows } : {}) });
+      out.push({
+        requirement: holder.qualifiedName,
+        // READ THE WAY `obligationKey` READS IT. `recordOfCarrier` does no
+        // schema validation on purpose, so a hand-written carrier reaches here
+        // as whatever JSON the file holds; a census that dereferenced it would
+        // take `npm run check` down over a line somebody typed.
+        clause: typeof record.obligation?.clause === 'string' ? record.obligation.clause : '',
+        scoped: s.scoped,
+        matched: s.matched,
+        wholeModelMoved: s.wholeModelMoved,
+        footprintContentMoved: s.footprintContentMoved,
+        footprintMembershipMoved: s.footprintMembershipMoved,
+        axiomSetMoved: s.axiomSetMoved,
+        premisesMoved: s.premisesMoved,
+        obligationMoved: s.obligationMoved,
+        // The unscoped sentences are the whole-model reading in the words
+        // `evidence-status` uses for it, and they say WHICH comparison ran —
+        // `current` unqualified is the answer to a question about the FILE, and
+        // is never this lane's scoped claim, which carries its scope in the
+        // sentence. A record that DOES carry a scope never falls through to
+        // them: {@link scopedStaleness} writes its own sentence for the
+        // unmatched case, and saying "carries no proof scope" about a record
+        // that carries one would be false of the very row being reported.
+        sentence:
+          s.sentence !== ''
+            ? s.sentence
+            : s.wholeModelMoved
+              ? 'stale — recorded over a different model, and this record carries no readable proof ' +
+                'scope: the comparison is over the whole model, so nothing here can say which ' +
+                'element moved'
+              : `current — the model still hashes to ${graph}, and this record carries no readable ` +
+                'proof scope, so the comparison is over the whole model',
+      });
+    }
+  }
+  return out;
+}
+
 /* ───────────────────────────── the record itself ─────────────────────────── */
 
 /**
@@ -615,6 +1221,21 @@ export interface EvidenceRecord {
   code?: string;
   /** The sentence the report printed. */
   detail: string;
+  /**
+   * What this proof stood on, so a later edit can be tested against the PROOF
+   * rather than against the file — see {@link ProofScope}.
+   *
+   * OPTIONAL, and it has to be: `--engine literal` produces records with no
+   * scope at all (a point evaluation has no axiom set and no non-vacuity step),
+   * and every record written before this field existed has none either. Both
+   * fall back to the whole-model comparison, which is what they were written
+   * under. The schema property is optional for the same reason — but a record
+   * written WITH it is refused by `evidence-attach` on any build older than the
+   * one that added it, because the schema is compiled with
+   * `additionalProperties: false` in two places. That incompatibility is
+   * one-directional and permanent, and it is recorded in `docs/CONFORMANCE.md`.
+   */
+  proofScope?: ProofScope;
 }
 
 /**

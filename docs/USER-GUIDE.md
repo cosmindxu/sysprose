@@ -1681,6 +1681,88 @@ next person to open the file runs the checker, not the verifier. A stale verdict
 only the verification lane could see would be a verdict that survived every edit
 made by anyone who did not know the lane existed.
 
+**An SMT proof is not re-run for an edit it could not have read.** A record
+written by `--engine smt` carries what its proof stood on: the axiom rows the
+clause's read-closure reaches (its *footprint*), a digest over the whole axiom
+set the consistency check ran over, a digest over the requirement's own
+premises, and a digest over the clause itself — each of them over the relation
+AND the scale it is read at, so relabelling a feature from `[Wh]` to `[J]` is an
+edit the scope sees even though the expression tree is unchanged. `npm run
+check` compares those rather than the whole model, so an edit that moves none of
+them raises nothing. Measured on
+`examples/uav-isr.sysml`: of nineteen single edits, eight — a declaration with
+no value, a doc line, a state, an action, a part definition, a string facet, a
+renamed connection, a prose requirement — move the whole-model digest and
+nothing either proof reads, and the two records stay put. The other eleven are
+reported, and the sentence says which part moved:
+
+```console
+budget.sysml:125:5: warning validation/stale-evidence  Evidence on UAVPowerBudget::ComputerDraw
+was recorded over sha256:95da2919…; this model is sha256:aa014dc3…. The claim `proved` no longer
+stands: stale — this proof's premises changed, so the satisfiable-assumptions check that
+separated `proved` from `vacuous` was not the one that ran. Re-read this requirement's slice —
+UAVPowerBudget::PowerSystem::flightComputer, UAVPowerBudget::PowerSystem::propulsion,
+UAVPowerBudget::FlightController — then re-run `verify --record` and `evidence-attach`. The
+comparison is scoped to what this proof stood on, so an edit elsewhere in the file is not
+reported here.
+```
+
+**The parts are different ways a proof dies, and most of them do not look like
+an edit to the proof.** An axiom in the footprint changing what it says is the
+obvious one. A NEW axiom entering the footprint is the second — the proof never
+mentioned it, and it is now part of the context the negation is unsatisfiable
+under (or is not). The third is the axiom SET: `proved` means *the negation is
+unsatisfiable under a satisfiable axiom set*, and that second conjunct is a
+property of the whole file — one added `assert` can contradict another one and
+void every proof in the model, including proofs whose footprint never touches
+either. The fourth is the premises: the check that separates `proved` from
+`vacuous` is a check on them, and it is in none of the first three — on
+`examples/uav-power-budget.sysml`, raising one `assume constraint {
+fc.supplyVoltage >= 20.0 [V] }` to `>= 200.0 [V]` moves no axiom, no footprint
+member and no symbol, and takes the obligation from `proved` to `vacuous`. The
+fifth is the clause itself: the first four are all about a proof's CONTEXT, and
+tightening `uav.mtow <= 25.0 [kg]` to `<= 24.0 [kg]` moves none of them.
+
+**Only three of them can change the answer, and the report says which.** The
+axiom-set digest is taken over every axiom row in the file, and the footprint is
+a subset of those same rows digested the same way — so a footprint digest cannot
+move without the axiom-set digest moving too, and a member cannot enter or leave
+the read-closure unless an axiom, a premise or the clause already moved. What
+the footprint parts buy is the SENTENCE: they are how a finding can name the
+axiom you have to re-read rather than telling you something in the file changed.
+The narrowing itself comes from the edits that touch no axiom at all — eight of
+the nineteen on `examples/uav-isr.sysml`.
+
+**What is NOT recorded, and why.** The solver's unsat core — the axioms z3 named
+as a sufficient reason, which `verify --why` prints — is not written into a
+record. Its membership was measured to move with how warm the solver's context
+is: the same model, one seed, six labels from a fresh process and five from a
+worker that had already run many checks. A record is promised byte-identical
+across two runs over an unchanged file, and a digest over a set chosen that way
+could not honour it. The footprint is the encoder's own relevance walk over the
+MODEL, is a function of the model alone, and is what the core is a subset of.
+
+**A record with no scope keeps the whole-model comparison**, and says so in the
+same words it always did: `--engine literal` writes no scope (a point evaluation
+has no axiom set and no non-vacuity step to speak of), and neither does a record
+written by a build older than this field.
+
+**`evidence-status` answers the other question, on purpose.** It reports whether
+a record was taken over THIS model — a fact about the file, which any edit moves
+— while the checker reports whether the edit could have reached the proof. A
+file where `evidence-status` says `stale` and `npm run check` says nothing is a
+file where something moved and no proof in it could have read what moved.
+`npm run check -- <file> --json` publishes the reading per record, inside the
+report: `{scoped, matched, wholeModelMoved, footprintContentMoved,
+footprintMembershipMoved, axiomSetMoved, premisesMoved, obligationMoved}` and
+the sentence. `matched` is `false` where a record carries a scope but this model
+states no obligation to recompute it against — the clause was deleted, or two
+anonymous clauses share one qualified name — in which case the comparison falls
+back to the whole model and the sentence says so. A scope that did not move reads *current within this proof's
+scope*, never the bare word: the claim is scoped and the words are part of it.
+Bare `current` appears only on a record that carries no scope, where it means
+what it has always meant — the model still hashes to what the record names.
+
 **What the digest can and cannot say.** It is taken over the whole user model —
 every element you wrote, canonicalised so that reformatting, reordering and
 reparsing leave it alone, and so that what a verification run itself wrote is
@@ -2404,7 +2486,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:551-568`, `963-984` (the two rules that ask),
+`src/validation/rules.ts:554-571`, `966-987` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

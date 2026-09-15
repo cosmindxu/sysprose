@@ -26,9 +26,12 @@ import {
   evidenceHolders,
   evidenceOf,
   evidenceStatus,
+  axiomsOf,
   isEvidenceArtefact,
   isEvidenceCarrier,
   modelVersionOf,
+  obligationDigest,
+  proofScopeOf,
   recordEvidence,
   sha256Hex,
   verifyModel,
@@ -38,6 +41,7 @@ import {
 } from '@api/index';
 import { isUserElement } from '@api/index';
 import { FAULTED_DECLARATION_REFUSAL, getRequirementAttr, setRequirementAttr } from '@semantics/index';
+import { obligationsOf } from '@semantics/obligations';
 import { validate } from '@validation/index';
 import { serializeElement } from '@text/index';
 import { loadModelText } from '@text/load';
@@ -745,5 +749,169 @@ describe('detachEvidence — the facet goes with the evidence', () => {
     // reports — so the file must come back exactly as it went in.
     expect(textOf(model)).toBe(before);
     expect(evidenceStatus(model).rows).toEqual([]);
+  }, 60_000);
+});
+
+/**
+ * The proof scope (§3.3b), at the level a golden cannot reach: the digests
+ * themselves.
+ *
+ * Everything here is solver-free by construction — a scope is computed from the
+ * MODEL, which is the property that makes it recordable at all — so these cases
+ * run without z3 and say what the corpus cannot: that the parts move when the
+ * model says something different and stay put when it only LOOKS different.
+ */
+describe('proofScopeOf — what a proof stood on, from the model alone', () => {
+  /** The one obligation row of {@link SUBJECT}, and the worklist around it. */
+  function worklist(model: Model) {
+    const rows = obligationsOf(model);
+    const row = rows.find((r) => r.role === 'obligation');
+    expect(row, 'the fixture states one obligation').toBeDefined();
+    return { rows, row: row! };
+  }
+
+  it('names the axiom the clause reads, and digests its normal form', async () => {
+    const model = await parse(SUBJECT);
+    const { rows, row } = worklist(model);
+    const scope = proofScopeOf(model, row, { rows });
+    expect(scope.footprint.map((f) => f.axiom)).toEqual(['P::Vehicle::mass']);
+    // The footprint entry's digest is the row's normal form AND the scale it is
+    // read at, which is NOT what `obligationDigest` takes: that one is the
+    // record's KEY and is blind to units on purpose, so a relabelled clause can
+    // still be matched to the record that is about it. Two digests, two jobs —
+    // and the case below is why the scope needs the second.
+    const massAxiom = rows.find((r) => r.element.qualifiedName === 'P::Vehicle::mass');
+    expect(scope.footprint[0].digest).not.toBe(obligationDigest(massAxiom!));
+    expect(scope.footprint[0].digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(scope.goal).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // No premises here, and the digest says so by being the digest OF NOTHING
+    // rather than absent: a record that omitted the field could not be told
+    // apart from one written before the field existed.
+    expect(scope.premises).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(scope.axiomSet).toMatch(/^sha256:[0-9a-f]{64}$/);
+  }, 60_000);
+
+  it('survives a reformat, and moves when the axiom says something else', async () => {
+    const model = await parse(SUBJECT);
+    const { rows, row } = worklist(model);
+    const scope = proofScopeOf(model, row, { rows });
+
+    // REFORMATTED, not edited: extra blank lines and a rewrapped clause body.
+    const reformatted = await parse(
+      SUBJECT.replace('    part vehicle : Vehicle;', '\n    part vehicle : Vehicle;\n').replace(
+        'require constraint { vehicle.mass <= 2000.0 }',
+        'require constraint {\n            vehicle.mass <= 2000.0\n        }',
+      ),
+    );
+    const after = worklist(reformatted);
+    expect(
+      proofScopeOf(reformatted, after.row, { rows: after.rows }),
+      'a reformat moved a digest the reader did not touch',
+    ).toEqual(scope);
+
+    // EDITED: the value the proof reads.
+    const edited = await parse(SUBJECT.replace('1500.0', '1600.0'));
+    const e = worklist(edited);
+    const moved = proofScopeOf(edited, e.row, { rows: e.rows });
+    expect(moved.footprint.map((f) => f.axiom)).toEqual(scope.footprint.map((f) => f.axiom));
+    expect(moved.footprint[0].digest, 'the axiom moved and its digest did not').not.toBe(
+      scope.footprint[0].digest,
+    );
+    expect(moved.axiomSet).not.toBe(scope.axiomSet);
+  }, 60_000);
+
+  it('does not read an axiom the clause cannot reach', async () => {
+    // The scope is a READ-CLOSURE, not a list of the model's axioms: a second
+    // valued feature nothing in the clause reads stays out of the footprint and
+    // lands in the axiom-set digest instead, which is exactly the division the
+    // four parts make.
+    const model = await parse(SUBJECT.replace('part vehicle : Vehicle;', 'part def Trailer { attribute mass : Real = 300.0; }\n    part vehicle : Vehicle;'));
+    const { rows, row } = worklist(model);
+    const scope = proofScopeOf(model, row, { rows });
+    expect(scope.footprint.map((f) => f.axiom)).toEqual(['P::Vehicle::mass']);
+    expect(
+      axiomsOf(rows).map((r) => r.element.qualifiedName).sort(),
+      'the trailer is an axiom of this model, just not of this proof',
+    ).toEqual(['P::Trailer::mass', 'P::Vehicle::mass']);
+  }, 60_000);
+
+  /**
+   * A UNIT EDIT MOVES THE SCOPE, and it has to, because it moves the verdict.
+   *
+   * This is the case the record's own `obligationDigest` cannot see. That digest
+   * canonicalises the expression tree and keeps the magnitude the FILE writes —
+   * `capacity == 640` is the same node whether the declaration says `[Wh]` or
+   * `[J]` — and it is right to, because it is the key a record is matched to its
+   * clause by. But the solver reads the relation in SI, and relabelling the unit
+   * multiplies what it reads by 3600. Measured on `examples/uav-isr.sysml`, the
+   * same edit takes the endurance proof from `proved` to `refuted`; a scope
+   * built on the key digest alone reported `current within this proof's scope`
+   * over it, which is the one sentence §3.3b says must never appear over a
+   * moved verdict.
+   */
+  it('moves when a unit is relabelled, where the record’s own key digest cannot', async () => {
+    const withUnits = `package P {
+    part def Vehicle {
+        attribute mass : ISQ::MassValue = 1500.0 [kg];
+    }
+    part vehicle : Vehicle;
+    requirement <R1> massLimit {
+        doc /* The vehicle mass shall not exceed 2000 kg. */
+        subject vehicle : Vehicle;
+        require constraint { vehicle.mass <= 2000.0 [kg] }
+    }
+    satisfy massLimit by vehicle;
+}
+`;
+    const parseFull = async (text: string): Promise<Model> => {
+      const { model, report } = await loadModelText(text, { fileName: 'units.sysml' });
+      expect(report.diagnostics.filter((d) => d.severity === 'error').map((d) => d.message)).toEqual(
+        [],
+      );
+      return model!;
+    };
+    const before = await parseFull(withUnits);
+    const b = worklist(before);
+    const scopeBefore = proofScopeOf(before, b.row, { rows: b.rows });
+
+    // ONE TOKEN: the axiom's declared unit. `1500 kg` becomes `1500 t`.
+    const after = await parseFull(withUnits.replace('1500.0 [kg]', '1500.0 [t]'));
+    const a = worklist(after);
+    const scopeAfter = proofScopeOf(after, a.row, { rows: a.rows });
+
+    // The key digest of the AXIOM is blind to it, by design…
+    const axiomBefore = b.rows.find((r) => r.element.qualifiedName === 'P::Vehicle::mass')!;
+    const axiomAfter = a.rows.find((r) => r.element.qualifiedName === 'P::Vehicle::mass')!;
+    expect(obligationDigest(axiomAfter)).toBe(obligationDigest(axiomBefore));
+    // …and the scope's is not.
+    expect(scopeAfter.footprint[0].digest, 'a unit relabel left the footprint digest alone').not.toBe(
+      scopeBefore.footprint[0].digest,
+    );
+    expect(scopeAfter.axiomSet).not.toBe(scopeBefore.axiomSet);
+
+    // AND THE GOAL WITH IT. The clause reads `vehicle.mass`, so the same
+    // redeclaration changes the scale the goal is read at while leaving its
+    // relation tree — and therefore its key digest — untouched. That is the
+    // half `obligation.obligationDigest` cannot cover, and why the scope
+    // carries a digest of the goal as well as one of every axiom.
+    expect(obligationDigest(a.row)).toBe(obligationDigest(b.row));
+    expect(scopeAfter.goal, 'the goal is read at another scale and its digest did not move').not.toBe(
+      scopeBefore.goal,
+    );
+
+    // A UNIT WRITTEN IN THE BODY is a different case and was never blind: a
+    // `[unit]` LITERAL is lowered to SI before the tree is digested, so a bound
+    // of `2000.0 [t]` is the node `<= 2000000` and moves the key digest by
+    // itself — while `2.0 [t]`, which is the same quantity as `2000.0 [kg]`,
+    // moves neither digest and should not. The contrast is the point: the gap
+    // is in the DECLARATION, not in the literal.
+    const bodyEdited = await parseFull(withUnits.replace('<= 2000.0 [kg]', '<= 2000.0 [t]'));
+    const g = worklist(bodyEdited);
+    expect(obligationDigest(g.row)).not.toBe(obligationDigest(b.row));
+    const sameQuantity = await parseFull(withUnits.replace('<= 2000.0 [kg]', '<= 2.0 [t]'));
+    const q = worklist(sameQuantity);
+    expect(obligationDigest(q.row), 'the same bound in another unit is not an edit').toBe(
+      obligationDigest(b.row),
+    );
   }, 60_000);
 });

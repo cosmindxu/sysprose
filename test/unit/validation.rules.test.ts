@@ -3,7 +3,10 @@ import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import type { ElementRecord, SerializedModel } from '@core/index';
 import { validate, isValid, RULES, RULE_IDS, RULES_BY_ID } from '@validation/index';
 import { loadStandardLibrary } from '../../src/library/index';
-import { modelVersionOf } from '@api/index';
+import { modelVersionOf, obligationDigest, proofScopeOf } from '@api/index';
+import { obligationsOf } from '@semantics/obligations';
+import { loadModelText } from '@text/load';
+import { serializeElement } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
   effectiveFeatures,
@@ -1180,6 +1183,150 @@ describe('rule 19 — stale-evidence', () => {
     const cell = m.all().find((el) => el.declaredName === 'record');
     m.setAttrs(cell!.id, { value: '"not json at all"' });
     expect(runRule(m, 'stale-evidence')).toHaveLength(0);
+  });
+
+  /* ─────────────── the SCOPED comparison, with no solver in sight ─────────── */
+
+  /**
+   * A model with a premise, an axiom the proof reads, and one it cannot.
+   *
+   * Parsed rather than built, because a proof scope is a read-closure over
+   * relation BODIES and the factory writes none. No units and no standard
+   * library: everything here is about which digest moves, not about scale.
+   */
+  const SCOPED_SUBJECT = `package P {
+    part def Vehicle {
+        attribute mass : Real = 1500.0;
+    }
+    part vehicle : Vehicle;
+    requirement massLimit {
+        subject vehicle : Vehicle;
+        assume constraint { vehicle.mass >= 0.0 }
+        require constraint { vehicle.mass <= 2000.0 }
+    }
+    satisfy massLimit by vehicle;
+}
+`;
+
+  async function parsed(text: string): Promise<Model> {
+    const { model, report } = await loadModelText(text, {
+      fileName: 'scoped.sysml',
+      library: 'none',
+    });
+    expect(report.diagnostics.filter((d) => d.severity === 'error').map((d) => d.message)).toEqual([]);
+    return model!;
+  }
+
+  /**
+   * The record a `verify --engine smt --record` run would have written over
+   * `text`, with the scope it would have carried — HAND-BUILT, and that is the
+   * point of these two cases.
+   *
+   * Every other test of the scoped comparison is a campaign case gated on a
+   * solver being installed, and `withZ3` SKIPS rather than fails when none is.
+   * A regression that collapsed the scoped rule back to the whole-model answer
+   * would have gone unnoticed on any machine without z3. `proofScopeOf` needs no
+   * solver — the scope is a function of the model — so the guard does not either.
+   */
+  async function scopedRecord(text: string) {
+    const model = await parsed(text);
+    const rows = obligationsOf(model);
+    const row = rows.find((r) => r.role === 'obligation');
+    expect(row, 'the fixture states one obligation').toBeDefined();
+    return {
+      schema: 'sysprose-evidence/1',
+      claim: 'proved',
+      verdict: 'pass',
+      modelVersion: { graph: modelVersionOf(model).graph },
+      obligation: {
+        clause: row!.element.qualifiedName,
+        obligationDigest: obligationDigest(row!),
+      },
+      proofScope: proofScopeOf(model, row!, { rows }),
+    };
+  }
+
+  /** Put one record on `massLimit` of an already-parsed model. */
+  function carry(model: Model, record: unknown): void {
+    const req = model.all().find((el) => el.declaredName === 'massLimit');
+    expect(req, 'the fixture declares `massLimit`').toBeDefined();
+    const carrier = model.create('MetadataUsage', {
+      ownerId: req!.id,
+      attrs: { annotation: true, type: 'SysproseVerification::Evidence' },
+    });
+    model.create('AttributeUsage', {
+      declaredName: 'record',
+      ownerId: carrier.id,
+      attrs: { value: JSON.stringify(JSON.stringify(record)) },
+    });
+  }
+
+  it('is SILENT on an edit that moved the whole model and nothing the proof reads', async () => {
+    const record = await scopedRecord(SCOPED_SUBJECT);
+    // A declaration with no value states no axiom, so it enters no axiom set
+    // and no read-closure — the whole-model digest is the only thing it moves.
+    const edited = await parsed(
+      SCOPED_SUBJECT.replace(
+        '    part vehicle : Vehicle;',
+        '    part def DataLink { attribute txPower : Real; }\n    part vehicle : Vehicle;',
+      ),
+    );
+    carry(edited, record);
+    expect(
+      modelVersionOf(edited).graph,
+      'the edit did not move the whole-model digest, so this case proves nothing',
+    ).not.toBe(record.modelVersion.graph);
+    expect(runRule(edited, 'stale-evidence')).toHaveLength(0);
+  });
+
+  it('REPORTS a premise edit, which no other conjunct can see', async () => {
+    const record = await scopedRecord(SCOPED_SUBJECT);
+    // The premise is not an axiom, is not in the footprint and is not the
+    // goal — it is what STEP 2 asks about, and STEP 2 is what separates
+    // `proved` from `vacuous`.
+    const edited = await parsed(
+      SCOPED_SUBJECT.replace('vehicle.mass >= 0.0', 'vehicle.mass >= 5000.0'),
+    );
+    carry(edited, record);
+    const diags = runRule(edited, 'stale-evidence');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('premises changed');
+    expect(diags[0].message).toContain('scoped to what');
+  });
+
+  it('does not take the checker down over a carrier that names no obligation', async () => {
+    // `recordOfCarrier` validates nothing beyond `schema`, so a hand-written
+    // record reaches every reader as whatever JSON the file holds. A reader
+    // that dereferenced `record.obligation.clause` threw inside `loadModelText`
+    // — which discards the MODEL and every real diagnostic with it, and in the
+    // browser store is swallowed whole and returns no diagnostics at all.
+    const text = SCOPED_SUBJECT.replace(
+      '    satisfy massLimit by vehicle;',
+      '    satisfy massLimit by vehicle;',
+    );
+    const model = await parsed(text);
+    carry(model, {
+      schema: 'sysprose-evidence/1',
+      claim: 'proved',
+      verdict: 'pass',
+      modelVersion: { graph: `sha256:${'0'.repeat(64)}` },
+      proofScope: 'nonsense',
+    });
+    const { model: reloaded, report } = await loadModelText(
+      model
+        .rootIds()
+        .filter((id) => model.get(id)?.attrs.isLibrary !== true)
+        .map((id) => serializeElement(model, id, 0))
+        .join('\n\n'),
+      { fileName: 'partial.sysml', library: 'none' },
+    );
+    expect(report.diagnostics.map((d) => d.code)).not.toContain('import/internal-error');
+    expect(reloaded, 'the model was discarded over one hand-written line').toBeDefined();
+    expect(report.elements.count).toBeGreaterThan(0);
+    // The record is unreadable as a scope, so the comparison falls back to the
+    // whole model — which it fails, loudly, rather than silently.
+    expect(report.diagnostics.map((d) => d.code)).toContain('validation/stale-evidence');
+    expect(report.evidenceScope?.[0]).toMatchObject({ scoped: false, clause: '' });
   });
 });
 

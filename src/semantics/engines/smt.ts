@@ -62,7 +62,7 @@
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, type ConstraintCheck } from '../evaluate-model';
 import { evaluate } from '../expr';
-import { type Obligation } from '../obligations';
+import { axiomsOf, type Obligation } from '../obligations';
 import { type ContractVariable, type Refusal } from '../contracts';
 import { idScopeFor } from '../relations';
 import { dimToString } from '../units';
@@ -452,9 +452,11 @@ export async function judgeBySmt(
   // `--free` means. Nothing else is dropped — a `bind` edge and an `assert`
   // are separate statements about the model, and silently deleting them would
   // widen the design space past what the reader asked for.
-  const axioms = encodedRows.filter(
-    (e) => e.row.role === 'axiom' && !(e.row.source === 'feature-value' && isFreedValueAxiom(e.row, free)),
-  );
+  // The axiom set, chosen by the SAME predicate the model-level `footprintOf`
+  // reads — `axiomsOf` over the rows — so a footprint computed without an
+  // encoder cannot name an axiom this run did not carry.
+  const axiomIds = new Set<ElementId>(axiomsOf(rows, free).map((r) => r.element.id));
+  const axioms = encodedRows.filter((e) => axiomIds.has(e.row.element.id));
   const premisesByRequirement = new Map<ElementId, EncodedRow[]>();
   for (const e of encodedRows) {
     if (e.row.role !== 'premise' || !e.row.requirement) continue;
@@ -498,15 +500,43 @@ export async function judgeBySmt(
 }
 
 /**
- * Is this feature-value axiom the binding of a feature the caller released?
+ * The footprint this engine would compute for one obligation, as element ids.
  *
- * EXPORTED because `bounds` releases values with the same flag and must drop
- * exactly the same axioms: two readings of one `--free` is how one command
- * would answer over a design space the other one bounded differently.
+ * EXPORTED FOR ONE TEST, and the test is the reason the model-level twin is
+ * allowed to exist. `footprintOf` (`src/semantics/obligations.ts`) computes the
+ * same read-closure without an encoder, because the staleness rule is
+ * synchronous and reachable from the browser bundle; this function is the
+ * ENCODER'S answer, and `test/campaign/verification.test.ts` asserts the two
+ * sets are equal over every case of the verdict corpus. Without it the twin
+ * would be a re-derivation nobody could check, and a re-derivation that drifted
+ * would scope a proof's staleness to axioms the proof did not stand on.
+ *
+ * No solver: {@link relevantAxioms} is syntactic, so this costs an encode and
+ * nothing else.
+ *
+ * `null` where this row never had a script — the encoder refused the goal, so
+ * no closure was taken. That is the same distinction {@link AxiomCensus} makes
+ * by being `null` rather than four zeroes.
  */
-export function isFreedValueAxiom(row: Obligation, free: ReadonlySet<string>): boolean {
-  if (free.has(row.element.qualifiedName)) return true;
-  return row.vars.some((v) => free.has(v.qualifiedName) && v.featureId === row.element.id);
+export function encodedFootprint(
+  rows: readonly Obligation[],
+  obligation: Obligation,
+  free: ReadonlySet<string> = new Set<string>(),
+): ReadonlySet<ElementId> | null {
+  const encodedRows = rows.map((row) => encodeRow(row, free));
+  const axiomIds = new Set<ElementId>(axiomsOf(rows, free).map((r) => r.element.id));
+  const axioms = encodedRows.filter((e) => axiomIds.has(e.row.element.id));
+  const premises = encodedRows.filter(
+    (e) =>
+      e.row.role === 'premise' &&
+      e.row.requirement !== null &&
+      obligation.requirement !== null &&
+      e.row.requirement.id === obligation.requirement.id,
+  );
+  const goal = encodedRows.find((e) => e.row.element.id === obligation.element.id)?.encoded;
+  if (goal === undefined) return null;
+  const { kept } = relevantAxioms(axioms, premises, goal);
+  return new Set<ElementId>(kept.map((e) => e.row.element.id));
 }
 
 /** Encode one row's body under its OWN scale decision and the caller's free set. */
