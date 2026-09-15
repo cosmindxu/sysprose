@@ -17,6 +17,31 @@
       })();
     </script>
     <title>Sysprose</title>
+    <meta
+      name="description"
+      content="Sysprose is an open-source, pure-browser systems modeler for a SysML v2–style notation: author models as text or diagrams, then verify requirements from the command line with an SMT solver, walk state machines exhaustively, and record verdicts that go stale when the design moves. Candidate notation, not certified."
+    />
+    <link rel="canonical" href="https://cosmindxu.github.io/sysprose/" />
+    <meta name="author" content="Sysprose contributors" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Open Graph / Twitter: without these a shared link renders as a bare URL. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Sysprose" />
+    <meta property="og:title" content="Sysprose — a browser modeler for a SysML v2–style notation, with a formal-verification lane" />
+    <meta
+      property="og:description"
+      content="Author a SysML v2–style model as text or diagrams in the browser, then verify it from a terminal: assume/guarantee contracts decided by an SMT solver, exhaustive state-machine walks, and evidence that expires when the model changes."
+    />
+    <meta property="og:url" content="https://cosmindxu.github.io/sysprose/" />
+    <meta property="og:image" content="https://cosmindxu.github.io/sysprose/icon.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Sysprose — a browser modeler for a SysML v2–style notation, with a formal-verification lane" />
+    <meta
+      name="twitter:description"
+      content="Open-source SysML v2–style modeling in the browser, with command-line verification that refuses to overclaim."
+    />
+    <meta name="twitter:image" content="https://cosmindxu.github.io/sysprose/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/icon.svg" />
@@ -25,6 +50,39 @@
     <meta name="apple-mobile-web-app-title" content="Sysprose" />
   </head>
   <body>
+    <!--
+      The app is a single-page bundle, so a client that does not run JavaScript —
+      a crawler, a reader-mode view, a text browser — would otherwise see nothing
+      at all here. This block is what such a client gets: a plain description and
+      the documentation, which is the part of this project that can be read
+      without installing it.
+    -->
+    <noscript>
+      <div style="max-width:46rem;margin:0 auto;padding:40px 20px;font:16px/1.6 ui-serif,Georgia,serif">
+        <h1 style="font-family:ui-sans-serif,system-ui,sans-serif">Sysprose</h1>
+        <p>
+          An open-source, pure-browser modeler for a SysML v2–style notation. Author a system as
+          text or as diagrams, validate it against a rule engine, and verify it from a terminal:
+          each requirement read as the assume/guarantee pair its own clauses state, decided by an
+          SMT solver or reported honestly as undecided; state machines walked exhaustively rather
+          than one run at a time; and verdicts written back into the file, where they go stale the
+          moment the design changes.
+        </p>
+        <p>The modeler itself needs JavaScript. The documentation does not:</p>
+        <ul>
+          <li><a href="./docs/">All reference documentation</a></li>
+          <li><a href="./docs/CONFORMANCE.html">Conformance scorecard — what was measured, and what was not</a></li>
+          <li><a href="./docs/USER-GUIDE.html">User guide</a></li>
+          <li><a href="./docs/CLI-REFERENCE.html">Command-line reference</a></li>
+          <li><a href="./docs/05-model-checking-literature.html">Model checking, read against this tool</a></li>
+          <li><a href="https://github.com/cosmindxu/sysprose">Source on GitHub</a></li>
+        </ul>
+        <p style="color:#5a6069;font-size:14px">
+          Sysprose implements a SysML v2–style notation and is a candidate, not a certified or
+          conformance-tested implementation. SysML is a trademark of the Object Management Group.
+        </p>
+      </div>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
