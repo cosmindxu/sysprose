@@ -18,6 +18,7 @@ import { resolve } from 'node:path';
 import { isDefinition, type Model } from '@core/index';
 import { buildDiagram, buildRequirementsTable } from '@diagram/index';
 import {
+  behaviourReport,
   connectivityReport,
   modelMetrics,
   orphanReport,
@@ -710,6 +711,30 @@ describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
         'verification/unrecoverable-mode  trap — 2 configuration(s) form a set nothing leaves: {failsafe, failsafeHold}. Entered in 3 step(s) from `standby`.',
       );
     });
+  });
+
+  /**
+   * The `every run?` line the `check-behaviour` transcript shows, checked
+   * against the run rather than remembered.
+   *
+   * It is the one line of that transcript with no figure in it, so the count
+   * claims above cannot see it move — and it moves whenever the modality's
+   * sentence, the simulator sentence folded into it, or the avoiding cycle on
+   * `FlightModes` changes. The transcript prints the line exactly as
+   * `propertyLines` composes it, so the whole sentence is the claim.
+   */
+  it('the modality line the check-behaviour transcript quotes', () => {
+    const machine = model.all().find((e) => e.declaredName === 'FlightModes');
+    expect(machine, 'examples/uav-isr.sysml no longer declares FlightModes').toBeDefined();
+    const report = behaviourReport(model, {
+      machineId: machine!.id,
+      pattern: 'pattern=absence, scope=globally, p=state failsafe',
+    });
+    const row = report.properties[0];
+    expect(row.claim).toBe('fail');
+    expect(row.modality, 'the fail row carries no modality').not.toBeNull();
+    expect(row.modality!.value).toBe('potential');
+    expect(read(GUIDE)).toContain(`    every run? ${row.modality!.sentence}\n`);
   });
 
   /**

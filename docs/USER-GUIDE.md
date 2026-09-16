@@ -2084,6 +2084,7 @@ examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pas
     from --pattern
     fail — witness trace of 3 step(s) …
     verification/refuted
+    every run? potential — some run avoids it: the cycle manual → autonomous → manual never enters `failsafe` — every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces
     3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} …
     witness — a run this semantics admits:
        0  start → UAVSurveillanceSystem::FlightModes::standby
@@ -2100,6 +2101,22 @@ transitions are enabled at `autonomous` and the simulator takes the first, so
 property: the model admits a run that reaches `failsafe`, and the witness is
 that run, step by step. A tool that only simulated would have told you the
 opposite.
+
+**And the `every run?` line says whether that witness is one run or every run.**
+`potential` means some run avoids the violation, and the line names it — here
+the cycle `manual → autonomous → manual`, which never enters `failsafe`;
+`guaranteed` means every maximal run of the machine reaches it. Both are read
+off the same graph the witness was, and both are withheld as `not decided`, with
+the reason, whenever that graph is not the machine's: a walk that stopped at a
+bound, a machine that names a trigger the walk offers unconditionally, a dwell
+the walk takes without advancing a clock, a guard over something the walk could
+not read — and three refusals of the property itself, a stateful pattern or
+scope, a `fires`/`trigger` atom, an expression that needs the store. The tail
+of the line is there because this machine has a choice point: the walk explored
+both branches at `autonomous`, and the run the sentence names is one the
+simulator's declaration-order tie-break never takes. In `--json` the same answer
+is the row's `modality` field — `value`, `sentence`, `failedClause`, `avoiding`
+— and it changes no count and no exit code.
 
 **The catalogue, and the half of it this engine will not decide.**
 

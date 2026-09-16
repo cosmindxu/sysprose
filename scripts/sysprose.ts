@@ -3540,6 +3540,10 @@ function propertyLines(v: PropertyVerdict): string[] {
     `    ${v.detail}`,
   ];
   if (v.code !== null) out.push(`    ${v.code}`);
+  // Some run or every run? One line, on a `fail` row only, with the value word
+  // first — `guaranteed`, `potential`, `not decided` — and the simulator
+  // sentence folded into the same line where the walk recorded a choice.
+  if (v.modality !== null) out.push(`    every run? ${v.modality.sentence}`);
   if (v.claim !== 'inconclusive' || v.configs > 0) {
     out.push(`    ${v.configs} product state(s) explored — ${v.qualification}`);
   }

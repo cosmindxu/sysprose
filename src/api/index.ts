@@ -487,6 +487,8 @@ export {
 export type {
   BehaviourOptions,
   BehaviourReport,
+  Modality,
+  ModalityValue,
   PatternClass,
   PatternName,
   PatternSpec,

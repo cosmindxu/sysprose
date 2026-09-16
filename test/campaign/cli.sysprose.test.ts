@@ -4601,6 +4601,7 @@ package P {
           exhaustive: boolean;
           sentence: string;
           witness: Array<{ index: number; leaf: { name: string }; holds: string[] }>;
+          modality: { value: string; failedClause: string | null; avoiding: unknown } | null;
         }>;
         profile: Array<{ field: string }>;
         counts: { passed: number; failed: number };
@@ -4620,6 +4621,12 @@ package P {
     // `standby` is the OPENING configuration, so the bad prefix is one step long.
     expect(p.witness.map((w) => w.leaf.name)).toEqual(['standby']);
     expect(p.witness[0].holds).toEqual(['p']);
+    // AND THE STEP-0 EDGE OF THE MODALITY (§3.R): the opening itself violates,
+    // so no run avoids it — G₀ is empty — and the row reads `guaranteed` under
+    // a walk the exactness gate holds on. This is the corpus witness for that
+    // edge; the field is subset-matched, so the row's other keys stay pinned
+    // where they are pinned above.
+    expect(p.modality).toMatchObject({ value: 'guaranteed', failedClause: null, avoiding: null });
     // Every verdict carries the reading it holds under (plan §3.8).
     expect(body.behaviour.profile.map((f) => f.field)).toEqual([
       'run-to-completion',
@@ -4629,6 +4636,51 @@ package P {
       'deferred events',
       'time',
     ]);
+  }, 90_000);
+
+  it('check-behaviour withholds the modality on the trapguard file, at the store clause and through argv', async () => {
+    // THE ROW-7 CASE, DRIVEN THROUGH THE COMMAND LINE (§3.R): `trapguard.sysml`
+    // is an ordinary `.sysml` file, so the store clause is the one clause of
+    // the exactness gate — with the environment clause on `latch.sysml` — a
+    // corpus fixture can reach through argv rather than only in-process. The
+    // escape `degradedA if resetOk then nominal` reads a `resetOk` nothing
+    // values, so the walk never offered it; the retained relation then has no
+    // cycle and no sink, and the naive answer is `guaranteed` — about a
+    // machine whose model states the way out. In-process `run`, not
+    // `spawnCli`: the case is about the text, and `check-behaviour` is not
+    // solver-bearing.
+    const r = await run([
+      'check-behaviour',
+      'test/fixtures/verification/models/trapguard.sysml',
+      '--element',
+      'TrapGuard::Trap',
+      '--pattern',
+      'pattern=absence, scope=globally, p=state degradedB',
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain('FAIL');
+    expect(r.stdout).toContain('verification/refuted');
+    const line = r.stdout.split('\n').find((l) => l.startsWith('    every run? '));
+    expect(line, 'the fail row prints no modality line').toBeDefined();
+    expect(line).toContain('not decided: a transition of this machine is guarded by a condition the walk consulted and could not decide');
+    expect(line).toContain('a guard the walk consulted decided nothing, so an edge the model states is absent from the relation');
+    expect(line).not.toContain('guaranteed');
+    expect(line).not.toContain('potential');
+    // The `= false` variant is DECIDED, through the same argv: the edge is
+    // absent because the model says so, and every run reaches `degradedB`.
+    const decided = await run([
+      'check-behaviour',
+      'test/fixtures/verification/models/trapguard-false.sysml',
+      '--element',
+      'TrapGuardFalse::Trap',
+      '--pattern',
+      'pattern=absence, scope=globally, p=state degradedB',
+    ]);
+    expect(decided.code).toBe(1);
+    expect(decided.stdout).toContain('    every run? guaranteed —');
+    // The words this command may never print, whatever it decided.
+    expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
+    expect(decided.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
   }, 90_000);
 
   it('check-behaviour never passes a liveness pattern, and says why', async () => {

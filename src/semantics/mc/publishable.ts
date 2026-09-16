@@ -319,6 +319,55 @@ export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
 };
 
 /**
+ * The standing sentences of plan §2.4 — (a) the environment, (c) the dwell,
+ * (d) the simulator — spelled once, here, beside the clause sentences.
+ *
+ * WHY THEY LIVE IN THIS FILE. Each is printed by more than one lane — a
+ * `cover` witness, a trap's entry path, the modality's row 6, a published cut
+ * set — and a sentence that exists in two files is the two-copies defect this
+ * module was created to close. They sit beside {@link CLAUSE_SENTENCE} rather
+ * than in `./patterns` because `./patterns` already imports from `./explore`,
+ * and a lane that prints one of these from `./explore` would then import from
+ * `./patterns`: a cycle, one constant wide.
+ *
+ * (a) is printed beside a witness that CONSUMED a trigger: such a trace is a run
+ * of the system under an environment that supplies the trigger, and the reader
+ * is told what the witness costs. It discloses; it never suppresses — a dwell is
+ * not a trigger an environment can withhold, which is why (c) is a different
+ * sentence and why clause (b) of the gate does the withholding (c) only
+ * explains.
+ */
+export const ENVIRONMENT_SENTENCE =
+  'the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it';
+
+/**
+ * (c) The dwell sentence. Printed beside whatever claim survives on a walk whose
+ * `timedTransitions` is non-empty — i.e. wherever clause (b) fails. It is NOT a
+ * substitute for the gate: where the claim is increasing the claim is withheld
+ * and this sentence says why. Both spellings of a dwell are named, because a
+ * transition carrying a numeric `attrs.after` and no trigger is offered as a
+ * COMPLETION and contributes no label at all.
+ */
+export const DWELL_SENTENCE =
+  'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take';
+
+/**
+ * (d) The simulator sentence — what the exactness gate does NOT cover.
+ *
+ * `walkIsExact` establishes that the retained relation is the MACHINE's. It
+ * establishes nothing about what the shipped interpreter does with that
+ * machine, and the two differ on every nondeterministic choice point: the walk
+ * explores both branches of a declaration-order tie-break and `runStateMachine`
+ * fires `enabled[0]`. Measured, that is not a corner case — two of the three
+ * shipped machines carry such a point. So this prints beside every increasing
+ * claim and every published witness whenever the walk recorded a choice, and it
+ * is deliberately not gated away: the verdict is about the model, and the reader
+ * is told so rather than left to assume the two agree.
+ */
+export const SIMULATOR_SENTENCE =
+  'every claim above is about this MACHINE\'s semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces';
+
+/**
  * The residue's own sentence, because `'bound'` must not tell a lie.
  *
  * The residue is reported as `'bound'` — the union is five values and the plan
@@ -348,31 +397,6 @@ const EXACT_SENTENCE =
  * above says why a claim was WITHHELD; these say what a claim that survived is
  * a claim ABOUT, and the two are different sentences on purpose.
  */
-
-/**
- * §2.4(a). Printed beside a verdict on a machine whose alphabet is non-empty:
- * every witness that consumed a trigger is a claim under a maximally
- * cooperative environment.
- */
-export const ENVIRONMENT_SENTENCE =
-  'the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it';
-
-/**
- * §2.4(c). Printed wherever clause (b) fails — beside whatever claim survives
- * it. NOT `CLAUSE_SENTENCE.time`: that one says why a claim was withheld; this
- * one discloses what a surviving claim was read under.
- */
-export const DWELL_SENTENCE =
-  'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take';
-
-/**
- * §2.4(d). Printed beside every increasing claim and every published witness
- * on a machine with a nondeterministic choice: the walk explores both
- * branches, the simulator takes the first declared one, and the gate above
- * establishes nothing about the second. Deliberately never gated away.
- */
-export const SIMULATOR_SENTENCE =
-  "every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces";
 
 /**
  * The first clause that failed, in the order {@link walkIsExact} states.
@@ -549,6 +573,13 @@ const CHECK_PROPERTY: ProducerRef = {
   file: 'src/semantics/mc/patterns.ts',
   symbol: 'checkProperty',
 };
+/**
+ * The modality's one producer (§3.R). Both A8 and W3 name it, which is the
+ * point: the two values are gated together, by one function reading one
+ * predicate, and the reflection suite reads that function's source to check
+ * that it reads `walkIsExact` and nothing from the decreasing family.
+ */
+const MODALITY_OF: ProducerRef = { file: 'src/semantics/mc/patterns.ts', symbol: 'modalityOf' };
 
 /**
  * Every claim in this lane whose truth is *"nothing of this kind exists"*.
@@ -705,7 +736,7 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
     walkRequires: 'walkIsExact',
     alsoRequires: [],
     otherwise: '`potential` or `not-decided`',
-    producedBy: null,
+    producedBy: MODALITY_OF,
   },
   {
     id: 'A9',
@@ -877,7 +908,7 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
     ridesOn: null,
     alsoRequires: ['a memoryless monitor', 'a configuration-valued atom'],
     otherwise: '`not decided`, with the reason split by §3.R’s `not decided` rows',
-    producedBy: null,
+    producedBy: MODALITY_OF,
   },
   {
     id: 'W4',

@@ -104,13 +104,28 @@ import {
   type BoundHit,
   type ExploreBounds,
   type ExploreOptions,
+  type ExploreResult,
   type StateRef,
   type TransitionRef,
   type UnsupportedConstruct,
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
-// One definition of "may this absence be stated", shared with `reachOne`.
-import { publishabilityOf } from './publishable';
+// One definition of "may this absence be stated", shared with `reachOne` — and
+// the one gate the modality reads for BOTH of its values (`walkIsExact`), with
+// the standing sentences the modality's rows print beside a withheld or a
+// published answer.
+import {
+  CLAUSE_SENTENCE,
+  DWELL_SENTENCE,
+  SIMULATOR_SENTENCE,
+  publishabilityOf,
+  walkIsExact,
+  type FailedClause,
+} from './publishable';
+// Component arithmetic over the retained relation, for the avoiding cycle.
+// `./scc` decides nothing about what may be published; `modalityOf` asks the
+// gate first and reads the components only where it holds.
+import { acyclic, tarjanComponents, type Components } from './scc';
 
 /* ───────────────────────────── the catalogue ────────────────────────────── */
 
@@ -302,6 +317,58 @@ export interface TraceStep {
   holds: readonly string[];
 }
 
+/** The three answers the modality can give about a refutation (plan §3.R). */
+export type ModalityValue = 'guaranteed' | 'potential' | 'not-decided';
+
+/**
+ * Whether the violation a `fail` row printed happens on SOME run or on EVERY
+ * run of the machine (plan §3.R). It annotates the refutation; it replaces
+ * nothing on the row, and no count or exit code reads it.
+ *
+ * `guaranteed` — every maximal run of the machine reaches the violation. An
+ * absence claim (register row A8): *no run avoids it*. `potential` — some run
+ * avoids it, and {@link Modality.sentence} names that run: a cycle that never
+ * enters the violating configuration, or a configuration of the FULL retained
+ * relation with no way out (register row W3, a maximality witness — the claim
+ * is that the cycle or the sink has no exit, which a missing edge invents).
+ * `not-decided` — one of the seven refusals of §3.R, with the reason in the
+ * sentence and, where the reason is the walk, the clause of the exactness gate
+ * that failed in {@link Modality.failedClause}.
+ *
+ * BOTH VALUES READ ONE PREDICATE. Neither `guaranteed` nor `potential` is ever
+ * composed unless `walkIsExact` holds: the first quantifies over the run set,
+ * which the cooperative environment changes; the second names a run with no
+ * exit, which a bound, a dwell the walk offers at every configuration and a
+ * guard nothing decided all manufacture. The value and the failed clause
+ * together are this feature's census.
+ */
+export interface Modality {
+  readonly value: ModalityValue;
+  /**
+   * The one line the report prints: the value word first, then the reason or
+   * the named run. On a decided value over a walk that recorded a
+   * nondeterministic choice, the simulator sentence is appended to it — one
+   * string, one printed line.
+   */
+  readonly sentence: string;
+  /**
+   * Which clause of `walkIsExact` withheld the answer — `null` where the gate
+   * held, AND `null` where the answer was withheld for a reason that is not
+   * the gate's (rows 2, 3 and 4: the monitor carries state, or the atom is one
+   * the retained relation cannot observe). So `value === 'not-decided' &&
+   * failedClause !== null` reads exactly "refused by the gate", and the four
+   * buckets of the census stay separable: a triggered machine refused at row 3
+   * is an atom refusal, not an environment one.
+   */
+  readonly failedClause: FailedClause;
+  /**
+   * The avoiding run, as the sentence prints it: the cycle with its first
+   * configuration repeated at the end, or the one configuration a run stops in.
+   * `null` on every value but `potential`.
+   */
+  readonly avoiding: readonly StateRef[] | null;
+}
+
 /** What one property came to, and everything a reader needs to argue with it. */
 export interface PropertyVerdict {
   /** The machine it is about. */
@@ -329,6 +396,15 @@ export interface PropertyVerdict {
   unsupported: readonly UnsupportedConstruct[];
   /** The bad prefix, when there is one. EMPTY on every other claim. */
   witness: readonly TraceStep[];
+  /**
+   * Some run or every run? Composed on a `fail` row and on no other claim.
+   *
+   * REQUIRED, `null` elsewhere, rather than optional: a `--json` consumer reads
+   * a stable key set, and a row that carries no modality says so by carrying
+   * the key. `counts` and `exitCode` never read it (plan §3.R: the exit-code
+   * contract is unchanged).
+   */
+  modality: Modality | null;
 }
 
 /** What `check-behaviour` publishes. */
@@ -1081,6 +1157,7 @@ function refusedRow(
     qualification: 'nothing was checked: the property could not be read',
     unsupported: [],
     witness: [],
+    modality: null,
   };
 }
 
@@ -1156,6 +1233,7 @@ export function checkProperty(
       qualification: 'not decided: this engine decides safety patterns only',
       unsupported: [],
       witness: [],
+      modality: null,
     };
   }
 
@@ -1179,6 +1257,7 @@ export function checkProperty(
       qualification: `not explored — ${walk.unsupported.map((u) => u.construct).join(', ')}`,
       unsupported: walk.unsupported,
       witness: [],
+      modality: null,
     };
   }
   // The FIFTH condition, and it is `reachOne`'s: a guard the walk consulted and
@@ -1222,6 +1301,9 @@ export function checkProperty(
     qualification,
     unsupported: [] as readonly UnsupportedConstruct[],
     activated: found.activated,
+    // The modality is a fact about a REFUTATION and about nothing else; the
+    // `fail` return below overrides this, and every other claim keeps it.
+    modality: null as Modality | null,
   };
 
   // An atom that could not be evaluated where the walk offered it. Never read
@@ -1262,6 +1344,10 @@ export function checkProperty(
         `fail — witness trace of ${witness.length - 1} step(s): ${sentence}. The run below is one ` +
         'this semantics admits; the simulator’s declaration-order tie-break may never take it.',
       witness,
+      // Some run, or every run? Composed here and nowhere else, from the walk
+      // the function opened with and never from `found` — the prefix walked
+      // before the first witness is an accident of where the search stopped.
+      modality: modalityOf(model, property, walk, bounds),
     };
   }
 
@@ -1359,6 +1445,259 @@ export function checkProperty(
       `pass — holds on every reachable configuration: ${sentence}. ${qualification}, over ` +
       `${found.configs} product state(s).`,
     witness: [],
+  };
+}
+
+/* ─────────────────────────────── the modality ───────────────────────────── */
+
+/**
+ * The seven `not decided` sentences of plan §3.R, rows 1–7, spelled once.
+ *
+ * Rows 1, 5, 6 and 7 are the clauses of `walkIsExact` as four sentences rather
+ * than one, because an author whose machine names `abort` and one whose
+ * machine guards on something the walk could not read have two different
+ * things to do about it, and *"this walk is not exact"* would tell neither
+ * which. Row 7 says *a condition the walk could not decide* and not *an
+ * attribute with no declared value*: the store clause is the SHIPPED
+ * `undeterminedGuards` predicate, which also covers `not mode` over a fully
+ * valued `mode` (`trapguard-typed.sysml`), and the narrower sentence would be
+ * false on the one corpus model that tells the two readings apart.
+ */
+const NOT_DECIDED = {
+  walk: 'not decided: the walk was not exhaustive',
+  step: 'not decided: this atom is a property of a step, not of a configuration, so the product does not collapse onto the configuration graph',
+  store: 'not decided: this atom reads the store, which this walk does not retain',
+  environment:
+    'not decided: this machine names triggers, and "every run" would be a claim about an environment this walk has no carrier for',
+  time: 'not decided: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so a run that avoids the violation may be one the interpreter never takes',
+  guard:
+    'not decided: a transition of this machine is guarded by a condition the walk consulted and could not decide, so this walk never offered an edge the model states and a run that avoids the violation may be one it could not see',
+} as const;
+
+/** Row 9's sentence: the absence claim, register row A8. */
+const GUARANTEED_SENTENCE = 'guaranteed — every maximal run of this machine reaches it';
+
+/**
+ * The configurations of *G₀*: reachable from the opening WITHIN the
+ * non-violating subgraph, in breadth-first order.
+ *
+ * SEEDED FROM NODE 0 AND NOWHERE ELSE, and empty when the opening itself
+ * violates — `absence (state standby)` on a machine that opens in `standby`
+ * is refuted at step 0 and every run violates. Reachability is taken INSIDE
+ * *G*: a cycle entered only by passing through a violating configuration is
+ * a cycle no violation-avoiding run reaches, and naming it would be a sentence
+ * about a run that does not exist.
+ */
+function avoidingReach(
+  successors: readonly (readonly number[])[],
+  violates: (node: number) => boolean,
+): number[] {
+  if (successors.length === 0 || violates(0)) return [];
+  const seen = new Uint8Array(successors.length);
+  const order: number[] = [0];
+  seen[0] = 1;
+  for (let head = 0; head < order.length; head++) {
+    for (const w of successors[order[head]]) {
+      if (seen[w] === 1 || violates(w)) continue;
+      seen[w] = 1;
+      order.push(w);
+    }
+  }
+  return order;
+}
+
+/**
+ * One cycle of the first cyclic component of a relation, as a closed walk.
+ *
+ * The component chosen is the one whose smallest member is smallest — the
+ * closest to the opening in discovery order, which is what a reader is most
+ * likely to be able to follow — and the cycle is the SHORTEST one through that
+ * member, found breadth-first inside the component and closed back on it. A
+ * self-loop is a cycle of one node and prints as `hazard → hazard`.
+ * Returns `null` when the relation has no cycle at all.
+ */
+function exhibitCycle(
+  successors: readonly (readonly number[])[],
+  comps: Components,
+): number[] | null {
+  let start = -1;
+  let member: number[] | null = null;
+  for (const members of comps.members) {
+    const cyclic =
+      members.length > 1 || (successors[members[0]] ?? []).includes(members[0]);
+    if (!cyclic) continue;
+    if (start === -1 || members[0] < start) {
+      start = members[0];
+      member = [...members];
+    }
+  }
+  if (member === null) return null;
+  const inside = new Set(member);
+  const parent = new Map<number, number>([[start, -1]]);
+  const queue = [start];
+  for (let head = 0; head < queue.length; head++) {
+    const v = queue[head];
+    for (const w of successors[v] ?? []) {
+      if (!inside.has(w)) continue;
+      if (w === start) {
+        // Closed: walk the parents back from `v` to `start`, then repeat `start`.
+        const path: number[] = [];
+        for (let n = v; n !== -1; n = parent.get(n)!) path.unshift(n);
+        path.push(start);
+        return path;
+      }
+      if (parent.has(w)) continue;
+      parent.set(w, v);
+      queue.push(w);
+    }
+  }
+  // Unreachable: a cyclic component holds a closed walk through every member.
+  return null;
+}
+
+/**
+ * Some run, or every run? — the guaranteed / potential modality on a `fail`
+ * (plan §3.R). THE ONE PRODUCER OF BOTH VALUES, and the dispatch is the plan's
+ * nine rows in their stated order, because the precedence is part of the
+ * specification: a machine satisfying rows 5, 6 and 7 at once prints row 5.
+ *
+ * It reads {@link walkIsExact} and nothing from the decreasing family — never
+ * `decreasingOk`, never `publishabilityOf` — and it reads the WALK the caller
+ * opened with, never `found`: the prefix the product search walked before its
+ * first witness is an accident of where the search stopped, and `enabled[0]`
+ * is the simulator's tie-break, which correction 13 forbids a verdict to be
+ * derived from.
+ *
+ * Rows 8 and 9 are decided over the retained relation explicitly. Let *V* be
+ * the violating configurations — those where `p` holds for `absence`, those
+ * where it does not for `universality` — *G* the subgraph induced on the
+ * others, and *G₀* the part of *G* reachable from the opening within *G*. A
+ * run avoiding the violation exists iff *G₀* holds a cycle, or holds a
+ * configuration with no successor IN THE FULL RELATION. Both scopings are
+ * load-bearing: *"reachable"* alone admits a cycle behind a violation, and *"no
+ * successor in G"* calls `nominal` a sink when its only edge leads into
+ * `hazard` — a sink is a sink in the full graph or it is not a sink.
+ */
+function modalityOf(
+  model: Model,
+  property: ResolvedProperty,
+  walk: ExploreResult,
+  bounds: ExploreBounds,
+): Modality {
+  const gate = walkIsExact(walk, bounds);
+  // `clause` is the gate's failed clause by default — the rows that ARE the
+  // gate's refusal (1, 5, 6, 7) — and `null` where the row's reason is the
+  // monitor's or the atom's, so the field never names a clause the sentence
+  // did not: `failedClause !== null` on a `not-decided` value reads "refused
+  // by the gate", and nothing else.
+  const withheld = (sentence: string, clause: FailedClause = gate.failedClause): Modality => ({
+    value: 'not-decided',
+    sentence,
+    failedClause: clause,
+    avoiding: null,
+  });
+
+  // Row 1 — the walk was not seen whole. The `unsupported` arm is unreachable
+  // here: `checkProperty` refuses an unsupported machine before it searches,
+  // so no `fail` ever reaches this function over one. It is dispatched all the
+  // same, because the gate names it and a row is selected by the clause.
+  if (gate.failedClause === 'bound' || gate.failedClause === 'unsupported') {
+    return withheld(`${NOT_DECIDED.walk} — ${gate.sentence}`);
+  }
+  // Row 2 — a stateful monitor. `search` short-circuits at the first
+  // violation, so the PRODUCT graph does not exist here; only a memoryless
+  // monitor — `absence` or `universality`, `globally` — collapses onto the
+  // configuration graph the walk retained. The parenthesis names whichever of
+  // the two made it stateful.
+  const memoryless =
+    property.pattern.name === 'absence' || property.pattern.name === 'universality';
+  if (!memoryless || property.scope.name !== 'globally') {
+    const carrier = memoryless ? property.scope.name : property.pattern.name;
+    return withheld(
+      `not decided: this monitor carries state (\`${carrier}\`), so the product does not collapse onto the configuration graph`,
+      null,
+    );
+  }
+  // Rows 3 and 4 — an atom the retained relation cannot observe. `fires` and
+  // `trigger` are properties of a STEP; `expression` needs the store, which the
+  // walk does not retain — left open, no configuration is ever marked
+  // violating, *G* is the whole graph and every cyclic machine reads
+  // `potential`, whatever the model says.
+  const atom = property.atoms.p;
+  if (atom === undefined) return withheld(NOT_DECIDED.store, null);
+  if (atom.kind === 'trigger' || atom.kind === 'fires') return withheld(NOT_DECIDED.step, null);
+  if (atom.kind === 'expression') return withheld(NOT_DECIDED.store, null);
+  // Rows 5, 6, 7 — the three relation clauses of the gate, in the gate's own
+  // order (`environment` first: a named trigger is something the author can
+  // act on, and the dwell sentence would send them to the wrong carrier).
+  switch (gate.failedClause) {
+    case 'environment':
+      return withheld(NOT_DECIDED.environment);
+    case 'time':
+      return withheld(`${NOT_DECIDED.time} — ${DWELL_SENTENCE}`);
+    case 'store':
+      return withheld(`${NOT_DECIDED.guard} — ${CLAUSE_SENTENCE.store}`);
+    case null:
+      break;
+  }
+  // Rows 8 and 9 — and only here, under the whole gate. The check is stated
+  // even though `failedClause === null` already implies it, because this is
+  // the line the MUST-NEVER list is about.
+  if (!gate.walkIsExact) return withheld(`${NOT_DECIDED.walk} — ${gate.sentence}`);
+
+  const target = atom.elementId!;
+  const holdsAt = (i: number): boolean =>
+    atom.kind === 'state' ? walk.configStates[i].includes(target) : walk.configLeaves[i] === target;
+  const violates = (i: number): boolean =>
+    property.pattern.name === 'absence' ? holdsAt(i) : !holdsAt(i);
+  const g0 = avoidingReach(walk.successors, violates);
+  const inG0 = new Uint8Array(walk.successors.length);
+  for (const i of g0) inG0[i] = 1;
+  const induced = walk.successors.map((targets, v) =>
+    inG0[v] === 1 ? targets.filter((w) => inG0[w] === 1) : [],
+  );
+  const comps = tarjanComponents(induced);
+  const cycle = acyclic(induced, comps) ? null : exhibitCycle(induced, comps);
+  // THE FULL RELATION, never the induced one: `walk.successors[i]`, not
+  // `induced[i]`.
+  const sink = g0.find((i) => walk.successors[i].length === 0);
+  const nameOf = (i: number): StateRef => {
+    const leaf = walk.configLeaves[i];
+    const stack = walk.configStates[i];
+    return stateRef(model, leaf ?? stack[stack.length - 1] ?? '');
+  };
+  const verb = property.pattern.name === 'absence' ? 'enters' : 'leaves';
+  // The (d) trigger reads the RECORDED rows alone. §2.4(d) also names "a
+  // nondeterminism row was withheld" — `exploreMachine` withholds one where an
+  // undetermined guard sits strictly inside the level of the choice — but that
+  // arm is vacuous here: such a walk has a non-empty `undeterminedGuards`, so
+  // `walkIsExact` fails on its store clause and row 7 has already returned.
+  const simulator =
+    walk.nondeterminism.length > 0 ? ` — ${SIMULATOR_SENTENCE}` : '';
+
+  if (cycle !== null) {
+    const run = cycle.map(nameOf);
+    return {
+      value: 'potential',
+      sentence: `potential — some run avoids it: the cycle ${run.map((s) => s.name).join(' → ')} never ${verb} \`${atom.argument}\`${simulator}`,
+      failedClause: null,
+      avoiding: run,
+    };
+  }
+  if (sink !== undefined) {
+    const stop = nameOf(sink);
+    return {
+      value: 'potential',
+      sentence: `potential — some run avoids it: the run that stops in \`${stop.name}\` never ${verb} \`${atom.argument}\`${simulator}`,
+      failedClause: null,
+      avoiding: [stop],
+    };
+  }
+  return {
+    value: 'guaranteed',
+    sentence: `${GUARANTEED_SENTENCE}${simulator}`,
+    failedClause: null,
+    avoiding: null,
   };
 }
 

@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 126 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 127 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -4710,6 +4710,57 @@ anything is free of deadlocks. `deadlock-guarded.sysml` is the file where the
 deadlock row's per-configuration gate and this feature's walk-wise gate answer
 differently — `Ctrl`'s decided sink keeps its row while the trap field is refused
 on the store clause — and they never contradict each other on it.
+
+**A refutation says whether it is one run or every run, and the two answers are
+gated together, by one predicate.** `check-behaviour`'s `fail` row carries a
+`modality` — `guaranteed`, every maximal run of the machine reaches the
+violation; `potential`, some run avoids it, named as a cycle that never enters
+the violating configuration or as a configuration of the full retained relation
+with no way out; or `not decided`, with the reason — and the text report prints
+it as one `every run?` line between the code and the product-states line. It is
+the first reader of the retained relation and of the exactness gate, and it
+reads that gate for BOTH values: `guaranteed` quantifies over the run set,
+which the cooperative environment changes (on the latch file the naive answer
+is `guaranteed`, about a machine that sits in `nominal` forever when nobody
+sends `unlatch`), and `potential` names a cycle with no exit, which a bound, a
+dwell the walk offers at every configuration and a guard nothing decided all
+manufacture (on the factory-built dwell cycle the naive answer is `potential —
+… the cycle nominal → hold → nominal`, about a machine on which the interpreter
+sends every run into `hazard`; on the trapguard file it is `guaranteed`, about
+a machine whose model states the escape). One `not decided` sentence per
+clause, in the gate's own order — a machine carrying a trigger, a dwell, an
+undecided guard and an avoiding cycle at once prints the trigger sentence,
+pinned as a dispatch rather than inferred — and the dwell row names no fairness
+carrier, because a dwell is not a trigger an environment can withhold. Three
+more refusals are the monitor's and the atom's: a stateful pattern or scope,
+since the product search returns at the first violation and the product graph
+does not exist at the fail site; a `fires` or `trigger` atom, which is a
+property of a step; and an `expression` atom, which reads a store the walk does
+not retain — left open, no configuration is ever marked violating and every
+cyclic machine reads `potential`, pinned on a machine where every run sets
+`mode = 3`. The decided answer is computed over the retained relation
+explicitly, and both scopings have a fixture naming the wrong answer: a cycle
+reached only through the violation is `guaranteed` (reachability is taken from
+the opening inside the non-violating subgraph), and `nominal -> hazard ->
+hazard` is `guaranteed` (a sink is a sink in the full relation or it is not a
+sink); the one way around that ends rather than cycles gets the sink wording,
+which is the only coverage that arm has. Where a decided value stands over a
+walk that recorded a nondeterministic choice, the simulator sentence is folded
+into the same line, so the reader who tries to reproduce the named cycle with
+`simulate` is told in advance why it may not appear. The row-7 sentence says
+*a condition the walk consulted and could not decide* rather than the plan's
+*an attribute with no declared value*, because the store clause is the shipped
+`undeterminedGuards` predicate and the narrower sentence is false on
+`trapguard-typed.sysml`, where `mode = 3` is declared and `not mode` still
+decides nothing. **Nothing else on the row moved:** claim, code, detail,
+witness, diagnostic severity and exit code are pinned byte-identical to the
+tree before the field existed, the text report is asserted to differ from that
+capture by the inserted line alone, and `counts` and `exitCode` never see the
+field. The register's A8 and W3 rows now name their producer, and the
+reflection suite reads its source: it calls `walkIsExact`, and it reads neither
+`decreasingOk`, nor `publishabilityOf`, nor `found`, nor `enabled[0]`. The
+user guide's `check-behaviour` transcript gains the line, hand-pasted, and is
+now checked against a run rather than remembered.
 
 ## 5. Phase status
 

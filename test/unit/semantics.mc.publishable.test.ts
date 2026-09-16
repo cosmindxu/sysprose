@@ -44,6 +44,9 @@ import { afterDuration } from '../../src/semantics/mc/config';
 import {
   ABSENCE_CLAIMS,
   BOUND_FAMILY,
+  DWELL_SENTENCE,
+  ENVIRONMENT_SENTENCE,
+  SIMULATOR_SENTENCE,
   WITNESS_CLAIMS,
   publishabilityOf,
   walkIsExact,
@@ -438,6 +441,25 @@ describe('not one published sentence moved', () => {
       });
     }
   });
+
+  it('spells the three §2.4 standing sentences verbatim, so a divergent copy is red', () => {
+    // THREE LANES DEFINE THESE CONSTANTS FROM THE SAME PARAGRAPH and the merge
+    // keeps one copy of each; nothing else in the tree pins the SPELLING —
+    // every consumer asserts `toContain(DWELL_SENTENCE)`, which is green on any
+    // wording — so this is the only assertion a copy that drifted from §2.4(a),
+    // (c) or (d) can fail. (a) is read by no producer of this lane yet; it is
+    // pinned all the same, because a constant exported for the other lanes to
+    // import is a contract whether or not this lane prints it.
+    expect(ENVIRONMENT_SENTENCE).toBe(
+      'the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it',
+    );
+    expect(DWELL_SENTENCE).toBe(
+      'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take',
+    );
+    expect(SIMULATOR_SENTENCE).toBe(
+      "every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces",
+    );
+  });
 });
 
 /* ═══════════════════ reflection over the two registers ═══════════════════ */
@@ -563,7 +585,10 @@ describe('the registers are data, and every column is asserted', () => {
     // is a checker rule's reading and not a walk at all. A6 and its rider W2
     // joined it with the trap list (§3.2a) — the first increasing claim to be
     // published, and both point at `reachOne` because that is where the gate
-    // is applied, not where the component arithmetic lives.
+    // is applied, not where the component arithmetic lives. A8 and W3 joined
+    // it together, with the modality (§3.R): the two values of one field,
+    // composed by one function, which is what "gated together and by one
+    // predicate" means when it is data rather than prose.
     expect(ALL_ROWS.filter((r) => r.producedBy !== null).map((r) => r.id)).toEqual([
       'A0',
       'A1',
@@ -571,10 +596,47 @@ describe('the registers are data, and every column is asserted', () => {
       'A3',
       'A4',
       'A6',
+      'A8',
       'A9',
       'A14',
       'W2',
+      'W3',
     ]);
+  });
+
+  it('the modality producer reads `walkIsExact`, and nothing from the decreasing family', () => {
+    // THE REGISTER IS THE WIRING, AND THIS READS THE WIRE — the same shape as
+    // the `reachOne` assertion above, for the producer A8 and W3 both name.
+    // `guaranteed` quantifies over the run set and `potential` names a cycle
+    // with no exit; both are manufactured by a relation that is not the
+    // machine's, so the one function that composes them reads the whole gate
+    // and neither `decreasingOk` nor `publishabilityOf`, which would let a
+    // bounded or a triggered walk publish either word. And it never reads
+    // `found` — the prefix walked before the first witness — nor `enabled[0]`,
+    // the simulator's tie-break, which correction 13 forbids a verdict to be
+    // derived from.
+    const a8 = ABSENCE_CLAIMS.find((r) => r.id === 'A8')!;
+    const w3 = WITNESS_CLAIMS.find((r) => r.id === 'W3')!;
+    expect(a8.producedBy).toEqual({ file: 'src/semantics/mc/patterns.ts', symbol: 'modalityOf' });
+    expect(w3.producedBy).toEqual(a8.producedBy);
+    const src = read(a8.producedBy!.file);
+    const body = /function modalityOf\([\s\S]*?\n}\n/.exec(src);
+    expect(body, 'patterns.ts no longer declares modalityOf').not.toBeNull();
+    const producer = body![0];
+    expect(producer).toContain('walkIsExact(');
+    expect(producer).not.toContain('decreasingOk');
+    expect(producer).not.toContain('publishabilityOf');
+    expect(producer).not.toContain('found');
+    expect(producer).not.toContain('enabled[0]');
+    // Both values sit BEHIND the gate: the decided branches read the gate's
+    // own field, and the sink is tested on the FULL relation (§3.R's
+    // sink-scoping rule), never on the induced one.
+    expect(producer).toContain('if (!gate.walkIsExact) return withheld(');
+    expect(producer).toContain('walk.successors[i].length === 0');
+    expect(producer).not.toContain('induced[i].length === 0');
+    // And `checkProperty` composes it on the `fail` row and nowhere else.
+    expect(src.match(/modality: modalityOf\(/g)).toHaveLength(1);
+    expect(src.match(/modality: null/g)!.length).toBeGreaterThanOrEqual(4);
   });
 
   it('the producer applies the gate each row declares, read off its source', () => {

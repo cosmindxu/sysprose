@@ -1147,6 +1147,20 @@ const TRAP_FILES = [
   'test/fixtures/verification/models/composite-trap.sysml',
 ];
 
+/**
+ * The machines the MODALITY commit adds (§3.R), listed apart for the same
+ * reason: four completion-driven machines whose guaranteed / potential answer
+ * is known by construction — a straight line, a self-loop the violating state
+ * never leaves, a way around that ends, and a cycle reached only through the
+ * violation.
+ */
+const MODALITY_FILES = [
+  'test/fixtures/verification/models/modality-line.sysml',
+  'test/fixtures/verification/models/modality-self-loop.sysml',
+  'test/fixtures/verification/models/avoiding-sink.sysml',
+  'test/fixtures/verification/models/cycle-behind-violation.sysml',
+];
+
 describe('every machine in the tree, walked', () => {
   const walked: Walked[] = [];
 
@@ -1166,15 +1180,17 @@ describe('every machine in the tree, walked', () => {
     }
   }, 300_000);
 
-  it('finds the eleven machines that were here, plus eight from one commit, three from the next and three from the trap commit', () => {
+  it('finds the eleven machines that were here, plus eight from one commit, three from the next, three from the trap commit and four from the modality', () => {
     const added = walked.filter((w) => ADDED_FILES.includes(w.file));
     expect(added).toHaveLength(8);
     const components = walked.filter((w) => COMPONENT_FILES.includes(w.file));
     expect(components).toHaveLength(3);
     const traps = walked.filter((w) => TRAP_FILES.includes(w.file));
     expect(traps).toHaveLength(3);
+    const modality = walked.filter((w) => MODALITY_FILES.includes(w.file));
+    expect(modality).toHaveLength(4);
     expect(
-      walked.length - added.length - components.length - traps.length,
+      walked.length - added.length - components.length - traps.length - modality.length,
       'the tree gained or lost a machine',
     ).toBe(11);
   });
