@@ -58,6 +58,10 @@ import {
 import { walkIsExact } from '../../src/semantics/mc/publishable';
 import { atomHolds, readAtom } from '../../src/semantics/mc/atoms';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
+// Every export, for the guard that reads the API's sentences against the
+// corpus alphabet — enumerated rather than listed, so a sentence added later
+// is read too.
+import * as API from '../../src/api/index';
 
 const root = (p: string) => resolve(process.cwd(), p);
 const read = (p: string) => readFileSync(root(p), 'utf8');
@@ -1226,6 +1230,36 @@ describe('every machine in the tree, walked', () => {
     expect(exploreMachine(dwells.model, dwells.machineId).census.counts.unaccounted).toBe(0);
     const numeric = numericAfterMachine();
     expect(exploreMachine(numeric.model, numeric.machineId).census.counts.unaccounted).toBe(0);
+  });
+
+  it('no exported sentence constant carries a trigger any corpus machine names', () => {
+    // THE DEFECT CLASS, GUARDED. `ENVIRONMENT_SENTENCE` was §2.4(a) verbatim
+    // with the plan's example trigger inside it — `` `abort` `` — and three
+    // lanes pinned it that way, so `reach` on the latch machine said *consumes
+    // `abort`* about a file naming only `unlatch`. The sentence is a function
+    // of the triggers now; this keeps the next constant from being written the
+    // same way. Every string-valued export of the API — bare, or the values
+    // of a string record — is read against the union of every corpus
+    // machine's alphabet, so a trigger a fixture names can sit in no standing
+    // sentence. `DWELL_SENTENCE` legitimately names `` `after(n)` `` and
+    // `` `attrs.after` ``, which is why the rule is "no corpus trigger" and
+    // not "no backticked token".
+    const alphabet = new Set(walked.flatMap((w) => w.walk.bounds.alphabet));
+    expect(alphabet.size, 'the corpus names no trigger at all — the guard is vacuous').toBeGreaterThan(0);
+    const sentences: Array<[string, string]> = [];
+    for (const [name, value] of Object.entries(API as Record<string, unknown>)) {
+      if (typeof value === 'string') sentences.push([name, value]);
+      else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+          if (typeof inner === 'string') sentences.push([`${name}.${key}`, inner]);
+        }
+      }
+    }
+    expect(sentences.length, 'the API exports no sentence at all').toBeGreaterThan(5);
+    const offending = sentences
+      .filter(([, text]) => [...alphabet].some((t) => text.includes(`\`${t}\``)))
+      .map(([name]) => name);
+    expect(offending, `a standing sentence names a corpus trigger: ${offending.join(', ')}`).toEqual([]);
   });
 
   it('names a trigger on `latch.sysml` and `cover-reachable.sysml` alone: `bounds.alphabet` is `[]` everywhere else', () => {

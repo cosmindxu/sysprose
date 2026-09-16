@@ -95,7 +95,8 @@ import {
   coverRequiredRefusal,
   DEADLOCK_WITHHELD_SENTENCE,
   DWELL_SENTENCE,
-  ENVIRONMENT_SENTENCE,
+  environmentSentence,
+  environmentTriggers,
   TRAP_REFUSAL_SENTENCE,
   GUARD_UNDETERMINED_CODE,
   contractReport,
@@ -3449,7 +3450,13 @@ function machineLines(m: MachineReach): string[] {
   // report is the reading every gate in this lane exists to withhold.
   switch (m.trapCensus.refusedByGate) {
     case 'environment':
-      out.push(`    ${TRAP_REFUSAL_SENTENCE.environment}; ${ENVIRONMENT_SENTENCE}`);
+      // The standing sentence names the triggers THIS machine names, in the
+      // order the bounds line above already printed them — never the plan's
+      // example trigger: `reach` once said *consumes `abort`* of a file whose
+      // only trigger is `unlatch`.
+      out.push(
+        `    ${TRAP_REFUSAL_SENTENCE.environment}; ${environmentSentence(environmentTriggers(m.bounds.alphabet))}`,
+      );
       break;
     case 'time':
       out.push(`    ${TRAP_REFUSAL_SENTENCE.time}; ${DWELL_SENTENCE}`);

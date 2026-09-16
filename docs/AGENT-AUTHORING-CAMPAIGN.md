@@ -124,7 +124,7 @@ one in this corpus was read and corrected by hand.
 | L3 | Referential: unresolved type, connection end, import, transition end, specialization and redefinition; forward references in a package; a type, a specialization or a connector end reached through an import, through inheritance, through a transitive supertype, through an implicit library base or through a library import written in text; an alias used as a type; a qualified path whose last segment collides with a library name; a name declared in both a supertype and an enclosing namespace, written both ways round; a multi-endpoint dependency naming the endpoint that is missing; plus a pinned behaviour | 24 |
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
-| L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
+| L6 | **Sufficiency invariants over the whole corpus** (see below; thirteen `it(` and one `it.each`, so the figure is the run's own row for `invariants.test.ts`, held by `docs-counts.test.ts` against `TEST-SUMMARY.md`) | 32 assertions (run-measured) |
 | L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 129 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
@@ -4388,7 +4388,9 @@ gate's two missing producers, and the guard fixture that separates the shipped
 *"consulted and decided nothing"* reading from the narrower *"no declared
 value"* one — the corpus has one guarded model and both readings agree on it, so
 until that fixture lands the only thing telling them apart is a synthetic row in
-the suite.
+the suite. *[False since `eb36d71` and `63d228b`, which added the gate's two
+producers, and `deadlock-guarded.sysml` / `trapguard-typed.sysml`, which are the
+fixtures; bracketed at commit 24, 2026-09-16, not rewritten.]*
 
 **The unsat core the verify path had in hand and threw away, and the two things
 that had to be true before it could be shown.** Every `proved` row is an `unsat`
@@ -4504,7 +4506,9 @@ that saw a graph whole. **Nothing reads any of it in this pass** — no diagnost
 no verdict, no report row — and the gate was that every row `reach` publishes on
 the six shipped examples is deep-equal to what it published before, pinned in the
 suite as a pasted table rather than asserted in prose. Five models arrive with it:
-`latch.sysml`, the one file in the tree that names a trigger, and the `trapguard`
+`latch.sysml`, the one file in the tree that names a trigger *[true of its pass;
+false since `b97f391`, whose `cover-reachable.sysml` names `abort` —
+`successors.test.ts` pins both; bracketed at commit 24]*, and the `trapguard`
 trio plus `trapguard-typed.sysml`, which are what separate *a guard the walk could
 not decide* from *a guard the model decided against*. The fourth of those is the
 only model in the repository on which the shipped reading and the narrower *"no
@@ -4640,7 +4644,10 @@ symbol applied to either, because gating the row on the walk-wise family would
 withhold it under a bound the catalogue says does not withhold it.
 
 **`reach` reports the configurations no run leaves, and it is the first claim
-gated on the increasing side.** A set of reachable configurations nothing
+gated on the increasing side.** *[Landing order, for the record: this is
+`faf61e1` and the modality paragraph below is `0872666`, which landed after it —
+so "first" here is right and the modality's "first reader" is bracketed there;
+commit 24, 2026-09-16.]* A set of reachable configurations nothing
 leaves — a bottom strongly-connected component of the retained relation — is
 `verification/unrecoverable-mode`, a warning at exit 0, naming the states of
 every configuration in the set (the union of their active stacks, never the leaf
@@ -4714,7 +4721,9 @@ violation; `potential`, some run avoids it, named as a cycle that never enters
 the violating configuration or as a configuration of the full retained relation
 with no way out; or `not decided`, with the reason — and the text report prints
 it as one `every run?` line between the code and the product-states line. It is
-the first reader of the retained relation and of the exactness gate, and it
+the first reader of the retained relation and of the exactness gate *[the second:
+`0872666` landed after the trap commit `faf61e1`, which read the gate first;
+bracketed at commit 24, 2026-09-16]*, and it
 reads that gate for BOTH values: `guaranteed` quantifies over the run set,
 which the cooperative environment changes (on the latch file the naive answer
 is `guaranteed`, about a machine that sits in `nominal` forever when nobody
@@ -5033,6 +5042,99 @@ labels the count `configuration(s)` on this row and the fail hint sends the
 reader to the set, not to a trace. Every non-recovery row on the behaviour
 fixtures is pinned byte-for-byte against a golden captured on the tree before
 the arm existed. Counts re-measured from this gate.
+
+**The closing pass: every number re-measured, one sentence turned into a
+function, and the plan's own entry corrected against the tree.** The
+model-checking plan (`docs/06`) closed with a commit that re-measures what the
+lane published, and the first thing it measured was its own *Files:* line:
+the inherited-clause chip it names for `src/ui/panels/Properties.tsx` and
+`src/diagram/contracts-table.ts` had shipped with the disclosure commit
+(`c6b46ab`, `ContractsTable.tsx`, `data-testid="contract-inherited"`), and the
+trap chip has no host — there is no `reach` view, and no behaviour surface in
+`src/ui` at all — so the closing commit touched neither file and the e2e suite
+ran for the figure it publishes, not for the touch rule. The verdict table the
+entry points at is the SMT lane's (`proved` / `holds-at-values` / …); the
+behaviour lane's six-word table already stood in the guide from the `cover`
+commit, and it gained the `every run?` line rather than a second table.
+`FEATURE-PARITY.md` and `UI-ROADMAP.md` carry no verification vocabulary and
+every figure in them was already guarded, so the plan named two files with
+nothing to change. **One defect, fixed by deleting a constant.**
+`ENVIRONMENT_SENTENCE` was §2.4(a) verbatim, and the plan's text names `abort`
+because its example does; three lanes pinned the constant that way, and
+`reach` on `latch.sysml` — a machine that names `unlatch` and nothing else —
+printed *a witness that consumes `abort`*, with `semantics.mc.traps.test.ts`
+asserting the wrong line. It is `environmentSentence(triggers)` now: the same
+sentence with each consumed trigger backticked in the order given, throwing on
+`[]` because a sentence about an environment the run never called on is the
+defect the cover row had once already; the cover row passes the triggers its
+witness consumed in trace order, `reach`'s trap block passes the alphabet
+minus its dwell labels (`environmentTriggers`, a string predicate beside
+`afterDuration` because `MachineReach` publishes the alphabet and not
+`timedLabels`, and a new field reddens two key-for-key pins), and the
+`recovery` refusal — the third consumer, which the brief thought printed no
+§2.4(a) — passes the gate's own `alphabet ∖ timedLabels`. The constant is
+gone from both barrels, four test imports and one campaign assertion, which
+now holds the WHOLE sentence through the CLI where it held a prefix that was
+green on any tail; the latch line is the named negative test, and
+`semantics.mc.successors.test.ts` reads every string-valued export of the API
+against the union of every corpus machine's alphabet so the next standing
+sentence cannot be written with a fixture's trigger inside it. **Every figure a
+reader meets in the scorecard, in TEST-REPORT §1, §5 and §7,
+in the generated summary and in this ledger's Levels table is a claim a test
+reads off the tree or holds to the others** — not every figure in every
+document: TEST-REPORT §3 and §4 are the 2026-07-03 run's per-area tables, kept
+as history under a dated bracket at each section's head, and a test holds the
+rule the other way round (a suite figure of §1's shape that is not §1's must sit
+under such a bracket). `docs-counts.test.ts` gained the conformance-suite file
+count, TEST-REPORT §1's per-directory file counts (its table was dated three
+weeks before its own §7 and contradicted it — 1242 tests against 3276 — with no
+campaign row at all), the E2E spec-file count in §1 and §5, the three remaining
+statements of the view count (six are now guarded), the per-level fixture counts
+of the Levels table above and their stated sum, the semantic profile's arity in
+prose (the guide's *"six things"* and the scorecard's *"six-field"*, read
+against `SEMANTIC_PROFILE.length`), and W3's witness kind in the scorecard's
+modality paragraph (`maximality`, read off the register — the paragraph first
+said *existential* in the sentence that then stated the maximality rule); and a
+cross-document test holds CONFORMANCE's scorecard, TEST-REPORT §1 and §7 and
+the generated `TEST-SUMMARY.md` — published by `npm run build` and three months
+stale at 374 files / 1061 tests — to each other, with §1's sub-rows summed to
+its headline, the file count to the tree, and the L6 figure held to the run's
+own row for `invariants.test.ts` (thirteen `it(` and one `it.each`: not a
+figure a regex can read). What that test cannot do is anchor a TEST count to
+anything derivable: the four documents can agree on a total no run produced,
+and what keeps the total honest is that the summary is regenerated from the
+gate run's JSON, by hand, on every commit that moves it.
+`scripts/gen-test-report.ts` takes `--from <vitest.json>` so the summary is
+generated from the gate's single run rather than from a second one; its
+*Files* line now counts files — it printed vitest's `numTotalTestSuites`, which
+is describe blocks (811 against 152 files), for as long as it existed — and its
+pure half, `summarize`, throws on a red or skipped run rather than rendering
+it, because the summary is an input to the suite that generates it and the
+published file must be a green run's. The suite asserts that refusal by calling
+`summarize` on a synthetic red run — a review removed the `process.exit`
+behind an intact `if` and nothing reddened while the refusal was read out of
+the script's source — and holds the summary's own failed and skipped fields to
+zero. The cover rider's trace-order, once-each list of consumed triggers has
+its witnesses: two factory machines, one whose trace fires `go` then `abort`
+and one that fires `go` twice, since no corpus machine reaches that branch. The guide's hand-pasted transcripts are pinned: the `cover` row is held
+byte-for-byte to `behaviourReport` on the probe (its witness really does
+consume `abort`, so the bytes did not move); the `--max-configs 2` line, the
+`spec-inherit` block (an inline model, not a corpus file), the fault-tree and
+evidence-attach lines are held to the analysis functions and to the L7 cases
+that assert them through the CLI; and the two solver figures this ledger
+quotes — 4 core axioms of a 4-axiom footprint on `uav-isr`, 24 → 9 on the
+power budget — are pinned in the L7 `--why` case that runs the solver, and
+held there from `user-guide.test.ts`, which loads none. `claims.test.ts`
+re-asserts every sentence the lane ships through the guard commit 4 reserved:
+the exported standing sentences as planted documents, and the module-private
+`not decided` / `guaranteed` / `--cover-required` sentences through the rows
+that produce them. **Four sentences in this ledger were false at HEAD and are
+bracketed, not rewritten**, each with the hash that made it so; the scorecard
+figures in `docs/CONFORMANCE.md` §8.5 gained the modality's three claim words
+and what each never claims; the README's `contracts` row and the scorecard say
+plainly that the app shows an inherited clause as a count and a source while
+the terminal lists its body. D5 is `aa3dc21`, above. Counts re-measured from
+this gate.
 
 ## 5. Phase status
 

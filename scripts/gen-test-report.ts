@@ -8,18 +8,20 @@
  * ground truth (previously `npm run report` pointed at a script that did not
  * exist, so the counts silently drifted).
  *
- * Run:  npm run report
+ * Run:  npm run report                       — spawns a full `vitest run`
+ *       npm run report -- --from <json>       — reads the JSON of a run that already happened
  */
 
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { isMainModule } from './lib/is-main';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'docs', 'TEST-SUMMARY.md');
 
-interface VitestJson {
+export interface VitestJson {
   numTotalTests: number;
   numPassedTests: number;
   numFailedTests: number;
@@ -42,8 +44,46 @@ function run(): VitestJson {
   return JSON.parse(raw.slice(start)) as VitestJson;
 }
 
-function main(): void {
-  const r = run();
+/**
+ * The JSON of a run that already happened, when the gate ran it.
+ *
+ * `--from <file>` reads the `--reporter=json --outputFile=<file>` output of a
+ * `vitest run` instead of spawning a second one. The gate runs the suite ONCE
+ * — two full runs in one process-loaded machine flake the interop and
+ * resolution suites on their time budgets, and `execFileSync` above throws on
+ * any red test and prints nothing a person can read — so the closing commit
+ * points this script at the gate's own JSON, and the summary is the summary of
+ * the run the other documents quote.
+ */
+function fromFile(file: string): VitestJson {
+  const raw = readFileSync(path.resolve(file), 'utf8');
+  const start = raw.indexOf('{');
+  if (start < 0) throw new Error(`${file} holds no JSON object`);
+  return JSON.parse(raw.slice(start)) as VitestJson;
+}
+
+/**
+ * The summary's text, or a throw — never a summary of a red run.
+ *
+ * `docs/TEST-SUMMARY.md` is read by the suite that produces it
+ * (`test/unit/docs-counts.test.ts` holds its totals to the scorecard's and
+ * its pass/fail split to zero), so a summary recording a failure would make
+ * the next run red on that line alone, and that run's summary would record
+ * the same failure — a fixed point no run can leave. The published file is
+ * therefore a green run's by construction: a red or skipped run gets no text,
+ * the file stays as it was, and the gate is where the red is reported.
+ *
+ * Exported — and pure — so the suite can assert the refusal by CALLING it on
+ * a red run, rather than by reading this comment out of the source: the
+ * closing commit's review defanged `process.exit(1)` with the guarding `if`
+ * and its message intact and nothing reddened.
+ */
+export function summarize(r: VitestJson): string {
+  if (r.numFailedTests > 0 || r.numPendingTests > 0) {
+    throw new Error(
+      `not written: ${r.numFailedTests} failed, ${r.numPendingTests} skipped — docs/TEST-SUMMARY.md records green runs only`,
+    );
+  }
   const rows = r.testResults
     .map((f) => {
       const rel = path.relative(root, f.name);
@@ -63,7 +103,11 @@ function main(): void {
     "> `vitest run`. This is the machine-checkable companion to the hand-authored",
     '> `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.',
     '',
-    `- **Files:** ${r.numTotalTestSuites}`,
+    // `testResults` is one entry per FILE; `numTotalTestSuites` counts describe
+    // blocks (811 at the closing commit, against 152 files) and was the figure
+    // this line printed for months — `docs/TEST-SUMMARY.md` said "374 files"
+    // about a 97-file suite, and nothing read it.
+    `- **Files:** ${r.testResults.length}`,
     `- **Tests:** ${r.numTotalTests} total — ` +
       `${r.numPassedTests} passed, ${r.numFailedTests} failed, ${r.numPendingTests} skipped`,
     '',
@@ -72,9 +116,23 @@ function main(): void {
     ...rows.map((x) => `| ${x.rel} | ${x.passed} | ${x.failed} | ${x.skipped} |`),
     '',
   ];
-  writeFileSync(out, lines.join('\n'));
-   
+  return lines.join('\n');
+}
+
+function main(): void {
+  const at = process.argv.indexOf('--from');
+  const r = at >= 0 ? fromFile(process.argv[at + 1] ?? '') : run();
+  let text: string;
+  try {
+    text = summarize(r);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+  writeFileSync(out, text);
   console.log(`Wrote ${path.relative(root, out)} — ${r.numTotalTests} tests, ${r.numFailedTests} failed.`);
 }
 
-main();
+// Imported by `test/unit/docs-counts.test.ts` for `summarize`; the guard keeps
+// the import from spawning a full `vitest run` inside the run that imports it.
+if (isMainModule(import.meta.url)) main();

@@ -25,6 +25,26 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+// The shipped sentences of the model-checking lane, re-asserted against the
+// guard below in the closing commit: every export the lane composes a verdict
+// from, and the API that produces the rows carrying the module-private ones.
+import {
+  CORE_SUFFICIENCY_NOTE,
+  DEADLOCK_WITHHELD_SENTENCE,
+  DWELL_SENTENCE,
+  SEMANTICS_ADMITS,
+  SIMULATOR_SENTENCE,
+  TRAP_ENTRY_WALK_ADMITS,
+  TRAP_REFUSAL_SENTENCE,
+  WALK_ADMITS,
+  behaviourReport,
+  coverRequiredRefusal,
+  environmentSentence,
+} from '../../src/api/index';
+// `CLAUSE_SENTENCE` is not re-exported through the API barrel: it is the gate's
+// own vocabulary, read from the module that owns it.
+import { CLAUSE_SENTENCE } from '../../src/semantics/mc/publishable';
+import { loadModelText } from '../../src/text/load';
 
 const ROOT = process.cwd();
 
@@ -755,6 +775,74 @@ describe('the guard itself, verified against planted sentences', () => {
       ).toBe(scan(narrow, form.allow, form.negativeIsTheClaim).length);
     }
   });
+});
+
+/**
+ * Every sentence the model-checking lane SHIPS, read through the guard.
+ *
+ * The forms above were reserved before the lane could print anything (commit 4
+ * of the model-checking plan, §2.6); this is the closing commit's half of that
+ * bargain — the shipped strings re-asserted against the shipped guard. Every
+ * exported standing sentence is scanned as a planted document; the two the
+ * producer keeps module-private (`NOT_DECIDED`, `COVER_REQUIRED_REFUSAL`) are
+ * reached through a produced row rather than exported for a test. The claim
+ * words themselves — `guaranteed`, `covered`, `recoverable` — appear in these
+ * sentences, and the guard is meant to let them: it reserves the SENTENCE FORM
+ * a reader would quote as a claim about the design, not the word.
+ */
+describe('the sentences the model-checking lane ships pass the guard', () => {
+  const hitsFor = (text: string): Hit[] =>
+    RESERVED_FORMS.flatMap((f) => scanText(text, f.pattern, f.allow, f.negativeIsTheClaim));
+
+  it('every exported standing sentence: 0 hits', () => {
+    const shipped: Array<[string, string]> = [
+      ...Object.entries(CLAUSE_SENTENCE).map(([k, v]): [string, string] => [`CLAUSE_SENTENCE.${k}`, v]),
+      ['DWELL_SENTENCE', DWELL_SENTENCE],
+      ['SIMULATOR_SENTENCE', SIMULATOR_SENTENCE],
+      ["environmentSentence(['abort'])", environmentSentence(['abort'])],
+      ...Object.entries(TRAP_REFUSAL_SENTENCE).map(([k, v]): [string, string] => [`TRAP_REFUSAL_SENTENCE.${k}`, v]),
+      ['DEADLOCK_WITHHELD_SENTENCE', DEADLOCK_WITHHELD_SENTENCE],
+      ['SEMANTICS_ADMITS', SEMANTICS_ADMITS],
+      ['WALK_ADMITS', WALK_ADMITS],
+      ['TRAP_ENTRY_WALK_ADMITS', TRAP_ENTRY_WALK_ADMITS],
+      ['CORE_SUFFICIENCY_NOTE', CORE_SUFFICIENCY_NOTE],
+      ['coverRequiredRefusal', coverRequiredRefusal({ atomKind: 'state', scope: 'globally', coverUnreached: 1, coverUnreachedBehindUndefinedGuard: 1 })],
+    ];
+    expect(shipped.length).toBeGreaterThan(10);
+    for (const [name, text] of shipped) {
+      expect(text.length, `${name} is empty`).toBeGreaterThan(0);
+      expect(hitsFor(text), `${name} trips a reserved form:${show(hitsFor(text))}`).toEqual([]);
+    }
+  });
+
+  it('the three modality sentences and the recovery refusal, as rows produce them: 0 hits', async () => {
+    // `NOT_DECIDED` and `GUARANTEED_SENTENCE` are module-private in
+    // `patterns.ts`; the rows that print them are the assertion surface.
+    const rowOn = async (file: string, machine: string, pattern: string) => {
+      const loaded = await loadModelText(readFileSync(join(ROOT, file), 'utf8'), { fileName: file });
+      const el = loaded.model!.all().find((e) => loaded.model!.qualifiedName(e.id) === machine);
+      expect(el, `${file} no longer declares ${machine}`).toBeDefined();
+      return behaviourReport(loaded.model!, { machineId: el!.id, pattern }).properties[0];
+    };
+    const potential = await rowOn('examples/uav-isr.sysml', 'UAVSurveillanceSystem::FlightModes', 'pattern=absence, scope=globally, p=state failsafe');
+    expect(potential.modality?.value).toBe('potential');
+    const notDecided = await rowOn('test/fixtures/verification/models/latch.sysml', 'Latch::Latch::Modes', 'pattern=absence, scope=globally, p=state locked');
+    expect(notDecided.modality?.value).toBe('not-decided');
+    const guaranteed = await rowOn('test/fixtures/verification/models/modality-line.sysml', 'MissionDag::Mission::Modes', 'pattern=absence, scope=globally, p=state landed');
+    expect(guaranteed.modality?.value).toBe('guaranteed');
+    const refusedRecovery = await rowOn('test/fixtures/verification/models/latch.sysml', 'Latch::Latch::Modes', 'pattern=recovery, scope=globally, p=state nominal');
+    expect(refusedRecovery.claim).toBe('inconclusive');
+    for (const [name, text] of [
+      ['potential', potential.modality!.sentence],
+      ['not decided', notDecided.modality!.sentence],
+      ['guaranteed', guaranteed.modality!.sentence],
+      ['recovery refused on the environment clause', refusedRecovery.detail],
+      ['the potential row’s detail', potential.detail],
+    ] as Array<[string, string]>) {
+      expect(text.length, `${name} is empty`).toBeGreaterThan(0);
+      expect(hitsFor(text), `${name} trips a reserved form:${show(hitsFor(text))}`).toEqual([]);
+    }
+  }, 120_000);
 });
 
 /**

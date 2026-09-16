@@ -22,7 +22,15 @@ import { resolve } from 'node:path';
 import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 import { checkText } from '../../src/text/check';
 import { loadModelText } from '@text/load';
-import { isUserElement, promptsFor, requirementSatisfaction } from '@api/index';
+import {
+  behaviourReport,
+  environmentSentence,
+  isUserElement,
+  promptsFor,
+  reachReport,
+  requirementSatisfaction,
+} from '@api/index';
+import { contractsOf } from '@semantics/index';
 import { buildRequirementsTable } from '@diagram/index';
 import {
   STATEMENT_KINDS,
@@ -749,8 +757,135 @@ describe('the fault-tree machine transcript', () => {
   });
 });
 
+/**
+ * The transcripts the closing commit found hand-pasted and unpinned, each held
+ * to the run the way the sections above are: FIGURES against the analysis
+ * function, WORDING against the L7 case that asserts it through the CLI.
+ *
+ * Four blocks. The `cover` transcript is the one a reader would quote about
+ * the environment sentence, and it is the sentence this commit turned from a
+ * constant into a function of the triggers consumed — so the whole detail line
+ * is pinned against `behaviourReport` over the probe file, bytes included, and
+ * a change to the sentence reddens here until the guide is re-pasted. The
+ * `--max-configs 2` block is a run over the shipped example under a bound the
+ * guide chose, so its figures are read off the same call. The `contracts`
+ * transcript over `spec-inherit.sysml` is not a corpus file, so the model is
+ * built inline exactly as the campaign case builds it. The `fault-tree` and
+ * `evidence-attach` transcripts are solver- and file-writing runs, so they are
+ * held against the campaign like the `--why` block below rather than re-run in
+ * a unit test.
+ */
+describe('the transcripts the closing commit pinned', () => {
+  const CAMPAIGN = read('test/campaign/cli.sysprose.test.ts');
+
+  it('the cover transcript is the row `behaviourReport` composes, sentence for sentence', async () => {
+    const file = 'test/fixtures/verification/models/cover-reachable.sysml';
+    const loaded = await loadModelText(read(file), { fileName: file });
+    const machine = loaded.model!.all().find((e) => loaded.model!.qualifiedName(e.id) === 'CoverProbe::Reachable::Modes');
+    expect(machine, `${file} no longer declares CoverProbe::Reachable::Modes`).toBeDefined();
+    const row = behaviourReport(loaded.model!, {
+      machineId: machine!.id,
+      pattern: 'pattern=cover, scope=globally, p=state failsafe',
+    }).properties[0];
+    expect(row.claim).toBe('covered');
+    // The witness consumed `abort`, and the sentence names it — this probe
+    // really does consume `abort`, which is why the guide's bytes did not move
+    // when the constant became a function.
+    expect(row.detail).toContain(environmentSentence(['abort']));
+    expect(GUIDE, 'the cover transcript no longer quotes the detail line the row composes').toContain(`    ${row.detail}\n`);
+    // The `--cover-required` line under the sealed twin, read out of the CLI
+    // source as `cliLiteral` reads the requirements notes.
+    const flagLine = /'( {2}--cover-required: every not-covered row above[^']*)'/.exec(read('scripts/sysprose.ts'));
+    expect(flagLine, 'scripts/sysprose.ts no longer prints the --cover-required line').not.toBeNull();
+    expect(GUIDE).toContain(`${flagLine![1]}\n`);
+    expect(CAMPAIGN).toContain('--cover-required: every not-covered row above is also an error below and spends the 1');
+  }, 60_000);
+
+  it('the `--max-configs 2` block shows the walk the bound produces on the shipped example', async () => {
+    const loaded = await loadModelText(read('examples/uav-isr.sysml'), { fileName: 'examples/uav-isr.sysml' });
+    const m = reachReport(loaded.model!, { maxConfigs: 2 }).machines[0];
+    expect(m.suppressed, 'the bound no longer suppresses the lists').toBe(true);
+    const block = /--max-configs 2\n…\n([\s\S]*?)\n```/.exec(GUIDE);
+    expect(block, 'the guide no longer shows the --max-configs 2 transcript').not.toBeNull();
+    // The guide elides the bounds record to `{maxConfigs 2, …}` on purpose —
+    // the full record is printed three transcripts up — so the line is pinned
+    // in its two un-elided halves: the head naming the bound the reader set,
+    // and the whole sentence after the dash, which is the claim.
+    // Split after the record's closing brace, not on the first dash: the store
+    // clause inside the record carries a dash of its own.
+    const close = m.qualification.indexOf('} — ');
+    expect(close, `the qualification no longer carries a bounds record: ${m.qualification}`).toBeGreaterThan(0);
+    expect(m.qualification.startsWith('partial under {maxConfigs 2,'), `the qualification no longer opens on the bound: ${m.qualification}`).toBe(true);
+    expect(`${block![1]}\n`).toContain(`    partial under {maxConfigs 2, …} — ${m.qualification.slice(close + 4)}\n`);
+  }, 60_000);
+
+  it('the spec-inherit transcript is the report the inline model produces', async () => {
+    // Not a corpus file: the model is the one the campaign case writes to a
+    // temporary directory, built here from the same text.
+    const text = `package SpecInherit {
+    part def Vehicle {
+        attribute mass : ISQ::MassValue;
+        attribute topSpeed : ISQ::SpeedValue;
+    }
+    requirement def MassLimit {
+        subject v : Vehicle;
+        require constraint { v.mass <= 1500 [kg] }
+    }
+    requirement def StrictMassLimit :> MassLimit {
+        require constraint { v.topSpeed <= 60 [m/s] }
+    }
+}
+`;
+    expect(CAMPAIGN, 'the campaign no longer builds the spec-inherit model from this text').toContain(text.trimEnd());
+    const loaded = await loadModelText(text, { fileName: 'spec-inherit.sysml' });
+    const child = contractsOf(loaded.model!).find((c) => c.qualifiedName === 'SpecInherit::StrictMassLimit');
+    expect(child, 'the inline model no longer declares StrictMassLimit').toBeDefined();
+    expect(child!.clausesInheritedFrom.map((d) => d.qualifiedName)).toEqual(['SpecInherit::MassLimit']);
+    expect(child!.guarantees, 'the child no longer writes exactly one clause of its own').toHaveLength(1);
+    expect(GUIDE).toContain(`  ${child!.qualifiedName}  [${child!.eClass}]\n`);
+    const lines = [
+      '2 guarantee(s): 1 declared, 1 inherited from SpecInherit::MassLimit',
+      'require v.mass <= 1500 [kg]  [QF_LRA — linear real arithmetic] (inherited)',
+      'variables declared v.topSpeed (parameter)',
+    ];
+    for (const line of lines) {
+      expect(GUIDE, `the guide no longer shows: ${line}`).toContain(line);
+      expect(CAMPAIGN, `nothing asserts the command prints: ${line} — the transcript is unbacked`).toContain(line);
+    }
+  }, 60_000);
+
+  it('the fault-tree and evidence-attach transcripts quote lines the campaign asserts', () => {
+    const lines = [
+      'a basic event is "sub-contract not honoured"',
+      '{BatterySupply}',
+      'order bound 2, from the default',
+      '2 record(s) attached to 2 element(s)',
+    ];
+    for (const line of lines) {
+      expect(GUIDE, `the guide no longer shows: ${line}`).toContain(line);
+      expect(CAMPAIGN, `nothing asserts the command prints: ${line} — the transcript is unbacked`).toContain(line);
+    }
+  });
+});
+
 describe('the `--why` transcript', () => {
   const CAMPAIGN = read('test/campaign/cli.sysprose.test.ts');
+
+  it('the two census figures the campaign ledger quotes are the ones the L7 case pins', () => {
+    // "4 core axioms of a 4-axiom footprint" on `uav-isr` and "24 footprint
+    // axioms to 9 core axioms" on the power budget are figures a solver
+    // produced, quoted in `docs/AGENT-AUTHORING-CAMPAIGN.md`. This file loads
+    // no solver, so the figures are held to the case that does: the ledger's
+    // sentence and the campaign's assertion must name the same numbers.
+    const ledger = read('docs/AGENT-AUTHORING-CAMPAIGN.md');
+    const uav = /\((\d+) core axioms of a (\d+)-axiom footprint/.exec(ledger);
+    const budget = /(\d+) footprint axioms to (\d+) core axioms across\s+the six obligations/.exec(ledger);
+    expect(uav, 'the ledger no longer quotes the uav-isr census').not.toBeNull();
+    expect(budget, 'the ledger no longer quotes the power-budget census').not.toBeNull();
+    expect(CAMPAIGN).toContain(`footprintAxioms: ${uav![2]},\n      coreAxioms: ${uav![1]},`);
+    expect(CAMPAIGN).toContain(`expect(footprint, 'the footprint census moved').toBe(${budget![1]});`);
+    expect(CAMPAIGN).toContain(`expect(core, 'the core census moved — the narrowing this lane is gated on').toBe(${budget![2]});`);
+  });
 
   it('is the output the command really produces', () => {
     const lines = [

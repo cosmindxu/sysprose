@@ -55,7 +55,7 @@ import {
 } from '../../src/semantics/mc/patterns';
 import {
   DWELL_SENTENCE,
-  ENVIRONMENT_SENTENCE,
+  environmentSentence,
   SIMULATOR_SENTENCE,
 } from '../../src/semantics/mc/publishable';
 import {
@@ -1427,7 +1427,7 @@ describe('`cover` — a positive reachability intent gets a claim word of its ow
     // event — NOT a trigger an environment sent (plan §2.3: a run of no
     // environment). This machine names no environment trigger at all, so the
     // environment sentence would be a sentence about nothing.
-    expect(row.detail, 'the environment sentence on a machine naming no environment trigger').not.toContain(ENVIRONMENT_SENTENCE);
+    expect(row.detail, 'the environment sentence on a machine naming no environment trigger').not.toContain('the environment offered every trigger');
     // Never `inconclusive`: that is the A6–A8 / W3 / W4 shape, not W1's.
     expect(row.claim).not.toBe('inconclusive');
   });
@@ -1452,15 +1452,52 @@ describe('`cover` — a positive reachability intent gets a claim word of its ow
     expect(row.detail).toContain(SEMANTICS_ADMITS);
     expect(row.detail, 'the walk-admits wording on a witness that crossed no dwell').not.toContain(WALK_ADMITS);
     // The witness consumed a trigger, so "reachable" is never said bare: the
-    // environment sentence prints beside it.
-    expect(row.detail).toContain(ENVIRONMENT_SENTENCE);
+    // environment sentence prints beside it, naming the trigger it consumed.
+    expect(row.detail).toContain(environmentSentence(['abort']));
     expect(row.detail).not.toContain(DWELL_SENTENCE);
     // And the sink, entered only across the dwell, is row 2.
     const viaDwell = checkProperty(m, sm.id, prop({ pattern: 'cover', scope: 'globally', p: 'state sink' }));
     expect(viaDwell.claim).toBe('covered');
     expect(viaDwell.detail).toContain(WALK_ADMITS);
-    expect(viaDwell.detail).toContain(ENVIRONMENT_SENTENCE);
+    expect(viaDwell.detail).toContain(environmentSentence(['abort']));
     expect(viaDwell.detail).toContain(DWELL_SENTENCE);
+  });
+
+  it('names the triggers a witness consumed in trace order, each once, and never a dwell', () => {
+    // The rider builds its list leaf-first and reverses it, deduplicating —
+    // a branch no corpus machine reached, because none yields a cover witness
+    // that consumes two triggers or one twice. Two factory machines do: the
+    // sentence must read `go` then `abort` (the order the trace fired them,
+    // not the order the backward walk met them), and a trigger consumed at
+    // two steps is named once, because the sentence is about the environment
+    // that offered it, not about the steps.
+    const two = new Model();
+    const tf = new ModelFactory(two);
+    const tsm = tf.stateDef('TwoTriggers');
+    const tIdle = tf.state('idle', tsm.id);
+    const tMid = tf.state('mid', tsm.id);
+    const tDone = tf.state('done', tsm.id);
+    tf.transition(tIdle.id, tMid.id, { ownerId: tsm.id, trigger: 'go' });
+    tf.transition(tMid.id, tDone.id, { ownerId: tsm.id, trigger: 'abort' });
+    const ordered = checkProperty(two, tsm.id, prop({ pattern: 'cover', scope: 'globally', p: 'state done' }));
+    expect(ordered.claim).toBe('covered');
+    expect(ordered.witness.map((w) => w.event)).toEqual(['-', 'go', 'abort']);
+    expect(ordered.detail).toContain(environmentSentence(['go', 'abort']));
+    expect(ordered.detail, 'the backward walk’s order, printed').not.toContain(environmentSentence(['abort', 'go']));
+
+    const twice = new Model();
+    const wf = new ModelFactory(twice);
+    const wsm = wf.stateDef('Twice');
+    const wIdle = wf.state('idle', wsm.id);
+    const wMid = wf.state('mid', wsm.id);
+    const wDone = wf.state('done', wsm.id);
+    wf.transition(wIdle.id, wMid.id, { ownerId: wsm.id, trigger: 'go' });
+    wf.transition(wMid.id, wDone.id, { ownerId: wsm.id, trigger: 'go' });
+    const once = checkProperty(twice, wsm.id, prop({ pattern: 'cover', scope: 'globally', p: 'state done' }));
+    expect(once.claim).toBe('covered');
+    expect(once.witness.map((w) => w.event)).toEqual(['-', 'go', 'go']);
+    expect(once.detail).toContain(environmentSentence(['go']));
+    expect(once.detail, 'a trigger consumed twice, named twice').not.toContain(environmentSentence(['go', 'go']));
   });
 
   it('prints the simulator sentence beside every `covered` on a machine with a choice point, and nowhere else', async () => {

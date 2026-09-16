@@ -121,7 +121,7 @@ with the function that control runs.
 | What breaks if I change this element? | Properties → *Used by* (`prop-used-by` → `whereUsed`), *Impact graph* (`prop-impact` → `neighboursOf`) † | `npm run sysprose -- where-used model.sysml --element X` | `impactClosure` — `src/api/analytics.ts` |
 | What did I declare and never use? | — no view yet | `npm run sysprose -- orphans model.sysml` | `orphanReport` — `src/api/analytics.ts` |
 | What guidance applies to this element? | — no view yet | `npm run sysprose -- prompts model.sysml --element X` | `promptsFor` — `src/api/analytics.ts` |
-| What does each requirement assume and guarantee, and on which subject? | **Contracts** view (`tb-view-contracts` → `buildContractsTable`) † | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
+| What does each requirement assume and guarantee, and on which subject? | **Contracts** view (`tb-view-contracts` → `buildContractsTable`) † — an inherited clause is shown as a count and its source; the terminal lists its body marked `(inherited)` | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
 | What must be shown, over which axioms, and what do the gates refuse? | — no view yet | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
 | How do I write a clause this tool will accept, over which names? | — no view yet | `npm run sysprose -- property-draft model.sysml --element X` | `propertyDraft` — `src/api/property.ts` |
 | Would this clause pass the gates, and what does it actually say? | — no view yet | `npm run sysprose -- property-check model.sysml --element X --clause 'u.mass <= 25.0 [kg]'` | `propertyCheck` — `src/api/property.ts` |

@@ -455,16 +455,39 @@ export function isCompletion(tr: ElementRecord): boolean {
   return t === undefined || t === null || t === '';
 }
 
+/**
+ * The one spelling of a dwell that reaches a label: `after(n)`, written as the
+ * trigger. Shared by {@link afterDuration} and {@link isDwellLabel} so the two
+ * readers of a dwell can never disagree on what one looks like.
+ */
+const AFTER_LABEL = /^after\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*\)$/;
+
 /** The dwell time of an `after(n)` timed transition, or `undefined`. */
 export function afterDuration(tr: ElementRecord): number | undefined {
   const a = tr.attrs.after;
   if (typeof a === 'number') return a;
   const t = tr.attrs.trigger;
   if (typeof t === 'string') {
-    const m = /^after\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*\)$/.exec(t.trim());
+    const m = AFTER_LABEL.exec(t.trim());
     if (m) return Number(m[1]);
   }
   return undefined;
+}
+
+/**
+ * Is this alphabet label a dwell spelled as a trigger, rather than an event an
+ * environment sends?
+ *
+ * A STRING predicate, for the one reader that holds the alphabet and not the
+ * walk: `MachineReach` carries `bounds.alphabet` but not `timedLabels`, and the
+ * text report has to say which triggers the environment sentence is about
+ * without adding a field to a payload two suites pin key-for-key. On a model the
+ * CLI can load the two readings coincide — `after(n)` is the only spelling of a
+ * dwell the notation has and it is a parse error there (correction 22) — and on
+ * a factory-built one the `after(n)` string IS the label `timedLabels` holds.
+ */
+export function isDwellLabel(label: string): boolean {
+  return AFTER_LABEL.test(label.trim());
 }
 
 /** The trigger label of a transition (empty for completion transitions). */

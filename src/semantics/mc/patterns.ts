@@ -137,7 +137,7 @@ import { SEMANTIC_PROFILE, type ProfileField } from './profile';
 import {
   CLAUSE_SENTENCE,
   DWELL_SENTENCE,
-  ENVIRONMENT_SENTENCE,
+  environmentSentence,
   SIMULATOR_SENTENCE,
   publishabilityOf,
   walkIsExact,
@@ -1944,10 +1944,18 @@ function modalityOf(
  * valued `mode` (`trapguard-typed.sysml`), and the narrower sentence would be
  * false on the one corpus model that tells the two readings apart.
  */
-const RECOVERY_REFUSED: Record<'environment' | 'time' | 'store', string> = {
-  environment:
+const RECOVERY_REFUSED: Record<'time' | 'store', string> & {
+  /**
+   * A function of the triggers the clause failed on, because the standing
+   * sentence names them: `alphabet ∖ timedLabels`, the gate's own subtraction,
+   * computed at the one call site that holds the walk. Never called with
+   * `[]` — the environment clause fails only when that difference is non-empty.
+   */
+  environment: (triggers: readonly string[]) => string;
+} = {
+  environment: (triggers) =>
     'inconclusive: this machine names triggers this walk offers at every configuration, so "reachable from every configuration" would be a claim about an environment this walk has no carrier for — ' +
-    ENVIRONMENT_SENTENCE,
+    environmentSentence(triggers),
   time:
     'inconclusive: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so "reachable from every configuration" would be a claim about escapes this walk invented — ' +
     DWELL_SENTENCE,
@@ -2135,7 +2143,12 @@ function recoveryRow(
   // precedent — never `null`, which only a `vacuous` row carries today.
   switch (gate.failedClause) {
     case 'environment':
-      return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.environment, gate.sentence, withheld);
+      return refused(
+        BEHAVIOUR_UNSUPPORTED_CODE,
+        RECOVERY_REFUSED.environment(bounds.alphabet.filter((t) => !walk.timedLabels.has(t))),
+        gate.sentence,
+        withheld,
+      );
     case 'time':
       return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.time, gate.sentence, withheld);
     case 'store':
@@ -2275,17 +2288,23 @@ function coverWarrant(
   const crossed: string[] = [];
   let dwell = false;
   let store = false;
-  let consumedTrigger = false;
+  // The triggers the witness consumed, leaf-first as the walk visits them and
+  // reversed below into TRACE order, so the sentence names the first
+  // consumption first and each trigger once.
+  const consumedBackward: string[] = [];
   let index = steps;
   for (let n: ProductNode | null = leaf; n !== null && n.parent !== null; n = n.parent, index--) {
-    // §2.4(a) is about an ENVIRONMENT — one that supplied `abort`. The walk
-    // also offers every `after(n)` dwell as a named event (plan §2.3: "the
-    // trace is a run of NO environment"), so a step whose input is a dwell
-    // label consumed nothing an environment sends; `timedLabels` and the
-    // alphabet range over the same relation, so the subtraction is the one
-    // `walkIsExact`'s environment clause makes. Without it a machine naming
-    // no trigger at all printed a sentence about the environment it lacks.
-    if (n.input?.kind === 'trigger' && !walk.timedLabels.has(n.input.trigger)) consumedTrigger = true;
+    // §2.4(a) is about an ENVIRONMENT — one that supplied the triggers this
+    // trace consumed, which the sentence names. The walk also offers every
+    // `after(n)` dwell as a named event (plan §2.3: "the trace is a run of NO
+    // environment"), so a step whose input is a dwell label consumed nothing
+    // an environment sends; `timedLabels` and the alphabet range over the same
+    // relation, so the subtraction is the one `walkIsExact`'s environment
+    // clause makes. Without it a machine naming no trigger at all printed a
+    // sentence about the environment it lacks.
+    if (n.input?.kind === 'trigger' && !walk.timedLabels.has(n.input.trigger)) {
+      consumedBackward.push(n.input.trigger);
+    }
     const tr = n.transition;
     if (tr === null) continue;
     const label = transitionLabel(transitionRef(model, tr));
@@ -2301,8 +2320,9 @@ function coverWarrant(
   }
   const exact = walkIsExact(walk, bounds).relationIsTheMachines;
   const bare = exact || (!dwell && !store);
+  const consumed = [...new Set(consumedBackward.reverse())];
   const riders = [
-    ...(consumedTrigger ? [ENVIRONMENT_SENTENCE] : []),
+    ...(consumed.length > 0 ? [environmentSentence(consumed)] : []),
     ...(dwell ? [DWELL_SENTENCE] : []),
     ...(walk.nondeterminism.length > 0 ? [SIMULATOR_SENTENCE] : []),
   ];

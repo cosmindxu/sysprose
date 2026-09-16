@@ -441,9 +441,10 @@ export {
   ABSENCE_CLAIMS,
   BOUND_FAMILY,
   DWELL_SENTENCE,
-  ENVIRONMENT_SENTENCE,
   SIMULATOR_SENTENCE,
   WITNESS_CLAIMS,
+  environmentSentence,
+  environmentTriggers,
   publishabilityOf,
   walkIsExact,
 } from '../semantics/mc/publishable';

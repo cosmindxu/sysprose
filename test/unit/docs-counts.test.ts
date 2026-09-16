@@ -30,6 +30,7 @@ import {
 import type { PropertyVerdict } from '@api/index';
 import type { TextRange } from '@validation/types';
 import { DIAGNOSTIC_CODES } from '@text/index';
+import { SEMANTIC_PROFILE, WITNESS_CLAIMS } from '@api/index';
 import { loadModelText } from '@text/load';
 import { RULES } from '@validation/index';
 import { contractsOf } from '@semantics/index';
@@ -38,6 +39,10 @@ import { contractsOf } from '@semantics/index';
 // document that quotes it has to be checked against the table and not against
 // the last person who remembered.
 import { COMMANDS } from '../../scripts/lib/sysprose-spec';
+// The summary generator's pure half, so its refusal to summarise a red run is
+// asserted by CALLING it (the script guards its `main()` with `isMainModule`,
+// as `gen-cli-reference.ts` does for its own drift test).
+import { summarize, type VitestJson } from '../../scripts/gen-test-report';
 
 const root = (p: string) => resolve(process.cwd(), p);
 const read = (p: string) => readFileSync(root(p), 'utf8');
@@ -173,7 +178,22 @@ const e2eSpecCount = specFiles('test/e2e').length;
  * Whitespace in the patterns is `\s+` on purpose: these figures sit inside
  * hard-wrapped Markdown, so a re-wrap can put a newline mid-phrase.
  */
-const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () => number }> = [
+/** A count written out as a word — "six-field" — read back as its number. */
+const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const figure = (text: string, words: boolean | undefined): number => {
+  if (!words) return Number(text);
+  const n = WORDS.indexOf(text.toLowerCase());
+  if (n < 0) throw new Error(`"${text}" is not a number word this file knows`);
+  return n;
+};
+
+/** The fixture directories of one campaign level, by their `L<n>-` prefix. */
+const fixturesAtLevel = (level: string): number =>
+  readdirSync(root('test/fixtures/agent-authoring'), { withFileTypes: true }).filter(
+    (e) => e.isDirectory() && e.name.startsWith(`${level}-`),
+  ).length;
+
+const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () => number; words?: boolean }> = [
   {
     file: 'docs/AGENT-AUTHORING-CAMPAIGN.md',
     what: 'fixture directories',
@@ -218,6 +238,109 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     what: 'solver block count in the D5 paragraph',
     pattern: /\*\*(\d+)\s+solver\s+blocks\*\*/,
     actual: () => [...read('test/campaign/verification.test.ts').matchAll(/beforeAll\(freshModule\)/g)].length,
+  },
+  // ── the closing commit's re-measurement ───────────────────────────────────
+  // Every figure below was hand-pasted once and guarded by nothing: the
+  // conformance-suite file count, TEST-REPORT §1's per-directory file counts
+  // (which contradicted its own §7 for one commit), the E2E spec-file count in
+  // §5, the third mention of the view count, the Levels table's per-level
+  // fixture counts, and the semantic profile's arity in prose. Each is
+  // derivable off the tree, so each is derived.
+  {
+    file: 'docs/CONFORMANCE.md',
+    what: 'conformance-suite file count in the headline table',
+    pattern: /Conformance suite \(`test\/conformance`\)\s*\|\s*\*\*\d+\s+passed\s+\/\s+0\s+failed\*\*\s+across\s+\*\*(\d+)\s+files\*\*/,
+    actual: () => specFiles('test/conformance').length,
+  },
+  {
+    file: 'docs/CONFORMANCE.md',
+    what: 'conformance-suite file count in the reproduce command',
+    pattern: /Just the conformance scorecard suite \(\d+ pass, (\d+) files\)/,
+    actual: () => specFiles('test/conformance').length,
+  },
+  ...(['unit', 'integration', 'conformance', 'server', 'interop', 'campaign'] as const).map((dir) => ({
+    file: 'docs/TEST-REPORT.md',
+    what: `the ${dir} file count in §1`,
+    pattern: new RegExp(String.raw`— ${dir}(?: \([^)]*\))? \| \d+ passed across (\d+) files? \|`),
+    actual: () => specFiles(`test/${dir}`).length,
+  })),
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'the E2E spec-file count in §5',
+    pattern: /All\s+\*\*\d+\*\*\s+scenarios\s+across\s+\*\*(\d+)\*\*\s+spec\s+files/,
+    actual: () => e2eSpecCount,
+  },
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'the E2E spec-file count in §1',
+    pattern: /\*\*E2E scenarios\*\*\s*\|\s*\*\*\d+\s+passed[^|]*across\s+\*\*(\d+)\s+spec\s+files\*\*/,
+    actual: () => e2eSpecCount,
+  },
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'the suite file count in §1',
+    pattern: /\*\*Vitest checks\*\*\s*\|\s*\*\*\d+\s+passed\s+\/\s+0\s+failed\s+\/\s+0\s+skipped\*\*\s+across\s+\*\*(\d+)\s+files\*\*/,
+    actual: () => vitestFileCount,
+  },
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'view count in the graphical-notation pillar row of §7',
+    pattern: /\*\*Graphical notation\*\* \((\d+) view kinds\)/,
+    actual: viewKindCount,
+  },
+  // The three remaining statements of the view count in the same report —
+  // the §1 scope sentence, the §2.3 heading and the unbolded §8 recap — each
+  // in a shape the bolded patterns above cannot match, so the closing review
+  // found them unguarded beside three guarded twins.
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'view count in the §1 scope sentence',
+    pattern: /graphical notation \((\d+) view kinds\)/,
+    actual: viewKindCount,
+  },
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'view count in the §2.3 heading',
+    pattern: /View switching — all (\d+) view kinds/,
+    actual: viewKindCount,
+  },
+  {
+    file: 'docs/TEST-REPORT.md',
+    what: 'view count in the §8 recap',
+    pattern: /all (\d+) view switches, the full/,
+    actual: viewKindCount,
+  },
+  ...(['L0', 'L1', 'L2', 'L3', 'L4', 'L5'] as const).map((level) => ({
+    file: 'docs/AGENT-AUTHORING-CAMPAIGN.md',
+    what: `${level} fixture count in the Levels table`,
+    pattern: new RegExp(String.raw`\|\s*${level}\s*\|[^|]*\|\s*(\d+)\s*\|`),
+    actual: () => fixturesAtLevel(level),
+  })),
+  {
+    // The derived figure beside the six operands above: every input to the
+    // sum was a claim and the sum was not, so a fixture added and its row
+    // bumped left the sentence stale with a green gate.
+    file: 'docs/AGENT-AUTHORING-CAMPAIGN.md',
+    what: 'the L0–L5 sum in the Levels paragraph',
+    pattern: /rows above sum to (\d+)/,
+    actual: () => ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'].reduce((n, level) => n + fixturesAtLevel(level), 0),
+  },
+  {
+    // Trap 83 of the model-checking plan: the arity of the profile is stated in
+    // prose in the one document readers treat as measured, and a seventh field
+    // would leave the sentence false with a green gate.
+    file: 'docs/CONFORMANCE.md',
+    what: 'the semantic profile arity in §8.5',
+    pattern: /the (\w+)-field semantic profile/,
+    actual: () => SEMANTIC_PROFILE.length,
+    words: true,
+  },
+  {
+    file: 'docs/USER-GUIDE.md',
+    what: 'the semantic profile arity in the reach walkthrough',
+    pattern: /names (\w+) things every published formalisation/,
+    actual: () => SEMANTIC_PROFILE.length,
+    words: true,
   },
   {
     file: 'docs/FEATURE-PARITY.md',
@@ -464,11 +587,188 @@ describe('counts quoted in prose', () => {
       expect(m, `${claim.file} no longer states a ${claim.what} figure matching ${claim.pattern}`)
         .not.toBeNull();
       expect(
-        Number(m![1]),
+        figure(m![1], claim.words),
         `${claim.file} (${claim.what}) says ${m![1]}; the tree says ${claim.actual()} — update the prose`,
       ).toBe(claim.actual());
     });
   }
+});
+
+/**
+ * The suite totals, quoted in four documents, are one number.
+ *
+ * Test COUNTS come from a run and cannot be derived here; what can be checked
+ * is that the four places quoting them quote the SAME run. `docs/TEST-REPORT.md`
+ * §1 carried a table dated three weeks before its own §7 — 1242 tests against
+ * 3276 — and `docs/TEST-SUMMARY.md`, which `npm run build` publishes, said 1061
+ * over 374 files; nothing reddened. So: CONFORMANCE's scorecard, TEST-REPORT §1
+ * and §7, and the generated TEST-SUMMARY are read for the suite total, the file
+ * count and the E2E total, and held equal — and §1's sub-rows are held to sum
+ * to its own headline, because a table whose rows do not add up to its total
+ * was never true of any run.
+ */
+describe('the suite totals agree across the documents that quote them', () => {
+  const num = (s: string) => Number(s.replace(/,/g, ''));
+  const conformance = () => {
+    const m =
+      /\*\*(\d[\d,]*)\s+passed\s+\/\s+0\s+failed\s+\/\s+0\s+skipped\*\*\s+across\s+\*\*(\d+)\s+files\*\*\s+\+\s+\*\*(\d[\d,]*)\s+E2E\*\*\s+across\s+\*\*(\d+)\s+spec\s+files\*\*/.exec(
+        read('docs/CONFORMANCE.md'),
+      );
+    expect(m, 'docs/CONFORMANCE.md no longer states the scorecard row').not.toBeNull();
+    const [tests, files, e2e, specs] = m!.slice(1, 5).map(num);
+    return { tests, files, e2e, specs };
+  };
+  const report1 = () => {
+    const r = read('docs/TEST-REPORT.md');
+    const v = /\*\*Vitest checks\*\*\s*\|\s*\*\*(\d[\d,]*)\s+passed\s+\/\s+0\s+failed\s+\/\s+0\s+skipped\*\*\s+across\s+\*\*(\d+)\s+files\*\*/.exec(r);
+    const e = /\*\*E2E scenarios\*\*\s*\|\s*\*\*(\d[\d,]*)\s+passed[^|]*across\s+\*\*(\d+)\s+spec\s+files\*\*/.exec(r);
+    const g = /\*\*Grand total\*\*\s*\|\s*\*\*(\d[\d,]*)\s+automated\s+checks\s+passed/.exec(r);
+    expect(v, 'TEST-REPORT §1 no longer states the Vitest row').not.toBeNull();
+    expect(e, 'TEST-REPORT §1 no longer states the E2E row').not.toBeNull();
+    expect(g, 'TEST-REPORT §1 no longer states the grand total').not.toBeNull();
+    const rows = [...r.matchAll(/— (unit|integration|conformance|server|interop|campaign)(?: \([^)]*\))? \| (\d+) passed across (\d+) files? \|/g)].map((m) => ({
+      dir: m[1],
+      tests: num(m[2]),
+      files: num(m[3]),
+    }));
+    return { tests: num(v![1]), files: num(v![2]), e2e: num(e![1]), specs: num(e![2]), total: num(g![1]), rows };
+  };
+  const summary = () => {
+    const s = read('docs/TEST-SUMMARY.md');
+    const f = /- \*\*Files:\*\* (\d+)/.exec(s);
+    const t = /- \*\*Tests:\*\* (\d+) total — (\d+) passed, (\d+) failed, (\d+) skipped/.exec(s);
+    expect(f, 'TEST-SUMMARY no longer states a file count').not.toBeNull();
+    expect(t, 'TEST-SUMMARY no longer states a test count').not.toBeNull();
+    return { files: num(f![1]), tests: num(t![1]), passed: num(t![2]), failed: num(t![3]), skipped: num(t![4]) };
+  };
+
+  it('TEST-REPORT §1 quotes the run CONFORMANCE quotes, and its sub-rows add up to it', () => {
+    const c = conformance();
+    const r = report1();
+    expect({ tests: r.tests, files: r.files, e2e: r.e2e, specs: r.specs }, 'TEST-REPORT §1 and the CONFORMANCE scorecard quote different runs').toEqual(c);
+    expect(r.total, 'the grand total is not the sum of the two rows above it').toBe(r.tests + r.e2e);
+    expect(r.rows.map((x) => x.dir), 'a test directory is missing from the §1 sub-rows').toEqual([
+      'unit',
+      'integration',
+      'conformance',
+      'server',
+      'interop',
+      'campaign',
+    ]);
+    expect(r.rows.reduce((n, x) => n + x.tests, 0), 'the §1 sub-rows do not sum to the Vitest total').toBe(r.tests);
+    expect(r.rows.reduce((n, x) => n + x.files, 0), 'the §1 sub-rows do not sum to the file count').toBe(r.files);
+    // And the file count is the tree's, which also says `src/` holds no test
+    // file today — a `*.test.ts` added under `src/` lands in the total and in
+    // no sub-row, which is exactly what the previous assertion catches.
+    expect(r.files).toBe(vitestFileCount);
+  });
+
+  it('the generated TEST-SUMMARY is the run the hand-written documents quote, and records a green one', () => {
+    const c = conformance();
+    const s = summary();
+    expect({ files: s.files, tests: s.tests }, 'docs/TEST-SUMMARY.md was generated from a different run — `npm run report -- --from <the gate’s vitest.json>`').toEqual({
+      files: c.files,
+      tests: c.tests,
+    });
+    expect(s.passed + s.failed + s.skipped, 'the Tests line does not add up').toBe(s.tests);
+    // The published summary is a GREEN run's. The generator refuses to write
+    // one of a red or skipped run (asserted below by calling it), so the only
+    // ways this file can record a failure are a hand edit or a generator
+    // whose refusal was removed — and both must redden here. (The closing
+    // commit's first draft read neither field, arguing that a red summary
+    // would be a fixed point the next run could not leave; that was true of
+    // the generator BEFORE it refused red runs and is false since, and a
+    // review defanged the refusal with its guarding `if` intact and nothing
+    // reddened.)
+    expect(s.failed, 'the published summary records a failure').toBe(0);
+    expect(s.skipped, 'the published summary records a skip').toBe(0);
+  });
+
+  it('the generator refuses a red or skipped run and renders a green one', () => {
+    // Behavioural, not textual: the refusal is exercised on a synthetic run,
+    // not read out of the script's source, so removing the throw reddens
+    // this whichever strings stay behind. The shape is vitest's own JSON
+    // reporter's, reduced to the fields the generator reads.
+    const file = (name: string, statuses: string[]) => ({
+      name: resolve(process.cwd(), name),
+      assertionResults: statuses.map((status) => ({ status })),
+    });
+    const green: VitestJson = {
+      numTotalTests: 3,
+      numPassedTests: 3,
+      numFailedTests: 0,
+      numPendingTests: 0,
+      numTotalTestSuites: 7,
+      testResults: [file('test/unit/b.test.ts', ['passed']), file('test/unit/a.test.ts', ['passed', 'passed'])],
+    };
+    expect(() => summarize({ ...green, numPassedTests: 2, numFailedTests: 1 })).toThrow(/records green runs only/);
+    expect(() => summarize({ ...green, numPassedTests: 2, numPendingTests: 1 })).toThrow(/records green runs only/);
+    const text = summarize(green);
+    // Files are counted, not describe blocks (`numTotalTestSuites` is 7 here
+    // and must not appear), the totals line is the run's, and the rows are
+    // one per file in path order.
+    expect(text).toContain('- **Files:** 2');
+    expect(text).toContain('- **Tests:** 3 total — 3 passed, 0 failed, 0 skipped');
+    expect(text).not.toContain('**Files:** 7');
+    expect(text.indexOf('| test/unit/a.test.ts | 2 | 0 | 0 |'), 'per-file rows are in path order').toBeLessThan(
+      text.indexOf('| test/unit/b.test.ts | 1 | 0 | 0 |'),
+    );
+  });
+
+  it('every other suite figure in TEST-REPORT is §1’s, or sits in a section whose opening paragraph brackets it as history', () => {
+    // §3 and §4 are the 2026-07-03 run's per-area tables, kept as history and
+    // bracketed as such at their head — a reader meets the bracket before the
+    // figure. This holds the rule the other way round: a figure of the shape
+    // §1 uses that is NOT §1's must sit under such a bracket, so a stale
+    // total cannot stand unlabelled anywhere in the report — the footer's
+    // re-measured figure included, which is held to §1 by the same rule.
+    const r = report1();
+    const text = read('docs/TEST-REPORT.md');
+    const byDir = new Map(r.rows.map((x) => [x.dir, x]));
+    for (const sec of text.split(/^## /m).slice(1)) {
+      const title = sec.slice(0, sec.indexOf('\n'));
+      const head = sec.slice(0, sec.indexOf('\n|') > 0 ? sec.indexOf('\n|') : sec.length);
+      const historical = /\[\d{4}-\d{2}-\d{2}:/.test(head);
+      const figures: Array<{ tests: number; files: number; dir?: string }> = [
+        ...[...sec.matchAll(/(\d[\d,]*) \/ \d[\d,]* passed across (\d+) files/g)].map((m) => ({ tests: num(m[1]), files: num(m[2]) })),
+        ...[...sec.matchAll(/(\d[\d,]*) passed \/\s+0 skipped across (\d+) files/g)].map((m) => ({ tests: num(m[1]), files: num(m[2]) })),
+        ...[...sec.matchAll(/\((\d+) files, (\d+) tests\)/g)].map((m) => ({ tests: num(m[2]), files: num(m[1]), dir: 'unit' })),
+        ...[...sec.matchAll(/\*\*(\w+) subtotal\*\* \| \*\*(\d+)\*\*[^\n]*\| (\d+) files?/g)].map((m) => ({ dir: m[1].toLowerCase(), tests: num(m[2]), files: num(m[3]) })),
+      ];
+      for (const f of figures) {
+        const current = f.dir === undefined ? { tests: r.tests, files: r.files } : byDir.get(f.dir);
+        const isCurrent = current !== undefined && current.tests === f.tests && current.files === f.files;
+        // (A historical figure that happens to equal today's — the conformance
+        // directory has not moved since that run — is not held either way.)
+        expect(
+          isCurrent || historical,
+          `§"${title}" states ${f.tests} tests across ${f.files} files${f.dir ? ` (${f.dir})` : ''}, which is not §1's, and its opening paragraph carries no dated bracket`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('the scorecard names W3 by its register kind', () => {
+    // §8.5's modality paragraph called W3 "an existential witness" while the
+    // register types it `maximality` — the one distinction the plan's §2.3
+    // says is load-bearing — and the same sentence then stated the
+    // maximality rule. The word is read off the register.
+    const m = /register row W3, an? (\w+)\s+witness/.exec(read('docs/CONFORMANCE.md'));
+    expect(m, 'docs/CONFORMANCE.md no longer names W3’s witness kind').not.toBeNull();
+    expect(m![1]).toBe(WITNESS_CLAIMS.find((w) => w.id === 'W3')!.kind);
+  });
+
+  it('the L6 figure in the Levels table is the invariants file’s own row in TEST-SUMMARY', () => {
+    // L6 is the one level whose count cannot be read off the tree with a
+    // regex — `invariants.test.ts` has thirteen `it(` and one `it.each` — so
+    // the Levels table quotes the RUN, and the run's own per-file row is what
+    // it is held to.
+    const l6 = /\|\s*L6\s*\|[^|]*\|\s*(\d+)\s+assertions\s*\(run-measured\)\s*\|/.exec(read('docs/AGENT-AUTHORING-CAMPAIGN.md'));
+    expect(l6, 'the Levels table no longer quotes a run-measured L6 figure').not.toBeNull();
+    const row = /\| test\/campaign\/invariants\.test\.ts \| (\d+) \| 0 \| 0 \|/.exec(read('docs/TEST-SUMMARY.md'));
+    expect(row, 'TEST-SUMMARY has no row for test/campaign/invariants.test.ts').not.toBeNull();
+    expect(num(l6![1]), 'the L6 figure is not what the run recorded for invariants.test.ts').toBe(num(row![1]));
+  });
 });
 
 /**

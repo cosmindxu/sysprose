@@ -45,7 +45,7 @@ import {
   ABSENCE_CLAIMS,
   BOUND_FAMILY,
   DWELL_SENTENCE,
-  ENVIRONMENT_SENTENCE,
+  environmentSentence,
   SIMULATOR_SENTENCE,
   WITNESS_CLAIMS,
   publishabilityOf,
@@ -450,12 +450,26 @@ describe('not one published sentence moved', () => {
     // keeps one copy of each; nothing else in the tree pins the SPELLING —
     // every consumer asserts `toContain(DWELL_SENTENCE)`, which is green on any
     // wording — so this is the only assertion a copy that drifted from §2.4(a),
-    // (c) or (d) can fail. (a) is read by no producer of this lane yet; it is
-    // pinned all the same, because a constant exported for the other lanes to
-    // import is a contract whether or not this lane prints it.
-    expect(ENVIRONMENT_SENTENCE).toBe(
+    // (c) or (d) can fail. (a) is read by three producers — the cover row, the
+    // trap block of `reach`, and the `recovery` refusal — and it is a FUNCTION
+    // of the triggers the run consumed: the plan's example, `abort`, is the
+    // pin for the spelling, and the two other shapes pin what the function
+    // does with the names it is given.
+    expect(environmentSentence(['abort'])).toBe(
       'the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it',
     );
+    expect(environmentSentence(['unlatch'])).toBe(
+      'the environment offered every trigger this machine names at every configuration, so a witness that consumes `unlatch` is a claim about that environment and not about one that withholds it',
+    );
+    // Two triggers: each backticked, comma-joined, in the order given — the
+    // caller's order, which is trace order for a witness and alphabet order for
+    // a report — and never sorted or deduplicated here.
+    expect(environmentSentence(['go', 'abort'])).toBe(
+      'the environment offered every trigger this machine names at every configuration, so a witness that consumes `go`, `abort` is a claim about that environment and not about one that withholds it',
+    );
+    // No trigger is the F2 defect — a sentence about an environment the
+    // machine does not name — and it is an error, not an empty sentence.
+    expect(() => environmentSentence([])).toThrow(/named none/);
     expect(DWELL_SENTENCE).toBe(
       'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take',
     );

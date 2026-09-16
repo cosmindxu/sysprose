@@ -84,7 +84,7 @@ import { join, resolve } from 'node:path';
 import { SYSPROSE_VERIFICATION_LIBRARY } from '@semantics/index';
 // The caveat that has to stand beside a printed core, imported rather than
 // retyped: a copy of it in a test asserts the copy.
-import { CORE_SUFFICIENCY_NOTE } from '@api/index';
+import { CORE_SUFFICIENCY_NOTE, environmentSentence } from '@api/index';
 
 const CLI = resolve(process.cwd(), 'scripts/sysprose.ts');
 /** The checker, spawned by the one case that has to prove it says nothing. */
@@ -2274,6 +2274,24 @@ package P {
     // R-UAV-002, on the same run: one axiom of the same twelve.
     expect(why.stdout).toContain('the core names 1 of this model’s 12 axiom(s)');
     expect(why.stdout).toContain('axiom UAVSurveillanceSystem::AirVehicle::mtow');
+
+    // NO NARROWING ON THIS MODEL, and the ledger says so in figures: "4 core
+    // axioms of a 4-axiom footprint" is R-UAV-001's census row, pinned here
+    // beside the sum the same sentence quotes for the power budget (below) so
+    // neither figure in `docs/AGENT-AUTHORING-CAMPAIGN.md` is remembered.
+    const whyJson = await run(['verify', UAV, '--engine', 'smt', '--why', '--json']);
+    expect(whyJson.code).toBe(0);
+    const uavRows = (
+      JSON.parse(whyJson.stdout) as {
+        verify: { results: Array<{ clause: { qualifiedName: string }; axiomCensus: { footprintAxioms: number; coreAxioms: number } | null }> };
+      }
+    ).verify.results;
+    const endurance = uavRows.find((r) => r.clause.qualifiedName.includes('EnduranceRequirement'));
+    expect(endurance, 'R-UAV-001 is gone from the run').toBeDefined();
+    expect(endurance?.axiomCensus, 'the census the ledger quotes as "4 core of a 4-axiom footprint"').toMatchObject({
+      footprintAxioms: 4,
+      coreAxioms: 4,
+    });
 
     expect(why.stdout, 'a core was printed with no caveat beside it').toContain(
       CORE_SUFFICIENCY_NOTE,
@@ -4600,8 +4618,10 @@ package P {
     expect(covered.stdout).toContain('COVERED      `state failsafe` holds on some run');
     expect(covered.stdout).toContain('covered — witness trace of 2 step(s), a run this semantics admits');
     expect(covered.stdout).toContain('witness — a run this semantics admits:');
-    // The witness consumed `abort`, so the environment sentence prints beside it.
-    expect(covered.stdout).toContain('the environment offered every trigger this machine names at every configuration');
+    // The witness consumed `abort`, so the environment sentence prints beside
+    // it — the whole sentence, naming that trigger: the prefix alone was green
+    // while the tail named the plan's example trigger about every machine.
+    expect(covered.stdout).toContain(environmentSentence(['abort']));
     expect(covered.stdout).not.toContain('verification/refuted');
     expect(covered.stdout).not.toMatch(/\bPASS\b|\bproved\b|\bverified\b/);
 

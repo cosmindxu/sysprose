@@ -46,7 +46,7 @@ import {
 } from '../../src/semantics/mc/explore';
 import {
   DWELL_SENTENCE,
-  ENVIRONMENT_SENTENCE,
+  environmentSentence,
   SIMULATOR_SENTENCE,
 } from '../../src/semantics/mc/publishable';
 import { main as sysproseMain } from '../../scripts/sysprose';
@@ -528,7 +528,13 @@ describe('clause (c), environment: a trigger nobody may send', () => {
     const r = await cli(['reach', root(file)]);
     expect(r.code).toBe(0);
     const block = machineBlock(r.stdout, 'Latch::Latch::Modes');
-    expect(block).toContain(`    ${TRAP_REFUSAL_SENTENCE.environment}; ${ENVIRONMENT_SENTENCE}`);
+    // THE NAMED NEGATIVE TEST. The standing sentence is about the trigger THIS
+    // machine names — `unlatch` — and about no other. The constant it replaced
+    // was §2.4(a) verbatim with the plan's example trigger inside it, and this
+    // very line asserted `reach` printing *a witness that consumes \`abort\`*
+    // about a file in which `abort` occurs nowhere.
+    expect(block).toContain(`    ${TRAP_REFUSAL_SENTENCE.environment}; ${environmentSentence(['unlatch'])}`);
+    expect(block, 'the example trigger of the plan, printed about a machine that never names it').not.toContain('consumes `abort`');
     expect(block).not.toContain('inconclusive inconclusive');
     expect(block).not.toContain('    trap ');
     expect(r.stdout).not.toContain('inescapable');

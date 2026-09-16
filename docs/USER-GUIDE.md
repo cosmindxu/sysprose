@@ -2354,7 +2354,7 @@ re-parsing a sentence.
 | You get | When | Exit |
 |---|---|---|
 | **pass** | no bad prefix, over a graph the walk saw **whole**, on a safety pattern | 0 |
-| **fail** | a bad prefix, printed as the run that produced it — still a fail under a bound, because a witness is a real run | 1 |
+| **fail** | a bad prefix, printed as the run that produced it — still a fail under a bound, because a witness is a real run. The `every run?` line beneath it says whether that run is one of many (`potential`, naming a run that avoids the violation) or all of them (`guaranteed`), or `not decided` with the reason; the line moves no count and no exit code | 1 |
 | **covered** | a `cover` witnessed by a run, printed step by step — still covered under a bound, for the same reason; re-worded to *a run this WALK admits* where the run crossed a dwell or an undecided guard | 0 |
 | **not covered** | a `cover` no explored run witnessed, over a graph the walk saw **whole**: a decided absence and a missing behaviour, not a violated requirement (`verification/not-covered`, info) | **2** — or 1 under `--cover-required`, which adds `verification/cover-required` and changes no word |
 | **vacuous** | the property's antecedent never holds, over a graph the walk saw **whole**: a scope no run opens, or a `precedence` whose P never happens | **2** |

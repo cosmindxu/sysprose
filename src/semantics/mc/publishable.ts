@@ -62,6 +62,7 @@
 
 import type { ElementId } from '@core/index';
 import type { BoundHit } from './explore';
+import { isDwellLabel } from './config';
 
 /* ══════════════════════ the decreasing side ══════════════════════ */
 
@@ -322,15 +323,51 @@ export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
 
 /**
  * §2.4(a) — the environment sentence, printed beside a witness that consumed a
- * trigger, and beside every escape from a trap.
+ * trigger, beside every escape from a trap, and beside a `recovery` the
+ * environment clause refused.
  *
  * `exploreMachine` offers the whole alphabet at EVERY configuration, so a
  * witness that consumes a trigger is a claim under a maximally cooperative
- * environment and about no other. Written once, verbatim from the plan, so the
- * three lanes that print it carry one string.
+ * environment and about no other. The plan's text names `abort` because its
+ * example does; the sentence is a FUNCTION OF THE TRIGGERS because a constant
+ * is not. Three lanes pinned the constant verbatim with the example trigger
+ * inside it, and `reach` on `latch.sysml` — a machine naming `unlatch` and
+ * nothing else — printed *a witness that consumes `abort`* about a trigger the
+ * file never mentions. Each name is backticked and they are joined in the order
+ * given, which is the caller's to choose: trace order for a witness, alphabet
+ * order for a report.
+ *
+ * THROWS ON NO TRIGGER. A sentence about the environment that names no trigger
+ * is the defect the F2 fix removed from the cover row — a machine naming no
+ * trigger at all printed a sentence about the environment it lacks — and a
+ * caller that reaches here with `[]` has that defect again. It is an error and
+ * not an empty string, so the regression is a red test rather than a quiet
+ * blank in a transcript.
  */
-export const ENVIRONMENT_SENTENCE =
-  'the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it';
+export function environmentSentence(triggers: readonly string[]): string {
+  if (triggers.length === 0) {
+    throw new Error(
+      'environmentSentence: §2.4(a) is a sentence about the trigger(s) a run consumed, and this call named none — the caller is printing the environment sentence about a run that consumed no trigger',
+    );
+  }
+  const named = triggers.map((t) => `\`${t}\``).join(', ');
+  return `the environment offered every trigger this machine names at every configuration, so a witness that consumes ${named} is a claim about that environment and not about one that withholds it`;
+}
+
+/**
+ * The triggers an environment would have to send, read off an alphabet alone:
+ * every label that is not a dwell spelled as a trigger.
+ *
+ * For the reader that holds a `MachineReach` and not the walk. The exactness
+ * gate's own subtraction is `alphabet ∖ timedLabels`; `MachineReach` publishes
+ * the alphabet and not the set, and adding the set reddens the payload's
+ * key-for-key pins for one sentence's sake. On any model the CLI can load the
+ * two subtractions coincide (see {@link isDwellLabel}). The order is the
+ * alphabet's — the order the bounds line beside the sentence already prints.
+ */
+export function environmentTriggers(alphabet: readonly string[]): string[] {
+  return alphabet.filter((t) => !isDwellLabel(t));
+}
 
 /**
  * §2.4(c) — the dwell sentence, printed on every verdict line whose walk has a

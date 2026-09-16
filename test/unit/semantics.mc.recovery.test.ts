@@ -64,7 +64,7 @@ import {
   ABSENCE_CLAIMS,
   CLAUSE_SENTENCE,
   DWELL_SENTENCE,
-  ENVIRONMENT_SENTENCE,
+  environmentSentence,
   SIMULATOR_SENTENCE,
   publishabilityOf,
   walkIsExact,
@@ -326,7 +326,7 @@ describe('the trap probe: four configurations cannot reach `standby`, and two of
     // takes one. Printed on the row — and §2.4(a) never is: a machine that
     // names a trigger is REFUSED on this row, not qualified.
     expect(v.detail).toContain(SIMULATOR_SENTENCE);
-    expect(v.detail).not.toContain(ENVIRONMENT_SENTENCE);
+    expect(v.detail).not.toContain('the environment offered every trigger');
     expect(v.detail).not.toContain('standby cannot');
     // The register's half of the dispatch test: no search ran, so the
     // product-search conjunct has no value — absent, never `false`.
@@ -666,7 +666,7 @@ describe('the atom-kind gate: three kinds the configuration graph cannot observe
       // here read as "no configuration holds it" about a set never computed.
       expect(v.recovery, p).toEqual({ atomKind: p.startsWith('fires') ? 'fires' : 'trigger', targetConfigs: null, cannotReach: null, bottomSccOverlap: null, refusedByGate: null });
       expect(v.recovery!.targetConfigs, p).not.toBe(0);
-      expect(v.detail, p).not.toContain(ENVIRONMENT_SENTENCE);
+      expect(v.detail, p).not.toContain('the environment offered every trigger');
     }
   });
 
@@ -787,7 +787,10 @@ describe('the exactness gate refuses BOTH directions, one fixture per mechanism'
     expect(v.claim).not.toBe('pass');
     expect(v.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
     expect(v.detail).toMatch(/^inconclusive: this machine names triggers this walk offers at every configuration/);
-    expect(v.detail).toContain(ENVIRONMENT_SENTENCE);
+    // Named for the trigger THIS file names, and the plan's example trigger
+    // — which the constant this replaced carried — pinned absent.
+    expect(v.detail).toContain(environmentSentence(['unlatch']));
+    expect(v.detail).not.toContain('consumes `abort`');
     expect(v.detail).not.toContain('recoverable');
     expect(v.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: null, bottomSccOverlap: null, refusedByGate: 'environment' });
     expect(v.qualification).toBe(CLAUSE_SENTENCE.environment);
