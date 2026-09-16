@@ -1167,6 +1167,13 @@ const COVER_FILES = [
   'test/fixtures/verification/models/cover-sealed.sysml',
 ];
 
+/**
+ * The machine `recovery` (§3.2b) added: a composite state, on which `state
+ * degraded` is on every stack inside it and `node degraded` is the leaf of
+ * none — the one fixture on which the two atom readings part.
+ */
+const RECOVERY_FILES = ['test/fixtures/verification/models/recovery-composite.sysml'];
+
 describe('every machine in the tree, walked', () => {
   const walked: Walked[] = [];
 
@@ -1186,7 +1193,7 @@ describe('every machine in the tree, walked', () => {
     }
   }, 300_000);
 
-  it('finds the eleven machines that were here, plus eight from one commit, three from the next, three from the trap commit, four from the modality and two from `cover`', () => {
+  it('finds the eleven machines that were here, plus eight from one commit, three from the next, three from the trap commit, four from the modality, two from `cover` and one from `recovery`', () => {
     const added = walked.filter((w) => ADDED_FILES.includes(w.file));
     expect(added).toHaveLength(8);
     const components = walked.filter((w) => COMPONENT_FILES.includes(w.file));
@@ -1197,8 +1204,10 @@ describe('every machine in the tree, walked', () => {
     expect(modality).toHaveLength(4);
     const covers = walked.filter((w) => COVER_FILES.includes(w.file));
     expect(covers).toHaveLength(2);
+    const recoveries = walked.filter((w) => RECOVERY_FILES.includes(w.file));
+    expect(recoveries).toHaveLength(1);
     expect(
-      walked.length - added.length - components.length - traps.length - modality.length - covers.length,
+      walked.length - added.length - components.length - traps.length - modality.length - covers.length - recoveries.length,
       'the tree gained or lost a machine',
     ).toBe(11);
   });

@@ -27,6 +27,7 @@ import {
   reachReport,
   requirementSatisfaction,
 } from '@api/index';
+import type { PropertyVerdict } from '@api/index';
 import type { TextRange } from '@validation/types';
 import { DIAGNOSTIC_CODES } from '@text/index';
 import { loadModelText } from '@text/load';
@@ -435,6 +436,25 @@ describe('the conformance scorecard adds up', () => {
       total,
     );
   });
+
+  it('the TEST-REPORT bottom line adds up the same way, and to the same figures', () => {
+    // The same three numbers, in the other order (green total first, then
+    // the suite and E2E figures in a parenthesis, with a line break inside
+    // the phrase). One commit moved the two inner figures and left the
+    // headline where it was, so the sentence claimed a total no run produced.
+    const m =
+      /\*\*(\d[\d,]*)\s+green\s+automated\s+checks\*\*\s+\(\*\*(\d[\d,]*)\*\*[\s\S]*?across\s+\*\*(\d+)\s+files\*\*[\s\S]*?\+\s+\*\*(\d[\d,]*)\s+E2E\*\*/.exec(
+        read('docs/TEST-REPORT.md'),
+      );
+    expect(m, 'docs/TEST-REPORT.md no longer states "**T green automated checks** (**N** … across **F files** … + **M E2E**"').not.toBeNull();
+    const [total, suite, files, e2e] = m!.slice(1, 5).map((n) => Number(n.replace(/,/g, '')));
+    expect(suite + e2e, `${suite} + ${e2e} is ${suite + e2e}, but the bottom line claims ${total}`).toBe(total);
+    const c =
+      /\*\*(\d[\d,]*)\s+passed\s+\/\s+0\s+failed\s+\/\s+0\s+skipped\*\*\s+across\s+\*\*(\d+)\s+files\*\*\s+\+\s+\*\*(\d[\d,]*)\s+E2E\*\*/.exec(
+        read('docs/CONFORMANCE.md'),
+      )!;
+    expect([suite, files, e2e], 'TEST-REPORT and CONFORMANCE state different suite figures').toEqual(c.slice(1, 4).map((n) => Number(n.replace(/,/g, ''))));
+  });
 });
 
 describe('counts quoted in prose', () => {
@@ -725,6 +745,69 @@ describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
       expect(read(GUIDE)).toContain(
         'verification/unrecoverable-mode  trap — 2 configuration(s) form a set nothing leaves: {failsafe, failsafeHold}. Entered in 3 step(s) from `standby`.',
       );
+    });
+  });
+
+  /**
+   * The `recovery` transcript on the trap probe, pinned against ITS file: the
+   * two numbers of §3.2b — the cannot-reach count and the trap overlap — the
+   * nearest entry depth, and the machine's configuration count, each read off
+   * `behaviourReport` rather than remembered. Anchored on the row's own
+   * `not recoverable:` sentence, which no other transcript in the guide prints.
+   */
+  describe('the recovery transcript', () => {
+    let probe: Model;
+    let row: PropertyVerdict;
+    beforeAll(async () => {
+      const file = 'test/fixtures/verification/models/trap-probe.sysml';
+      probe = (await loadModelText(read(file), { fileName: file })).model!;
+      const machine = probe.all().find((e) => probe.qualifiedName(e.id) === 'TrapProbe::Probe::Modes');
+      expect(machine, 'trap-probe.sysml no longer declares TrapProbe::Probe::Modes').toBeDefined();
+      row = behaviourReport(probe, {
+        machineId: machine!.id,
+        pattern: 'pattern=recovery, scope=globally, p=state standby',
+      }).properties[0];
+      expect(row.claim).toBe('fail');
+    }, 60_000);
+    const block = () => {
+      const m = /pattern=recovery, scope=globally, p=state standby'\n([\s\S]*?)\n  semantic profile/.exec(read(GUIDE));
+      expect(m, `${GUIDE} no longer shows the recovery transcript`).not.toBeNull();
+      return m![1];
+    };
+    const recoveryClaims: Array<{ what: string; pattern: RegExp; actual: () => number }> = [
+      {
+        what: 'configurations that cannot reach the state',
+        pattern: /not recoverable: (\d+) configuration\(s\) cannot reach/,
+        actual: () => row.recovery!.cannotReach!,
+      },
+      {
+        what: 'configurations in the trap',
+        pattern: /Of these, (\d+) form a set nothing leaves/,
+        actual: () => row.recovery!.bottomSccOverlap!,
+      },
+      {
+        what: 'steps to the nearest',
+        pattern: /the nearest is entered in (\d+) step\(s\)/,
+        actual: () => Number(/entered in (\d+) step/.exec(row.detail)![1]),
+      },
+      {
+        what: 'configurations explored',
+        pattern: /(\d+) configuration\(s\) explored — exhaustive/,
+        actual: () => row.machineConfigs,
+      },
+    ];
+    for (const claim of recoveryClaims) {
+      it(claim.what, () => {
+        const m = claim.pattern.exec(block());
+        expect(m, `${GUIDE} recovery block no longer shows ${claim.what}`).not.toBeNull();
+        expect(
+          Number(m![1]),
+          `${GUIDE} (recovery ${claim.what}) shows ${m![1]}; the fixture reports ${claim.actual()} — re-run the command and paste what it says`,
+        ).toBe(claim.actual());
+      });
+    }
+    it('quotes the detail sentence exactly as the row composes it', () => {
+      expect(block()).toContain(`    ${row.detail}\n`);
     });
   });
 

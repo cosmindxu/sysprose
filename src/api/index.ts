@@ -497,6 +497,8 @@ export {
   parsePropertyText,
   propertiesOf,
   traceLine,
+  STORE_ATOM_REASON,
+  STEP_ATOM_REASON,
 } from '../semantics/mc/patterns';
 export type {
   BehaviourOptions,
@@ -504,6 +506,7 @@ export type {
   Modality,
   ModalityValue,
   CoverCensus,
+  RecoveryCensus,
   PatternClass,
   PatternName,
   PatternSpec,

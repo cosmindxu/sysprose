@@ -228,6 +228,14 @@ describe('the generated command reference', () => {
     expect(BEHAVIOUR_EXIT_CODES).toContain(
       'or, under --cover-required, a cover this walk did not witness on any run it saw whole',
     );
+    // And the 1 row's third cause — a `recovery` set — sits OUTSIDE the
+    // `--cover-required` clause: a `not recoverable` row spends the 1 with
+    // no flag, and a clause landing inside the flag's scope read as if it
+    // needed one.
+    const recoveryClause = 'or a `recovery` assertion some reachable configuration cannot discharge, reported as that set rather than as a run';
+    expect(BEHAVIOUR_EXIT_CODES).toContain(recoveryClause);
+    expect(BEHAVIOUR_EXIT_CODES.indexOf(recoveryClause)).toBeLessThan(BEHAVIOUR_EXIT_CODES.indexOf('or, under --cover-required'));
+    expect(BEHAVIOUR_EXIT_CODES.indexOf(recoveryClause)).toBeGreaterThan(BEHAVIOUR_EXIT_CODES.indexOf('1 at least one property refuted'));
     expect(BEHAVIOUR_EXIT_CODES).not.toBe(VERIFY_EXIT_CODES);
     const behaving = COMMANDS.filter((c) => c.exitContract === 'behaviour').map((c) => c.name);
     expect(behaving, 'the behaviour contract is declared by exactly `check-behaviour`').toEqual([
@@ -437,9 +445,12 @@ describe('the `--pattern` vocabulary and the catalogue behind it', () => {
       PATTERNS.filter((p) => p.kind === 'liveness').map((p) => p.name),
       'the liveness pair moved — the --pattern row says the LAST TWO are liveness',
     ).toEqual(PATTERN_NAMES.slice(-2));
-    // The guarantee row sits between the two groups, and the row says so.
-    expect(PATTERN_NAMES.indexOf('cover')).toBe(PATTERN_NAMES.length - 3);
+    // The guarantee row and the branching row sit between the two groups, in
+    // that order, and the row says so of each.
+    expect(PATTERN_NAMES.indexOf('cover')).toBe(PATTERN_NAMES.length - 4);
+    expect(PATTERN_NAMES.indexOf('recovery')).toBe(PATTERN_NAMES.length - 3);
     expect(row!).toContain('GUARANTEE');
+    expect(row!).toContain('BRANCHING-TIME');
   });
 });
 

@@ -198,7 +198,7 @@ export const BOUNDS_EXIT_CODES = `Exit codes: 0 every bound asked for was DECIDE
  * reason: exit 0 says every property was shown to hold, so a machine that
  * states none has been shown nothing.
  */
-export const BEHAVIOUR_EXIT_CODES = `Exit codes: 0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every \`cover\` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits — or, under --cover-required, a cover this walk did not witness on any run it saw whole · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass — or a \`cover\` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — \`--cover-required\` spends the 1 for it instead. There is no solver in this lane and no --free: the walk reads the model’s own values`
+export const BEHAVIOUR_EXIT_CODES = `Exit codes: 0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every \`cover\` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits — or a \`recovery\` assertion some reachable configuration cannot discharge, reported as that set rather than as a run — or, under --cover-required, a cover this walk did not witness on any run it saw whole · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass — or a \`cover\` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — \`--cover-required\` spends the 1 for it instead. There is no solver in this lane and no --free: the walk reads the model’s own values`
 
 /**
  * `fault-tree`'s exit-code contract — a SIXTH one, because its 1 is about a
@@ -303,6 +303,8 @@ export const PATTERN_NAMES: readonly string[] = [
   // BEFORE `existence`, not at the end: the `--pattern` row says the last two
   // are liveness, and `test/unit/cli-reference.test.ts` holds it to that.
   'cover',
+  // AFTER `cover` and before the pair, for the same reason.
+  'recovery',
   'existence',
   'response',
 ];
@@ -908,7 +910,7 @@ export const COMMANDS: readonly CommandSpec[] = [
         kind: 'value',
         metavar: 'SPEC',
         fallback: 'the properties the machine itself carries',
-        doc: `One property, in the same field names the @SysproseVerification::PropertyPattern carrier uses: \`pattern=absence, scope=globally, p=state failsafe\`. Patterns: ${PATTERN_NAMES.join(' | ')} — the first four are SAFETY and are decided here; \`cover\` is a GUARANTEE (can some run reach the situation I name?), decided here in both directions and answered \`covered\` with a witness or \`not covered\`; the last two are LIVENESS and report inconclusive, because a bad-prefix search decides neither. Scopes: ${SCOPE_NAMES.join(' | ')}. Atoms: \`state X\`, \`trigger t\`, \`fires T\`, \`node N\`, or an expression. It is checked BESIDE the carriers, never instead of them, and a field value may hold no comma or semicolon (the carrier form has no such limit)`,
+        doc: `One property, in the same field names the @SysproseVerification::PropertyPattern carrier uses: \`pattern=absence, scope=globally, p=state failsafe\`. Patterns: ${PATTERN_NAMES.join(' | ')} — the first four are SAFETY and are decided here; \`cover\` is a GUARANTEE (can some run reach the situation I name?), decided here in both directions and answered \`covered\` with a witness or \`not covered\`; \`recovery\` is BRANCHING-TIME (from every configuration the machine can be in, can it get back to the state I name?), decided here in both directions by reverse reachability over a walk whose relation is the machine's own — \`recoverable\`, or \`not recoverable\` naming the configurations that cannot — and withheld as inconclusive over any other walk; it reads \`state\` and \`node\` atoms only, over \`globally\` only; the last two are LIVENESS and report inconclusive, because a bad-prefix search decides neither. Scopes: ${SCOPE_NAMES.join(' | ')}. Atoms: \`state X\`, \`trigger t\`, \`fires T\`, \`node N\`, or an expression. It is checked BESIDE the carriers, never instead of them, and a field value may hold no comma or semicolon (the carrier form has no such limit)`,
       },
       {
         name: 'max-configs',

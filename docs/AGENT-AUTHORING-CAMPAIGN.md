@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 128 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 129 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -3783,7 +3783,9 @@ cannot are named rather than answered.** `absence`, `universality`,
 `bounded-existence` and `precedence` are safety properties and are decided in
 the refuting direction. `cover` is a GUARANTEE and is decided in the witnessing
 direction — its two words, `covered` and `not covered`, are recorded further
-down in this section. `existence` and `response` are LIVENESS: they are broken
+down in this section. `recovery` is BRANCHING-TIME — `AG EF p` — and is decided
+in both directions by a reverse-reachability pass over the retained relation
+that runs INSTEAD of the search, recorded further down as well. `existence` and `response` are LIVENESS: they are broken
 only by an infinite run that never delivers, and a bad-prefix search finds no
 bad prefix for one on any graph. Under a naïve "nothing found, so it holds" rule
 that would print this command's strongest verdict for exactly the two properties
@@ -4806,7 +4808,7 @@ being the `#exceptional` states across every machine, unreachable from the
 contract lane by construction since a state is never a fault-injection top
 event. **Measured, and recorded plainly: the census reads 0 across the corpus.**
 Over the six shipped examples and every model under
-`test/fixtures/verification/models/` — twenty-eight machines between them — no
+`test/fixtures/verification/models/` — twenty-nine machines between them — no
 machine carries an `#exceptional` state and none carries a failure-mode flag;
 `grep -rl exceptional --include=*.sysml` over the repository returns nothing. A
 census that finds nothing is the result, not a failure: the behavioural fault
@@ -4946,6 +4948,91 @@ block with the old module's workers stopped (+44 MB with them left running;
 fixtures set (2.5–2.9 GB before and after). Mutation: with the cache-drop removed from the
 bridge's death path, the unit case "the next loadZ3 pays init again" is red
 while the throw assertion stays green. Counts re-measured from this gate.
+
+**The `recovery` pattern: a branching-time question answered by a branching-time
+algorithm, at the one position where the walk exists and the search has not run
+(model-checking plan §3.2b).** `pattern=recovery, scope=globally, p=state
+standby` asks `AG EF p` — from every configuration the walk reached, can the
+machine get back to `p`? — which `absence` and `cover` cannot ask and a
+bad-prefix search cannot answer in either direction: no finite run breaks it,
+so `search` would find nothing on ANY graph and return `pass` for free, the
+exact failure the liveness refusal exists to prevent. So `PatternClass` gained
+`branching`, `checkProperty` gained a third dispatch arm, and the arm's
+position is the specification: AFTER the unsupported-construct refusal — the
+only point on that function enforcing the construct conjunct of `seenWhole` —
+and BEFORE `const found = search(…)`. The arm (`recoveryRow`, register row A7's
+producer) collects the target configurations through `atomHolds`'s own
+selection for the kind — `state` on the active stack, `node` as the active leaf
+— and follows the retained relation backwards from them, reflexively, so a
+configuration already holding `p` reaches it in zero steps. Every configuration
+the reverse pass misses is named: *not recoverable: 4 configuration(s) cannot
+reach `state standby`: {alpha, beta, failsafe, failsafeHold}; the nearest is
+entered in 1 step(s) from `standby`. Of these, 2 form a set nothing leaves —
+`reach` reports them as `verification/unrecoverable-mode`.* on the trap
+probe — `verification/refuted`, exit 1, a `fail` with an EMPTY witness, because
+a set is not a run, and with `modality: null`, because it is not a bad-prefix
+refutation. The two numbers answer two questions and the overlap is read off
+the same classifier and exemption order `reach` uses (`classifyBottoms`,
+exported from `explore.ts` for this one reader), so the clause can never
+disagree with the trap row on one machine. **Both directions read one gate,
+`walkIsExact`, and the reason is the store.** `recoverable` is increasing and
+would be invented by a dwell or a trigger; `not recoverable` is decreasing on
+those two mechanisms but is MANUFACTURED by an under-approximation — on
+`trapguard.sysml` the escape edge is absent because nothing valued `resetOk`,
+and a per-direction gate would have printed *not recoverable: 2 configuration(s)
+cannot reach `state nominal`* at exit 1 about a design that states the way
+back. So the row is `inconclusive` naming the clause on the latch (environment,
+where the draft's A7 held and published `recoverable` at exit 0), on the
+factory-built preempted dwell (time, both spellings), on the trapguard trio's
+undecided members (store, `-typed` included), and under `--max-configs 2`
+(bound); `trapguard-false` is the one file where the refutation legitimately
+publishes, and `trapguard-true` reads `recoverable`. Three refusals are the
+property's own: `trigger`, `fires` and `expression` atoms are refused as
+`verification/malformed-property` with the reason each kind earns — the
+`expression` reason is one exported constant §3.R's row 4 also prints — because
+ungated each would leave the target set empty and earn a refutation from a
+tool limitation; and a scope other than `globally` is refused, a narrowing the
+plan's "over any scope" did not price (a scope is a monitor over a run). An
+empty target set over an exact walk is a `fail` and never `vacuous`: on the
+composite fixture `recovery-composite.sysml`, `state degraded` is on every
+stack inside it and `node degraded` is the leaf of nothing, so the first reads
+`recoverable` and the second is the refutation — asserted against `atomHolds`
+on every configuration of the walk, beside the shipped `absence` pair (`node`
+PASS / `state` FAIL) the two readings must keep agreeing with; `recoverable` at
+exit 0 for `node degraded` is the answer one hand-written stack predicate for
+both kinds gave, and it is pinned as the wrong one. The empty-target row tells
+its two reasons apart by the STACKS and not by the atom kind — a state on no
+stack at all is `reach`'s `verification/unreachable-state` whichever reading
+asked, a state on some stack but the leaf of none is a composite only `node`
+can miss — because branching on the kind alone gave a plain unreachable leaf
+the composite explanation under `node` and withheld the pointer that was true
+of it; it prints the count it names and the trap overlap its census carries,
+so no figure sits on one surface only; and the named set on the other `fail`
+row is deduplicated by leaf identity, spelt by qualified name when simple
+names collide, and says when one state holds more than one configuration, so
+its cardinality can always be read against the count that introduces it. The
+fail hint has two shapes for the two rows: the one that names a set and a
+depth, and the one that names neither. No new claim word, no new
+code and no new flag: the row spends `pass`/`fail`, `verification/refuted`,
+`verification/bound-exhausted`, `verification/guard-undetermined` (store) and
+`verification/behaviour-unsupported-construct` (environment, time — the
+liveness refusal's precedent for "a question this engine cannot decide here"),
+and `verification/malformed-property`; four catalogue `when`s gained the
+recovery cause, since each published an enumeration that was exhaustive until
+this row. The `--json` row carries a census — `{atomKind, targetConfigs,
+cannotReach, bottomSccOverlap, refusedByGate}`, three-valued like the trap
+census so a refused walk never publishes `cannotReach: 0` as a decided absence,
+and `targetConfigs` itself `null` on the two refusals that collect no target
+set at all — and the kill measurement is the plan's: if `cannotReach` is always 0 or the
+whole complement of the opening's component, this pattern answers what
+`reach`'s trap row already does. The `--help` exit contract's 1 row gained a
+clause of its own (a refuted assertion "reported as that set rather than as a
+run"), placed before the `--cover-required` clause because the set spends the
+1 with no flag, since its shipped sentence promised a witness trace; `propertyLines`
+labels the count `configuration(s)` on this row and the fail hint sends the
+reader to the set, not to a trace. Every non-recovery row on the behaviour
+fixtures is pinned byte-for-byte against a golden captured on the tree before
+the arm existed. Counts re-measured from this gate.
 
 ## 5. Phase status
 

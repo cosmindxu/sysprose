@@ -1,0 +1,1637 @@
+[
+  {
+    "file": "examples/uav-isr.sysml",
+    "machine": "UAVSurveillanceSystem::FlightModes",
+    "pattern": "pattern=absence, scope=globally, p=state failsafe",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 3 step(s): `state failsafe` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "standby",
+      "manual",
+      "autonomous",
+      "failsafe"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/uav-isr.sysml",
+    "machine": "UAVSurveillanceSystem::FlightModes",
+    "pattern": "pattern=universality, scope=globally, p=state failsafe",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state failsafe` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "standby"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/uav-isr.sysml",
+    "machine": "UAVSurveillanceSystem::FlightModes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state failsafe, n=1",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 7 step(s): `state failsafe` holds at most 1 time(s), over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "standby",
+      "manual",
+      "autonomous",
+      "failsafe",
+      "standby",
+      "manual",
+      "autonomous",
+      "failsafe"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/uav-isr.sysml",
+    "machine": "UAVSurveillanceSystem::FlightModes",
+    "pattern": "pattern=precedence, scope=globally, p=state failsafe, s=state standby",
+    "claim": "pass",
+    "code": null,
+    "detail": "pass — holds on every reachable configuration: `state standby` holds before `state failsafe` ever does, over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 7 product state(s).",
+    "witness": [],
+    "exitCode": 0,
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/uav-isr.sysml",
+    "machine": "UAVSurveillanceSystem::FlightModes",
+    "pattern": "pattern=cover, scope=globally, p=state failsafe",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 3 step(s), a run this semantics admits: `state failsafe` holds on some run, over the whole run — every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces",
+    "witness": [
+      "standby",
+      "manual",
+      "autonomous",
+      "failsafe"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/uav-isr.sysml",
+    "machine": "UAVSurveillanceSystem::FlightModes",
+    "pattern": "pattern=existence, scope=globally, p=state failsafe",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/uav-isr.sysml",
+    "machine": "UAVSurveillanceSystem::FlightModes",
+    "pattern": "pattern=response, scope=globally, p=state failsafe",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/vehicle.sysml",
+    "machine": "VehicleModel::VehicleStates",
+    "pattern": "pattern=absence, scope=globally, p=state off",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state off` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "off"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/vehicle.sysml",
+    "machine": "VehicleModel::VehicleStates",
+    "pattern": "pattern=universality, scope=globally, p=state off",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state off` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "off",
+      "idling"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/vehicle.sysml",
+    "machine": "VehicleModel::VehicleStates",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state off, n=1",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 2 step(s): `state off` holds at most 1 time(s), over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "off",
+      "idling",
+      "off"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/vehicle.sysml",
+    "machine": "VehicleModel::VehicleStates",
+    "pattern": "pattern=precedence, scope=globally, p=state off, s=state moving",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state moving` holds before `state off` ever does, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "off"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/vehicle.sysml",
+    "machine": "VehicleModel::VehicleStates",
+    "pattern": "pattern=cover, scope=globally, p=state off",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state off` holds on some run, over the whole run — every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces",
+    "witness": [
+      "off"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/vehicle.sysml",
+    "machine": "VehicleModel::VehicleStates",
+    "pattern": "pattern=existence, scope=globally, p=state off",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "examples/vehicle.sysml",
+    "machine": "VehicleModel::VehicleStates",
+    "pattern": "pattern=response, scope=globally, p=state off",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trap-probe.sysml",
+    "machine": "TrapProbe::Probe::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state standby",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state standby` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "standby"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trap-probe.sysml",
+    "machine": "TrapProbe::Probe::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state standby",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state standby` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "standby",
+      "alpha"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trap-probe.sysml",
+    "machine": "TrapProbe::Probe::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state standby, n=1",
+    "claim": "pass",
+    "code": null,
+    "detail": "pass — holds on every reachable configuration: `state standby` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 5 product state(s).",
+    "witness": [],
+    "exitCode": 0,
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trap-probe.sysml",
+    "machine": "TrapProbe::Probe::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state standby, s=state failsafe",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state failsafe` holds before `state standby` ever does, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "standby"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trap-probe.sysml",
+    "machine": "TrapProbe::Probe::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state standby",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state standby` holds on some run, over the whole run — every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces",
+    "witness": [
+      "standby"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trap-probe.sysml",
+    "machine": "TrapProbe::Probe::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state standby",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trap-probe.sysml",
+    "machine": "TrapProbe::Probe::Modes",
+    "pattern": "pattern=response, scope=globally, p=state standby",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/latch.sysml",
+    "machine": "Latch::Latch::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state nominal` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/latch.sysml",
+    "machine": "Latch::Latch::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state nominal` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "locked"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/latch.sysml",
+    "machine": "Latch::Latch::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 2 step(s): `state nominal` holds at most 1 time(s), over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "locked",
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/latch.sysml",
+    "machine": "Latch::Latch::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state nominal, s=state locked",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state locked` holds before `state nominal` ever does, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/latch.sysml",
+    "machine": "Latch::Latch::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state nominal",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state nominal` holds on some run, over the whole run",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/latch.sysml",
+    "machine": "Latch::Latch::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/latch.sysml",
+    "machine": "Latch::Latch::Modes",
+    "pattern": "pattern=response, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::Trap::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state nominal` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::Trap::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state nominal` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degradedA"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::Trap::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
+    "claim": "inconclusive",
+    "code": "verification/guard-undetermined",
+    "detail": "inconclusive: 1 guard(s) on this machine could not be evaluated — the first is `resetOk` (no value is in scope for `resetOk`). The walk did not decide whether those transitions are enabled, so this property was searched over a graph missing an edge that may well be there — and one of the runs it hides is exactly where a bad prefix would be. This is NOT a pass: `reach` on the same machine withholds its unreachable and dead lists for the same reason.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::Trap::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state nominal, s=state degradedB",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state degradedB` holds before `state nominal` ever does, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::Trap::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state nominal",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state nominal` holds on some run, over the whole run",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::Trap::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::Trap::Modes",
+    "pattern": "pattern=response, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::TwoState::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state nominal` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::TwoState::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state nominal` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degraded"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::TwoState::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
+    "claim": "inconclusive",
+    "code": "verification/guard-undetermined",
+    "detail": "inconclusive: 1 guard(s) on this machine could not be evaluated — the first is `resetOk` (no value is in scope for `resetOk`). The walk did not decide whether those transitions are enabled, so this property was searched over a graph missing an edge that may well be there — and one of the runs it hides is exactly where a bad prefix would be. This is NOT a pass: `reach` on the same machine withholds its unreachable and dead lists for the same reason.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::TwoState::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state nominal, s=state degradedB",
+    "claim": "inconclusive",
+    "code": "verification/unknown-atom",
+    "detail": "`state degradedB` names no state in this machine — it declares `nominal`, `degraded`",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::TwoState::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state nominal",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state nominal` holds on some run, over the whole run",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::TwoState::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard.sysml",
+    "machine": "TrapGuard::TwoState::Modes",
+    "pattern": "pattern=response, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::Trap::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state nominal` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::Trap::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state nominal` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degradedA"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::Trap::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
+    "claim": "pass",
+    "code": null,
+    "detail": "pass — holds on every reachable configuration: `state nominal` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 3 product state(s).",
+    "witness": [],
+    "exitCode": 0,
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::Trap::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state nominal, s=state degradedB",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state degradedB` holds before `state nominal` ever does, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::Trap::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state nominal",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state nominal` holds on some run, over the whole run",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::Trap::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::Trap::Modes",
+    "pattern": "pattern=response, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::TwoState::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state nominal` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::TwoState::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state nominal` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degraded"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::TwoState::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
+    "claim": "pass",
+    "code": null,
+    "detail": "pass — holds on every reachable configuration: `state nominal` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 2 product state(s).",
+    "witness": [],
+    "exitCode": 0,
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::TwoState::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state nominal, s=state degradedB",
+    "claim": "inconclusive",
+    "code": "verification/unknown-atom",
+    "detail": "`state degradedB` names no state in this machine — it declares `nominal`, `degraded`",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::TwoState::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state nominal",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state nominal` holds on some run, over the whole run",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::TwoState::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-false.sysml",
+    "machine": "TrapGuardFalse::TwoState::Modes",
+    "pattern": "pattern=response, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::Trap::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state nominal` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::Trap::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state nominal` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degradedA"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::Trap::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 2 step(s): `state nominal` holds at most 1 time(s), over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degradedA",
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::Trap::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state nominal, s=state degradedB",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state degradedB` holds before `state nominal` ever does, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::Trap::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state nominal",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state nominal` holds on some run, over the whole run — every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::Trap::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::Trap::Modes",
+    "pattern": "pattern=response, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::TwoState::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state nominal` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::TwoState::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state nominal` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degraded"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::TwoState::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 2 step(s): `state nominal` holds at most 1 time(s), over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degraded",
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::TwoState::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state nominal, s=state degradedB",
+    "claim": "inconclusive",
+    "code": "verification/unknown-atom",
+    "detail": "`state degradedB` names no state in this machine — it declares `nominal`, `degraded`",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::TwoState::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state nominal",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state nominal` holds on some run, over the whole run",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::TwoState::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-true.sysml",
+    "machine": "TrapGuardTrue::TwoState::Modes",
+    "pattern": "pattern=response, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-typed.sysml",
+    "machine": "TrapGuardTyped::Trap::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state nominal` never holds, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-typed.sysml",
+    "machine": "TrapGuardTyped::Trap::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state nominal",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 1 step(s): `state nominal` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal",
+      "degradedA"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-typed.sysml",
+    "machine": "TrapGuardTyped::Trap::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state nominal, n=1",
+    "claim": "inconclusive",
+    "code": "verification/guard-undetermined",
+    "detail": "inconclusive: 1 guard(s) on this machine could not be evaluated — the first is `not mode` (it did not evaluate to a value). The walk did not decide whether those transitions are enabled, so this property was searched over a graph missing an edge that may well be there — and one of the runs it hides is exactly where a bad prefix would be. This is NOT a pass: `reach` on the same machine withholds its unreachable and dead lists for the same reason.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-typed.sysml",
+    "machine": "TrapGuardTyped::Trap::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state nominal, s=state degradedB",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state degradedB` holds before `state nominal` ever does, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-typed.sysml",
+    "machine": "TrapGuardTyped::Trap::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state nominal",
+    "claim": "covered",
+    "code": null,
+    "detail": "covered — witness trace of 0 step(s), a run this semantics admits: `state nominal` holds on some run, over the whole run",
+    "witness": [
+      "nominal"
+    ],
+    "exitCode": 0,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 1,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-typed.sysml",
+    "machine": "TrapGuardTyped::Trap::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/trapguard-typed.sysml",
+    "machine": "TrapGuardTyped::Trap::Modes",
+    "pattern": "pattern=response, scope=globally, p=state nominal",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/cover-sealed.sysml",
+    "machine": "CoverProbe::Sealed::Modes",
+    "pattern": "pattern=absence, scope=globally, p=state failsafe",
+    "claim": "pass",
+    "code": null,
+    "detail": "pass — holds on every reachable configuration: `state failsafe` never holds, over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 2 product state(s).",
+    "witness": [],
+    "exitCode": 0,
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/cover-sealed.sysml",
+    "machine": "CoverProbe::Sealed::Modes",
+    "pattern": "pattern=universality, scope=globally, p=state failsafe",
+    "claim": "fail",
+    "code": "verification/refuted",
+    "detail": "fail — witness trace of 0 step(s): `state failsafe` holds at every configuration, over the whole run. The run below is one this semantics admits; the simulator’s declaration-order tie-break may never take it.",
+    "witness": [
+      "idle"
+    ],
+    "exitCode": 1,
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/cover-sealed.sysml",
+    "machine": "CoverProbe::Sealed::Modes",
+    "pattern": "pattern=bounded-existence, scope=globally, p=state failsafe, n=1",
+    "claim": "pass",
+    "code": null,
+    "detail": "pass — holds on every reachable configuration: `state failsafe` holds at most 1 time(s), over the whole run. exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}, over 2 product state(s).",
+    "witness": [],
+    "exitCode": 0,
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/cover-sealed.sysml",
+    "machine": "CoverProbe::Sealed::Modes",
+    "pattern": "pattern=precedence, scope=globally, p=state failsafe, s=state idle",
+    "claim": "vacuous",
+    "code": null,
+    "detail": "vacuous: `state failsafe` holds on no explored run, so \"`state idle` holds before `state failsafe` ever does, over the whole run\" is true of this machine without S ever being reached. It is inconclusive and exits 2; `--strict-vacuity` raises it to an error and changes no exit code.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 1,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/cover-sealed.sysml",
+    "machine": "CoverProbe::Sealed::Modes",
+    "pattern": "pattern=cover, scope=globally, p=state failsafe",
+    "claim": "not-covered",
+    "code": "verification/not-covered",
+    "detail": "not covered under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — over 2 configuration(s): `state failsafe` holds on some run, over the whole run — and no explored run holds `state failsafe` inside an open scope segment. A decided absence: the design as written admits no such run within these bounds. It is a missing behaviour and not a violated requirement, so it exits 2; `--cover-required` spends the 1 for it instead.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 0,
+      "covered": 0,
+      "notCovered": 1
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/cover-sealed.sysml",
+    "machine": "CoverProbe::Sealed::Modes",
+    "pattern": "pattern=existence, scope=globally, p=state failsafe",
+    "claim": "inconclusive",
+    "code": "verification/behaviour-unsupported-construct",
+    "detail": "inconclusive: liveness not checked in-process. `existence` is violated only by an infinite run that never delivers what it promised, and this engine searches for finite bad prefixes — of which such a run has none. It stays inconclusive until a lasso search lands and a fairness assumption is named; there is no flag that lowers it.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  },
+  {
+    "file": "test/fixtures/verification/models/cover-sealed.sysml",
+    "machine": "CoverProbe::Sealed::Modes",
+    "pattern": "pattern=response, scope=globally, p=state failsafe",
+    "claim": "inconclusive",
+    "code": "verification/malformed-property",
+    "detail": "`response` needs a `s` atom (every P is followed by an S, over the whole run), and the property states none.",
+    "witness": [],
+    "exitCode": 2,
+    "counts": {
+      "passed": 0,
+      "failed": 0,
+      "vacuous": 0,
+      "inconclusive": 1,
+      "covered": 0,
+      "notCovered": 0
+    }
+  }
+]

@@ -714,7 +714,7 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
     // nobody hit.
     alsoRequires: [],
     otherwise: 'inconclusive, naming the failed clause',
-    producedBy: null,
+    producedBy: { file: 'src/semantics/mc/patterns.ts', symbol: 'recoveryRow' },
   },
   {
     id: 'A8',

@@ -1443,8 +1443,17 @@ export const TRAP_REFUSAL_SENTENCE: Record<'environment' | 'time' | 'store', str
  * A SELF-LOOPING SINGLETON IS A TRAP. It has a successor, so it is not a
  * deadlock row; if it is not an ending and not the opening, nothing leaves it
  * and the machine was not meant to stop there.
+ *
+ * EXPORTED for one reader outside this file: `recoveryRow` (`./patterns`,
+ * §3.2b), whose *"Of these, N form a set nothing leaves"* clause counts the
+ * cannot-reach configurations that sit inside a trap — read off THIS
+ * classifier, with THIS exemption order, so that number can never disagree
+ * with the `verification/unrecoverable-mode` row `reach` prints on the same
+ * machine. `trapsOf` below returns rows without node indices, which is why the
+ * classifier is the export and not the row producer. Not in the API barrel:
+ * `reachReport` is the door.
  */
-function classifyBottoms(
+export function classifyBottoms(
   model: Model,
   walk: ExploreResult,
   comps: Components,

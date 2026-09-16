@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3302 passed / 0 failed / 0 skipped** across **151 files** + **128 E2E** across **78 spec files** = **3430 green** (measured 2026-09-16) |
+| Full automated suite | **3335 passed / 0 failed / 0 skipped** across **152 files** + **128 E2E** across **78 spec files** = **3463 green** (measured 2026-09-16) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -1141,7 +1141,17 @@ properties, and a bad-prefix search over a finite graph decides them. One —
 refutable, which is why the engine cannot decide `existence`, but finitely
 *witnessable*, which is why the same search that refutes `absence of P` confirms
 `cover P` — the bad prefix of the one is the witness of the other, and the
-monitor is shared byte for byte. Two — `existence`, `response` — are liveness,
+monitor is shared byte for byte. One — `recovery` — is **branching-time** (`AG EF p`:
+from every reachable configuration, some continuation reaches `p`), which no
+bad-prefix search decides in either direction; it never reaches the search and
+is answered by reverse reachability over the walk's retained relation, as
+`recoverable` or as `not recoverable` naming the configurations that cannot,
+and ONLY over a walk whose relation is the machine's own (`walkIsExact`,
+register row A7) — both directions behind one gate, because a guard the walk
+could not decide removes an edge the model states and would otherwise
+manufacture the refutation at exit 1; it reads `state` and `node` atoms only,
+through the same selection `absence` reads them with, and refuses the other
+three kinds rather than earning a refutation from an empty target set. Two — `existence`, `response` — are liveness,
 and a bad-prefix search finds no bad prefix for either on any graph; both report
 `inconclusive: liveness not checked in-process` until a lasso search lands and a
 fairness assumption is named. A `pass` is emitted only when the walk saw the
@@ -1196,8 +1206,10 @@ makes are a list a test can walk.** `publishabilityOf` in
 product-search conjunct only the second of them has, which is a field a
 walk-only claim does not carry rather than a `false` it would print "bound
 exhausted" from. Beside it sits `walkIsExact`, a second and stricter predicate
-for a different kind of claim, and exactly one published field reads it — the
-trap list (register row A6): an absence list gets **smaller** as edges are
+for a different kind of claim, and the published answers that read it are the
+trap list (register row A6), the modality on a refutation (A8 and W3), the
+wording of a `covered` warrant (W1) and both directions of `recovery` (A7): an
+absence list gets **smaller** as edges are
 added, so a walk that offers more edges than the machine grants cannot invent
 one, while *"nothing here is inescapable"* gets **easier** to state as edges are
 added and the same over-approximation falsifies it. Two registers, `ABSENCE_CLAIMS` and `WITNESS_CLAIMS`, record which of the two
@@ -1315,7 +1327,10 @@ on a model that is green on this build. One-directional, in the same direction
 as every other carrier commitment here, and priced in this paragraph rather
 than left unsaid; the alternative, a `--pattern`-only feature with no carrier
 value, was rejected because `PropertyPattern` exists so a property travels with
-the file.
+the file. **The value `pattern = "recovery"` is the same commitment, made the
+same way:** a file carrying it is refused by any build before the pattern
+landed as `verification/malformed-property` — inconclusive, exit 2 — on a model
+this build decides; recorded here in the commit that added it.
 
 ### 8.6 The vocabulary this lane reads, and the vocabulary it writes
 
@@ -1446,7 +1461,7 @@ dependency this census reports the absence of.
 | **Requirements — contracts and obligations** | `contracts` / `obligations` read `RequirementDefinition` / `RequirementUsage` clause roles and case `objective`s into an assumption/guarantee inventory and a proof worklist (`src/semantics/contracts.ts`, `src/semantics/obligations.ts`) | **These commands report structure only.** They evaluate nothing and decide nothing: no solver stands behind them, and neither prints a word about whether a requirement holds. A clause an element INHERITS is disclosed and never filed. On a row whose element also wrote a clause of its own, the inherited one is listed marked `(inherited)`, under a count that says how many of the clauses shown the element itself wrote and which element wrote each of the others; on a row whose element wrote none — `requirement massOk : MassLimit;`, the ordinary way to apply a requirement — the row names the definition the clauses are filed on instead, exactly as it always did. Either way it enters no worklist, moves no obligation digest and reaches no evidence key: the clause is filed once, on the element whose body holds it, so a requirement USAGE is still not read through its definition's clauses (the definition carries its own contract, and the usage's row names it rather than being counted as bodiless). Only a clause some contract in the same run FILES is disclosed — a general type the run left out, a `#prose` statement or a clause written outside a case's `objective`, is disclosed nowhere. The `variables` and `fragment` a row carries are its declared clauses' and are labelled `declared` wherever an inherited clause is shown beside them; an attribute declared in a `port def` is one element however many ports reach it, so the variables a clause reads are reported per PATH and their `in`/`out` direction is taken from the port the path names; `discharged` and `stale` are declared in the status vocabulary and never produced, because both are read back from an evidence record that does not ship yet. |
 | **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine — a point evaluation (`src/semantics/engines/literal.ts`) or negation-UNSAT in z3 (`src/semantics/engines/smt.ts`) — and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). `proved` is reachable only under `--engine smt`, only as UNSAT-of-negation over a satisfiable axiom set with satisfiable premises and a two-sided domain, and only for the quantifier-free arithmetic fragment the unit gates pass — anything else is inconclusive with a code, and a missing solver is exit 2 rather than a fallback. The two engines are held to one answer by a differential gate over the whole fixture corpus, and every constraint-bearing element is accounted for by a relation census; neither says the gatherer reads every construct the standard defines. What an external tool makes of a record or a verdict facet is untested. |
 | **Safety — cut sets from contract-failure injection (`fault-tree`)** | Minimal cut sets over the refinement obligations of §8.3c, enumerated by increasing order with supersets pruned and the check count reported (`src/semantics/fault-tree.ts`); §8.3d above states what a cut set claims and the four sentences the command never writes | **Contract-level FTA, never a behavioural safety analysis**, and every report says so. No failure rates, no probabilities and no importance measures: the model states none and none is derived. Every absence carries the order it was checked to; a vacuous contract set is reported as vacuous and never as "no cut set"; an undecided order-1 check forbids the no-single-point claim; a state machine is answered with a count of its failure-mode flags and `#exceptional` states — exit 2, nothing enumerated — rather than with an empty list. The order bound is an assumption about how many failures are credible at once, carried in a Sysprose metadata definition, and what an external reader makes of that carrier is untested. |
-| **Behaviour — bounded safety verdicts (`reach`, `check-behaviour`)** | An explicit walk of a state machine's configuration graph, exploring every enabled transition where the simulator takes the first (`src/semantics/mc/`), with safety patterns decided by bad-prefix search over it and the `cover` guarantee witnessed by the same search; §8.5 above states the profile, the split and the exit contract | **This is a reading of THIS tool's interpreter, not of the specification's execution semantics**, and every verdict prints the six-field profile it holds under. PSSM is not implemented and no conformance with it is claimed. Liveness is not decided in-process; a parallel or history machine is refused rather than walked; a bound hit empties the unreachable and dead lists and can never produce a pass — it does NOT empty the deadlock rows, which are about a configuration the walk already dequeued and offered every input at, and which a bound cannot make wrong; and a guard the walk consulted and could not evaluate withholds all three of `reach`'s absence claims outright (`verification/guard-undetermined`) rather than reading “did not evaluate” as “is false”, and makes `check-behaviour` report `inconclusive` rather than `pass` or `vacuous`. Every edge-bearing element under a machine is accounted for by a census as walked, read by the opening, refused, with neither end a node the walk can stand on, or as no step at all (a typing, a subsetting, a `connect` — facts about the states rather than steps between them) — and an edge that sequences behaviour and that the relation does not hold (one carrying a payload today, an unforeseen spelling tomorrow) refuses the machine rather than shrinking its absence lists; both spellings of a state-to-state edge, `transition` and `first … then …`, are walked. The property carrier is a Sysprose metadata definition, and what an external reader makes of it is untested. |
+| **Behaviour — bounded safety verdicts (`reach`, `check-behaviour`)** | An explicit walk of a state machine's configuration graph, exploring every enabled transition where the simulator takes the first (`src/semantics/mc/`), with safety patterns decided by bad-prefix search over it, the `cover` guarantee witnessed by the same search, and the `recovery` branching-time pattern decided by reverse reachability over the retained relation where the walk is exact; §8.5 above states the profile, the split and the exit contract | **This is a reading of THIS tool's interpreter, not of the specification's execution semantics**, and every verdict prints the six-field profile it holds under. PSSM is not implemented and no conformance with it is claimed. Liveness is not decided in-process; a parallel or history machine is refused rather than walked; a bound hit empties the unreachable and dead lists and can never produce a pass — it does NOT empty the deadlock rows, which are about a configuration the walk already dequeued and offered every input at, and which a bound cannot make wrong; and a guard the walk consulted and could not evaluate withholds all three of `reach`'s absence claims outright (`verification/guard-undetermined`) rather than reading “did not evaluate” as “is false”, and makes `check-behaviour` report `inconclusive` rather than `pass` or `vacuous`. Every edge-bearing element under a machine is accounted for by a census as walked, read by the opening, refused, with neither end a node the walk can stand on, or as no step at all (a typing, a subsetting, a `connect` — facts about the states rather than steps between them) — and an edge that sequences behaviour and that the relation does not hold (one carrying a payload today, an unforeseen spelling tomorrow) refuses the machine rather than shrinking its absence lists; both spellings of a state-to-state edge, `transition` and `first … then …`, are walked. The property carrier is a Sysprose metadata definition, and what an external reader makes of it is untested. |
 
 **The load-bearing gap.** The interop client round-trips **fully** against our own
 spec-shaped server (§6), and against the live OMG pilot it round-trips a read and
@@ -1469,7 +1484,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3302 pass / 0 skip, 151 files)
+# Full unit + integration + conformance suite (3335 pass / 0 skip, 152 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

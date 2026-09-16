@@ -2203,6 +2203,78 @@ not admit. On a machine where the walk explored a choice the simulator never
 takes, every `covered` also carries the simulator sentence: the claim is about
 the machine's semantics, and `simulate` may never produce the run.
 
+**And one question neither `absence` nor `cover` can ask: from every configuration
+the machine can be in, can it get back?** `absence` says whether a run ever
+enters `failsafe`; `cover` says whether some run does; neither says whether the
+design can *return* from wherever it ends up. That is a branching-time question
+— `AG EF p`, *from every reachable configuration, some continuation reaches
+`p`* — and a bad-prefix search cannot answer it in either direction: no finite
+run breaks it, so the search would find nothing and print this command's
+strongest verdict for free. `recovery` is answered by a different algorithm on
+the same walk: the configurations that hold the state you name are collected,
+and the walk's own successor relation is followed *backwards* from them. Every
+configuration the backward pass reaches can get there; every one it does not is
+named.
+
+```console
+$ npm run sysprose -- check-behaviour test/fixtures/verification/models/trap-probe.sysml \
+    --element TrapProbe::Probe::Modes --pattern 'pattern=recovery, scope=globally, p=state standby'
+test/fixtures/verification/models/trap-probe.sysml: TrapProbe::Probe::Modes — 1 property: 0 pass, 1 fail, 0 vacuous, 0 inconclusive, 0 covered, 0 not covered
+  …
+  FAIL         `state standby` is reachable from every reachable configuration, over the whole run
+    from --pattern
+    not recoverable: 4 configuration(s) cannot reach `state standby`: {alpha, beta, failsafe, failsafeHold}; the nearest is entered in 1 step(s) from `standby`. Of these, 2 form a set nothing leaves — `reach` reports them as `verification/unrecoverable-mode`.
+    verification/refuted
+    5 configuration(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
+  semantic profile (the reading every verdict above holds under):
+    ...
+  error verification/refuted  `TrapProbe::Probe::Modes`: `state standby` is reachable from every reachable configuration, over the whole run — not recoverable: 4 configuration(s) cannot reach `state standby`: …
+```
+
+Read the two numbers for the two questions they answer. **Four** configurations
+cannot get back to `standby` — nothing in this machine returns there, so every
+configuration but the opening is on the list — and the row names them by the
+state each rests in and says how soon the first is entered. **Two** of those four
+are the set `reach` reports as a trap: `{failsafe, failsafeHold}` is the part
+nothing leaves at all, while `alpha` and `beta` cycle between themselves with a
+way out that leads only deeper. The trap row and this row are the same machine
+seen from two sides, and neither number is ever printed under the other's
+question. Note what the row is *not*: it is a `fail` — an assertion you wrote
+that the design does not meet, `verification/refuted`, exit 1 — but there is
+no witness trace under it, because a set is not a run; the count beside the
+bounds line is the machine's own configurations, not product states, because
+no product search ran. On the flagship machine the same property reads
+`PASS` with *recoverable: `state standby` is reachable from every reachable
+configuration*, exit 0, and the simulator sentence beside it, because the walk
+explored both branches at `autonomous` and `simulate` takes one.
+
+**What the row refuses, and why it refuses both directions.** `recoverable` is
+a claim that gets *easier* to make as edges are added, so it is withheld — never
+qualified — wherever the walk's relation is not the machine's: a bound the walk
+hit, a named trigger the walk offers at every configuration with no carrier for
+whether an environment would send it (the latch fixture: `locked → nominal`
+exists only because the walk supplies `unlatch`, and the draft of this feature
+printed `recoverable` about it), an `after(n)` dwell the walk takes without
+advancing a clock. `not recoverable` gets easier as edges are *removed*, which is
+the opposite direction — and a guard over something the walk could not decide
+removes exactly one: on the trapguard fixture the escape `degradedA if resetOk
+then nominal` is absent from the relation because nothing valued `resetOk`, and
+a row that gated only the positive half would print *not recoverable: 2
+configuration(s) cannot reach `state nominal`* at exit 1 about a design that
+states the way back. So one gate holds both halves, the row is `inconclusive`
+naming the clause, and nothing is shortened. Two more refusals are about the
+property rather than the walk: `p` must be a `state` or a `node` atom — a
+`trigger` or `fires` atom holds on a step and not at a configuration, and an
+expression reads a store this walk does not retain, so none of the three gives
+a target set to reverse from, and reading one anyway would earn a refutation
+from a tool limitation — and the scope must be `globally`. And the two atom
+kinds are read exactly as `absence` reads them: `state X` is *X on the active
+stack*, `node X` is *X the active leaf*, so on a composite state `recovery p =
+state degraded` holds from everywhere while `recovery p = node degraded` is a
+refutation with an empty target set — the same split `absence` shows on the
+same file, and the pattern never says `vacuous` for it: a state nothing reaches
+is a decided *no*, not an unopened antecedent.
+
 **The catalogue, and the half of it this engine will not decide.**
 
 | Pattern | Class | Reads | Decided here? |
@@ -2212,6 +2284,7 @@ the machine's semantics, and `simulate` may never produce the run.
 | `bounded-existence` | safety | P *occurs* at most `n` times | yes |
 | `precedence` | safety | S holds before P ever does | yes |
 | `cover` | **guarantee** | P holds on some run | yes — `covered` with a witness, or `not covered` (exit 2; exit 1 under `--cover-required`) |
+| `recovery` | **branching** | P is reachable from every reachable configuration | yes — `recoverable`, or `not recoverable` naming the configurations that cannot (exit 1); withheld unless the walk's relation is the machine's; `state`/`node` atoms and `globally` only |
 | `existence` | **liveness** | P holds at some point | **no** |
 | `response` | **liveness** | every P is followed by an S | **no** |
 
@@ -2221,7 +2294,10 @@ Manna–Pnueli's `◇β` — is *confirmed* by a finite run, so the same search 
 finds one and prints it, or, having seen the whole graph, has not; it is the one
 pattern whose negative answer is a behaviour the design does not admit rather
 than a requirement it violates, which is why it has two words of its own and why
-`not covered` exits 2 by default. A **liveness** property is broken only
+`not covered` exits 2 by default. A **branching-time** property — `recovery` is
+`AG EF p` — is not a property of any run, so the search decides nothing about
+it; it is answered by reverse reachability over the same walk, in both
+directions, and only over a walk whose relation is the machine's. A **liveness** property is broken only
 by an infinite run that never delivers what it promised, and a bad-prefix search
 finds no bad prefix for one on *any* graph. Reporting "nothing found, so it
 holds" would print this command's strongest verdict for exactly the two

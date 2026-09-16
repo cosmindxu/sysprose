@@ -3,7 +3,7 @@
  * things this engine refuses to say (plan §3.8).
  *
  * WHAT IT DECIDES, AND WHAT IT CANNOT. A property pattern is a shape with atoms
- * in it (`./atoms`) and a SCOPE it holds over. Four of the seven patterns in the
+ * in it (`./atoms`) and a SCOPE it holds over. Four of the eight patterns in the
  * catalogue are SAFETY properties: every violation of one has a finite bad
  * prefix, so a search over the configuration graph either finds a run that
  * breaks it — and prints that run — or, having seen the whole graph, does not.
@@ -15,6 +15,11 @@
  * W1 of `./publishable`), `not-covered` a decided absence (row A5) — a missing
  * behaviour, never a violated requirement, so it exits 2 and spends the 1 only
  * under `--cover-required`.
+ * One is BRANCHING-TIME: `recovery` asks whether a named state is reachable
+ * from EVERY reachable configuration — `AG EF p` — which no bad-prefix search
+ * decides in either direction, so it never reaches one: {@link recoveryRow} is a
+ * reverse-reachability pass over the relation the walk retained, and it
+ * publishes `recoverable` or `not recoverable` only where `walkIsExact` holds.
  * Two of them are LIVENESS: `existence` and `response` are violated only by an
  * INFINITE run that never delivers what was promised, and a bad-prefix search
  * finds no bad prefix for either. Under a naive "no violation found ⇒ pass"
@@ -108,6 +113,7 @@ import {
   DEFAULT_MAX_DEPTH,
   GUARD_UNDETERMINED_CODE,
   boundsSentence,
+  classifyBottoms,
   exploreMachine,
   machineAlphabet,
   machineStates,
@@ -140,27 +146,30 @@ import {
 // Component arithmetic over the retained relation, for the avoiding cycle.
 // `./scc` decides nothing about what may be published; `modalityOf` asks the
 // gate first and reads the components only where it holds.
-import { acyclic, tarjanComponents, type Components } from './scc';
+import { acyclic, reverseReachable, tarjanComponents, type Components } from './scc';
 
 /* ───────────────────────────── the catalogue ────────────────────────────── */
 
-/** The seven patterns, split by what a bad-prefix search can decide. */
+/** The eight patterns, split by what a bad-prefix search can decide. */
 export type PatternName =
   | 'absence'
   | 'universality'
   | 'bounded-existence'
   | 'precedence'
   | 'cover'
+  | 'recovery'
   | 'existence'
   | 'response';
 
 /**
  * Safety is decided here in the refuting direction; a guarantee is decided here
  * in the WITNESSING direction (`cover` — Manna–Pnueli's `◇β`, confirmed by one
- * run and never refuted by a finite prefix); liveness is not decided
- * in-process at all.
+ * run and never refuted by a finite prefix); a branching-time pattern
+ * (`recovery` — `AG EF p`) is decided in BOTH directions by reverse
+ * reachability over the retained relation, and by no run at all; liveness is
+ * not decided in-process at all.
  */
-export type PatternClass = 'safety' | 'guarantee' | 'liveness';
+export type PatternClass = 'safety' | 'guarantee' | 'branching' | 'liveness';
 
 /** The five scopes, spelled as a reader writes them in the carrier. */
 export type ScopeName = 'globally' | 'before' | 'after' | 'between' | 'after-until';
@@ -226,6 +235,19 @@ export const PATTERNS: readonly PatternSpec[] = [
     fields: ['p'],
     needsCount: false,
     reading: 'P holds on some run',
+  },
+  {
+    // THE ONE BRANCHING-TIME ROW. Not a property of a run at all: from every
+    // configuration the walk reached, is there SOME continuation that enters
+    // P? A bad-prefix search finds no bad prefix for it on any graph and would
+    // return `pass` for free, which is why `checkProperty` dispatches it to
+    // `recoveryRow` before any search runs. Before the liveness pair for the
+    // reason `cover` is.
+    name: 'recovery',
+    kind: 'branching',
+    fields: ['p'],
+    needsCount: false,
+    reading: 'P is reachable from every reachable configuration',
   },
   {
     name: 'existence',
@@ -367,6 +389,35 @@ export interface CoverCensus {
   readonly coverUnreachedBehindUndefinedGuard: number;
 }
 
+/**
+ * The census one `recovery` row publishes on `--json` (plan §2.5, §3.2b, §5 row
+ * 9): which atom kind it read, how many configurations hold the target, how
+ * many cannot reach it, how many of those `reach` would report as a trap, and
+ * which clause of the exactness gate — if any — withheld the answer.
+ *
+ * THREE-VALUED where `TrapCensus` is, for the same reason: `cannotReach` and
+ * `bottomSccOverlap` are answers about the MACHINE and read `null` whenever
+ * the row was refused — by the gate, or by the atom kind — because a
+ * `cannotReach: 0` on a refused walk would read as a decided absence.
+ * `targetConfigs` is a fact about the RETAINED relation and stays a number on
+ * every walk the arm READ — a gate refusal carries the count it collected —
+ * but it is `null` on the two refusals that come before the target set is
+ * collected at all (a scope this pattern gives no semantics to, an atom kind
+ * it cannot observe): a `0` there would read as "no configuration holds it",
+ * the same species of decided-looking absence, about a set never computed.
+ *
+ * The kill measurement (§3.2b): if `cannotReach` is always either 0 or the
+ * whole complement of the opening's component, this pattern answers the
+ * question `reach`'s trap row already answers.
+ */
+export interface RecoveryCensus {
+  readonly atomKind: Atom['kind'];
+  readonly targetConfigs: number | null;
+  readonly cannotReach: number | null;
+  readonly bottomSccOverlap: number | null;
+  readonly refusedByGate: FailedClause;
+}
+
 /** One observation of the witness run, in the words the trace prints. */
 export interface TraceStep {
   /** 0 for the opening configuration, then one per step. */
@@ -483,6 +534,8 @@ export interface PropertyVerdict {
   modality: Modality | null;
   /** Present on a `cover` row that reached the walk, and on no other. */
   cover?: CoverCensus;
+  /** Present on a `recovery` row that reached the walk, and on no other. */
+  recovery?: RecoveryCensus;
 }
 
 /** What `check-behaviour` publishes. */
@@ -1368,6 +1421,15 @@ export function checkProperty(
   // withholding its absence lists while this one wrote `pass` and `exhaustive`
   // over the same machine was the tool contradicting itself on one file.
   const guardsDecided = walk.undeterminedGuards.length === 0;
+  // THE THIRD DISPATCH ARM, AND ITS POSITION IS THE SPECIFICATION (plan §3.2b).
+  // `recovery` is branching-time — `AG EF p` — and the search below is a
+  // bad-prefix search, which finds no bad prefix for it on ANY graph and would
+  // return `pass` for free. So the arm sits here and nowhere else: AFTER the
+  // unsupported refusal above, which is the only enforcement point on this
+  // function for the `unsupported` conjunct of `seenWhole`, and BEFORE the
+  // search, which must never run for it. The walk exists here; two lines
+  // higher it would not.
+  if (property.pattern.kind === 'branching') return recoveryRow(model, walk, property, row, bounds);
   const found = search(model, machineId, property, bounds);
   // ONE DEFINITION, in `./publishable`, and this is the reader that adds the
   // product-search conjunct: `found.boundHit === 'none'` becomes
@@ -1597,6 +1659,28 @@ export function checkProperty(
 /* ─────────────────────────────── the modality ───────────────────────────── */
 
 /**
+ * The reason a store-valued atom is refused, spelled ONCE for two readers:
+ * §3.R's row 4 (`modalityOf`, as `not decided: …`) and §3.2b's atom-kind gate
+ * (`recoveryRow`, as a `verification/malformed-property` refusal). Exported so
+ * the two sections cannot drift back apart — the draft plan had them stating
+ * opposite gates for one restriction.
+ */
+export const STORE_ATOM_REASON = 'this atom reads the store, which this walk does not retain';
+
+/**
+ * The reason a step-valued atom is refused by `recovery`: `trigger` and `fires`
+ * hold on a STEP (`atomHolds` reads `obs.input` and `obs.transition`), and a
+ * configuration graph has no steps to select target nodes from. Ungated, the
+ * target set would be empty and the row would publish a refutation — exit 1,
+ * `verification/refuted` — about a well-formed model on the strength of an atom
+ * kind the engine cannot observe, which is the one path in the plan where a
+ * tool limitation would earn a refutation (§3.2b MUST-NEVER).
+ */
+export const STEP_ATOM_REASON =
+  'a trigger is observed on a step, not at a configuration, so `recovery` has no target set to reverse from';
+
+
+/**
  * The seven `not decided` sentences of plan §3.R, rows 1–7, spelled once.
  *
  * Rows 1, 5, 6 and 7 are the clauses of `walkIsExact` as four sentences rather
@@ -1612,7 +1696,7 @@ export function checkProperty(
 const NOT_DECIDED = {
   walk: 'not decided: the walk was not exhaustive',
   step: 'not decided: this atom is a property of a step, not of a configuration, so the product does not collapse onto the configuration graph',
-  store: 'not decided: this atom reads the store, which this walk does not retain',
+  store: `not decided: ${STORE_ATOM_REASON}`,
   environment:
     'not decided: this machine names triggers, and "every run" would be a claim about an environment this walk has no carrier for',
   time: 'not decided: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so a run that avoids the violation may be one the interpreter never takes',
@@ -1847,6 +1931,311 @@ function modalityOf(
   };
 }
 
+/* ─────────────────────────── the recovery pattern ───────────────────────── */
+
+/**
+ * The three §3.2b refusal sentences, one per clause of the exactness gate,
+ * each followed by the standing sentence for its mechanism (§2.4).
+ *
+ * The store sentence says *a condition the walk consulted and could not decide*
+ * and NOT the plan's *an attribute with no declared value*, for the reason
+ * `modalityOf`'s row 7 gives: the store clause is the shipped
+ * `undeterminedGuards` predicate, which also covers `not mode` over a fully
+ * valued `mode` (`trapguard-typed.sysml`), and the narrower sentence would be
+ * false on the one corpus model that tells the two readings apart.
+ */
+const RECOVERY_REFUSED: Record<'environment' | 'time' | 'store', string> = {
+  environment:
+    'inconclusive: this machine names triggers this walk offers at every configuration, so "reachable from every configuration" would be a claim about an environment this walk has no carrier for — ' +
+    ENVIRONMENT_SENTENCE,
+  time:
+    'inconclusive: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so "reachable from every configuration" would be a claim about escapes this walk invented — ' +
+    DWELL_SENTENCE,
+  store:
+    'inconclusive: a transition of this machine is guarded by a condition the walk consulted and could not decide, so this walk never offered an edge the model states and neither direction of this claim is made — ' +
+    CLAUSE_SENTENCE.store,
+};
+
+/**
+ * How many of `cannot` sit inside a trap — the second of §3.2b's two numbers,
+ * under its own question. Read off the SAME classifier and exemption order
+ * `reach` applies, so the *"Of these, N form a set nothing leaves"* clause can
+ * never disagree with the `verification/unrecoverable-mode` row on one machine.
+ */
+function trapOverlap(model: Model, walk: ExploreResult, cannot: ReadonlySet<number>): number {
+  let overlap = 0;
+  for (const members of classifyBottoms(model, walk, tarjanComponents(walk.successors)).traps) {
+    for (const i of members) if (cannot.has(i)) overlap++;
+  }
+  return overlap;
+}
+
+/** The shortest number of steps from the opening into `target`, breadth-first over the relation. */
+function nearestDepth(successors: readonly (readonly number[])[], target: ReadonlySet<number>): number {
+  const depth = new Int32Array(successors.length).fill(-1);
+  const queue = [0];
+  depth[0] = 0;
+  for (let head = 0; head < queue.length; head++) {
+    const v = queue[head];
+    if (target.has(v)) return depth[v];
+    for (const w of successors[v]) {
+      if (depth[w] !== -1) continue;
+      depth[w] = depth[v] + 1;
+      queue.push(w);
+    }
+  }
+  // Every node the walk numbered is reachable from node 0 by construction, so a
+  // non-empty target the loop never met is a defect in the producer.
+  throw new Error('a configuration of the walk is not reachable from its opening');
+}
+
+/**
+ * `recovery` — reverse reachability to a named state (plan §3.2b): from every
+ * configuration the walk reached, can the machine get back to `p`? THE ONE
+ * PRODUCER OF BOTH ANSWERS, register row A7, and the arm `checkProperty`
+ * dispatches to instead of the bad-prefix search.
+ *
+ * ONE GATE, BOTH DIRECTIONS, AND WHY. `recoverable` (∀ configuration ∃ run into
+ * `p`) is monotone-INCREASING in the edge relation: every over-approximating
+ * mechanism of this walk — a dwell offered without a clock, a trigger offered
+ * without an environment — can invent it, so it reads `walkIsExact` like every
+ * increasing claim. `not recoverable` (∃ configuration reaching no target) is an
+ * absence over REVERSE reachability, monotone-DECREASING in edges, so on the
+ * dwell and trigger mechanisms alone the decreasing conjunction would be a sound
+ * gate for that half — but not under an UNDER-approximation: a guard the walk
+ * consulted and could not decide (`trapguard.sysml`: the escape edge is absent,
+ * measured `cannot 2`) removes an edge the model states and MANUFACTURES the
+ * refutation, `verification/refuted` at exit 1 on a design that declares the
+ * way back. A bound and a missing edge kind are the other two, and both are
+ * already inside `seenWhole`. So both halves are gated on the whole of
+ * `walkIsExact` and print under ONE `qualification`; a per-direction relaxation
+ * would put two exhaustiveness promises on one row and re-admit the trapguard
+ * refutation through the store. Nothing here reads the decreasing family, the
+ * product search, or its prefix — the reflection suite pins that off the
+ * source.
+ *
+ * THE TARGET PREDICATE IS `atomHolds`'s OWN SELECTION. A `state` atom holds
+ * where the id is on the active STACK (`configStates[i].includes`), a `node`
+ * atom where it is the active LEAF (`configLeaves[i] ===`) — exactly as
+ * `atomHolds` reads them, so `recovery` and `absence` cannot disagree about
+ * one atom inside one command. One predicate for both was the draft's error:
+ * on any composite state it flips the verdict AND the exit code (measured,
+ * §3.2b). `walk.reachable` is never a target predicate — it is the entry
+ * cascade, and a state can be in it without being any configuration's leaf.
+ * Reverse reachability is REFLEXIVE: a configuration already holding `p`
+ * reaches it in zero steps.
+ *
+ * ORDER OF THE REFUSALS, which is the order of what is knowable: a scope this
+ * pattern gives no semantics to; an atom kind the configuration graph cannot
+ * observe (`trigger`, `fires`, `expression` — each with the reason its own
+ * kind earns, the last byte-identical to §3.R's row 4); a walk that did not
+ * see the graph whole; a relation that is not the machine's, one clause at a
+ * time; THEN an empty target set, which over an exact walk is a decided
+ * refutation and never `vacuous` — there is no antecedent left unopened; and
+ * only then the reverse-reachability pass.
+ */
+function recoveryRow(
+  model: Model,
+  walk: ExploreResult,
+  property: ResolvedProperty,
+  row: Pick<PropertyVerdict, 'machine' | 'property' | 'pattern' | 'patternClass' | 'scope' | 'sentence' | 'bounds'>,
+  bounds: ExploreBounds,
+): PropertyVerdict {
+  const atom = property.atoms.p!;
+  // Every row this arm composes carries the machine's own count twice —
+  // `configs` is the product-search figure elsewhere and there is no product
+  // search here — an empty witness (a set is not a run), no modality (a
+  // `not recoverable` is not a bad-prefix `fail`), and an open scope.
+  const shape = {
+    ...row,
+    configs: walk.configs,
+    machineConfigs: walk.configs,
+    boundHit: walk.boundHit,
+    unsupported: [] as readonly UnsupportedConstruct[],
+    activated: true,
+    witness: [] as readonly TraceStep[],
+    modality: null as Modality | null,
+  };
+  const refused = (
+    code: string,
+    detail: string,
+    qualification: string,
+    census: Omit<RecoveryCensus, 'atomKind'>,
+  ): PropertyVerdict => ({
+    ...shape,
+    claim: 'inconclusive',
+    code,
+    detail,
+    exhaustive: false,
+    qualification,
+    recovery: { atomKind: atom.kind, ...census },
+  });
+  // Nothing below the two refusals that use this ran: no target set was
+  // collected, so its count is `null` and not a `0` a `--json` reader would
+  // take for "no configuration holds it".
+  const notRead = { targetConfigs: null, cannotReach: null, bottomSccOverlap: null, refusedByGate: null };
+
+  // (1) The scope. §3.2b gives a scope no semantics and every example is
+  // `globally`; a scope is a monitor over a RUN, and this question is asked of
+  // configurations. Refused rather than read as `globally`, which would decide
+  // a property nobody wrote.
+  if (property.scope.name !== 'globally') {
+    return refused(
+      MALFORMED_PROPERTY_CODE,
+      `inconclusive: \`recovery\` is read over \`globally\` only — a scope selects segments of a run, and "reachable from every reachable configuration" is a question about configurations, not about the segments \`${property.scope.name}\` would select; the property was not read.`,
+      'nothing was checked: this pattern reads no scope but `globally`',
+      notRead,
+    );
+  }
+  // (2) The atom-kind gate, which is part of the arm. Only `state` and `node`
+  // are observed AT a configuration; the other three would leave the target
+  // set empty and land on the refutation row below.
+  if (atom.kind === 'trigger' || atom.kind === 'fires' || atom.kind === 'expression') {
+    const reason = atom.kind === 'expression' ? STORE_ATOM_REASON : STEP_ATOM_REASON;
+    return refused(
+      MALFORMED_PROPERTY_CODE,
+      `inconclusive: \`${atom.text}\` was not read by \`recovery\` — ${reason}`,
+      'nothing was checked: this pattern reads `state` and `node` atoms only',
+      notRead,
+    );
+  }
+
+  // (3) The gate, computed once; and the target set, read through
+  // `atomHolds`'s own selection for the kind.
+  const gate = walkIsExact(walk, bounds);
+  const id = atom.elementId!;
+  const targets: number[] = [];
+  for (let i = 0; i < walk.configs; i++) {
+    const holds = atom.kind === 'state' ? walk.configStates[i].includes(id) : walk.configLeaves[i] === id;
+    if (holds) targets.push(i);
+  }
+  const withheld = {
+    targetConfigs: targets.length,
+    cannotReach: null,
+    bottomSccOverlap: null,
+    refusedByGate: gate.failedClause,
+  };
+
+  // (4) The walk did not see the graph whole. `unsupported` never reaches here
+  // — `checkProperty` refused it above — so the clause is `bound` or the
+  // residue, and both print the bound code.
+  if (!gate.seenWhole) {
+    return refused(
+      BOUND_EXHAUSTED_CODE,
+      `inconclusive: bound exhausted — the recovery claim is not made. ${gate.sentence}; neither "reachable from every configuration" nor its complement is a claim a partial relation supports. Raise the bound (\`--max-configs N\`) and re-run.`,
+      gate.sentence,
+      withheld,
+    );
+  }
+  // (5) The relation is not the machine's. One switch on the gate's own
+  // clause, in its own order, so two machines failing for two reasons never
+  // print one sentence. The codes: the store clause files under the same code
+  // `reach` and the search branch file that mechanism under; a trigger and a
+  // dwell are questions this engine cannot decide HERE, the liveness refusal's
+  // precedent — never `null`, which only a `vacuous` row carries today.
+  switch (gate.failedClause) {
+    case 'environment':
+      return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.environment, gate.sentence, withheld);
+    case 'time':
+      return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.time, gate.sentence, withheld);
+    case 'store':
+      return refused(GUARD_UNDETERMINED_CODE, RECOVERY_REFUSED.store, gate.sentence, withheld);
+    default:
+      break;
+  }
+
+  const qualification = `exhaustive under ${boundsSentence(bounds)}`;
+  const decided = (claim: 'pass' | 'fail', code: string | null, detail: string, cannot: number, overlap: number): PropertyVerdict => ({
+    ...shape,
+    claim,
+    code,
+    detail,
+    exhaustive: gate.walkIsExact,
+    qualification,
+    recovery: {
+      atomKind: atom.kind,
+      targetConfigs: targets.length,
+      cannotReach: cannot,
+      bottomSccOverlap: overlap,
+      refusedByGate: null,
+    },
+  });
+
+  // The second of §3.2b's two numbers, printed under its own question and only
+  // when there is one — the same clause on both `fail` rows, so the census
+  // never carries a figure the text withholds.
+  const overlapClause = (overlap: number): string =>
+    overlap > 0 ? ` Of these, ${overlap} form a set nothing leaves — \`reach\` reports them as \`verification/unrecoverable-mode\`.` : '';
+
+  // (6) An empty target set over an exact walk is a decided refutation, NOT a
+  // vacuity: `AG EF p` over a non-empty reachable set with no `p` anywhere is
+  // false, and there is no antecedent left unopened. Two reasons a target set
+  // is empty, told apart by the STACKS and not by the atom kind: the state is
+  // on some stack but the leaf of none — a composite, which only the `node`
+  // reading can miss, and which `reach` reports reachable (measured on the
+  // composite fixture) — or it is on no stack at all, which is `reach`'s
+  // `verification/unreachable-state` whichever reading asked. Branching on
+  // the kind alone gave a plain unreachable leaf the composite explanation
+  // under `node` and withheld the pointer that was true of it.
+  if (targets.length === 0) {
+    const all = new Set<number>();
+    for (let i = 0; i < walk.configs; i++) all.add(i);
+    const overlap = trapOverlap(model, walk, all);
+    const onSomeStack = walk.configStates.some((stack) => stack.includes(id));
+    const none = `so none of the ${walk.configs} configuration(s) this walk reached can reach it`;
+    const where = onSomeStack
+      ? `is the active leaf of no reachable configuration, ${none} — the design as written never rests in \`${atom.argument}\` itself; a composite state is on the stack inside its substates and the leaf of none, which \`state ${atom.argument}\` would read.`
+      : `is on the stack of no reachable configuration, ${none} — the design as written has no way into \`${atom.argument}\` at all; \`reach\` reports it under \`verification/unreachable-state\`.`;
+    return decided('fail', 'verification/refuted', `not recoverable: \`${atom.text}\` ${where}${overlapClause(overlap)}`, walk.configs, overlap);
+  }
+
+  // (7) The reverse pass, reflexive, over the retained relation.
+  const canReach = reverseReachable(walk.successors, targets);
+  const cannot: number[] = [];
+  for (let i = 0; i < walk.configs; i++) if (!canReach.has(i)) cannot.push(i);
+  if (cannot.length === 0) {
+    return decided(
+      'pass',
+      null,
+      `recoverable: \`${atom.text}\` is reachable from every reachable configuration, ${qualification}${
+        walk.nondeterminism.length > 0 ? ` — ${SIMULATOR_SENTENCE}` : ''
+      }`,
+      0,
+      0,
+    );
+  }
+  const cannotSet = new Set(cannot);
+  const overlap = trapOverlap(model, walk, cannotSet);
+  // The set is named by the STATE each configuration rests in, once per
+  // state — a state is what a reader can find in the model, a configuration
+  // is not. Deduplicated by the leaf's identity and not its spelling, so two
+  // same-named leaves under different composites are two entries and not
+  // one; spelled by their qualified names when the simple ones collide; and
+  // when one state hosts more than one configuration, the count and the
+  // list disagree on purpose and the row says so, so the cardinality of the
+  // set can always be read against the number that introduces it.
+  const leaves: ElementId[] = [];
+  for (const i of cannot) {
+    const states = walk.configStates[i];
+    const leaf = walk.configLeaves[i] ?? states[states.length - 1];
+    if (!leaves.includes(leaf)) leaves.push(leaf);
+  }
+  const refs = leaves.map((leaf) => stateRef(model, leaf));
+  const spelt = new Map<string, number>();
+  for (const ref of refs) spelt.set(ref.name, (spelt.get(ref.name) ?? 0) + 1);
+  const names = refs.map((ref) => ((spelt.get(ref.name) ?? 0) > 1 ? ref.qualifiedName : ref.name));
+  const resting = names.length < cannot.length ? ` (${names.length} state(s), holding the ${cannot.length} configurations between them)` : '';
+  const openingLeaf = walk.configLeaves[0];
+  const opening = stateRef(model, openingLeaf ?? walk.configStates[0][walk.configStates[0].length - 1]).name;
+  return decided(
+    'fail',
+    'verification/refuted',
+    `not recoverable: ${cannot.length} configuration(s) cannot reach \`${atom.text}\`: {${names.join(', ')}}${resting}; the nearest is entered in ${nearestDepth(walk.successors, cannotSet)} step(s) from \`${opening}\`.${overlapClause(overlap)}`,
+    cannot.length,
+    overlap,
+  );
+}
+
 /* ─────────────────────────── the cover witness ──────────────────────────── */
 
 /** The two warrants a `covered` row may carry, in the words the row prints. */
@@ -2001,7 +2390,8 @@ export function coverRequiredRefusal(census: CoverCensus): string {
 
 /**
  * Does this behaviour pattern hold on every reachable configuration, and can
- * this design reach the situation I name (plan §3.8, model-checking plan §3.1)?
+ * this design reach the situation I name (plan §3.8, model-checking plan §3.1,
+ * §3.2b — `recovery` asks the second question of EVERY configuration)?
  *
  * It JUDGES, which is why it carries an exit code where `reachReport` does not:
  * a property is a claim somebody wrote into a file, and a claim that fails is a
@@ -2126,7 +2516,17 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
       elementName: row.machine.qualifiedName,
       code: row.code,
       hint:
-        row.claim === 'fail'
+        row.claim === 'fail' && row.patternClass === 'branching' && row.recovery?.targetConfigs === 0
+          ? // The empty-target refutation names no configuration and counts
+            // no steps — there is no nearest one — so the hint that promised
+            // both would point at text the row does not carry.
+            'No configuration this walk reached holds the state the property names, so every one of them is on the list and there is no nearest one to count steps to. The row says which of two things that is: a state the design has no way into, or a composite the `node` reading never rests in and the `state` reading would find. Add the way in, or name the reading that matches the state.'
+          : row.claim === 'fail' && row.patternClass === 'branching'
+          ? // A `recovery` refutation is a SET, not a run: there is no trace
+            // to read, and the hint that sends a reader to one would send
+            // them to an empty block.
+            'Read the set: each configuration named cannot reach the state the property names, over the relation this machine states, and the nearest of them is entered in the number of steps given. Where `reach` reports part of it as `verification/unrecoverable-mode`, that is the same set seen from the other side. Add the way back the design is missing, or name a state that is reachable from there.'
+          : row.claim === 'fail'
           ? 'Read the witness trace: it is a run this semantics admits, printed step by step with the atoms that hold at each one. The simulator may never take it — that is what makes it worth printing.'
           : row.claim === 'not-covered'
             ? // The "pass `--cover-required`" clause is printed on a flagged run

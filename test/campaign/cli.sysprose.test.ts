@@ -4765,6 +4765,55 @@ package P {
     expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
   }, 90_000);
 
+  it('check-behaviour decides a `recovery` in both directions, as a set and never as a run', async () => {
+    // THE BRANCHING-TIME QUESTION, at the surface a person uses: from every
+    // configuration this machine can be in, can it get back to `standby`?
+    // On the trap probe four configurations cannot, and two of those are the
+    // set `reach` reports as a trap — two numbers, two questions, each under
+    // its own clause. On the flagship machine every configuration can.
+    const probe = resolve(process.cwd(), `${FIXV}/models/trap-probe.sysml`);
+    const pattern = 'pattern=recovery, scope=globally, p=state standby';
+    const refuted = await run(['check-behaviour', probe, '--element', 'TrapProbe::Probe::Modes', '--pattern', pattern]);
+    expect(refuted.code).toBe(1);
+    expect(refuted.stdout).toContain('0 pass, 1 fail, 0 vacuous, 0 inconclusive, 0 covered, 0 not covered');
+    expect(refuted.stdout).toContain('FAIL         `state standby` is reachable from every reachable configuration, over the whole run');
+    expect(refuted.stdout).toContain(
+      'not recoverable: 4 configuration(s) cannot reach `state standby`: {alpha, beta, failsafe, failsafeHold}; the nearest is entered in 1 step(s) from `standby`. Of these, 2 form a set nothing leaves — `reach` reports them as `verification/unrecoverable-mode`.',
+    );
+    // A set, not a run: the count is the machine's and no witness block
+    // prints. (The hint that sends a reader to the set rather than to a trace
+    // is on the diagnostic object, asserted in the unit suite; the text report
+    // prints no hints.)
+    expect(refuted.stdout).toContain('5 configuration(s) explored — exhaustive under {maxConfigs 10000');
+    expect(refuted.stdout).not.toContain('product state(s) explored');
+    expect(refuted.stdout).not.toContain('witness —');
+    expect(refuted.stdout).toContain('error verification/refuted');
+
+    const held = await run(['check-behaviour', UAV, '--element', 'FlightModes', '--pattern', pattern]);
+    expect(held.code).toBe(0);
+    expect(held.stdout).toContain('1 pass, 0 fail, 0 vacuous, 0 inconclusive, 0 covered, 0 not covered');
+    expect(held.stdout).toContain('PASS         `state standby` is reachable from every reachable configuration, over the whole run');
+    expect(held.stdout).toContain('recoverable: `state standby` is reachable from every reachable configuration, exhaustive under {maxConfigs 10000');
+    // §2.4(d): the walk explored both branches at `autonomous`.
+    expect(held.stdout).toContain("every claim above is about this MACHINE's semantics");
+    expect(held.stdout).not.toContain('verification/refuted');
+
+    // The census, on `--json`, inside the existing payload: the top-level
+    // keys are what they were.
+    const json = await run(['check-behaviour', probe, '--element', 'TrapProbe::Probe::Modes', '--pattern', pattern, '--json']);
+    expect(json.code).toBe(1);
+    const { keys, body } = payload<{
+      behaviour: { properties: Array<{ claim: string; patternClass: string; recovery: Record<string, unknown>; witness: unknown[]; modality: unknown }> };
+    }>(json);
+    expect(keys).toEqual(['behaviour', 'file', 'ok', 'verdict']);
+    const p = body.behaviour.properties[0];
+    expect(p.claim).toBe('fail');
+    expect(p.patternClass).toBe('branching');
+    expect(p.witness).toEqual([]);
+    expect(p.modality).toBeNull();
+    expect(p.recovery).toMatchObject({ atomKind: 'state', targetConfigs: 1, cannotReach: 4, bottomSccOverlap: 2, refusedByGate: null });
+  });
+
   it('check-behaviour --json publishes under `behaviour`, with a verdict beside it', async () => {
     const r = await run([
       'check-behaviour',

@@ -1763,13 +1763,15 @@ describe('`cover` — a positive reachability intent gets a claim word of its ow
       expect(fn, `coverWarrant reads \`${banned}\``).not.toContain(banned);
     }
     // And the `cover` catalogue row is a guarantee sitting before the
-    // liveness pair, so the "last two are liveness" guard stays green.
+    // liveness pair — with `recovery`, the branching row, between it and the
+    // pair — so the "last two are liveness" guard stays green.
     expect(PATTERNS.map((p) => p.name)).toEqual([
       'absence',
       'universality',
       'bounded-existence',
       'precedence',
       'cover',
+      'recovery',
       'existence',
       'response',
     ]);

@@ -3587,7 +3587,11 @@ function propertyLines(v: PropertyVerdict, coverRequired: boolean): string[] {
   // sentence folded into the same line where the walk recorded a choice.
   if (v.modality !== null) out.push(`    every run? ${v.modality.sentence}`);
   if (v.claim !== 'inconclusive' || v.configs > 0) {
-    out.push(`    ${v.configs} product state(s) explored — ${v.qualification}`);
+    // A `recovery` row never ran the product search: its count is the
+    // machine's configurations, and "product state(s)" would label it as a
+    // number nothing computed.
+    const unit = v.patternClass === 'branching' ? 'configuration(s)' : 'product state(s)';
+    out.push(`    ${v.configs} ${unit} explored — ${v.qualification}`);
   }
   // CORRECTION 23's disclosure. A cover withheld under an undecided guard is
   // not `not covered` and the flag has no 1 to spend on it, so the row says

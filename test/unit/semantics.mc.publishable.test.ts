@@ -592,6 +592,9 @@ describe('the registers are data, and every column is asserted', () => {
     // arithmetic lives; A8 and W3 together, with the modality (§3.R): the two
     // values of one field, composed by one function, which is what "gated
     // together and by one predicate" means when it is data rather than prose.
+    // A7 joined it with `recovery` (§3.2b): one producer for both directions
+    // of a branching-time claim, and no witness row beside it — a set is not
+    // a run.
     expect(ALL_ROWS.filter((r) => r.producedBy !== null).map((r) => r.id)).toEqual([
       'A0',
       'A1',
@@ -600,6 +603,7 @@ describe('the registers are data, and every column is asserted', () => {
       'A4',
       'A5',
       'A6',
+      'A7',
       'A8',
       'A9',
       'A14',
@@ -607,6 +611,39 @@ describe('the registers are data, and every column is asserted', () => {
       'W2',
       'W3',
     ]);
+  });
+
+  it('the recovery producer reads `walkIsExact` for BOTH directions, and nothing from the decreasing family or the search', () => {
+    // THE REGISTER IS THE WIRING, AND THIS READS THE WIRE — for the producer
+    // A7 names. `recoverable` is increasing and `not recoverable` is an
+    // absence over reverse reachability; the store clause manufactures the
+    // second (trapguard: the escape edge is absent, measured `cannot 2`), so
+    // both halves read the whole gate and neither reads `decreasingOk`, which
+    // would let an undecided guard publish a refutation at exit 1 on a
+    // design that states the way back. And it never reads `found`: no product
+    // search runs on this path, and `searchComplete` has no value to read.
+    const a7 = ABSENCE_CLAIMS.find((r) => r.id === 'A7')!;
+    expect(a7.producedBy).toEqual({ file: 'src/semantics/mc/patterns.ts', symbol: 'recoveryRow' });
+    expect(a7.alsoRequires).toEqual([]);
+    const src = read(a7.producedBy!.file);
+    const body = /function recoveryRow\([\s\S]*?\n}\n/.exec(src);
+    expect(body, 'patterns.ts no longer declares recoveryRow').not.toBeNull();
+    const producer = body![0];
+    expect(producer).toContain('walkIsExact(');
+    expect(producer).toContain('reverseReachable(');
+    expect(producer).not.toContain('decreasingOk');
+    expect(producer).not.toContain('publishabilityOf');
+    expect(producer).not.toContain('searchComplete');
+    expect(producer).not.toContain('found');
+    expect(producer).not.toContain('search(');
+    // The pass and the fail both sit behind the SAME two checks, in the
+    // gate's own order, and the empty-target refutation comes after them.
+    expect(producer.indexOf('if (!gate.seenWhole)')).toBeLessThan(producer.indexOf('switch (gate.failedClause)'));
+    expect(producer.indexOf('switch (gate.failedClause)')).toBeLessThan(producer.indexOf('if (targets.length === 0)'));
+    expect(producer.indexOf('if (targets.length === 0)')).toBeLessThan(producer.indexOf('reverseReachable('));
+    // And `checkProperty` dispatches to it exactly once, before its search.
+    expect(src.match(/return recoveryRow\(/g)).toHaveLength(1);
+    expect(src.indexOf('return recoveryRow(')).toBeLessThan(src.indexOf('const found = search('));
   });
 
   it('the modality producer reads `walkIsExact`, and nothing from the decreasing family', () => {
