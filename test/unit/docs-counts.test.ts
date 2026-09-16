@@ -203,6 +203,21 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     pattern: /\|\s*L8\s*\|[^|]*\|\s*(\d+)\s+cases\s*\|/,
     actual: l8CaseCount,
   },
+  // The D5 paragraph quotes two figures about the campaign file itself: how
+  // many of its cases are `withZ3`, and how many blocks start on a fresh
+  // module. Both are read off the file, at the grain the sentence uses.
+  {
+    file: 'docs/AGENT-AUTHORING-CAMPAIGN.md',
+    what: 'withZ3 case count in the D5 paragraph',
+    pattern: /\*\*(\d+)\s+`withZ3`\s+cases\*\*/,
+    actual: () => [...read('test/campaign/verification.test.ts').matchAll(/^[ \t]*withZ3\(/gm)].length,
+  },
+  {
+    file: 'docs/AGENT-AUTHORING-CAMPAIGN.md',
+    what: 'solver block count in the D5 paragraph',
+    pattern: /\*\*(\d+)\s+solver\s+blocks\*\*/,
+    actual: () => [...read('test/campaign/verification.test.ts').matchAll(/beforeAll\(freshModule\)/g)].length,
+  },
   {
     file: 'docs/FEATURE-PARITY.md',
     what: 'rule count in the validation row',

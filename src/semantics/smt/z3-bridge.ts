@@ -34,6 +34,18 @@
  *  - **The seed is fixed.** `random_seed` is pinned to {@link RANDOM_SEED} on
  *    every solver, so a determinism failure in a suite is a real one and not a
  *    seed (§6, the worker-parallelism row).
+ *  - **A dead module is discarded, never reused.** z3's WASM build can die
+ *    under a check (defect D5, measured on CI: an `ASSERTION VIOLATION` inside
+ *    `check_sat`, the check's pthread gone, z3 calling `exit()`), and once it
+ *    has, the check's promise never settles and every later call on the same
+ *    module traps. {@link isZ3ModuleDeath} names those shapes; a check that
+ *    shows one, or that has not settled {@link DEAD_MODULE_MARGIN_MS} past its
+ *    own budget, throws {@link Z3ModuleDeadError}, drops the cached module and
+ *    terminates its worker threads, so the NEXT {@link loadZ3} pays `init()`
+ *    again instead of handing out the corpse. It is a THROW and not a fourth
+ *    `error` outcome on purpose: `error` means "z3 refused the script this tool
+ *    produced", and a runtime that stopped existing is not a defect in the
+ *    script — folding it in would print that sentence over the wrong fact.
  *
  * WHY SMT-LIB2 TEXT RATHER THAN THE `Context` OBJECT API. The encoder
  * ({@link ./encode}) builds a SCRIPT, and this bridge asserts it with
@@ -233,7 +245,24 @@ export function z3Disabled(): boolean {
  * rather than answer. One context, a fresh `Solver` per check: the solver is
  * what carries the assertions, so no assertion outlives its script either way.
  */
-let cached: { z3: Z3Api; ctx: Z3Context; initMs: number } | undefined;
+let cached: CachedModule | undefined;
+
+/** One initialised module: the API, its one context, and the init figure. */
+interface CachedModule {
+  z3: Z3Api;
+  ctx: Z3Context;
+  initMs: number;
+}
+
+/**
+ * How many times a module has been found dead in this process.
+ *
+ * A COUNTER rather than a flag, because the observer that cares — a suite
+ * deciding whether the red it just saw was the solver dying — runs after the
+ * cache has already been dropped and possibly after a fresh module was loaded;
+ * a flag {@link loadZ3} clears would be invisible to it. Monotonic, never reset.
+ */
+let deaths = 0;
 
 /**
  * The slice of `z3-solver` this bridge uses.
@@ -248,6 +277,13 @@ interface Z3Api {
   getFullVersion(): string;
   setParam(name: string, value: string | number | boolean): void;
   Context(name: string): Z3Context;
+  /**
+   * The emscripten module behind the API, as `init()` spreads it in. Only its
+   * thread pool is touched, and only to stop the workers of a module this
+   * bridge has given up on; every member is optional because the shape is the
+   * package's internals, not its contract.
+   */
+  em?: { PThread?: { terminateAllThreads?: () => void } };
 }
 interface Z3Context {
   Solver: new () => Z3Solver;
@@ -336,27 +372,170 @@ export async function loadZ3(): Promise<Z3Load> {
     }
   }
 
-  const { z3, ctx, initMs } = cached;
+  const entry = cached;
+  const { z3, initMs } = entry;
   return {
     absent: false,
     version: z3.getVersionString(),
     fullVersion: z3.getFullVersion(),
     seed: RANDOM_SEED,
     initMs,
-    check: (script, opts) => runCheck(ctx, script, opts),
-    optimize: (script, sense, opts) => runOptimize(ctx, script, sense, opts),
+    // Bound to THIS module, not to whatever is cached at call time: a backend
+    // handed out before a death keeps pointing at the module it was made on,
+    // and its next call is what reports that module dead.
+    check: (script, opts) => runCheck(entry, script, opts),
+    optimize: (script, sense, opts) => runOptimize(entry, script, sense, opts),
   };
 }
 
 /**
  * Forget the initialised module, so the next {@link loadZ3} pays `init()` again.
  *
- * Exists for ONE reason: the init cost is a registered figure (§6), and a
- * measurement taken after another suite in the same worker already initialised
- * z3 would report zero. It is a test affordance and nothing else calls it.
+ * Exists for two reasons, both of them suites. The init cost is a registered
+ * figure (§6), and a measurement taken after another suite in the same worker
+ * already initialised z3 would report zero. And a campaign that drives one
+ * context through a hundred checks can start each block on a fresh module,
+ * which bounds what any one context has accumulated (defect D5).
+ *
+ * Forgetting is PURE by default: a backend handed out earlier keeps working on
+ * the module it was made on, whose worker threads stay up (measured: +44 MB
+ * RSS per forgotten module). `terminate: true` stops those workers as well
+ * (+14 MB instead) and is only for a caller that holds no such backend.
  */
-export function resetZ3Cache(): void {
+export function resetZ3Cache(opts: { terminate?: boolean } = {}): void {
+  const entry = cached;
   cached = undefined;
+  if (entry && opts.terminate === true) terminateThreads(entry);
+}
+
+/** How many modules this process has found dead. See {@link deaths}. */
+export function z3DeathCount(): number {
+  return deaths;
+}
+
+/**
+ * How far past its own budget a check may run before the module is presumed
+ * dead, in milliseconds.
+ *
+ * z3 enforces `timeout` from a timer thread that sets a cancel flag the search
+ * polls, so an answer normally lands within a few hundred milliseconds of the
+ * budget. A promise that has not settled 30 s after it is the other thing
+ * (D5): the pthread running the check is gone and nothing will ever resolve
+ * it. The margin is a flat 30 s rather than a multiple of the budget so that a
+ * 400 ms probe and a 30 s fault-tree check are judged by the same overshoot,
+ * and it sits above the 20 s the bounded-check suite allows a 400 ms budget.
+ */
+export const DEAD_MODULE_MARGIN_MS = 30_000;
+
+/**
+ * The bridge's one exception: the WASM module died under a call.
+ *
+ * Thrown, not returned — see the charter's fifth rule. The message starts with
+ * a fixed phrase so a log can be grepped for it, names the shape z3 died in,
+ * and says what happens next, because the reader of a CI log has to tell this
+ * from a defect in the model or in this tool.
+ */
+export class Z3ModuleDeadError extends Error {
+  /** The shape as it was seen: the trap's message, or the hang sentence. */
+  readonly shape: string;
+  constructor(shape: string) {
+    super(
+      `z3 WASM module died (defect D5): ${shape}. The module was discarded and its worker ` +
+        'threads stopped; the next loadZ3() initialises a fresh one',
+    );
+    this.name = 'Z3ModuleDeadError';
+    this.shape = shape;
+  }
+}
+
+/**
+ * The shapes a dead emscripten module speaks in, measured from the CI trace
+ * of defect D5 and from `z3-solver`'s own async wrapper.
+ *
+ * The check thread died with `getWasmTableEntry(...) is not a function`, the
+ * timer thread with `null function or function signature mismatch`, z3's
+ * `exit()` unwound the JS stack with the bare string `unwind`, and every call
+ * after that trapped (`memory access out of bounds`, `WebAssembly.Table.get():
+ * invalid index …`). `async_call` keeps ONE pending-call slot, so once a call
+ * has been abandoned the wrapper itself refuses the next one with "you can't
+ * execute multiple async functions at the same time" — that sentence is a
+ * death too, of the module rather than of the call.
+ */
+const DEATH_SIGNATURES: readonly RegExp[] = [
+  /\bAborted\(/,
+  /null function or function signature mismatch/,
+  /getWasmTableEntry/,
+  /memory access out of bounds/,
+  /WebAssembly\.Table\.get\(\)/,
+  /table index is out of bounds/,
+  /can't execute multiple async functions at the same time/,
+  /^unwind$/,
+];
+
+/**
+ * Is this thrown thing a dead module, as opposed to something z3 SAID?
+ *
+ * A `WebAssembly.RuntimeError` is a trap, after which the module's C++ state
+ * is undefined; emscripten's `ExitStatus` is `exit()` having run; the rest are
+ * matched by message. A refusal z3 states in words — "unknown constant",
+ * "unsupported" — is none of these and stays an ordinary `error` outcome.
+ */
+export function isZ3ModuleDeath(err: unknown): boolean {
+  if (typeof err === 'string') return DEATH_SIGNATURES.some((re) => re.test(err));
+  if (typeof err !== 'object' || err === null) return false;
+  if (typeof WebAssembly !== 'undefined' && err instanceof WebAssembly.RuntimeError) return true;
+  if ((err as { name?: unknown }).name === 'ExitStatus') return true;
+  const message = messageOf(err);
+  return DEATH_SIGNATURES.some((re) => re.test(message));
+}
+
+/** The internal token for "the budget and the margin passed and nothing settled". */
+class HangSignal extends Error {
+  constructor(timeoutMs: number) {
+    super(
+      `the check did not answer within its ${timeoutMs} ms budget plus the ` +
+        `${DEAD_MODULE_MARGIN_MS} ms margin; the thread running it is presumed gone`,
+    );
+    this.name = 'HangSignal';
+  }
+}
+
+/**
+ * Await a solver promise, or give up when the module is presumed dead.
+ *
+ * The timer is cleared the moment the promise settles, so a live CLI process
+ * is never held open by it. A promise that settles AFTER the guard fired is
+ * simply dropped: the module it came from has already been discarded.
+ */
+function settleOrDie<T>(p: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new HangSignal(timeoutMs)), timeoutMs + DEAD_MODULE_MARGIN_MS);
+  });
+  return Promise.race([p, guard]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Turn a death seen on `entry` into the exception, having discarded the module.
+ *
+ * Anything that is not a death is rethrown untouched, so a bad budget or a
+ * caller's own error keeps its original stack.
+ */
+function classify(entry: CachedModule, err: unknown): never {
+  if (!(err instanceof HangSignal) && !isZ3ModuleDeath(err)) throw err;
+  deaths += 1;
+  if (cached === entry) cached = undefined;
+  terminateThreads(entry);
+  throw new Z3ModuleDeadError(err instanceof HangSignal ? err.message : messageOf(err));
+}
+
+/** Stop a module's worker threads, best effort: a dead module may refuse even this. */
+function terminateThreads(entry: CachedModule): void {
+  try {
+    entry.z3.em?.PThread?.terminateAllThreads?.();
+  } catch {
+    // The module is already past helping; nothing to report and nowhere to.
+  }
 }
 
 /**
@@ -368,11 +547,27 @@ export function resetZ3Cache(): void {
  * of WASM heap that is never given back.
  */
 async function runCheck(
-  ctx: Z3Context,
+  entry: CachedModule,
   script: string,
   opts: CheckOptions = {},
 ): Promise<CheckOutcome> {
+  // A bad budget is the caller's error and keeps its own stack: it is refused
+  // before the module is touched, so it can never be mistaken for a death.
   const timeoutMs = boundOf(opts.timeoutMs);
+  try {
+    return await checkOn(entry.ctx, script, timeoutMs, opts.variables);
+  } catch (err) {
+    return classify(entry, err);
+  }
+}
+
+/** {@link runCheck}'s body, with every trap of a dead module allowed to escape. */
+async function checkOn(
+  ctx: Z3Context,
+  script: string,
+  timeoutMs: number,
+  variables: readonly string[] | undefined,
+): Promise<CheckOutcome> {
   const empty = { witness: [] as WitnessValue[], core: [] as string[], timeoutMs };
   const solver = new ctx.Solver();
   solver.set('timeout', timeoutMs);
@@ -383,15 +578,17 @@ async function runCheck(
   } catch (err) {
     // The script itself was refused — a malformed term, an undeclared symbol,
     // or a `set-logic` the assertions do not fit. That is a defect in what this
-    // tool produced, and it is reported as one.
+    // tool produced, and it is reported as one. A trap is not a refusal.
+    if (isZ3ModuleDeath(err)) throw err;
     return { ...empty, status: 'error', reason: messageOf(err), timedOut: false, elapsedMs: 0 };
   }
 
   const t0 = now();
   let status: 'sat' | 'unsat' | 'unknown';
   try {
-    status = await solver.check();
+    status = await settleOrDie(solver.check(), timeoutMs);
   } catch (err) {
+    if (err instanceof HangSignal || isZ3ModuleDeath(err)) throw err;
     return {
       ...empty,
       status: 'error',
@@ -409,7 +606,7 @@ async function runCheck(
       reason: '',
       timedOut: false,
       elapsedMs,
-      witness: witnessOf(solver, opts.variables),
+      witness: witnessOf(solver, variables),
     };
   }
   if (status === 'unsat') {
@@ -434,12 +631,27 @@ async function runCheck(
  * "attained" — three different verdict sentences that all render as one string.
  */
 async function runOptimize(
-  ctx: Z3Context,
+  entry: CachedModule,
   script: string,
   sense: OptimizeSense,
   opts: CheckOptions = {},
 ): Promise<OptimizeOutcome> {
   const timeoutMs = boundOf(opts.timeoutMs);
+  try {
+    return await optimizeOn(entry.ctx, script, sense, timeoutMs, opts.variables);
+  } catch (err) {
+    return classify(entry, err);
+  }
+}
+
+/** {@link runOptimize}'s body, with every trap of a dead module allowed to escape. */
+async function optimizeOn(
+  ctx: Z3Context,
+  script: string,
+  sense: OptimizeSense,
+  timeoutMs: number,
+  variables: readonly string[] | undefined,
+): Promise<OptimizeOutcome> {
   const empty = { bound: null, witness: [] as WitnessValue[], timeoutMs };
   const opt = new ctx.Optimize();
   opt.set('timeout', timeoutMs);
@@ -451,14 +663,16 @@ async function runOptimize(
     // The same reading as `check`'s: a script z3 REFUSES is a defect in what
     // this tool produced — an objective over a symbol nothing declared, most
     // likely — and never an undecided answer about the model.
+    if (isZ3ModuleDeath(err)) throw err;
     return { ...empty, status: 'error', reason: messageOf(err), timedOut: false, elapsedMs: 0 };
   }
 
   const t0 = now();
   let status: 'sat' | 'unsat' | 'unknown';
   try {
-    status = await opt.check();
+    status = await settleOrDie(opt.check(), timeoutMs);
   } catch (err) {
+    if (err instanceof HangSignal || isZ3ModuleDeath(err)) throw err;
     return { ...empty, status: 'error', reason: messageOf(err), timedOut: false, elapsedMs: now() - t0 };
   }
   const elapsedMs = now() - t0;
@@ -474,7 +688,7 @@ async function runOptimize(
     timedOut: false,
     elapsedMs,
     bound: boundOfObjective(opt, sense),
-    witness: witnessOf(opt, opts.variables),
+    witness: witnessOf(opt, variables),
   };
 }
 

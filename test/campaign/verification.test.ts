@@ -52,7 +52,7 @@
  * regenerates the goldens; a regenerated golden is a DRAFT and every one in
  * this corpus was read by hand.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it as vitestIt, expect, beforeAll, afterEach, type TestFunction } from 'vitest';
 import Ajv from 'ajv';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -112,7 +112,7 @@ import {
   writeVerdict,
 } from '@semantics/index';
 import { obligationsOf } from '@semantics/obligations';
-import { loadZ3, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
+import { loadZ3, resetZ3Cache, z3DeathCount, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
 import { serializeElement, serializeModel } from '@text/serializer';
 import { RULES_BY_ID } from '@validation/rules';
@@ -286,6 +286,78 @@ beforeAll(async () => {
   }
 }, 60_000);
 
+/**
+ * `it`, re-run ONCE when — and only when — the solver died under the case.
+ *
+ * Defect D5: z3's WASM build can die under a check on a loaded runner (an
+ * `ASSERTION VIOLATION` inside `check_sat`, measured on CI with no code
+ * change), and this file drives one cached module through a hundred solver
+ * cases. Before the bridge learned to notice, the dying case timed out at
+ * 120 s and every later case failed in under a second on the corpse — 61 reds
+ * from one event, and a re-run was green. The bridge now throws
+ * `Z3ModuleDeadError`, drops the module and counts the death; this wrapper
+ * reads the counter around the case, and a red that is NOT a death is thrown
+ * exactly as it was. A blanket vitest `retry` would re-run every red, and an
+ * intermittent of any other kind would then pass behind a yellow suffix — this
+ * one re-runs nothing it cannot name, and names it on stderr first.
+ *
+ * Shadowing vitest's `it` file-locally is deliberate: 25 of the plain cases
+ * below drive the solver too (the golden loop, the exit-contract sweep, the
+ * method gate), so a wrapper on `withZ3` alone would cover two thirds of the
+ * exposure. Every `it(` in this file is the plain three-argument form.
+ */
+const it = (name: string, fn: TestFunction, timeout?: number) =>
+  vitestIt(
+    name,
+    async (ctx) => {
+      const deathsBefore = z3DeathCount();
+      try {
+        await fn(ctx);
+      } catch (err) {
+        if (z3DeathCount() === deathsBefore) throw err;
+        console.error(
+          `[D5] z3 WASM module died under "${name}" (${err instanceof Error ? err.message : String(err)}); ` +
+            'a fresh module is initialised and the case runs once more',
+        );
+        resetZ3Cache();
+        await fn(ctx);
+      }
+    },
+    timeout,
+  );
+
+/**
+ * The belt to the wrapper's braces: a death a case swallowed and passed over
+ * still leaves a line in the log, and never leaves a corpse for the next case.
+ */
+let deathsSeen = z3DeathCount();
+afterEach(() => {
+  if (z3DeathCount() === deathsSeen) return;
+  deathsSeen = z3DeathCount();
+  console.error(`[D5] z3 WASM module death #${deathsSeen} was recorded in this file; the cache is dropped`);
+  resetZ3Cache();
+});
+
+/**
+ * A fresh module at the head of every block that drives the solver.
+ *
+ * One context accumulates state across checks — the CLI campaign measured a
+ * nonlinear optimisation that answered in 200 ms on a fresh context driving
+ * z3 into a 4.2 GB heap request on a used one — and this file's 101 solver
+ * cases (76 `withZ3`, 25 plain) used to share a single context from the first
+ * block to the last. Every block holding one of them now starts on its own
+ * module, so no context outlives its block; the one block with no solver case
+ * (the model digest) runs on whatever the block before it left. Measured:
+ * `init()` is ~100 ms, and a fresh module costs +14 MB RSS with the old one's
+ * workers stopped (+44 MB with them left running); the file's peak RSS is set
+ * by the model and fixture work, not by the modules (2.5–2.9 GB either way).
+ * The workers CAN be stopped here because no block holds a backend made in an
+ * earlier one — every case loads its own.
+ */
+function freshModule(): void {
+  resetZ3Cache({ terminate: true });
+}
+
 /** Does this case mean what it says only when a backend answered? */
 function needsSolver(meta: Meta): boolean {
   return meta.noZ3 !== true && meta.engine !== 'literal';
@@ -348,6 +420,7 @@ async function runCase(meta: Meta): Promise<VerifyReport> {
 }
 
 describe('L8 — the verdict corpus', () => {
+  beforeAll(freshModule);
   it('has cases, and every one of them declares a model that exists', () => {
     // A corpus that silently emptied would make every `it.each` below vacuous:
     // zero cases, zero assertions, green.
@@ -409,6 +482,7 @@ describe('L8 — the verdict corpus', () => {
  */
 describe('L8 — the exit contract holds over the whole corpus', () => {
   const goldens: Array<{ name: string; meta: Meta; golden: Golden }> = [];
+  beforeAll(freshModule);
   beforeAll(async () => {
     for (const name of caseNames) {
       const meta = JSON.parse(read(`test/fixtures/verification/${name}/meta.json`)) as Meta;
@@ -962,6 +1036,7 @@ describe('L8 — the model digest survives a reparse and notices an edit', () =>
  * one.
  */
 describe('L8 — every evidence record validates against its schema', () => {
+  beforeAll(freshModule);
   // `allowUnionTypes` because a witness value really is one of number, boolean,
   // string or null — the model's own values are not all of one type — and ajv's
   // strict mode would rather see four sub-schemas than say so once.
@@ -1039,6 +1114,7 @@ describe('L8 — every evidence record validates against its schema', () => {
 
 /** The one option the literal engine refuses rather than accepts and ignores. */
 describe('L8 — `--free` is refused by the engine that cannot honour it', () => {
+  beforeAll(freshModule);
   it('throws rather than printing a verdict under a bound that was not in force', async () => {
     const { model } = await loadModelText(read('examples/uav-isr.sysml'), { fileName: 'a.sysml' });
     await expect(
@@ -1068,6 +1144,7 @@ describe('L8 — `--free` is refused by the engine that cannot honour it', () =>
  * witness gate declines instead of printing a refutation.
  */
 describe('L8 — a single-field mutation moves the verdict, and moves the digest', () => {
+  beforeAll(freshModule);
   const base = [
     'package Mutation {',
     '    part def Chassis {',
@@ -1169,6 +1246,7 @@ describe('L8 — a single-field mutation moves the verdict, and moves the digest
  * not answer.
  */
 describe('L8 — consistency: a requirement set, and the subset that conflicts', () => {
+  beforeAll(freshModule);
   const CONFLICT = 'test/fixtures/verification/models/consistency-conflict.sysml';
   const OFFSET = 'test/fixtures/verification/models/consistency-offset-scale.sysml';
   const COMPUTED = 'test/fixtures/verification/models/consistency-computed-value.sysml';
@@ -1731,6 +1809,7 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
  * corpus holds the exit contract and this block holds the reasoning behind it.
  */
 describe('L8 — the verification-case method gate', () => {
+  beforeAll(freshModule);
   const EXAMPLE = 'examples/uav-isr-verification.sysml';
 
   async function casesOf(
@@ -2459,6 +2538,7 @@ describe('L8 — the verification-case method gate', () => {
  * bare `connect` encodes NOTHING and is listed rather than silently folded in.
  */
 describe('L8 — refine: Cimatti’s obligations, in normal form, over the equalities the model states', () => {
+  beforeAll(freshModule);
   const BUDGET = 'examples/uav-power-budget.sysml';
   const MUTUAL = 'test/fixtures/verification/models/refinement-mutual-support.sysml';
   const SIBLINGS = 'test/fixtures/verification/models/refinement-contradictory-siblings.sysml';
@@ -2882,6 +2962,7 @@ describe('L8 — refine: Cimatti’s obligations, in normal form, over the equal
  * promised), in normal form for the same reason the composition ones are.
  */
 describe('L8 — refine: derivation and refinement chains, with the measured orientation', () => {
+  beforeAll(freshModule);
   const STRONGER = 'test/fixtures/verification/models/derivation-stronger-assumption.sysml';
   const CONJOINS = 'test/fixtures/verification/models/derivation-conjoins.sysml';
   const REFINES = 'test/fixtures/verification/models/derivation-refine-chain.sysml';
@@ -3145,6 +3226,7 @@ describe('L8 — refine: derivation and refinement chains, with the measured ori
  *    with a different guarantee, and it never beats the bound z3 proved.
  */
 describe('L8 — bounds: exact, or honest about not being exact', () => {
+  beforeAll(freshModule);
   const UAV = 'test/fixtures/verification/models/bounds-uav.sysml';
   const REFUSED_AXIOM = 'test/fixtures/verification/models/bounds-refused-axiom.sysml';
   const ASSUME = 'test/fixtures/verification/models/bounds-assume.sysml';
@@ -3537,6 +3619,7 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
  * two that have to fail together.
  */
 describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
+  beforeAll(freshModule);
   const BUDGET = 'examples/uav-power-budget.sysml';
   const REDUNDANT = 'test/fixtures/verification/models/fault-tree-redundant.sysml';
   const SIBLINGS = 'test/fixtures/verification/models/refinement-contradictory-siblings.sysml';
@@ -4511,6 +4594,7 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
  * edit, and the twenty-eight edited models are judged without it.
  */
 describe('L8 — staleness scoped to what provably cannot affect the proof', () => {
+  beforeAll(freshModule);
   /** The reader's own roots as text — what `evidence-attach --out` writes. */
   const userText = (model: Model): string =>
     model

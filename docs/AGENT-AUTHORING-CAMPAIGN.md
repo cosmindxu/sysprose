@@ -4906,6 +4906,47 @@ Fixtures: `cover-reachable.sysml` and `cover-sealed.sysml`, the two halves of
 the probe; the timed machines are factory-built because `accept after(n)` is
 a parse error. Counts re-measured from this gate.
 
+**Defect D5 — the solver dying under the in-process campaign, and the gate
+made to survive it.** CI run 35036623980 on `fae0b0e`, a commit that touched
+no test and no solver code, reddened `test/campaign/verification.test.ts` 61
+times from one event: z3 5.1 tripped `ASSERTION VIOLATION
+src/util/hashtable.h:445` inside `check_sat`, the pthread running the check
+died with `getWasmTableEntry(...) is not a function`, its timeout timer thread
+with `null function or function signature mismatch`, and z3 called `exit()`
+(the bare `unwind`). The check's promise never settled — `z3-solver`'s
+`async_call` keeps one pending slot — so that case timed out at 120 s, and
+every later solver case failed in under a second on the same cached module
+(`memory access out of bounds`, `WebAssembly.Table.get(): invalid index`, or
+the wrapper's own "can't execute multiple async functions"), because the
+bridge caches one module and one context on purpose (a context per check
+leaks ~9 MB) and nothing told it the module was gone. A re-run was green. It
+did not reproduce here: the file passed 3 of 3 plain runs (178 tests, 58–60 s
+each), 1 of 1 under `--poolOptions.forks.singleFork`, and 1 of 1 at `nice 19` beside 24 busy loops that a co-tenant's operator stopped part-way through the run (203 s instead of 58 s, no D5 line in any log; a third, heavier provocation was skipped on the same instruction) — so the
+fix makes the lane resilient to a death rather than assuming one cannot
+happen. In `src/semantics/smt/z3-bridge.ts`, `isZ3ModuleDeath` names the
+shapes above; a check or optimisation that shows one, or that has not settled
+`DEAD_MODULE_MARGIN_MS` (30 s) past its own budget, throws
+`Z3ModuleDeadError` (grep a log for `z3 WASM module died`), drops the cached
+module, stops its worker threads and advances `z3DeathCount()`, so the next
+`loadZ3()` pays `init()` again (~100 ms) instead of handing out the corpse.
+It is a throw and not a fourth `error` outcome, because `error` prints "the
+solver refused the script this tool produced" and a runtime that stopped
+existing is not that; a refusal z3 states in words is still `error` and drops
+nothing (the negative control in `test/unit/smt-z3-bridge-death.test.ts`,
+which fakes `z3-solver` in every shape the trace showed, plus the hang under
+fake timers). The campaign file shadows `it` with a wrapper that re-runs a
+case once, only when the death counter advanced under it, after printing a
+`[D5]` line on stderr — a red for any other reason is thrown as it was, so no
+intermittent of another kind can pass behind a retry. Its **76 `withZ3`
+cases** and the 25 plain cases that also drive the solver used to share one
+context from the first block to the last; each of its **12 solver blocks** now
+starts on a fresh module (`beforeAll(freshModule)`), which is +14 MB RSS per
+block with the old module's workers stopped (+44 MB with them left running;
+`init()` ~100 ms) — and no change to the file's peak RSS, which the models and
+fixtures set (2.5–2.9 GB before and after). Mutation: with the cache-drop removed from the
+bridge's death path, the unit case "the next loadZ3 pays init again" is red
+while the throw assertion stays green. Counts re-measured from this gate.
+
 ## 5. Phase status
 
 - **Phase 1 — done.** The contract, `checkText`, the CLI, the fixture corpus,
