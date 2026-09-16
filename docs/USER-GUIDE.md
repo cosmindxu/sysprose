@@ -1927,6 +1927,71 @@ guard sits strictly inside it, and reported everywhere else.
 graph missing an edge nothing decided is `inconclusive` (exit 2), never `pass`
 and never `vacuous`, and its row is the same `verification/guard-undetermined`.
 
+**A set of configurations nothing leaves.** Everything above is about where a
+run can get to. `reach` also asks the other half of the question — which
+configurations, once entered, no run ever leaves — and reports each such set as
+`verification/unrecoverable-mode`. A set nothing leaves is a bottom
+strongly-connected component of the walk's successor relation, and three kinds
+of them are exempted rather than reported: an ending (final states and `done`
+nodes are where the machine is meant to stop), a single configuration with no
+successor at all (that is already `verification/deadlock`, and one fact gets
+one row), and the component holding the opening configuration — which is the
+machine's own reachable core, not somewhere it can be trapped *from*. That last
+exemption is why `FlightModes` above prints nothing here: its four states form
+one component and `standby` is in it. A machine that is trapped looks like this:
+
+```console
+$ npm run sysprose -- reach test/fixtures/verification/models/trap-probe.sysml
+test/fixtures/verification/models/trap-probe.sysml: 1 state machine(s), 1 walked to exhaustion; 5 configuration(s) explored
+  a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
+  TrapProbe::Probe::Modes [StateDefinition]
+    5 configuration(s) explored, depth 4 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
+    5 of 5 state(s) reachable; 6 of 6 transition(s) fired, 0 dead
+    trap         {failsafe, failsafeHold} — 2 configuration(s) nothing leaves; entered in 3 step(s) from standby
+    choice       TrapProbe::Probe::Modes::beta: 2 enabled as completion transitions (no trigger); the simulator takes beta -> alpha, never beta -> failsafe
+  semantic profile (the reading every figure above holds under):
+    ...
+  verification/unrecoverable-mode  trap — 2 configuration(s) form a set nothing leaves: {failsafe, failsafeHold}. Entered in 3 step(s) from `standby`. every claim above is about this MACHINE's semantics — …
+  verification/nondeterministic-choice  `TrapProbe::Probe::Modes::beta`: 2 transitions are enabled at once …
+```
+
+Read the row for what it says and for what it does not. `{failsafe, failsafeHold}`
+names the states of every configuration in the set — the union of their active
+stacks, so a composite state is named as itself and never only by the leaf inside
+it — and `entered in 3 step(s) from standby` is the shortest way in. It does NOT
+say the machine cannot recover: escaping the set might need a trigger the real
+environment never offers, and this tool has no carrier for what an environment
+supplies. It does not say `livelock`, and it does not say the machine is free of
+anything. And the sentence beside the finding is there because `beta` is a
+choice point: the walk explored both branches, `simulate` takes `beta -> alpha`
+every time, and a reader who tries to reproduce the trap with the simulator may
+never see it.
+
+**This is the first row `reach` publishes under the stricter gate, and it is
+emptied — never shortened — whenever the walk is not exact.** The unreachable and
+dead lists are claims that can only *shrink* as edges are added, so a walk that
+offers more edges than the machine grants cannot invent one. *No trap* runs the
+other way: it gets *easier* to say as edges are added, and a missing edge invents
+a trap. So the trap list is published only where the walk finished inside every
+bound, met no construct this engine refuses, offers no `after(n)` dwell, names no
+trigger, and consulted no guard it could not evaluate. On the latch machine
+(`transition locked accept unlatch then nominal;`) the walk supplies `unlatch` at
+every configuration, so whether `locked` is inescapable is a question about the
+environment, and the report says so in place of the list:
+
+```console
+    inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger this machine names at every configuration, …
+```
+
+The same refusal, with its own sentence, prints for a dwell transition and for a
+guard the walk could not evaluate; a bound or an unsupported construct prints
+nothing extra, because the lines above already say every list is short. On
+`--json` the machine row carries `trapCensus` — how many components the walk had,
+how many nothing leaves, how many were exempted as endings, deadlocks or the
+core, and which clause refused the answer if one did — and, where the gate held
+and no trap was found, a sentence that names what was exempted rather than a
+bare all-clear. That sentence is never a text row.
+
 **Both spellings of an edge are one edge.** Between two states the notation
 offers `transition idle then active;` and `first active then done;`, and a
 machine may mix them in one body:

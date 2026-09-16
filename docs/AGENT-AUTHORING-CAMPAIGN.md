@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 125 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 126 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **100 catalogue codes** in
+`npm run check` is what raises it — beside **101 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -4595,10 +4595,11 @@ model, the walk hits no bound at all and its relation is two nodes and the singl
 edge between them, so a field gated on *did a bound stop this walk* publishes
 `acyclic: true` about a model that states `nominal -> degraded -> nominal`. Both
 wrong answers are pinned by name in the suite. **The gate the census reads
-publishes nothing**: every claim `reach` makes still reads the decreasing
-conjunction, and the factory-built timed machine — whose gate reads false and
-whose unreachable and dead lists are non-empty and unmoved — is the fixture that
-goes red the moment anyone points one at the other.
+published nothing when it landed**: every claim `reach` made still read the
+decreasing conjunction, and the factory-built timed machine — whose gate reads
+false and whose unreachable and dead lists are non-empty and unmoved — is the
+fixture that goes red the moment anyone points one of those at the gate. The
+trap list (next paragraph but one) is the first claim to read it.
 
 **Two sentences moved with it, both deliberately.** The bounds line every lane
 prints now names the store — *"store seeded from declared literal values — a
@@ -4641,6 +4642,74 @@ conjunct alone, which the reflection suite now pins by reading the producer's
 source: the conjunct applied to both halves of the answer, and neither walk-wise
 symbol applied to either, because gating the row on the walk-wise family would
 withhold it under a bound the catalogue says does not withhold it.
+
+**`reach` reports the configurations no run leaves, and it is the first claim
+gated on the increasing side.** A set of reachable configurations nothing
+leaves — a bottom strongly-connected component of the retained relation — is
+`verification/unrecoverable-mode`, a warning at exit 0, naming the states of
+every configuration in the set (the union of their active stacks, never the leaf
+alone) and the shortest path in from the opening. Three kinds of bottom
+component are exempted, in the order the deadlock row already reads them: an
+ending first (final states and `done` nodes — a `done` node has no successor, so
+tested second it would be counted as a deadlock), then a single configuration
+with no successor, which is `verification/deadlock`'s subject and gets one row
+under one code, then the component holding the opening, which is the machine's
+own reachable core. The third is load-bearing: every shipped machine is one
+component holding its opening, so all three are silent and the campaign's exact
+diagnostics array over `examples/uav-isr.sysml` is unmoved — and the
+`trapguard-true.sysml` variant, whose decided-true guard retains the escape edge
+and makes the machine one component, is asserted in the no-trap slot for that
+reason, because putting it in the positive slot invites weakening the exemption.
+The field is gated on `walkIsExact` — register row A6, polarity `increasing`,
+with its `entry` witness W2 riding on it — and NOT on the `publishable` the
+unreachable and dead lists read, which the reflection suite now pins off
+`reachOne`'s source (`const traps = gate.walkIsExact ? …`). Half of every trap
+sentence would be sound under the looser conjunction — "nothing leaves S" is an
+absence over edges and an over-approximating walk cannot invent it — but the
+same row prints the positive entry path and its emptiness is the increasing "no
+trap", so the field is gated whole, and a per-claim relaxation is a written
+sentence (`TRAP_ENTRY_WALK_ADMITS`, asserted printed nowhere) rather than a
+silent edit. On every refused walk the list is EMPTIED, never shortened, the
+no-trap sentence is not written either, and the three clauses that refuse a walk
+that finished print an `inconclusive:` line in the text report naming the
+clause; a bound and an unsupported construct print nothing extra. One fixture
+per mechanism names its wrong answer: a factory-built preempted dwell (time),
+the latch (environment — the draft listed it as a trap naming `{locked}`, and
+under the gate it is a refusal, which is the feature's real narrowing), the
+trapguard trio (store: the base file and the fully-valued `-typed` variant refuse
+on the SHIPPED predicate, `= false` publishes `trap — 2 configuration(s) form a
+set nothing leaves: {degradedA, degradedB}. Entered in 1 step(s) from
+\`nominal\`.` because the guard is decided and the relation is the machine's),
+and `--max-configs 2` on the trap probe (bound). The `--json` row carries a trap
+census — components, bottom components, and the exemption counts — three-valued
+like `acyclic`: the two relation facts stay numbers on every walk, and the four
+answers about the machine read `null` whenever the gate refused, so a bounded
+walk never publishes "3 exempted as deadlock" about frontier nodes that only look
+like sinks. Where the gate held and no trap was found, the census carries `no
+component of this walk is inescapable beyond its endings — N ending, N deadlocked
+configuration(s) and N whole-graph component were exempted, exhaustive under {…}`,
+asserted byte-identically on a four-state DAG into `done` (1 ending) and on a
+two-state sink beside its own deadlock row (1 deadlocked configuration) — the
+accounting the draft's "nothing this walk found is inescapable" would have
+contradicted three lines above — and that sentence is `--json` only, never a text
+row. It counts configurations and not rows on purpose: the deadlock rows are
+deduped by leaf, so two configurations standing at one state with two stores are
+two exemptions beside one row, and a sentence that said "2 deadlock row(s)" there
+would name a figure the report does not show. The trap's `states` is the union of
+the active stacks, pinned on `composite-trap.sysml`, where a cycle inside a
+composite prints `{degraded, sub2, sub1}` and a leaf-only reading would print
+`{sub1, sub2}`. The plan's MUST NEVER — a trap row and a deadlock row about one
+configuration — is held at CONFIGURATION granularity: the census partitions the
+bottom components, and a state may appear in both rows when two stores put two
+configurations at it, one a sink and one inside a cycle. The
+simulator sentence of plan §2.4(d) prints beside the row wherever the machine
+has a choice point, and the three standing sentences of §2.4 now exist as one
+constant each beside `CLAUSE_SENTENCE`. What the row never says, and the suite
+greps every output for: that the machine can recover, that it livelocks, that
+anything is free of deadlocks. `deadlock-guarded.sysml` is the file where the
+deadlock row's per-configuration gate and this feature's walk-wise gate answer
+differently — `Ctrl`'s decided sink keeps its row while the trap field is refused
+on the store clause — and they never contradict each other on it.
 
 ## 5. Phase status
 

@@ -23,6 +23,7 @@ import {
   orphanReport,
   propertyCheck,
   propertyDraft,
+  reachReport,
   requirementSatisfaction,
 } from '@api/index';
 import type { TextRange } from '@validation/types';
@@ -594,6 +595,47 @@ describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
       pattern: /data dictionary — (\d+) legal name\(s\)/,
       actual: () => propertyDraft(model, massRequirement()).dictionary.length,
     },
+    // The `reach` walkthrough's FlightModes transcript. None of its figures was
+    // pinned until the trap commit — the guide had been re-pasted by hand
+    // twice — so each is read off `reachReport` over the shipped example. The
+    // patterns anchor on the FIRST matching line, which is the FlightModes
+    // block: the trap-probe transcript further down is pinned separately by
+    // its own machine name.
+    {
+      what: 'configurations explored in the reach transcript',
+      pattern: /(\d+) configuration\(s\) explored, depth \d+ — exhaustive/,
+      actual: () => reachReport(model).machines[0].configs,
+    },
+    {
+      what: 'depth in the reach transcript',
+      pattern: /\d+ configuration\(s\) explored, depth (\d+) — exhaustive/,
+      actual: () => reachReport(model).machines[0].depth,
+    },
+    {
+      what: 'reachable states in the reach transcript',
+      pattern: /(\d+) of \d+ state\(s\) reachable/,
+      actual: () => reachReport(model).machines[0].states.reachable.length,
+    },
+    {
+      what: 'states in total in the reach transcript',
+      pattern: /\d+ of (\d+) state\(s\) reachable/,
+      actual: () => reachReport(model).machines[0].states.total,
+    },
+    {
+      what: 'transitions fired in the reach transcript',
+      pattern: /(\d+) of \d+ transition\(s\) fired/,
+      actual: () => reachReport(model).machines[0].transitions.fired,
+    },
+    {
+      what: 'transitions in total in the reach transcript',
+      pattern: /\d+ of (\d+) transition\(s\) fired/,
+      actual: () => reachReport(model).machines[0].transitions.total,
+    },
+    {
+      what: 'dead transitions in the reach transcript',
+      pattern: /transition\(s\) fired, (\d+) dead/,
+      actual: () => reachReport(model).machines[0].transitions.dead.length,
+    },
   ];
 
   for (const claim of claims) {
@@ -606,6 +648,69 @@ describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
       ).toBe(claim.actual());
     });
   }
+
+  /**
+   * The trap-probe transcript under the same walkthrough, pinned against ITS
+   * file. Anchored on the machine's own block, because the FlightModes block
+   * above it matches the same shapes first.
+   */
+  describe('the trap-probe transcript', () => {
+    let probe: Model;
+    beforeAll(async () => {
+      const file = 'test/fixtures/verification/models/trap-probe.sysml';
+      probe = (await loadModelText(read(file), { fileName: file })).model!;
+    }, 60_000);
+    const block = () => {
+      const m = /TrapProbe::Probe::Modes \[StateDefinition\]\n([\s\S]*?)\n  semantic profile/.exec(
+        read(GUIDE),
+      );
+      expect(m, `${GUIDE} no longer shows the trap-probe block`).not.toBeNull();
+      return m![1];
+    };
+    const probeClaims: Array<{ what: string; pattern: RegExp; actual: () => number }> = [
+      {
+        what: 'configurations explored',
+        pattern: /(\d+) configuration\(s\) explored, depth \d+/,
+        actual: () => reachReport(probe).machines[0].configs,
+      },
+      {
+        what: 'depth',
+        pattern: /configuration\(s\) explored, depth (\d+)/,
+        actual: () => reachReport(probe).machines[0].depth,
+      },
+      {
+        what: 'transitions fired',
+        pattern: /(\d+) of \d+ transition\(s\) fired/,
+        actual: () => reachReport(probe).machines[0].transitions.fired,
+      },
+      {
+        what: 'configurations in the trap',
+        pattern: /trap {2,}\{[^}]*\} — (\d+) configuration\(s\) nothing leaves/,
+        actual: () => reachReport(probe).machines[0].traps[0].configs,
+      },
+      {
+        what: 'steps into the trap',
+        pattern: /nothing leaves; entered in (\d+) step\(s\)/,
+        actual: () => reachReport(probe).machines[0].traps[0].steps,
+      },
+    ];
+    for (const claim of probeClaims) {
+      it(claim.what, () => {
+        const m = claim.pattern.exec(block());
+        expect(m, `${GUIDE} trap-probe block no longer shows ${claim.what}`).not.toBeNull();
+        expect(
+          Number(m![1]),
+          `${GUIDE} (trap-probe ${claim.what}) shows ${m![1]}; the fixture reports ${claim.actual()} — re-run the command and paste what it says`,
+        ).toBe(claim.actual());
+      });
+    }
+    it('names the trap by its states, and the finding code beneath it', () => {
+      expect(block()).toContain('trap         {failsafe, failsafeHold}');
+      expect(read(GUIDE)).toContain(
+        'verification/unrecoverable-mode  trap — 2 configuration(s) form a set nothing leaves: {failsafe, failsafeHold}. Entered in 3 step(s) from `standby`.',
+      );
+    });
+  });
 
   /**
    * The line number `property-check`'s transcript quotes, which is a position in

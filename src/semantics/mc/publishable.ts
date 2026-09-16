@@ -16,15 +16,17 @@
  * the successor relation, so `ExploreResult` satisfies {@link ExactnessWalk}
  * structurally and `walkIsExact` is called on a real walk.
  *
- * THE INCREASING GATE IS NOW WIRED, AND IT PUBLISHES NO CLAIM. `reachOne`
- * (`./explore`) evaluates it on every machine it walks and records the answer —
- * with the four clause figures beside it — in the exactness CENSUS, a `--json`
- * payload field that no report row prints. Not one verdict, list, count or
- * sentence is gated on it: the claims that ship read `decreasingOk` and nothing
- * else, which is what keeps a machine carrying a dwell from losing a sound
- * `verification/unreachable-state` finding the day the gate arrived. The census
- * exists so that the features which WILL read the gate can be retired on a
- * measured number rather than on a memory.
+ * THE INCREASING GATE IS WIRED, AND EXACTLY ONE PUBLISHED CLAIM READS IT.
+ * `reachOne` (`./explore`) evaluates it on every machine it walks, records the
+ * answer — with the four clause figures beside it — in the exactness CENSUS,
+ * and gates ONE field on it: the trap list (register row A6, and its rider W2).
+ * Every other verdict, list, count and sentence that ships reads `decreasingOk`
+ * and nothing else, which is what keeps a machine carrying a dwell from losing
+ * a sound `verification/unreachable-state` finding the day the gate arrived —
+ * and the trap list reads `walkIsExact` and nothing looser, which is what
+ * keeps the same machine from being told *no trap* over an escape the walk
+ * supplied itself. The census exists so that the features which will read the
+ * gate next can be retired on a measured number rather than on a memory.
  *
  * WHY THERE ARE TWO CONJUNCTIONS AND NOT ONE. Publishability is not one
  * property, and a single `ok` would have shipped a regression on behaviour that
@@ -332,6 +334,46 @@ const RESIDUAL_SENTENCE =
 const EXACT_SENTENCE =
   'the walk saw the whole graph, and the relation it retained is the one this machine states';
 
+/* ══════════════════════ the standing sentences ══════════════════════ */
+
+/**
+ * The three standing sentences of plan §2.4, each written ONCE and printed by
+ * every lane beside the claim it qualifies — verbatim from the plan, so that
+ * the copies each lane defines are byte-identical and collapse to one.
+ *
+ * WHY THEY ARE HERE AND NOT IN A REPORT FILE. Each names a mechanism this
+ * gate's clauses read — the environment (c), the clock (b), and the one the
+ * gate does NOT cover, the simulator's tie-break — and a sentence about a
+ * mechanism belongs beside the predicate that decides it. `CLAUSE_SENTENCE`
+ * above says why a claim was WITHHELD; these say what a claim that survived is
+ * a claim ABOUT, and the two are different sentences on purpose.
+ */
+
+/**
+ * §2.4(a). Printed beside a verdict on a machine whose alphabet is non-empty:
+ * every witness that consumed a trigger is a claim under a maximally
+ * cooperative environment.
+ */
+export const ENVIRONMENT_SENTENCE =
+  'the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it';
+
+/**
+ * §2.4(c). Printed wherever clause (b) fails — beside whatever claim survives
+ * it. NOT `CLAUSE_SENTENCE.time`: that one says why a claim was withheld; this
+ * one discloses what a surviving claim was read under.
+ */
+export const DWELL_SENTENCE =
+  'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take';
+
+/**
+ * §2.4(d). Printed beside every increasing claim and every published witness
+ * on a machine with a nondeterministic choice: the walk explores both
+ * branches, the simulator takes the first declared one, and the gate above
+ * establishes nothing about the second. Deliberately never gated away.
+ */
+export const SIMULATOR_SENTENCE =
+  "every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces";
+
 /**
  * The first clause that failed, in the order {@link walkIsExact} states.
  *
@@ -621,7 +663,22 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
     walkRequires: 'walkIsExact',
     alsoRequires: [],
     otherwise: 'rows suppressed, never shortened, with the failed clause named',
-    producedBy: null,
+    // The producer is where the GATE is applied — `reachOne`'s ternary on
+    // `gate.walkIsExact` — not where the component arithmetic lives, for the
+    // reason A0–A4 point at the same symbol: the reflection suite reads the
+    // wiring off that function's source.
+    //
+    // ONE HALF OF THIS ROW WOULD BE SOUND UNDER `decreasingOk`, AND IT IS NOT
+    // WIRED THAT WAY. *"Nothing leaves S"* is an absence over the edge relation
+    // — adding edges can only destroy a trap — so an over-approximating walk
+    // cannot invent one; only a MISSING edge can, and every under-approximation
+    // this engine has is a clause of `seenWhole` or the store clause. But the
+    // same row prints the positive `entry` witness (W2) and the list's
+    // emptiness is the increasing *no trap*, so the field is gated whole on
+    // `walkIsExact`. A per-claim relaxation is a written sentence (W2's
+    // re-wording, `TRAP_ENTRY_WALK_ADMITS` in `./explore`) and never a silent
+    // edit of this cell.
+    producedBy: REACH_ONE,
   },
   {
     id: 'A7',
@@ -798,7 +855,12 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
     alsoRequires: [],
     otherwise:
       'the row is already suppressed with A6; this clause is what stops a per-claim relaxation of the gate being made silently',
-    producedBy: null,
+    // Rides on A6 and is composed where A6 is applied. The per-step
+    // alternative the column records has NO producer yet — the retained
+    // relation carries node numbers and no transition per edge, so nothing can
+    // ask whether a step of the `entry` path crossed a dwell — which is why the
+    // re-wording it would print exists as a constant and is asserted unprinted.
+    producedBy: REACH_ONE,
   },
   {
     id: 'W3',

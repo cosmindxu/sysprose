@@ -1123,8 +1123,9 @@ export const INCONSISTENT_REQUIREMENTS_CODE = 'verification/inconsistent-require
  */
 export const VERIFICATION_WARNING_CODES: ReadonlySet<string> = new Set<string>([
   // Only the behaviour engine raises one today: an unreachable state, a dead
-  // transition, a state nothing leaves, a choice the notation does not resolve,
-  // a guard nothing in the model decides.
+  // transition, a state nothing leaves, a set of configurations nothing leaves,
+  // a choice the notation does not resolve, a guard nothing in the model
+  // decides.
   ...BEHAVIOUR_WARNING_CODES,
 ]);
 

@@ -359,7 +359,10 @@ describe('the semantic profile is data, and its provenance is real', () => {
     }
   });
 
-  it('names the seven codes this engine can raise', () => {
+  it('names the eight codes this engine can raise', () => {
+    // Eight since the trap row: `verification/unrecoverable-mode` is a set of
+    // configurations nothing leaves, and it is the one code of the eight that
+    // is gated on the exactness gate rather than on the decreasing conjunction.
     expect([...BEHAVIOUR_CODES].sort()).toEqual([
       'verification/behaviour-unsupported-construct',
       'verification/bound-exhausted',
@@ -368,6 +371,7 @@ describe('the semantic profile is data, and its provenance is real', () => {
       'verification/guard-undetermined',
       'verification/nondeterministic-choice',
       'verification/unreachable-state',
+      'verification/unrecoverable-mode',
     ]);
   });
 });

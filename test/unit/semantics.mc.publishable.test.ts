@@ -556,19 +556,24 @@ describe('the registers are data, and every column is asserted', () => {
         `function ${symbol}(`,
       );
     }
-    // SEVEN rows name a producer, and A0 is among them: `verification/deadlock`
+    // NINE rows name a producer, and A0 is among them: `verification/deadlock`
     // is machinery this register RECORDS rather than machinery it repairs. The
     // set is pinned so a feature landing without its row being wired is red.
     // A9 joined it with the scoped staleness comparison (§3.3b), whose producer
-    // is a checker rule's reading and not a walk at all.
+    // is a checker rule's reading and not a walk at all. A6 and its rider W2
+    // joined it with the trap list (§3.2a) — the first increasing claim to be
+    // published, and both point at `reachOne` because that is where the gate
+    // is applied, not where the component arithmetic lives.
     expect(ALL_ROWS.filter((r) => r.producedBy !== null).map((r) => r.id)).toEqual([
       'A0',
       'A1',
       'A2',
       'A3',
       'A4',
+      'A6',
       'A9',
       'A14',
+      'W2',
     ]);
   });
 
@@ -618,6 +623,23 @@ describe('the registers are data, and every column is asserted', () => {
       'no outgoing transition of the deadlocked leaf is in `walk.undeterminedGuards`',
     ]);
     expect(src).toContain('function nothingUndecidedLeaves(');
+    // A6: the trap list is the ONE field gated on the increasing side, and it
+    // reads the whole gate — `gate.walkIsExact` — and nothing from the
+    // decreasing family. The wrong wiring is named: `publishable` here would
+    // publish "no trap" over a walk that supplied the escape itself, and the
+    // rule two tests below ("no increasing row reads decreasingOk") would go
+    // red on the register while the producer quietly did it anyway.
+    const traps = /const traps = ([^;]*);/.exec(reachOne);
+    expect(traps, 'reachOne no longer binds `traps`').not.toBeNull();
+    expect(reachOne).toMatch(/const traps = gate\.walkIsExact\s*\?/);
+    expect(traps![1]).not.toContain('publishable');
+    expect(traps![1]).not.toContain('decreasingOk');
+    expect(traps![1]).not.toContain('guardsDecided');
+    expect(traps![1]).toContain('trapsOf(');
+    expect(src).toContain('function trapsOf(');
+    const a6 = ABSENCE_CLAIMS.find((r) => r.id === 'A6')!;
+    expect(a6.walkRequires).toBe('walkIsExact');
+    expect(a6.producedBy).toEqual({ file: 'src/semantics/mc/explore.ts', symbol: 'reachOne' });
   });
 
   it('A0–A5, the six decreasing rows, read the conjunction the shipped commands read', () => {

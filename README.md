@@ -226,7 +226,8 @@ answer can be recognised again after an edit. The same lane also asks whether a 
 can hold at once and names the subset that conflicts (`consistency`), whether the parts deliver
 what the whole promised (`refine`), how tight a measure can get (`bounds`), which combinations of
 contract failures break the top requirement (`fault-tree`), which configurations a state machine
-can reach and whether a safety pattern survives all of them (`reach`, `check-behaviour`), and it
+can reach, which sets of configurations no run leaves, and whether a safety pattern survives all
+of them (`reach`, `check-behaviour`), and it
 writes verdicts back into the file as annotations that go stale when the design moves
 (`evidence-attach`, `evidence-status`). All of them are among the **22 subcommands** listed in the
 Develop block below, and every flag is in

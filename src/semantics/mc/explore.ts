@@ -84,14 +84,25 @@ import {
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
 // One definition of "may this absence be stated", read by this file and by
 // `./patterns`, so the two cannot drift apart again. `walkIsExact` is the OTHER
-// predicate in that file — the gate for the increasing side — and it is read
-// here for the census and for nothing else: no claim this command publishes is
-// gated on it, which is what keeps this commit from moving a single finding.
-import { CLAUSE_SENTENCE, publishabilityOf, walkIsExact, type FailedClause } from './publishable';
+// predicate in that file — the gate for the increasing side — and it now gates
+// exactly ONE published field, the trap list (register row A6): every other
+// row this command prints keeps reading the decreasing conjunction, which is
+// what keeps a machine carrying a dwell from losing a sound unreachable-state
+// finding to a gate built for the claims that grow.
+import {
+  CLAUSE_SENTENCE,
+  SIMULATOR_SENTENCE,
+  publishabilityOf,
+  walkIsExact,
+  type Exactness,
+  type FailedClause,
+} from './publishable';
 // The component arithmetic, over the relation the walk retained. It answers
 // what it is asked about the graph it is given; whether the answer may be
-// published at all is the gate's question and is asked first.
-import { acyclic } from './scc';
+// published at all is the gate's question and is asked first — `trapsOf` below
+// is called only where the gate holds, and the census beside it is what a
+// refused walk publishes instead.
+import { acyclic, bottomComponents, tarjanComponents, type Components } from './scc';
 // The same reader the step relation uses to decide an edge carries an item, so
 // the census can say WHY that edge is not in the relation in the relation's own
 // terms rather than in a sentence of its own.
@@ -113,6 +124,8 @@ export const BOUND_EXHAUSTED_CODE = 'verification/bound-exhausted';
 export const BEHAVIOUR_UNSUPPORTED_CODE = 'verification/behaviour-unsupported-construct';
 /** A guard the walk consulted and could not evaluate: the absence lists are withheld. */
 export const GUARD_UNDETERMINED_CODE = 'verification/guard-undetermined';
+/** A set of reachable configurations no run leaves, that is not where the machine ends. */
+export const UNRECOVERABLE_MODE_CODE = 'verification/unrecoverable-mode';
 
 /** Every code this module can put in front of a reader, for the catalogue guard. */
 export const BEHAVIOUR_CODES: ReadonlySet<string> = new Set([
@@ -123,18 +136,20 @@ export const BEHAVIOUR_CODES: ReadonlySet<string> = new Set([
   BOUND_EXHAUSTED_CODE,
   BEHAVIOUR_UNSUPPORTED_CODE,
   GUARD_UNDETERMINED_CODE,
+  UNRECOVERABLE_MODE_CODE,
 ]);
 
 /**
- * The five this engine raises as WARNINGS, and none of the seven as an error.
+ * The six this engine raises as WARNINGS, and none of the eight as an error.
  *
  * The reading rule, not an omission. An error in this lane is reserved for a
- * refuted obligation, and `reach` refutes nothing. But the five below are
+ * refuted obligation, and `reach` refutes nothing. But the six below are
  * findings about a MACHINE — a state nothing reaches, a transition nothing
- * fires, a state nothing leaves, a choice the notation does not resolve, a
- * guard nothing in the model decides — and filing them as info would put them
- * beside "this construct is outside the fragment", which is the tool talking
- * about ITSELF. The remaining two do exactly that, and they are info.
+ * fires, a state nothing leaves, a set of configurations nothing leaves, a
+ * choice the notation does not resolve, a guard nothing in the model decides —
+ * and filing them as info would put them beside "this construct is outside the
+ * fragment", which is the tool talking about ITSELF. The remaining two do
+ * exactly that, and they are info.
  *
  * `verification/guard-undetermined` is a warning for the sharper reason that it
  * is the REASON the absence lists are short. A reader who sees an empty
@@ -152,6 +167,7 @@ export const BEHAVIOUR_WARNING_CODES: ReadonlySet<string> = new Set([
   DEADLOCK_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
   GUARD_UNDETERMINED_CODE,
+  UNRECOVERABLE_MODE_CODE,
 ]);
 
 /* ────────────────────────────── the bounds ──────────────────────────────── */
@@ -243,6 +259,88 @@ export interface UndeterminedGuardRow {
   guard: string;
   /** The names it reads that nothing in scope or in the store gives a value to. */
   unresolved: readonly string[];
+}
+
+/**
+ * A set of reachable configurations no run leaves — a bottom strongly-connected
+ * component of the retained relation that is neither an ending, nor a single
+ * configuration with no successor (already a deadlock row), nor the component
+ * holding the opening (plan §3.2a).
+ *
+ * Published only where the walk is EXACT (register row A6): a missing edge
+ * invents one of these, and a bound, an unsupported construct and an undecided
+ * guard each remove edges the machine states, while a dwell and a named trigger
+ * add edges no environment may supply — which is what makes the complement,
+ * *no trap*, false in the other direction.
+ */
+export interface TrapRow {
+  /** Configurations in the set. */
+  configs: number;
+  /**
+   * The states those configurations stand in — the union of every member's
+   * ACTIVE STACK, composites included, never the leaves alone. One state spans
+   * many configurations, so a trap named by leaf would name the wrong thing on
+   * any machine with a composite state.
+   */
+  states: readonly StateRef[];
+  /**
+   * The shortest path from the opening configuration into the set, as the leaf
+   * of each configuration on it, the opening first. An EXISTENTIAL claim
+   * (register row W2), and it rides on the trap row: it prints only where the
+   * row does, so its effective gate is the row's.
+   */
+  entry: readonly StateRef[];
+  /** `entry.length - 1`. */
+  steps: number;
+}
+
+/**
+ * What the component pass found and what was made of it, per machine — the
+ * trap census (plan §3.2a *Census*, §5).
+ *
+ * THREE-VALUED WHERE THE EXACTNESS CENSUS IS, AND FOR THE SAME REASON. `sccs`
+ * and `bottomSccs` are facts about the relation the walk RETAINED and stay
+ * numbers on every walk. The four counts after them are answers about the
+ * MACHINE — how many of its inescapable sets are endings, deadlocks, its own
+ * core, or traps — and read `null` whenever the gate refused, because a bounded
+ * walk must not publish *"3 exempted as deadlock"* about frontier nodes that
+ * only look like sinks, and a walk missing a guarded edge must not publish
+ * *"1 trap"* about a set the model states an escape from.
+ */
+export interface TrapCensus {
+  /** Strongly connected components of the retained relation. */
+  sccs: number;
+  /** Those no edge leaves — trivial ones included. */
+  bottomSccs: number;
+  /** Bottom components that survived all three exemptions; `null` when refused. */
+  trapsAfterExemptions: number | null;
+  /** Bottom components made only of final states and `done` nodes. */
+  exemptedAsEnding: number | null;
+  /**
+   * Single configurations with no successor, handed to the deadlock row. NOT
+   * `deadlocks.length` in general: the deadlock rows are deduped by leaf and
+   * withheld per configuration, so this can exceed the rows published.
+   */
+  exemptedAsDeadlock: number | null;
+  /** The component holding the opening configuration — the reachable set itself. */
+  exemptedAsCore: number | null;
+  /** The clause the gate failed on, `null` exactly when the answers above are numbers. */
+  refusedByGate: FailedClause;
+  /**
+   * The no-trap accounting, `--json` ONLY and never a text row: *no component
+   * of this walk is inescapable beyond its endings — N ending, N deadlocked
+   * configuration(s) and N whole-graph component were exempted, exhaustive
+   * under {…}*. Written when the gate holds and no component qualifies; `null`
+   * otherwise. It names what was exempted so that a deadlock row above it and
+   * this sentence are two halves of one accounting rather than two answers.
+   *
+   * "DEADLOCKED CONFIGURATION(S)", NOT "DEADLOCK ROW(S)". The count is
+   * `exemptedAsDeadlock`, which is per configuration, and the deadlock rows
+   * are deduped by leaf — two configurations standing at one state with two
+   * stores are two exemptions and one row — so a sentence that said "row(s)"
+   * would name a figure the report beside it does not show.
+   */
+  sentence: string | null;
 }
 
 /** A construct this engine will not explore, and what it does instead. */
@@ -1285,6 +1383,189 @@ function nothingUndecidedLeaves(
 export const DEADLOCK_WITHHELD_SENTENCE =
   `no enabled way out was found and none is reported: ${CLAUSE_SENTENCE.store}`;
 
+/* ─────────────────────────────── the traps ──────────────────────────────── */
+
+/**
+ * The re-wording a trap's `entry` path would take if it were ever published
+ * over a relation that is not the machine's (register row W2, plan §3.2a).
+ *
+ * WRITTEN NOW, PRINTED NOWHERE, AND ASSERTED SO. The entry path is a positive
+ * claim — *this run exists* — and a walk that offers a dwell or a trigger the
+ * environment may never supply can invent it. Where a positive witness
+ * survives such a walk, the plan re-words it rather than suppressing it:
+ * `` Entered in ${k} step(s) from `${s}` — on a run this WALK admits: step ${i}
+ * fires `${label}` … ``. Today the trap row is suppressed whole with A6, so the
+ * re-wording has nothing to attach to; it exists so that a per-claim relaxation
+ * of the gate cannot be made silently — the sentence that relaxation would have
+ * to print is already here, and `test/unit/semantics.mc.traps.test.ts` asserts
+ * it reaches no output. The per-step check it would need — was this step taken
+ * across a dwell or an undecided guard — has no producer yet: the retained
+ * relation carries node numbers and no transition per edge.
+ */
+export const TRAP_ENTRY_WALK_ADMITS = 'on a run this WALK admits';
+
+/**
+ * What the text report prints in place of the trap list on the three clauses
+ * that refuse a walk that FINISHED (plan §3.2a's verdict table).
+ *
+ * A bound and an unsupported construct print nothing here: the existing
+ * SUPPRESSED and not-explored lines already say why every list is short. These
+ * three are the clauses those lines do not cover — the walk saw the whole graph
+ * its step relation admits, and that relation is still not the machine's.
+ * Each is followed in the report by the standing sentence for its mechanism.
+ */
+export const TRAP_REFUSAL_SENTENCE: Record<'environment' | 'time' | 'store', string> = {
+  environment:
+    'inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed',
+  time: 'inconclusive: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so the escape relation is an over-approximation and no absence of an escape is claimed',
+  // "an expression this walk could not evaluate" and not "an attribute with no
+  // declared value": the store clause is the SHIPPED predicate, which also
+  // refuses `not mode` over a fully valued `mode` (`trapguard-typed.sysml`),
+  // and a sentence naming only the unvalued case would be false on that file.
+  store:
+    'inconclusive: a transition of this machine is guarded by an expression this walk could not evaluate — most often an attribute with no declared value — so this walk never offered an edge the model states and a set it calls inescapable may not be',
+};
+
+/**
+ * Each bottom component of the retained relation, sorted into the three
+ * exemptions and the traps — ONE reading of the exemptions, for both the rows
+ * and the census.
+ *
+ * THE ORDER IS `recordDeadlock`'S ORDER, and it is load-bearing. An ending is
+ * tested FIRST: a `done` node has no successor, so a single-member test run
+ * first would count every ending as a deadlock and the mission DAG would read
+ * *1 deadlocked configuration(s)* about a machine that publishes none. The opening's
+ * component is tested last because it is the widest: on a machine that is one
+ * component, every configuration is in it, and testing it first would hide an
+ * ending inside it — which is fine — but the counts are meant to name the
+ * narrowest reason a component was exempted.
+ *
+ * A SELF-LOOPING SINGLETON IS A TRAP. It has a successor, so it is not a
+ * deadlock row; if it is not an ending and not the opening, nothing leaves it
+ * and the machine was not meant to stop there.
+ */
+function classifyBottoms(
+  model: Model,
+  walk: ExploreResult,
+  comps: Components,
+): { traps: (readonly number[])[]; ending: number; deadlock: number; core: number } {
+  const out = { traps: [] as (readonly number[])[], ending: 0, deadlock: 0, core: 0 };
+  for (const members of bottomComponents(walk.successors, comps)) {
+    const isEnding = members.every((i) => {
+      const leaf = walk.configLeaves[i];
+      return leaf !== null && (isFinalState(model, leaf) || isTerminalNode(model, leaf));
+    });
+    if (isEnding) out.ending++; // an ending, not a trap — the same two predicates the deadlock row reads
+    else if (members.length === 1 && walk.successors[members[0]].length === 0)
+      out.deadlock++; // a configuration with no successor is `verification/deadlock`'s subject
+    else if (members.includes(0))
+      out.core++; // the reachable set itself: there is nowhere to be trapped FROM
+    else out.traps.push(members);
+  }
+  return out;
+}
+
+/** The shortest node path from the opening into `target`, breadth-first over the relation. */
+function entryPath(successors: readonly (readonly number[])[], target: ReadonlySet<number>): number[] {
+  const parent = new Int32Array(successors.length).fill(-1);
+  const seen = new Uint8Array(successors.length);
+  const queue = [0];
+  seen[0] = 1;
+  for (let head = 0; head < queue.length; head++) {
+    const v = queue[head];
+    if (target.has(v)) {
+      const path: number[] = [];
+      for (let u = v; u !== -1; u = parent[u]) path.push(u);
+      return path.reverse();
+    }
+    for (const w of successors[v]) {
+      if (seen[w]) continue;
+      seen[w] = 1;
+      parent[w] = v;
+      queue.push(w);
+    }
+  }
+  // Every bottom component is reachable from node 0 by construction — the walk
+  // numbered only what it reached — so this is a defect in the producer.
+  throw new Error('a bottom component of the walk is not reachable from its opening');
+}
+
+/**
+ * The trap rows of an EXACT walk. Called only where the gate holds — the
+ * caller's ternary in `reachOne` is the gate, and it is what the reflection
+ * suite pins.
+ */
+function trapsOf(model: Model, walk: ExploreResult, comps: Components): TrapRow[] {
+  return classifyBottoms(model, walk, comps).traps.map((members) => {
+    // The union of the active STACKS, in node order, once each — a composite
+    // state on the stack of every configuration inside it is named once.
+    const stack: ElementId[] = [];
+    const seen = new Set<ElementId>();
+    for (const i of members) {
+      for (const s of walk.configStates[i]) {
+        if (seen.has(s)) continue;
+        seen.add(s);
+        stack.push(s);
+      }
+    }
+    const path = entryPath(walk.successors, new Set(members));
+    const entry = path.map((i) => {
+      const leaf = walk.configLeaves[i];
+      const states = walk.configStates[i];
+      return stateRef(model, leaf ?? states[states.length - 1]);
+    });
+    return {
+      configs: members.length,
+      states: stack.map((s) => stateRef(model, s)),
+      entry,
+      steps: path.length - 1,
+    };
+  });
+}
+
+/** The trap census, on every walk: the relation's facts always, the machine's answers only under the gate. */
+function trapCensusOf(
+  model: Model,
+  walk: ExploreResult,
+  comps: Components,
+  traps: readonly TrapRow[],
+  gate: Exactness,
+): TrapCensus {
+  const bottoms = bottomComponents(walk.successors, comps);
+  if (!gate.walkIsExact) {
+    return {
+      sccs: comps.members.length,
+      bottomSccs: bottoms.length,
+      trapsAfterExemptions: null,
+      exemptedAsEnding: null,
+      exemptedAsDeadlock: null,
+      exemptedAsCore: null,
+      refusedByGate: gate.failedClause,
+      sentence: null,
+    };
+  }
+  const sorted = classifyBottoms(model, walk, comps);
+  return {
+    sccs: comps.members.length,
+    bottomSccs: bottoms.length,
+    trapsAfterExemptions: traps.length,
+    exemptedAsEnding: sorted.ending,
+    exemptedAsDeadlock: sorted.deadlock,
+    exemptedAsCore: sorted.core,
+    refusedByGate: null,
+    // Asserts no component cardinality — the mission DAG is five components —
+    // and names what was exempted, so the deadlock row above and this sentence
+    // are one accounting. Only when no trap was found: a machine with a trap
+    // row has its answer in the row.
+    sentence:
+      traps.length === 0
+        ? `no component of this walk is inescapable beyond its endings — ${sorted.ending} ending, ` +
+          `${sorted.deadlock} deadlocked configuration(s) and ${sorted.core} whole-graph component were exempted, ` +
+          `exhaustive under ${boundsSentence(walk.bounds)}`
+        : null,
+  };
+}
+
 /* ─────────────────────────────── the report ─────────────────────────────── */
 
 /** One machine's answer. */
@@ -1362,6 +1643,21 @@ export interface MachineReach {
    * it.
    */
   exactness: ExactnessCensus;
+  /**
+   * The sets of configurations no run leaves that are not endings, not
+   * deadlock rows and not the machine's own core (plan §3.2a).
+   *
+   * GATED ON `walkIsExact` — register row A6, polarity `increasing` — and NOT
+   * on the `publishable` the two lists above read. The list's emptiness is the
+   * claim *no trap*, which gets EASIER to state as edges are added, so the
+   * over-approximating walk that keeps `unreachable` honest falsifies it; and
+   * each row's *nothing leaves this set* is falsified by a MISSING edge, which
+   * a bound and an undecided guard both produce. EMPTIED when the gate refuses,
+   * never shortened; {@link trapCensus} says which clause refused.
+   */
+  traps: readonly TrapRow[];
+  /** What the component pass found and what was made of it — `--json`, like the two censuses above. */
+  trapCensus: TrapCensus;
   /** The guards this walk consulted and could not evaluate. Never `false`. */
   undeterminedGuards: readonly UndeterminedGuardRow[];
   /** True when the two absence lists were withheld — by a bound, or by an undecided guard. */
@@ -1427,6 +1723,8 @@ export interface ReachReport {
     dead: number;
     nondeterministic: number;
     deadlocks: number;
+    /** Trap rows published — zero on every refused machine, by construction. */
+    traps: number;
   };
   diagnostics: Diagnostic[];
 }
@@ -1550,13 +1848,22 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
   // the same walk; `guardsDecided` stays local because the deadlock row below
   // is gated on it ALONE and reads it separately.
   const publishable = publishabilityOf(walk).decreasingOk;
-  // THE INCREASING GATE, READ FOR THE CENSUS AND FOR NOTHING ELSE. Not one row
-  // below is gated on it: `unreachable`, `dead`, the deadlock rows and the
-  // qualification all keep reading the decreasing conjunction, which is what
-  // makes them monotone-decreasing claims an over-approximating walk cannot
-  // invent. Pointing any of them at this gate would empty a sound finding out
-  // of a shipped command the first time a machine carried a dwell.
+  // THE INCREASING GATE, AND EXACTLY ONE ROW BELOW READS IT: the trap list.
+  // `unreachable`, `dead`, the deadlock rows and the qualification all keep
+  // reading the decreasing conjunction, which is what makes them
+  // monotone-decreasing claims an over-approximating walk cannot invent.
+  // Pointing any of them at this gate would empty a sound finding out of a
+  // shipped command the first time a machine carried a dwell; pointing the
+  // trap list at THEIR conjunction would publish "no trap" over a walk that
+  // supplied the escape itself.
   const gate = walkIsExact(walk, walk.bounds);
+  // One Tarjan pass, read by the acyclicity census and the trap question both.
+  const comps = tarjanComponents(walk.successors);
+  // Register row A6, applied here and nowhere else: the whole field, on the
+  // whole gate, and on nothing narrower. `test/unit/semantics.mc.publishable.test.ts`
+  // reads this line back off the source.
+  const traps = gate.walkIsExact ? trapsOf(model, walk, comps) : [];
+  const trapCensus = trapCensusOf(model, walk, comps, traps, gate);
 
   const states = machineStates(model, machine.id);
   const transitions = walkableTransitions(model, machine.id);
@@ -1652,7 +1959,7 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
       // two are the same relation — the gate — the answer stands; where they
       // are not, the honest answer is that nothing was decided, and a `false`
       // would be as wrong as a `true`.
-      acyclic: gate.walkIsExact ? acyclic(walk.successors) : null,
+      acyclic: gate.walkIsExact ? acyclic(walk.successors, comps) : null,
       openFrontier: walk.openFrontier,
       edges: walk.successors.reduce((n, targets) => n + targets.length, 0),
       timedTransitions: walk.timedTransitions.size,
@@ -1689,6 +1996,8 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     // name the no-way-out list at all.
     deadlocks,
     deadlocksWithheld,
+    traps,
+    trapCensus,
     unsupported: walk.unsupported,
     undeterminedGuards: walk.undeterminedGuards,
     suppressed: !publishable,
@@ -1801,6 +2110,26 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
         hint: 'Give it a way out, or mark it final if stopping there is the intent. This is a reading of THIS machine under the printed alphabet, never a statement that the system deadlocks.',
       });
     }
+    // After the deadlock rows — exemption 1 hands a single sink to them, so the
+    // two never name one configuration — and before the choice rows, which the
+    // simulator sentence below refers a reader to.
+    for (const t of m.traps) {
+      const members = t.states.map((s) => s.name).join(', ');
+      findings.push({
+        severity: 'warning',
+        message:
+          `trap — ${t.configs} configuration(s) form a set nothing leaves: {${members}}. ` +
+          `Entered in ${t.steps} step(s) from \`${t.entry[0].name}\`.` +
+          // §2.4(d): an increasing claim is about the MACHINE, and on a machine
+          // with a choice point a reader who tries to reproduce the trap with
+          // `simulate` may never see it. Said beside the row, not assumed.
+          (m.nondeterminism.length > 0 ? ` ${SIMULATOR_SENTENCE}` : ''),
+        elementId: t.states[0].id,
+        elementName: t.states[0].qualifiedName,
+        code: UNRECOVERABLE_MODE_CODE,
+        hint: 'Give one state in the set a transition to a state outside it, or end the machine there with `done` if stopping is the intent. This is a reading of THIS machine over a walk whose relation is the one the model states — it says no run of this machine leaves the set, never anything about the system it models.',
+      });
+    }
     for (const n of m.nondeterminism) {
       const on = n.event === '' ? 'as completion transitions (no trigger)' : `on \`${n.event}\``;
       findings.push({
@@ -1828,6 +2157,7 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
       dead: machines.reduce((n, m) => n + m.transitions.dead.length, 0),
       nondeterministic: machines.reduce((n, m) => n + m.nondeterminism.length, 0),
       deadlocks: machines.reduce((n, m) => n + m.deadlocks.length, 0),
+      traps: machines.reduce((n, m) => n + m.traps.length, 0),
     },
     diagnostics: findings.map((d, i) => ({
       id: `verification#${i}`,

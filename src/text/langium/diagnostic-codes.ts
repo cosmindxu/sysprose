@@ -798,6 +798,13 @@ const CODES = [
     hint: 'Give the state a way out, or end the machine there properly — `done finished;` in the notation, or `kind = "final"` through the API. It is a reading of ONE machine under the printed alphabet: it says the machine cannot progress from there, never that the system deadlocks, and this tool never writes "deadlock-free".',
   },
   {
+    code: 'verification/unrecoverable-mode',
+    source: 'verification',
+    severity: 'warning',
+    when: 'A set of reachable configurations no run leaves — a bottom strongly-connected component of the walk’s successor relation — that is not where the machine is meant to stop. Three kinds of bottom component are exempted and never reported here: one made only of final states and `done` nodes (an ending); a single configuration with no successor at all, which is already `verification/deadlock` (one fact, one row); and the component holding the opening configuration, which is the machine’s own reachable core rather than somewhere it can be trapped FROM. The row names the states of every configuration in the set — the union of their active stacks, never the leaf alone — and the shortest path from the opening into it. It is published ONLY where the walk is exact: it finished inside every bound, met no construct this engine refuses, offers no `after(n)` dwell, names no trigger, and consulted no guard it could not evaluate. Each of those is a way the retained relation can differ from the machine’s — a missing edge invents a set nothing leaves, and an edge the environment may never supply invents an escape from one — so under any of them the whole list is emptied, never shortened, and the report says which clause refused it. A machine with a nondeterministic choice carries the simulator sentence beside the row: the walk explores both branches, the simulator takes the first declared one.',
+    hint: 'Give one state in the set a transition to a state outside it, or end the machine there with `done` if stopping is the intent. This is a reading of ONE machine over a walk whose relation is the one the model states: it says no run of this machine leaves the set, and nothing about the system it models or about what an environment could do. A `--json` payload carries `trapCensus` beside the rows — how many components the walk had, how many nothing leaves, and how many were exempted as endings, deadlocks or the core — and, where no trap was found, a sentence that names what was exempted rather than a bare all-clear.',
+  },
+  {
     code: 'verification/nondeterministic-choice',
     source: 'verification',
     severity: 'warning',

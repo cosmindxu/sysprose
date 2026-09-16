@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3181 passed / 0 failed / 0 skipped** across **148 files** + **128 E2E** across **78 spec files** = **3309 green** (measured 2026-09-16) |
+| Full automated suite | **3181 passed / 0 failed / 0 skipped** across **149 files** + **128 E2E** across **78 spec files** = **3309 green** (measured 2026-09-16) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -1141,11 +1141,11 @@ makes are a list a test can walk.** `publishabilityOf` in
 product-search conjunct only the second of them has, which is a field a
 walk-only claim does not carry rather than a `false` it would print "bound
 exhausted" from. Beside it sits `walkIsExact`, a second and stricter predicate
-for a different kind of claim and one nothing in the tool reads yet: an absence
-list gets **smaller** as edges are added, so a walk that offers more edges than
-the machine grants cannot invent one, while *"nothing here is inescapable"* gets
-**easier** to state as edges are added and the same over-approximation falsifies
-it. Two registers, `ABSENCE_CLAIMS` and `WITNESS_CLAIMS`, record which of the two
+for a different kind of claim, and exactly one published field reads it — the
+trap list (register row A6): an absence list gets **smaller** as edges are
+added, so a walk that offers more edges than the machine grants cannot invent
+one, while *"nothing here is inescapable"* gets **easier** to state as edges are
+added and the same over-approximation falsifies it. Two registers, `ABSENCE_CLAIMS` and `WITNESS_CLAIMS`, record which of the two
 each claim reads, which way it moves as edges are added, and what is published
 instead when its condition fails; `test/unit/semantics.mc.publishable.test.ts`
 asserts the wiring by reflection, so a claim added without a condition is a
@@ -1172,9 +1172,9 @@ cycle at all, and the two edges the prune contributes on
 `examples/uav-isr.sysml` are exactly the ones that close that machine's cycles.
 And it is **interned to integers**: a configuration hash is built from element
 ids, which are fresh on every load, so no hash string reaches a report, a digest
-or a JSON payload. Nothing reads the relation yet — no
-diagnostic, no verdict, no report row — and the gate for the commit that added it
-was that every row `reach` publishes on the shipped examples is unchanged.
+or a JSON payload. The gate for the commit that added it was that every row
+`reach` publishes on the shipped examples is unchanged; the relation is now read
+by the component census and by the trap list below.
 
 **The components of that relation are computed, and what they are allowed to say
 about the MACHINE is a separate question that is asked first.** `reach --json`
@@ -1188,12 +1188,43 @@ everywhere else, because the question is about the machine while the graph is th
 walk's: an edge behind a guard nothing valued is a cycle-closing edge the walk
 never had, and a walk that refused a construct outright has an empty relation
 that trivially has no cycle. A boolean there would state a property of a graph
-nobody built. **None of this is a finding and none of it is printed**: it is a
-`--json` payload field, it gates nothing, and every claim the command publishes
-still reads the same conjunction it read before — a state nobody enters and a
+nobody built. **The census itself is not a finding and is not printed**: it is
+a `--json` payload field, and every claim the command published before it still
+reads the same conjunction it read before — a state nobody enters and a
 transition nobody fires are claims that can only shrink as edges are added, and
 pointing them at a gate built for the claims that GROW would empty a sound
 finding out of a shipped command.
+
+**One claim now reads the stricter gate, and it is the first of the kind that
+grows.** `reach` reports each set of reachable configurations no run leaves — a
+bottom strongly-connected component of the retained relation — as
+`verification/unrecoverable-mode`, a warning at exit 0, naming the states of the
+set (the union of the active stacks, never the leaf alone) and the shortest way
+in. Three kinds of bottom component are exempted and never reported: an ending
+(final states and `done` nodes), a single configuration with no successor (which
+is already `verification/deadlock`, so one fact gets one row), and the component
+holding the opening configuration, which is the machine's own reachable core.
+That third exemption is what keeps all three shipped examples silent — each is
+one component holding its opening — and the campaign's exact diagnostics array
+over `examples/uav-isr.sysml` is unmoved. The list is gated on `walkIsExact` and
+on nothing looser: the "no trap" its emptiness asserts gets easier to state as
+edges are added, and each row's "nothing leaves this set" is falsified by a
+MISSING edge, so a bound, an unsupported construct, a dwell transition, a named
+trigger and an undecided guard each EMPTY the field rather than shorten it, and
+the three of those that refuse a walk that finished print an `inconclusive:` line
+naming the clause. Four fixtures pin the four mechanisms by name: a factory-built
+preempted dwell (time), the latch's `unlatch` (environment), the trapguard trio
+(store — the base file refuses, `= false` publishes the trap because the guard is
+DECIDED and the relation is the machine's, `= true` is one whole-graph component
+and is exempted as the core), and `--max-configs` on the trap probe. The `--json`
+row carries a trap census — components, bottom components, and how many were
+exempted as endings, deadlocks or the core — three-valued like the acyclicity
+field, so a bounded walk never publishes "3 exempted as deadlock" about frontier
+nodes that only look like sinks; where the gate held and no trap was found it
+carries a sentence naming what was exempted, byte-identical on a DAG into `done`
+and on a two-state sink beside that sink's deadlock row, and that sentence is
+never a text row. What the row never says: that the machine can recover, that it
+livelocks, or anything about the system the machine models.
 
 **One row did move, and it moved towards saying more rather than less.** A
 `verification/deadlock` row — *this configuration has no enabled way out* — used
@@ -1373,7 +1404,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3181 pass / 0 skip, 148 files)
+# Full unit + integration + conformance suite (3181 pass / 0 skip, 149 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

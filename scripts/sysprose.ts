@@ -94,6 +94,9 @@ import {
   CONTRACT_LEVEL_NOTE,
   consistencyReport,
   DEADLOCK_WITHHELD_SENTENCE,
+  DWELL_SENTENCE,
+  ENVIRONMENT_SENTENCE,
+  TRAP_REFUSAL_SENTENCE,
   contractReport,
   CORE_SUFFICIENCY_NOTE,
   coreCount,
@@ -3382,6 +3385,40 @@ function machineLines(m: MachineReach): string[] {
   // a withheld claim and a claim nobody made.
   for (const d of m.deadlocksWithheld) {
     out.push(`    withheld     ${d.leaf.qualifiedName} \u2014 ${DEADLOCK_WITHHELD_SENTENCE}`);
+  }
+  // A set of configurations nothing leaves (register row A6). The list is
+  // gated on `walkIsExact` and is EMPTY on every walk that gate refuses, so a
+  // row here is a row over the relation the model states. The states are
+  // declared names inside the braces — the finding beneath carries the
+  // qualified one — and the opening is named because a trap is a claim about
+  // where a run CAN get to, not only about where it cannot leave.
+  for (const t of m.traps) {
+    out.push(
+      `    trap         {${t.states.map((s) => s.name).join(', ')}} \u2014 ${t.configs} configuration(s) ` +
+        `nothing leaves; entered in ${t.steps} step(s) from ${t.entry[0].name}`,
+    );
+  }
+  // Where the gate refused a walk that FINISHED, the reason is printed here in
+  // place of the list — the sentence opens with `inconclusive:` and is its own
+  // row label — followed by the standing sentence for the mechanism. A
+  // bound and an unsupported construct print nothing extra — the SUPPRESSED
+  // and not-explored lines already say why every list is short. The no-trap
+  // sentence is `--json` only and is NEVER a text row: a bare all-clear in a
+  // report is the reading every gate in this lane exists to withhold.
+  switch (m.trapCensus.refusedByGate) {
+    case 'environment':
+      out.push(`    ${TRAP_REFUSAL_SENTENCE.environment}; ${ENVIRONMENT_SENTENCE}`);
+      break;
+    case 'time':
+      out.push(`    ${TRAP_REFUSAL_SENTENCE.time}; ${DWELL_SENTENCE}`);
+      break;
+    case 'store':
+      // The store's standing sentence is already inside the bounds line above
+      // (`boundsSentence`), so nothing is appended here.
+      out.push(`    ${TRAP_REFUSAL_SENTENCE.store}`);
+      break;
+    default:
+      break;
   }
   for (const n of m.nondeterminism) {
     const on = n.event === '' ? 'as completion transitions (no trigger)' : `on \`${n.event}\``;

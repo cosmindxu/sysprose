@@ -717,7 +717,7 @@ narrowed subset.
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
 SysML v2 standard family — all six read **Covered** — with **3309 green automated
-checks** (**3181** unit/integration/conformance/server/interop across **148 files**,
+checks** (**3181** unit/integration/conformance/server/interop across **149 files**,
 **0 skips**, + **128 E2E** across **78 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
@@ -736,7 +736,7 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 ---
 
 *End of report. Counts and verdicts derived from a live `vitest run` (3181 passed /
-0 skipped across 148 files) and Playwright (128/128 across 78 spec files), plus
+0 skipped across 149 files) and Playwright (128/128 across 78 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
 verdict-bearing write probe — see `docs/CONFORMANCE.md` §6.1) and

@@ -2,13 +2,16 @@
  * The successor relation `exploreMachine` computes, retained instead of
  * discarded (plan `docs/06-model-checking-implementation-plan.md` §3.P).
  *
- * WHAT THIS COMMIT ADDS IS DATA, AND NOTHING READS IT YET. Six fields on
- * `ExploreResult` — the relation, the two per-configuration arrays, the open
- * frontier flag and the two dwell sets — every one of them a value the walk
- * already had in hand and threw away. No diagnostic, no verdict, no report row.
- * So the gate for the commit is the last half of this file: what `reach`
- * publishes on the six shipped examples is deep-equal to what it published
- * before, and the relation retained is the one reachability was computed from.
+ * WHAT THE RETAINING COMMIT ADDED WAS DATA, AND THE TRAP LIST NOW READS IT. Six
+ * fields on `ExploreResult` — the relation, the two per-configuration arrays,
+ * the open frontier flag and the two dwell sets — every one of them a value the
+ * walk already had in hand and threw away; at first no diagnostic, no verdict,
+ * no report row read them, and the gate for that commit was the last half of
+ * this file: what `reach` publishes on the six shipped examples is deep-equal to
+ * what it published before, and the relation retained is the one reachability
+ * was computed from. The component census and then the trap list (plan §3.2a)
+ * each re-recorded the table by exactly the named movements in
+ * {@link MOVED_BY_THE_CENSUS}, and the shipped rows are otherwise unmoved.
  *
  * THE ONE LINE THE FEATURE'S HONESTY TURNS ON is where the edge is recorded.
  * An edge is written down at BOTH sites — at the revisit prune and at the
@@ -288,6 +291,12 @@ describe('`openFrontier` is the negation of `exhaustive`, not a test on `boundHi
  *
  * Nothing else in this table moved, and that is the whole gate for the census
  * going live: no finding, no verdict, no list and no count.
+ *
+ * THE TRAP COMMIT RE-RECORDED IT ONCE MORE, by exactly two fields and one total
+ * — `traps`, `trapCensus` and `totals.traps` — and the differential's meaning
+ * is that `traps` is `[]` on all three shipped machines: each is one component
+ * holding its opening, exempted as the machine's core. The first claim gated on
+ * the increasing side landed with no shipped row, count or finding moving.
  */
 const REACH_BEFORE: Record<string, unknown> = {
   "examples/contract-authoring-prompts.sysml": {
@@ -299,7 +308,8 @@ const REACH_BEFORE: Record<string, unknown> = {
       "unreachable": 0,
       "dead": 0,
       "nondeterministic": 0,
-      "deadlocks": 0
+      "deadlocks": 0,
+      "traps": 0
     },
     "diagnostics": []
   },
@@ -312,7 +322,8 @@ const REACH_BEFORE: Record<string, unknown> = {
       "unreachable": 0,
       "dead": 0,
       "nondeterministic": 0,
-      "deadlocks": 0
+      "deadlocks": 0,
+      "traps": 0
     },
     "diagnostics": []
   },
@@ -484,6 +495,17 @@ const REACH_BEFORE: Record<string, unknown> = {
         ],
         "deadlocks": [],
         "deadlocksWithheld": [],
+        "traps": [],
+        "trapCensus": {
+          "sccs": 1,
+          "bottomSccs": 1,
+          "trapsAfterExemptions": 0,
+          "exemptedAsEnding": 0,
+          "exemptedAsDeadlock": 0,
+          "exemptedAsCore": 1,
+          "refusedByGate": null,
+          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}"
+        },
         "unsupported": [],
         "undeterminedGuards": [],
         "suppressed": false
@@ -496,7 +518,8 @@ const REACH_BEFORE: Record<string, unknown> = {
       "unreachable": 0,
       "dead": 0,
       "nondeterministic": 1,
-      "deadlocks": 0
+      "deadlocks": 0,
+      "traps": 0
     },
     "diagnostics": [
       {
@@ -519,7 +542,8 @@ const REACH_BEFORE: Record<string, unknown> = {
       "unreachable": 0,
       "dead": 0,
       "nondeterministic": 0,
-      "deadlocks": 0
+      "deadlocks": 0,
+      "traps": 0
     },
     "diagnostics": []
   },
@@ -681,6 +705,17 @@ const REACH_BEFORE: Record<string, unknown> = {
         ],
         "deadlocks": [],
         "deadlocksWithheld": [],
+        "traps": [],
+        "trapCensus": {
+          "sccs": 1,
+          "bottomSccs": 1,
+          "trapsAfterExemptions": 0,
+          "exemptedAsEnding": 0,
+          "exemptedAsDeadlock": 0,
+          "exemptedAsCore": 1,
+          "refusedByGate": null,
+          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}"
+        },
         "unsupported": [],
         "undeterminedGuards": [],
         "suppressed": false
@@ -693,7 +728,8 @@ const REACH_BEFORE: Record<string, unknown> = {
       "unreachable": 0,
       "dead": 0,
       "nondeterministic": 1,
-      "deadlocks": 0
+      "deadlocks": 0,
+      "traps": 0
     },
     "diagnostics": [
       {
@@ -785,6 +821,17 @@ const REACH_BEFORE: Record<string, unknown> = {
         "nondeterminism": [],
         "deadlocks": [],
         "deadlocksWithheld": [],
+        "traps": [],
+        "trapCensus": {
+          "sccs": 1,
+          "bottomSccs": 1,
+          "trapsAfterExemptions": 0,
+          "exemptedAsEnding": 0,
+          "exemptedAsDeadlock": 0,
+          "exemptedAsCore": 1,
+          "refusedByGate": null,
+          "sentence": "no component of this walk is inescapable beyond its endings — 0 ending, 0 deadlocked configuration(s) and 1 whole-graph component were exempted, exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}"
+        },
         "unsupported": [],
         "undeterminedGuards": [],
         "suppressed": false
@@ -797,7 +844,8 @@ const REACH_BEFORE: Record<string, unknown> = {
       "unreachable": 0,
       "dead": 0,
       "nondeterministic": 0,
-      "deadlocks": 0
+      "deadlocks": 0,
+      "traps": 0
     },
     "diagnostics": []
   }
@@ -1083,6 +1131,22 @@ const COMPONENT_FILES = [
   'test/fixtures/verification/models/deadlock-guarded.sysml',
 ];
 
+/**
+ * The machines the TRAP commit adds, for the same reason the list above is
+ * kept apart. `mission-dag.sysml` is a chain into a `done` node — the ending
+ * exemption's fixture, and the one on which an exemption order that tested
+ * "no successor" before "an ending" would count the ending as a deadlock;
+ * `sink.sysml` is two states and one edge — the deadlock exemption's fixture,
+ * where a deadlock row and the no-trap accounting must agree in one output;
+ * `composite-trap.sysml` is a cycle inside a composite state — the one fixture
+ * on which a trap named by its leaves and one named by the active stacks differ.
+ */
+const TRAP_FILES = [
+  'test/fixtures/verification/models/mission-dag.sysml',
+  'test/fixtures/verification/models/sink.sysml',
+  'test/fixtures/verification/models/composite-trap.sysml',
+];
+
 describe('every machine in the tree, walked', () => {
   const walked: Walked[] = [];
 
@@ -1102,13 +1166,15 @@ describe('every machine in the tree, walked', () => {
     }
   }, 300_000);
 
-  it('finds the eleven machines that were here, plus eight from one commit and two from the next', () => {
+  it('finds the eleven machines that were here, plus eight from one commit, three from the next and three from the trap commit', () => {
     const added = walked.filter((w) => ADDED_FILES.includes(w.file));
     expect(added).toHaveLength(8);
     const components = walked.filter((w) => COMPONENT_FILES.includes(w.file));
     expect(components).toHaveLength(3);
+    const traps = walked.filter((w) => TRAP_FILES.includes(w.file));
+    expect(traps).toHaveLength(3);
     expect(
-      walked.length - added.length - components.length,
+      walked.length - added.length - components.length - traps.length,
       'the tree gained or lost a machine',
     ).toBe(11);
   });
@@ -1291,6 +1357,17 @@ const MOVED_BY_THE_CENSUS = {
     ', store seeded from declared literal values — a guard over an attribute with no declared value is read as false',
   censusField: 'exactness',
   withheldField: 'deadlocksWithheld',
+  /**
+   * The trap commit's two fields (plan §3.2a), re-recorded here deliberately:
+   * `traps` is `[]` on every shipped machine — each is one whole-graph
+   * component and exemption 3 keeps it silent — and `trapCensus` records that
+   * as `exemptedAsCore: 1` with the no-trap sentence. The differential's
+   * meaning is exactly that emptiness: the first published claim gated on the
+   * increasing side moved no row, no count and no finding on the shipped
+   * examples, and `totals` gained `traps: 0`.
+   */
+  trapsField: 'traps',
+  trapCensusField: 'trapCensus',
 } as const;
 
 describe("the differential: `reach`'s published output moved in exactly three named ways", () => {
@@ -1318,7 +1395,7 @@ describe("the differential: `reach`'s published output moved in exactly three na
     }, 120_000);
   }
 
-  it('the two fields that arrived are the only keys a machine row did not have', async () => {
+  it('the four fields that arrived are the only keys a machine row did not have', async () => {
     // The table above pins every row whole; this reads the same rows for the
     // shape of the movement so that a field arriving under a new name is red
     // here and not merely a diff in a 1,000-line table.
@@ -1327,9 +1404,17 @@ describe("the differential: `reach`'s published output moved in exactly three na
       for (const m of reachReport(loaded.model!).machines) {
         expect(m, file).toHaveProperty(MOVED_BY_THE_CENSUS.censusField);
         expect(m, file).toHaveProperty(MOVED_BY_THE_CENSUS.withheldField);
+        expect(m, file).toHaveProperty(MOVED_BY_THE_CENSUS.trapsField);
+        expect(m, file).toHaveProperty(MOVED_BY_THE_CENSUS.trapCensusField);
         // Empty on every shipped machine: none carries a guard, so the
         // per-configuration conjunct withheld nothing and no row moved.
         expect(m.deadlocksWithheld, file).toEqual([]);
+        // And empty here too: every shipped machine is one component holding
+        // its opening, so the trap list is silent by exemption 3 and the
+        // census says so rather than the list merely being short.
+        expect(m.traps, file).toEqual([]);
+        expect(m.trapCensus.exemptedAsCore, file).toBe(1);
+        expect(m.trapCensus.refusedByGate, file).toBeNull();
       }
     }
   }, 120_000);

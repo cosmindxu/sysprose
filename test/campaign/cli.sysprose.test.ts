@@ -4244,6 +4244,75 @@ package P {
     );
   }, 90_000);
 
+  it('reach reports a set of configurations nothing leaves, and refuses to on a walk that is not exact', async () => {
+    // §3.2a at the surface a person uses. The trap probe is completion-driven
+    // throughout, so the walk's relation is the machine's and the row is
+    // published: a warning, exit 0, naming the states of the set and the
+    // shortest way in. The latch names a trigger the walk supplies at every
+    // configuration, so whether `{locked}` is inescapable is a question about
+    // an environment this engine has no carrier for — the list is EMPTIED and
+    // the line says which clause refused it; the wrong answer, "no component of
+    // this walk is inescapable beyond its endings … 1 whole-graph component",
+    // is printed nowhere and the no-trap sentence is `--json` only.
+    const probe = resolve(process.cwd(), `${FIXV}/models/trap-probe.sysml`);
+    const r = await run(['reach', probe]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(
+      'trap         {failsafe, failsafeHold} — 2 configuration(s) nothing leaves; entered in 3 step(s) from standby',
+    );
+    expect(r.stdout).toContain(
+      'verification/unrecoverable-mode  trap — 2 configuration(s) form a set nothing leaves: {failsafe, failsafeHold}. Entered in 3 step(s) from `standby`.',
+    );
+    // The simulator sentence rides beside the row: `beta` is a choice point.
+    expect(r.stdout).toContain("every claim above is about this MACHINE's semantics");
+    const j = await run(['reach', probe, '--json']);
+    const { body } = payload<{
+      reach: {
+        machines: Array<{
+          traps: Array<{ configs: number; steps: number; states: Array<{ name: string }> }>;
+          trapCensus: { trapsAfterExemptions: number | null; refusedByGate: string | null; sentence: string | null };
+        }>;
+        totals: { traps: number };
+        diagnostics: Array<{ code: string; severity: string }>;
+      };
+    }>(j);
+    expect(body.reach.totals.traps).toBe(1);
+    expect(body.reach.machines[0].traps[0]).toMatchObject({ configs: 2, steps: 3 });
+    expect(body.reach.machines[0].trapCensus).toMatchObject({
+      trapsAfterExemptions: 1,
+      refusedByGate: null,
+      sentence: null,
+    });
+    expect(body.reach.diagnostics.map((d) => [d.code, d.severity])).toEqual([
+      ['verification/unrecoverable-mode', 'warning'],
+      ['verification/nondeterministic-choice', 'warning'],
+    ]);
+
+    const latch = resolve(process.cwd(), `${FIXV}/models/latch.sysml`);
+    const l = await run(['reach', latch]);
+    expect(l.code).toBe(0);
+    expect(l.stdout).toContain(
+      'inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger',
+    );
+    expect(l.stdout).not.toContain('trap         ');
+    expect(l.stdout).not.toContain('inescapable');
+    expect(l.stdout).not.toContain('verification/unrecoverable-mode');
+    const lj = await run(['reach', latch, '--json']);
+    const latchBody = payload<{
+      reach: {
+        machines: Array<{ traps: unknown[]; trapCensus: { refusedByGate: string | null; sentence: string | null; exemptedAsCore: number | null } }>;
+        diagnostics: unknown[];
+      };
+    }>(lj).body;
+    expect(latchBody.reach.machines[0].traps).toEqual([]);
+    expect(latchBody.reach.machines[0].trapCensus).toMatchObject({
+      refusedByGate: 'environment',
+      sentence: null,
+      exemptedAsCore: null,
+    });
+    expect(latchBody.reach.diagnostics).toEqual([]);
+  }, 90_000);
+
   it('reach withholds every absence over a guard it could not evaluate, and says why', async () => {
     // The defect at the surface a person uses. `GuardProbe::Ctrl` never values
     // `mode`, so `if mode == 3` decides nothing — and this command used to print
