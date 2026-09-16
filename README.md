@@ -39,6 +39,37 @@ tool does and does not keep for you.
 - **Local-first** — projects persist in the browser (IndexedDB/localStorage); import/export `.sysml`, model JSON, and OMG element-graph JSON.
 - **A kind for every statement** — one keyword says whether a statement binds (`#'requirement'`), explains (`#prose`) or is guidance for an agent (`#prompt`); coverage counts the first, and the guidance is collectable for whatever it applies to.
 
+## Verification checks at a glance
+
+Every check runs from a terminal (`npm run sysprose -- <command>`) and from the SDK. Each answer
+prints the conditions it was reached under, and where a check cannot decide it says so, gives a
+code and exits 2, never a pass. Details are in [Formal verification, from a terminal](#formal-verification-from-a-terminal) below
+and in [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md).
+
+| Question it answers | Command | How it is decided | Status |
+|---|---|---|---|
+| Does each requirement hold, given its own `assume` clauses? | `verify` | SMT solver (z3); `--engine literal` evaluates at the stated values instead | available |
+| Which axioms did a proof actually use? | `verify --why` | the solver's unsat core, beside the axioms the obligation reads | available |
+| Can a set of requirements hold at once, and which subset conflicts? | `consistency` | SMT solver, with a deletion loop to shrink the conflict | available |
+| Do the parts deliver what the whole promised? | `refine` | SMT solver, over the contract decomposition | available |
+| How tight can a measure get? | `bounds` | SMT optimisation, reported as exact or as a bound | available |
+| Which combinations of contract failures break a top requirement? | `fault-tree` | minimal cut sets from contract-failure injection | available, contract level only |
+| Is a recorded verdict still about this model? | `check` | for a solver proof, a digest of what the proof read; for other records, a digest of the whole model | available |
+| Which states can a state machine reach, where can it deadlock, and which sets of states can no run leave? | `reach` | exhaustive walk of the configuration graph | available |
+| Does a safety pattern (absence, universality, bounded existence, precedence) hold on every run? | `check-behaviour` | bad-prefix search over the same walk, with a witness run when it fails | available |
+| When a pattern fails, does every run violate it, or only some? | `check-behaviour` | strongly connected components of the walk | available |
+| Can the design ever reach a situation I name? | `check-behaviour`, pattern `cover` | the same search, answered `covered` with an example run | available |
+| From anywhere it can get to, can it still get back to a state I name? | `check-behaviour`, pattern `recovery` | reverse reachability over the walk | available |
+| Does something eventually happen (`existence`, `response`), under fairness assumptions? | `check-behaviour` | not decided: reported as inconclusive, with the reason | **not yet** |
+| Does a child definition refine its parent's contract? | none (planned as `refine --via specialize`) | none | **not yet** |
+| Does one state machine refine another? | none | none | **not yet** |
+| Which failures injected into a state machine break a requirement? | `fault-tree` | reports what such an analysis would need, and injects nothing | **not yet** |
+
+The four **not yet** rows were held back on purpose. None of the models in this repository would
+exercise them yet, so they would print verdicts that no test shows to be right.
+[`docs/06-model-checking-implementation-plan.md`](docs/06-model-checking-implementation-plan.md) §8
+gives the measurement behind each.
+
 ## Name and standards status
 
 Sysprose implements a **SysML v2–style textual notation** and an **OMG-API-shaped element
