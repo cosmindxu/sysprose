@@ -103,6 +103,17 @@ text:
   `vite preview` elsewhere cannot hijack the run.
 - `vite`'s dev server does not work on the share; use `npm run build && npm run preview`.
 
+## Action files
+
+Outstanding work lives in three files at the repository root. Put a new item in the file that matches
+its kind:
+
+- `TODO.md`: next actions, concrete, small and actionable.
+- `ROADMAP.md`: big features that need a refined plan before work starts.
+- `RESEARCH.md`: items that need decisions and further refinement after deeper research.
+
+When an item moves from research to roadmap to todo, move it; don't copy it.
+
 ## Validation gate — run before every commit
 
 ```bash

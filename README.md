@@ -67,6 +67,7 @@ and in [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md).
 
 The four **not yet** rows were held back on purpose. None of the models in this repository would
 exercise them yet, so they would print verdicts that no test shows to be right.
+[`RESEARCH.md`](RESEARCH.md) lists the decisions each one needs before it can be planned, and
 [`docs/06-model-checking-implementation-plan.md`](docs/06-model-checking-implementation-plan.md) §8
 gives the measurement behind each.
 
@@ -299,6 +300,7 @@ See [`docs/03-architecture-and-plan.md`](docs/03-architecture-and-plan.md). Laye
 
 ## Reference docs
 
+- [`TODO.md`](TODO.md), [`ROADMAP.md`](ROADMAP.md), [`RESEARCH.md`](RESEARCH.md) — the three action files: next small actions, big features that need a plan, and items that need decisions after research.
 - [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) — the guide: the views, the notation, the hazards, and what is kept.
 - [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md) — every subcommand and flag of `check` and `sysprose` (generated).
 - [`docs/DIAGNOSTIC-CODES.md`](docs/DIAGNOSTIC-CODES.md) — every diagnostic code, its trigger and its repair hint (generated).
