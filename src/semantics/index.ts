@@ -309,10 +309,15 @@ export {
 export {
   computeFaultTree,
   faultTreeCensus,
-  behaviourLaneRefusal,
+  behaviouralLaneCensus,
   isBehaviouralElement,
+  machineAnswer,
+  machineFailureModes,
+  machineRootOf,
+  machineRouteRefusal,
   CONTRACT_LEVEL_NOTE,
   DEFAULT_MAX_ORDER,
+  FAILURE_MODE_DEFINITION,
   FAULT_TREE_CODES,
   ORDERS_NOT_EXPLORED_NOTE,
   SINGLE_POINT_OF_FAILURE_CODE,
@@ -324,6 +329,9 @@ export {
   type FaultTreeResult,
   type MaxOrderSource,
   type UndecidedCheck,
+  type BehaviouralLaneCensus,
+  type MachineAnswer,
+  type MachineFailureModes,
 } from './fault-tree';
 export {
   obligationsOf,

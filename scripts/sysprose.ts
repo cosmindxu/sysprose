@@ -87,7 +87,6 @@ import type { ElementRecord, Model } from '../src/core/index';
 import Ajv from 'ajv';
 import {
   attachEvidence,
-  behaviourLaneRefusal,
   boundsReport,
   connectivityReport,
   signatureCensus,
@@ -108,6 +107,7 @@ import {
   impactClosure,
   isBehaviouralElement,
   isUserElement,
+  machineRouteRefusal,
   modelMetrics,
   obligationsReport,
   orphanReport,
@@ -2729,26 +2729,34 @@ function faultTreeMaxOrder(args: ParsedArgs): number | undefined {
 }
 
 /**
- * The top event a run was narrowed to, with the ONE element kind this command
- * refuses by name.
+ * The element a run was narrowed to, and WHICH LANE it belongs to.
  *
- * THE TWO SAFETY LANES STAY APART (§3.9). A `StateUsage` has no contract to
- * withdraw, so a fault tree over it would enumerate nothing and print an empty
- * cut-set list — which every safety reader reads as "no combination of failures
- * breaks this". The refusal points at the behavioural lane, and the pointer is
- * CONDITIONAL on that command existing in this build: `findCommand` is the
- * single-token lookup the dispatcher itself uses, and a sentence telling a
- * reader to run something `--help` does not list is worse than no pointer. The
- * refusal and the exit code are the same either way.
+ * THE TWO SAFETY LANES STAY APART (§3.9), and this predicate is the seam. A
+ * state machine has no contract to withdraw, so a fault tree over it would
+ * enumerate nothing and print an empty cut-set list — which every safety
+ * reader reads as "no combination of failures breaks this". It used to be
+ * refused here, with a pointer; it is ROUTED now, into a measured answer: how
+ * many failure-mode flags and `#exceptional` states the machine carries, which
+ * is what a behavioural fault tree would need and what that lane is held
+ * behind. The exit code is 2 either way, and the routing is what keeps the
+ * empty list unprintable: a machine that reached the contract path would
+ * select no decomposition and be refused as naming none, never listed.
  */
-function faultTreeElement(model: Model, args: ParsedArgs): ElementRecord | undefined {
+function faultTreeElement(
+  model: Model,
+  args: ParsedArgs,
+): { element: ElementRecord; lane: 'contract' | 'machine' } | undefined {
   const el = verificationScope(model, args);
-  if (el !== undefined && isBehaviouralElement(el)) {
-    throw new UsageError(
-      behaviourLaneRefusal(qname(model, el.id), findCommand('check-behaviour')?.name ?? null),
-    );
-  }
-  return el;
+  if (el === undefined) return undefined;
+  if (!isBehaviouralElement(el)) return { element: el, lane: 'contract' };
+  // THE SAME MACHINES THE CENSUS COUNTS, and no other. A state inside a
+  // machine, or a `state def` that owns no transition, is refused here in the
+  // words `check-behaviour` and `reach` use for the same input — measured
+  // instead, the first was answered about its own descendants and the second
+  // sat beside `machines: 0` in the payload that called it a machine.
+  const refusal = machineRouteRefusal(model, el.id);
+  if (refusal !== null) throw new UsageError(refusal);
+  return { element: el, lane: 'machine' };
 }
 
 /** One basic event, named with what it expands to when it is not a leaf. */
@@ -2831,13 +2839,37 @@ async function reportFaultTree(
   text: string,
   args: ParsedArgs,
 ): Promise<Report> {
-  const element = faultTreeElement(model, args);
+  const scope = faultTreeElement(model, args);
+  const element = scope?.element;
   const maxOrder = faultTreeMaxOrder(args);
   const r = await faultTreeReport(model, {
-    ...(element ? { elementId: element.id } : {}),
+    ...(scope?.lane === 'contract' ? { elementId: scope.element.id } : {}),
+    ...(scope?.lane === 'machine' ? { machineId: scope.element.id } : {}),
     ...(maxOrder !== undefined ? { maxOrder } : {}),
     sourceText: text,
   });
+
+  // A MACHINE IS ANSWERED WITH ITS OWN BLOCK, and none of the generic lines:
+  // every figure below is about trees, and "0 with cut sets" over a behaviour
+  // this command never looked at is the sentence the routing above exists to
+  // keep off the page. The census the run took is in the `--json` payload
+  // (plan §2.5) and prints nothing here.
+  if (r.machine !== null) {
+    return {
+      json: r,
+      text: [
+        `${name}: ${r.machine.sentence}`,
+        '  nothing was enumerated and no absence is claimed: this command injects failures into the ' +
+          'CONTRACTS a `satisfy` attaches to the parts of a system, and a state machine carries none — ' +
+          'its failure modes would be flags its guards read, which no lane in this build injects, ' +
+          'so this run is exit 2',
+        `  ${CONTRACT_LEVEL_NOTE}`,
+        `  model ${r.modelVersion.graph}`,
+        ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
+      ].join('\n'),
+      faultTree: r,
+    };
+  }
 
   // AN `--element` THAT SELECTED NOTHING IS A USAGE ERROR, not a statement
   // about the model — the same rule `refine --element` and `consistency

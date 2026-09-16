@@ -56,12 +56,13 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import Ajv from 'ajv';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { Model } from '@core/index';
+import { Model, ModelFactory } from '@core/index';
 import {
   ALLOW_INCONCLUSIVE_CODES,
   attachEvidence,
   boundsReport,
   faultTreeReport,
+  VerifyOptionError,
   faultTreeVerdict,
   canonicalElements,
   consistencyReport,
@@ -81,13 +82,18 @@ import {
   type VerifyEngineOption,
   type VerifyReport,
 } from '@api/index';
-import { findCommand, flagsFor } from '../../scripts/lib/sysprose-spec';
+import { FAULT_TREE_EXIT_CODES, findCommand, flagsFor } from '../../scripts/lib/sysprose-spec';
 import {
-  behaviourLaneRefusal,
+  behaviouralLaneCensus,
   checkBounds,
   checkConsistency,
   computeFaultTree,
   isBehaviouralElement,
+  machineAnswer,
+  machineFailureModes,
+  machineRootOf,
+  machineRouteRefusal,
+  FAILURE_MODE_DEFINITION,
   CONNECTION_HINT,
   CONTRACT_LEVEL_NOTE,
   DEFAULT_MAX_ORDER,
@@ -106,7 +112,6 @@ import {
   writeVerdict,
 } from '@semantics/index';
 import { obligationsOf } from '@semantics/obligations';
-import { parsePropertyText } from '@semantics/mc/patterns';
 import { loadZ3, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
 import { serializeElement, serializeModel } from '@text/serializer';
@@ -3519,11 +3524,13 @@ describe('L8 — bounds: exact, or honest about not being exact', () => {
  *    by a stub backend rather than by a timeout, so the case says what it means
  *    on every machine: one check comes back `unknown` and the group's
  *    `singlePointOfFailure` must be `null`, not `false`.
- *  - **A state machine is refused, in BOTH builds.** The pointer to
- *    `check-behaviour` is conditional on that row existing, and the fallback
- *    sentence is checked here because the build that needs it is the one this
- *    repository does not have — phase 4 has landed, so the live branch is the
- *    pointer and the fallback would otherwise never be executed at all.
+ *  - **A state machine is answered with a MEASUREMENT, never with a list.**
+ *    The refusal it used to get is gone; what replaces it is the count a
+ *    behavioural fault tree would need — failure-mode flags and `#exceptional`
+ *    states — and the census that lane is held behind. The flagship carries
+ *    none, so its sentence is asserted with the measured `0`s; the `1` spelling
+ *    is pinned from a factory-built machine that has one, the way the dwell
+ *    fixtures pin a timed edge the shipped examples do not carry.
  *
  * The redundancy fixture carries the two answers a fault tree exists to tell
  * apart: one sub-contract whose failure alone breaks the top requirement, and
@@ -3734,74 +3741,273 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     );
   });
 
-  it('a state machine is refused in both builds, and never answered with an empty list', () => {
-    // THE TWO SAFETY LANES STAY APART. The refusal is the same and so is the
-    // exit code; only the POINTER moves, and it moves on whether the row
-    // exists. The live branch is the pointer — phase 4 has landed — so the
-    // fallback is checked here, against the build this repository does not
-    // have but the plan explicitly allows.
-    expect(
-      findCommand('check-behaviour'),
-      'the pointer branch below is checked against a command that no longer exists',
-    ).toBeDefined();
-    const withCommand = behaviourLaneRefusal('P::FlightModes', 'check-behaviour');
-    expect(withCommand).toContain('is a state machine; contract-level fault trees do not cover behaviour');
-    // RE-RECORDED, deliberately: this line pinned `--from-keywords`, a flag
-    // `check-behaviour` does not declare and never will. The pointer names
-    // `--pattern` now, and the case below reads every printed invocation back
-    // against the command table so the substring cannot drift off it again.
-    expect(withCommand).toContain('check-behaviour <file> --element P::FlightModes --pattern');
-    const fallback = behaviourLaneRefusal('P::FlightModes', null);
-    expect(
-      fallback,
-      'the fallback sentence points at a subcommand this build may not ship',
-    ).not.toContain('check-behaviour');
-    // AND IT POINTS AT NOTHING AT ALL, rather than at a command spelled from
-    // whatever the lookup returned: a build with no behavioural lane must not
-    // print "run `npm run sysprose -- null`" either.
-    expect(fallback, 'the fallback still tells a reader to run something').not.toContain(
-      'npm run sysprose',
-    );
-    expect(fallback).toContain('is a state machine; contract-level fault trees do not cover behaviour');
-    // THE REFUSAL IS THE SAME REFUSAL; only the pointer is added to it. That is
-    // §4's own sentence for this commit — "the refusal and the exit code are
-    // unchanged either way" — and it is what makes the conditional safe.
-    expect(withCommand.startsWith(fallback), 'the two builds refuse differently').toBe(true);
-    // Both say what an empty cut-set list would have said instead, which is the
-    // thing being refused rather than a flourish.
-    for (const message of [withCommand, fallback]) {
-      expect(message).toContain('empty cut-set list');
-    }
-    // And the predicate the CLI branches on names the metaclass a machine is.
+  it('the predicate that routes a machine into the behavioural lane', () => {
+    // MORE LOAD-BEARING THAN IT LOOKS. `scripts/sysprose.ts` branches on this
+    // predicate to send a machine into the measured answer instead of the
+    // contract path; a regression that read a `StateUsage` as a part would
+    // send a machine down the contract path — where it selects no
+    // decomposition and is refused as naming none — with the answer, and the
+    // census, gone from the surface a reader meets. The two assertions used to
+    // sit at the end of the refusal case; they outlive it.
     expect(isBehaviouralElement({ eClass: 'StateUsage' } as never)).toBe(true);
+    expect(isBehaviouralElement({ eClass: 'StateDefinition' } as never)).toBe(true);
     expect(isBehaviouralElement({ eClass: 'PartUsage' } as never)).toBe(false);
   });
 
+  it('a state machine gets a measured answer with the numbers the tree produces, and never an empty list', async () => {
+    // THE FLAGSHIP, AS IT IS. `FlightModes` carries no failure-mode flag and no
+    // `#exceptional` state — `grep -rl exceptional --include=*.sysml` over the
+    // repository returns nothing — so the sentence is asserted with the `0`s
+    // it actually prints, not with a number the plan's draft once hoped for.
+    const path = 'examples/uav-isr.sysml';
+    const source = read(path);
+    const { model } = await loadModelText(source, { fileName: path });
+    if (!model) throw new Error(`${path} produced no model`);
+    const machine = model.all().find((e) => e.declaredName === 'FlightModes');
+    expect(machine, 'the flagship no longer declares FlightModes').toBeDefined();
+    expect(isBehaviouralElement(machine!), 'FlightModes is no longer routed as a machine').toBe(true);
+    // No solver is consulted on this route, so the case needs none and never skips.
+    const r = await faultTreeReport(model, { machineId: machine!.id, sourceText: source });
+    expect(r.exitCode).toBe(2);
+    expect(r.groups, 'a machine was answered with a tree').toEqual([]);
+    expect(r.toolAbsent).toBe(false);
+    expect(r.checks).toBe(0);
+    expect(r.diagnostics).toEqual([]);
+    expect(r.machine).not.toBeNull();
+    expect(r.machine!.element.qualifiedName).toBe('UAVSurveillanceSystem::FlightModes');
+    expect(r.machine!.failureModeFlags).toBe(0);
+    expect(r.machine!.exceptionalStates).toBe(0);
+    // THE SENTENCE, MEASURED: the plan quotes it with these numbers, and this
+    // is the case that keeps the quotation honest.
+    expect(r.machine!.sentence).toContain(
+      '0 failure-mode flag(s), 0 `#exceptional` state(s) — the behavioural lane has no fault variable to inject here',
+    );
+    // AND IT MATCHES THE ROW THAT NAMES IT: the 2 row of the exit contract
+    // says what this run is, in the same words, so `--help` and the report
+    // cannot come to publish two different reasons for one exit code.
+    const clause = 'a state machine whose failure modes this command found none of';
+    expect(FAULT_TREE_EXIT_CODES).toContain(clause);
+    expect(r.machine!.sentence).toContain(clause);
+    // No pointer, no flag, no invocation — a sentence that names nothing to
+    // run cannot go stale the way the refusal's `--from-keywords` did.
+    expect(r.machine!.sentence).not.toContain('npm run sysprose');
+    expect(r.machine!.sentence).not.toContain('--');
+    // And no absence: the reserved form and the word itself stay off it.
+    expect(r.machine!.sentence).not.toContain('cut set');
+    // The census over the file, taken on this run and on every other.
+    expect(r.behaviouralLane).toEqual({
+      machines: 1,
+      machinesWithExceptionalStates: 0,
+      machinesWithFailureModeFlags: 0,
+      hazardsUnreachableFromTheContractLane: 0,
+    });
+    // A contract-level run over the same file carries the same census and no
+    // machine answer, so a `--json` reader can tell the two apart.
+    const contract = await faultTreeReport(model, { sourceText: source });
+    expect(contract.machine).toBeNull();
+    expect(contract.behaviouralLane).toEqual(r.behaviouralLane);
+  });
+
+  /**
+   * A machine built by hand, because nothing shipped carries `#exceptional` on
+   * a state — the same discipline the dwell fixtures use for a timed edge.
+   * The definition is declared in the same package, under the short name the
+   * shipped library uses, so `hasKeyword` resolves it the way it resolves the
+   * library's own.
+   */
+  function machineWith(opts: { exceptional: boolean; flag: boolean; declareFlagDef?: boolean }) {
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const pkg = f.pkg('P');
+    model.create('MetadataDefinition', {
+      declaredName: 'ExceptionalOutcome',
+      declaredShortName: 'exceptional',
+      ownerId: pkg.id,
+    });
+    if (opts.declareFlagDef !== false) {
+      model.create('MetadataDefinition', {
+        declaredName: FAILURE_MODE_DEFINITION,
+        declaredShortName: 'failureMode',
+        ownerId: pkg.id,
+      });
+    }
+    const sm = f.stateDef('Modes', pkg.id);
+    const nominal = f.state('nominal', sm.id);
+    const hazard = model.create('StateUsage', {
+      declaredName: 'hazard',
+      ownerId: sm.id,
+      attrs: opts.exceptional ? { metadata: ['exceptional'] } : {},
+    });
+    if (opts.flag) {
+      model.create('AttributeUsage', {
+        declaredName: 'navFail',
+        ownerId: sm.id,
+        attrs: { type: 'Boolean', value: false, metadata: ['failureMode'] },
+      });
+    }
+    f.transition(nominal.id, hazard.id, { ownerId: sm.id, trigger: 'fail' });
+    return { model, f, pkg, machineId: sm.id };
+  }
+
+  it('the `1` spelling is pinned from a factory-built machine that carries one `#exceptional` state', async () => {
+    const { model, f, pkg, machineId } = machineWith({ exceptional: true, flag: false });
+    expect(machineFailureModes(model, machineId)).toEqual({ failureModeFlags: 0, exceptionalStates: 1 });
+    const answer = machineAnswer(model, machineId);
+    expect(answer.sentence).toContain('0 failure-mode flag(s), 1 `#exceptional` state(s)');
+    expect(answer.sentence).toContain('the behavioural lane has no fault variable to inject here');
+    // The hazard is a MODE, and the contract lane cannot reach it: that is the
+    // number §3.8's release condition is read against, and it is 1 here and 0
+    // on every shipped model.
+    expect(behaviouralLaneCensus(model)).toEqual({
+      machines: 1,
+      machinesWithExceptionalStates: 1,
+      machinesWithFailureModeFlags: 0,
+      hazardsUnreachableFromTheContractLane: 1,
+    });
+    // Per MACHINE, not per state: a second, untagged machine in the same file
+    // moves the denominator and nothing else.
+    const other = f.stateDef('Other', pkg.id);
+    const a = f.state('a', other.id);
+    const b = f.state('b', other.id);
+    f.transition(a.id, b.id, { ownerId: other.id, trigger: 'go' });
+    expect(behaviouralLaneCensus(model)).toMatchObject({ machines: 2, machinesWithExceptionalStates: 1 });
+    // And through the report: still exit 2, still no tree, the answer carried.
+    const r = await faultTreeReport(model, { machineId });
+    expect(r.exitCode).toBe(2);
+    expect(r.groups).toEqual([]);
+    expect(r.machine!.exceptionalStates).toBe(1);
+    expect(r.machine!.sentence).toContain('1 `#exceptional` state(s)');
+  });
+
+  it('a failure-mode flag this build does not inject is counted, and never called absent', () => {
+    // THE OTHER TAIL. "No fault variable to inject" is true of every machine in
+    // this repository and false of a model that declared its own `FailureMode`
+    // definition and applied it — the sentence must not tell that reader
+    // nothing was found when something was.
+    const { model, machineId } = machineWith({ exceptional: false, flag: true });
+    expect(machineFailureModes(model, machineId)).toEqual({ failureModeFlags: 1, exceptionalStates: 0 });
+    const answer = machineAnswer(model, machineId);
+    expect(answer.sentence).toContain('1 failure-mode flag(s), 0 `#exceptional` state(s)');
+    expect(answer.sentence, 'a flag the census found was reported as none').not.toContain('found none of');
+    expect(answer.sentence).not.toContain('cut set');
+    // AND THIS TAIL IS IN THE 2 ROW TOO, pinned the way the other tail is: the
+    // exit contract names both reasons a machine run is exit 2, so `--help`
+    // and the report cannot publish two different reasons for one code.
+    const clause = 'found and does not inject';
+    expect(answer.sentence).toContain(`is a state machine whose failure modes this command ${clause}`);
+    expect(FAULT_TREE_EXIT_CODES).toContain(clause);
+    expect(behaviouralLaneCensus(model)).toMatchObject({ machinesWithFailureModeFlags: 1 });
+    // COUNTED BY RESOLUTION, NOT BY SPELLING: `keywords.ts`'s rule is that a
+    // keyword naming no definition in scope tags nothing, and the census
+    // inherits it. A `#failureMode` written ahead of the vocabulary reads 0.
+    const spelled = machineWith({ exceptional: false, flag: true, declareFlagDef: false });
+    expect(machineFailureModes(spelled.model, spelled.machineId).failureModeFlags).toBe(0);
+    expect(machineAnswer(spelled.model, spelled.machineId).sentence).toContain('found none of');
+  });
+
+  it('a state inside a machine, or a state def that owns no transition, is refused rather than measured', async () => {
+    // ONE POPULATION FOR THE ROUTE AND THE CENSUS. Measured before this case:
+    // a leaf state named as `--element` was answered about its own descendants
+    // — the `#exceptional` hazard a reader named read `0 \`#exceptional\`
+    // state(s)` about itself — and `succession-only.sysml`'s `Modes`, which
+    // owns no transition, was called a machine in the same payload whose
+    // census said `machines: 0`. Both are refused now, in the words
+    // `check-behaviour` and `reach` use for the same input, at the API as well
+    // as on the command line, because `machineId` is public through both barrels.
+    const { model, machineId } = machineWith({ exceptional: true, flag: false });
+    const hazard = model.children(machineId).find((c) => c.declaredName === 'hazard')!;
+    expect(machineRootOf(model, hazard.id)?.id).toBe(machineId);
+    expect(machineRootOf(model, machineId)?.id).toBe(machineId);
+    expect(machineRouteRefusal(model, machineId)).toBeNull();
+    const inside = machineRouteRefusal(model, hazard.id)!;
+    expect(inside).toContain('`P::Modes::hazard` is a state inside `P::Modes`');
+    expect(inside).toContain('name the machine');
+    expect(inside, 'a hazard the reader named was called absent').not.toContain('found none of');
+    expect(inside).not.toContain('cut set');
+    await expect(faultTreeReport(model, { machineId: hazard.id })).rejects.toThrow(VerifyOptionError);
+    await expect(faultTreeReport(model, { machineId: hazard.id })).rejects.toThrow('name the machine');
+    // The flagship's leaf: routed as behavioural, refused as a region of FlightModes.
+    const uav = await loadModelText(read('examples/uav-isr.sysml'), { fileName: 'examples/uav-isr.sysml' });
+    const standby = uav.model!.all().find((e) => e.declaredName === 'standby')!;
+    expect(isBehaviouralElement(standby)).toBe(true);
+    expect(machineRouteRefusal(uav.model!, standby.id)).toContain(
+      '`UAVSurveillanceSystem::FlightModes::standby` is a state inside `UAVSurveillanceSystem::FlightModes`',
+    );
+    // The fixture that owns no transition: not a machine of this tool's, so
+    // the census counts 0 and the route says so in `reach`'s words instead of
+    // publishing a machine answer beside that 0.
+    const file = 'test/fixtures/verification/models/succession-only.sysml';
+    const succ = (await loadModelText(read(file), { fileName: file })).model!;
+    const modes = succ.all().find((e) => e.declaredName === 'Modes')!;
+    expect(isBehaviouralElement(modes)).toBe(true);
+    expect(behaviouralLaneCensus(succ).machines).toBe(0);
+    expect(machineRootOf(succ, modes.id)).toBeNull();
+    const refusal = machineRouteRefusal(succ, modes.id)!;
+    expect(refusal).toContain('`SuccOnly::Ctrl::Modes` owns no transition');
+    expect(refusal).toContain('`reach` reads a machine as an element that owns a transition');
+    expect(refusal).not.toContain('found none of');
+    await expect(faultTreeReport(succ, { machineId: modes.id })).rejects.toThrow(VerifyOptionError);
+  });
+
+  it('the census reads 0 across the shipped corpus, over a non-zero number of machines', async () => {
+    // THE MEASUREMENT THE BEHAVIOURAL LANE IS HELD BEHIND (plan §3.8, §5). A
+    // census that finds nothing is the result, not a failure — and it is what
+    // keeps a second model vocabulary from being committed to before there is a
+    // subject for it. Non-vacuous: the machines are counted too, so "0 of 0"
+    // cannot pass as "0 of many".
+    const dirs = ['examples', 'test/fixtures/verification/models'];
+    const files = dirs.flatMap((dir) =>
+      readdirSync(root(dir))
+        .filter((f) => f.endsWith('.sysml'))
+        .map((f) => `${dir}/${f}`),
+    );
+    let machines = 0;
+    for (const file of files) {
+      const { model } = await loadModelText(read(file), { fileName: file });
+      if (!model) continue;
+      const census = behaviouralLaneCensus(model);
+      expect(census, `${file} carries what the census was expected not to find`).toMatchObject({
+        machinesWithExceptionalStates: 0,
+        machinesWithFailureModeFlags: 0,
+        hazardsUnreachableFromTheContractLane: 0,
+      });
+      machines += census.machines;
+    }
+    expect(machines, 'the census counted no machine at all, so its zeros are vacuous').toBeGreaterThanOrEqual(10);
+    // THE LEDGER'S FIGURE, PINNED TO THE MEASUREMENT: the campaign ledger says
+    // how many machines the zeros are over, in words, and a prose number with
+    // nothing behind it drifts the day a fixture is added or dropped. Change
+    // both together.
+    expect(machines, 'docs/AGENT-AUTHORING-CAMPAIGN.md says "twenty-six machines"; re-measure and edit both').toBe(26);
+    expect(read('docs/AGENT-AUTHORING-CAMPAIGN.md')).toContain('twenty-six machines between them');
+  });
+
   it('every command a printed sentence names exists, with the flags it names', () => {
-    // THE CLASS, NOT THE INSTANCE. The refusal above once pointed a reader at
-    // `check-behaviour … --from-keywords`, and that flag is declared on
-    // `obligations` alone: a reader who pasted the sentence got
-    // `unknown option: --from-keywords` and exit 2 from the very command the
-    // tool had just told them to run. Nothing went red, because no guard read a
-    // printed invocation against the table the parser and `--help` are both
-    // rendered from — so the instance was fixed here and the CLASS is closed
-    // here too.
+    // THE CLASS, NOT THE INSTANCE. The state-machine refusal `fault-tree` used
+    // to print once pointed a reader at `check-behaviour … --from-keywords`,
+    // and that flag is declared on `obligations` alone: a reader who pasted
+    // the sentence got `unknown option: --from-keywords` and exit 2 from the
+    // very command the tool had just told them to run. Nothing went red,
+    // because no guard read a printed invocation against the table the parser
+    // and `--help` are both rendered from — so the instance was fixed here and
+    // the CLASS is closed here too. The refusal itself is gone now, replaced
+    // by a measured answer that names no invocation at all (the case above
+    // asserts it prints no `npm run sysprose` and no flag); what stays is the
+    // walk over everything else the tool prints.
     //
     // WHAT THIS WALK COVERS, exactly, because the sentence above is a promise
     // and an absence claim is only worth the walk behind it: every
     // `npm run sysprose -- …` line and every backticked `<subcommand> --flag`
     // reference spelled LITERALLY in a `.ts` or `.tsx` source under `src/` or
-    // `scripts/`, plus the state-machine refusal rendered. It does not read
-    // `.md`, and it cannot read a subcommand assembled out of parts at runtime.
-    // Three parts, because none of them can see the others:
+    // `scripts/`. It does not read `.md`, it cannot read a subcommand
+    // assembled out of parts at runtime, and it cannot read a sentence
+    // rendered from a `${…}` — the refusal was one, which is why it used to
+    // be rendered and read here separately. Two parts, because neither can
+    // see the other:
     //
-    //  1. the refusal RENDERED, which is the form a user meets — a source scan
-    //     cannot read it at all, because its subcommand is a `${…}` and its
-    //     flags sit in a later template chunk with no `npm run sysprose` in
-    //     front of them;
-    //  2. every literal `npm run sysprose -- …`, checked the way `parseArgs`
+    //  1. every literal `npm run sysprose -- …`, checked the way `parseArgs`
     //     would parse it, because that is a line somebody PASTES;
-    //  3. every backticked `<subcommand> --flag` reference, checked for
+    //  2. every backticked `<subcommand> --flag` reference, checked for
     //     EXISTENCE only. That form is how this codebase names a flag in prose
     //     (`verify --record`, `obligations --missing`), not a pasteable line, so
     //     a value flag standing there with no value is correct English rather
@@ -3818,8 +4024,8 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     // Stops at the quote that closes the string it is written in, so a template
     // chunk contributes what it actually spells and never runs on into prose —
     // EXCEPT for a balanced `"…"` run, which is a shell-quoted flag value. The
-    // pointer this commit rewrote carries one (`--pattern "pattern=absence, …"`)
-    // and a scanner that stopped at its opening quote would report the flag as
+    // refusal's pointer carried one (`--pattern "pattern=absence, …"`) and a
+    // scanner that stopped at its opening quote would report the flag as
     // valueless: it would go red on the only spelling that runs, and green on
     // the metavariable that does not. Sources here are single-quoted or
     // template strings, so a `"` in one is printed text rather than a delimiter.
@@ -3923,47 +4129,7 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
       });
     }
 
-    // ── part one: the refusal, rendered ─────────────────────────────────────
-    const pointer = invocationsIn(
-      behaviourLaneRefusal('P::FlightModes', 'check-behaviour'),
-      'the state-machine refusal',
-    );
-    expect(
-      pointer.map((i) => i.command),
-      'the refusal no longer points at a subcommand, so the check below reads nothing',
-    ).toEqual(['check-behaviour']);
-    expect(
-      pointer[0].rest.filter((t) => t.startsWith('--')),
-      'the refusal names no flag, so the flag clause of this check is vacuous',
-    ).not.toEqual([]);
-    // AND THE VALUE IS ONE THE COMMAND CAN READ, which a table lookup cannot
-    // tell you. The pointer once printed `--pattern SPEC`: the flag exists, the
-    // metavariable is a token, every check above is happy — and the pasted line
-    // still exited 2 with `verification/malformed-property`, because
-    // `parsePropertyText` reads a property as `key=value` fields and `SPEC` is
-    // none. So the printed value is handed to the reader `check-behaviour`
-    // itself decides it with. It is shell-quoted because it holds spaces: three
-    // bare words would reach the command as three arguments.
-    const printedPattern = pointer[0].rest[pointer[0].rest.indexOf('--pattern') + 1];
-    expect(
-      printedPattern !== undefined &&
-        printedPattern.startsWith('"') &&
-        printedPattern.endsWith('"'),
-      'the printed --pattern value is not one shell-quoted argument — or the tokeniser split it',
-    ).toBe(true);
-    expect(
-      parsePropertyText(printedPattern!.slice(1, -1), 'flag').ok,
-      'the pointer prints a --pattern value the command answers verification/malformed-property to',
-    ).toBe(true);
-    for (const inv of pointer) checkAgainstTheTable(inv);
-    // The fallback build names no command at all, which is the whole point of
-    // it, so it contributes no invocation to check.
-    expect(
-      invocationsIn(behaviourLaneRefusal('P::FlightModes', null), 'the fallback refusal'),
-      'the fallback names a subcommand this build may not ship',
-    ).toEqual([]);
-
-    // ── part two: every literal invocation the tool can print ───────────────
+    // ── part one: every literal invocation the tool can print ───────────────
     // `.tsx` AS WELL AS `.ts`, because the widest printed surface is the app:
     // `src/ui/panels/Properties.tsx` renders a `npm run sysprose -- verify …`
     // line into the Evidence panel, and a walk that stopped at `.ts` would have
@@ -4001,7 +4167,7 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     ).toBeGreaterThanOrEqual(10);
     for (const inv of named) checkAgainstTheTable(inv);
 
-    // ── part three: the bare `subcommand --flag` references in prose ────────
+    // ── part two: the bare `subcommand --flag` references in prose ──────────
     // EXISTENCE ONLY, and deliberately. `verify --record` in a sentence names a
     // flag; it is not a line anybody pastes, so demanding a value after it
     // would go red on correct prose. What it does catch is the species that

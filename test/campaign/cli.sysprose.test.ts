@@ -3244,15 +3244,73 @@ package P {
     );
   }, 240_000);
 
-  it('fault-tree refuses a state machine with the pointer, and a --max-order that is not a bound', async () => {
+  it('fault-tree answers a state machine with a measured census, and refuses a --max-order that is not a bound', async () => {
     // THE TWO SAFETY LANES STAY APART, at the surface a person meets them. An
     // empty cut-set list over a machine reads as a behaviour with no failure
-    // mode, so the command refuses by name and points at the other lane.
+    // mode, so the command never prints one; what it prints instead is the
+    // measurement a behavioural fault tree would need — RE-RECORDED, from a
+    // refusal with a pointer to this answer, on the same run. The exit code is
+    // the same 2, under the row that now names it. The answer is a REPORT on
+    // stdout (the census rides in the `--json` payload), where the refusal was
+    // a usage error on stderr.
     const machine = await run(['fault-tree', UAV, '--element', 'FlightModes']);
     expect(machine.code).toBe(2);
-    expect(machine.stderr).toContain('contract-level fault trees do not cover behaviour');
-    expect(machine.stderr).toContain('check-behaviour');
+    expect(machine.stdout).toContain(
+      '`UAVSurveillanceSystem::FlightModes` is a state machine whose failure modes this command found none of: 0 failure-mode flag(s), 0 `#exceptional` state(s) — the behavioural lane has no fault variable to inject here',
+    );
+    expect(machine.stdout).toContain('nothing was enumerated and no absence is claimed');
+    expect(machine.stderr).toBe('');
     expect(machine.stdout, 'a machine was answered with a cut-set list').not.toContain('cut set');
+    // The pointer is gone rather than re-pointed: nothing on the page tells a
+    // reader to run something, so nothing on it can name a flag that does not exist.
+    expect(machine.stdout).not.toContain('npm run sysprose');
+    // The census lands INSIDE the payload (plan §2.5): the top-level keys are
+    // the four every fault-tree run publishes, and the verdict agrees with the
+    // process.
+    const json = await run(['fault-tree', UAV, '--element', 'FlightModes', '--json']);
+    expect(json.code).toBe(2);
+    const { keys, body } = payload<{
+      verdict: { exitCode: number };
+      faultTree: {
+        groups: unknown[];
+        machine: { failureModeFlags: number; exceptionalStates: number; sentence: string } | null;
+        behaviouralLane: Record<string, number>;
+      };
+    }>(json);
+    expect(keys).toEqual(['faultTree', 'file', 'ok', 'verdict']);
+    expect(body.verdict.exitCode).toBe(2);
+    expect(body.faultTree.groups).toEqual([]);
+    expect(body.faultTree.machine).toMatchObject({ failureModeFlags: 0, exceptionalStates: 0 });
+    expect(body.faultTree.behaviouralLane).toEqual({
+      machines: 1,
+      machinesWithExceptionalStates: 0,
+      machinesWithFailureModeFlags: 0,
+      hazardsUnreachableFromTheContractLane: 0,
+    });
+
+    // THE SAME MACHINES THE CENSUS COUNTS. A state inside `FlightModes` is a
+    // region of it, not a machine: refused with the machine named, never
+    // measured over its own descendants (which read a tagged hazard as `0`).
+    const leaf = await run(['fault-tree', UAV, '--element', 'FlightModes::standby']);
+    expect(leaf.code).toBe(2);
+    expect(leaf.stderr).toContain(
+      '`UAVSurveillanceSystem::FlightModes::standby` is a state inside `UAVSurveillanceSystem::FlightModes`',
+    );
+    expect(leaf.stderr).toContain('name the machine');
+    expect(leaf.stdout, 'a leaf state was measured as a machine').toBe('');
+    // And a `state def` that owns no transition is not one of this tool's
+    // machines — `reach` says so over this fixture — so it is not answered as
+    // one beside a census that counts 0.
+    const succ = await run([
+      'fault-tree',
+      `${FIXV}/models/succession-only.sysml`,
+      '--element',
+      'Modes',
+    ]);
+    expect(succ.code).toBe(2);
+    expect(succ.stderr).toContain('`SuccOnly::Ctrl::Modes` owns no transition');
+    expect(succ.stderr).not.toContain('found none of');
+    expect(succ.stdout).toBe('');
 
     // A bound that is not a bound is an answer about the command line, and it
     // arrives before the model is parsed.

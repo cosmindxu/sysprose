@@ -4306,30 +4306,21 @@ undecided: `singlePointOfFailure` is `null` rather than `false` there, so the
 sentence cannot be composed at all, and there is no `--allow-inconclusive` on
 this command to forgive one. It never states an absence without its **bound** —
 "no cut set up to order 2, higher orders not explored" is the whole sentence.
-And it never answers a **state machine** with an empty cut-set list: a
-`StateUsage` is refused by name, with a pointer to `check-behaviour` that is
-emitted only when `findCommand` resolves that row, so a build shipping this
-command without phase 4 prints "this element is a state machine; contract-level
-fault trees do not cover behaviour" instead of advertising a subcommand `--help`
-does not list. **The FLAG beside it is resolved on the same terms, and it was
-not always:** the pointer named `--from-keywords`, which is declared on
-`obligations` and nowhere else, so the sentence sent a reader to
-`unknown option: --from-keywords` and a second exit 2 from the command it had
-just recommended. It names `--pattern` now, spelled with a value the command can
-actually read — `pattern=absence, scope=globally, p=state failsafe`, the one
-`check-behaviour` itself prints when a machine states no property. The
-metavariable `SPEC` would have passed a table lookup and still exited 2, on
-`verification/malformed-property` instead: a property is read as `key=value`
-fields and `SPEC` is none, so an unpasteable pointer would have survived with a
-different code on the end of it. Pasted at `examples/uav-isr.sysml` the sentence
-now exits 1 with a refutation and a witness trace. And the class is closed
-rather than the instance: a case parses every `npm run sysprose -- …` line, and
-every backticked `<subcommand> --flag` reference, spelled literally in a `.ts` or
-`.tsx` source under `src/` or `scripts/` — plus this refusal rendered, which no
-source scan can read, since its subcommand is interpolated — back into a
-subcommand and its flags, and looks each one up in the command table the parser
-and `--help` are both rendered from. What that walk does not read is said with
-it: `.md` prose, and any invocation assembled out of parts at runtime.
+And it never answers a **state machine** with an empty cut-set list. It used
+to refuse one by name, with a pointer to `check-behaviour`; the pointer once
+named `--from-keywords`, a flag declared on `obligations` and nowhere else, so
+the sentence sent a reader to `unknown option: --from-keywords` and a second
+exit 2 from the command it had just recommended. The instance was fixed (the
+pointer named `--pattern` with a value the command could read) and the class was
+closed: a case parses every `npm run sysprose -- …` line, and every backticked
+`<subcommand> --flag` reference, spelled literally in a `.ts` or `.tsx` source
+under `src/` or `scripts/`, back into a subcommand and its flags, and looks each
+one up in the command table the parser and `--help` are both rendered from. What
+that walk does not read is said with it: `.md` prose, and any invocation
+assembled out of parts at runtime — the refusal was one, and it was rendered and
+read separately for as long as it existed. **The refusal itself is gone now**,
+replaced by the measured answer the paragraph below describes, which names no
+invocation at all and so cannot go stale the way the pointer did.
 
 Measured on the shipped power-budget example: `refine` exits 0
 and this exits 1 with FOUR single points of failure, because each load's draw is
@@ -4761,6 +4752,70 @@ reflection suite reads its source: it calls `walkIsExact`, and it reads neither
 `decreasingOk`, nor `publishabilityOf`, nor `found`, nor `enabled[0]`. The
 user guide's `check-behaviour` transcript gains the line, hand-pasted, and is
 now checked against a run rather than remembered.
+
+**A machine is answered with a measurement, and the measurement is the gate:
+`fault-tree --element <machine>`.** The refusal above was the right sentence
+for the wrong reason: it kept an empty cut-set list off the page — "0 cut sets"
+over a behaviour this command never looked at reads as "no combination of
+failures breaks this" — but it did so by refusing to look, and it pointed at a
+flag that did not exist for as long as nothing read the pointer back. It is
+**deleted**, not re-pointed: `behaviourLaneRefusal` is gone from
+`src/semantics/fault-tree.ts` and from both barrels, and the deletion took its
+campaign case, the CLI case that asserted its printed sentence without ever
+importing it, the part of the invocation walk that rendered it, and the
+hand-pasted transcript in the user guide with it (the standing rule: a commit
+that deletes a printed sentence greps for the SENTENCE across `test/` and
+`docs/`, not for the function that composed it). What a machine gets instead is
+the number a behavioural fault tree would need: how many **failure-mode flags**
+it carries (attributes tagged with a `FailureMode` metadata definition — counted
+through keyword resolution, so a spelling that names no definition in scope
+counts 0 for the same reason `contracts --keywords` reports it as naming
+nothing) and how many **`#exceptional` states** (the hazard such a tree would
+aim at). On `examples/uav-isr.sysml`'s `FlightModes` the sentence is *`0
+failure-mode flag(s), 0 `#exceptional` state(s) — the behavioural lane has no
+fault variable to inject here`*, exit 2 under the exit contract's re-worded 2
+row (*a state machine whose failure modes this command found none of*, the
+replacement rather than a deletion, so `--help` and the byte-pinned reference
+name the most common cause of that exit), nothing enumerated, no absence
+claimed, and no `cut set` anywhere on the page. The `1` spelling is pinned from
+a factory-built machine that carries one, the discipline the dwell fixtures
+already use, because nothing shipped carries one; and a second tail — *whose
+failure modes this command found and does not inject* — covers a model that
+declared its own definition, so the sentence never calls a flag it found absent,
+and the 2 row names that tail too (*or found and does not inject*), so `--help`
+and the report cannot publish two reasons for one exit code. **The route and the
+census measure one population**: the command answers exactly the machines
+`reach` walks (`stateMachinesIn` — an element that directly owns a transition,
+resolved through `machineRootOf`), so a state named *inside* a machine is
+refused with the machine named (*name the machine*, as `check-behaviour`
+refuses it) rather than measured over its own descendants — which read the very
+`#exceptional` hazard a reader named as `0` — and a `state def` whose states are
+joined only by successions, which owns no transition and which `reach` walks
+nothing over, is refused as not one of this tool's machines rather than answered
+as one beside a census that counts 0. The refusal sentence is composed once
+(`machineRouteRefusal`) and thrown as a usage error on the command line and as
+`VerifyOptionError` from `faultTreeReport`, because `machineId` is public
+through both barrels.
+Under `--json` the run — every run, not only a machine's — carries
+`faultTree.behaviouralLane`: `{machines, machinesWithExceptionalStates,
+machinesWithFailureModeFlags, hazardsUnreachableFromTheContractLane}`, the last
+being the `#exceptional` states across every machine, unreachable from the
+contract lane by construction since a state is never a fault-injection top
+event. **Measured, and recorded plainly: the census reads 0 across the corpus.**
+Over the six shipped examples and every model under
+`test/fixtures/verification/models/` — twenty-six machines between them — no
+machine carries an `#exceptional` state and none carries a failure-mode flag;
+`grep -rl exceptional --include=*.sysml` over the repository returns nothing. A
+census that finds nothing is the result, not a failure: the behavioural fault
+tree (plan §3.8) stays **held** behind it, and no second model vocabulary is
+committed to before there is a subject for it. The routing predicate
+(`isBehaviouralElement`) is now more load-bearing than it was — it is what
+sends a machine into this answer rather than down the contract path, where it
+would select no decomposition and be refused as naming none — so its two
+assertions outlive the refusal case they sat in, and a `StateDefinition` is
+asserted beside the `StateUsage`. `COMMANDS.length` stays 22 and `RULES.length`
+stays 25; the `--json` top level stays `['faultTree','file','ok','verdict']`
+with the census inside the payload.
 
 ## 5. Phase status
 

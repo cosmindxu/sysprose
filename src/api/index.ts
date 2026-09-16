@@ -185,16 +185,22 @@ export type {
   BoundsSense,
   MeasureRef,
 } from '../semantics/bounds';
-// The fault-tree engine's own payload types and its two composed sentences, for
-// the same reason again: a consumer coming through this barrel walks a cut set,
-// a basic event and the order bound it was found under without a deep import
-// into the semantics layer — and the refusal sentence is composed once, where
-// the rule that the two safety lanes stay apart is written down.
+// The fault-tree engine's own payload types and its composed sentences, for the
+// same reason again: a consumer coming through this barrel walks a cut set, a
+// basic event and the order bound it was found under without a deep import
+// into the semantics layer — and the machine answer is composed once, where
+// the rule that the two safety lanes stay apart is written down, beside the
+// census that says whether the other lane would have a subject at all.
 export {
-  behaviourLaneRefusal,
+  behaviouralLaneCensus,
   isBehaviouralElement,
+  machineAnswer,
+  machineFailureModes,
+  machineRootOf,
+  machineRouteRefusal,
   CONTRACT_LEVEL_NOTE,
   DEFAULT_MAX_ORDER,
+  FAILURE_MODE_DEFINITION,
   FAULT_TREE_CODES,
   ORDERS_NOT_EXPLORED_NOTE,
   SINGLE_POINT_OF_FAILURE_CODE,
@@ -208,6 +214,9 @@ export type {
   FaultTreeResult,
   MaxOrderSource,
   UndecidedCheck,
+  BehaviouralLaneCensus,
+  MachineAnswer,
+  MachineFailureModes,
 } from '../semantics/fault-tree';
 export type {
   ConsistencyGroup,

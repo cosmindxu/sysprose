@@ -92,6 +92,7 @@ import { BEHAVIOUR_CODES, BEHAVIOUR_WARNING_CODES } from '../semantics/mc/explor
 import { PROPERTY_PATTERN_CODES } from '../semantics/mc/patterns';
 import {
   checkRefinement,
+  faultInjectionTargets,
   refinementCensus,
   CONTRACT_SET_VACUOUS_CODE,
   DERIVATION_NOT_REFINEMENT_CODE,
@@ -103,12 +104,17 @@ import {
   type RefinementVia,
 } from '../semantics/refinement';
 import {
+  behaviouralLaneCensus,
   computeFaultTree,
   faultTreeCensus,
+  machineAnswer,
+  machineRouteRefusal,
   FAULT_TREE_CODES,
   SINGLE_POINT_OF_FAILURE_CODE,
+  type BehaviouralLaneCensus,
   type FaultTreeGroup,
   type FaultTreeResult,
+  type MachineAnswer,
 } from '../semantics/fault-tree';
 import { FAULT_HYPOTHESIS_QUALIFIED_NAME } from '../semantics/verification-vocabulary';
 import {
@@ -2820,6 +2826,28 @@ function boundsFindings(result: BoundsResult): Finding[] {
 export interface FaultTreeReportOptions {
   /** Only the tree at this element: a system contract, or the part it is about. */
   elementId?: ElementId;
+  /**
+   * `--element` named a STATE MACHINE, and the caller routed it here.
+   *
+   * The other lane's subject, given a measured answer rather than a tree: no
+   * contract is withdrawn, nothing is enumerated, and the run is exit 2 under
+   * the row that names a machine whose failure modes this command found none
+   * of, or found and does not inject.
+   *
+   * PRECONDITION, ENFORCED: a member of `stateMachinesIn(model)` — the same
+   * population `behaviouralLane.machines` counts. Anything else is refused
+   * with {@link VerifyOptionError} carrying `machineRouteRefusal`'s sentence
+   * (a state inside a machine: name the machine; a `state def` owning no
+   * transition: not one of this tool's machines), never answered — an answer
+   * over a leaf would count the leaf's descendants and call a tagged hazard
+   * `0 \`#exceptional\` state(s)` about itself, and an answer over an element
+   * the census did not count would sit beside `machines: 0` in one payload.
+   * The command line refuses first with the same sentence, so this throw is
+   * the guard for a caller of the API. A machine that arrived as `elementId`
+   * instead would select no decomposition and be refused as naming none —
+   * never answered with an empty list.
+   */
+  machineId?: ElementId;
   /** The order bound. Overrides a `FaultHypothesis` carrier; defaults to 2. */
   maxOrder?: number;
   /** The per-check budget in ms. */
@@ -2830,9 +2858,29 @@ export interface FaultTreeReportOptions {
 
 /** What a fault-tree run came to, with the arithmetic behind its exit code. */
 export interface FaultTreeReport {
-  /** True when no solver loaded: every tree is `verification/tool-absent`. */
+  /**
+   * True when no solver loaded: every tree is `verification/tool-absent`.
+   *
+   * `false` on a machine run, which consults no solver at all: there is no
+   * tree for one to be absent from, and the answer is a count.
+   */
   toolAbsent: boolean;
   groups: FaultTreeGroup[];
+  /**
+   * The measured answer when `--element` named a state machine; `null` on
+   * every contract-level run. When it is set, `groups` is empty BY DESIGN and
+   * the exit code is 2 — an empty cut-set list over a machine is the one
+   * sentence this command never prints, and this field is what a `--json`
+   * reader gets instead of one.
+   */
+  machine: MachineAnswer | null;
+  /**
+   * The behavioural-lane census over the whole file, on every run (plan §2.5:
+   * inside the payload, `--json` only, nothing on the text path). It is the
+   * number the behavioural fault tree is held behind, and it is recorded here
+   * so a reader can tell whether that lane would have a subject.
+   */
+  behaviouralLane: BehaviouralLaneCensus;
   /** Trees with at least one minimal cut set up to the order bound. */
   withCutSets: number;
   /** Trees with a sub-contract whose failure alone breaks the top requirement. */
@@ -2888,6 +2936,47 @@ export async function faultTreeReport(
   opts: FaultTreeReportOptions = {},
 ): Promise<FaultTreeReport> {
   const modelVersion = modelVersionOf(model, opts.sourceText);
+  const behaviouralLane = behaviouralLaneCensus(model);
+
+  if (opts.machineId !== undefined) {
+    // THE MACHINE ROUTE, BEFORE THE SOLVER IS EVEN LOADED: the answer is a
+    // count and needs none, and a run that said "no solver ran" over a machine
+    // would attribute its empty enumeration to the wrong cause. The guard is
+    // first: the answer is composed only over a census root, so `machine` and
+    // `behaviouralLane` in one payload are about the same population.
+    const refusal = machineRouteRefusal(model, opts.machineId);
+    if (refusal !== null) throw new VerifyOptionError(refusal);
+    // The contract census is still taken. Only the decomposition SELECTION is
+    // scoped to the machine — and a machine selects none, which is why
+    // `groups` is empty — while `contracts` and the γ figures are file-wide,
+    // as they are on every run, rather than reading as "not looked at".
+    const census = faultInjectionTargets(model, { elementId: opts.machineId });
+    return {
+      toolAbsent: false,
+      groups: [],
+      machine: machineAnswer(model, opts.machineId),
+      behaviouralLane,
+      withCutSets: 0,
+      singlePointsOfFailure: 0,
+      noCutSet: 0,
+      vacuous: 0,
+      topEventOpen: 0,
+      inconclusive: 0,
+      undecidedChecks: 0,
+      contracts: census.contracts,
+      bindEqualities: census.bindEqualities,
+      itemFlows: census.itemFlows,
+      connectionEqualities: census.connectionEqualities,
+      notEncoded: census.notEncoded.length,
+      refused: census.refused.length,
+      checks: 0,
+      exitCode: 2,
+      timeoutMs: null,
+      modelVersion,
+      diagnostics: [],
+    };
+  }
+
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const load = await loadZ3();
 
@@ -2915,6 +3004,8 @@ export async function faultTreeReport(
     return {
       toolAbsent: true,
       groups: census.groups,
+      machine: null,
+      behaviouralLane,
       withCutSets: 0,
       singlePointsOfFailure: 0,
       noCutSet: 0,
@@ -2953,6 +3044,8 @@ export async function faultTreeReport(
   return {
     toolAbsent: false,
     groups: result.groups,
+    machine: null,
+    behaviouralLane,
     ...faultTreeVerdict(result),
     contracts: result.contracts,
     bindEqualities: result.bindEqualities,

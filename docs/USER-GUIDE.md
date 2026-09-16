@@ -1562,18 +1562,40 @@ check and the report says so instead — and there is no `--allow-inconclusive`
 here to forgive it.
 
 **The two safety lanes stay apart.** A state machine passed as `--element` is
-**refused**, with a pointer to `check-behaviour`:
+**measured, not enumerated**: the command counts what a behavioural fault tree
+would need — failure-mode flags to inject and `#exceptional` states to aim at —
+prints the two numbers, and exits 2 under the row that names *a state machine
+whose failure modes this command found none of*:
 
 ```console
 $ npm run sysprose -- fault-tree examples/uav-isr.sysml --element FlightModes
-sysprose fault-tree: `UAVSurveillanceSystem::FlightModes` is a state machine; contract-level fault trees do not cover behaviour. …
+examples/uav-isr.sysml: `UAVSurveillanceSystem::FlightModes` is a state machine whose failure modes this command found none of: 0 failure-mode flag(s), 0 `#exceptional` state(s) — the behavioural lane has no fault variable to inject here
+  nothing was enumerated and no absence is claimed: this command injects failures into the CONTRACTS a `satisfy` attaches to the parts of a system, and a state machine carries none — its failure modes would be flags its guards read, which no lane in this build injects, so this run is exit 2
+  this is contract-level fault-tree analysis over the refinement obligations, not a behavioural safety analysis: it says which contract failures break the top requirement, and nothing about ordering, time, rates or probabilities
+  model sha256:…
 $ echo $?
 2
 ```
 
 An empty cut-set list over a machine would read as a behaviour with no failure
-mode, which is the loudest false statement this command could make. And every
-report says what it is: **contract-level fault-tree analysis over the refinement
+mode, which is the loudest false statement this command could make — so no list
+is printed, and no absence is claimed. Under `--json` the payload also carries a
+census over the whole file, `faultTree.behaviouralLane`
+(`machines`, `machinesWithExceptionalStates`, `machinesWithFailureModeFlags`,
+`hazardsUnreachableFromTheContractLane`): the measurement a behavioural fault
+tree is held behind, and it reads **0** on every shipped example and every
+verification fixture. A failure-mode flag is an attribute tagged with a
+`FailureMode` metadata definition; the shipped vocabulary does not declare one
+yet, so only a model that declares its own is counted — and a machine that
+carries one is answered with the other tail of the same row, *whose failure
+modes this command found and does not inject*: still exit 2, still no list. The
+command measures exactly the machines `reach` walks: name a state *inside* a
+machine (`--element FlightModes::standby`) and it is refused with the machine
+named — *name the machine* — rather than measured over the state's own
+descendants; name a `state def` whose states are joined only by successions
+and it is refused as owning no transition, the same answer `reach` gives over
+it, rather than counted as a machine the census did not. And every report says
+what it is: **contract-level fault-tree analysis over the refinement
 obligations** — nothing about ordering, time, rates or probabilities, and not a
 behavioural safety analysis.
 

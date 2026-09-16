@@ -241,6 +241,16 @@ describe('the generated command reference', () => {
     expect(FAULT_TREE_EXIT_CODES).toContain('never as "no cut set"');
     expect(FAULT_TREE_EXIT_CODES).toContain('absent solver');
     expect(FAULT_TREE_EXIT_CODES).toContain('higher orders are not explored');
+    // THE 2 ROW NAMES A MACHINE BY WHAT THE RUN NOW SAYS ABOUT IT. A state
+    // machine passed as `--element` is no longer refused — it gets a measured
+    // answer, whose sentence carries this same clause (asserted on the run in
+    // `test/campaign/verification.test.ts`) — so the contract must not go on
+    // publishing a refusal the command stopped performing.
+    expect(FAULT_TREE_EXIT_CODES).toContain('a state machine whose failure modes this command found none of');
+    // The second tail of that answer — a machine carrying a flag this build
+    // does not inject — is exit 2 under the same row, and the row says so.
+    expect(FAULT_TREE_EXIT_CODES).toContain('(or found and does not inject)');
+    expect(FAULT_TREE_EXIT_CODES).not.toContain('contract-level fault trees do not cover behaviour');
     expect(FAULT_TREE_EXIT_CODES).not.toBe(REFINE_EXIT_CODES);
     const injecting = COMMANDS.filter((c) => c.exitContract === 'fault-tree').map((c) => c.name);
     expect(injecting, 'the fault-tree contract is declared by exactly `fault-tree`').toEqual([

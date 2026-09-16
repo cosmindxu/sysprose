@@ -720,6 +720,35 @@ describe('the keyword vocabulary section', () => {
  * literal, which is the stronger check of the two and the reason a literal
  * cross-check of that line would be a check on a copy.
  */
+/**
+ * §"The two safety lanes stay apart" — the `fault-tree` transcript over a
+ * state machine, and the same rule again: it was a hand-pasted REFUSAL once,
+ * and when the command stopped refusing nothing reddened, because a transcript
+ * is prose to every other check in this file. So the lines are held against
+ * the L7 case that runs `fault-tree --element FlightModes` and asserts those
+ * exact strings — a renderer change reddens the campaign case, and this one
+ * then reddens until the guide is brought with it.
+ */
+describe('the fault-tree machine transcript', () => {
+  const CAMPAIGN = read('test/campaign/cli.sysprose.test.ts');
+
+  it('is the output the command really produces', () => {
+    const lines = [
+      '`UAVSurveillanceSystem::FlightModes` is a state machine whose failure modes this command found none of: 0 failure-mode flag(s), 0 `#exceptional` state(s) — the behavioural lane has no fault variable to inject here',
+      'nothing was enumerated and no absence is claimed',
+    ];
+    for (const line of lines) {
+      expect(GUIDE, `the guide no longer shows: ${line}`).toContain(line);
+      expect(
+        CAMPAIGN,
+        `nothing asserts the command prints: ${line} — the transcript is unbacked`,
+      ).toContain(line);
+    }
+    // And the refusal it replaced is gone from the guide, not kept beside it.
+    expect(GUIDE).not.toContain('contract-level fault trees do not cover behaviour');
+  });
+});
+
 describe('the `--why` transcript', () => {
   const CAMPAIGN = read('test/campaign/cli.sysprose.test.ts');
 

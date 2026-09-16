@@ -31,11 +31,13 @@
  *    orders not explored" is the whole sentence, always: `⋀ C(n,k)` checks up
  *    to *k* say nothing about *k+1*, and §6's own register lists "no cut set up
  *    to order 2" among the bounded answers that are not proofs.
- *  - **This is contract-level FTA and it says so.** A `StateUsage` passed as
- *    `--element` is REFUSED ({@link behaviourLaneRefusal}), never answered with
- *    an empty cut-set list: an empty list over a machine reads as a behaviour
- *    with no failure mode, and the behavioural lane is `check-behaviour`. No
- *    verdict here may be read as a behavioural safety analysis.
+ *  - **This is contract-level FTA and it says so.** A state machine passed as
+ *    `--element` is never answered with an empty cut-set list: an empty list
+ *    over a machine reads as a behaviour with no failure mode. It gets a
+ *    MEASURED answer instead ({@link machineAnswer}) — how many failure-mode
+ *    flags and `#exceptional` states it carries, which is what a behavioural
+ *    fault tree would inject and aim at — and exit 2, because nothing was
+ *    enumerated. No verdict here may be read as a behavioural safety analysis.
  *
  * WHAT IS NOT HERE. No probabilities, no rates, no importance measures: the
  * model states none and a fault tree without them is a structural statement
@@ -54,6 +56,7 @@
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
 import { type ContractRef, type ContractSubject, type Fragment } from './contracts';
 import { hasKeyword } from './keywords';
+import { machineStates, stateMachinesIn } from './mc/explore';
 import {
   faultInjectionTargets,
   CONTRACT_SET_VACUOUS_CODE,
@@ -316,67 +319,215 @@ export function isBehaviouralElement(el: ElementRecord): boolean {
 }
 
 /**
- * The refusal a `StateUsage` gets, with a pointer that is CONDITIONAL on the
- * command existing.
+ * The metadata definition a failure-mode flag is tagged with.
  *
- * THE POINTER IS RESOLVED, NOT ASSUMED. `check-behaviour` is a row in the
- * command table, and a build that ships this command without that one — the
- * plan's phases are separable and Checkpoint C sits right here — would
- * otherwise print a sentence telling a reader to run something `--help` does
- * not list. So the caller passes what `findCommand('check-behaviour')`
- * resolved to, and when it resolved to nothing the message says what is true of
- * every build: this is a state machine, and contract-level fault trees do not
- * cover behaviour. **The refusal and the exit code are unchanged either way** —
- * only the sentence moves.
- *
- * THE FLAG IS RESOLVED TOO, and it was not always. The sentence used to name
- * `--from-keywords`, which is declared on `obligations` and on nothing else, so
- * a reader who pasted the pointer got `unknown option: --from-keywords` and
- * exit 2 from the command this message had just sent them to — a refusal that
- * refuses twice. It names `--pattern` instead: the flag that says which property
- * to decide.
- *
- * AND IT SPELLS A VALUE, not the metavariable. `SPEC` parses as a flag the
- * command accepts, so a table lookup is happy with it — and the run still exits
- * 2, because `parsePropertyText` reads a property as `key=value` fields and
- * `SPEC` is none, so the pasted line answers `verification/malformed-property`
- * and decides nothing. That is the same defect one step further on: an
- * unpasteable pointer with a different error code on the end of it. The value
- * here is the one `check-behaviour` itself prints when a machine states no
- * property, so the two sentences a reader meets spell the flag the same way.
- * Measured: pasting this line at `examples/uav-isr.sysml` exits 1 with a
- * refutation and a witness trace, where `--pattern SPEC` exited 2 having read
- * nothing.
- *
- * `test/campaign/verification.test.ts` reads every `npm run sysprose --`
- * invocation, and every backticked `<subcommand> --flag` reference, spelled
- * literally in a `.ts` or `.tsx` source under `src/` or `scripts/` — plus this
- * refusal rendered, which no source scan can see, since its subcommand is a
- * `${…}` — back against the command table. That is what closes the class rather
- * than this one instance of it. It is not a claim about text this repository
- * does not spell: a subcommand assembled at runtime out of parts is outside
- * that walk, and so is anything printed from a `.md`.
- *
- * What may never happen in either build is an empty cut-set list over a
- * machine. "0 cut sets" reads as "no combination of failures breaks this",
- * which about a behaviour this command never looked at is the loudest false
- * statement it could make.
+ * The definition itself SHIPS IN THE VOCABULARY COMMIT, not here (plan §3.8:
+ * `metadata def <failureMode> FailureMode;`, applied as a keyword on a Boolean
+ * attribute of the machine — the store Boolean the guards read, marked as a
+ * fault variable the analysis may set rather than a design parameter). Until
+ * then only a model that declares its own definition by this name is counted,
+ * and that is the point of counting through {@link hasKeyword} rather than by
+ * spelling: `keywords.ts`'s rule is that a keyword naming no definition in
+ * scope tags nothing, so a bare `#failureMode` written ahead of the vocabulary
+ * reads 0 here for the same reason `contracts --keywords` reports it as naming
+ * nothing. The census reads 0 on the shipped corpus for the RIGHT reason.
  */
-export function behaviourLaneRefusal(
-  qualifiedName: string,
-  behaviourCommand: string | null,
-): string {
-  const head =
-    `\`${qualifiedName}\` is a state machine; contract-level fault trees do not cover behaviour. ` +
-    'This command injects failures into the CONTRACTS a `satisfy` attaches to the parts of a ' +
-    'system, and a state usage carries none — so there is nothing here to withdraw and an empty ' +
-    'cut-set list would read as a machine with no failure mode.';
-  return behaviourCommand === null
-    ? head
-    : `${head} The behavioural lane is \`npm run sysprose -- ${behaviourCommand} <file> --element ` +
-      `${qualifiedName} --pattern "pattern=absence, scope=globally, p=state failsafe"\`, which ` +
-      'walks the configuration graph and decides the safety patterns the machine carries, beside ' +
-      'the one spelled there.';
+export const FAILURE_MODE_DEFINITION = 'FailureMode';
+
+/** What one machine carries of the two things a behavioural fault tree would need. */
+export interface MachineFailureModes {
+  /** Attributes under the machine tagged with {@link FAILURE_MODE_DEFINITION}. */
+  failureModeFlags: number;
+  /** States under the machine tagged `#exceptional` — the hazard a tree would aim at. */
+  exceptionalStates: number;
+}
+
+/**
+ * The answer a state machine passed as `--element` gets.
+ *
+ * MEASURED, NOT REFUSED, AND STILL NOT A TREE. This command injects failures
+ * into the CONTRACTS a `satisfy` attaches to the parts of a system, and a
+ * machine carries none — so there is nothing here to withdraw, and an empty
+ * cut-set list would read as a machine with no failure mode. What a
+ * behavioural lane would inject instead is a fault variable — a Boolean flag
+ * the guards read — and what it would aim at is an `#exceptional` state; this
+ * answer counts both, and the count is the gate the behavioural lane is held
+ * behind (plan §3.8's release condition). A machine that carries neither is
+ * the ordinary case in this repository, and the sentence says so with the
+ * measured numbers rather than with a refusal.
+ *
+ * NO POINTER. The refusal this replaces once sent a reader to a flag that did
+ * not exist, and the guard that finally caught it read the rendered refusal
+ * back against the command table. A sentence that names no invocation cannot
+ * go stale that way, and `check-behaviour` is documented where commands are.
+ *
+ * What may never happen is an empty cut-set list over a machine. "0 cut sets"
+ * reads as "no combination of failures breaks this", which about a behaviour
+ * this command never looked at is the loudest false statement it could make —
+ * so the run that carries this answer enumerates nothing, claims no absence,
+ * and is exit 2 under the row that names it.
+ */
+export interface MachineAnswer {
+  /**
+   * The machine the reader named — always one of {@link stateMachinesIn}'s
+   * roots, because {@link machineRouteRefusal} turns anything else away before
+   * an answer is composed, so this is the same element the census counted.
+   */
+  element: { id: ElementId; qualifiedName: string };
+  failureModeFlags: number;
+  exceptionalStates: number;
+  /** The one sentence the run prints, with both numbers in it. */
+  sentence: string;
+}
+
+/**
+ * The file-wide census a behavioural fault tree is held behind (plan §2.5,
+ * §3.8), taken on every run and published under `--json` only.
+ *
+ * The three named fields are the ones the plan reads the lane's release
+ * against; `machines` is the denominator, because *0 machines with an
+ * `#exceptional` state* means something different over 0 machines and over a
+ * dozen. `hazardsUnreachableFromTheContractLane` is defined here rather than
+ * computed as a difference: it is the number of `#exceptional` STATES across
+ * every machine, and every one of them is unreachable from the contract lane
+ * BY CONSTRUCTION — a fault-injection top event is a requirement satisfied by
+ * a part, and a state is never one — so the name says what the number is a
+ * count of rather than implying a subtraction this tool performed.
+ */
+export interface BehaviouralLaneCensus {
+  /**
+   * State machines the file states, the bundled library excluded — under
+   * `reach`'s definition ({@link stateMachinesIn}): an element that DIRECTLY
+   * owns a `TransitionUsage`, or a parallel container holding one, and is not
+   * inside another such element. A `state def` whose states are joined only
+   * by successions owns no transition and is NOT counted, exactly as `reach`
+   * walks nothing over it; and a state INSIDE a machine is a region of it, not
+   * a second machine. The route that answers a machine holds to the same
+   * bound ({@link machineRootOf}), so one payload never calls an element a
+   * machine that this figure did not count.
+   */
+  machines: number;
+  machinesWithExceptionalStates: number;
+  machinesWithFailureModeFlags: number;
+  hazardsUnreachableFromTheContractLane: number;
+}
+
+/**
+ * The census machine an element belongs to: the {@link stateMachinesIn} root
+ * that is the element itself or one of its ancestors, or `null` when there is
+ * none.
+ *
+ * ONE POPULATION FOR THE ROUTE AND THE CENSUS. `isBehaviouralElement` says
+ * what a reader may point `--element` at (any state), and `stateMachinesIn`
+ * says what the census counts (roots that own a transition); this is the seam
+ * between them. Measured without it, a `--json` payload could carry a machine
+ * answer beside `machines: 0` over `succession-only.sysml`, and a state named
+ * INSIDE a machine was counted by its own descendants — so the `#exceptional`
+ * hazard a reader named was answered with `0 \`#exceptional\` state(s)` about
+ * itself. Both were false statements on the printed page.
+ */
+export function machineRootOf(model: Model, id: ElementId): ElementRecord | null {
+  const roots = new Map(stateMachinesIn(model).map((m) => [m.id, m] as const));
+  let cursor: ElementId | null | undefined = id;
+  while (cursor != null) {
+    const root = roots.get(cursor);
+    if (root !== undefined) return root;
+    cursor = model.get(cursor)?.ownerId;
+  }
+  return null;
+}
+
+/**
+ * Why an element may NOT be answered as a machine, or `null` when it is one.
+ *
+ * REFUSED, NOT RE-TARGETED. A state inside a machine could be silently
+ * resolved to the machine and answered about that — but the reader named the
+ * state, and an answer about an element they did not name is its own honesty
+ * problem; `check-behaviour` refuses the same input the same way. A state
+ * definition that owns no transition is not one of this tool's machines at
+ * all, and `reach` already says so in these words rather than walking it.
+ * The sentence is composed once here so the command line (`UsageError`) and
+ * the API (`VerifyOptionError`) cannot come to disagree about the reason.
+ */
+export function machineRouteRefusal(model: Model, id: ElementId): string | null {
+  const named = model.qualifiedName(id) || id;
+  const root = machineRootOf(model, id);
+  if (root === null) {
+    return (
+      `\`${named}\` owns no transition, so it is not one of this tool's state machines: \`reach\` reads a ` +
+      'machine as an element that owns a transition, this command measures the same machines ' +
+      '`reach` walks, and a `state def` whose states are joined only by successions is walked by ' +
+      'neither — there is nothing here to count and no contract to withdraw'
+    );
+  }
+  if (root.id !== id) {
+    return (
+      `\`${named}\` is a state inside \`${model.qualifiedName(root.id) || root.id}\`, which is the machine ` +
+      'this command measures — name the machine: an answer about one state would count only what ' +
+      "is under it, and that is not the machine's failure modes"
+    );
+  }
+  return null;
+}
+
+/**
+ * Count what one machine carries; the two numbers every sentence above prints.
+ *
+ * Counts what is UNDER `machineId`: call it with a {@link stateMachinesIn}
+ * root ({@link machineRootOf}), which is what {@link faultTreeReport} enforces
+ * — over a leaf state it would count that state's descendants and read a
+ * tagged leaf as carrying nothing.
+ */
+export function machineFailureModes(model: Model, machineId: ElementId): MachineFailureModes {
+  const failureModeFlags = model
+    .descendants(machineId)
+    .filter((e) => e.eClass === 'AttributeUsage' && hasKeyword(model, e.id, FAILURE_MODE_DEFINITION))
+    .length;
+  const exceptionalStates = machineStates(model, machineId).filter((s) =>
+    hasKeyword(model, s.id, EXCEPTIONAL_DEFINITION),
+  ).length;
+  return { failureModeFlags, exceptionalStates };
+}
+
+/** The measured answer for one machine — see {@link MachineAnswer}. */
+export function machineAnswer(model: Model, machineId: ElementId): MachineAnswer {
+  const qualifiedName = model.qualifiedName(machineId) || machineId;
+  const { failureModeFlags, exceptionalStates } = machineFailureModes(model, machineId);
+  const counts =
+    `${failureModeFlags} failure-mode flag(s), ${exceptionalStates} \`#exceptional\` state(s)`;
+  // TWO TAILS, BECAUSE ONE WOULD BE FALSE. "No fault variable to inject" is
+  // the truth about every machine in this repository, and a lie about a model
+  // that declared its own `FailureMode` definition and applied it — the
+  // sentence must not tell that reader nothing was found when something was.
+  // Both tails are clauses of the exit contract's 2 row (`FAULT_TREE_EXIT_CODES`:
+  // "found none of", "found and does not inject"), so `--help` and the report
+  // publish one reason for one exit code whichever tail is printed.
+  const sentence =
+    failureModeFlags === 0
+      ? `\`${qualifiedName}\` is a state machine whose failure modes this command found none of: ` +
+        `${counts} — the behavioural lane has no fault variable to inject here`
+      : `\`${qualifiedName}\` is a state machine whose failure modes this command found and does not ` +
+        `inject: ${counts} — no behavioural lane is built here, so nothing was injected and no ` +
+        'absence is claimed';
+  return { element: { id: machineId, qualifiedName }, failureModeFlags, exceptionalStates, sentence };
+}
+
+/** The census over every machine the file states — see {@link BehaviouralLaneCensus}. */
+export function behaviouralLaneCensus(model: Model): BehaviouralLaneCensus {
+  const census: BehaviouralLaneCensus = {
+    machines: 0,
+    machinesWithExceptionalStates: 0,
+    machinesWithFailureModeFlags: 0,
+    hazardsUnreachableFromTheContractLane: 0,
+  };
+  for (const machine of stateMachinesIn(model)) {
+    const { failureModeFlags, exceptionalStates } = machineFailureModes(model, machine.id);
+    census.machines += 1;
+    if (exceptionalStates > 0) census.machinesWithExceptionalStates += 1;
+    if (failureModeFlags > 0) census.machinesWithFailureModeFlags += 1;
+    census.hazardsUnreachableFromTheContractLane += exceptionalStates;
+  }
+  return census;
 }
 
 /* ──────────────────────── the fault hypothesis carrier ───────────────────── */
