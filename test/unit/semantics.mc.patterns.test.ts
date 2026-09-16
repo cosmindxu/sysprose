@@ -29,20 +29,35 @@
  * profile is printed under every verdict this command reaches.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { runStateMachine } from '@semantics/index';
 import { loadModelText } from '@text/load';
 import { serializeModel } from '@text/serializer';
 import { MALFORMED_PROPERTY_CODE, UNKNOWN_ATOM_CODE } from '../../src/semantics/mc/atoms';
+import { diagnosticCode } from '@text/index';
 import {
+  COVER_REQUIRED_CODE,
+  NOT_COVERED_CODE,
   PATTERNS,
   SCOPES,
+  SEMANTICS_ADMITS,
+  WALK_ADMITS,
   behaviourReport,
   checkProperty,
+  coverRequiredRefusal,
   parsePropertyText,
   propertiesOf,
+  type BehaviourOptions,
+  type BehaviourReport,
   type PropertyText,
 } from '../../src/semantics/mc/patterns';
+import {
+  DWELL_SENTENCE,
+  ENVIRONMENT_SENTENCE,
+  SIMULATOR_SENTENCE,
+} from '../../src/semantics/mc/publishable';
 import {
   BEHAVIOUR_UNSUPPORTED_CODE,
   BOUND_EXHAUSTED_CODE,
@@ -1204,5 +1219,560 @@ describe('a pass needs every guard decided, not only every bound unspent', () =>
     // `verification/unsupported-construct`.
     expect(rep.exitCode).toBe(2);
     expect(rep.diagnostics.map((d) => d.code)).toContain(GUARD_UNDETERMINED_CODE);
+  });
+});
+
+/* ═══════════ `cover` — the guarantee class, and the polarity it fixes ═══════════ */
+
+/** One corpus model, loaded with the standard library so the fixture reads as a file would. */
+async function loadFixture(name: string): Promise<{ model: Model; machineOf: (qname: string) => ElementId }> {
+  const file = `test/fixtures/verification/models/${name}`;
+  const text = readFileSync(resolve(process.cwd(), file), 'utf8');
+  const r = await loadModelText(text, { fileName: file, library: 'none' });
+  expect(r.report.diagnostics, `${file} does not load cleanly`).toEqual([]);
+  const model = r.model!;
+  return {
+    model,
+    machineOf: (qname) => {
+      const m = stateMachinesIn(model).find((el) => model.qualifiedName(el.id) === qname);
+      expect(m, `${file} declares no machine ${qname}`).toBeDefined();
+      return m!.id;
+    },
+  };
+}
+
+describe('`cover` — a positive reachability intent gets a claim word of its own', () => {
+  const cover = prop({ pattern: 'cover', scope: 'globally', p: 'state failsafe' });
+  const absence = prop({ pattern: 'absence', scope: 'globally', p: 'state failsafe' });
+
+  it('THE POLARITY REGRESSION: the design that reaches failsafe is `covered`, the one that cannot is `not-covered` — and `absence` says the opposite of both', async () => {
+    // Before this commit the only spelling of "can this design reach
+    // failsafe?" was `absence of state failsafe`, which is red on the design
+    // that satisfies the intent and green on the one that violates it. Both
+    // polarities in one case, so a rename that kept the inversion is red here.
+    const reachable = await loadFixture('cover-reachable.sysml');
+    const sealed = await loadFixture('cover-sealed.sysml');
+    const rId = reachable.machineOf('CoverProbe::Reachable::Modes');
+    const sId = sealed.machineOf('CoverProbe::Sealed::Modes');
+
+    const covered = checkProperty(reachable.model, rId, cover);
+    expect(covered.claim).toBe('covered');
+    expect(covered.code).toBeNull();
+    expect(covered.patternClass).toBe('guarantee');
+    expect(covered.witness.map((w) => w.leaf!.name)).toEqual(['idle', 'armed', 'failsafe']);
+    expect(covered.detail).toContain('covered — witness trace of 2 step(s)');
+
+    const notCovered = checkProperty(sealed.model, sId, cover);
+    expect(notCovered.claim).toBe('not-covered');
+    expect(notCovered.code).toBe('verification/not-covered');
+    expect(notCovered.witness).toEqual([]);
+    expect(notCovered.detail).toContain('not covered under {maxConfigs 10000');
+
+    // The inverse, asserted in the same case: `absence` refutes the reachable
+    // design and passes the sealed one.
+    expect(checkProperty(reachable.model, rId, absence).claim).toBe('fail');
+    expect(checkProperty(sealed.model, sId, absence).claim).toBe('pass');
+  });
+
+  it('never routes `not-covered` through the `fail` branch, and never exits 1 without the flag', async () => {
+    const sealed = await loadFixture('cover-sealed.sysml');
+    const machineId = sealed.machineOf('CoverProbe::Sealed::Modes');
+    const plain = behaviourReport(sealed.model, {
+      machineId,
+      pattern: 'pattern=cover, scope=globally, p=state failsafe',
+    });
+    expect(plain.counts).toMatchObject({ failed: 0, notCovered: 1, covered: 0, inconclusive: 0 });
+    expect(plain.exitCode).toBe(2);
+    expect(plain.properties[0].claim).toBe('not-covered');
+    expect(plain.properties[0].code).not.toBe('verification/refuted');
+    expect(plain.diagnostics.map((d) => `${d.severity} ${d.code}`)).toEqual([`info ${NOT_COVERED_CODE}`]);
+    // And `covered` is never laundered into `pass`.
+    const reachable = await loadFixture('cover-reachable.sysml');
+    const green = behaviourReport(reachable.model, {
+      machineId: reachable.machineOf('CoverProbe::Reachable::Modes'),
+      pattern: 'pattern=cover, scope=globally, p=state failsafe',
+    });
+    expect(green.counts).toMatchObject({ passed: 0, covered: 1, failed: 0 });
+    expect(green.exitCode).toBe(0);
+    expect(green.diagnostics).toEqual([]);
+  });
+
+  it('`--cover-required` raises the exit code and never the claim: byte-identical words, 1 vs 2, two findings', async () => {
+    const sealed = await loadFixture('cover-sealed.sysml');
+    const machineId = sealed.machineOf('CoverProbe::Sealed::Modes');
+    const pattern = 'pattern=cover, scope=globally, p=state failsafe';
+    const plain = behaviourReport(sealed.model, { machineId, pattern });
+    const required = behaviourReport(sealed.model, { machineId, pattern, coverRequired: true });
+    expect(plain.exitCode).toBe(2);
+    expect(required.exitCode).toBe(1);
+    expect(required.coverRequired).toBe(true);
+    // Same claim word, same code, same detail, same sentence — the flag moved
+    // the exit code and added one error, and nothing else.
+    expect(required.properties[0].claim).toBe(plain.properties[0].claim);
+    expect(required.properties[0].claim).toBe('not-covered');
+    expect(required.properties[0].code).toBe(plain.properties[0].code);
+    expect(required.properties[0].detail).toBe(plain.properties[0].detail);
+    expect(required.counts).toEqual(plain.counts);
+    // TWO findings on the flagged run, not a substitution: the info row the
+    // plain run prints survives, and the error is ADDED beside it. Promoting
+    // the row to `fail` would have printed `verification/refuted` about a
+    // design that violates nothing.
+    expect(plain.diagnostics.map((d) => `${d.severity} ${d.code}`)).toEqual([`info ${NOT_COVERED_CODE}`]);
+    expect(required.diagnostics.map((d) => `${d.severity} ${d.code}`)).toEqual([
+      `error ${COVER_REQUIRED_CODE}`,
+      `info ${NOT_COVERED_CODE}`,
+    ]);
+    expect(required.diagnostics.map((d) => d.code)).not.toContain('verification/refuted');
+    // And the flag turns nothing ELSE red: a `covered` row is still exit 0.
+    const reachable = await loadFixture('cover-reachable.sysml');
+    const green = behaviourReport(reachable.model, {
+      machineId: reachable.machineOf('CoverProbe::Reachable::Modes'),
+      pattern,
+      coverRequired: true,
+    });
+    expect(green.exitCode).toBe(0);
+    expect(green.diagnostics).toEqual([]);
+  });
+
+  it('the bound frontier, from both sides: a witness at depth d needs maxConfigs ≥ d, and the sealed machine is never `not-covered` below exhaustion', async () => {
+    const reachable = await loadFixture('cover-reachable.sysml');
+    const rId = reachable.machineOf('CoverProbe::Reachable::Modes');
+    // The witness is 2 steps deep. The violation check runs on a freshly
+    // stepped successor, but that successor is only enqueued past the config
+    // bound, and `seen` starts holding the root — so `--max-configs 1` never
+    // reaches the second step and `2` does. Asserted from both sides rather
+    // than assumed: the draft's "`--max-configs 1` keeps `covered`" was false.
+    const atD = checkProperty(reachable.model, rId, cover, { maxConfigs: 2 });
+    expect(atD.claim).toBe('covered');
+    expect(atD.witness).toHaveLength(3);
+    // `covered` STANDS ON A PARTIAL WALK, for the reason `fail` does: a bound
+    // can hide a witness and can never invent one. The row reads no member of
+    // the bound family, and says so in its qualification.
+    expect(atD.exhaustive).toBe(false);
+    expect(atD.qualification).toContain('partial under {maxConfigs 2');
+    const below = checkProperty(reachable.model, rId, cover, { maxConfigs: 1 });
+    expect(below.claim).toBe('inconclusive');
+    expect(below.code).toBe(BOUND_EXHAUSTED_CODE);
+    expect(below.witness).toEqual([]);
+
+    // The sealed machine below exhaustion is INCONCLUSIVE, not `not-covered`:
+    // A5 is a decreasing absence and is withheld exactly where `pass` is.
+    const sealed = await loadFixture('cover-sealed.sysml');
+    const sId = sealed.machineOf('CoverProbe::Sealed::Modes');
+    const partial = checkProperty(sealed.model, sId, cover, { maxConfigs: 1 });
+    expect(partial.claim).toBe('inconclusive');
+    expect(partial.code).toBe(BOUND_EXHAUSTED_CODE);
+    expect(partial.detail).toContain('the not-covered claim is not made');
+    expect(partial.detail).not.toContain('not covered under');
+    expect(checkProperty(sealed.model, sId, cover).claim).toBe('not-covered');
+  });
+
+  it('publishes two LABELLED counts, equal only where they should be', async () => {
+    // `configs` is the product states seen UP TO the witness — the search
+    // returns at the first breach — and `machineConfigs` is the walk's own
+    // count. On the reachable probe the witness is found before the product
+    // space is spanned, so the two differ; on the sealed one the search ran to
+    // exhaustion and they agree. Neither sentence quotes `configs` as a total.
+    const reachable = await loadFixture('cover-reachable.sysml');
+    const r = checkProperty(reachable.model, reachable.machineOf('CoverProbe::Reachable::Modes'), cover);
+    expect(r.machineConfigs).toBe(3);
+    expect(r.configs).toBe(2);
+    expect(r.configs).not.toBe(r.machineConfigs);
+    const sealed = await loadFixture('cover-sealed.sysml');
+    const s = checkProperty(sealed.model, sealed.machineOf('CoverProbe::Sealed::Modes'), cover);
+    expect(s.machineConfigs).toBe(2);
+    expect(s.configs).toBe(2);
+    expect(s.detail).toContain(`over ${s.machineConfigs} configuration(s)`);
+    // The row that reached no walk carries the field too, at zero.
+    const refused = checkProperty(sealed.model, sealed.machineOf('CoverProbe::Sealed::Modes'), prop({ pattern: 'nope', scope: 'globally', p: 'state failsafe' }));
+    expect(refused.machineConfigs).toBe(0);
+  });
+
+  /** `{after(5)} idle → A` declared BEFORE `{after(10)} idle → B`: the interpreter never enters `B`. */
+  function twoDwell(): { model: Model; machineId: ElementId } {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Dwells');
+    const idle = f.state('idle', sm.id);
+    const a = f.state('A', sm.id);
+    const b = f.state('B', sm.id);
+    f.transition(idle.id, a.id, { ownerId: sm.id, trigger: 'after(5)' });
+    f.transition(idle.id, b.id, { ownerId: sm.id, trigger: 'after(10)' });
+    return { model: m, machineId: sm.id };
+  }
+
+  it('the two-dwell machine: the claim survives, the warrant is re-worded, and the bare wording is the wrong answer', () => {
+    // No `.sysml` spelling exists — `accept after(n)` is a parse error — so
+    // this machine is factory-built and driven in-process. The walk offers
+    // `after(10)` as a named event with no dwell test and finds a one-step
+    // witness into `B`, a state the interpreter enters on NO run: it fires
+    // `enabled[0]` at every advance. `reach` reporting `B` reachable only
+    // shrinks an absence list; `cover` republishing the same trace as "a run
+    // this semantics admits" would flip the direction, and that sentence is
+    // banned verbatim. The claim is kept — a bound can hide a witness and can
+    // never invent one — and the warrant names the mechanism.
+    const { model, machineId } = twoDwell();
+    const walk = exploreMachine(model, machineId);
+    expect(walk.timedTransitions.size).toBeGreaterThan(0);
+    const row = checkProperty(model, machineId, prop({ pattern: 'cover', scope: 'globally', p: 'state B' }));
+    expect(row.claim).toBe('covered');
+    expect(row.code).toBeNull();
+    expect(row.witness.map((w) => w.leaf!.name)).toEqual(['idle', 'B']);
+    expect(row.detail).toContain(WALK_ADMITS);
+    expect(row.detail).toContain('step 1 fires `after(10)`');
+    expect(row.detail).toContain('so the interpreter may never take this trace');
+    expect(row.detail).toContain(DWELL_SENTENCE);
+    expect(row.detail, 'the bare wording on a dwell-crossing witness').not.toContain(SEMANTICS_ADMITS);
+    // The step consumed `after(10)`, a dwell label the walk offers as a named
+    // event — NOT a trigger an environment sent (plan §2.3: a run of no
+    // environment). This machine names no environment trigger at all, so the
+    // environment sentence would be a sentence about nothing.
+    expect(row.detail, 'the environment sentence on a machine naming no environment trigger').not.toContain(ENVIRONMENT_SENTENCE);
+    // Never `inconclusive`: that is the A6–A8 / W3 / W4 shape, not W1's.
+    expect(row.claim).not.toBe('inconclusive');
+  });
+
+  it('the row-1 disjunction: a timed machine whose witness fired no dwell keeps the bare wording, with the environment sentence beside it', () => {
+    // `timedLabels` is non-empty here — `after(5)` leaves `target` — but the
+    // witness into `target` fired `abort`, not a dwell. The draft's two rows
+    // left this shape matched by neither; the disjunction puts it on row 1.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Mixed');
+    const idle = f.state('idle', sm.id);
+    const target = f.state('target', sm.id);
+    const sink = f.state('sink', sm.id);
+    f.transition(idle.id, target.id, { ownerId: sm.id, trigger: 'abort' });
+    f.transition(target.id, sink.id, { ownerId: sm.id, trigger: 'after(5)' });
+    const walk = exploreMachine(m, sm.id);
+    expect(walk.timedLabels.has('after(5)')).toBe(true);
+    const row = checkProperty(m, sm.id, prop({ pattern: 'cover', scope: 'globally', p: 'state target' }));
+    expect(row.claim).toBe('covered');
+    expect(row.witness.map((w) => w.event)).toEqual(['-', 'abort']);
+    expect(row.detail).toContain(SEMANTICS_ADMITS);
+    expect(row.detail, 'the walk-admits wording on a witness that crossed no dwell').not.toContain(WALK_ADMITS);
+    // The witness consumed a trigger, so "reachable" is never said bare: the
+    // environment sentence prints beside it.
+    expect(row.detail).toContain(ENVIRONMENT_SENTENCE);
+    expect(row.detail).not.toContain(DWELL_SENTENCE);
+    // And the sink, entered only across the dwell, is row 2.
+    const viaDwell = checkProperty(m, sm.id, prop({ pattern: 'cover', scope: 'globally', p: 'state sink' }));
+    expect(viaDwell.claim).toBe('covered');
+    expect(viaDwell.detail).toContain(WALK_ADMITS);
+    expect(viaDwell.detail).toContain(ENVIRONMENT_SENTENCE);
+    expect(viaDwell.detail).toContain(DWELL_SENTENCE);
+  });
+
+  it('prints the simulator sentence beside every `covered` on a machine with a choice point, and nowhere else', async () => {
+    // `FlightModes` has two completion transitions enabled at `autonomous`;
+    // the simulator takes the first and never enters `failsafe`. The cover is
+    // witnessed on the machine's semantics, and the row says the run may be
+    // one `simulate` never produces.
+    const text = readFileSync(resolve(process.cwd(), 'examples/uav-isr.sysml'), 'utf8');
+    const r = await loadModelText(text, { fileName: 'examples/uav-isr.sysml' });
+    const fm = stateMachinesIn(r.model!).find((el) => el.declaredName === 'FlightModes')!;
+    const row = checkProperty(r.model!, fm.id, cover);
+    expect(row.claim).toBe('covered');
+    expect(row.detail).toContain(SIMULATOR_SENTENCE);
+    // The probe has no choice point, so the sentence is absent there.
+    const reachable = await loadFixture('cover-reachable.sysml');
+    const plain = checkProperty(reachable.model, reachable.machineOf('CoverProbe::Reachable::Modes'), cover);
+    expect(plain.detail).not.toContain(SIMULATOR_SENTENCE);
+  });
+
+  it('the unset-guard fixture: `inconclusive` under the guard code, the census counts the exposure, and the flag spends no 1', async () => {
+    // §3.1's prose says `not covered`; the tree says otherwise, and the
+    // register wins: the `!guardsDecided` branch fires first and A5 reads
+    // `decreasingOk`, which includes `guardsDetermined`. So the honest row is
+    // inconclusive / guard-undetermined / exit 2 — flag or no flag — with the
+    // exposure COUNTED on the census rather than argued about.
+    const g = await loadFixture('guard-undetermined.sysml');
+    const ctrl = g.machineOf('GuardProbe::Ctrl::Modes');
+    const hazard = prop({ pattern: 'cover', scope: 'globally', p: 'state hazard' });
+    const withheld = checkProperty(g.model, ctrl, hazard);
+    expect(withheld.claim).toBe('inconclusive');
+    expect(withheld.code).toBe(GUARD_UNDETERMINED_CODE);
+    expect(withheld.claim).not.toBe('not-covered');
+    expect(withheld.cover).toEqual({ atomKind: 'state', scope: 'globally', coverUnreached: 1, coverUnreachedBehindUndefinedGuard: 1 });
+    const required = behaviourReport(g.model, {
+      machineId: ctrl,
+      pattern: 'pattern=cover, scope=globally, p=state hazard',
+      coverRequired: true,
+    });
+    expect(required.exitCode).toBe(2);
+    expect(required.counts).toMatchObject({ inconclusive: 1, notCovered: 0 });
+    expect(required.diagnostics.map((d) => d.code)).not.toContain(COVER_REQUIRED_CODE);
+    // The mirror: `= 3` gives a bare `covered`, so clause (d) tracks the
+    // declared literal and not the guard text.
+    const fires = checkProperty(g.model, g.machineOf('GuardProbe::Fires::Modes'), hazard);
+    expect(fires.claim).toBe('covered');
+    expect(fires.detail).toContain(SEMANTICS_ADMITS);
+    expect(fires.cover).toMatchObject({ coverUnreached: 0, coverUnreachedBehindUndefinedGuard: 0 });
+    // And the sealed probe's exposure is zero: its unreached state has an
+    // inbound edge nobody guards.
+    const sealed = await loadFixture('cover-sealed.sysml');
+    const s = checkProperty(sealed.model, sealed.machineOf('CoverProbe::Sealed::Modes'), cover);
+    expect(s.cover).toMatchObject({ coverUnreached: 1, coverUnreachedBehindUndefinedGuard: 0 });
+  });
+
+  it('the refusal sentence is counted, not universal: a state behind a DECIDED guard, an unguarded edge or nothing at all is not behind an undecided one', () => {
+    // `mode` has no value, so `if mode == 3` is undecided; `k = 4` decides
+    // `if k == 3` FALSE; `downstream` sits behind an unguarded edge out of
+    // `hazard`; `orphan` has no inbound edge. Four unreached states, ONE of
+    // them behind an undecided guard — and the sentence used to say "every
+    // unreached state of this cover sits behind" one, a universal nothing
+    // computed. The census carries both numbers so the sentence is a fraction
+    // a reader can check against the model.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Modes');
+    f.attribute('k', sm.id, { type: 'Integer', value: 4 });
+    const idle = f.state('idle', sm.id);
+    const hazard = f.state('hazard', sm.id);
+    const downstream = f.state('downstream', sm.id);
+    const sealed = f.state('sealed', sm.id);
+    f.state('orphan', sm.id);
+    f.transition(idle.id, hazard.id, { ownerId: sm.id, guard: 'mode == 3' });
+    f.transition(hazard.id, downstream.id, { ownerId: sm.id });
+    f.transition(idle.id, sealed.id, { ownerId: sm.id, guard: 'k == 3' });
+    const row = checkProperty(m, sm.id, prop({ pattern: 'cover', scope: 'globally', p: 'state hazard' }));
+    expect(row.claim).toBe('inconclusive');
+    expect(row.code).toBe(GUARD_UNDETERMINED_CODE);
+    expect(row.cover).toEqual({ atomKind: 'state', scope: 'globally', coverUnreached: 4, coverUnreachedBehindUndefinedGuard: 1 });
+    const sentence = coverRequiredRefusal(row.cover!);
+    expect(sentence).toContain(
+      '--cover-required not applied: this cover is inconclusive under verification/guard-undetermined, not `not covered`',
+    );
+    expect(sentence).toContain('1 of its 4 unreached state(s) sits behind a guard over an attribute with no declared value');
+    expect(sentence, 'a universal nothing computed').not.toContain('every unreached state');
+    expect(sentence).toContain('exit 2, not 1');
+
+    // The census-0 shape: the undecided edge leads back to a state the walk
+    // reached anyway, and the cover names an orphan. The flag declined on this
+    // row exactly as on the one above, and the sentence says so at `0 of 1`
+    // rather than printing nothing.
+    const m2 = new Model();
+    const f2 = new ModelFactory(m2);
+    const sm2 = f2.stateDef('Modes');
+    const idle2 = f2.state('idle', sm2.id);
+    const hazard2 = f2.state('hazard', sm2.id);
+    f2.state('orphan', sm2.id);
+    f2.transition(idle2.id, hazard2.id, { ownerId: sm2.id });
+    const back = f2.transition(hazard2.id, idle2.id, { ownerId: sm2.id, guard: 'mode == 3' });
+    m2.update(back.id, { declaredName: 'back' });
+    const zero = checkProperty(m2, sm2.id, prop({ pattern: 'cover', scope: 'globally', p: 'state orphan' }));
+    expect(zero.claim).toBe('inconclusive');
+    expect(zero.code).toBe(GUARD_UNDETERMINED_CODE);
+    expect(zero.cover).toEqual({ atomKind: 'state', scope: 'globally', coverUnreached: 1, coverUnreachedBehindUndefinedGuard: 0 });
+    expect(coverRequiredRefusal(zero.cover!)).toContain('0 of its 1 unreached state(s) sit behind');
+
+    // And nothing unreached at all — the atom is the undecided transition
+    // itself, which never fired: the sentence still reads as a sentence.
+    const fires = checkProperty(m2, sm2.id, prop({ pattern: 'cover', scope: 'globally', p: 'fires back' }));
+    expect(fires.claim).toBe('inconclusive');
+    expect(fires.code).toBe(GUARD_UNDETERMINED_CODE);
+    expect(fires.cover).toMatchObject({ atomKind: 'fires', coverUnreached: 1, coverUnreachedBehindUndefinedGuard: 0 });
+    const sm3 = f2.stateDef('Tight');
+    const i3 = f2.state('idle', sm3.id);
+    const h3 = f2.state('hazard', sm3.id);
+    f2.transition(i3.id, h3.id, { ownerId: sm3.id });
+    const back3 = f2.transition(h3.id, i3.id, { ownerId: sm3.id, guard: 'mode == 3' });
+    m2.update(back3.id, { declaredName: 'back' });
+    const none = checkProperty(m2, sm3.id, prop({ pattern: 'cover', scope: 'globally', p: 'fires back' }));
+    expect(none.claim).toBe('inconclusive');
+    expect(none.cover).toMatchObject({ coverUnreached: 0, coverUnreachedBehindUndefinedGuard: 0 });
+    expect(coverRequiredRefusal(none.cover!)).toContain('no state of this machine is unreached');
+  });
+
+  it('covers a `fires T` atom, an expression atom, and a `between` scope — the shapes `reach` cannot answer', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Atoms');
+    const idle = f.state('idle', sm.id);
+    const busy = f.state('busy', sm.id);
+    const t = f.transition(idle.id, busy.id, { ownerId: sm.id, trigger: 'go' });
+    m.update(t.id, { declaredName: 'starting' });
+    const one = (p: string) => checkProperty(m, sm.id, prop({ pattern: 'cover', scope: 'globally', p }));
+    expect(one('fires starting').claim).toBe('covered');
+    expect(one('fires starting').cover!.atomKind).toBe('fires');
+    expect(one('1 == 1').claim).toBe('covered');
+    expect(one('1 == 1').witness).toHaveLength(1);
+    expect(one('1 == 1').cover!.atomKind).toBe('expression');
+    expect(one('1 == 2').claim).toBe('not-covered');
+
+    // A cover under `between`: the witness EXTENDS TO THE CLOSING R, because
+    // `between` establishes nothing until the segment closes (Dwyer's
+    // reading, shared with `absence`). Recorded in CONFORMANCE §8.5.
+    const { model, machineId } = buildChain();
+    const between = checkProperty(
+      model,
+      machineId,
+      prop({ pattern: 'cover', scope: 'between', p: 'state C', q: 'state B', r: 'state D' }),
+    );
+    expect(between.claim).toBe('covered');
+    expect(between.cover!.scope).toBe('between');
+    expect(between.witness.map((w) => w.leaf!.name)).toEqual(['A', 'B', 'C', 'D']);
+    // A `between` whose segment never closes is vacuous, exactly as for
+    // `absence`: nothing was witnessed and nothing was decided.
+    const open = checkProperty(
+      model,
+      machineId,
+      prop({ pattern: 'cover', scope: 'between', p: 'state C', q: 'state B', r: 'state E' }),
+    );
+    expect(open.claim).toBe('vacuous');
+  });
+
+  it('reads a `pattern = "cover"` carrier, and round-trips it idempotently from the second save', async () => {
+    const SRC = `package Modes {
+    state def M {
+        @SysproseVerification::PropertyPattern {
+            attribute pattern = "cover";
+            attribute scope = "globally";
+            attribute p = "state failsafe";
+        }
+        state standby;
+        state failsafe;
+        transition standby -> failsafe;
+    }
+}
+`;
+    const first = await loadModelText(SRC, { fileName: 'c.sysml', library: 'none' });
+    expect(first.report.diagnostics).toEqual([]);
+    const machineId = stateMachinesIn(first.model!)[0].id;
+    expect(propertiesOf(first.model!, machineId)[0]).toMatchObject({ pattern: 'cover', source: 'model' });
+    const rep = behaviourReport(first.model!, { machineId });
+    expect(rep.properties[0].claim).toBe('covered');
+    expect(rep.properties[0].property.source).toBe('model');
+    expect(rep.exitCode).toBe(0);
+    const once = serializeModel(first.model!);
+    const second = await loadModelText(once, { fileName: 'c.sysml', library: 'none' });
+    expect(serializeModel(second.model!)).toBe(once);
+    expect(once).toContain('attribute pattern = "cover";');
+  });
+
+  /** Every behaviour run this file's cover cases make, for the two cross-cutting guards below. */
+  async function everyBehaviourRun(): Promise<BehaviourReport[]> {
+    const runs: BehaviourReport[] = [];
+    const push = (model: Model, opts: BehaviourOptions) => runs.push(behaviourReport(model, opts));
+    const reachable = await loadFixture('cover-reachable.sysml');
+    const sealed = await loadFixture('cover-sealed.sysml');
+    const guard = await loadFixture('guard-undetermined.sysml');
+    const chain = buildChain();
+    const dwell = twoDwell();
+    const c = 'pattern=cover, scope=globally, p=state failsafe';
+    const rId = reachable.machineOf('CoverProbe::Reachable::Modes');
+    const sId = sealed.machineOf('CoverProbe::Sealed::Modes');
+    for (const coverRequired of [false, true]) {
+      for (const strictVacuity of [false, true]) {
+        push(reachable.model, { machineId: rId, pattern: c, coverRequired, strictVacuity });
+        push(reachable.model, { machineId: rId, pattern: c, coverRequired, strictVacuity, maxConfigs: 1 });
+        push(reachable.model, { machineId: rId, pattern: 'pattern=absence, scope=globally, p=state failsafe', coverRequired, strictVacuity });
+        push(sealed.model, { machineId: sId, pattern: c, coverRequired, strictVacuity });
+        push(sealed.model, { machineId: sId, pattern: c, coverRequired, strictVacuity, maxConfigs: 1 });
+        push(sealed.model, { machineId: sId, pattern: 'pattern=absence, scope=globally, p=state failsafe', coverRequired, strictVacuity });
+        push(sealed.model, { machineId: sId, pattern: 'pattern=cover, scope=before, p=state armed, r=state failsafe', coverRequired, strictVacuity });
+        push(sealed.model, { machineId: sId, pattern: 'pattern=existence, scope=globally, p=state failsafe', coverRequired, strictVacuity });
+        push(sealed.model, { machineId: sId, pattern: 'pattern=nope, scope=globally, p=state failsafe', coverRequired, strictVacuity });
+        push(sealed.model, { machineId: sId, pattern: 'pattern=cover, scope=globally, p=state nowhere', coverRequired, strictVacuity });
+        push(sealed.model, { machineId: sId, coverRequired, strictVacuity });
+        for (const part of ['Ctrl', 'Decided', 'Fires']) {
+          push(guard.model, { machineId: guard.machineOf(`GuardProbe::${part}::Modes`), pattern: 'pattern=cover, scope=globally, p=state hazard', coverRequired, strictVacuity });
+        }
+        push(chain.model, { machineId: chain.machineId, pattern: 'pattern=cover, scope=between, p=state C, q=state B, r=state E', coverRequired, strictVacuity });
+        push(chain.model, { machineId: chain.machineId, pattern: 'pattern=precedence, scope=globally, p=state E, s=state B', coverRequired, strictVacuity });
+        push(dwell.model, { machineId: dwell.machineId, pattern: 'pattern=cover, scope=globally, p=state B', coverRequired, strictVacuity });
+      }
+    }
+    return runs;
+  }
+
+  it('THE COUNTS-SUM GUARD: the six buckets sum to the row count on every behaviour run', async () => {
+    // A word added to `PropertyClaim` and to no bucket leaves every count at
+    // zero with rows present, which falls through the exit ternary to 0 — a
+    // green run that decided nothing. Every claim word this file reaches is
+    // exercised above, with and without both flags.
+    const runs = await everyBehaviourRun();
+    const claims = new Set<string>();
+    for (const r of runs) {
+      const { passed, failed, vacuous, inconclusive, covered, notCovered } = r.counts;
+      expect(passed + failed + vacuous + inconclusive + covered + notCovered, JSON.stringify(r.counts)).toBe(r.properties.length);
+      for (const p of r.properties) claims.add(p.claim);
+      // And the exit code is a function of the buckets alone (§2.2).
+      const want =
+        failed > 0 ? 1 : r.coverRequired && notCovered > 0 ? 1 : vacuous > 0 || inconclusive > 0 || notCovered > 0 || r.properties.length === 0 ? 2 : 0;
+      expect(r.exitCode, JSON.stringify(r.counts)).toBe(want);
+    }
+    expect([...claims].sort()).toEqual(['covered', 'fail', 'inconclusive', 'not-covered', 'pass', 'vacuous']);
+  });
+
+  it('THE EMITTED-SEVERITY GUARD: every diagnostic a behaviour run emits carries the catalogue’s severity for its code', async () => {
+    // §2.2 assumed this assertion existed; it did not. The findings loop used
+    // to derive severity from the CLAIM with per-branch overrides, so a code
+    // catalogued `error` could be emitted `info` — and the catalogue guard
+    // compares two constants, never an emitted diagnostic. Now it does.
+    const runs = await everyBehaviourRun();
+    const seen = new Set<string>();
+    for (const r of runs) {
+      for (const d of r.diagnostics) {
+        expect(d.code, 'a behaviour finding carries no code').toBeDefined();
+        const entry = diagnosticCode(d.code!);
+        expect(entry, `${d.code} is not in the catalogue`).toBeDefined();
+        expect(d.severity, `${d.code} emitted at the wrong severity`).toBe(entry!.severity);
+        seen.add(`${d.severity} ${d.code}`);
+      }
+    }
+    // The case the plan names: a `--cover-required` run prints the error, not
+    // an info line — and the guard-undetermined row is the WARNING the
+    // catalogue says it is.
+    expect(seen).toContain(`error ${COVER_REQUIRED_CODE}`);
+    expect(seen).not.toContain(`info ${COVER_REQUIRED_CODE}`);
+    expect(seen).toContain(`info ${NOT_COVERED_CODE}`);
+    expect(seen).toContain(`warning ${GUARD_UNDETERMINED_CODE}`);
+    expect(seen).toContain('error verification/refuted');
+    expect(seen).toContain('error verification/vacuous-property');
+  });
+
+  it('`verification/malformed-property` names every catalogue pattern and nothing outside it', () => {
+    // The catalogue entry hand-copies the pattern names — `diagnostic-codes.ts`
+    // imports nothing from the semantics layer — so a pattern added to
+    // `PATTERNS` and not to the `when` would tell a reader, in the generated
+    // reference, that it lies outside the catalogue.
+    const entry = diagnosticCode('verification/malformed-property')!;
+    const listed = /outside the catalogue \(([^)]*)\)/.exec(entry.when);
+    expect(listed, 'the `when` no longer lists the catalogue').not.toBeNull();
+    const names = [...listed![1].matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
+    expect(names).toEqual(PATTERNS.map((p) => p.name));
+    // And the hint offers the guarantee spelling beside the safety one.
+    expect(entry.hint).toContain('pattern=cover');
+  });
+
+  it('the `covered` warrant reads the relation half and the per-step alternative, and no member of the bound family — by reflection', () => {
+    // W1's condition, read off the producer's source: `relationIsTheMachines`
+    // OR the per-step check on `afterDuration` (of the step's TRANSITION, never
+    // its label) and `undeterminedGuards`. Nothing from the bound family, so
+    // this and the frontier case above cannot become mutually unsatisfiable.
+    const src = readFileSync(resolve(process.cwd(), 'src/semantics/mc/patterns.ts'), 'utf8');
+    const body = /function coverWarrant\([\s\S]*?\n}\n/.exec(src);
+    expect(body, 'patterns.ts no longer declares coverWarrant').not.toBeNull();
+    const fn = body![0];
+    expect(fn).toContain('.relationIsTheMachines');
+    expect(fn).toContain('afterDuration(tr)');
+    expect(fn).toContain('undeterminedGuards');
+    expect(fn).not.toMatch(/afterDuration\([^)]*event/);
+    for (const banned of ['decreasingOk', 'seenWhole', 'searchComplete', 'boundHit', 'walkIsExact:', '.exhaustive']) {
+      expect(fn, `coverWarrant reads \`${banned}\``).not.toContain(banned);
+    }
+    // And the `cover` catalogue row is a guarantee sitting before the
+    // liveness pair, so the "last two are liveness" guard stays green.
+    expect(PATTERNS.map((p) => p.name)).toEqual([
+      'absence',
+      'universality',
+      'bounded-existence',
+      'precedence',
+      'cover',
+      'existence',
+      'response',
+    ]);
+    expect(PATTERNS.find((p) => p.name === 'cover')!.kind).toBe('guarantee');
   });
 });

@@ -3,10 +3,18 @@
  * things this engine refuses to say (plan §3.8).
  *
  * WHAT IT DECIDES, AND WHAT IT CANNOT. A property pattern is a shape with atoms
- * in it (`./atoms`) and a SCOPE it holds over. Four of the six patterns in the
+ * in it (`./atoms`) and a SCOPE it holds over. Four of the seven patterns in the
  * catalogue are SAFETY properties: every violation of one has a finite bad
  * prefix, so a search over the configuration graph either finds a run that
  * breaks it — and prints that run — or, having seen the whole graph, does not.
+ * One is a GUARANTEE: `cover` asks whether some run enters a situation, which
+ * is Manna–Pnueli's `◇β` — not finitely refutable, so the bad-prefix engine
+ * cannot refute it, but finitely WITNESSABLE, so the same search that refutes
+ * `absence` confirms it. Its two answers are `covered` and `not-covered`, and
+ * neither is laundered into the four words beside them: `covered` is a witness (row
+ * W1 of `./publishable`), `not-covered` a decided absence (row A5) — a missing
+ * behaviour, never a violated requirement, so it exits 2 and spends the 1 only
+ * under `--cover-required`.
  * Two of them are LIVENESS: `existence` and `response` are violated only by an
  * INFINITE run that never delivers what was promised, and a bad-prefix search
  * finds no bad prefix for either. Under a naive "no violation found ⇒ pass"
@@ -75,6 +83,7 @@ import {
 } from './atoms';
 import {
   MAX_COMPLETION,
+  afterDuration,
   enabledTransitions,
   hashConfig,
   initialConfig,
@@ -93,6 +102,7 @@ import {
 // the same way: one definition, two readers.
 import {
   BEHAVIOUR_UNSUPPORTED_CODE,
+  BEHAVIOUR_WARNING_CODES,
   BOUND_EXHAUSTED_CODE,
   DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_DEPTH,
@@ -100,7 +110,9 @@ import {
   boundsSentence,
   exploreMachine,
   machineAlphabet,
+  machineStates,
   transitionLabel,
+  walkableTransitions,
   type BoundHit,
   type ExploreBounds,
   type ExploreOptions,
@@ -111,12 +123,15 @@ import {
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
 // One definition of "may this absence be stated", shared with `reachOne` — and
-// the one gate the modality reads for BOTH of its values (`walkIsExact`), with
-// the standing sentences the modality's rows print beside a withheld or a
-// published answer.
+// the one gate the modality reads for BOTH of its values (`walkIsExact`) and
+// the exactness gate's relation half, which is what the `covered` witness
+// reads, with the standing sentences (§2.4) the modality's rows and the cover
+// warrant print beside a withheld or a published answer. `./explore` prints
+// them as well and imports nothing from here, so this file cannot be their home.
 import {
   CLAUSE_SENTENCE,
   DWELL_SENTENCE,
+  ENVIRONMENT_SENTENCE,
   SIMULATOR_SENTENCE,
   publishabilityOf,
   walkIsExact,
@@ -129,17 +144,23 @@ import { acyclic, tarjanComponents, type Components } from './scc';
 
 /* ───────────────────────────── the catalogue ────────────────────────────── */
 
-/** The six patterns, split by what a bad-prefix search can decide. */
+/** The seven patterns, split by what a bad-prefix search can decide. */
 export type PatternName =
   | 'absence'
   | 'universality'
   | 'bounded-existence'
   | 'precedence'
+  | 'cover'
   | 'existence'
   | 'response';
 
-/** Safety is decided here; liveness is not decided in-process at all. */
-export type PatternClass = 'safety' | 'liveness';
+/**
+ * Safety is decided here in the refuting direction; a guarantee is decided here
+ * in the WITNESSING direction (`cover` — Manna–Pnueli's `◇β`, confirmed by one
+ * run and never refuted by a finite prefix); liveness is not decided
+ * in-process at all.
+ */
+export type PatternClass = 'safety' | 'guarantee' | 'liveness';
 
 /** The five scopes, spelled as a reader writes them in the carrier. */
 export type ScopeName = 'globally' | 'before' | 'after' | 'between' | 'after-until';
@@ -157,12 +178,16 @@ export interface PatternSpec {
 }
 
 /**
- * The catalogue, in `vogel-2022`'s split.
+ * The catalogue, in `vogel-2022`'s split, plus the one guarantee row.
  *
  * The order is safety first, and it is not cosmetic: the four this engine
  * decides come first so a reader scanning `--help` or the guide meets what the
  * command can do before what it refuses, and the two liveness rows carry the
- * refusal in their own reading rather than in a footnote.
+ * refusal in their own reading rather than in a footnote. `cover` sits BETWEEN
+ * the two groups and not at the end, because `test/unit/cli-reference.test.ts`
+ * asserts that the liveness pair is the LAST TWO of `PATTERN_NAMES` — the
+ * `--pattern` help row says "the last two are LIVENESS" — and appending would
+ * have moved that guard for a reason nobody wanted.
  */
 export const PATTERNS: readonly PatternSpec[] = [
   {
@@ -192,6 +217,15 @@ export const PATTERNS: readonly PatternSpec[] = [
     fields: ['p', 's'],
     needsCount: false,
     reading: 'S holds before P ever does',
+  },
+  {
+    // THE ONE GUARANTEE. `existence` below asks the same question of EVERY run
+    // and is liveness; `cover` asks it of SOME run, which one witness settles.
+    name: 'cover',
+    kind: 'guarantee',
+    fields: ['p'],
+    needsCount: false,
+    reading: 'P holds on some run',
   },
   {
     name: 'existence',
@@ -301,8 +335,37 @@ interface ResolvedProperty {
 
 /* ─────────────────────────────── the verdict ────────────────────────────── */
 
-/** The four words this command may reach. Nothing here is ever `proved`. */
-export type PropertyClaim = 'pass' | 'fail' | 'vacuous' | 'inconclusive';
+/**
+ * The six words this command may reach. Nothing here is ever `proved`.
+ *
+ * `covered` and `not-covered` are `cover`'s alone (plan §2.2) and the
+ * vocabulary is CLOSED after them. Neither is laundered into the four it grew
+ * from: `covered ⇒ pass` would file a witness under a word that means "on every
+ * reachable configuration", and `not-covered ⇒ inconclusive` would file a
+ * DECIDED absence under the word this tool reserves for undecided. The exit
+ * arithmetic in {@link behaviourReport} and the summary line in
+ * `scripts/sysprose.ts` both count all six, and a guard asserts the six buckets
+ * sum to the row count — a word counted nowhere falls through to exit 0.
+ */
+export type PropertyClaim = 'pass' | 'fail' | 'vacuous' | 'inconclusive' | 'covered' | 'not-covered';
+
+/**
+ * The census one `cover` row publishes on `--json` (plan §2.5, §3.1).
+ *
+ * `coverUnreachedBehindUndefinedGuard` is correction 23's exposure counted
+ * rather than argued about: the states this cover did not reach whose EVERY
+ * inbound walkable transition carries a guard the walk could not evaluate. A
+ * state nothing points at is not counted — `[].every()` is true and an orphan
+ * is not "behind" anything. `coverUnreached` is the denominator — every state
+ * of the machine the walk did not reach, orphans included — so the refusal
+ * sentence can quote the exposure as a fraction rather than as a universal.
+ */
+export interface CoverCensus {
+  readonly atomKind: Atom['kind'];
+  readonly scope: ScopeName;
+  readonly coverUnreached: number;
+  readonly coverUnreachedBehindUndefinedGuard: number;
+}
 
 /** One observation of the witness run, in the words the trace prints. */
 export interface TraceStep {
@@ -388,13 +451,26 @@ export interface PropertyVerdict {
   /** Did an explored run ever open the property's scope? */
   activated: boolean;
   bounds: ExploreBounds;
+  /**
+   * PRODUCT states the search saw — and, on a row with a witness, only those
+   * seen UP TO the witness, because the search returns at the first breach.
+   */
   configs: number;
+  /**
+   * Configurations of the MACHINE graph, `exploreMachine`'s own count.
+   *
+   * A second, LABELLED number beside {@link configs}, because `base` sets
+   * `configs: found.configs` on every row and no sentence may quote that as a
+   * total (§2.4b). The `not covered … over W configuration(s)` sentence names
+   * this field, so the JSON and the prose cannot publish two unlabelled counts.
+   */
+  machineConfigs: number;
   exhaustive: boolean;
   boundHit: BoundHit;
   /** The sentence every figure on this row is true UNDER. */
   qualification: string;
   unsupported: readonly UnsupportedConstruct[];
-  /** The bad prefix, when there is one. EMPTY on every other claim. */
+  /** The run this row stands on — a bad prefix, or a `cover` witness. EMPTY on every other claim. */
   witness: readonly TraceStep[];
   /**
    * Some run or every run? Composed on a `fail` row and on no other claim.
@@ -405,6 +481,8 @@ export interface PropertyVerdict {
    * contract is unchanged).
    */
   modality: Modality | null;
+  /** Present on a `cover` row that reached the walk, and on no other. */
+  cover?: CoverCensus;
 }
 
 /** What `check-behaviour` publishes. */
@@ -419,9 +497,13 @@ export interface BehaviourReport {
     failed: number;
     vacuous: number;
     inconclusive: number;
+    covered: number;
+    notCovered: number;
   };
   /** Was the vacuity row raised to an error? It changes no exit code (§2). */
   strictVacuity: boolean;
+  /** Does a `not-covered` row spend the 1? It changes no claim word (§2.2). */
+  coverRequired: boolean;
   exitCode: 0 | 1 | 2;
   diagnostics: Diagnostic[];
 }
@@ -434,6 +516,13 @@ export interface BehaviourOptions extends ExploreOptions {
   pattern?: string;
   /** Raise the vacuity row to an ERROR. It changes no exit code (§2). */
   strictVacuity?: boolean;
+  /**
+   * Exit 1 on a `not-covered` row. It raises the exit code and NEVER the claim:
+   * promoting `not-covered` to `fail` would print `verification/refuted` about
+   * a design that violates nothing — the defect `cover` exists to fix,
+   * reproduced by the fix (§2.2).
+   */
+  coverRequired?: boolean;
 }
 
 /* ──────────────────────────── reading a property ────────────────────────── */
@@ -847,6 +936,13 @@ function monitorStep(p: ResolvedProperty, m: Monitor, v: Valuation): Monitor {
   let breach = false;
   switch (p.pattern.name) {
     case 'absence':
+    case 'cover':
+      // BYTE-FOR-BYTE THE SAME BREACH. `cover` is `absence` read the other way
+      // round: the "bad prefix" of `absence of P` is exactly the witness of
+      // `cover P`, so the monitor is shared and only the verdict tail in
+      // `checkProperty` reads the breach differently. Listed explicitly rather
+      // than left to `default` so a new pattern cannot fall through this switch
+      // into a silent "no breach".
       breach = v.p === true;
       break;
     case 'universality':
@@ -1152,6 +1248,7 @@ function refusedRow(
     activated: false,
     bounds,
     configs: 0,
+    machineConfigs: 0,
     exhaustive: false,
     boundHit: 'none',
     qualification: 'nothing was checked: the property could not be read',
@@ -1228,9 +1325,10 @@ export function checkProperty(
         'lasso search lands and a fairness assumption is named; there is no flag that lowers it.',
       activated: false,
       configs: 0,
+      machineConfigs: 0,
       exhaustive: false,
       boundHit: 'none',
-      qualification: 'not decided: this engine decides safety patterns only',
+      qualification: 'not decided: this engine decides safety and guarantee patterns only',
       unsupported: [],
       witness: [],
       modality: null,
@@ -1252,6 +1350,7 @@ export function checkProperty(
         'absence of one.',
       activated: false,
       configs: 0,
+      machineConfigs: 0,
       exhaustive: false,
       boundHit: walk.boundHit,
       qualification: `not explored — ${walk.unsupported.map((u) => u.construct).join(', ')}`,
@@ -1293,9 +1392,11 @@ export function checkProperty(
             ? 'a trigger the machine names was never offered'
             : boundSentence(boundHit)
         }`;
+  const isCover = property.pattern.name === 'cover';
   const base = {
     ...row,
     configs: found.configs,
+    machineConfigs: walk.configs,
     exhaustive,
     boundHit,
     qualification,
@@ -1304,6 +1405,10 @@ export function checkProperty(
     // The modality is a fact about a REFUTATION and about nothing else; the
     // `fail` return below overrides this, and every other claim keeps it.
     modality: null as Modality | null,
+    // The census rides on EVERY cover row that reached the walk, the
+    // guard-undetermined one included: correction 23's number is most useful
+    // exactly where the row is withheld.
+    ...(isCover ? { cover: coverCensus(model, machineId, walk, property) } : {}),
   };
 
   // An atom that could not be evaluated where the walk offered it. Never read
@@ -1330,14 +1435,30 @@ export function checkProperty(
   // never invent one.
   if (found.violation !== null) {
     const witness = traceOf(model, found.violation);
+    // The search RETURNED at the first violation, so `configs` counts the
+    // product states seen up to the witness and is not the size of the
+    // product space. `exhaustive` is still true of the machine graph — that
+    // is `exploreMachine`'s figure — and printing the two side by side under
+    // one word invited the count to be read as the second.
+    const witnessQualification = `${qualification} — the count beside it is the product states seen up to the witness, not the size of the product space`;
+    // THE FIRST FORK: `cover`'s breach is a WITNESS, not a refutation. Routing
+    // it through the `fail` return below would print `verification/refuted`
+    // and exit 1 about a design that does what its author asked — the polarity
+    // defect this pattern exists to fix. The claim is `covered`, the code is
+    // none, and the warrant is `coverWarrant`'s: register row W1.
+    if (isCover) {
+      return {
+        ...base,
+        qualification: witnessQualification,
+        claim: 'covered',
+        code: null,
+        detail: coverWarrant(model, walk, bounds, found.violation, witness.length - 1, sentence),
+        witness,
+      };
+    }
     return {
       ...base,
-      // The search RETURNED at the first violation, so `configs` counts the
-      // product states seen up to the witness and is not the size of the
-      // product space. `exhaustive` is still true of the machine graph — that
-      // is `exploreMachine`'s figure — and printing the two side by side under
-      // one word invited the count to be read as the second.
-      qualification: `${qualification} — the count beside it is the product states seen up to the witness, not the size of the product space`,
+      qualification: witnessQualification,
       claim: 'fail',
       code: 'verification/refuted',
       detail:
@@ -1397,10 +1518,14 @@ export function checkProperty(
       ...base,
       claim: 'inconclusive',
       code: BOUND_EXHAUSTED_CODE,
-      detail:
-        `inconclusive: ${found.activated ? 'no bad prefix was found' : "no explored run opened the property's scope"}, and the walk did not finish — ${boundSentence(boundHit) || 'a trigger the machine names was never offered'}. ` +
-        'The absence of a violation in part of a graph is not the absence of one, and neither is ' +
-        'the absence of an antecedent. Raise the bound (`--max-configs N`) and re-run.',
+      // `not-covered` is register row A5, a decreasing absence: it is withheld
+      // here exactly where `pass` is, and this row says which claim went.
+      detail: isCover
+        ? `inconclusive: bound exhausted — the not-covered claim is not made. No witness was found and the walk did not finish — ${boundSentence(boundHit) || 'a trigger the machine names was never offered'}. ` +
+          'A missing witness in part of a graph is not a missing behaviour. Raise the bound (`--max-configs N`) and re-run.'
+        : `inconclusive: ${found.activated ? 'no bad prefix was found' : "no explored run opened the property's scope"}, and the walk did not finish — ${boundSentence(boundHit) || 'a trigger the machine names was never offered'}. ` +
+          'The absence of a violation in part of a graph is not the absence of one, and neither is ' +
+          'the absence of an antecedent. Raise the bound (`--max-configs N`) and re-run.',
       witness: [],
     };
   }
@@ -1433,6 +1558,27 @@ export function checkProperty(
         `vacuous: \`${property.atoms.p!.text}\` holds on no explored run, so "${sentence}" is ` +
         'true of this machine without S ever being reached. It is inconclusive and exits 2; ' +
         '`--strict-vacuity` raises it to an error and changes no exit code.',
+      witness: [],
+    };
+  }
+
+  // THE SECOND FORK: no breach over a graph seen whole is `pass` for an
+  // assertion and `not-covered` for a cover — a DECIDED absence (register row
+  // A5, read off `decreasingOk` like every other decreasing claim), which is a
+  // missing behaviour and not a violated requirement. It carries a code and
+  // exits 2; `--cover-required` spends the 1 for it and changes no word here.
+  // The count it quotes is `machineConfigs`, never `found.configs` (§2.4b).
+  if (isCover) {
+    return {
+      ...base,
+      claim: 'not-covered',
+      code: NOT_COVERED_CODE,
+      detail:
+        `not covered under ${boundsSentence(bounds)} — over ${walk.configs} configuration(s): ` +
+        `${sentence} — and no explored run holds \`${property.atoms.p!.text}\` inside an open ` +
+        'scope segment. A decided absence: the design as written admits no such run within these ' +
+        'bounds. It is a missing behaviour and not a violated requirement, so it exits 2; ' +
+        '`--cover-required` spends the 1 for it instead.',
       witness: [],
     };
   }
@@ -1701,29 +1847,173 @@ function modalityOf(
   };
 }
 
+/* ─────────────────────────── the cover witness ──────────────────────────── */
+
+/** The two warrants a `covered` row may carry, in the words the row prints. */
+export const SEMANTICS_ADMITS = 'a run this semantics admits';
+export const WALK_ADMITS = 'a run this WALK admits';
+
+/**
+ * The warrant of a `covered` row — register row W1, and the FIRST affirmative
+ * claim this lane publishes.
+ *
+ * The bare wording (`SEMANTICS_ADMITS`) needs `relationIsTheMachines` OR the
+ * per-step alternative: no step of the witness was taken across a transition
+ * with `afterDuration` defined — tested on the step's TRANSITION RECORD and
+ * never on its recorded label, which a numeric `attrs.after` step leaves
+ * empty — and none crossed a transition in `undeterminedGuards`. Where that
+ * disjunction fails the claim SURVIVES and the warrant is re-worded
+ * (`WALK_ADMITS`, naming the mechanism the step used): a bound can hide a
+ * witness and can never invent one, so this is never `inconclusive` — but the
+ * walk offers every dwell at every configuration and advances no clock, so a
+ * trace across one is a trace the interpreter may never take, and saying
+ * "this semantics admits" of it would be the sentence the plan bans verbatim.
+ *
+ * READS NO MEMBER OF THE BOUND FAMILY — not `decreasingOk`, not `seenWhole`,
+ * not `searchComplete`, not `boundHit`. `test/unit/semantics.mc.patterns.test.ts`
+ * asserts that by reading this function's source, and the `--max-configs d`
+ * frontier case asserts it by running one.
+ */
+function coverWarrant(
+  model: Model,
+  walk: ExploreResult,
+  bounds: ExploreBounds,
+  leaf: ProductNode,
+  steps: number,
+  sentence: string,
+): string {
+  const undetermined = new Set(walk.undeterminedGuards.map((g) => g.transition.id));
+  const crossed: string[] = [];
+  let dwell = false;
+  let store = false;
+  let consumedTrigger = false;
+  let index = steps;
+  for (let n: ProductNode | null = leaf; n !== null && n.parent !== null; n = n.parent, index--) {
+    // §2.4(a) is about an ENVIRONMENT — one that supplied `abort`. The walk
+    // also offers every `after(n)` dwell as a named event (plan §2.3: "the
+    // trace is a run of NO environment"), so a step whose input is a dwell
+    // label consumed nothing an environment sends; `timedLabels` and the
+    // alphabet range over the same relation, so the subtraction is the one
+    // `walkIsExact`'s environment clause makes. Without it a machine naming
+    // no trigger at all printed a sentence about the environment it lacks.
+    if (n.input?.kind === 'trigger' && !walk.timedLabels.has(n.input.trigger)) consumedTrigger = true;
+    const tr = n.transition;
+    if (tr === null) continue;
+    const label = transitionLabel(transitionRef(model, tr));
+    if (afterDuration(tr) !== undefined) {
+      dwell = true;
+      crossed.unshift(
+        `step ${index} fires \`${triggerLabelOf(tr) || `after(${afterDuration(tr)})`}\` (${label}), a dwell this engine offers as a named event without advancing a clock`,
+      );
+    } else if (undetermined.has(tr.id)) {
+      store = true;
+      crossed.unshift(`step ${index} crosses ${label}, whose guard the walk read against a store nothing valued`);
+    }
+  }
+  const exact = walkIsExact(walk, bounds).relationIsTheMachines;
+  const bare = exact || (!dwell && !store);
+  const riders = [
+    ...(consumedTrigger ? [ENVIRONMENT_SENTENCE] : []),
+    ...(dwell ? [DWELL_SENTENCE] : []),
+    ...(walk.nondeterminism.length > 0 ? [SIMULATOR_SENTENCE] : []),
+  ];
+  const head = bare
+    ? `covered — witness trace of ${steps} step(s), ${SEMANTICS_ADMITS}: ${sentence}`
+    : `covered — witness trace of ${steps} step(s), ${WALK_ADMITS}: ${crossed.join('; ')}, so the interpreter may never take this trace. ${sentence}`;
+  return [head, ...riders].join(' — ');
+}
+
+/**
+ * Correction 23's exposure, counted: the unreached states, and how many of
+ * them sit behind an undecided guard alone. Both numbers, because the refusal
+ * sentence quotes them as a fraction: "1 of 4" is a fact a reader can check
+ * against the model, where "every" was a universal nothing computed — an
+ * unreached state behind a guard the walk DID decide, or behind an unguarded
+ * edge from another unreached state, is not behind an undecided one.
+ */
+function coverCensus(
+  model: Model,
+  machineId: ElementId,
+  walk: ExploreResult,
+  property: ResolvedProperty,
+): CoverCensus {
+  const undetermined = new Set(walk.undeterminedGuards.map((g) => g.transition.id));
+  const walkable = walkableTransitions(model, machineId);
+  let unreached = 0;
+  let behind = 0;
+  for (const state of machineStates(model, machineId)) {
+    if (walk.reachable.has(state.id)) continue;
+    unreached++;
+    const inbound = walkable.filter((tr) => tr.target?.[0] === state.id);
+    if (inbound.length > 0 && inbound.every((tr) => undetermined.has(tr.id))) behind++;
+  }
+  return {
+    atomKind: property.atoms.p!.kind,
+    scope: property.scope.name,
+    coverUnreached: unreached,
+    coverUnreachedBehindUndefinedGuard: behind,
+  };
+}
+
 /* ──────────────────────────────── the report ────────────────────────────── */
 
 /** The code `--strict-vacuity` raises a vacuity row to. Declared at commit 5. */
 const STRICT_VACUITY_CODE = 'verification/vacuous-property';
 
+/** A `cover` no explored run witnessed, over a graph seen whole: a decided absence, info. */
+export const NOT_COVERED_CODE = 'verification/not-covered';
+/** The error `--cover-required` ADDS beside {@link NOT_COVERED_CODE} — never in place of it. */
+export const COVER_REQUIRED_CODE = 'verification/cover-required';
+
 /** The codes this command can raise that no other part of the lane declares. */
 export const PROPERTY_PATTERN_CODES: ReadonlySet<string> = new Set([
   MALFORMED_PROPERTY_CODE,
   UNKNOWN_ATOM_CODE,
+  NOT_COVERED_CODE,
+  COVER_REQUIRED_CODE,
 ]);
 
 /**
- * Does this safety pattern hold on every reachable configuration (plan §3.8)?
+ * The sentence printed beside EVERY `cover` row `--cover-required` declines to
+ * spend the 1 on (correction 23): the row is not `not-covered` at all but
+ * `inconclusive` under `verification/guard-undetermined`, so the flag has no
+ * decided absence to grade. An answer about an unbound model parameter is not
+ * an answer about a design that violates something.
+ *
+ * COUNTED, NOT UNIVERSAL. An earlier wording said "every unreached state of
+ * this cover sits behind a guard over an attribute with no declared value" —
+ * a claim nothing computed: the census counts the states behind an undecided
+ * guard ALONE, and a machine with an unreached state behind a guard the walk
+ * did decide (`k : Integer = 4` under `if k == 3`), or behind an unguarded
+ * edge out of another unreached state, printed that universal falsely. The
+ * sentence now quotes the census as a fraction the reader can check against
+ * the model, and prints on every withheld cover — a census of 0 is a fact
+ * about the model too, and the flag declined on that row all the same.
+ */
+export function coverRequiredRefusal(census: CoverCensus): string {
+  const { coverUnreached: unreached, coverUnreachedBehindUndefinedGuard: behind } = census;
+  const states =
+    unreached === 0
+      ? 'no state of this machine is unreached'
+      : `${behind} of its ${unreached} unreached state(s) sit${behind === 1 ? 's' : ''} behind a guard over an attribute with no declared value, which the walk read as false`;
+  return `--cover-required not applied: this cover is inconclusive under verification/guard-undetermined, not \`not covered\`, so there is no decided absence to spend the 1 on — ${states} — exit 2, not 1`;
+}
+
+/**
+ * Does this behaviour pattern hold on every reachable configuration, and can
+ * this design reach the situation I name (plan §3.8, model-checking plan §3.1)?
  *
  * It JUDGES, which is why it carries an exit code where `reachReport` does not:
  * a property is a claim somebody wrote into a file, and a claim that fails is a
- * finding about the model. The arithmetic is §2's, over four words —
- * `fail` is 1, `vacuous` and `inconclusive` are 2, and a run with NOTHING to
- * decide is 2 as well, because exit 0 says every property was shown to hold and
- * a model that states none has been shown nothing.
+ * finding about the model. The arithmetic is §2's, over six words — `fail` is
+ * 1, `vacuous`, `inconclusive` and `not-covered` are 2, `covered` and `pass`
+ * are both discharged, a run with NOTHING to decide is 2 as well, because exit
+ * 0 says every property was shown to hold and a model that states none has
+ * been shown nothing — and `--cover-required` moves `not-covered` to 1 without
+ * touching the word.
  */
 export function behaviourReport(model: Model, opts: BehaviourOptions): BehaviourReport {
-  const { machineId, pattern, strictVacuity = false, ...explore } = opts;
+  const { machineId, pattern, strictVacuity = false, coverRequired = false, ...explore } = opts;
   const machineEl = model.get(machineId);
   const machine: (StateRef & { eClass: string }) | null = machineEl
     ? { ...stateRef(model, machineId), eClass: machineEl.eClass }
@@ -1773,13 +2063,20 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
     failed: rows.filter((r) => r.claim === 'fail').length,
     vacuous: rows.filter((r) => r.claim === 'vacuous').length,
     inconclusive: rows.filter((r) => r.claim === 'inconclusive').length,
+    covered: rows.filter((r) => r.claim === 'covered').length,
+    notCovered: rows.filter((r) => r.claim === 'not-covered').length,
   };
+  // §2.2's arithmetic. A word counted in none of the six buckets would fall
+  // through this ternary to exit 0 — a green run that decided nothing — which
+  // is why the suite asserts the buckets sum to `rows.length`.
   const exitCode: 0 | 1 | 2 =
     counts.failed > 0
       ? 1
-      : counts.vacuous > 0 || counts.inconclusive > 0 || rows.length === 0
-        ? 2
-        : 0;
+      : coverRequired && counts.notCovered > 0
+        ? 1
+        : counts.vacuous > 0 || counts.inconclusive > 0 || counts.notCovered > 0 || rows.length === 0
+          ? 2
+          : 0;
 
   const findings: Array<Omit<Diagnostic, 'id' | 'ruleId' | 'source'>> = [];
   for (const row of rows) {
@@ -1798,9 +2095,32 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
       });
       continue;
     }
+    if (row.claim === 'not-covered' && coverRequired) {
+      // THE DEDICATED BRANCH, mirroring `--strict-vacuity`'s above in shape
+      // and NOT in its `continue`. The generic push below derives severity
+      // from the CLAIM, and a `not-covered` row is not `fail` — so this code,
+      // catalogued `error`, would otherwise be emitted `info`. And the flagged
+      // run must still emit the `verification/not-covered` info finding the
+      // plain run emits (§2.2): the two runs differ by this added error and
+      // the exit code, and by nothing else. A `continue` here drops the info
+      // row, which is exactly the substitution shape the plan forbids.
+      findings.push({
+        severity: 'error',
+        message: `\`${row.machine.qualifiedName}\`: ${row.sentence} — ${row.detail}`,
+        elementId: row.machine.id,
+        elementName: row.machine.qualifiedName,
+        code: COVER_REQUIRED_CODE,
+        hint: 'The flag spends the 1 and changes NOTHING else: the claim stays `not-covered`, the row stays a decided absence, and `verification/not-covered` is still filed beside this. A missing behaviour is a defect only because you said so with the flag — add the run the cover asks for, or drop the flag and read the row as the answer it is.',
+      });
+    }
     if (row.code === null) continue;
     findings.push({
-      severity: row.claim === 'fail' ? 'error' : 'info',
+      // Severity is a property of the CODE, read off the same sets the
+      // catalogue guard compares — never a per-branch override. `fail` rows
+      // are the lane's one refutation; a `BEHAVIOUR_WARNING_CODES` member is a
+      // finding about the MODEL (a guard nothing valued); everything else says
+      // what was not decided.
+      severity: row.claim === 'fail' ? 'error' : BEHAVIOUR_WARNING_CODES.has(row.code) ? 'warning' : 'info',
       message: `\`${row.machine.qualifiedName}\`: ${row.sentence} — ${row.detail}`,
       elementId: row.machine.id,
       elementName: row.machine.qualifiedName,
@@ -1808,7 +2128,14 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
       hint:
         row.claim === 'fail'
           ? 'Read the witness trace: it is a run this semantics admits, printed step by step with the atoms that hold at each one. The simulator may never take it — that is what makes it worth printing.'
-          : 'Nothing is claimed about this property. A row that says what was not decided is the one thing a silence could never say.',
+          : row.claim === 'not-covered'
+            ? // The "pass `--cover-required`" clause is printed on a flagged run
+              // too, where it is advice about a flag already given. That is the
+              // cost of §2.2's rule that the info finding is BYTE-IDENTICAL
+              // between a flagged and a plain run, and the rule wins: the
+              // error row beside it is what says the flag was applied.
+              'This row IS decided: over a graph the walk saw whole, no run enters the situation the cover names. It is a missing behaviour and not a violated requirement, so it exits 2 — pass `--cover-required` to make it exit 1, which adds `verification/cover-required` and changes no word above.'
+            : 'Nothing is claimed about this property. A row that says what was not decided is the one thing a silence could never say.',
     });
   }
 
@@ -1818,6 +2145,7 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
     profile: SEMANTIC_PROFILE,
     counts,
     strictVacuity,
+    coverRequired,
     exitCode,
     diagnostics: findings.map((d, i) => ({
       id: `verification#${i}`,

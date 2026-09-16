@@ -415,7 +415,7 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 ## Formal verification
 
-The verification lane, and the severity splits it in two. Almost all of these are INFO because none of them is a defect in the model: they say that a relation is outside the fragment the lane encodes, that a contract has nothing to show, that a clause sits somewhere the standard does not admit it, or that a proof would be void rather than absent — each stated rather than left to be inferred from a silence. Exactly two are ERRORS, because they say something about the MODEL: `verification/refuted`, the violation this lane exists to find, and `verification/vacuous-property`, which exists only because `--strict-vacuity` asked for a vacuity to be loud.
+The verification lane, and the severity splits it in two. Almost all of these are INFO because none of them is a defect in the model: they say that a relation is outside the fragment the lane encodes, that a contract has nothing to show, that a clause sits somewhere the standard does not admit it, or that a proof would be void rather than absent — each stated rather than left to be inferred from a silence. The ERRORS are the codes that say something about the MODEL — `verification/refuted`, the violation this lane exists to find, at their head — and the two a flag asks for: `verification/vacuous-property`, which exists only because `--strict-vacuity` asked for a vacuity to be loud, and `verification/cover-required`, which exists only because `--cover-required` asked for a decided absence to spend the 1.
 
 ### `verification/unsupported-expression`
 
@@ -715,8 +715,8 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 
 - **Severity:** info
 - **Source:** verification
-- **Fires when:** A behavioural property could not be read as one: a `pattern` outside the catalogue (`absence`, `universality`, `bounded-existence`, `precedence`, `existence`, `response`), a `scope` outside its five, a field the pattern needs and did not get, a `bounded-existence` with no `n`, a `--pattern` that is not `key=value` — or an expression atom that parses and is not a predicate, so it yielded a number (or nothing) where the walk needed a boolean.
-- **Hint given:** Write the property as `pattern=absence, scope=globally, p=state failsafe`, which is exactly the field set the `@SysproseVerification::PropertyPattern` carrier uses. A property nobody could read is never dropped from the run: it is inconclusive and exits 2, because a typo that silently removed a claim would look like a clean sweep.
+- **Fires when:** A behavioural property could not be read as one: a `pattern` outside the catalogue (`absence`, `universality`, `bounded-existence`, `precedence`, `cover`, `existence`, `response`), a `scope` outside its five, a field the pattern needs and did not get, a `bounded-existence` with no `n`, a `--pattern` that is not `key=value` — or an expression atom that parses and is not a predicate, so it yielded a number (or nothing) where the walk needed a boolean.
+- **Hint given:** Write the property as `pattern=absence, scope=globally, p=state failsafe` — or `pattern=cover, scope=globally, p=state failsafe` to ask whether some run reaches the situation rather than whether none does — which is exactly the field set the `@SysproseVerification::PropertyPattern` carrier uses. A property nobody could read is never dropped from the run: it is inconclusive and exits 2, because a typo that silently removed a claim would look like a clean sweep.
 
 ### `verification/unknown-atom`
 
@@ -724,6 +724,20 @@ The verification lane, and the severity splits it in two. Almost all of these ar
 - **Source:** verification
 - **Fires when:** A name in a property names nothing the machine has: `state X` for a state it does not declare, `trigger t` for a trigger no transition names, `fires T` for a transition with no such declared name, `node N` for no such node — or an expression reading a feature that is in no scope the walk offered. A name matching several elements lands here too, rather than resolving to whichever the walk reached first.
 - **Hint given:** The row lists what the machine DOES offer, so a misspelling is one line from being fixed; on an ambiguous name, write the qualified one. This is never read as "the atom is false": `absence of state failsafe` would then PASS the moment `failsafe` were misspelt, which is the loudest way this lane could print a green verdict that means nothing.
+
+### `verification/not-covered`
+
+- **Severity:** info
+- **Source:** verification
+- **Fires when:** A `cover` property — "can this design reach the situation I name?" — found no witness over a graph the walk saw whole: no explored run enters a configuration where its `p` atom holds inside an open scope segment. It is a DECIDED absence, published under the same five conditions a `pass` is (a bound hit or an undecided guard makes the row `inconclusive` instead, and the row says the not-covered claim is not made), and it is a missing behaviour rather than a violated requirement: the run exits 2, never 1, unless `--cover-required` is given.
+- **Hint given:** Read the sentence as an answer, not a limit: the design as written admits no run into that situation within the printed bounds. If that situation is one the design must reach, add the transition or the trigger that gets there — or pass `--cover-required`, which makes the row exit 1 and adds `verification/cover-required` beside this line without changing the claim word. A witness that IS found prints as `covered` with the run step by step; the positive answer carries no code.
+
+### `verification/cover-required`
+
+- **Severity:** error
+- **Source:** verification
+- **Fires when:** `--cover-required` was given and a `cover` property came back `not covered`. The flag spends the exit code’s 1 on a decided absence — a behaviour the author says this design MUST admit and it does not — and this error is ADDED beside the `verification/not-covered` info line, never in its place, so a flagged run and a plain run print the same claim word and the same info finding and differ only by this error and the exit code. The flag never re-grades a row that is `inconclusive` under `verification/guard-undetermined`: on every such cover the run says `--cover-required not applied`, counts how many of the cover’s unreached states sit behind a guard over an attribute with no declared value (which the walk read as false), and stays at exit 2, because an answer about an unbound model parameter is not an answer about a design that violates something.
+- **Hint given:** The claim is still `not-covered`, not `fail`: nothing was refuted, and `verification/refuted` is never printed for a missing behaviour. Add the run the cover asks for, give the guarded attribute a value the walk can read if the row was withheld instead, or drop the flag and take exit 2 as the answer it is.
 
 ## Input handling
 
@@ -784,4 +798,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*101 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*103 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

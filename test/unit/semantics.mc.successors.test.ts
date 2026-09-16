@@ -1161,6 +1161,12 @@ const MODALITY_FILES = [
   'test/fixtures/verification/models/cycle-behind-violation.sysml',
 ];
 
+/** The polarity pair `cover` (§3.1) added: one machine each, the reachable half naming `abort`. */
+const COVER_FILES = [
+  'test/fixtures/verification/models/cover-reachable.sysml',
+  'test/fixtures/verification/models/cover-sealed.sysml',
+];
+
 describe('every machine in the tree, walked', () => {
   const walked: Walked[] = [];
 
@@ -1180,7 +1186,7 @@ describe('every machine in the tree, walked', () => {
     }
   }, 300_000);
 
-  it('finds the eleven machines that were here, plus eight from one commit, three from the next, three from the trap commit and four from the modality', () => {
+  it('finds the eleven machines that were here, plus eight from one commit, three from the next, three from the trap commit, four from the modality and two from `cover`', () => {
     const added = walked.filter((w) => ADDED_FILES.includes(w.file));
     expect(added).toHaveLength(8);
     const components = walked.filter((w) => COMPONENT_FILES.includes(w.file));
@@ -1189,8 +1195,10 @@ describe('every machine in the tree, walked', () => {
     expect(traps).toHaveLength(3);
     const modality = walked.filter((w) => MODALITY_FILES.includes(w.file));
     expect(modality).toHaveLength(4);
+    const covers = walked.filter((w) => COVER_FILES.includes(w.file));
+    expect(covers).toHaveLength(2);
     expect(
-      walked.length - added.length - components.length - traps.length - modality.length,
+      walked.length - added.length - components.length - traps.length - modality.length - covers.length,
       'the tree gained or lost a machine',
     ).toBe(11);
   });
@@ -1211,12 +1219,16 @@ describe('every machine in the tree, walked', () => {
     expect(exploreMachine(numeric.model, numeric.machineId).census.counts.unaccounted).toBe(0);
   });
 
-  it('names a trigger on `latch.sysml` alone: `bounds.alphabet` is `[]` everywhere else', () => {
+  it('names a trigger on `latch.sysml` and `cover-reachable.sysml` alone: `bounds.alphabet` is `[]` everywhere else', () => {
+    // `cover-reachable.sysml` joined `latch.sysml` with the `cover` commit: its
+    // witness consumes `abort`, which is what the environment sentence beside
+    // a `covered` row is about (§2.4a). Everything else in the tree is
+    // completion-driven.
     const named = walked.filter((w) => w.walk.bounds.alphabet.length > 0);
-    expect(named.map((w) => `${w.file} :: ${w.name}`)).toEqual([
-      'test/fixtures/verification/models/latch.sysml :: Modes',
+    expect(named.map((w) => `${w.file} :: ${w.name} :: ${w.walk.bounds.alphabet.join(',')}`)).toEqual([
+      'test/fixtures/verification/models/cover-reachable.sysml :: Modes :: abort',
+      'test/fixtures/verification/models/latch.sysml :: Modes :: unlatch',
     ]);
-    expect(named[0].walk.bounds.alphabet).toEqual(['unlatch']);
   });
 
   it('carries no dwell at all: `timedTransitions` and `timedLabels` are empty on every one of them', () => {

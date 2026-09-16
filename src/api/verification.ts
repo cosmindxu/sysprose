@@ -89,7 +89,7 @@ import {
   type ConsistencyResult,
 } from '../semantics/consistency';
 import { BEHAVIOUR_CODES, BEHAVIOUR_WARNING_CODES } from '../semantics/mc/explore';
-import { PROPERTY_PATTERN_CODES } from '../semantics/mc/patterns';
+import { COVER_REQUIRED_CODE, PROPERTY_PATTERN_CODES } from '../semantics/mc/patterns';
 import {
   checkRefinement,
   faultInjectionTargets,
@@ -1152,6 +1152,10 @@ export const VERIFICATION_ERROR_CODES: ReadonlySet<string> = new Set([
   'verification/refuted',
   // Only ever present because `--strict-vacuity` asked for it.
   STRICT_VACUITY_CODE,
+  // Its twin in the behaviour lane: only ever present because `--cover-required`
+  // asked for a decided absence to spend the 1. It is ADDED beside
+  // `verification/not-covered`, never substituted for it (§2.2).
+  COVER_REQUIRED_CODE,
   // A requirement set nothing can satisfy is the same KIND of finding as a
   // refutation: decided, about the model, and never a limit of the tool. It is
   // an error for that reason and for one more — it is the only row `consistency`

@@ -211,6 +211,23 @@ describe('the generated command reference', () => {
     expect(BEHAVIOUR_EXIT_CODES).toContain('vacuous');
     expect(BEHAVIOUR_EXIT_CODES).toContain('liveness');
     expect(BEHAVIOUR_EXIT_CODES).toContain('a bound the walk hit');
+    // THE TWO DISCHARGE SHAPES OF THE 0 ROW, named separately (§2.1): `covered`
+    // is existential and stands on a partial walk, so "held on every reachable
+    // configuration over a graph seen whole" is false of it twice over — and
+    // exit 0 has to keep meaning what `--help` says it means.
+    expect(BEHAVIOUR_EXIT_CODES).toContain(
+      '0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every `cover` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide',
+    );
+    // And the 2 row's clause for the decided absence that is not a refutation.
+    expect(BEHAVIOUR_EXIT_CODES).toContain(
+      'or a `cover` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — `--cover-required` spends the 1 for it instead',
+    );
+    // And the 1 row's second cause, in the 2 row's words: an `inconclusive`
+    // cover is also one the walk did not witness, and it exits 2 under the
+    // flag, not 1 — "did not witness" alone over-stated.
+    expect(BEHAVIOUR_EXIT_CODES).toContain(
+      'or, under --cover-required, a cover this walk did not witness on any run it saw whole',
+    );
     expect(BEHAVIOUR_EXIT_CODES).not.toBe(VERIFY_EXIT_CODES);
     const behaving = COMMANDS.filter((c) => c.exitContract === 'behaviour').map((c) => c.name);
     expect(behaving, 'the behaviour contract is declared by exactly `check-behaviour`').toEqual([
@@ -420,6 +437,9 @@ describe('the `--pattern` vocabulary and the catalogue behind it', () => {
       PATTERNS.filter((p) => p.kind === 'liveness').map((p) => p.name),
       'the liveness pair moved — the --pattern row says the LAST TWO are liveness',
     ).toEqual(PATTERN_NAMES.slice(-2));
+    // The guarantee row sits between the two groups, and the row says so.
+    expect(PATTERN_NAMES.indexOf('cover')).toBe(PATTERN_NAMES.length - 3);
+    expect(row!).toContain('GUARANTEE');
   });
 });
 

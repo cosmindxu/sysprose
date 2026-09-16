@@ -503,11 +503,15 @@ const CODES = [
   // SEVERITY SPLITS THEM IN TWO, and the split is the reading rule. The
   // undecided codes are INFO: none of them is a defect in the model, and none
   // of them is a verdict — they are the tool saying what it did not decide,
-  // which is the one thing a silence could never say. Exactly two are ERRORS
-  // because they say something about the MODEL: `verification/refuted`, the
-  // violation this lane exists to find, and `verification/vacuous-property`,
-  // which exists only because `--strict-vacuity` asked for a vacuity to be
-  // loud. A consumer filtering on severity would otherwise read the loudest
+  // which is the one thing a silence could never say. The ERRORS are the codes
+  // that say something about the MODEL — `verification/refuted`, the violation
+  // this lane exists to find, at their head — plus the two a flag asks for:
+  // `verification/vacuous-property`, which exists only because
+  // `--strict-vacuity` asked for a vacuity to be loud, and
+  // `verification/cover-required`, which exists only because `--cover-required`
+  // asked for a decided absence to spend the 1. `src/api/verification.ts`
+  // keeps the same set and a test compares the two, so the split here is the
+  // split a consumer sees. A consumer filtering on severity would otherwise read the loudest
   // verdict in a run at the same level as "this construct is outside the
   // fragment".
   {
@@ -842,8 +846,13 @@ const CODES = [
     code: 'verification/malformed-property',
     source: 'verification',
     severity: 'info',
-    when: 'A behavioural property could not be read as one: a `pattern` outside the catalogue (`absence`, `universality`, `bounded-existence`, `precedence`, `existence`, `response`), a `scope` outside its five, a field the pattern needs and did not get, a `bounded-existence` with no `n`, a `--pattern` that is not `key=value` — or an expression atom that parses and is not a predicate, so it yielded a number (or nothing) where the walk needed a boolean.',
-    hint: 'Write the property as `pattern=absence, scope=globally, p=state failsafe`, which is exactly the field set the `@SysproseVerification::PropertyPattern` carrier uses. A property nobody could read is never dropped from the run: it is inconclusive and exits 2, because a typo that silently removed a claim would look like a clean sweep.',
+    // The seven names are a HAND COPY of `PATTERNS` (`src/semantics/mc/patterns.ts`),
+    // for the reason `PATTERN_NAMES` in `scripts/lib/sysprose-spec.ts` is one:
+    // this module imports nothing from the semantics layer and is read by three
+    // doc guards. `test/unit/semantics.mc.patterns.test.ts` asserts the copy
+    // names every catalogue pattern and nothing outside it.
+    when: 'A behavioural property could not be read as one: a `pattern` outside the catalogue (`absence`, `universality`, `bounded-existence`, `precedence`, `cover`, `existence`, `response`), a `scope` outside its five, a field the pattern needs and did not get, a `bounded-existence` with no `n`, a `--pattern` that is not `key=value` — or an expression atom that parses and is not a predicate, so it yielded a number (or nothing) where the walk needed a boolean.',
+    hint: 'Write the property as `pattern=absence, scope=globally, p=state failsafe` — or `pattern=cover, scope=globally, p=state failsafe` to ask whether some run reaches the situation rather than whether none does — which is exactly the field set the `@SysproseVerification::PropertyPattern` carrier uses. A property nobody could read is never dropped from the run: it is inconclusive and exits 2, because a typo that silently removed a claim would look like a clean sweep.',
   },
   {
     code: 'verification/unknown-atom',
@@ -851,6 +860,26 @@ const CODES = [
     severity: 'info',
     when: 'A name in a property names nothing the machine has: `state X` for a state it does not declare, `trigger t` for a trigger no transition names, `fires T` for a transition with no such declared name, `node N` for no such node — or an expression reading a feature that is in no scope the walk offered. A name matching several elements lands here too, rather than resolving to whichever the walk reached first.',
     hint: 'The row lists what the machine DOES offer, so a misspelling is one line from being fixed; on an ambiguous name, write the qualified one. This is never read as "the atom is false": `absence of state failsafe` would then PASS the moment `failsafe` were misspelt, which is the loudest way this lane could print a green verdict that means nothing.',
+  },
+
+  // The two `cover` adds. `cover` is the one pattern whose negative answer is a
+  // behaviour the design does not admit rather than a requirement it violates,
+  // which is why the first is INFO and exits 2 — and why the second exists at
+  // all: an error a reader has to ask for, added beside the first and never in
+  // its place.
+  {
+    code: 'verification/not-covered',
+    source: 'verification',
+    severity: 'info',
+    when: 'A `cover` property — "can this design reach the situation I name?" — found no witness over a graph the walk saw whole: no explored run enters a configuration where its `p` atom holds inside an open scope segment. It is a DECIDED absence, published under the same five conditions a `pass` is (a bound hit or an undecided guard makes the row `inconclusive` instead, and the row says the not-covered claim is not made), and it is a missing behaviour rather than a violated requirement: the run exits 2, never 1, unless `--cover-required` is given.',
+    hint: 'Read the sentence as an answer, not a limit: the design as written admits no run into that situation within the printed bounds. If that situation is one the design must reach, add the transition or the trigger that gets there — or pass `--cover-required`, which makes the row exit 1 and adds `verification/cover-required` beside this line without changing the claim word. A witness that IS found prints as `covered` with the run step by step; the positive answer carries no code.',
+  },
+  {
+    code: 'verification/cover-required',
+    source: 'verification',
+    severity: 'error',
+    when: '`--cover-required` was given and a `cover` property came back `not covered`. The flag spends the exit code’s 1 on a decided absence — a behaviour the author says this design MUST admit and it does not — and this error is ADDED beside the `verification/not-covered` info line, never in its place, so a flagged run and a plain run print the same claim word and the same info finding and differ only by this error and the exit code. The flag never re-grades a row that is `inconclusive` under `verification/guard-undetermined`: on every such cover the run says `--cover-required not applied`, counts how many of the cover’s unreached states sit behind a guard over an attribute with no declared value (which the walk read as false), and stays at exit 2, because an answer about an unbound model parameter is not an answer about a design that violates something.',
+    hint: 'The claim is still `not-covered`, not `fail`: nothing was refuted, and `verification/refuted` is never printed for a missing behaviour. Add the run the cover asks for, give the guarded attribute a value the walk can read if the row was withheld instead, or drop the flag and take exit 2 as the answer it is.',
   },
 
   /* ── round-trip oracle ── */

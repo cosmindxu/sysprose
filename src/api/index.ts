@@ -482,10 +482,15 @@ export type { Components } from '../semantics/mc/scc';
 // the same reason: `check-behaviour` is a rendering of `behaviourReport`, and a
 // checker an agent could only reach by spawning a CLI is not an in-process API.
 export {
+  COVER_REQUIRED_CODE,
+  coverRequiredRefusal,
+  NOT_COVERED_CODE,
   PATTERNS,
   PROPERTY_FIELDS,
   PROPERTY_PATTERN_CODES,
   SCOPES,
+  SEMANTICS_ADMITS,
+  WALK_ADMITS,
   behaviourReport,
   checkProperty,
   isPropertyCarrier,
@@ -498,6 +503,7 @@ export type {
   BehaviourReport,
   Modality,
   ModalityValue,
+  CoverCensus,
   PatternClass,
   PatternName,
   PatternSpec,

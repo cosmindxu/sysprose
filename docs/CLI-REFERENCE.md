@@ -41,7 +41,7 @@ file back, and they have no exit 1 at all:
 0 written · 2 usage/IO error, or a model that did not load cleanly — a degraded model is refused rather than partially rewritten, so there is no exit 1.
 `check-behaviour` judges a *machine* and carries another,
 because there is no solver in that lane and no `--free` for it either:
-0 every property stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass. There is no solver in this lane and no --free: the walk reads the model’s own values.
+0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every `cover` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits — or, under --cover-required, a cover this walk did not witness on any run it saw whole · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass — or a `cover` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — `--cover-required` spends the 1 for it instead. There is no solver in this lane and no --free: the walk reads the model’s own values.
 `fault-tree` judges an *architecture from the failure side* and carries the last of them,
 because its 1 is a combination of contract failures rather than one refuted
 obligation — a decomposition that refines can still have a single point of
@@ -88,7 +88,7 @@ rather than reporting on the first one.
 | [`evidence-attach`](#evidence-attach) | Write the records of a verify run into the file, as annotations on what they are about | `evidenceAttach` | writes |
 | [`evidence-detach`](#evidence-detach) | Take every evidence record back off the file, and the verdict facets with them | `evidenceDetach` | writes |
 | [`reach`](#reach) | Which states are reachable, which transitions are dead, where did the simulator hide a choice? | `reach` | reports |
-| [`check-behaviour`](#check-behaviour) | Does this safety pattern hold on every reachable configuration? | `behaviour` | judges |
+| [`check-behaviour`](#check-behaviour) | Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? | `behaviour` | judges |
 
 ### Options every subcommand takes
 
@@ -465,7 +465,7 @@ Computed by `reachReport (src/semantics/mc/explore.ts)`. With `--json` the answe
 
 ### `check-behaviour`
 
-**Does this safety pattern hold on every reachable configuration?**
+**Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name?**
 
 ```bash
 npm run sysprose -- check-behaviour <file.sysml|-> [options]
@@ -474,13 +474,14 @@ npm run sysprose -- check-behaviour <file.sysml|-> [options]
 | Flag | What it does | Default |
 |---|---|---|
 | `--element REF` | The state machine to check: an id, a qualified name, or a name unique in the model. Required | — |
-| `--pattern SPEC` | One property, in the same field names the @SysproseVerification::PropertyPattern carrier uses: `pattern=absence, scope=globally, p=state failsafe`. Patterns: absence \| universality \| bounded-existence \| precedence \| existence \| response — the last two are LIVENESS and report inconclusive, because a bad-prefix search decides neither. Scopes: globally \| before \| after \| between \| after-until. Atoms: `state X`, `trigger t`, `fires T`, `node N`, or an expression. It is checked BESIDE the carriers, never instead of them, and a field value may hold no comma or semicolon (the carrier form has no such limit) | the properties the machine itself carries |
+| `--pattern SPEC` | One property, in the same field names the @SysproseVerification::PropertyPattern carrier uses: `pattern=absence, scope=globally, p=state failsafe`. Patterns: absence \| universality \| bounded-existence \| precedence \| cover \| existence \| response — the first four are SAFETY and are decided here; `cover` is a GUARANTEE (can some run reach the situation I name?), decided here in both directions and answered `covered` with a witness or `not covered`; the last two are LIVENESS and report inconclusive, because a bad-prefix search decides neither. Scopes: globally \| before \| after \| between \| after-until. Atoms: `state X`, `trigger t`, `fires T`, `node N`, or an expression. It is checked BESIDE the carriers, never instead of them, and a field value may hold no comma or semicolon (the carrier form has no such limit) | the properties the machine itself carries |
 | `--max-configs N` | Configurations to explore before the walk gives up. A walk that hits it can still REFUTE a property — a witness is a real run — and can never pass one: no bad prefix in part of a graph is not the absence of one, so the row is inconclusive and the run exits 2 | 10000 configurations |
 | `--strict-vacuity` | Raise a vacuous property from a row to verification/vacuous-property, an error. It does NOT change the exit code: a vacuity is inconclusive and exits 2 with the flag and without it | — |
+| `--cover-required` | Exit 1 on a `cover` property that came back not covered, adding verification/cover-required (an error) beside the verification/not-covered line. It raises the exit code and NEVER the claim: the row still says `not covered`, never `fail`, because a missing behaviour is not a violated requirement. Not applied where the row is inconclusive under verification/guard-undetermined — the run says so beside the row, counting how many of the cover's unreached states sit behind a guard over an attribute with no declared value, and stays at exit 2 | — |
 
 Computed by `behaviourReport (src/semantics/mc/patterns.ts)`. With `--json` the answer is published under `behaviour`, beside `ok` and `file`.
 
-**Exit codes.** 0 every property stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass. There is no solver in this lane and no --free: the walk reads the model’s own values.
+**Exit codes.** 0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every `cover` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits — or, under --cover-required, a cover this walk did not witness on any run it saw whole · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass — or a `cover` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — `--cover-required` spends the 1 for it instead. There is no solver in this lane and no --free: the walk reads the model’s own values.
 
 ### `trace` relationship presets
 

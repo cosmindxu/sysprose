@@ -73,6 +73,9 @@ const MODELS = [
   'test/fixtures/verification/models/guard-undetermined.sysml',
   'test/fixtures/verification/models/succession-mixed.sysml',
   'test/fixtures/verification/models/succession-only.sysml',
+  'test/fixtures/verification/models/latch.sysml',
+  'test/fixtures/verification/models/cover-reachable.sysml',
+  'test/fixtures/verification/models/cover-sealed.sysml',
   'test/fixtures/agent-authoring/L2-bare-transition-arrow/fixed.sysml',
   'test/fixtures/agent-authoring/L3-unresolved-transition-end/input.sysml',
   'test/fixtures/agent-authoring/L3-unresolved-transition-end/fixed.sysml',
@@ -582,23 +585,25 @@ describe('the registers are data, and every column is asserted', () => {
     // is machinery this register RECORDS rather than machinery it repairs. The
     // set is pinned so a feature landing without its row being wired is red.
     // A9 joined it with the scoped staleness comparison (§3.3b), whose producer
-    // is a checker rule's reading and not a walk at all. A6 and its rider W2
-    // joined it with the trap list (§3.2a) — the first increasing claim to be
-    // published, and both point at `reachOne` because that is where the gate
-    // is applied, not where the component arithmetic lives. A8 and W3 joined
-    // it together, with the modality (§3.R): the two values of one field,
-    // composed by one function, which is what "gated together and by one
-    // predicate" means when it is data rather than prose.
+    // is a checker rule's reading and not a walk at all. A5 and W1 joined it
+    // with `cover` (§3.1) — the first witness row in the register to ship; A6
+    // and its rider W2 with the trap list (§3.2a), both pointing at `reachOne`
+    // because that is where the gate is applied, not where the component
+    // arithmetic lives; A8 and W3 together, with the modality (§3.R): the two
+    // values of one field, composed by one function, which is what "gated
+    // together and by one predicate" means when it is data rather than prose.
     expect(ALL_ROWS.filter((r) => r.producedBy !== null).map((r) => r.id)).toEqual([
       'A0',
       'A1',
       'A2',
       'A3',
       'A4',
+      'A5',
       'A6',
       'A8',
       'A9',
       'A14',
+      'W1',
       'W2',
       'W3',
     ]);
@@ -705,9 +710,9 @@ describe('the registers are data, and every column is asserted', () => {
   });
 
   it('A0–A5, the six decreasing rows, read the conjunction the shipped commands read', () => {
-    // Five of the six ship today; A5 (`cover`, §3.1) is not built, and it is
-    // listed here because its POLARITY is settled — it reads `decreasingOk`
-    // when it lands, and a later commit wiring it to the gate is red here.
+    // All six ship. A5 (`cover`'s `not covered`, §3.1) was listed here before
+    // it was built because its POLARITY was settled — it reads `decreasingOk`,
+    // and a commit wiring it to the exactness gate is red here.
     for (const id of ['A0', 'A1', 'A2', 'A3', 'A4', 'A5']) {
       const row = ABSENCE_CLAIMS.find((r) => r.id === id)!;
       expect(row.walkRequires, id).toBe('decreasingOk');
@@ -760,6 +765,31 @@ describe('the registers are data, and every column is asserted', () => {
       expect(w.walkRequires, w.id).toBe('relationIsTheMachines');
       expect(w.perStepAlternative, w.id).toBe(true);
     }
+  });
+
+  it('W1 stands on a partial walk: the `--max-configs d` witness still publishes `covered`', async () => {
+    // The register's claim, run rather than read. Without this beside the
+    // reflection above, that assertion and `cover`'s bound-frontier case would
+    // be mutually unsatisfiable, and the cheap repair would have been to weaken
+    // the reflection. The witness on the reachable probe is two steps deep;
+    // at `maxConfigs 2` the walk is partial and the row is still `covered`.
+    const file = 'test/fixtures/verification/models/cover-reachable.sysml';
+    const r = await loadModelText(read(file), { fileName: file });
+    const machine = r.model!.all().find((el) => r.model!.qualifiedName(el.id) === 'CoverProbe::Reachable::Modes')!;
+    const row = checkProperty(
+      r.model!,
+      machine.id,
+      { source: 'flag', carrier: null, pattern: 'cover', scope: 'globally', p: 'state failsafe' },
+      { maxConfigs: 2 },
+    );
+    expect(row.claim).toBe('covered');
+    expect(row.exhaustive).toBe(false);
+    expect(row.boundHit).not.toBe('none');
+    expect(row.qualification).toContain('partial under {maxConfigs 2');
+    expect(row.witness).toHaveLength(3);
+    // And `decreasingOk` reads FALSE on the same walk — which is what a row
+    // reading it would have withheld the witness on.
+    expect(publishabilityOf(exploreMachine(r.model!, machine.id, { maxConfigs: 2 })).decreasingOk).toBe(false);
   });
 
   it('every maximality witness reads the whole gate', () => {
@@ -1109,8 +1139,8 @@ describe('the exactness gate, clause by clause', () => {
 /* ═════════ the survey the gate is priced on, re-measured rather than quoted ═══ */
 
 /**
- * What the exactness gate answers on every machine in the tree, machine by
- * machine.
+ * What the exactness gate answers on the eleven machines the tree carried when
+ * the gate landed, machine by machine.
  *
  * The plan's §5(d) survey is the kill measurement every feature that reads this
  * gate is retired on, and a survey that lives only in a document is a number
@@ -1118,7 +1148,11 @@ describe('the exactness gate, clause by clause', () => {
  * are the ones that ALREADY report `suppressed: true` today — one on the
  * unsupported construct, one on the guard clause — so the gate suppresses
  * nothing the shipped flag does not already suppress, and the honest reading of
- * that is *the gate is free on this corpus*, not *the gate is proven*.
+ * that is *the gate is free on THESE ELEVEN*, not *the gate is proven* and not
+ * *free on the tree*: the machines added since (`latch.sysml`, then the two
+ * `cover` probes) are pinned in the last case below, and two of them are the
+ * shape these eleven cannot show — refused on the environment clause with
+ * `suppressed: false`.
  */
 const EXACTNESS_SURVEY: Array<{
   file: string;
@@ -1183,7 +1217,7 @@ const EXACTNESS_SURVEY: Array<{
   },
 ];
 
-describe('the exactness survey, over every machine the tree had', () => {
+describe('the exactness survey, over the eleven machines the tree had when the gate landed', () => {
   it('reads the gate machine by machine: nine exact, two refused, and which clause refused each', () => {
     const seen: string[] = [];
     for (const want of EXACTNESS_SURVEY) {
@@ -1224,14 +1258,43 @@ describe('the exactness survey, over every machine the tree had', () => {
 
   it('leaves clauses (b) and (c) unfalsifiable by this corpus, which is what the fixtures are for', () => {
     // No `.sysml` file in the tree carries a dwell — `accept after(n)` is a
-    // parse error and `attrs.after` has no notation at all — and only one names
-    // a trigger. Said plainly here rather than implied: no run of the shipped
-    // examples is evidence that either clause behaves correctly.
+    // parse error and `attrs.after` has no notation at all — and none of the
+    // eleven names a trigger (the tree's trigger-naming machines sit outside
+    // the survey; see the next case). Said plainly here rather than implied:
+    // no run of the shipped examples is evidence that either clause behaves
+    // correctly.
     for (const want of EXACTNESS_SURVEY) {
       const model = loaded.find((l) => l.file === want.file)!.model;
       const row = reachReport(model).machines.find((m) => m.machine.qualifiedName === want.machine)!;
       expect(row.exactness.timedTransitions, want.machine).toBe(0);
       expect(row.exactness.alphabet, want.machine).toBe(0);
+    }
+  }, 300_000);
+
+  it('names the machines added since, outside the survey premise: two refused on the environment clause and NOT suppressed, one exact', () => {
+    // `latch.sysml` (since eb36d71) and `cover-reachable.sysml` (commit 6)
+    // each name a trigger, so clause (c) refuses them and the shipped
+    // `suppressed` flag never fired on either — the one shape the eleven
+    // above cannot show, and the reason "free on this corpus" is a claim
+    // about those eleven. `cover-sealed.sysml` is exact. They stay out of
+    // `EXACTNESS_SURVEY` because two of its three premises (refused ⇒
+    // suppressed; alphabet 0) are exactly what the first two falsify.
+    const outside = [
+      { file: 'test/fixtures/verification/models/latch.sysml', machine: 'Latch::Latch::Modes', failedClause: 'environment', alphabet: 1 },
+      { file: 'test/fixtures/verification/models/cover-reachable.sysml', machine: 'CoverProbe::Reachable::Modes', failedClause: 'environment', alphabet: 1 },
+      { file: 'test/fixtures/verification/models/cover-sealed.sysml', machine: 'CoverProbe::Sealed::Modes', failedClause: null, alphabet: 0 },
+    ];
+    for (const want of outside) {
+      expect(EXACTNESS_SURVEY.some((r) => r.machine === want.machine), `${want.machine} is in the survey`).toBe(false);
+      const model = loaded.find((l) => l.file === want.file)!.model;
+      const row = reachReport(model).machines.find((m) => m.machine.qualifiedName === want.machine);
+      expect(row, `${want.file} no longer declares ${want.machine}`).toBeDefined();
+      expect(row!.exactness.walkIsExact, want.machine).toBe(want.failedClause === null);
+      expect(row!.exactness.failedClause, want.machine).toBe(want.failedClause);
+      expect(row!.suppressed, want.machine).toBe(false);
+      expect(row!.exactness.alphabet, want.machine).toBe(want.alphabet);
+      expect(row!.exactness.timedTransitions, want.machine).toBe(0);
+      expect(row!.census.counts.unaccounted, want.machine).toBe(0);
     }
   }, 300_000);
 });
@@ -1270,7 +1333,7 @@ function triggerAndDwellMachine(): { model: Model; machineId: ElementId } {
 }
 
 describe('each clause of the gate, on the one input that can fail it', () => {
-  it('names `environment` on the latch file — the only model in the tree that names a trigger', async () => {
+  it('names `environment` on the latch file — one of the two models in the tree that name a trigger (the other, `cover-reachable.sysml`, is pinned in the successors suite)', async () => {
     const file = 'test/fixtures/verification/models/latch.sysml';
     const r = await loadModelText(read(file), { fileName: file });
     const row = reachReport(r.model!).machines[0];

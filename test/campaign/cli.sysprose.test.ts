@@ -4583,6 +4583,134 @@ package P {
     expect(decided.stdout).toContain('exhaustive under {maxConfigs 10000');
   }, 90_000);
 
+  it('check-behaviour decides a `cover` in both directions, and spends the 1 only when asked', async () => {
+    // THE POLARITY DEFECT, at the surface a person uses. `absence of state
+    // failsafe` is red on the design that can reach failsafe and green on the
+    // one that cannot; `cover` is the same question asked the right way round,
+    // with a claim word, a witness and an exit code of its own.
+    const reachable = resolve(process.cwd(), `${FIXV}/models/cover-reachable.sysml`);
+    const sealed = resolve(process.cwd(), `${FIXV}/models/cover-sealed.sysml`);
+    const pattern = 'pattern=cover, scope=globally, p=state failsafe';
+    const covered = await run(['check-behaviour', reachable, '--element', 'CoverProbe::Reachable::Modes', '--pattern', pattern]);
+    expect(covered.code).toBe(0);
+    expect(covered.stdout).toContain('0 pass, 0 fail, 0 vacuous, 0 inconclusive, 1 covered, 0 not covered');
+    expect(covered.stdout).toContain(
+      'pass, fail, vacuous, inconclusive, covered, not covered are the six words this command reaches',
+    );
+    expect(covered.stdout).toContain('COVERED      `state failsafe` holds on some run');
+    expect(covered.stdout).toContain('covered — witness trace of 2 step(s), a run this semantics admits');
+    expect(covered.stdout).toContain('witness — a run this semantics admits:');
+    // The witness consumed `abort`, so the environment sentence prints beside it.
+    expect(covered.stdout).toContain('the environment offered every trigger this machine names at every configuration');
+    expect(covered.stdout).not.toContain('verification/refuted');
+    expect(covered.stdout).not.toMatch(/\bPASS\b|\bproved\b|\bverified\b/);
+
+    // The decided absence: exit 2, an info line, never `fail`.
+    const notCovered = await run(['check-behaviour', sealed, '--element', 'CoverProbe::Sealed::Modes', '--pattern', pattern]);
+    expect(notCovered.code).toBe(2);
+    expect(notCovered.stdout).toContain('0 pass, 0 fail, 0 vacuous, 0 inconclusive, 0 covered, 1 not covered');
+    expect(notCovered.stdout).toContain('NOT-COVERED  `state failsafe` holds on some run');
+    expect(notCovered.stdout).toContain('not covered under {maxConfigs 10000');
+    expect(notCovered.stdout).toContain('over 2 configuration(s)');
+    expect(notCovered.stdout).toContain('info verification/not-covered');
+    expect(notCovered.stdout).not.toContain('verification/refuted');
+    expect(notCovered.stdout).not.toContain('verification/cover-required');
+    expect(notCovered.stdout).not.toMatch(/\bFAIL\b/);
+
+    // `--cover-required`: exit 1, the error ADDED beside the info line, and
+    // the same claim word — never `fail`, never `verification/refuted`.
+    const required = await run(['check-behaviour', sealed, '--element', 'CoverProbe::Sealed::Modes', '--pattern', pattern, '--cover-required']);
+    expect(required.code).toBe(1);
+    expect(required.stdout).toContain('NOT-COVERED  `state failsafe` holds on some run');
+    expect(required.stdout).toContain('error verification/cover-required');
+    expect(required.stdout).toContain('info verification/not-covered');
+    expect(required.stdout).toContain('--cover-required: every not-covered row above is also an error below and spends the 1');
+    expect(required.stdout).not.toContain('verification/refuted');
+    expect(required.stdout).not.toMatch(/\bFAIL\b/);
+
+    // Correction 23: the flag spends no 1 on a cover withheld under a guard
+    // nothing valued, and says so beside the row.
+    const probe = resolve(process.cwd(), `${FIXV}/models/guard-undetermined.sysml`);
+    const withheld = await run(['check-behaviour', probe, '--element', 'GuardProbe::Ctrl::Modes', '--pattern', 'pattern=cover, scope=globally, p=state hazard', '--cover-required']);
+    expect(withheld.code).toBe(2);
+    expect(withheld.stdout).toContain('INCONCLUSIVE');
+    expect(withheld.stdout).toContain(
+      '--cover-required not applied: this cover is inconclusive under verification/guard-undetermined, not `not covered`',
+    );
+    // COUNTED, never "every": `1 of its 1` here, and the universal an earlier
+    // wording printed is pinned absent.
+    expect(withheld.stdout).toContain('1 of its 1 unreached state(s) sits behind a guard over an attribute with no declared value');
+    expect(withheld.stdout).not.toContain('every unreached state');
+    expect(withheld.stdout).toContain('warning verification/guard-undetermined');
+    expect(withheld.stdout).not.toContain('verification/cover-required');
+
+    // And on a withheld cover whose census is 0 — the undecided edge leads
+    // back to a state the walk reached anyway, and the cover names an orphan —
+    // the line prints all the same, at `0 of its 1`: the flag declined on
+    // this row too, and the trailing `--cover-required:` line alone would
+    // leave a reader thinking it applied.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cover-'));
+    try {
+      const zero = join(dir, 'zero.sysml');
+      writeFileSync(
+        zero,
+        `package ZeroCensus {
+    part def Ctrl {
+        attribute mode : Integer;
+        state def Modes {
+            state idle;
+            state hazard;
+            state orphan;
+            transition idle then hazard;
+            transition hazard if mode == 3 then idle;
+        }
+    }
+}
+`,
+      );
+      const declined = await run(['check-behaviour', zero, '--element', 'ZeroCensus::Ctrl::Modes', '--pattern', 'pattern=cover, scope=globally, p=state orphan', '--cover-required']);
+      expect(declined.code).toBe(2);
+      expect(declined.stdout).toContain('INCONCLUSIVE');
+      expect(declined.stdout).toContain('--cover-required not applied: this cover is inconclusive under verification/guard-undetermined');
+      expect(declined.stdout).toContain('0 of its 1 unreached state(s) sit behind a guard over an attribute with no declared value');
+      expect(declined.stdout).toContain('warning verification/guard-undetermined');
+      expect(declined.stdout).not.toContain('verification/cover-required');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    // `--json`: both counts present and labelled, the census inside the row,
+    // and the top-level key list unmoved.
+    const j = await run(['check-behaviour', reachable, '--element', 'CoverProbe::Reachable::Modes', '--pattern', pattern, '--json']);
+    expect(j.code).toBe(0);
+    const { keys, body } = payload<{
+      verdict: { covered: number; notCovered: number; exitCode: number };
+      behaviour: {
+        coverRequired: boolean;
+        counts: { covered: number; notCovered: number };
+        properties: Array<{
+          claim: string;
+          code: string | null;
+          patternClass: string;
+          configs: number;
+          machineConfigs: number;
+          cover: { atomKind: string; scope: string; coverUnreached: number; coverUnreachedBehindUndefinedGuard: number };
+        }>;
+      };
+    }>(j);
+    expect(keys).toEqual(['behaviour', 'file', 'ok', 'verdict']);
+    expect(body.verdict).toMatchObject({ covered: 1, notCovered: 0, exitCode: 0 });
+    expect(body.behaviour.coverRequired).toBe(false);
+    expect(body.behaviour.counts).toMatchObject({ covered: 1, notCovered: 0 });
+    const p = body.behaviour.properties[0];
+    expect(p.claim).toBe('covered');
+    expect(p.code).toBeNull();
+    expect(p.patternClass).toBe('guarantee');
+    expect(p.configs).toBe(2);
+    expect(p.machineConfigs).toBe(3);
+    expect(p.cover).toEqual({ atomKind: 'state', scope: 'globally', coverUnreached: 0, coverUnreachedBehindUndefinedGuard: 0 });
+  }, 240_000);
+
   it('reach reports a file with no machine at all, and exits 0 doing it', async () => {
     // NOT a usage error. Nothing was misused and nothing failed to load: the
     // file simply declares no machine, which is a fact about the model and the

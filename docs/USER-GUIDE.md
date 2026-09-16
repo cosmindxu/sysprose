@@ -2087,20 +2087,23 @@ is not a bound, or an `--element` that names something holding no machine.
 interpreter and the walk share), `src/semantics/mc/explore.ts` and
 `src/semantics/mc/profile.ts`.
 
-### Whether a safety property holds on every configuration
+### Whether a safety property holds on every configuration, and whether a situation can be reached
 
 `reach` reports on a machine. `check-behaviour` **judges a claim you made about
 one**: a *property pattern* — a shape with holes in it — filled with *atoms*
 that name things the walk can observe. It walks the same configuration graph
 `reach` walks, looking for a **bad prefix**: a finite run that breaks the
 property. Finding one is a `fail`, printed as that run. Finding none over a
-graph the walk saw *whole* is a `pass`. Everything else is said out loud.
+graph the walk saw *whole* is a `pass`. One pattern, `cover`, asks the opposite
+question — *can some run get here?* — and the same search answers it the other
+way round: a run found is `covered`, printed as that run; none found over a
+graph seen whole is `not covered`. Everything else is said out loud.
 
 ```console
 $ npm run sysprose -- check-behaviour examples/uav-isr.sysml --element FlightModes \
     --pattern 'pattern=absence, scope=globally, p=state failsafe'
-examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pass, 1 fail, 0 vacuous, 0 inconclusive
-  a pass is a claim about every configuration this walk reached, under the bounds printed beside it, and about nothing outside them: pass, fail, vacuous, inconclusive are the four words this command reaches
+examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pass, 1 fail, 0 vacuous, 0 inconclusive, 0 covered, 0 not covered
+  a pass is a claim about every configuration this walk reached, under the bounds printed beside it, and about nothing outside them; a covered is a claim that ONE run this walk saw reaches the situation named, and not covered that none it saw whole does: pass, fail, vacuous, inconclusive, covered, not covered are the six words this command reaches
   liveness (`existence`, `response`) is NOT decided here: a bad-prefix search finds no bad prefix for either, so both report inconclusive
   FAIL         `state failsafe` never holds, over the whole run
     from --pattern
@@ -2140,6 +2143,66 @@ simulator's declaration-order tie-break never takes. In `--json` the same answer
 is the row's `modality` field — `value`, `sentence`, `failedClause`, `avoiding`
 — and it changes no count and no exit code.
 
+**But if reaching `failsafe` is what you WANTED, that `fail` is the wrong
+colour.** `absence` is red on the design that can get there and green on the
+one that cannot — the intent "can this design ever reach the situation I care
+about?" was, until `cover`, only expressible upside down. `cover` is the same
+search read the right way round:
+
+```console
+$ npm run sysprose -- check-behaviour model.sysml --element Modes \
+    --pattern 'pattern=cover, scope=globally, p=state failsafe'
+model.sysml: CoverProbe::Reachable::Modes — 1 property: 0 pass, 0 fail, 0 vacuous, 0 inconclusive, 1 covered, 0 not covered
+  …
+  COVERED      `state failsafe` holds on some run, over the whole run
+    from --pattern
+    covered — witness trace of 2 step(s), a run this semantics admits: `state failsafe` holds on some run, over the whole run — the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it
+    2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet abort, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space
+    witness — a run this semantics admits:
+       0  start → CoverProbe::Reachable::Modes::idle
+       1  completion idle -> armed → CoverProbe::Reachable::Modes::armed
+       2  on `abort` armed -> failsafe on `abort` → CoverProbe::Reachable::Modes::failsafe  [holds p]
+```
+
+Exit 0, a witness, and the environment sentence beside it: the walk offers
+every trigger the machine names at every configuration, so a run that consumed
+`abort` is a claim about *that* environment and not about one that never sends
+it. On the sealed twin — the same machine with the `abort` edge removed — the
+row reads `NOT-COVERED`, `not covered under {…} — over 2 configuration(s)`, an
+**info** line `verification/not-covered`, and **exit 2**: a decided absence, a
+missing behaviour, and not a violated requirement. Nothing was refuted, so the
+1 is not spent — unless you say the behaviour is required:
+
+```console
+$ npm run sysprose -- check-behaviour model.sysml --element Modes \
+    --pattern 'pattern=cover, scope=globally, p=state failsafe' --cover-required
+…
+  NOT-COVERED  `state failsafe` holds on some run, over the whole run
+  …
+  --cover-required: every not-covered row above is also an error below and spends the 1; the claim word is the same with the flag and without it
+  error verification/cover-required  …
+  info verification/not-covered  …
+```
+
+Exit 1 now — and the row still says `NOT-COVERED`, never `FAIL`, and the
+`verification/not-covered` line is still there under the added error. The flag
+moves the exit code and nothing else. Two more things the row tells you rather
+than leaving you to infer: `--max-configs` can hide a witness and can never
+invent one, so a `covered` found under a bound still stands (the bounds line
+says `partial under {…}`) while a `not covered` needs the whole graph, exactly
+as a `pass` does — below the bound the sealed twin is `inconclusive: bound
+exhausted — the not-covered claim is not made`. And a witness that crossed an
+`after(n)` dwell is a run the walk admits and the interpreter may never take,
+because this walk advances no clock; the row keeps the claim and re-words the
+warrant — `covered — witness trace of 1 step(s), a run this WALK admits: step 1
+fires `after(10)` (idle -> B on `after(10)`), a dwell this engine offers as a
+named event without advancing a clock, so the interpreter may never take this
+trace` — so the bare
+"a run this semantics admits" is never printed over a trace the semantics does
+not admit. On a machine where the walk explored a choice the simulator never
+takes, every `covered` also carries the simulator sentence: the claim is about
+the machine's semantics, and `simulate` may never produce the run.
+
 **The catalogue, and the half of it this engine will not decide.**
 
 | Pattern | Class | Reads | Decided here? |
@@ -2148,11 +2211,17 @@ is the row's `modality` field — `value`, `sentence`, `failedClause`, `avoiding
 | `universality` | safety | P holds at every configuration | yes |
 | `bounded-existence` | safety | P *occurs* at most `n` times | yes |
 | `precedence` | safety | S holds before P ever does | yes |
+| `cover` | **guarantee** | P holds on some run | yes — `covered` with a witness, or `not covered` (exit 2; exit 1 under `--cover-required`) |
 | `existence` | **liveness** | P holds at some point | **no** |
 | `response` | **liveness** | every P is followed by an S | **no** |
 
 A safety property is broken by a finite run, so a search for one either finds it
-or, having seen the whole graph, has not. A **liveness** property is broken only
+or, having seen the whole graph, has not. A **guarantee** — `cover` is
+Manna–Pnueli's `◇β` — is *confirmed* by a finite run, so the same search either
+finds one and prints it, or, having seen the whole graph, has not; it is the one
+pattern whose negative answer is a behaviour the design does not admit rather
+than a requirement it violates, which is why it has two words of its own and why
+`not covered` exits 2 by default. A **liveness** property is broken only
 by an infinite run that never delivers what it promised, and a bad-prefix search
 finds no bad prefix for one on *any* graph. Reporting "nothing found, so it
 holds" would print this command's strongest verdict for exactly the two
@@ -2210,11 +2279,14 @@ re-parsing a sentence.
 |---|---|---|
 | **pass** | no bad prefix, over a graph the walk saw **whole**, on a safety pattern | 0 |
 | **fail** | a bad prefix, printed as the run that produced it — still a fail under a bound, because a witness is a real run | 1 |
+| **covered** | a `cover` witnessed by a run, printed step by step — still covered under a bound, for the same reason; re-worded to *a run this WALK admits* where the run crossed a dwell or an undecided guard | 0 |
+| **not covered** | a `cover` no explored run witnessed, over a graph the walk saw **whole**: a decided absence and a missing behaviour, not a violated requirement (`verification/not-covered`, info) | **2** — or 1 under `--cover-required`, which adds `verification/cover-required` and changes no word |
 | **vacuous** | the property's antecedent never holds, over a graph the walk saw **whole**: a scope no run opens, or a `precedence` whose P never happens | **2** |
 | **inconclusive** | a bound hit — including one that stopped the walk before the antecedent, which is *not* a vacuity — a guard the walk could not evaluate, a construct the explorer refuses (parallel regions, history), a liveness pattern, a property that could not be read, or an atom that names nothing | **2** |
 
 **A bound can hide a violation and can never invent one**, which is why those
-two rows are not symmetric. `--max-configs N` that stops the walk turns a would-be
+rows are not symmetric — and why `covered` sits with `fail` on the witness side
+of the line and `not covered` with `pass` on the whole-graph side. `--max-configs N` that stops the walk turns a would-be
 pass into `inconclusive`; a violation found *inside* the same bound is still a
 violation. A vacuity is on the `pass` side of that line: "no run opens the scope"
 is a claim of *absence*, and a walk that stopped at a bound has not established

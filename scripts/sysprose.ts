@@ -92,10 +92,12 @@ import {
   signatureCensus,
   CONTRACT_LEVEL_NOTE,
   consistencyReport,
+  coverRequiredRefusal,
   DEADLOCK_WITHHELD_SENTENCE,
   DWELL_SENTENCE,
   ENVIRONMENT_SENTENCE,
   TRAP_REFUSAL_SENTENCE,
+  GUARD_UNDETERMINED_CODE,
   contractReport,
   CORE_SUFFICIENCY_NOTE,
   coreCount,
@@ -120,8 +122,10 @@ import {
   READING,
   reachReport,
   behaviourReport,
+  SEMANTICS_ADMITS,
   stateMachinesIn,
   traceLine,
+  WALK_ADMITS,
   transitionLabel,
   requirementSatisfaction,
   traceabilityMatrix,
@@ -308,12 +312,16 @@ interface RefinementVerdict {
   exitCode: number;
 }
 
-/** The same block for `check-behaviour`, whose figures are PROPERTIES. */
+/** The same block for `check-behaviour`, whose figures are PROPERTIES — six words, not four. */
 interface BehaviourVerdict {
   passed: number;
   failed: number;
   vacuous: number;
   inconclusive: number;
+  /** `cover` rows with a witness: discharged, like `passed`. */
+  covered: number;
+  /** `cover` rows decided absent: exit 2, or 1 under `--cover-required`. */
+  notCovered: number;
   exitCode: number;
 }
 
@@ -423,6 +431,8 @@ function judgeBehaviour(report: BehaviourReport, degraded: boolean): BehaviourVe
     failed: report.counts.failed,
     vacuous: report.counts.vacuous,
     inconclusive: report.counts.inconclusive,
+    covered: report.counts.covered,
+    notCovered: report.counts.notCovered,
     exitCode: degraded ? 2 : report.exitCode,
   };
 }
@@ -3564,7 +3574,7 @@ function behaviourMachine(model: Model, args: ParsedArgs): ElementRecord {
 }
 
 /** One property's block: the verdict, then the trace that stands behind it. */
-function propertyLines(v: PropertyVerdict): string[] {
+function propertyLines(v: PropertyVerdict, coverRequired: boolean): string[] {
   const from = v.property.source === 'flag' ? '--pattern' : `@PropertyPattern on ${v.property.carrier}`;
   const out: string[] = [
     `  ${v.claim.toUpperCase().padEnd(12)} ${v.sentence}`,
@@ -3579,8 +3589,21 @@ function propertyLines(v: PropertyVerdict): string[] {
   if (v.claim !== 'inconclusive' || v.configs > 0) {
     out.push(`    ${v.configs} product state(s) explored — ${v.qualification}`);
   }
+  // CORRECTION 23's disclosure. A cover withheld under an undecided guard is
+  // not `not covered` and the flag has no 1 to spend on it, so the row says
+  // so on EVERY such cover — the census may be 0 (the undecided edge leads
+  // somewhere the walk reached anyway) and the flag declined on that row all
+  // the same — quoting the census as a fraction rather than leaving a reader
+  // to wonder why the flag did nothing, or telling them "every" about states
+  // nothing counted.
+  if (coverRequired && v.cover !== undefined && v.code === GUARD_UNDETERMINED_CODE) {
+    out.push(`    ${coverRequiredRefusal(v.cover)}`);
+  }
   if (v.witness.length > 0) {
-    out.push('    witness — a run this semantics admits:');
+    // ONE STRING, TWO READERS: the header repeats the warrant `checkProperty`
+    // composed into the detail, so a `covered` row re-worded to the walk's
+    // warrant cannot print a header claiming the semantics'.
+    out.push(`    witness — ${v.detail.includes(WALK_ADMITS) ? WALK_ADMITS : SEMANTICS_ADMITS}:`);
     for (const step of v.witness) out.push(`      ${traceLine(step)}`);
   }
   return out;
@@ -3595,17 +3618,20 @@ function reportCheckBehaviour(model: Model, name: string, args: ParsedArgs): Rep
     ...(pattern !== undefined ? { pattern } : {}),
     ...(maxConfigs !== undefined ? { maxConfigs } : {}),
     strictVacuity: flagGiven(args, 'strict-vacuity'),
+    coverRequired: flagGiven(args, 'cover-required'),
   });
   const text = [
     `${name}: ${qname(model, machine.id)} — ${r.properties.length} propert${r.properties.length === 1 ? 'y' : 'ies'}: ` +
       `${r.counts.passed} pass, ${r.counts.failed} fail, ${r.counts.vacuous} vacuous, ` +
-      `${r.counts.inconclusive} inconclusive`,
+      // APPENDED after the four, never reordered: the campaign pins the
+      // four-bucket prefix as a substring on every transcript.
+      `${r.counts.inconclusive} inconclusive, ${r.counts.covered} covered, ${r.counts.notCovered} not covered`,
     // The two sentences that keep the command inside its remit: what a pass is
     // a claim about, and what this engine does not decide at all. It reaches
-    // four words and no others — and the three louder ones a reader might
+    // six words and no others — and the three louder ones a reader might
     // expect are not among them, which is said by their absence and by the
     // claims guard rather than by naming them here.
-    '  a pass is a claim about every configuration this walk reached, under the bounds printed beside it, and about nothing outside them: pass, fail, vacuous, inconclusive are the four words this command reaches',
+    '  a pass is a claim about every configuration this walk reached, under the bounds printed beside it, and about nothing outside them; a covered is a claim that ONE run this walk saw reaches the situation named, and not covered that none it saw whole does: pass, fail, vacuous, inconclusive, covered, not covered are the six words this command reaches',
     '  liveness (`existence`, `response`) is NOT decided here: a bad-prefix search finds no bad prefix for either, so both report inconclusive',
     ...(r.properties.length === 0
       ? [
@@ -3613,11 +3639,14 @@ function reportCheckBehaviour(model: Model, name: string, args: ParsedArgs): Rep
           '  write one with `--pattern "pattern=absence, scope=globally, p=state failsafe"`, or carry it in the model as `@SysproseVerification::PropertyPattern { attribute pattern = "absence"; … }`',
         ]
       : []),
-    ...r.properties.flatMap(propertyLines),
+    ...r.properties.flatMap((v) => propertyLines(v, r.coverRequired)),
     '  semantic profile (the reading every verdict above holds under):',
     ...profileLines('    '),
     ...(r.strictVacuity
       ? ['  --strict-vacuity: every vacuous row above is also an error below; the exit code is the same with the flag and without it']
+      : []),
+    ...(r.coverRequired
+      ? ['  --cover-required: every not-covered row above is also an error below and spends the 1; the claim word is the same with the flag and without it']
       : []),
     ...r.diagnostics.map((d) => `  ${d.severity} ${d.code}  ${d.message}`),
   ].join('\n');

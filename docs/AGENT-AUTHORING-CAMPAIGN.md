@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below) | 14 assertions |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 127 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 128 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -136,7 +136,7 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **101 catalogue codes** in
+`npm run check` is what raises it — beside **103 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3780,14 +3780,17 @@ that only simulated would have said the opposite.
 
 **The catalogue is split by what a bad-prefix search can decide, and the two it
 cannot are named rather than answered.** `absence`, `universality`,
-`bounded-existence` and `precedence` are safety properties and are decided.
-`existence` and `response` are LIVENESS: they are broken only by an infinite run
-that never delivers, and a bad-prefix search finds no bad prefix for one on any
-graph. Under a naïve "nothing found, so it holds" rule that would print this
-command's strongest verdict for exactly the two properties it cannot decide, so
-both report `inconclusive: liveness not checked in-process` until a lasso search
-lands and a fairness assumption is named. The refusal is asserted with a
-positive control beside it, on a graph where the safety sibling passes.
+`bounded-existence` and `precedence` are safety properties and are decided in
+the refuting direction. `cover` is a GUARANTEE and is decided in the witnessing
+direction — its two words, `covered` and `not covered`, are recorded further
+down in this section. `existence` and `response` are LIVENESS: they are broken
+only by an infinite run that never delivers, and a bad-prefix search finds no
+bad prefix for one on any graph. Under a naïve "nothing found, so it holds" rule
+that would print this command's strongest verdict for exactly the two properties
+it cannot decide, so both report `inconclusive: liveness not checked
+in-process` until a lasso search lands and a fairness assumption is named. The
+refusal is asserted with a positive control beside it, on a graph where the
+safety sibling passes.
 
 **A pass needs the whole graph; a fail does not.** `exhaustive` is computed from
 `exploreMachine`'s walk, over the same five conditions `reach` publishes under —
@@ -4803,7 +4806,7 @@ being the `#exceptional` states across every machine, unreachable from the
 contract lane by construction since a state is never a fault-injection top
 event. **Measured, and recorded plainly: the census reads 0 across the corpus.**
 Over the six shipped examples and every model under
-`test/fixtures/verification/models/` — twenty-six machines between them — no
+`test/fixtures/verification/models/` — twenty-eight machines between them — no
 machine carries an `#exceptional` state and none carries a failure-mode flag;
 `grep -rl exceptional --include=*.sysml` over the repository returns nothing. A
 census that finds nothing is the result, not a failure: the behavioural fault
@@ -4816,6 +4819,92 @@ assertions outlive the refusal case they sat in, and a `StateDefinition` is
 asserted beside the `StateUsage`. `COMMANDS.length` stays 22 and `RULES.length`
 stays 25; the `--json` top level stays `['faultTree','file','ok','verdict']`
 with the census inside the payload.
+
+**A positive reachability intent has a claim word, a witness and an exit code
+of its own, and its negative answer is decided rather than undecided.**
+Measured before the change, on a two-machine probe: the only spelling of "can
+this design ever reach `failsafe`?" was `absence of state failsafe`, which is
+**red** — `fail`, `verification/refuted`, an error, exit 1 — on the design that
+satisfies the intent, and **green** — `pass`, exit 0 — on the one that violates
+it; `pattern=existence` was refused as liveness. The catalogue now carries
+`cover`, the one guarantee-class pattern (Manna–Pnueli `◇β`): not finitely
+refutable, so the bad-prefix engine still refuses `existence`, but finitely
+witnessable, so the search that refutes `absence of P` confirms `cover P` with
+the same monitor byte for byte and only the verdict tail reading the breach the
+other way. It inserts before `existence`, because the `--pattern` help row says
+the last two names are liveness and a guard holds it to that. The vocabulary
+opened once, from four words to six — `covered`, a witness that stands on a
+partial walk for the reason a `fail` does, exit 0; `not covered`, a DECIDED
+absence over a graph seen whole, `verification/not-covered` as an info line,
+exit 2 — and is closed after them. Neither is laundered into the four:
+`covered ⇒ pass` would file a witness under a word meaning *every reachable
+configuration*, `not covered ⇒ inconclusive` a decided answer under the word
+reserved for undecided, `not covered ⇒ fail` a refutation of a design that
+violates nothing. `--cover-required` spends the 1 on a `not covered` row and
+changes NOTHING else: the claim word, the code and the sentence are asserted
+byte-identical with the flag and without it, and the flagged run emits
+`verification/cover-required` as an error ADDED beside the info line rather
+than in its place — a `continue` in that branch, which is the shape the
+`--strict-vacuity` branch it mirrors has, would have dropped the info row.
+**Two guards the plan assumed existed, now written:** the six count buckets
+are asserted to sum to the row count on every behaviour run in the suite, with
+and without both flags, because a word counted nowhere falls through the exit
+ternary to 0 — a green run that decided nothing; and every diagnostic a
+behaviour run emits is asserted to carry the catalogue's severity for its code.
+That second guard found a pre-existing drift the moment it ran: the findings
+loop derived severity from the CLAIM with per-branch overrides, so
+`verification/guard-undetermined` — catalogued a warning, and emitted as one by
+`reach` — reached `check-behaviour`'s output as `info`. Severity is now read off
+the code's set; the transcript line moved from `info` to `warning`, and no
+case had pinned the old word. **The first affirmative claim this lane
+publishes is gated, and the gate is the register's, not the bound's.**
+`covered` reads `relationIsTheMachines`, or the per-step alternative over the
+transitions the trace actually used — no step across a transition with
+`afterDuration` defined, tested on the transition record and never on the
+recorded label, and none across a transition the walk left undecided — and no
+member of the bound family, asserted by reading the producer's source and by
+running the `--max-configs d` frontier, where the witness at depth *d* stands
+at `d` and is `inconclusive` at `d − 1`. Where the disjunction fails the claim
+SURVIVES and the warrant is re-worded, never suppressed and never
+`inconclusive`: on a factory-built machine with `after(5)` declared before
+`after(10)` out of the same state, `cover (state B)` names a state the
+interpreter enters on no run, and the row prints `a run this WALK admits: step
+1 fires `after(10)`, a dwell this engine offers as a named event without
+advancing a clock, so the interpreter may never take this trace`, with the
+bare `a run this semantics admits` pinned as the wrong answer. Its mirror — a
+timed machine whose witness fired `abort` and crossed no dwell — keeps the bare
+wording with the environment sentence beside it, so the two rows partition. The
+three standing sentences of the plan's §2.4 — environment, dwell, simulator —
+are one exported constant each beside `CLAUSE_SENTENCE`, printed verbatim on
+the rows they belong to, and the `check-behaviour` summary line, the six-words
+sentence and the `--help` exit contract all moved: the 0 row now names its two
+discharge shapes separately, an assertion holding on every reachable
+configuration over a graph seen whole and a cover witnessed on a run this walk
+saw, because a `covered` under `--max-configs 2` exits 0 while the old sentence
+promised an exhaustive walk. **One place the plan's prose and the tree
+disagreed, and the tree won:** §3.1 said an unset-guard cover (`attribute mode :
+Integer;` with `if mode == 3`) prints `not covered` with the store named. The
+guard-undetermined branch fires ahead of everything and the register's row A5
+reads `decreasingOk`, which includes every guard decided — pinned
+byte-identically by the reflection suite — so the honest row is
+`inconclusive` under `verification/guard-undetermined`, the census counts the
+exposure as a fraction (`coverUnreached` and
+`coverUnreachedBehindUndefinedGuard`: 1 of 1 on that machine, 0 of 1 on the
+sealed probe), and `--cover-required` prints on every such row that it was not
+applied, quoting that fraction, and stays at exit 2 rather than spending the 1
+on an unbound model parameter. The review of this commit found the first
+wording of that sentence said "every unreached state of this cover sits behind"
+an undecided guard — a universal nothing computed, false on a machine with a
+second unreached state behind a guard the walk DID decide — and found the
+environment sentence printed beside a witness whose only "trigger" was an
+`after(n)` dwell label, on a machine naming no environment trigger; both are
+fixed and pinned (`semantics.mc.patterns.test.ts`, the L7 case). The
+`pattern = "cover"` value persisted in a file is a forward-compatibility
+commitment and is recorded as one in the conformance document; the `cover`
+witness under `before`/`between` extends to the closing R, recorded there too.
+Fixtures: `cover-reachable.sysml` and `cover-sealed.sysml`, the two halves of
+the probe; the timed machines are factory-built because `accept after(n)` is
+a parse error. Counts re-measured from this gate.
 
 ## 5. Phase status
 

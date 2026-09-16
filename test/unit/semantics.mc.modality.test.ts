@@ -577,6 +577,7 @@ describe('the field is required and `null` on every claim but `fail`', () => {
     });
     expect(Object.keys(report).sort()).toEqual([
       'counts',
+      'coverRequired',
       'diagnostics',
       'exitCode',
       'machine',
@@ -614,7 +615,15 @@ interface Before {
   /** `[leaf name, holds]` per step of the witness. */
   witness: Array<[string, string[]]>;
   exitCode: number;
-  counts: { passed: number; failed: number; vacuous: number; inconclusive: number };
+  counts: {
+    passed: number;
+    failed: number;
+    vacuous: number;
+    inconclusive: number;
+    // The two `cover` buckets (§3.1) landed beside these; 0 on every absence row.
+    covered: number;
+    notCovered: number;
+  };
   /** `[severity, code]` per diagnostic the report emitted. */
   diagnostics: Array<[string, string]>;
   /** The property block `check-behaviour` printed, from the claim line to the profile. */
@@ -640,7 +649,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['standby', []], ['manual', []], ['autonomous', []], ['failsafe', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state failsafe` never holds, over the whole run',
@@ -664,7 +673,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['standby', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state standby` never holds, over the whole run',
@@ -686,7 +695,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['standby', []], ['manual', []], ['autonomous', []], ['failsafe', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state failsafe` never holds, over the whole run',
@@ -710,7 +719,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['standby', []], ['manual', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state failsafe` holds before `state manual` ever does, over the whole run',
@@ -732,7 +741,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['standby', []], ['manual', ['q']], ['autonomous', []], ['failsafe', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state failsafe` never holds, from the first `state manual` onwards',
@@ -756,7 +765,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['standby', ['p']], ['manual', []]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state standby` holds at every configuration, over the whole run',
@@ -778,7 +787,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['takeoff', []], ['cruise', []], ['landed', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state landed` never holds, over the whole run',
@@ -801,7 +810,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['takeoff', ['p']], ['cruise', []]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state takeoff` holds at every configuration, over the whole run',
@@ -823,7 +832,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['nominal', []], ['hazard', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state hazard` never holds, over the whole run',
@@ -845,7 +854,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['start', []], ['alarm', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state alarm` never holds, over the whole run',
@@ -867,7 +876,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['boot', []], ['fault', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state fault` never holds, over the whole run',
@@ -889,7 +898,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['nominal', []], ['locked', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state locked` never holds, over the whole run',
@@ -911,7 +920,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['nominal', []], ['degradedA', []], ['degradedB', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state degradedB` never holds, over the whole run',
@@ -934,7 +943,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['nominal', []], ['degradedA', []], ['degradedB', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state degradedB` never holds, over the whole run',
@@ -957,7 +966,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['nominal', []], ['degradedA', []], ['degradedB', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state degradedB` never holds, over the whole run',
@@ -980,7 +989,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['nominal', []], ['degradedA', []], ['degradedB', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `state degradedB` never holds, over the whole run',
@@ -1003,7 +1012,7 @@ const BEFORE: readonly Before[] = [
     code: 'verification/refuted',
     witness: [['nominal', []], ['hazard', ['p']]],
     exitCode: 1,
-    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0 },
+    counts: { passed: 0, failed: 1, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 },
     diagnostics: [['error', 'verification/refuted']],
     textLines: [
       '  FAIL         `node hazard` never holds, over the whole run',

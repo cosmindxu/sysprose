@@ -318,51 +318,41 @@ export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
     'a guard the walk consulted decided nothing, so an edge the model states is absent from the relation',
 };
 
+/* ══════════════════════ the standing sentences (§2.4) ══════════════════════ */
+
 /**
- * The standing sentences of plan §2.4 — (a) the environment, (c) the dwell,
- * (d) the simulator — spelled once, here, beside the clause sentences.
+ * §2.4(a) — the environment sentence, printed beside a witness that consumed a
+ * trigger, and beside every escape from a trap.
  *
- * WHY THEY LIVE IN THIS FILE. Each is printed by more than one lane — a
- * `cover` witness, a trap's entry path, the modality's row 6, a published cut
- * set — and a sentence that exists in two files is the two-copies defect this
- * module was created to close. They sit beside {@link CLAUSE_SENTENCE} rather
- * than in `./patterns` because `./patterns` already imports from `./explore`,
- * and a lane that prints one of these from `./explore` would then import from
- * `./patterns`: a cycle, one constant wide.
- *
- * (a) is printed beside a witness that CONSUMED a trigger: such a trace is a run
- * of the system under an environment that supplies the trigger, and the reader
- * is told what the witness costs. It discloses; it never suppresses — a dwell is
- * not a trigger an environment can withhold, which is why (c) is a different
- * sentence and why clause (b) of the gate does the withholding (c) only
- * explains.
+ * `exploreMachine` offers the whole alphabet at EVERY configuration, so a
+ * witness that consumes a trigger is a claim under a maximally cooperative
+ * environment and about no other. Written once, verbatim from the plan, so the
+ * three lanes that print it carry one string.
  */
 export const ENVIRONMENT_SENTENCE =
   'the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it';
 
 /**
- * (c) The dwell sentence. Printed beside whatever claim survives on a walk whose
- * `timedTransitions` is non-empty — i.e. wherever clause (b) fails. It is NOT a
- * substitute for the gate: where the claim is increasing the claim is withheld
- * and this sentence says why. Both spellings of a dwell are named, because a
- * transition carrying a numeric `attrs.after` and no trigger is offered as a
- * COMPLETION and contributes no label at all.
+ * §2.4(c) — the dwell sentence, printed on every verdict line whose walk has a
+ * non-empty `timedTransitions`, beside whatever claim survives.
+ *
+ * It is a DISCLOSURE and not a gate: where a claim is increasing the gate
+ * withholds it and this says why; where a claim is a positive witness, the
+ * register's row says whether it is re-worded (`covered`, a trap's entry path)
+ * or withheld (a maximality witness). The second half names both spellings of a
+ * dwell, because a machine whose dwells carry no label at all exists.
  */
 export const DWELL_SENTENCE =
   'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take';
 
 /**
- * (d) The simulator sentence — what the exactness gate does NOT cover.
+ * §2.4(d) — the simulator sentence, printed beside every increasing claim and
+ * every published witness whenever the walk found a nondeterministic choice.
  *
- * `walkIsExact` establishes that the retained relation is the MACHINE's. It
- * establishes nothing about what the shipped interpreter does with that
- * machine, and the two differ on every nondeterministic choice point: the walk
- * explores both branches of a declaration-order tie-break and `runStateMachine`
- * fires `enabled[0]`. Measured, that is not a corner case — two of the three
- * shipped machines carry such a point. So this prints beside every increasing
- * claim and every published witness whenever the walk recorded a choice, and it
- * is deliberately not gated away: the verdict is about the model, and the reader
- * is told so rather than left to assume the two agree.
+ * `walkIsExact` establishes that the retained relation is the MACHINE's; it
+ * establishes nothing about what the shipped interpreter does with it, and the
+ * two differ at every declaration-order tie-break. Deliberately never gated
+ * away: the verdict is about the model, and the reader is told so.
  */
 export const SIMULATOR_SENTENCE =
   'every claim above is about this MACHINE\'s semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces';
@@ -682,7 +672,7 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
     // edge.
     alsoRequires: [],
     otherwise: 'inconclusive, `verification/bound-exhausted`',
-    producedBy: null,
+    producedBy: CHECK_PROPERTY,
   },
   {
     id: 'A6',
@@ -871,7 +861,7 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
     alsoRequires: ['`found.violation !== null`'],
     otherwise:
       'the walk-admits re-wording, never suppression — a bound can hide a witness and can never invent one',
-    producedBy: null,
+    producedBy: CHECK_PROPERTY,
   },
   {
     id: 'W2',

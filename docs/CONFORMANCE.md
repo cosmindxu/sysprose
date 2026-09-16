@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3257 passed / 0 failed / 0 skipped** across **150 files** + **128 E2E** across **78 spec files** = **3385 green** (measured 2026-09-16) |
+| Full automated suite | **3276 passed / 0 failed / 0 skipped** across **150 files** + **128 E2E** across **78 spec files** = **3404 green** (measured 2026-09-16) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -1136,17 +1136,58 @@ with it is claimed.
 
 **Which properties it decides, and which it refuses.** Four patterns —
 `absence`, `universality`, `bounded-existence`, `precedence` — are safety
-properties, and a bad-prefix search over a finite graph decides them. Two —
-`existence`, `response` — are liveness, and a bad-prefix search finds no bad
-prefix for either on any graph; both report `inconclusive: liveness not checked
-in-process` until a lasso search lands and a fairness assumption is named. A
-`pass` is emitted only when the walk saw the graph **whole**: the four conditions
-§3.8 states, computed from `exploreMachine`'s walk, **and** the fifth this tool
-added afterwards — every guard the walk consulted decided something. A bound hit,
-a parallel or history machine, a guard the walk could not evaluate, an unreadable
-property or an atom that names nothing is `inconclusive` ⇒ exit 2. A **fail**
-does not need exhaustion, and the asymmetry is deliberate: a bound can hide a
-violation and can never invent one.
+properties, and a bad-prefix search over a finite graph decides them. One —
+`cover` — is a **guarantee** in Manna–Pnueli's sense (`◇β`): not finitely
+refutable, which is why the engine cannot decide `existence`, but finitely
+*witnessable*, which is why the same search that refutes `absence of P` confirms
+`cover P` — the bad prefix of the one is the witness of the other, and the
+monitor is shared byte for byte. Two — `existence`, `response` — are liveness,
+and a bad-prefix search finds no bad prefix for either on any graph; both report
+`inconclusive: liveness not checked in-process` until a lasso search lands and a
+fairness assumption is named. A `pass` is emitted only when the walk saw the
+graph **whole**: the four conditions §3.8 states, computed from
+`exploreMachine`'s walk, **and** the fifth this tool added afterwards — every
+guard the walk consulted decided something. A bound hit, a parallel or history
+machine, a guard the walk could not evaluate, an unreadable property or an atom
+that names nothing is `inconclusive` ⇒ exit 2. A **fail** does not need
+exhaustion, and the asymmetry is deliberate: a bound can hide a violation and
+can never invent one.
+
+**`cover` has two words of its own, and neither is one of the four above.** A
+witness is `covered`: it stands on a partial walk exactly as a `fail` does,
+because a bound can hide a run and can never invent one, and it exits 0. No
+witness over a graph seen whole is `not covered`: a *decided* absence, published
+under the same five conditions a `pass` is, and a **missing behaviour rather
+than a violated requirement** — so it carries `verification/not-covered` as an
+info line and exits 2, and spends the 1 only under `--cover-required`, which
+adds `verification/cover-required` as an error beside the info line and changes
+no claim word. `covered ⇒ pass` would file a witness under a word that means
+*on every reachable configuration*; `not covered ⇒ inconclusive` would file a
+decided answer under the word reserved for undecided; `not covered ⇒ fail` would
+print `verification/refuted` about a design that violates nothing — the exact
+defect the pattern exists to fix. Two disclosures ride on the witness. A run
+that consumed a trigger carries the environment sentence: the walk offers every
+trigger the machine names at every configuration, so the witness is a claim
+about that environment and not about one that withholds it. A run that crossed
+an `after(n)` dwell, or a transition whose guard the walk read against a store
+nothing valued, keeps the claim and **re-words the warrant** — `a run this WALK
+admits`, naming the step and the mechanism — because the walk advances no clock
+and the interpreter may never take that trace; the bare `a run this semantics
+admits` is never printed over it. The condition is register row W1 in
+`src/semantics/mc/publishable.ts`: `relationIsTheMachines`, or the per-step
+alternative over the transitions the trace actually used, and no member of the
+bound family. **One semantic decision, recorded rather than implied:** under
+`before` and `between`, `absence` establishes a breach only when the segment
+closes, so a `cover` witness under those scopes extends to the closing R — a
+`between` whose segment never closes is `vacuous`, exactly as for `absence`.
+Where any guard on the machine could not be evaluated, a cover is
+`inconclusive` under `verification/guard-undetermined` — the register's row A5
+reads the same five conditions a `pass` does, and that includes every guard
+decided — the census counts the exposure as a fraction (`coverUnreached` and
+`coverUnreachedBehindUndefinedGuard`, on `--json`: the unreached states, and
+how many of them sit behind an undecided guard alone), and `--cover-required`
+prints on every such row that it was not applied, quoting that fraction,
+rather than spending the 1 on an unbound model parameter.
 
 **Those five conditions have exactly one definition, and the claims this lane
 makes are a list a test can walk.** `publishabilityOf` in
@@ -1256,15 +1297,25 @@ property whose antecedent never holds is `vacuous` ⇒ inconclusive ⇒ exit 2, 
 true — the two antecedents this engine detects are a scope no explored run opens
 and a `precedence` whose P never occurs. Sub-formula-replacement vacuity is not
 done. `--strict-vacuity` raises the row to `verification/vacuous-property`, an
-error, and changes no exit code. The verdict vocabulary is four words — `pass`,
-`fail`, `vacuous`, `inconclusive` — and this command never says `proved`, never
+error, and changes no exit code. The verdict vocabulary is six words — `pass`,
+`fail`, `vacuous`, `inconclusive`, `covered`, `not covered` — the last two
+`cover`'s alone, and closed after them; this command never says `proved`, never
 says `verified` and never says `deadlock-free`.
 
 **The property carrier is Sysprose's, not the specification's.**
 `@SysproseVerification::PropertyPattern { attribute pattern = …; }` is §7.27
 annotating metadata over a `metadata def` this tool ships as text, exactly as the
 evidence carrier is (§7). A conforming external reader may ignore it entirely,
-and nothing is claimed about what another tool makes of it.
+and nothing is claimed about what another tool makes of it. **And the value
+`pattern = "cover"` is a forward-compatibility commitment of the same kind as an
+added evidence-record field** (§8.2c): it is persisted in a user's file, and a
+build before it reads the carrier through the same generic cell reader and then
+refuses the value as `verification/malformed-property` — inconclusive, exit 2 —
+on a model that is green on this build. One-directional, in the same direction
+as every other carrier commitment here, and priced in this paragraph rather
+than left unsaid; the alternative, a `--pattern`-only feature with no carrier
+value, was rejected because `PropertyPattern` exists so a property travels with
+the file.
 
 ### 8.6 The vocabulary this lane reads, and the vocabulary it writes
 
@@ -1395,7 +1446,7 @@ dependency this census reports the absence of.
 | **Requirements — contracts and obligations** | `contracts` / `obligations` read `RequirementDefinition` / `RequirementUsage` clause roles and case `objective`s into an assumption/guarantee inventory and a proof worklist (`src/semantics/contracts.ts`, `src/semantics/obligations.ts`) | **These commands report structure only.** They evaluate nothing and decide nothing: no solver stands behind them, and neither prints a word about whether a requirement holds. A clause an element INHERITS is disclosed and never filed. On a row whose element also wrote a clause of its own, the inherited one is listed marked `(inherited)`, under a count that says how many of the clauses shown the element itself wrote and which element wrote each of the others; on a row whose element wrote none — `requirement massOk : MassLimit;`, the ordinary way to apply a requirement — the row names the definition the clauses are filed on instead, exactly as it always did. Either way it enters no worklist, moves no obligation digest and reaches no evidence key: the clause is filed once, on the element whose body holds it, so a requirement USAGE is still not read through its definition's clauses (the definition carries its own contract, and the usage's row names it rather than being counted as bodiless). Only a clause some contract in the same run FILES is disclosed — a general type the run left out, a `#prose` statement or a clause written outside a case's `objective`, is disclosed nowhere. The `variables` and `fragment` a row carries are its declared clauses' and are labelled `declared` wherever an inherited clause is shown beside them; an attribute declared in a `port def` is one element however many ports reach it, so the variables a clause reads are reported per PATH and their `in`/`out` direction is taken from the port the path names; `discharged` and `stale` are declared in the status vocabulary and never produced, because both are read back from an evidence record that does not ship yet. |
 | **Requirements — verdicts (`verify`)** | `verifyModel` judges each obligation with a named engine — a point evaluation (`src/semantics/engines/literal.ts`) or negation-UNSAT in z3 (`src/semantics/engines/smt.ts`) — and writes an evidence record bound to a canonical model digest (`src/api/verification.ts`, `src/api/evidence.ts`); §8 above states the exit contract, the deviation and the two unbound slots | **One declared deviation** (a requirement with a false assumption is `vacuous`, not true — §8.1) and **one slot deliberately unbound** (`VerificationCase::verdict` — §8.2). `proved` is reachable only under `--engine smt`, only as UNSAT-of-negation over a satisfiable axiom set with satisfiable premises and a two-sided domain, and only for the quantifier-free arithmetic fragment the unit gates pass — anything else is inconclusive with a code, and a missing solver is exit 2 rather than a fallback. The two engines are held to one answer by a differential gate over the whole fixture corpus, and every constraint-bearing element is accounted for by a relation census; neither says the gatherer reads every construct the standard defines. What an external tool makes of a record or a verdict facet is untested. |
 | **Safety — cut sets from contract-failure injection (`fault-tree`)** | Minimal cut sets over the refinement obligations of §8.3c, enumerated by increasing order with supersets pruned and the check count reported (`src/semantics/fault-tree.ts`); §8.3d above states what a cut set claims and the four sentences the command never writes | **Contract-level FTA, never a behavioural safety analysis**, and every report says so. No failure rates, no probabilities and no importance measures: the model states none and none is derived. Every absence carries the order it was checked to; a vacuous contract set is reported as vacuous and never as "no cut set"; an undecided order-1 check forbids the no-single-point claim; a state machine is answered with a count of its failure-mode flags and `#exceptional` states — exit 2, nothing enumerated — rather than with an empty list. The order bound is an assumption about how many failures are credible at once, carried in a Sysprose metadata definition, and what an external reader makes of that carrier is untested. |
-| **Behaviour — bounded safety verdicts (`reach`, `check-behaviour`)** | An explicit walk of a state machine's configuration graph, exploring every enabled transition where the simulator takes the first (`src/semantics/mc/`), with safety patterns decided by bad-prefix search over it; §8.5 above states the profile, the split and the exit contract | **This is a reading of THIS tool's interpreter, not of the specification's execution semantics**, and every verdict prints the six-field profile it holds under. PSSM is not implemented and no conformance with it is claimed. Liveness is not decided in-process; a parallel or history machine is refused rather than walked; a bound hit empties the unreachable and dead lists and can never produce a pass — it does NOT empty the deadlock rows, which are about a configuration the walk already dequeued and offered every input at, and which a bound cannot make wrong; and a guard the walk consulted and could not evaluate withholds all three of `reach`'s absence claims outright (`verification/guard-undetermined`) rather than reading “did not evaluate” as “is false”, and makes `check-behaviour` report `inconclusive` rather than `pass` or `vacuous`. Every edge-bearing element under a machine is accounted for by a census as walked, read by the opening, refused, with neither end a node the walk can stand on, or as no step at all (a typing, a subsetting, a `connect` — facts about the states rather than steps between them) — and an edge that sequences behaviour and that the relation does not hold (one carrying a payload today, an unforeseen spelling tomorrow) refuses the machine rather than shrinking its absence lists; both spellings of a state-to-state edge, `transition` and `first … then …`, are walked. The property carrier is a Sysprose metadata definition, and what an external reader makes of it is untested. |
+| **Behaviour — bounded safety verdicts (`reach`, `check-behaviour`)** | An explicit walk of a state machine's configuration graph, exploring every enabled transition where the simulator takes the first (`src/semantics/mc/`), with safety patterns decided by bad-prefix search over it and the `cover` guarantee witnessed by the same search; §8.5 above states the profile, the split and the exit contract | **This is a reading of THIS tool's interpreter, not of the specification's execution semantics**, and every verdict prints the six-field profile it holds under. PSSM is not implemented and no conformance with it is claimed. Liveness is not decided in-process; a parallel or history machine is refused rather than walked; a bound hit empties the unreachable and dead lists and can never produce a pass — it does NOT empty the deadlock rows, which are about a configuration the walk already dequeued and offered every input at, and which a bound cannot make wrong; and a guard the walk consulted and could not evaluate withholds all three of `reach`'s absence claims outright (`verification/guard-undetermined`) rather than reading “did not evaluate” as “is false”, and makes `check-behaviour` report `inconclusive` rather than `pass` or `vacuous`. Every edge-bearing element under a machine is accounted for by a census as walked, read by the opening, refused, with neither end a node the walk can stand on, or as no step at all (a typing, a subsetting, a `connect` — facts about the states rather than steps between them) — and an edge that sequences behaviour and that the relation does not hold (one carrying a payload today, an unforeseen spelling tomorrow) refuses the machine rather than shrinking its absence lists; both spellings of a state-to-state edge, `transition` and `first … then …`, are walked. The property carrier is a Sysprose metadata definition, and what an external reader makes of it is untested. |
 
 **The load-bearing gap.** The interop client round-trips **fully** against our own
 spec-shaped server (§6), and against the live OMG pilot it round-trips a read and
@@ -1418,7 +1469,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3257 pass / 0 skip, 150 files)
+# Full unit + integration + conformance suite (3276 pass / 0 skip, 150 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

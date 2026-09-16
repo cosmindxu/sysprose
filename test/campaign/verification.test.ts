@@ -3978,8 +3978,8 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
     // how many machines the zeros are over, in words, and a prose number with
     // nothing behind it drifts the day a fixture is added or dropped. Change
     // both together.
-    expect(machines, 'docs/AGENT-AUTHORING-CAMPAIGN.md says "twenty-six machines"; re-measure and edit both').toBe(26);
-    expect(read('docs/AGENT-AUTHORING-CAMPAIGN.md')).toContain('twenty-six machines between them');
+    expect(machines, 'docs/AGENT-AUTHORING-CAMPAIGN.md says "twenty-eight machines"; re-measure and edit both').toBe(28);
+    expect(read('docs/AGENT-AUTHORING-CAMPAIGN.md')).toContain('twenty-eight machines between them');
   });
 
   it('every command a printed sentence names exists, with the flags it names', () => {
