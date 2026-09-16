@@ -225,6 +225,18 @@ describe('the two shipped conjunctions and `decreasingOk`', () => {
  *
  * The gate of this commit is *"not one published sentence moved"*, and a gate
  * nobody can fail proves nothing. Every figure below is a published one.
+ *
+ * RE-RECORDED TWICE SINCE, BOTH DELIBERATELY AND BOTH NAMED. The component
+ * commit appended the store clause to every `under {…}` qualification (the
+ * successors suite pins the position), and the same commit moved ONE more
+ * sentence in ONE row of this table: `GuardProbe::Ctrl::Modes`'s qualification
+ * no longer enumerates *the unreachable, dead and no-way-out lists* as withheld
+ * — the no-way-out row is withheld per configuration now (register row A0), so
+ * the sentence names that list only where a row of it went, counted from the
+ * withheld rows themselves. On that machine one did — `idle`'s only way out is
+ * the guard nothing valued — and the tail says so. Every count below is
+ * unmoved: `deadlocks: 0` there is the published list, and the withheld row
+ * sits beside it in `deadlocksWithheld`, which this table predates.
  */
 const REACH_BEFORE: Array<{
   file: string;
@@ -247,7 +259,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -261,7 +273,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -275,7 +287,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -289,7 +301,7 @@ const REACH_BEFORE: Array<{
     exhaustive: false,
     boundHit: 'none',
     qualification:
-      'undetermined under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger} — 1 guard(s) the walk could not evaluate; the unreachable, dead and no-way-out lists are WITHHELD and are NOT reported as findings',
+      'undetermined under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — 1 guard(s) the walk could not evaluate; the unreachable and dead lists are WITHHELD and are NOT reported as findings, as is the no-way-out row for 1 configuration(s) whose only ways out are guards this walk could not decide',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -303,7 +315,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: ['hazard'],
     dead: 1,
     deadlocks: 1,
@@ -317,7 +329,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: [],
     dead: 0,
     deadlocks: 1,
@@ -331,7 +343,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: [],
     dead: 0,
     deadlocks: 1,
@@ -345,7 +357,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: [],
     dead: 0,
     deadlocks: 0,
@@ -359,7 +371,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: [],
     dead: 0,
     deadlocks: 1,
@@ -387,7 +399,7 @@ const REACH_BEFORE: Array<{
     exhaustive: true,
     boundHit: 'none',
     qualification:
-      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}',
+      'exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
     unreachable: [],
     dead: 0,
     deadlocks: 1,
@@ -560,6 +572,54 @@ describe('the registers are data, and every column is asserted', () => {
     ]);
   });
 
+  it('the producer applies the gate each row declares, read off its source', () => {
+    // THE REGISTER IS THE WIRING, AND THIS READS THE WIRE. The columns say what
+    // `reachOne` applies to each list; nothing else in this file reads
+    // `reachOne` to check that it does. A1 and A2 declare `decreasingOk`, which
+    // `reachOne` binds as `publishable` and ternaries both lists on. A0
+    // declares `decreasingOk` too — the plan's cell (§2.3) — with the
+    // per-configuration conjunct in `alsoRequires`; what the producer applies
+    // to the deadlock rows is that conjunct and ONLY that conjunct. It cannot
+    // apply the walk-wise family without regressing the row: `decreasingOk`
+    // includes `exhaustive`, and the `verification/deadlock` catalogue entry
+    // says a bound does not withhold the row, while `guardsDecided` subsumes
+    // the leaf-wise conjunct and would empty the array whole again, which is
+    // the reading §4 says loses the decided sink. So the assertion is exact:
+    // the conjunct is applied, and neither walk-wise symbol is.
+    const src = read('src/semantics/mc/explore.ts');
+    const body = /function reachOne\([\s\S]*?\n}\n/.exec(src);
+    expect(body, 'explore.ts no longer declares reachOne').not.toBeNull();
+    const reachOne = body![0];
+    // A1, A2: `const unreachable = publishable ? … : []`, `const dead = publishable ? … : []`.
+    expect(reachOne).toMatch(/const publishable = publishabilityOf\(walk\)\.decreasingOk;/);
+    expect(reachOne).toMatch(/const unreachable = publishable\s*\?/);
+    expect(reachOne).toMatch(/const dead = publishable\s*\?/);
+    // A0: the published rows are the walk's rows filtered by the conjunct, the
+    // withheld rows are the complement, and no walk-wise symbol touches either.
+    const deadlocks = /const deadlocks = ([^;]*);/.exec(reachOne);
+    const withheld = /const deadlocksWithheld = ([^;]*);/.exec(reachOne);
+    expect(deadlocks, 'reachOne no longer binds `deadlocks`').not.toBeNull();
+    expect(withheld, 'reachOne no longer binds `deadlocksWithheld`').not.toBeNull();
+    for (const [name, m] of [
+      ['deadlocks', deadlocks],
+      ['deadlocksWithheld', withheld],
+    ] as const) {
+      expect(m![1], name).toContain('walk.deadlocks.filter(');
+      expect(m![1], name).toContain('nothingUndecidedLeaves(row, undecidedExits)');
+      expect(m![1], name).not.toContain('publishable');
+      expect(m![1], name).not.toContain('guardsDecided');
+      expect(m![1], name).not.toContain('decreasingOk');
+    }
+    expect(withheld![1]).toContain('!nothingUndecidedLeaves');
+    expect(deadlocks![1]).not.toContain('!nothingUndecidedLeaves');
+    // And the row itself names that conjunct, so the two cannot drift apart.
+    const a0 = ABSENCE_CLAIMS.find((r) => r.id === 'A0')!;
+    expect(a0.alsoRequires).toEqual([
+      'no outgoing transition of the deadlocked leaf is in `walk.undeterminedGuards`',
+    ]);
+    expect(src).toContain('function nothingUndecidedLeaves(');
+  });
+
   it('A0–A5, the six decreasing rows, read the conjunction the shipped commands read', () => {
     // Five of the six ship today; A5 (`cover`, §3.1) is not built, and it is
     // listed here because its POLARITY is settled — it reads `decreasingOk`
@@ -699,6 +759,27 @@ describe('a timed machine keeps its decreasing claims and loses its increasing o
     expect(row.transitions.dead).toHaveLength(1);
     expect(row.transitions.dead[0].from!.name).toBe('orphan');
     expect(row.qualification).toContain('exhaustive under {maxConfigs 10000');
+  });
+
+  it('and the gate is LIVE on that row without touching either list', () => {
+    // The A1/A2 non-regression, re-run now that `reach` computes the gate on
+    // every machine it walks. The census on this row says the walk is not
+    // exact and names the time clause, and the two absence lists beside it are
+    // the same non-empty lists they were before the gate existed. This is the
+    // assertion that fails the moment anyone points the decreasing side at it.
+    const row = reachReport(model).machines[0];
+    expect(row.exactness.walkIsExact).toBe(false);
+    expect(row.exactness.failedClause).toBe('time');
+    expect(row.exactness.timedTransitions).toBe(4);
+    expect(row.exactness.alphabet).toBe(2);
+    // Unmoved, beside a gate that reads false on the same object.
+    expect(row.states.unreachable.map((s) => s.name)).toEqual(['orphan']);
+    expect(row.transitions.dead).toHaveLength(1);
+    expect(row.suppressed).toBe(false);
+    // And the census field that IS gated: a walk this inexact decides nothing
+    // about cycles, even though its relation plainly has one.
+    expect(row.exactness.acyclic).toBeNull();
+    expect(row.exactness.edges).toBeGreaterThan(0);
   });
 
   it('`walkIsExact` is FALSE on the same walk, and names the time clause', () => {
@@ -938,5 +1019,231 @@ describe('the exactness gate, clause by clause', () => {
     expect(publishabilityOf({ ...base, undeterminedGuards: [{ guard: 'not mode', unresolved: [] }] }).guardsDetermined).toBe(
       false,
     );
+  });
+});
+
+/* ═════════ the survey the gate is priced on, re-measured rather than quoted ═══ */
+
+/**
+ * What the exactness gate answers on every machine in the tree, machine by
+ * machine.
+ *
+ * The plan's §5(d) survey is the kill measurement every feature that reads this
+ * gate is retired on, and a survey that lives only in a document is a number
+ * nobody re-takes. Nine of the eleven machines are exact; the two that are not
+ * are the ones that ALREADY report `suppressed: true` today — one on the
+ * unsupported construct, one on the guard clause — so the gate suppresses
+ * nothing the shipped flag does not already suppress, and the honest reading of
+ * that is *the gate is free on this corpus*, not *the gate is proven*.
+ */
+const EXACTNESS_SURVEY: Array<{
+  file: string;
+  machine: string;
+  walkIsExact: boolean;
+  failedClause: string | null;
+}> = [
+  { file: 'examples/uav-isr.sysml', machine: 'UAVSurveillanceSystem::FlightModes', walkIsExact: true, failedClause: null },
+  { file: 'examples/vehicle.sysml', machine: 'VehicleModel::VehicleStates', walkIsExact: true, failedClause: null },
+  { file: 'examples/views-tour.sysml', machine: 'DroneDemo::FlightModes', walkIsExact: true, failedClause: null },
+  {
+    file: 'test/fixtures/agent-authoring/L2-bare-transition-arrow/fixed.sysml',
+    machine: 'P::M',
+    walkIsExact: true,
+    failedClause: null,
+  },
+  {
+    file: 'test/fixtures/agent-authoring/L3-unresolved-transition-end/fixed.sysml',
+    machine: 'P::M',
+    walkIsExact: true,
+    failedClause: null,
+  },
+  // The one machine class this engine refuses to walk: nothing was explored, so
+  // the first half of the gate fails on its own and the relation is empty.
+  {
+    file: 'test/fixtures/agent-authoring/L3-unresolved-transition-end/input.sysml',
+    machine: 'P::M',
+    walkIsExact: false,
+    failedClause: 'unsupported',
+  },
+  // The corpus witness for clause (d), and the only one the tree has: an
+  // undecidable guard with two decided controls beside it in the same file.
+  {
+    file: 'test/fixtures/verification/models/guard-undetermined.sysml',
+    machine: 'GuardProbe::Ctrl::Modes',
+    walkIsExact: false,
+    failedClause: 'store',
+  },
+  {
+    file: 'test/fixtures/verification/models/guard-undetermined.sysml',
+    machine: 'GuardProbe::Decided::Modes',
+    walkIsExact: true,
+    failedClause: null,
+  },
+  {
+    file: 'test/fixtures/verification/models/guard-undetermined.sysml',
+    machine: 'GuardProbe::Fires::Modes',
+    walkIsExact: true,
+    failedClause: null,
+  },
+  {
+    file: 'test/fixtures/verification/models/succession-mixed.sysml',
+    machine: 'SuccMix::Ctrl::Modes',
+    walkIsExact: true,
+    failedClause: null,
+  },
+  {
+    file: 'test/fixtures/verification/models/succession-mixed.sysml',
+    machine: 'SuccMix::Loop::Modes',
+    walkIsExact: true,
+    failedClause: null,
+  },
+];
+
+describe('the exactness survey, over every machine the tree had', () => {
+  it('reads the gate machine by machine: nine exact, two refused, and which clause refused each', () => {
+    const seen: string[] = [];
+    for (const want of EXACTNESS_SURVEY) {
+      const model = loaded.find((l) => l.file === want.file)!.model;
+      const row = reachReport(model).machines.find((m) => m.machine.qualifiedName === want.machine);
+      expect(row, `${want.file} no longer declares ${want.machine}`).toBeDefined();
+      expect(row!.exactness.walkIsExact, want.machine).toBe(want.walkIsExact);
+      expect(row!.exactness.failedClause, want.machine).toBe(want.failedClause);
+      seen.push(want.machine);
+    }
+    expect(seen).toHaveLength(11);
+    expect(EXACTNESS_SURVEY.filter((r) => r.walkIsExact)).toHaveLength(9);
+    // THE HONEST HALF OF THE MEASUREMENT: neither refusal is new. Both machines
+    // already withheld their lists before this gate existed, so nothing in the
+    // corpus can say what the gate would cost anyone else.
+    for (const refused of EXACTNESS_SURVEY.filter((r) => !r.walkIsExact)) {
+      const model = loaded.find((l) => l.file === refused.file)!.model;
+      const row = reachReport(model).machines.find(
+        (m) => m.machine.qualifiedName === refused.machine,
+      )!;
+      expect(row.suppressed, refused.machine).toBe(true);
+    }
+  }, 300_000);
+
+  it('accounts for every edge on all eleven — the one clause of exactness this corpus exercises', () => {
+    // `census.unaccounted` is the ELEMENT-SET half of the gate, and it is the
+    // half with real corpus coverage: it is checked on every machine of every
+    // walk, including the two the other half refuses. An edge-bearing element
+    // nobody accounted for lands here and refuses the machine, which is why
+    // `relationIsTheMachines` needs no clause for a missing edge KIND.
+    for (const want of EXACTNESS_SURVEY) {
+      const model = loaded.find((l) => l.file === want.file)!.model;
+      const row = reachReport(model).machines.find((m) => m.machine.qualifiedName === want.machine)!;
+      expect(row.census.counts.unaccounted, want.machine).toBe(0);
+      expect(row.census.unaccounted, want.machine).toEqual([]);
+    }
+  }, 300_000);
+
+  it('leaves clauses (b) and (c) unfalsifiable by this corpus, which is what the fixtures are for', () => {
+    // No `.sysml` file in the tree carries a dwell — `accept after(n)` is a
+    // parse error and `attrs.after` has no notation at all — and only one names
+    // a trigger. Said plainly here rather than implied: no run of the shipped
+    // examples is evidence that either clause behaves correctly.
+    for (const want of EXACTNESS_SURVEY) {
+      const model = loaded.find((l) => l.file === want.file)!.model;
+      const row = reachReport(model).machines.find((m) => m.machine.qualifiedName === want.machine)!;
+      expect(row.exactness.timedTransitions, want.machine).toBe(0);
+      expect(row.exactness.alphabet, want.machine).toBe(0);
+    }
+  }, 300_000);
+});
+
+/* ═══════════ one fixture per clause, because that is all they will get ═══════ */
+
+/** Three dwells and no trigger at all: the machine an alphabet-scoped clause (b) reads clean. */
+function numericAfterMachine(): { model: Model; machineId: ElementId } {
+  const m = new Model();
+  const f = new ModelFactory(m);
+  const sm = f.stateDef('NumericDwells');
+  const failsafe = f.state('failsafe', sm.id);
+  const hold = f.state('failsafeHold', sm.id);
+  const standby = f.state('standby', sm.id);
+  for (const [from, to, after] of [
+    [failsafe.id, hold.id, 5],
+    [failsafe.id, standby.id, 60],
+    [hold.id, failsafe.id, 5],
+  ] as const) {
+    m.create('TransitionUsage', { ownerId: sm.id, attrs: { after }, source: [from], target: [to] });
+  }
+  return { model: m, machineId: sm.id };
+}
+
+/** A named trigger in one region and a dwell in another, on one machine. */
+function triggerAndDwellMachine(): { model: Model; machineId: ElementId } {
+  const m = new Model();
+  const f = new ModelFactory(m);
+  const sm = f.stateDef('Both');
+  const nominal = f.state('nominal', sm.id);
+  const aborting = f.state('aborting', sm.id);
+  const hold = f.state('hold', sm.id);
+  f.transition(nominal.id, aborting.id, { ownerId: sm.id, trigger: 'abort' });
+  f.transition(aborting.id, hold.id, { ownerId: sm.id, trigger: 'after(5)' });
+  return { model: m, machineId: sm.id };
+}
+
+describe('each clause of the gate, on the one input that can fail it', () => {
+  it('names `environment` on the latch file — the only model in the tree that names a trigger', async () => {
+    const file = 'test/fixtures/verification/models/latch.sysml';
+    const r = await loadModelText(read(file), { fileName: file });
+    const row = reachReport(r.model!).machines[0];
+    expect(row.exactness.alphabet).toBe(1);
+    expect(row.exactness.walkIsExact).toBe(false);
+    expect(row.exactness.failedClause).toBe('environment');
+    // The walk is otherwise whole: it is the cooperative environment alone
+    // that refuses, and `locked -> nominal` exists only because the walk hands
+    // the machine `unlatch` at every configuration.
+    expect(row.exhaustive).toBe(true);
+    expect(row.suppressed).toBe(false);
+  }, 120_000);
+
+  it('names `store` on the trapguard file, whose escape edge the walk never had', async () => {
+    const file = 'test/fixtures/verification/models/trapguard.sysml';
+    const r = await loadModelText(read(file), { fileName: file });
+    const row = reachReport(r.model!).machines.find(
+      (m) => m.machine.qualifiedName === 'TrapGuard::Trap::Modes',
+    )!;
+    expect(row.exactness.undeterminedGuards).toBe(1);
+    expect(row.exactness.walkIsExact).toBe(false);
+    expect(row.exactness.failedClause).toBe('store');
+  }, 120_000);
+
+  it('names `time` on the factory-built dwell machine, and again on the numeric spelling of it', () => {
+    const dwell = twoDwellMachine();
+    expect(reachReport(dwell.model).machines[0].exactness.failedClause).toBe('time');
+
+    // THE SECOND SPELLING OF CLAUSE (b), and the one the draft's alphabet-scoped
+    // version could not see: every edge is a completion transition carrying a
+    // numeric `attrs.after`, so the alphabet is empty, no label was ever
+    // contributed, and the transition set is the only field that knows.
+    const numeric = numericAfterMachine();
+    const row = reachReport(numeric.model).machines[0];
+    expect(row.exactness.alphabet).toBe(0);
+    expect(row.exactness.timedLabels).toBe(0);
+    expect(row.exactness.timedTransitions).toBe(3);
+    expect(row.exactness.walkIsExact).toBe(false);
+    expect(row.exactness.failedClause).toBe('time');
+    // And the wrong answer, named: a gate that read `true` here would let a
+    // later pass call `{failsafe, failsafeHold}` a set nothing leaves, on a
+    // walk whose every edge is a wait the interpreter never grants.
+    expect(row.exactness.walkIsExact).not.toBe(true);
+    expect(row.exactness.acyclic).toBeNull();
+  });
+
+  it('puts `environment` before `time` on a real machine carrying both, not only on a fabricated walk', () => {
+    const { model } = triggerAndDwellMachine();
+    const row = reachReport(model).machines[0];
+    expect(row.exactness.alphabet).toBe(2);
+    expect(row.exactness.timedTransitions).toBe(1);
+    expect(row.exactness.timedLabels).toBe(1);
+    // `abort` is in the alphabet and not in `timedLabels`, so it is a trigger an
+    // environment supplies and the author has something to do about it. The
+    // dwell sentence would send them to the wrong carrier, and this is the
+    // order the modality's own row-precedence rule reads.
+    expect(row.exactness.failedClause).toBe('environment');
+    expect(row.exactness.failedClause).not.toBe('time');
   });
 });

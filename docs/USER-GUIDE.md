@@ -1820,7 +1820,7 @@ $ npm run sysprose -- reach examples/uav-isr.sysml
 examples/uav-isr.sysml: 1 state machine(s), 1 walked to exhaustion; 4 configuration(s) explored
   a bounded walk of what the interpreter would do — every figure below holds under the bounds printed beside it
   UAVSurveillanceSystem::FlightModes [StateDefinition]
-    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}
+    4 configuration(s) explored, depth 3 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}
     4 of 4 state(s) reachable; 5 of 5 transition(s) fired, 0 dead
     choice       UAVSurveillanceSystem::FlightModes::autonomous: 2 enabled as completion transitions (no trigger); the simulator takes autonomous -> manual, never autonomous -> failsafe
   semantic profile (the reading every figure above holds under):
@@ -1891,14 +1891,23 @@ part def Ctrl {
 The model does not say `mode != 3`; it says *nothing* about `mode`, so
 `mode == 3` evaluates to nothing at all. A walk cannot fire that transition — it
 has to pick something, and it picks not firing — but "the walk did not fire it"
-is not "no run ever could". So `reach` withholds all three absence lists for that
-machine (unreachable, dead, and the no-way-out rows), prints `undetermined
-under {…}` where it would otherwise print `exhaustive`, and raises
-`verification/guard-undetermined` naming the guard and the names nothing valued:
+is not "no run ever could". So `reach` withholds the two walk-wise absence lists
+for that machine (unreachable and dead), prints `undetermined under {…}` where
+it would otherwise print `exhaustive`, and raises
+`verification/guard-undetermined` naming the guard and the names nothing valued.
+A no-way-out row is withheld per CONFIGURATION rather than per machine: it goes
+only where the undecided guard is an edge out of the configuration the row is
+about (read over its whole active stack), and each row that goes leaves a
+`withheld` line in its place, so a short list is never read as a clean one. A
+sink elsewhere in the same machine that no guard was consulted about keeps its
+row and its finding. Here `idle`'s only way out is the undecided guard, so its
+row is the one withheld:
 
 ```console
-    1 configuration(s) explored, depth 0 — undetermined under {maxConfigs 10000, …} — 1 guard(s) the walk could not evaluate; the unreachable, dead and no-way-out lists are WITHHELD and are NOT reported as findings
+    1 configuration(s) explored, depth 0 — undetermined under {maxConfigs 10000, …} — 1 guard(s) the walk could not evaluate; the unreachable and dead lists are WITHHELD and are NOT reported as findings, as is the no-way-out row for 1 configuration(s) whose only ways out are guards this walk could not decide
     undecided    idle -> hazard — guard `mode == 3`: no value for mode
+    withheld     GuardProbe::Ctrl::Modes::idle — no enabled way out was found and none is reported: a guard the walk consulted decided nothing, so an edge the model states is absent from the relation
+    the unreachable and dead lists are WITHHELD, and the no-way-out rows marked `withheld` above: a guard this walk could not evaluate is not a guard that is false
   verification/guard-undetermined  the guard `mode == 3` on transition `idle -> hazard` could not be evaluated — no value is in scope for `mode`. …
 ```
 
@@ -2010,7 +2019,7 @@ examples/uav-isr.sysml: UAVSurveillanceSystem::FlightModes — 1 property: 0 pas
     from --pattern
     fail — witness trace of 3 step(s) …
     verification/refuted
-    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}
+    3 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} …
     witness — a run this semantics admits:
        0  start → UAVSurveillanceSystem::FlightModes::standby
        1  completion standby -> manual → UAVSurveillanceSystem::FlightModes::manual
@@ -2561,7 +2570,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **No domain axioms from a quantity kind** | Typing a feature `ISQ::PowerValue` tells this tool nothing about its sign. A freed feature bounded on one side only is `verification/free-variable-unbounded`, never a refutation — otherwise `cruisePower = -1 W` reads as a counterexample and the arithmetic check confirms it. |
 | **A narrow encodable fragment** | Only single-valued scalar features with ScalarValues typing are encoded. Multiplicity > 1, chains through unresolved typings, strings, enums, `null`, `%` and variable exponents are `verification/unsupported-construct` — inconclusive, with the construct named. Ordering on °C is encoded in kelvin; arithmetic on °C is refused, exactly as the numeric surface refuses it. |
 | **A bounded behaviour walk** | The in-process engine decides the finite abstraction it exhaustively explored, and says so: a `pass` needs the whole configuration graph, a `fail` does not. There is no event pool and no deferred events, completion chasing stops at 64, and `after(n)` is a discrete clock, not dense time. |
-| **A guard nothing values is not a guard that is false** | `transition idle if mode == 3 then hazard;` over an `attribute mode : Integer;` with no value is a question this tool does not decide. `reach` withholds that machine's unreachable, dead and no-way-out lists, prints `undetermined under {…}` instead of `exhaustive`, and raises `verification/guard-undetermined` naming the guard and the names nothing valued — give the feature a value (`= 3`) and the walk decides it. `check-behaviour` shares the gate and reports `inconclusive` (exit 2) rather than `pass` or `vacuous`. A hidden-choice row stays where the withheld guard is beside it — two transitions enabled at once is an existential claim, and removing a candidate next to them can only shrink it — and is withheld where the withheld guard is strictly inside it, because that moves which level the choice is read at. |
+| **A guard nothing values is not a guard that is false** | `transition idle if mode == 3 then hazard;` over an `attribute mode : Integer;` with no value is a question this tool does not decide. `reach` withholds that machine's unreachable and dead lists — and, per configuration, the no-way-out row of any configuration that guard is an edge out of, printing a `withheld` line in its place — prints `undetermined under {…}` instead of `exhaustive`, and raises `verification/guard-undetermined` naming the guard and the names nothing valued — give the feature a value (`= 3`) and the walk decides it. `check-behaviour` shares the gate and reports `inconclusive` (exit 2) rather than `pass` or `vacuous`. A hidden-choice row stays where the withheld guard is beside it — two transitions enabled at once is an existential claim, and removing a candidate next to them can only shrink it — and is withheld where the withheld guard is strictly inside it, because that moves which level the choice is read at. |
 | **An edge kind the walk does not follow refuses the machine** | Between two states, `transition a then b;` and `first a then b;` are one edge and both are walked; an edge carrying a PAYLOAD (a `SuccessionFlow`, or a succession with an item) is one this relation models nothing of, and is not. Every edge-bearing element under a machine is accounted for by a census (`--json`, under `census`) as walked, read by the opening, refused, with neither end a node the walk can stand on, or as no step at all (a typing, a subsetting, a `connect` — facts about the states rather than steps between them) — and anything left over refuses the machine (`edge-not-walked`) rather than shrinking its unreachable, dead and no-way-out lists. A state definition owning no `TransitionUsage` at all is still not one of this tool's machines, and `reach` says so instead of walking it. |
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |

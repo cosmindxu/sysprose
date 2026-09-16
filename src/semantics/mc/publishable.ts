@@ -11,14 +11,20 @@
  * `check-behaviour` printed `pass` over the same machine — and the repair was to
  * read the same fields off the same walk. Two readers were survivable; the
  * verification lane adds five more, so the conjunction is lifted here and both
- * shipped readers now call it. Nothing PUBLISHED reads the increasing side yet:
- * its gate is wired into a report in a later commit. Its two remaining
- * producers — `timedTransitions` and `timedLabels` — arrived with the commit
- * that retains the successor relation, so `ExploreResult` satisfies
- * {@link ExactnessWalk} structurally and `walkIsExact` is called on a real walk
- * in this tree's tests. That the gate itself still prints nothing is deliberate:
- * a refactor whose gate is *"not one published sentence moved"* only proves
- * something while nothing new consumes it.
+ * shipped readers now call it. Its two remaining producers —
+ * `timedTransitions` and `timedLabels` — arrived with the commit that retains
+ * the successor relation, so `ExploreResult` satisfies {@link ExactnessWalk}
+ * structurally and `walkIsExact` is called on a real walk.
+ *
+ * THE INCREASING GATE IS NOW WIRED, AND IT PUBLISHES NO CLAIM. `reachOne`
+ * (`./explore`) evaluates it on every machine it walks and records the answer —
+ * with the four clause figures beside it — in the exactness CENSUS, a `--json`
+ * payload field that no report row prints. Not one verdict, list, count or
+ * sentence is gated on it: the claims that ship read `decreasingOk` and nothing
+ * else, which is what keeps a machine carrying a dwell from losing a sound
+ * `verification/unreachable-state` finding the day the gate arrived. The census
+ * exists so that the features which WILL read the gate can be retired on a
+ * measured number rather than on a memory.
  *
  * WHY THERE ARE TWO CONJUNCTIONS AND NOT ONE. Publishability is not one
  * property, and a single `ok` would have shipped a regression on behaviour that
@@ -138,10 +144,12 @@ export interface Publishability {
    * its four branches do not share one template — the `exhaustive` branch
    * carries no reason tail at all and the unsupported branch carries no
    * `under <bounds>` — so a reader must not build a row out of this field
-   * expecting it to reproduce one. It is the REASON half only, and it is
-   * deliberately not wired here: the commit that wires it is the one that
-   * collapses the two byte-identical copies of `boundsSentence`, and until then
-   * a wiring would move a published sentence, which this commit may not do.
+   * expecting it to reproduce one. It is the REASON half only. The two
+   * byte-identical copies of `boundsSentence` ARE collapsed now — one
+   * definition in `./explore`, imported by `./patterns` — but that only removes
+   * the obstacle: the four branches still do not share a template, so wiring
+   * this field would move a published sentence in a way no reader asked for,
+   * and the shape a row would need is not the shape this field has.
    */
   readonly sentence: string;
 }
@@ -286,8 +294,18 @@ export interface Exactness {
   readonly sentence: string;
 }
 
-/** What each failed clause says to a reader, once, so no two spell it alike. */
-const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
+/**
+ * What each failed clause says to a reader, once, so no two spell it alike.
+ *
+ * EXPORTED because one of them is printed by a claim that does not read this
+ * gate at all: A0's `otherwise` cell is *the row is withheld and the store
+ * sentence prints in its place*, and `reachOne` withholds a deadlock row on the
+ * per-configuration conjunct rather than on `walkIsExact`. The sentence is the
+ * same sentence either way — an edge the model states is absent from the
+ * relation — and a second copy of it in `./explore` is the two-copies defect
+ * this file exists to stop.
+ */
+export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
   bound: 'the walk stopped at a bound, so an edge it never followed is missing from the relation',
   unsupported:
     'the walk did not run: a construct this engine does not explore was found, and an unexplored graph holds nothing',
@@ -508,10 +526,27 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
       'decreasing in the over-approximating mechanisms, increasing in the undecided-guard one: a missing edge invents this row',
     walkRequires: 'decreasingOk',
     // THE ONE ESCAPE IN THE REGISTER, and it is legal by stating why: the
-    // conjunct names the very mechanism the note identifies. The shipped gate is
-    // walk-wise — one undetermined guard anywhere empties the whole array — and
-    // the leaf-wise conjunct is added ON TOP of it, which is a strengthening of
-    // the row's availability and not a relaxation of its gate.
+    // conjunct names the very mechanism the note identifies. It SHIPS now, in
+    // `reachOne`: the array used to be emptied walk-wise, one undetermined
+    // guard anywhere silencing every row, and the question is now asked of the
+    // configuration each row is about — over its whole active stack, since an
+    // edge leaving a composite is an edge out of every configuration inside it.
+    // That is a strengthening of the row's AVAILABILITY and not a relaxation of
+    // its gate: wherever every guard decided, the set of undecided edges is
+    // empty and the two readings are the same expression.
+    //
+    // WHAT THE `walkRequires` CELL RECORDS, AND WHAT THE PRODUCER APPLIES. The
+    // cell is the plan's column (§2.3, row A0) and the polarity rule above
+    // reads it — A0 is the one escape, and the escape is legal because this
+    // conjunct names the mechanism the note names. The producer applies this
+    // conjunct and NO member of the walk-wise family to the deadlock rows, and
+    // it cannot without regressing them: `decreasingOk` includes `exhaustive`,
+    // and the `verification/deadlock` catalogue entry says a bound does not
+    // withhold the row; `guardsDecided` subsumes this conjunct and would empty
+    // the array whole again, which is the reading that loses the decided sink.
+    // The reflection suite reads `reachOne`'s source and pins that wiring —
+    // the conjunct applied, neither walk-wise symbol applied — so the cell and
+    // the producer cannot drift apart unnoticed a second time.
     alsoRequires: [
       'no outgoing transition of the deadlocked leaf is in `walk.undeterminedGuards`',
     ],

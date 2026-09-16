@@ -85,12 +85,19 @@ import {
   type MachineConfig,
   type StepInput,
 } from './config';
+// `boundsSentence` is IMPORTED and no longer copied. This file carried a
+// byte-identical second definition of it, and the sentence it composes is the
+// one every absence row in every lane is qualified by — so the two copies had to
+// move together or say two different things about the same walk. That is the
+// defect the publishability conjunction had one document down, and it is fixed
+// the same way: one definition, two readers.
 import {
   BEHAVIOUR_UNSUPPORTED_CODE,
   BOUND_EXHAUSTED_CODE,
   DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_DEPTH,
   GUARD_UNDETERMINED_CODE,
+  boundsSentence,
   exploreMachine,
   machineAlphabet,
   transitionLabel,
@@ -1035,12 +1042,6 @@ function traceOf(model: Model, leaf: ProductNode): TraceStep[] {
   });
 }
 
-/** `{maxConfigs …, maxDepth …, maxCompletion …, alphabet …}`, spelled out. */
-function boundsSentence(b: ExploreBounds): string {
-  const alphabet = b.alphabet.length === 0 ? 'no named trigger' : b.alphabet.join(', ');
-  return `{maxConfigs ${b.maxConfigs}, maxDepth ${b.maxDepth}, maxCompletion ${b.maxCompletion}, alphabet ${alphabet}}`;
-}
-
 /** Why a walk stopped, in the words the report prints. */
 function boundSentence(hit: BoundHit): string {
   switch (hit) {
@@ -1294,8 +1295,14 @@ export function checkProperty(
             : ' (it did not evaluate to a value)'
         }. The walk did not decide whether those transitions are enabled, so this ` +
         'property was searched over a graph missing an edge that may well be there — and one of ' +
+        // NAMES THE TWO LISTS THAT GO WALK-WISE, and no longer the third. A
+        // no-way-out row is withheld per configuration (register row A0), so a
+        // machine can publish one of them while this command reports the whole
+        // property inconclusive — and this sentence, which is about the SAME
+        // machine and is the one place the two commands speak about each other,
+        // must not describe `reach` as withholding a row `reach` prints.
         'the runs it hides is exactly where a bad prefix would be. This is NOT a pass: `reach` on ' +
-        'the same machine withholds its unreachable, dead and no-way-out lists for the same reason.',
+        'the same machine withholds its unreachable and dead lists for the same reason.',
       witness: [],
     };
   }

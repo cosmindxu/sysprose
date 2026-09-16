@@ -93,6 +93,7 @@ import {
   signatureCensus,
   CONTRACT_LEVEL_NOTE,
   consistencyReport,
+  DEADLOCK_WITHHELD_SENTENCE,
   contractReport,
   CORE_SUFFICIENCY_NOTE,
   coreCount,
@@ -3374,6 +3375,14 @@ function machineLines(m: MachineReach): string[] {
   for (const d of m.deadlocks) {
     out.push(`    no way out   ${d.leaf.qualifiedName} \u2014 reached in ${d.steps} step(s), not marked final`);
   }
+  // A0's `otherwise` cell, printed. A row withheld because an undecided guard
+  // is an edge out of the very configuration it is about leaves a LINE behind,
+  // not a silence: the walk found the configuration and cannot say what a
+  // reader would take the row to mean, and saying so is the difference between
+  // a withheld claim and a claim nobody made.
+  for (const d of m.deadlocksWithheld) {
+    out.push(`    withheld     ${d.leaf.qualifiedName} \u2014 ${DEADLOCK_WITHHELD_SENTENCE}`);
+  }
   for (const n of m.nondeterminism) {
     const on = n.event === '' ? 'as completion transitions (no trigger)' : `on \`${n.event}\``;
     out.push(
@@ -3387,9 +3396,15 @@ function machineLines(m: MachineReach): string[] {
     // differently: a bound is raised with `--max-configs`, an undecided guard is
     // fixed in the model. Printing the bound sentence over a walk that finished
     // would send them to the wrong one.
+    // And it names the no-way-out list only where a row of it actually went:
+    // after A0 that list is withheld per configuration, so on a machine whose
+    // every deadlocked configuration was fully decided this line would
+    // otherwise say a published row above it was not reported.
     out.push(
       m.undeterminedGuards.length > 0
-        ? '    the unreachable, dead and no-way-out lists are WITHHELD: a guard this walk could not evaluate is not a guard that is false'
+        ? `    the unreachable and dead lists are WITHHELD${
+            m.deadlocksWithheld.length === 0 ? '' : ', and the no-way-out rows marked `withheld` above'
+          }: a guard this walk could not evaluate is not a guard that is false`
         : '    the unreachable and dead lists are SUPPRESSED: a walk that did not finish cannot say what it never reached',
     );
   }

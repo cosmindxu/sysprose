@@ -4116,6 +4116,19 @@ package P {
     // The machine is trigger-less, so the report may not print a trigger label
     // it made up: the alphabet line has to say there is none.
     expect(r.stdout).toContain('alphabet no named trigger');
+    // AND THE STORE, which is the other half of what `exhaustive under {…}` has
+    // always meant: the walk opens from the literal values the model declares,
+    // and a guard over an attribute with no declared value is read the way the
+    // interpreter reads it. Appended after the alphabet clause, which is why
+    // the prefix assertion above and this one are both true.
+    expect(r.stdout).toContain(
+      'alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}',
+    );
+    // The exactness census is a `--json` payload field and not a report row: it
+    // is the kill measurement for the features that will read the gate, and a
+    // reader acts on the rows above it.
+    expect(r.stdout).not.toContain('acyclic');
+    expect(r.stdout).not.toContain('walkIsExact');
     // And the words this command may never print, whatever it found.
     expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
   }, 90_000);
@@ -4134,6 +4147,19 @@ package P {
           states: { total: number; reachable: Array<{ name: string }>; unreachable: unknown[] };
           transitions: { total: number; fired: number; dead: unknown[] };
           nondeterminism: Array<{ state: { name: string }; event: string; taken: { to: { name: string } } }>;
+          deadlocks: unknown[];
+          deadlocksWithheld: unknown[];
+          exactness: {
+            acyclic: boolean | null;
+            openFrontier: boolean;
+            edges: number;
+            timedTransitions: number;
+            timedLabels: number;
+            alphabet: number;
+            undeterminedGuards: number;
+            walkIsExact: boolean;
+            failedClause: string | null;
+          };
         }>;
         profile: Array<{ field: string; reading: string; provenance: string }>;
         totals: { machines: number; exhaustive: number };
@@ -4154,6 +4180,11 @@ package P {
     expect(fm.nondeterminism[0].state.name).toBe('autonomous');
     expect(fm.nondeterminism[0].event).toBe('');
     expect(fm.nondeterminism[0].taken.to.name).toBe('manual');
+    // Both halves of the deadlock answer travel: the published rows and the
+    // rows the per-configuration guard conjunct withheld. Neither on a machine
+    // with no sink and no guard.
+    expect(fm.deadlocks).toEqual([]);
+    expect(fm.deadlocksWithheld).toEqual([]);
     // Every report carries the reading it holds under (plan §3.8).
     expect(body.reach.profile.map((f) => f.field)).toEqual([
       'run-to-completion',
@@ -4166,6 +4197,21 @@ package P {
     expect(body.reach.diagnostics.map((d) => d.code)).toEqual([
       'verification/nondeterministic-choice',
     ]);
+    // The exactness census, published beside the figures and printed in none of
+    // them. `acyclic` is FALSE here and not `null`: this walk saw the whole
+    // graph its step relation admits, and that graph cycles. The four clause
+    // counts beside it are what a later feature is retired on.
+    expect(fm.exactness).toEqual({
+      acyclic: false,
+      openFrontier: false,
+      edges: 5,
+      timedTransitions: 0,
+      timedLabels: 0,
+      alphabet: 0,
+      undeterminedGuards: 0,
+      walkIsExact: true,
+      failedClause: null,
+    });
   }, 90_000);
 
   it('reach --max-configs suppresses both absence lists rather than shrinking them', async () => {
@@ -4211,9 +4257,13 @@ package P {
     expect(r.stdout).toContain('3 state machine(s), 2 walked to exhaustion');
     expect(r.stdout).toContain('verification/guard-undetermined');
     expect(r.stdout).toContain('undecided    idle -> hazard — guard `mode == 3`: no value for mode');
+    // The trailing line names ONLY what was withheld: the two walk-wise lists
+    // always, and the no-way-out rows only because one really went here —
+    // `idle`'s only way out is the guard nothing valued.
     expect(r.stdout).toContain(
-      'the unreachable, dead and no-way-out lists are WITHHELD: a guard this walk could not evaluate is not a guard that is false',
+      'the unreachable and dead lists are WITHHELD, and the no-way-out rows marked `withheld` above: a guard this walk could not evaluate is not a guard that is false',
     );
+    expect(r.stdout).not.toContain('no-way-out lists');
     // The undecided machine is never called exhaustive, and nothing is claimed
     // absent about it.
     const ctrl = r.stdout.slice(
@@ -4224,11 +4274,55 @@ package P {
     expect(ctrl).not.toContain('exhaustive');
     expect(ctrl).not.toContain('unreachable  ');
     expect(ctrl).not.toContain('no way out   ');
+    // The withheld row is a LINE, not a silence (register row A0's `otherwise`
+    // cell): the store sentence prints where the row would have been.
+    expect(ctrl).toContain(
+      'withheld     GuardProbe::Ctrl::Modes::idle — no enabled way out was found and none is reported: a guard the walk consulted decided nothing, so an edge the model states is absent from the relation',
+    );
     // The control: the machine that DID decide its guard still says everything.
     expect(r.stdout).toContain('unreachable  GuardProbe::Decided::Modes::hazard');
     expect(r.stdout).toContain('no way out   GuardProbe::Decided::Modes::idle');
     // And the words this command may never print, whatever it withheld.
     expect(r.stdout).not.toMatch(/\bproved\b|\bverified\b|\bdeadlock-free\b/);
+
+    // THE MACHINE WHERE THE PER-CONFIGURATION GATE AND THE WALK-WISE ONE
+    // DIFFER, at the surface a person reads. An undecided guard out of
+    // `holding`, a fully-decided sink at `done`: the sink's row is published
+    // as a finding, `holding`'s is withheld under its own line, and no sentence
+    // in the block says the published row was withheld — which is what the
+    // block said, three lines above the row, before the sentences were
+    // counted from the withheld rows themselves.
+    const guarded = resolve(process.cwd(), `${FIXV}/models/deadlock-guarded.sysml`);
+    const g = await run(['reach', guarded]);
+    expect(g.code).toBe(0);
+    const ctrlG = g.stdout.slice(
+      g.stdout.indexOf('DeadlockGuarded::Ctrl::Modes [StateDefinition]'),
+      g.stdout.indexOf('DeadlockGuarded::Nested::Modes [StateDefinition]'),
+    );
+    expect(ctrlG).toContain(
+      'no way out   DeadlockGuarded::Ctrl::Modes::done — reached in 1 step(s), not marked final',
+    );
+    expect(ctrlG).toContain(
+      'withheld     DeadlockGuarded::Ctrl::Modes::holding — no enabled way out was found and none is reported',
+    );
+    expect(ctrlG).toContain(
+      'the unreachable and dead lists are WITHHELD and are NOT reported as findings, as is the no-way-out row for 1 configuration(s) whose only ways out are guards this walk could not decide',
+    );
+    expect(ctrlG).toContain(
+      'the unreachable and dead lists are WITHHELD, and the no-way-out rows marked `withheld` above',
+    );
+    expect(g.stdout).not.toContain('no-way-out lists');
+    expect(g.stdout).toContain(
+      'verification/deadlock  state `DeadlockGuarded::Ctrl::Modes::done` has no enabled outgoing transition',
+    );
+    expect(g.stdout).toContain(
+      'so the unreachable and dead lists for this machine are withheld, as is the no-way-out row for 1 configuration(s) an undecided guard is an edge out of.',
+    );
+    // The nested machine: the undecided guard is on the COMPOSITE, so the leaf
+    // under it is withheld and nothing is published about it.
+    const nestedG = g.stdout.slice(g.stdout.indexOf('DeadlockGuarded::Nested::Modes [StateDefinition]'));
+    expect(nestedG).not.toContain('no way out   ');
+    expect(nestedG).toContain('withheld     DeadlockGuarded::Nested::Modes::degraded::sub2');
   }, 90_000);
 
   it('reach walks a succession between two states, and counts it', async () => {

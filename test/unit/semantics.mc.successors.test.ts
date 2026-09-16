@@ -259,16 +259,35 @@ describe('`openFrontier` is the negation of `exhaustive`, not a test on `boundHi
   });
 });
 
-/* ════════════════════ the published surface, before this commit ══════════════ */
+/* ═══════════════════════ the published surface, pinned ══════════════════════ */
 
 /**
- * What `reach` published on each shipped example at the commit before this one.
+ * What `reach` publishes on each shipped example, entire.
  *
- * MEASURED, NOT REMEMBERED: captured off `sysprose reach --json` on the parent
- * commit and pasted here with the ids dropped. It is the whole of what this
- * commit promises — the relation is new data and not one published row moves —
- * and it is deliberately in this file rather than in a golden, so the commit
- * that DOES move a qualification string moves it here, in sight of the reason.
+ * MEASURED, NOT REMEMBERED: captured off `sysprose reach --json` and pasted
+ * here with the ids dropped. It was written for the commit that retained the
+ * successor relation, whose promise was that not one published row moved, and
+ * it was put in this file rather than in a golden so that the commit which DOES
+ * move a published sentence has to move it here, in sight of the reason.
+ *
+ * THAT COMMIT IS THE COMPONENT ONE, AND EXACTLY THREE THINGS MOVED WITH IT, each
+ * named in {@link MOVED_BY_THE_CENSUS} and asserted there rather than left to be
+ * read out of a diff:
+ *
+ *  1. every `qualification` gained the STORE CLAUSE, appended after the alphabet
+ *     clause — a disclosure of what `exhaustive under {…}` has always meant, and
+ *     a re-record that moves every qualification string in every lane at once;
+ *  2. every machine row gained `exactness`, the census the plan retires the
+ *     features reading this gate on. It is a payload field and no report row
+ *     prints it;
+ *  3. every machine row gained `deadlocksWithheld` — the deadlock rows the
+ *     per-configuration guard conjunct (register row A0) withheld, carried out
+ *     beside the published ones rather than dropped. It is EMPTY on every
+ *     machine below: no shipped example carries a guard, so nothing here was
+ *     withheld and no published row moved.
+ *
+ * Nothing else in this table moved, and that is the whole gate for the census
+ * going live: no finding, no verdict, no list and no count.
  */
 const REACH_BEFORE: Record<string, unknown> = {
   "examples/contract-authoring-prompts.sysml": {
@@ -315,7 +334,7 @@ const REACH_BEFORE: Record<string, unknown> = {
         "depth": 3,
         "exhaustive": true,
         "boundHit": "none",
-        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}",
+        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}",
         "states": {
           "total": 4,
           "reachable": [
@@ -387,6 +406,17 @@ const REACH_BEFORE: Record<string, unknown> = {
           },
           "unaccounted": []
         },
+        "exactness": {
+          "acyclic": false,
+          "openFrontier": false,
+          "edges": 5,
+          "timedTransitions": 0,
+          "timedLabels": 0,
+          "alphabet": 0,
+          "undeterminedGuards": 0,
+          "walkIsExact": true,
+          "failedClause": null
+        },
         "nondeterminism": [
           {
             "state": {
@@ -453,6 +483,7 @@ const REACH_BEFORE: Record<string, unknown> = {
           }
         ],
         "deadlocks": [],
+        "deadlocksWithheld": [],
         "unsupported": [],
         "undeterminedGuards": [],
         "suppressed": false
@@ -510,7 +541,7 @@ const REACH_BEFORE: Record<string, unknown> = {
         "depth": 2,
         "exhaustive": true,
         "boundHit": "none",
-        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}",
+        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}",
         "states": {
           "total": 3,
           "reachable": [
@@ -571,6 +602,17 @@ const REACH_BEFORE: Record<string, unknown> = {
             "unaccounted": 0
           },
           "unaccounted": []
+        },
+        "exactness": {
+          "acyclic": false,
+          "openFrontier": false,
+          "edges": 4,
+          "timedTransitions": 0,
+          "timedLabels": 0,
+          "alphabet": 0,
+          "undeterminedGuards": 0,
+          "walkIsExact": true,
+          "failedClause": null
         },
         "nondeterminism": [
           {
@@ -638,6 +680,7 @@ const REACH_BEFORE: Record<string, unknown> = {
           }
         ],
         "deadlocks": [],
+        "deadlocksWithheld": [],
         "unsupported": [],
         "undeterminedGuards": [],
         "suppressed": false
@@ -682,7 +725,7 @@ const REACH_BEFORE: Record<string, unknown> = {
         "depth": 1,
         "exhaustive": true,
         "boundHit": "none",
-        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger}",
+        "qualification": "exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet no named trigger, store seeded from declared literal values — a guard over an attribute with no declared value is read as false}",
         "states": {
           "total": 2,
           "reachable": [
@@ -728,8 +771,20 @@ const REACH_BEFORE: Record<string, unknown> = {
           },
           "unaccounted": []
         },
+        "exactness": {
+          "acyclic": false,
+          "openFrontier": false,
+          "edges": 2,
+          "timedTransitions": 0,
+          "timedLabels": 0,
+          "alphabet": 0,
+          "undeterminedGuards": 0,
+          "walkIsExact": true,
+          "failedClause": null
+        },
         "nondeterminism": [],
         "deadlocks": [],
+        "deadlocksWithheld": [],
         "unsupported": [],
         "undeterminedGuards": [],
         "suppressed": false
@@ -1010,6 +1065,24 @@ const ADDED_FILES = [
   'test/fixtures/verification/models/trapguard-typed.sysml',
 ];
 
+/**
+ * The machines the COMPONENT commit adds, listed apart from the five above.
+ *
+ * Kept separate rather than merged into one list, because the sentence this
+ * file's count assertion makes is *"the tree that was here, plus what each
+ * commit put in it"* — and a merged list makes the next commit's fixture
+ * indistinguishable from the last one's on the day a count moves unexpectedly.
+ * `trap-probe.sysml` is the shape the component pass exists for;
+ * `deadlock-guarded.sysml` carries the only two machines in the tree with an
+ * undecided guard in one region and a sink in another — one flat, where the
+ * sink's row survives, and one nested, where the guard is on the composite the
+ * sink stands inside and the row is withheld.
+ */
+const COMPONENT_FILES = [
+  'test/fixtures/verification/models/trap-probe.sysml',
+  'test/fixtures/verification/models/deadlock-guarded.sysml',
+];
+
 describe('every machine in the tree, walked', () => {
   const walked: Walked[] = [];
 
@@ -1029,10 +1102,15 @@ describe('every machine in the tree, walked', () => {
     }
   }, 300_000);
 
-  it('finds the eleven machines that were here, plus the eight this commit adds', () => {
+  it('finds the eleven machines that were here, plus eight from one commit and two from the next', () => {
     const added = walked.filter((w) => ADDED_FILES.includes(w.file));
     expect(added).toHaveLength(8);
-    expect(walked.length - added.length, 'the tree gained or lost a machine').toBe(11);
+    const components = walked.filter((w) => COMPONENT_FILES.includes(w.file));
+    expect(components).toHaveLength(3);
+    expect(
+      walked.length - added.length - components.length,
+      'the tree gained or lost a machine',
+    ).toBe(11);
   });
 
   it('accounts for every edge: `census.counts.unaccounted` is 0 on all of them', () => {
@@ -1068,18 +1146,20 @@ describe('every machine in the tree, walked', () => {
     }
   });
 
-  it('leaves a guard undecided on exactly four of them, and `undeterminedGuards` is the shipped field that says so', () => {
+  it('leaves a guard undecided on exactly six of them, and `undeterminedGuards` is the shipped field that says so', () => {
     const undecided = walked
       .filter((w) => w.walk.undeterminedGuards.length > 0)
       .map((w) => `${w.file} :: ${w.name}`);
     expect(undecided.sort()).toEqual([
+      'test/fixtures/verification/models/deadlock-guarded.sysml :: Modes',
+      'test/fixtures/verification/models/deadlock-guarded.sysml :: Modes',
       'test/fixtures/verification/models/guard-undetermined.sysml :: Modes',
       'test/fixtures/verification/models/trapguard-typed.sysml :: Modes',
       'test/fixtures/verification/models/trapguard.sysml :: Modes',
       'test/fixtures/verification/models/trapguard.sysml :: Modes',
     ]);
     expect(walked.length - undecided.length, 'a guard that used to decide stopped deciding').toBe(
-      walked.length - 4,
+      walked.length - 6,
     );
   });
 });
@@ -1199,7 +1279,21 @@ function withoutIds(value: unknown): unknown {
   return value;
 }
 
-describe("the differential: `reach`'s published output did not move", () => {
+/**
+ * The three movements the census commit made, as data.
+ *
+ * A re-record is only honest if the thing re-recorded is stated: the sentence
+ * that moved is quoted here and the two fields that arrived are named, so a
+ * fourth movement — a finding, a count, a list — cannot ride in with them.
+ */
+const MOVED_BY_THE_CENSUS = {
+  storeClause:
+    ', store seeded from declared literal values — a guard over an attribute with no declared value is read as false',
+  censusField: 'exactness',
+  withheldField: 'deadlocksWithheld',
+} as const;
+
+describe("the differential: `reach`'s published output moved in exactly three named ways", () => {
   const files = Object.keys(REACH_BEFORE);
 
   for (const file of files) {
@@ -1223,6 +1317,46 @@ describe("the differential: `reach`'s published output did not move", () => {
       ).toEqual(REACH_BEFORE[file]);
     }, 120_000);
   }
+
+  it('the two fields that arrived are the only keys a machine row did not have', async () => {
+    // The table above pins every row whole; this reads the same rows for the
+    // shape of the movement so that a field arriving under a new name is red
+    // here and not merely a diff in a 1,000-line table.
+    for (const file of files) {
+      const loaded = await loadModelText(read(file), { fileName: file });
+      for (const m of reachReport(loaded.model!).machines) {
+        expect(m, file).toHaveProperty(MOVED_BY_THE_CENSUS.censusField);
+        expect(m, file).toHaveProperty(MOVED_BY_THE_CENSUS.withheldField);
+        // Empty on every shipped machine: none carries a guard, so the
+        // per-configuration conjunct withheld nothing and no row moved.
+        expect(m.deadlocksWithheld, file).toEqual([]);
+      }
+    }
+  }, 120_000);
+
+  it('appends the store clause AFTER the alphabet clause, on every machine and once each', async () => {
+    // The position is what keeps the process-level campaign green: it asserts a
+    // PREFIX of this sentence that stops before `alphabet`, and the alphabet
+    // clause separately as a substring. A clause inserted earlier reddens the
+    // first; this one is appended, and the assertion here is the same shape the
+    // campaign's is so the two cannot drift apart.
+    for (const file of files) {
+      const loaded = await loadModelText(read(file), { fileName: file });
+      for (const m of reachReport(loaded.model!).machines) {
+        if (!m.qualification.includes('under {')) continue;
+        expect(m.qualification, file).toContain(
+          `alphabet no named trigger${MOVED_BY_THE_CENSUS.storeClause}}`,
+        );
+        expect(
+          m.qualification.split(MOVED_BY_THE_CENSUS.storeClause),
+          `${file} states the store twice`,
+        ).toHaveLength(2);
+        expect(m.qualification.indexOf('alphabet')).toBeLessThan(
+          m.qualification.indexOf('store seeded'),
+        );
+      }
+    }
+  }, 120_000);
 
   it('and on the timed machine no file can carry, which keeps both of its absence lists', () => {
     const { model } = twoDwellMachine();

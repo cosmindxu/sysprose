@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **3142 passed / 0 failed / 0 skipped** across **147 files** + **128 E2E** across **78 spec files** = **3270 green** (measured 2026-09-16) |
+| Full automated suite | **3181 passed / 0 failed / 0 skipped** across **148 files** + **128 E2E** across **78 spec files** = **3309 green** (measured 2026-09-16) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -1176,6 +1176,36 @@ or a JSON payload. Nothing reads the relation yet — no
 diagnostic, no verdict, no report row — and the gate for the commit that added it
 was that every row `reach` publishes on the shipped examples is unchanged.
 
+**The components of that relation are computed, and what they are allowed to say
+about the MACHINE is a separate question that is asked first.** `reach --json`
+now carries an exactness census beside its edge census: how many edges the walk
+retained, how many of its transitions this engine reads as a dwell, how many
+events the machine names, how many guards were consulted and decided nothing,
+whether the walk saw the graph whole — and whether the retained relation has a
+cycle. That last field is **three-valued**. It answers `true` or `false` only
+where the relation the walk retained is the relation the model states, and `null`
+everywhere else, because the question is about the machine while the graph is the
+walk's: an edge behind a guard nothing valued is a cycle-closing edge the walk
+never had, and a walk that refused a construct outright has an empty relation
+that trivially has no cycle. A boolean there would state a property of a graph
+nobody built. **None of this is a finding and none of it is printed**: it is a
+`--json` payload field, it gates nothing, and every claim the command publishes
+still reads the same conjunction it read before — a state nobody enters and a
+transition nobody fires are claims that can only shrink as edges are added, and
+pointing them at a gate built for the claims that GROW would empty a sound
+finding out of a shipped command.
+
+**One row did move, and it moved towards saying more rather than less.** A
+`verification/deadlock` row — *this configuration has no enabled way out* — used
+to be withheld across a whole machine whenever any guard anywhere in it was left
+undecided. That is one question asked in place of another: what can make such a
+row wrong is an undecided edge out of the configuration the row is about, over
+its own active stack, and an undecided guard in another region of the same
+machine cannot. The question is now asked of the configuration. Where every guard
+decided, the two readings are the same expression and every row is unchanged;
+where one did not, a genuine sink whose own way out nobody was ever consulted
+about is reported instead of being lost with the row that really is undecided.
+
 **The declared deviation of §8.1 extends to this command, in the same words.** A
 property whose antecedent never holds is `vacuous` ⇒ inconclusive ⇒ exit 2, not
 true — the two antecedents this engine detects are a scope no explored run opens
@@ -1343,7 +1373,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (3142 pass / 0 skip, 147 files)
+# Full unit + integration + conformance suite (3181 pass / 0 skip, 148 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

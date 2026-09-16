@@ -351,12 +351,20 @@ export type {
 // `timedLabels` needs no such export — it ranges over the same relation
 // `bounds.alphabet` does, and `bounds` is on the result already, which is the
 // whole point of the two fields being scoped differently.
+//
+// `MachineReach` now carries `ExactnessCensus` beside the edge census: the shape
+// of the walk as numbers, including the THREE-VALUED `acyclic`. A caller reading
+// that field is reading a fact about the machine only where `walkIsExact` holds,
+// and `null` is what it says everywhere else.
 export {
   BEHAVIOUR_CODES,
   BEHAVIOUR_UNSUPPORTED_CODE,
   BOUND_EXHAUSTED_CODE,
   DEAD_TRANSITION_CODE,
   DEADLOCK_CODE,
+  // What prints where a deadlock row was withheld, so an API caller composing
+  // its own report withholds it in the same words the CLI does.
+  DEADLOCK_WITHHELD_SENTENCE,
   DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_DEPTH,
   GUARD_UNDETERMINED_CODE,
@@ -377,6 +385,7 @@ export type {
   EdgeAccount,
   EdgeCensus,
   EdgeCensusRow,
+  ExactnessCensus,
   ExploreBounds,
   ExploreOptions,
   ExploreResult,
@@ -434,6 +443,24 @@ export type {
   WalkRequires,
   WitnessClaim,
 } from '../semantics/mc/publishable';
+// The component arithmetic over the retained relation: which configurations are
+// mutually reachable, which of those sets nothing leaves, whether the relation
+// cycles at all, and which configurations can reach a given set. Exported
+// through the same door as the walk because the relation is, and a caller
+// holding `successors` with no way to ask a question of it holds an array of
+// integers.
+//
+// NOTHING HERE DECIDES WHAT MAY BE PUBLISHED. These functions answer over the
+// graph they are handed; whether that graph is the machine's is `walkIsExact`'s
+// question, and it is asked first — which is why `MachineReach.exactness`
+// reports `acyclic` as `null` rather than as an answer whenever the gate fails.
+export {
+  acyclic,
+  bottomComponents,
+  reverseReachable,
+  tarjanComponents,
+} from '../semantics/mc/scc';
+export type { Components } from '../semantics/mc/scc';
 // Safety patterns over that graph (plan §3.8), through the same door and for
 // the same reason: `check-behaviour` is a rendering of `behaviourReport`, and a
 // checker an agent could only reach by spawning a CLI is not an in-process API.

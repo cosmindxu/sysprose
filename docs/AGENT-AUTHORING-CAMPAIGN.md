@@ -3675,15 +3675,23 @@ second reading. That reading is right for STEPPING — the interpreter has to pi
 something, and it still does not fire an undetermined guard — and wrong for a
 REPORT. The walk now records, per transition, the guards it consulted and could
 not decide, with the guard text and the names nothing valued
-(`ExploreResult.undeterminedGuards`); `reach` withholds `unreachable`, `dead`
-**and** `deadlock` over such a machine, prints `undetermined under {…}` in place
-of `exhaustive`, and raises `verification/guard-undetermined` — a WARNING,
-because it is the reason the lists below it are short and a reader who meets an
-empty list under an info line has been told good news. `check-behaviour` reads
-the same fifth condition off the same walk result and reports `inconclusive`
-(exit 2) rather than `pass` or `vacuous`: the two commands cannot contradict each
-other about one machine, which they did for exactly as long as the gate lived in
-only one of them.
+(`ExploreResult.undeterminedGuards`); `reach` withholds `unreachable` and `dead`
+over such a machine — **and, per configuration, the `deadlock` row of every
+configuration one of those undecided edges leaves**, printing a `withheld` line
+in its place — prints `undetermined under {…}` in place of `exhaustive`, and
+raises `verification/guard-undetermined` — a WARNING, because it is the reason
+the lists below it are short and a reader who meets an empty list under an info
+line has been told good news. The per-configuration reading arrived with the
+components pass below; before it, one undecided guard anywhere emptied the whole
+array, and the sentence above read *`unreachable`, `dead` and `deadlock`*
+without qualification. `check-behaviour` reads the same fifth condition off the
+same walk result and reports `inconclusive` (exit 2) rather than `pass` or
+`vacuous`: the two commands do not contradict each other about one machine,
+which they did for exactly as long as the gate lived in only one of them — and
+what keeps that true of the no-way-out row now that it is decided per
+configuration is that **every sentence naming a withheld list names only the
+lists that were actually withheld**, computed from the rows that went rather
+than written out in advance.
 
 A hidden-choice row is an EXISTENTIAL claim about a configuration the walk
 reached, and the narrow true statement about it is the one to keep. Removing a
@@ -4569,6 +4577,70 @@ fixed ahead of this lane — and the cases here assert that fixed baseline
 (`unconnectedPortUsages` empty, `unreconciledPorts` empty, and no output on any
 example that reassures *every declared port is wired* above a list of dangling
 ends) rather than reporting somebody else's fix as new.
+
+**The components of that relation are computed, and the census that reads them
+is three-valued where a boolean would have lied.** One iterative Tarjan pass over
+the retained relation answers which configurations are mutually reachable, which
+of those sets has no edge leaving it, whether the relation cycles at all, and
+which configurations can reach a given set — the arithmetic checked on graphs
+whose answer is known by construction before any sentence is composed from it,
+including a five-thousand-configuration chain that says the pass is iterative
+rather than claiming it. `reach --json` records the answers as an exactness
+census beside its edge census, and `acyclic` there reads `true`, `false` **or
+`null`**: the question is about the machine while the graph is the walk's, so a
+walk that refused a construct — an empty relation, trivially without a cycle —
+and a walk whose escape edge sat behind a guard nothing valued both answer
+`null`. The second of those is the sharp one: measured on the two-state trapguard
+model, the walk hits no bound at all and its relation is two nodes and the single
+edge between them, so a field gated on *did a bound stop this walk* publishes
+`acyclic: true` about a model that states `nominal -> degraded -> nominal`. Both
+wrong answers are pinned by name in the suite. **The gate the census reads
+publishes nothing**: every claim `reach` makes still reads the decreasing
+conjunction, and the factory-built timed machine — whose gate reads false and
+whose unreachable and dead lists are non-empty and unmoved — is the fixture that
+goes red the moment anyone points one at the other.
+
+**Two sentences moved with it, both deliberately.** The bounds line every lane
+prints now names the store — *"store seeded from declared literal values — a
+guard over an attribute with no declared value is read as false"* — appended
+after the alphabet clause, which is where it has to go for the process-level
+assertions that stop before `alphabet` and check the alphabet clause separately
+to stay true. It is a disclosure of what `exhaustive under {…}` has always meant
+and says less than the guard clause the walk already publishes; where the two
+differ it is the `verification/guard-undetermined` row a reader acts on. The
+two hand-pasted transcripts in the user guide that print that sentence in full
+move with it, and they are named here because no test protects them — as does
+the guide's guard-undetermined block (prose, console transcript and the
+one-line table row beneath it), which now prints the `withheld` line and names
+only the two walk-wise lists, for the same reason and under the same absence of
+a test. And a
+`verification/deadlock` row is no longer withheld across a whole machine because
+a guard somewhere else in it decided nothing: the question is asked of the
+configuration the row is about, over its active stack rather than its leaf alone,
+since an edge leaving a composite state is an edge out of every configuration
+inside it. Wherever every guard decided, the two readings are the same
+expression and no shipped row moves; `deadlock-guarded.sysml` is the one model in
+the tree where they differ, and it reports the sink it always knew about instead
+of losing it with the leaf that really is undecided. **Five sentences moved with
+that row, and they had to.** Four of them — the machine's qualification, the
+report's trailing withheld line, the `verification/guard-undetermined` message
+and the same code's catalogue hint — enumerated *the unreachable, dead and
+no-way-out lists* as withheld, which was true by construction only while the
+array was emptied whole; a per-configuration gate turns each of them into a
+report contradicting a row three lines above it, so each now names the
+no-way-out list only when a row of it actually went, counted from the withheld
+rows themselves. The fifth is `check-behaviour`'s cross-command sentence, which
+says what `reach` does about the same machine and now names the two lists that
+still go walk-wise. And a withheld row is not a silence: one `withheld` line
+prints per configuration, carrying the same store sentence the exactness gate
+uses for the same mechanism, so the list a reader sees is never shorter than the
+list the walk found without saying why. The register's row for that claim keeps
+the plan's `decreasingOk` cell — it is the one polarity escape, and the escape
+is what the per-configuration conjunct buys — while the producer applies the
+conjunct alone, which the reflection suite now pins by reading the producer's
+source: the conjunct applied to both halves of the answer, and neither walk-wise
+symbol applied to either, because gating the row on the walk-wise family would
+withhold it under a bound the catalogue says does not withhold it.
 
 ## 5. Phase status
 

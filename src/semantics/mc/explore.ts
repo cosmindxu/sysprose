@@ -83,8 +83,15 @@ import {
 } from './config';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
 // One definition of "may this absence be stated", read by this file and by
-// `./patterns`, so the two cannot drift apart again.
-import { publishabilityOf } from './publishable';
+// `./patterns`, so the two cannot drift apart again. `walkIsExact` is the OTHER
+// predicate in that file — the gate for the increasing side — and it is read
+// here for the census and for nothing else: no claim this command publishes is
+// gated on it, which is what keeps this commit from moving a single finding.
+import { CLAUSE_SENTENCE, publishabilityOf, walkIsExact, type FailedClause } from './publishable';
+// The component arithmetic, over the relation the walk retained. It answers
+// what it is asked about the graph it is given; whether the answer may be
+// published at all is the gate's question and is asked first.
+import { acyclic } from './scc';
 // The same reader the step relation uses to decide an edge carries an item, so
 // the census can say WHY that edge is not in the relation in the relation's own
 // terms rather than in a sentence of its own.
@@ -1227,6 +1234,57 @@ function recordDeadlock(
   });
 }
 
+/**
+ * May this deadlock row be published — asked of the configuration it is about?
+ *
+ * A deadlock row is an absence claim over ONE configuration's outgoing edges:
+ * *nothing enabled here*. What can make it wrong is an edge out of THIS
+ * configuration that the walk could not decide, and nothing else — a bound
+ * cannot, because the walk evaluated every input at a configuration it
+ * dequeued, and neither can an undecided guard in a region the row is not
+ * standing in.
+ *
+ * OVER THE WHOLE STACK AND NOT OVER THE LEAF ALONE. `stepCandidates` offers
+ * every edge leaving any member of the active stack, so a composite state's own
+ * outgoing transition is an edge out of every configuration inside it — and a
+ * leaf-only reading would publish *"no way out"* about a configuration whose way
+ * out is a guard on its parent that decided nothing. The stack includes the
+ * leaf, so this is the leaf reading plus the ancestors it has to cover to be
+ * sound.
+ *
+ * IT IS CONSERVATIVE IN ONE DIRECTION, DELIBERATELY. `undeterminedGuards` is one
+ * row per transition, not one per configuration the transition was consulted at,
+ * so an edge that decided nothing somewhere else and would have decided here is
+ * counted against this row too. That withholds a row this walk could have
+ * stated; the other direction would state one it could not.
+ */
+function nothingUndecidedLeaves(
+  row: DeadlockRow,
+  undecidedExits: ReadonlySet<ElementId>,
+): boolean {
+  return row.stack.every((s) => !undecidedExits.has(s.id));
+}
+
+/**
+ * What prints where a withheld deadlock row would have been (register row A0's
+ * `otherwise` cell: *the row is withheld and the store sentence prints in its
+ * place*).
+ *
+ * A WITHHELD ROW IS NOT A ROW THAT WAS NOT FOUND, and the difference is the
+ * whole reason this line exists. The walk did reach a configuration it could
+ * offer no edge out of; what it cannot say is that there is none, because one of
+ * the edges it could not decide leaves that very configuration. Printing
+ * nothing would leave a reader who fixes the guard surprised by a row that
+ * appeared from nowhere — and would leave the report's own *the no-way-out list
+ * is withheld* sentence with nothing to point at.
+ *
+ * The tail is `CLAUSE_SENTENCE.store` verbatim: the mechanism is the same one
+ * the exactness gate names, so it is named in the same words even though this
+ * row is gated on the per-configuration conjunct and not on that gate.
+ */
+export const DEADLOCK_WITHHELD_SENTENCE =
+  `no enabled way out was found and none is reported: ${CLAUSE_SENTENCE.store}`;
+
 /* ─────────────────────────────── the report ─────────────────────────────── */
 
 /** One machine's answer. */
@@ -1258,11 +1316,31 @@ export interface MachineReach {
   };
   nondeterminism: readonly NondeterministicChoice[];
   /**
-   * EMPTY whenever a guard was undetermined — a deadlock row is an absence
-   * claim about ONE configuration's outgoing edges, and an edge the walk could
-   * not decide is exactly what makes it wrong.
+   * The rows that MAY be stated — one per reached configuration with no enabled
+   * edge out and no undecided one either.
+   *
+   * A deadlock row is an absence claim about ONE configuration's outgoing edges,
+   * and an edge the walk could not decide is exactly what makes it wrong — so
+   * the question is asked of the configuration each row is about rather than of
+   * the whole walk (register row A0). What the question withheld is
+   * {@link deadlocksWithheld}, and the two together are every row the walk
+   * found: a reader who meets a short list here has the rest beside it and the
+   * reason with them.
    */
   deadlocks: readonly DeadlockRow[];
+  /**
+   * The rows the undecided-guard conjunct withheld — never silently dropped.
+   *
+   * NON-EMPTY IS WHY THE SENTENCES ABOVE SAY WHAT THEY SAY. `qualification`, the
+   * report's trailing line and the `verification/guard-undetermined` finding
+   * each name the no-way-out list as withheld exactly when this array is
+   * non-empty, and name only the unreachable and dead lists when it is not —
+   * because after A0 a machine can publish one configuration's row while
+   * another's is withheld, and a sentence that said *the no-way-out list is
+   * WITHHELD* beside a published `no way out` row would be the report
+   * contradicting itself about one machine.
+   */
+  deadlocksWithheld: readonly DeadlockRow[];
   unsupported: readonly UnsupportedConstruct[];
   /**
    * Every edge under this machine, walked or refused — see {@link edgeCensus}.
@@ -1273,10 +1351,66 @@ export interface MachineReach {
    * which is already a `verification/behaviour-unsupported-construct` row above.
    */
   census: EdgeCensus;
+  /**
+   * What the walk was, as numbers — the exactness census (plan §5).
+   *
+   * Published on `--json` and printed in no report row, for the same reason the
+   * edge census is: it is the KILL MEASUREMENT for the features this lane is
+   * about to build — *does any model anyone loads have a dwell, a named
+   * trigger, an undecided guard, a cycle* — and not a finding anybody acts on.
+   * What a reader acts on is the row the gate withheld, and the sentence beside
+   * it.
+   */
+  exactness: ExactnessCensus;
   /** The guards this walk consulted and could not evaluate. Never `false`. */
   undeterminedGuards: readonly UndeterminedGuardRow[];
   /** True when the two absence lists were withheld — by a bound, or by an undecided guard. */
   suppressed: boolean;
+}
+
+/**
+ * The shape of the walk, recorded per machine so a later feature can be retired
+ * on a number rather than on a memory (plan §5's census table, commit 3).
+ *
+ * Every field is a count or a boolean over a walk that already happened: no new
+ * traversal, no new compute, and — deliberately — no new sentence. The four
+ * clause figures are recorded beside the verdict they produce so that a reader
+ * of a recorded run can tell WHICH clause a withheld claim failed on without
+ * re-running anything.
+ */
+export interface ExactnessCensus {
+  /**
+   * Has the retained relation no cycle — `true`, `false`, or `null` when the
+   * question was not answered.
+   *
+   * THREE-VALUED, AND THAT IS LOAD-BEARING. It reads `null` whenever the walk
+   * is not exact, which is WIDER than *whenever a bound was hit*: an edge
+   * behind a guard nothing decided is a cycle-closing edge the walk never had,
+   * so a machine whose stated relation cycles can be walked into an acyclic
+   * one — measured on `trapguard.sysml`'s two-state machine, which hits no
+   * bound at all and whose relation is two nodes and the single edge between
+   * them. A boolean here would publish `true` about a graph nobody built: on
+   * the unsupported-construct walk the relation is empty and an empty relation
+   * has no cycle. The release condition of any later feature that reads this
+   * field counts only `acyclic === true` on a walk where the gate holds.
+   */
+  acyclic: boolean | null;
+  /** `!exhaustive` — this walk did not see the graph whole. */
+  openFrontier: boolean;
+  /** Edges in the retained relation, counted with their multiplicity. */
+  edges: number;
+  /** Clause (b): walkable transitions this engine reads as a dwell. */
+  timedTransitions: number;
+  /** Gates nothing — the dwell labels that reached the alphabet (plan §3.P). */
+  timedLabels: number;
+  /** Clause (c): distinct events the machine names. */
+  alphabet: number;
+  /** Clause (d): transitions whose guard was consulted and decided nothing. */
+  undeterminedGuards: number;
+  /** The gate itself, over both halves. */
+  walkIsExact: boolean;
+  /** Which clause failed, `null` exactly when the gate holds. */
+  failedClause: FailedClause;
 }
 
 /** What `reach` publishes. */
@@ -1341,10 +1475,39 @@ export function stateMachinesIn(model: Model, scopeId?: ElementId): ElementRecor
   return roots.filter((r) => inScope.has(r.id));
 }
 
-/** `{maxConfigs …, maxDepth …, maxCompletion …, alphabet …}`, spelled out. */
-function boundsSentence(b: ExploreBounds): string {
+/**
+ * `{maxConfigs …, maxDepth …, maxCompletion …, alphabet …, store …}`, spelled
+ * out — the sentence every figure in every lane is true UNDER.
+ *
+ * ONE COPY, AND IT IS EXPORTED FOR THAT REASON. `checkProperty` (`./patterns`)
+ * carried a byte-identical second copy, each of which composed the string every
+ * one of its own absence rows is qualified by; two copies of a sentence that
+ * must move together is the same defect the publishability conjunction had, one
+ * document down.
+ *
+ * THE STORE CLAUSE IS NEW HERE AND IT IS A DELIBERATE RE-RECORD: it moves every
+ * qualification string this tool prints, which is why it could not land in the
+ * commit whose whole gate was *"`reach`'s output did not move"*. It says what
+ * `exhaustive under {…}` has always meant — the walk opens from the literal
+ * values the model declares, and a guard over an attribute with no declared
+ * value is read the way the interpreter reads it. It is a DISCLOSURE and not a
+ * condition: it says LESS than the guard clause the walk already publishes,
+ * which covers guards that decided nothing for reasons other than an unvalued
+ * feature, and where the two differ it is the `verification/guard-undetermined`
+ * row that a reader acts on.
+ *
+ * APPENDED AFTER THE ALPHABET CLAUSE, and the position is not a style choice:
+ * the process-level campaign asserts a PREFIX of this sentence that stops before
+ * `alphabet` and asserts the alphabet clause separately as a substring, so an
+ * appended clause keeps both true while one inserted earlier reddens the first.
+ */
+export function boundsSentence(b: ExploreBounds): string {
   const alphabet = b.alphabet.length === 0 ? 'no named trigger' : b.alphabet.join(', ');
-  return `{maxConfigs ${b.maxConfigs}, maxDepth ${b.maxDepth}, maxCompletion ${b.maxCompletion}, alphabet ${alphabet}}`;
+  return (
+    `{maxConfigs ${b.maxConfigs}, maxDepth ${b.maxDepth}, maxCompletion ${b.maxCompletion}, ` +
+    `alphabet ${alphabet}, store seeded from declared literal values — a guard over an ` +
+    'attribute with no declared value is read as false}'
+  );
 }
 
 /** Why a walk stopped, in the words the report prints. */
@@ -1387,9 +1550,33 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
   // the same walk; `guardsDecided` stays local because the deadlock row below
   // is gated on it ALONE and reads it separately.
   const publishable = publishabilityOf(walk).decreasingOk;
+  // THE INCREASING GATE, READ FOR THE CENSUS AND FOR NOTHING ELSE. Not one row
+  // below is gated on it: `unreachable`, `dead`, the deadlock rows and the
+  // qualification all keep reading the decreasing conjunction, which is what
+  // makes them monotone-decreasing claims an over-approximating walk cannot
+  // invent. Pointing any of them at this gate would empty a sound finding out
+  // of a shipped command the first time a machine carried a dwell.
+  const gate = walkIsExact(walk, walk.bounds);
 
   const states = machineStates(model, machine.id);
   const transitions = walkableTransitions(model, machine.id);
+  // Where an undecided guard COULD have been an edge out, by the node that edge
+  // leaves. Read off the walkable relation rather than off the deadlock row,
+  // because the row carries states and the guard rows carry transitions, and
+  // the question a deadlock row asks is about the edges of the configuration it
+  // stands in.
+  const undecided = new Set(walk.undeterminedGuards.map((g) => g.transition.id));
+  const undecidedExits = new Set<ElementId>();
+  for (const t of transitions) if (undecided.has(t.id)) undecidedExits.add(t.source![0]);
+  // BOTH HALVES ARE KEPT, and that is what lets the sentences below be true.
+  // The withheld half is not a residue nobody reads: it is what decides whether
+  // the qualification, the trailing report line and the guard finding may say
+  // *the no-way-out list is withheld* at all, and it is what the report prints
+  // the store sentence against (A0's `otherwise` cell).
+  const deadlocks = walk.deadlocks.filter((row) => nothingUndecidedLeaves(row, undecidedExits));
+  const deadlocksWithheld = walk.deadlocks.filter(
+    (row) => !nothingUndecidedLeaves(row, undecidedExits),
+  );
   const reachable = states.filter((s) => walk.reachable.has(s.id)).map((s) => stateRef(model, s.id));
   const unreachable = publishable
     ? states.filter((s) => !walk.reachable.has(s.id)).map((s) => stateRef(model, s.id))
@@ -1410,9 +1597,19 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
           // in the model and a bound is raised with `--max-configs`; a reader
           // shown only the first would raise nothing and wonder why the walk
           // stayed short after they valued the feature.
+          // AND IT NAMES ONLY WHAT WAS WITHHELD. The unreachable and dead lists
+          // are emptied walk-wise and always have been, so they are named
+          // unconditionally; the no-way-out list is withheld per configuration
+          // (A0), so it is named only when a row actually went. Naming it
+          // unconditionally is how this line came to sit three lines above a
+          // published `no way out` row saying that row was not reported.
           `undetermined under ${boundsSentence(walk.bounds)} — ${walk.undeterminedGuards.length} guard(s) the walk could not evaluate${
             walk.boundHit === 'none' ? '' : `, and ${boundSentence(walk.boundHit)}`
-          }; the unreachable, dead and no-way-out lists are WITHHELD and are NOT reported as findings`
+          }; the unreachable and dead lists are WITHHELD and are NOT reported as findings${
+            deadlocksWithheld.length === 0
+              ? ''
+              : `, as is the no-way-out row for ${deadlocksWithheld.length} configuration(s) whose only ways out are guards this walk could not decide`
+          }`
         : `partial under ${boundsSentence(walk.bounds)} — ${
             walk.boundHit === 'none'
               ? 'a trigger the machine names was never offered'
@@ -1448,6 +1645,23 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     // declines to record one there, and what survives to here was found at a
     // level nothing inside was withheld from.
     census: walk.census,
+    exactness: {
+      // The ONE field of this census that is not a plain count, and the reason
+      // it is not a boolean is that the question it answers is about the
+      // machine while the graph it is computed over is the walk's. Where the
+      // two are the same relation — the gate — the answer stands; where they
+      // are not, the honest answer is that nothing was decided, and a `false`
+      // would be as wrong as a `true`.
+      acyclic: gate.walkIsExact ? acyclic(walk.successors) : null,
+      openFrontier: walk.openFrontier,
+      edges: walk.successors.reduce((n, targets) => n + targets.length, 0),
+      timedTransitions: walk.timedTransitions.size,
+      timedLabels: walk.timedLabels.size,
+      alphabet: walk.bounds.alphabet.length,
+      undeterminedGuards: walk.undeterminedGuards.length,
+      walkIsExact: gate.walkIsExact,
+      failedClause: gate.failedClause,
+    },
     nondeterminism: walk.nondeterminism,
     // Gated on the guards ALONE, not on `publishable`. A deadlock row says one
     // configuration the walk REACHED had no enabled edge out, and a bound
@@ -1455,7 +1669,26 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     // configuration it dequeues, and a bound only stops it enqueueing
     // successors. An undetermined guard CAN make it wrong: it is an edge out
     // that may have been enabled, and nothing here decided whether it was.
-    deadlocks: guardsDecided ? walk.deadlocks : [],
+    //
+    // AND IT IS NOW ASKED OF THE CONFIGURATION RATHER THAN OF THE WALK, which
+    // is a strengthening of the row's AVAILABILITY and not a relaxation of its
+    // gate. The two readings agree wherever every guard decided — the set of
+    // undecided edges is empty there, so the filter below is `walk.deadlocks`
+    // verbatim and every shipped row is byte-identical. They differ on one
+    // shape, and the tree now carries it: a machine with an undecided guard in
+    // one region and a real sink in another. The walk-wise reading empties the
+    // whole array over it, losing a fact about the design — a configuration
+    // whose leaf has no outgoing edge at all, about which no guard was ever
+    // consulted — to a question asked somewhere else entirely.
+    //
+    // WHAT THE QUESTION WITHHELD TRAVELS WITH IT. A0's `otherwise` cell is *the
+    // row is withheld and the store sentence prints in its place*, so the
+    // withheld rows are carried out of here rather than filtered away: the
+    // report prints one line per withheld configuration, and the sentences that
+    // say which lists are withheld read this array to decide whether they may
+    // name the no-way-out list at all.
+    deadlocks,
+    deadlocksWithheld,
     unsupported: walk.unsupported,
     undeterminedGuards: walk.undeterminedGuards,
     suppressed: !publishable,
@@ -1497,10 +1730,20 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
           : 'this walk could not read it as a value at all';
       findings.push({
         severity: 'warning',
+        // THE TAIL NAMES ONLY WHAT WAS WITHHELD, for the reason the
+        // qualification does: the unreachable and dead lists go walk-wise, so
+        // an undecided guard anywhere empties them; a no-way-out row goes only
+        // where the undecided edge is one out of the configuration the row
+        // stands in (A0). On a machine where none was, this finding used to say
+        // a list was withheld that the report below it published.
         message:
           `the guard \`${g.guard}\` on transition \`${transitionLabel(g.transition)}\` could not be ` +
-          `evaluated — ${names}. The walk did not decide whether it holds, so the unreachable, dead ` +
-          'and no-way-out lists for this machine are withheld.',
+          `evaluated — ${names}. The walk did not decide whether it holds, so the unreachable and ` +
+          `dead lists for this machine are withheld${
+            m.deadlocksWithheld.length === 0
+              ? ''
+              : `, as is the no-way-out row for ${m.deadlocksWithheld.length} configuration(s) an undecided guard is an edge out of`
+          }.`,
         elementId: g.transition.id,
         elementName: g.transition.qualifiedName,
         code: GUARD_UNDETERMINED_CODE,
