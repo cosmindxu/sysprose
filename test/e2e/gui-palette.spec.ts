@@ -5,10 +5,11 @@ import { captureErrors, gotoApp, shot } from './fixtures';
  * Palette polish:
  *  - per-metaclass tool glyphs + a clearer armed-tool hint naming the tool;
  *  - Escape disarms the pending tool (matches the Cancel affordance);
- *  - the palette column is HIDDEN on the non-graph views (table/analysis/…),
- *    where it would only be dead space, and returns on a diagram view.
+ *  - the non-graph views (table/analysis/…) draw nothing, so they carry no
+ *    Tools section — and still carry Edit and Checks, which is the point of
+ *    having a palette there at all.
  */
-test('palette: armed-tool hint + Escape-cancel; hidden on non-graph views', async ({ page }) => {
+test('palette: armed-tool hint + Escape-cancel; no drawing tools on non-graph views', async ({ page }) => {
   const errors = captureErrors(page);
   await gotoApp(page);
   const viewbar = page.locator('.viewbar');
@@ -29,14 +30,18 @@ test('palette: armed-tool hint + Escape-cancel; hidden on non-graph views', asyn
   await expect(partTool).not.toHaveClass(/is-active/);
   await shot(page, '77-palette');
 
-  // A non-graph view (Grid): the palette column is gone entirely.
+  // A non-graph view (Grid): nothing to draw, so no Tools section — but the
+  // palette stays, because Edit and Checks apply to a table as much as a diagram.
   await viewbar.locator('[data-testid="tb-view-grid"]').click();
   await expect(page.getByTestId('center-grid')).toBeVisible();
-  await expect(page.getByTestId('palette')).toHaveCount(0);
-
-  // Back on a diagram view, the palette returns.
-  await viewbar.locator('[data-testid="tb-view-general"]').click();
   await expect(page.getByTestId('palette')).toBeVisible();
+  await expect(page.getByTestId('palette-tools')).toHaveCount(0);
+  await expect(page.getByTestId('palette-tool')).toHaveCount(0);
+  await expect(page.getByTestId('palette-checks')).toBeVisible();
+
+  // Back on a diagram view, the drawing tools return.
+  await viewbar.locator('[data-testid="tb-view-general"]').click();
+  await expect(page.getByTestId('palette-tools')).toBeVisible();
 
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });

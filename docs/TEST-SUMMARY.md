@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 152
-- **Tests:** 3374 total — 3374 passed, 0 failed, 0 skipped
+- **Files:** 153
+- **Tests:** 3381 total — 3381 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -61,6 +61,7 @@
 | test/unit/api.versioning.test.ts | 10 | 0 | 0 |
 | test/unit/branding.test.ts | 7 | 0 | 0 |
 | test/unit/centrality.test.ts | 7 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 7 | 0 | 0 |
 | test/unit/claims.test.ts | 36 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 14 | 0 | 0 |
