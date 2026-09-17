@@ -288,6 +288,13 @@ Parametric and Case — and are greyed out everywhere else, with the reason in t
 tooltip. Sequence and Geometry are drawn by their own renderers and lay
 themselves out: Sequence has no drawing palette, Geometry does.
 
+Every view has a **palette**, though: the views that draw nothing still carry the
+Edit and Checks sections, which is where the allocation matrix gets `trace`, the
+contracts table gets `refine` and `fault-tree`, and the analysis views get
+`stats` and `where-used`. A check marked `not here` is one this page cannot run
+— z3 needs a cross-origin-isolated page — and its row carries the command that
+runs it in a terminal instead of a verdict nobody measured.
+
 | View | What it shows | The question it answers | Test id |
 |---|---|---|---|
 | General | Definitions and usages as boxes with attribute and port compartments; composition ◆, reference ◇, specialization ▷ and satisfy/allocate edges | What are the parts of this system, and how do they relate? | `tb-view-general` |
@@ -2907,17 +2914,21 @@ quietly go stale.
 | Where-used list | Everything that references the selection, click to navigate | `prop-used-by` |
 | Impact graph | The 1-hop reference neighbourhood, drawn | `prop-impact` |
 | Breadcrumb | The containment path of the **selection** (not the diagram scope) | `breadcrumb` |
-| Palette | The drawing tools of the active view; hidden on views with none | `palette` |
+| Palette | Three sections for the active view — **Tools** (what to draw, including an explicit Select), **Edit** (what to do to the selection), **Checks** (what to verify). Every view has one: a table view draws nothing, so it has Edit and Checks only. The column can be put away and comes back where you left it | `palette`, `palette-tools`, `palette-select`, `palette-edit`, `palette-checks`, `palette-collapse`, `palette-expand` |
+| Palette · Edit | Rename (opens the explorer's inline rename), Duplicate, Delete — each disabled with the reason when nothing is selected. Reparenting stays a drag onto the new owner | `palette-rename`, `palette-duplicate`, `palette-delete` |
+| Palette · Checks | One row per verification command that fits this view: the question it answers, **Run** (runs it here, against the model on screen), **Copy command** (the same check for a terminal), and a verdict — `not run`, `holds`, `findings`, `undecided`, `stale` after an edit, or `not here` for a check that needs the z3 solver, which needs a cross-origin-isolated page | `palette-check`, `palette-check-run`, `palette-check-copy`, `palette-check-verdict` |
 | Canvas | The diagram itself | `diagram-canvas` |
 | Fit / zoom to selection / snap / auto-layout | The canvas mini-toolbar | `diagram-fit`, `diagram-fit-selection`, `diagram-snap`, `diagram-autolayout` |
 | Scope diagram to this / Show whole model | Narrow every drawable view to one subtree, and clear it | `node-ctx-scope`, `node-ctx-scope-clear` |
-| Legend | The notation families present in this view | `diagram-legend` |
+| Legend | The notation families present in this view, docked bottom-left beside the zoom controls | `diagram-legend`, `legend-toggle` |
+| Overview map | The minimap. On a canvas narrower than 720 px it is a toggle, so it cannot cover the legend | `minimap-toggle` |
 
 ### Bottom panel
 
 | Tab | What it is | Test id |
 |---|---|---|
 | Problems | One shared list, overwritten by Validate / Check / Simulate / Solve / parse | `tab-problems` |
+| Checks | What each palette check last said: verdict, summary, and each finding with its code — click a finding to select the element it names. A result from before the last edit is marked stale rather than shown as current | `tab-checks`, `checks-result`, `checks-row`, `checks-row-select`, `checks-clear` |
 | Text | The model as editable text, with **Apply text → model** | `tab-text`, `text-editor`, `text-apply` |
 | API Console | A console over the live SDK: queries, metrics, requirement satisfaction, where-used, commit | `tab-api`, `api-query`, `api-run`, `api-metrics` |
 | Simulation | The interactive stepper: target, start, play, step, inject, scrub | `tab-simulation`, `sim-target`, `sim-start`, `sim-step`, `sim-inject` |

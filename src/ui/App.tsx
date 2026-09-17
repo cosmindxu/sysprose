@@ -20,7 +20,7 @@ import { Toolbar } from './panels/Toolbar';
 import { Explorer } from './panels/Explorer';
 import { CenterPanel } from './panels/CenterPanel';
 import { Breadcrumb } from './panels/Breadcrumb';
-import { Palette, viewHasTools } from './panels/Palette';
+import { Palette, viewHasPalette } from './panels/Palette';
 import { Properties } from './panels/Properties';
 import { BottomPanel } from './panels/BottomPanel';
 
@@ -177,7 +177,7 @@ export function App(): JSX.Element {
           </>
         )}
         <main className="app-center">
-          {viewHasTools(activeView) && (
+          {viewHasPalette(activeView) && (
             <aside className="app-palette">
               <Palette />
             </aside>

@@ -1,7 +1,10 @@
 /**
  * BottomPanel — the tabbed bottom area.
  *
- *  (1) Problems — lists {@link useAppStore.diagnostics}; click a row to select
+ *  (1) Checks   — what each verification check last said, from the palette's
+ *      Checks section; click a row to select the element it names. A result
+ *      from before the last edit is labelled stale, never shown as current.
+ *  (2) Problems — lists {@link useAppStore.diagnostics}; click a row to select
  *      the offending element.
  *  (2) Text     — embeds the {@link TextEditor}.
  *  (3) API      — a console over the data-analysis / automation SDK: run a JSON
@@ -20,6 +23,8 @@ function isFullQueryElement(el: ElementRecord | ProjectedRow): el is ElementReco
   return typeof el.id === 'string';
 }
 import { TextEditor } from './TextEditor';
+import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
+import { CHECKS } from '../checks';
 import { SimulationTab } from './SimulationTab';
 import {
   modelMetrics,
@@ -32,7 +37,7 @@ import {
 import { SEVERITY_ORDER, type Diagnostic } from '@validation/index';
 import './panels.css';
 
-type Tab = 'problems' | 'text' | 'api' | 'versions' | 'simulation';
+type Tab = 'checks' | 'problems' | 'text' | 'api' | 'versions' | 'simulation';
 
 /** A few illustrative canned queries to seed the console. */
 const CANNED: Array<{ label: string; query: string }> = [
@@ -65,6 +70,71 @@ type Output =
   | { kind: 'error'; text: string }
   | { kind: 'query' }
   | { kind: 'json'; title: string; data: unknown };
+
+/* ──────────────────────────────── Checks ────────────────────────────────── */
+
+/** What the checks said, most recent first, with their findings. */
+function ChecksTab(): JSX.Element {
+  const results = useChecksStore((s) => s.results);
+  const clear = useChecksStore((s) => s.clear);
+  const rev = useAppStore((s) => s.rev);
+  const select = useAppStore((s) => s.select);
+  const entries = Object.entries(results).sort((a, b) => b[1].at - a[1].at);
+
+  if (entries.length === 0) {
+    return (
+      <div className="panel-empty" data-testid="checks-empty">
+        No check has run yet. The palette's <b>Checks</b> section runs the one that fits the view you are on, and
+        offers the same command for a terminal.
+      </div>
+    );
+  }
+  return (
+    <div className="checks-tab" data-testid="checks-tab">
+      <div className="checks-tab-head">
+        <button type="button" data-testid="checks-clear" onClick={() => clear()} title="Forget these results">
+          Clear
+        </button>
+      </div>
+      {entries.map(([id, stored]) => {
+        const spec = CHECKS.find((c) => c.id === id);
+        const verdict = verdictOf(stored, rev);
+        return (
+          <div className="checks-result" key={id} data-testid="checks-result" data-check={id} data-verdict={verdict}>
+            <div className="checks-result-head">
+              <span className="checks-result-label">{spec?.label ?? id}</span>
+              <code>{id}</code>
+              <span className={`palette-check-verdict is-${verdict}`}>{VERDICT_LABEL[verdict]}</span>
+              <span className="checks-result-summary">{stored.result.summary}</span>
+            </div>
+            {stored.result.rows.length > 0 && (
+              <ul className="checks-rows">
+                {stored.result.rows.map((row, i) => (
+                  <li key={`${row.code}:${row.elementId ?? i}`} data-testid="checks-row" data-severity={row.severity}>
+                    <code className="checks-row-code">{row.code}</code>
+                    {row.elementId ? (
+                      <button
+                        type="button"
+                        className="checks-row-link"
+                        data-testid="checks-row-select"
+                        onClick={() => select(row.elementId ?? null)}
+                        title="Select this element"
+                      >
+                        {row.message}
+                      </button>
+                    ) : (
+                      <span>{row.message}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /* ─────────────────────────────── Problems ───────────────────────────────── */
 
@@ -499,8 +569,16 @@ export function BottomPanel(): JSX.Element {
   const [tab, setTab] = useState<Tab>('problems');
   const problemCount = useAppStore((s) => s.diagnostics.length);
 
+  const checkRuns = useChecksStore((s) => s.runs);
+  const checkCount = useChecksStore((s) => Object.keys(s.results).length);
+  // A run puts its results in front of the person who asked for them.
+  useEffect(() => {
+    if (checkRuns > 0) setTab('checks');
+  }, [checkRuns]);
+
   const tabs: Array<{ id: Tab; testid: string; label: string }> = [
     { id: 'problems', testid: 'tab-problems', label: `Problems${problemCount ? ` (${problemCount})` : ''}` },
+    { id: 'checks', testid: 'tab-checks', label: `Checks${checkCount ? ` (${checkCount})` : ''}` },
     { id: 'text', testid: 'tab-text', label: 'Text' },
     { id: 'api', testid: 'tab-api', label: 'API Console' },
     { id: 'simulation', testid: 'tab-simulation', label: 'Simulation' },
@@ -523,6 +601,7 @@ export function BottomPanel(): JSX.Element {
       </div>
       <div className="bottom-content">
         {tab === 'problems' && <ProblemsTab />}
+        {tab === 'checks' && <ChecksTab />}
         {tab === 'text' && <TextEditor />}
         {tab === 'api' && <ApiTab />}
         {tab === 'simulation' && <SimulationTab />}

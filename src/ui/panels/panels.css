@@ -1605,3 +1605,200 @@
   overflow: auto;
 }
 
+/* ─────────── Palette sections: Tools · Edit · Checks (one column) ─────────── */
+.palette-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 26px;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.palette-action:hover:not(:disabled) {
+  background: var(--hover);
+}
+.palette-action.is-destructive:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+.palette-action kbd {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.palette-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 2px 0;
+}
+
+.palette-check {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 6px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.palette-check-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  justify-content: space-between;
+}
+.palette-check-label {
+  font-weight: 600;
+  font-size: 11px;
+}
+/* Verdict reads as a word first; the colour only reinforces it. */
+.palette-check-verdict {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.palette-check-verdict.is-holds {
+  color: var(--success);
+  border-color: var(--success);
+}
+.palette-check-verdict.is-issues {
+  color: var(--error);
+  border-color: var(--error);
+}
+/* Undecided and stale are NOT green and NOT red: nothing was concluded. */
+.palette-check-verdict.is-undecided,
+.palette-check-verdict.is-stale {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+.palette-check-question {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.palette-check-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.palette-check-actions button {
+  font-size: 10px;
+  padding: 3px 6px;
+  min-height: 24px;
+}
+.palette-check-cli {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+.palette-check-summary {
+  font-size: 10px;
+  color: var(--text);
+}
+
+/* ───────────────────── Checks tab (results of the palette runs) ───────────── */
+.checks-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.checks-tab-head {
+  display: flex;
+  justify-content: flex-end;
+}
+.checks-result {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  background: var(--bg);
+}
+.checks-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.checks-result-label {
+  font-weight: 600;
+}
+.checks-result-summary {
+  color: var(--text-muted);
+}
+.checks-rows {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.checks-rows li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.checks-rows li[data-severity='error'] .checks-row-code {
+  color: var(--error);
+}
+.checks-rows li[data-severity='warning'] .checks-row-code {
+  color: var(--warning);
+}
+.checks-row-code {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.checks-row-link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  min-height: 24px;
+}
+.checks-row-link:hover {
+  text-decoration: underline;
+}
+
+/* The column can be put away; the strip that brings it back stays hittable. */
+.palette-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+}
+.palette.is-collapsed {
+  width: 28px;
+  min-width: 28px;
+  flex: 0 0 28px;
+  padding: 4px 2px;
+  align-items: center;
+}
+.palette-collapse {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.palette-collapse:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+

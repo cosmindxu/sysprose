@@ -38,15 +38,15 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
 | **Date** | 2026-09-16 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **3374 passed / 0 failed / 0 skipped** across **152 files** |
-| &nbsp;&nbsp;— unit | 2531 passed across 114 files |
+| **Vitest checks** | **3381 passed / 0 failed / 0 skipped** across **153 files** |
+| &nbsp;&nbsp;— unit | 2538 passed across 115 files |
 | &nbsp;&nbsp;— integration | 230 passed across 21 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
 | &nbsp;&nbsp;— interop | 8 passed across 1 file |
 | &nbsp;&nbsp;— campaign (L6–L8) | 483 passed across 5 files |
-| **E2E scenarios** | **128 passed / 0 failed / 0 flaky / 0 skipped** across **79 spec files** |
-| **Grand total** | **3502 automated checks passed / 0 failed** |
+| **E2E scenarios** | **151 passed / 0 failed / 0 flaky / 0 skipped** across **80 spec files** |
+| **Grand total** | **3532 automated checks passed / 0 failed** |
 
 > **Previously the one failure**, now fixed: `conformance › Systems Library/
 > Actions.sysml › parses with 0 errors`. The OMG corpus (an *external,
@@ -421,7 +421,7 @@ the 2026-07-03 run's total; the current run's is §1's and §7's.]*
 
 Playwright, headless Chromium, against the built app at `:4173`
 (`test-results/e2e-results.json`; HTML at `playwright-report/index.html`). All
-**128** scenarios across **79** spec files passed (0 flaky, 0 skipped). (The
+**128** scenarios across **80** spec files passed (0 flaky, 0 skipped). (The
 per-row table below is hand-authored and lags the authoritative total; the
 regroup-workbench rows are appended at the end, followed by the
 model-manipulation rows 53–61, the untouched-affordance rows 62–70, the
@@ -724,9 +724,9 @@ narrowed subset.
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **3502 green automated
-checks** (**3374** unit/integration/conformance/server/interop/campaign across **152 files**,
-**0 skips**, + **128 E2E** across **79 spec files**) and no failures. The report now
+SysML v2 standard family — all six read **Covered** — with **3532 green automated
+checks** (**3381** unit/integration/conformance/server/interop/campaign across **153 files**,
+**0 skips**, + **151 E2E** across **80 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
 interaction surface, every Properties field with unit conversion, palette
@@ -743,8 +743,8 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (3374 passed /
-0 skipped across 152 files) and Playwright (128/128 across 79 spec files), plus
+*End of report. Counts and verdicts derived from a live `vitest run` (3381 passed /
+0 skipped across 153 files) and Playwright (151/151 across 80 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
 verdict-bearing write probe — see `docs/CONFORMANCE.md` §6.1) and

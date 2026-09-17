@@ -1,5 +1,16 @@
 /**
- * Palette — a floating, view-aware list of element/edge creation tools.
+ * Palette — the per-view tools: what to draw, what to do to the selection, and
+ * what to check.
+ *
+ * Three sections, because a person at a diagram has three questions — "how do I
+ * add this", "how do I change that", "is it right?" — and only the first had an
+ * answer here. Checks come from {@link CHECKS}, the one registry the Checks tab
+ * and the copyable terminal command also read, so the three cannot drift.
+ *
+ * Every view has a palette now. A table or analysis view draws nothing, so it
+ * has no Tools section, and its palette is Edit + Checks — which is exactly
+ * where a reader of the allocation matrix or the contracts table wants
+ * `trace`, `orphans` or `refine`.
  *
  * The palette is *modal*: clicking a tool arms it, and the actual model
  * mutation happens on the {@link DiagramCanvas} (a node tool creates an element
@@ -13,11 +24,13 @@
  * only two files this surface owns.
  */
 
-import { useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
 import { useAppStore } from '../store';
+import { checksFor, runCheck, type CheckSpec } from '../checks';
+import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 
 /* ─────────────────────────── Shared tool state ──────────────────────────── */
 
@@ -199,10 +212,18 @@ const TOOLS_BY_VIEW: Record<ViewKind, ToolGroup[]> = {
   contracts: [],
 };
 
-/** Whether a view offers drawing tools — used to hide the palette column on the
- *  table/analysis/geometry views, where it would only be dead space. */
+/** Whether a view offers drawing tools — the Tools section appears only then. */
 export function viewHasTools(view: ViewKind): boolean {
   return (TOOLS_BY_VIEW[view] ?? []).length > 0;
+}
+
+/**
+ * Whether the palette column is worth showing at all. Every view has Edit and
+ * Checks, so this is true everywhere; kept as the one place that decides, so a
+ * future view with nothing to offer can say so.
+ */
+export function viewHasPalette(view: ViewKind): boolean {
+  return viewHasTools(view) || checksFor(view).length > 0;
 }
 
 /* ──────────────────────────────── Component ─────────────────────────────── */
@@ -245,8 +266,161 @@ function tooltip(spec: ToolSpec): string {
     : `Connect with ${spec.label} («${keyword}») — then click a source then a target node`;
 }
 
+/* ────────────────────────────── Sections ───────────────────────────────── */
+
+/** The Edit section: what the store can already do to a selection. */
+function EditSection(): JSX.Element | null {
+  const selectionId = useAppStore((st) => st.selectionId);
+  const selectionCount = useAppStore((st) => st.selectionIds.length);
+  const deleteSelection = useAppStore((st) => st.deleteSelection);
+  const duplicateSelection = useAppStore((st) => st.duplicateSelection);
+  const setRenamingId = useAppStore((st) => st.setRenamingId);
+  const none = selectionId === null;
+  const what = selectionCount > 1 ? `${selectionCount} elements` : 'the selection';
+  return (
+    <div className="palette-group" data-testid="palette-edit">
+      <div className="palette-group-title">Edit</div>
+      <button
+        type="button"
+        className="palette-action"
+        data-testid="palette-rename"
+        disabled={none}
+        title={none ? 'Select an element first' : 'Rename it in the explorer (F2)'}
+        onClick={() => selectionId && setRenamingId(selectionId)}
+      >
+        <span aria-hidden>✎</span>
+        <span>Rename</span>
+        <kbd>F2</kbd>
+      </button>
+      <button
+        type="button"
+        className="palette-action"
+        data-testid="palette-duplicate"
+        disabled={none}
+        title={none ? 'Select an element first' : `Duplicate ${what} as a sibling`}
+        onClick={() => duplicateSelection()}
+      >
+        <span aria-hidden>⧉</span>
+        <span>Duplicate</span>
+        <kbd>Ctrl+D</kbd>
+      </button>
+      <button
+        type="button"
+        className="palette-action is-destructive"
+        data-testid="palette-delete"
+        disabled={none}
+        title={none ? 'Select an element first' : `Delete ${what} and what it contains`}
+        onClick={() => deleteSelection()}
+      >
+        <span aria-hidden>␡</span>
+        <span>Delete</span>
+        <kbd>Del</kbd>
+      </button>
+      <div className="palette-note">Drag a node onto another to reparent it.</div>
+    </div>
+  );
+}
+
+/** One check: the question, the verdict, Run, and the command to run it elsewhere. */
+function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
+  const model = useAppStore((st) => st.model);
+  const rev = useAppStore((st) => st.rev);
+  const selectionId = useAppStore((st) => st.selectionId);
+  const projectName = useAppStore((st) => st.projectName);
+  const stored = useChecksStore((st) => st.results[spec.id]);
+  const record = useChecksStore((st) => st.record);
+  const [copied, setCopied] = useState(false);
+
+  // One object per (model, selection, project), so the callbacks below are
+  // stable between renders instead of being rebuilt on each one.
+  const ctx = useMemo(() => {
+    const selected = selectionId ? model.get(selectionId) : undefined;
+    return {
+      model,
+      selectionId,
+      selectionName: selected ? (model.qualifiedName(selected.id) ?? selected.attrs.declaredName ?? null) : null,
+      isolated: (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true,
+      fileName: `${projectName || 'model'}.sysml`,
+    };
+  }, [model, selectionId, projectName]);
+  const verdict = verdictOf(stored, rev);
+
+  const onRun = useCallback(() => {
+    record(spec.id, runCheck(spec, ctx), rev);
+  }, [record, spec, ctx, rev]);
+
+  const onCopy = useCallback(() => {
+    void navigator.clipboard?.writeText(spec.command(ctx)).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      },
+      () => setCopied(false),
+    );
+  }, [spec, ctx]);
+
+  return (
+    <div className="palette-check" data-testid="palette-check" data-check={spec.id} data-verdict={verdict}>
+      <div className="palette-check-head">
+        <span className="palette-check-label" title={`${spec.question}\n\n${spec.command(ctx)}`}>
+          {spec.label}
+        </span>
+        <span className={`palette-check-verdict is-${verdict}`} data-testid="palette-check-verdict">
+          {VERDICT_LABEL[verdict]}
+        </span>
+      </div>
+      <div className="palette-check-actions">
+        <button type="button" data-testid="palette-check-run" onClick={onRun} title={`Run ${spec.id} on the model as it is now`}>
+          Run
+        </button>
+        <button type="button" data-testid="palette-check-copy" onClick={onCopy} title={spec.command(ctx)}>
+          {copied ? 'Copied' : 'Copy command'}
+        </button>
+        <code className="palette-check-cli">{spec.id}</code>
+      </div>
+      {stored && <div className="palette-check-summary">{stored.result.summary}</div>}
+    </div>
+  );
+}
+
+/** The Checks section: the verification commands that apply to this view. */
+function ChecksSection({ view }: { view: ViewKind }): JSX.Element | null {
+  const specs = checksFor(view);
+  if (specs.length === 0) return null;
+  return (
+    <div className="palette-group" data-testid="palette-checks">
+      <div className="palette-group-title">Checks</div>
+      {specs.map((spec) => (
+        <CheckRowView key={spec.id} spec={spec} />
+      ))}
+    </div>
+  );
+}
+
+const COLLAPSE_KEY = 'palette-collapsed';
+
+/** Whether the column starts collapsed — remembered per browser, never in the model. */
+function initiallyCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export function Palette(): JSX.Element {
   const activeView = useAppStore((s) => s.activeView);
+  const [collapsed, setCollapsed] = useState(initiallyCollapsed);
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((c) => {
+      try {
+        localStorage.setItem(COLLAPSE_KEY, c ? '0' : '1');
+      } catch {
+        // A browser that refuses storage still gets the toggle, just not the memory.
+      }
+      return !c;
+    });
+  }, []);
   const tool = usePaletteStore((s) => s.tool);
   const setTool = usePaletteStore((s) => s.setTool);
 
@@ -279,9 +453,54 @@ export function Palette(): JSX.Element {
           .find((t) => t.eClass === (tool as { eClass: string }).eClass && t.type === tool.mode)
           ?.label ?? (tool as { eClass: string }).eClass);
 
+  if (collapsed) {
+    return (
+      <div className="palette is-collapsed" data-testid="palette" data-collapsed="true">
+        <button
+          type="button"
+          className="palette-collapse"
+          data-testid="palette-expand"
+          title="Show the palette (tools, edit, checks)"
+          aria-expanded={false}
+          onClick={toggleCollapsed}
+        >
+          ›
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="palette" data-testid="palette">
-      <div className="palette-group-title">Palette · {activeView}</div>
+    <div className="palette" data-testid="palette" data-collapsed="false">
+      <div className="palette-head">
+        <span className="palette-group-title">Palette · {activeView}</span>
+        <button
+          type="button"
+          className="palette-collapse"
+          data-testid="palette-collapse"
+          title="Hide the palette"
+          aria-expanded
+          onClick={toggleCollapsed}
+        >
+          ‹
+        </button>
+      </div>
+      {groups.length > 0 && (
+        <div className="palette-group" data-testid="palette-tools">
+          <div className="palette-group-title">Tools</div>
+          <button
+            type="button"
+            className={`palette-tool${tool.mode === 'select' ? ' is-active' : ''}`}
+            data-testid="palette-select"
+            aria-pressed={tool.mode === 'select'}
+            title="Select and move elements — no tool armed (Esc)"
+            onClick={() => setTool({ mode: 'select' })}
+          >
+            <span aria-hidden>▸</span>
+            <span>Select</span>
+          </button>
+        </div>
+      )}
       {groups.map((group) => (
         <div key={group.title} className="palette-group">
           <div className="palette-group-title">{group.title}</div>
@@ -309,6 +528,8 @@ export function Palette(): JSX.Element {
           ))}
         </div>
       ))}
+      <EditSection />
+      <ChecksSection view={activeView} />
       {tool.mode !== 'select' && (
         <div className="palette-hint" data-testid="palette-hint">
           <div className="palette-hint-title">

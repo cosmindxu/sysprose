@@ -80,7 +80,7 @@
   --bottom-h: 220px;
   --explorer-w: 260px;
   --properties-w: 300px;
-  --palette-w: 168px;
+  --palette-w: 208px;
 }
 
 :root[data-theme='dark'] {
