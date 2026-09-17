@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store';
+import { Popover, isInside } from './Popover';
 
 export function Collaborate(): JSX.Element {
   const collab = useAppStore((s) => s.collab);
@@ -24,6 +25,7 @@ export function Collaborate(): JSX.Element {
   const [open, setOpen] = useState(false);
   const [room, setRoom] = useState(collab.room || 'room-1');
   const wrapRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // Keep the input in sync when the store's room changes (e.g. URL auto-connect).
   useEffect(() => {
@@ -34,7 +36,7 @@ export function Collaborate(): JSX.Element {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+      if (!isInside(e.target, wrapRef, panelRef)) setOpen(false);
     };
     window.addEventListener('mousedown', onDown);
     return () => window.removeEventListener('mousedown', onDown);
@@ -65,7 +67,7 @@ export function Collaborate(): JSX.Element {
       </button>
 
       {open && (
-        <div className="collab-panel" data-testid="collab-panel">
+        <Popover anchor={wrapRef} panelRef={panelRef} className="collab-panel" testid="collab-panel" align="end">
           <div className="collab-panel-title">Real-time collaboration</div>
 
           <label className="collab-field">
@@ -139,7 +141,7 @@ export function Collaborate(): JSX.Element {
               </div>
             ))}
           </div>
-        </div>
+        </Popover>
       )}
     </div>
   );

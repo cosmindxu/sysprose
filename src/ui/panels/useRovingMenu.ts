@@ -11,7 +11,9 @@
  *    MutationObserver), so the single-Tab-stop invariant survives dynamic menus
  *    (clipboard-dependent Paste, context-disabled export items, …);
  *  - moves the active item with ↑/↓ (wrapping) and Home/End;
- *  - CLOSES the menu when focus Tabs out of it (APG menu behavior); and
+ *  - CLOSES the menu on Tab, and when focus lands outside it (APG menu
+ *    behavior) — the key itself is watched because a menu in a body portal has
+ *    nothing after it to receive focus, so a Tab out reports no relatedTarget;
  *  - RESTORES focus to the element that opened the menu when it closes (the
  *    toolbar trigger, or the right-clicked canvas node) — so a keyboard user's
  *    place is never dropped to `<body>`.
@@ -76,6 +78,14 @@ export function useRovingMenu(
       const tag = ae?.tagName;
       // Let a focused text input / native select handle its own arrow keys.
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // APG: Tab leaves the menu, so the menu closes. Handled on the key, not
+      // only on `focusout`: a menu rendered in a body portal is last in the
+      // document, so tabbing out of it reports no `relatedTarget` at all and the
+      // focusout rule below never fired.
+      if (e.key === 'Tab') {
+        onClose();
+        return;
+      }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') {
         return;
       }

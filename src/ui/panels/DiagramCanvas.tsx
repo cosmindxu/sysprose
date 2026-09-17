@@ -51,6 +51,9 @@ import { NodeContextMenu } from './NodeContextMenu';
 import { PaneContextMenu } from './PaneContextMenu';
 import { Legend } from './Legend';
 
+/** Canvas width (px) below which the minimap becomes a toggle so it cannot cover the legend. */
+const MINIMAP_MIN_CANVAS = 720;
+
 /** A memoised decorated node plus the base node it was derived from (H5-b). */
 interface DecoratedNode {
   base: Node;
@@ -143,6 +146,24 @@ function DiagramCanvasInner(): JSX.Element {
 
   // True only while a Shift+drag box-select is in progress (see onSelectionChange).
   const boxDragging = useRef(false);
+
+  // Canvas overlays each keep a corner: zoom and legend bottom-left, minimap
+  // bottom-right, canvas actions top-right. The corners are disjoint only if the
+  // minimap stays small enough for the canvas it sits on — with the explorer,
+  // palette and properties open, a 1024 px window leaves under 300 px, and the
+  // default 200×150 minimap covered the legend. Below MINIMAP_MIN_CANVAS the
+  // minimap is a toggle, and opens at a size that fits.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasWidth, setCanvasWidth] = useState(1200);
+  const [minimapOpen, setMinimapOpen] = useState(false);
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setCanvasWidth(entry.contentRect.width));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const narrowCanvas = canvasWidth < MINIMAP_MIN_CANVAS;
 
   // The element a drag-to-reparent would drop onto (highlighted mid-drag). A ref
   // mirrors the state so onNodeDrag only calls setState when the target actually
@@ -517,7 +538,7 @@ function DiagramCanvasInner(): JSX.Element {
   );
 
   return (
-    <div className="diagram-canvas" data-testid="diagram-canvas" style={{ width: '100%', height: '100%' }}>
+    <div className="diagram-canvas" data-testid="diagram-canvas" ref={canvasRef} style={{ width: '100%', height: '100%' }}>
       <ReactFlow
         nodes={decoratedNodes}
         edges={edges}
@@ -546,9 +567,26 @@ function DiagramCanvasInner(): JSX.Element {
         proOptions={{ hideAttribution: true }}
       >
         <Background />
-        <Controls />
-        <MiniMap pannable zoomable />
-        <Panel position="bottom-center">
+        <Controls position="bottom-left" />
+        {!narrowCanvas && <MiniMap pannable zoomable />}
+        {narrowCanvas && minimapOpen && (
+          <MiniMap pannable zoomable style={{ width: 120, height: 90, marginBottom: 48 }} />
+        )}
+        {narrowCanvas && (
+          <Panel position="bottom-right">
+            <button
+              type="button"
+              className="diagram-minimap-toggle"
+              data-testid="minimap-toggle"
+              aria-expanded={minimapOpen}
+              title={minimapOpen ? 'Hide the overview map' : 'Show an overview map of the diagram'}
+              onClick={() => setMinimapOpen((o) => !o)}
+            >
+              {minimapOpen ? '▾' : '▸'} Map
+            </button>
+          </Panel>
+        )}
+        <Panel position="bottom-left" className="diagram-legend-panel">
           <Legend edges={diagram?.edges ?? []} />
         </Panel>
         <Panel position="top-right">

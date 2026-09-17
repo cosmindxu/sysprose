@@ -1593,3 +1593,15 @@
   margin-top: 4px;
   word-break: break-word;
 }
+
+/* ─────────────── Popover layer (menus rendered in a body portal) ───────────── */
+/* Position comes from Popover.tsx as inline fixed coordinates; the per-menu
+   rules above still say `position: absolute; right: 0`, which would stretch a
+   fixed box between `left` and `right`. */
+.popover-layer {
+  right: auto;
+  bottom: auto;
+  z-index: 1000;
+  overflow: auto;
+}
+
