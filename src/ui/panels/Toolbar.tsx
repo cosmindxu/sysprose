@@ -11,7 +11,7 @@
  * keyboard/command surface.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store';
 import { useRovingMenu } from './useRovingMenu';
 import { Collaborate } from './Collaborate';
@@ -20,6 +20,7 @@ import { svgFromDiagram, type DiagramGraph, type ViewKind } from '@diagram/index
 import { downloadText, downloadBytes, openTextFile, type ModelFormat } from '@persistence/index';
 import { exportFmu, fmiModelDescription } from '@interop/index';
 import { PRODUCT_NAME } from '../../branding';
+import { Popover, isInside } from './Popover';
 import './panels.css';
 
 /**
@@ -95,8 +96,73 @@ const GRAPH_VIEWS = new Set<ViewKind>([
   'case',
 ]);
 
+/**
+ * Toolbar commands that give way to a "More ▾" menu when the bar is too narrow,
+ * first to last. Save, Open, Export, Validate, Check, Undo and Redo are not in
+ * the list: they never leave the bar. Before this, the bar scrolled sideways
+ * and at 1024 px Undo, Redo and the theme toggle were simply off-screen.
+ */
+const COLLAPSE_ORDER = ['tb-import-fmi', 'tb-import', 'tb-layout', 'tb-solve', 'tb-simulate', 'tb-new'] as const;
+const TOOLBAR_GAP = 6;
+const MORE_WIDTH_GUESS = 72;
+
+/**
+ * How many of {@link COLLAPSE_ORDER} have to move into "More" for the bar to fit.
+ *
+ * Widths are measured while a command is on the bar and remembered, so a
+ * collapsed command still counts when the window grows again. The bar's
+ * natural width is its scroll width minus the flexible spacer; from that the
+ * smallest number of commands to move is computed directly — never by
+ * collapsing, re-rendering and checking again, which oscillates at the edge.
+ */
+function useToolbarOverflow(barRef: React.RefObject<HTMLDivElement>): Set<string> {
+  const [count, setCount] = useState(0);
+  const widths = useRef(new Map<string, number>());
+  const moreWidth = useRef(MORE_WIDTH_GUESS);
+
+  const measure = useCallback(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    for (const id of COLLAPSE_ORDER) {
+      const el = bar.querySelector<HTMLElement>(`:scope [data-testid="${id}"]`);
+      if (el) widths.current.set(id, el.offsetWidth);
+    }
+    const more = bar.querySelector<HTMLElement>('[data-testid="tb-more"]');
+    if (more) moreWidth.current = more.offsetWidth;
+    const spacer = bar.querySelector<HTMLElement>('.toolbar-spacer');
+    const width = (id: string): number => (widths.current.get(id) ?? 0) + TOOLBAR_GAP;
+    const collapsedNow = COLLAPSE_ORDER.slice(0, count);
+    const natural =
+      bar.scrollWidth -
+      (spacer?.offsetWidth ?? 0) +
+      collapsedNow.reduce((sum, id) => sum + width(id), 0) -
+      (count > 0 ? moreWidth.current + TOOLBAR_GAP : 0);
+    let k = 0;
+    let need = natural;
+    while (need > bar.clientWidth - 2 && k < COLLAPSE_ORDER.length) {
+      need -= width(COLLAPSE_ORDER[k]);
+      if (k === 0) need += moreWidth.current + TOOLBAR_GAP;
+      k += 1;
+    }
+    if (k !== count) setCount(k);
+  }, [barRef, count]);
+
+  useLayoutEffect(() => {
+    measure();
+  });
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [barRef, measure]);
+
+  return useMemo(() => new Set<string>(COLLAPSE_ORDER.slice(0, count)), [count]);
+}
+
 /** A toolbar button that opens a small dropdown of commands (closes on outside click). */
-function ToolbarMenu(props: { label: string; testid: string; items: MenuItem[] }): JSX.Element {
+function ToolbarMenu(props: { label: string; testid: string; items: MenuItem[]; align?: 'start' | 'end'; title?: string }): JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -107,8 +173,9 @@ function ToolbarMenu(props: { label: string; testid: string; items: MenuItem[] }
   useRovingMenu(dropdownRef, close, open);
   useEffect(() => {
     if (!open) return;
+    // The dropdown lives in a portal, so "outside" is outside both the trigger and the panel.
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (!isInside(e.target, ref, dropdownRef)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -127,15 +194,18 @@ function ToolbarMenu(props: { label: string; testid: string; items: MenuItem[] }
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
+        title={props.title}
       >
         {props.label} ▾
       </button>
       {open && (
-        <div
+        <Popover
+          anchor={ref}
+          panelRef={dropdownRef}
           className="toolbar-dropdown"
-          data-testid={`${props.testid}-menu`}
+          testid={`${props.testid}-menu`}
           role="menu"
-          ref={dropdownRef}
+          align={props.align}
         >
           {props.items.map((it) => (
             <button
@@ -154,7 +224,7 @@ function ToolbarMenu(props: { label: string; testid: string; items: MenuItem[] }
               {it.label}
             </button>
           ))}
-        </div>
+        </Popover>
       )}
     </div>
   );
@@ -265,6 +335,7 @@ export function Toolbar(): JSX.Element {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projects, setProjects] = useState<string[]>([]);
   const openWrapRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme);
 
   const toggleTheme = useCallback(() => {
@@ -294,9 +365,7 @@ export function Toolbar(): JSX.Element {
   useEffect(() => {
     if (!pickerOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (openWrapRef.current && !openWrapRef.current.contains(e.target as Node)) {
-        setPickerOpen(false);
-      }
+      if (!isInside(e.target, openWrapRef, pickerRef)) setPickerOpen(false);
     };
     window.addEventListener('mousedown', onDown);
     return () => window.removeEventListener('mousedown', onDown);
@@ -409,24 +478,44 @@ export function Toolbar(): JSX.Element {
   const graphOnlyTitle = (base: string): string =>
     isGraphView ? base : `${base} — available on a diagram view`;
 
+  const barRef = useRef<HTMLDivElement>(null);
+  const collapsed = useToolbarOverflow(barRef);
+  // The commands that can give way, as data: the same entry renders as a bar
+  // button or as a "More" item, with the same test id either way.
+  const collapsible: Record<(typeof COLLAPSE_ORDER)[number], MenuItem> = {
+    'tb-new': { label: 'New', testid: 'tb-new', onClick: () => newProject(), title: 'New project' },
+    'tb-import': { label: 'Import', testid: 'tb-import', onClick: () => void onImport(), title: 'Import .sysml / .json' },
+    'tb-import-fmi': { label: 'Import FMI', testid: 'tb-import-fmi', onClick: () => void onImportFmi(), title: 'Import an FMI 3.0 modelDescription.xml as a SysML block' },
+    'tb-simulate': { label: 'Simulate', testid: 'tb-simulate', onClick: () => simulate(), title: 'Simulate the active action flow / state machine' },
+    'tb-solve': { label: 'Solve', testid: 'tb-solve', onClick: () => solveParametric(), title: 'Solve parametric constraints & evaluate measures of effectiveness' },
+    'tb-layout': { label: 'Auto-layout', testid: 'tb-layout', onClick: () => void rebuildDiagram(), disabled: !isGraphView, title: graphOnlyTitle('Re-run auto-layout') },
+  };
+  const command = (id: (typeof COLLAPSE_ORDER)[number]): JSX.Element | null => {
+    if (collapsed.has(id)) return null;
+    const c = collapsible[id];
+    return (
+      <button data-testid={c.testid} onClick={c.onClick} disabled={c.disabled} title={c.title}>
+        {c.label}
+      </button>
+    );
+  };
+
   return (
     <>
       {/* ── Row 1: command bar (no view tabs → no horizontal scroll) ── */}
-      <div className="toolbar">
+      <div className="toolbar" ref={barRef}>
         <span className="toolbar-brand" data-testid="toolbar-brand">
           {PRODUCT_NAME}
         </span>
 
         {/* File */}
-        <button data-testid="tb-new" onClick={() => newProject()} title="New project">
-          New
-        </button>
+        {command('tb-new')}
         <div className="toolbar-open" ref={openWrapRef} style={{ position: 'relative' }}>
           <button data-testid="tb-open" onClick={togglePicker} title="Open a saved project">
             Open ▾
           </button>
           {pickerOpen && (
-            <div className="toolbar-picker" data-testid="project-picker">
+            <Popover anchor={openWrapRef} panelRef={pickerRef} className="toolbar-picker" testid="project-picker">
               {projects.length === 0 ? (
                 <div className="toolbar-picker-empty">No saved projects</div>
               ) : (
@@ -442,7 +531,7 @@ export function Toolbar(): JSX.Element {
                   </button>
                 ))
               )}
-            </div>
+            </Popover>
           )}
         </div>
         <button
@@ -452,20 +541,8 @@ export function Toolbar(): JSX.Element {
         >
           Save
         </button>
-        <button
-          data-testid="tb-import"
-          onClick={() => void onImport()}
-          title="Import .sysml / .json"
-        >
-          Import
-        </button>
-        <button
-          data-testid="tb-import-fmi"
-          onClick={() => void onImportFmi()}
-          title="Import an FMI 3.0 modelDescription.xml as a SysML block"
-        >
-          Import FMI
-        </button>
+        {command('tb-import')}
+        {command('tb-import-fmi')}
         <ToolbarMenu
           label="Export"
           testid="tb-export"
@@ -493,28 +570,17 @@ export function Toolbar(): JSX.Element {
         >
           Check
         </button>
-        <button
-          data-testid="tb-simulate"
-          onClick={() => simulate()}
-          title="Simulate the active action flow / state machine"
-        >
-          Simulate
-        </button>
-        <button
-          data-testid="tb-solve"
-          onClick={() => solveParametric()}
-          title="Solve parametric constraints & evaluate measures of effectiveness"
-        >
-          Solve
-        </button>
-        <button
-          data-testid="tb-layout"
-          onClick={() => void rebuildDiagram()}
-          disabled={!isGraphView}
-          title={graphOnlyTitle('Re-run auto-layout')}
-        >
-          Auto-layout
-        </button>
+        {command('tb-simulate')}
+        {command('tb-solve')}
+        {command('tb-layout')}
+        {collapsed.size > 0 && (
+          <ToolbarMenu
+            label="More"
+            testid="tb-more"
+            title={`${collapsed.size} command(s) that do not fit at this width`}
+            items={COLLAPSE_ORDER.filter((id) => collapsed.has(id)).map((id) => collapsible[id])}
+          />
+        )}
 
         <span className="toolbar-spacer" />
 

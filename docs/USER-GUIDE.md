@@ -2878,6 +2878,7 @@ quietly go stale.
 | Simulate | One batch run of a behaviour, as a trace in Problems | `tb-simulate` |
 | Solve | Numeric solve, measures of effectiveness and feasibility | `tb-solve` |
 | Auto-layout | Re-runs the layout, discarding manual node positions (drawable views only) | `tb-layout` |
+| More ▾ | The commands that do not fit the window at this width — New, Import, Import FMI, Simulate, Solve, Auto-layout give way in that order, and Save, Open, Export, Validate, Check, Undo and Redo never do | `tb-more` |
 | Collaborate | Room name, connect/disconnect and the participant roster | `tb-collab` |
 | Undo / Redo | Snapshot undo and redo; the depth is in [§5](#5-authoring-and-the-one-dangerous-button) | `tb-undo`, `tb-redo` |
 | Theme | Light/dark, remembered | `tb-theme` |

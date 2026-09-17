@@ -376,7 +376,10 @@ body {
   padding: 0 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-muted);
-  overflow-x: auto;
+  /* Never scroll: an overflowing axis forces the other to scroll too, which
+     clipped every open menu to the bar. Narrow widths move commands into
+     "More" instead (useToolbarOverflow), and menus render in a portal. */
+  overflow: hidden;
 }
 
 .toolbar .toolbar-brand {
@@ -834,6 +837,9 @@ textarea:focus-visible,
 
 .bottom-tab.is-active {
   background: var(--bg);
+  /* `button.is-active` sets white text for accent-filled buttons; this tab is
+     not accent-filled, and inherited it — white on white, an invisible label. */
+  color: var(--text);
   border-color: var(--border);
   font-weight: 600;
 }
@@ -1080,11 +1086,20 @@ textarea:focus-visible,
 .diagram-legend {
   font-size: 11px;
   color: var(--text);
-  /* Bottom-centre placement, expanding UPWARD (list above the toggle) so it
-     never overlaps the bottom-left Controls or the bottom-right MiniMap. */
+  /* Docked bottom-left beside the zoom controls, expanding UPWARD (list above
+     the toggle). It was bottom-centre, where a small canvas put it under the
+     bottom-right minimap. */
   display: flex;
   flex-direction: column-reverse;
-  align-items: center;
+  align-items: flex-start;
+}
+/* React Flow's Controls sit at left 15 px and are 26 px wide: start after them. */
+.react-flow__panel.diagram-legend-panel {
+  margin-left: 56px;
+}
+.diagram-minimap-toggle,
+.diagram-legend-toggle {
+  min-height: 24px;
 }
 .diagram-legend-toggle {
   border: 1px solid var(--border);
