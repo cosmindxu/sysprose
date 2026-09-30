@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 155
-- **Tests:** 3427 total — 3427 passed, 0 failed, 0 skipped
+- **Tests:** 3433 total — 3433 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -79,7 +79,7 @@
 | test/unit/diagram.layout2.test.ts | 7 | 0 | 0 |
 | test/unit/diagram.matrix.test.ts | 10 | 0 | 0 |
 | test/unit/diagram.parametric.test.ts | 10 | 0 | 0 |
-| test/unit/diagram.readability.test.ts | 30 | 0 | 0 |
+| test/unit/diagram.readability.test.ts | 33 | 0 | 0 |
 | test/unit/diagram.sequence.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.svg-export.test.ts | 17 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
@@ -143,7 +143,7 @@
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 24 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 48 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 51 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 10 | 0 | 0 |
