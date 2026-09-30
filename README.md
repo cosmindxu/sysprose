@@ -346,6 +346,8 @@ npm run sysprose -- <subcommand> <file.sysml|-> [--json]   # report on a model
                        # `npm run sysprose -- --help` lists them
 ```
 
+**Recording a tutorial video.** `node scripts/record-tutorial.mjs --scenario <file.json> --app <url> --out <dir>` drives a running build of the app (`npm run build && npm run preview`, or a deployment) through a scenario — clicks, typing and view switches on elements named by qualified name — with a visible pointer, and writes a silent 1920×1080 MP4 with the captions in a band below the app (burned in, and as WebVTT), plus one still per step to review. It needs Playwright's Chromium and `ffmpeg` with libass. The scenario format is documented at the top of the script; the drone-swarm tutorials of [mbse-workflow](https://github.com/cosmindxu/mbse-workflow/tree/main/docs/tutorials) are recorded with it.
+
 ## Deploy
 
 Sysprose is a pure static SPA — no backend needed. `vite.config.ts` uses `base: './'`, so the build runs on any host path.

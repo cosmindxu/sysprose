@@ -1802,3 +1802,93 @@
   color: var(--text);
 }
 
+
+/* Breadcrumb: the diagrams' scope, while one is set. */
+.scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+  padding: 1px 4px 1px 8px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.scope-chip-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 3px;
+  cursor: pointer;
+}
+.tree-actions button.is-active {
+  color: var(--accent);
+}
+
+/* Bottom panel: fold/unfold, at the far end of the tab strip. */
+.bottom-collapse {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+/* Text tab: the folded "N parse warnings" line. */
+.text-editor-diags-toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+/* Requirements table: the filter-as-you-type link picker. */
+.req-ref-picker-wrap {
+  position: relative;
+  display: inline-block;
+}
+.req-ref-options {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.req-ref-option {
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.req-ref-option.is-active,
+.req-ref-option:hover {
+  background: var(--accent-soft);
+}
+.req-ref-none {
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}

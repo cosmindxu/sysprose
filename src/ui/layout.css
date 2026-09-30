@@ -16,6 +16,23 @@
   opacity: 1;
 }
 
+/* Connecting: the source picked with an edge tool, until the target is clicked. */
+.react-flow__node.rf-pending-source {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* The canvas's own word on what the armed palette tool will do next. */
+.canvas-tool-hint {
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
 /* Drag-to-reparent: the node the drop would re-own is outlined mid-drag. */
 .react-flow__node.rf-reparent-target {
   outline: 2px dashed var(--accent);
@@ -406,6 +423,14 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+/* Folded down to its tab strip (the ▾ at the end of the tabs). */
+.app-bottom.is-collapsed {
+  height: auto;
+  flex: 0 0 auto;
+}
+.app-bottom.is-collapsed .bottom-content {
+  display: none;
 }
 
 /* ──────────────────────────────── Toolbar ───────────────────────────────── */

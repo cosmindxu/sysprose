@@ -396,34 +396,18 @@ export function RequirementsTable(): JSX.Element {
             </span>
           ))}
           {isPicking ? (
-            <select
-              className="req-ref-picker"
-              data-testid="req-ref-picker"
-              autoFocus
-              defaultValue=""
-              onClick={(e) => e.stopPropagation()}
-              onBlur={() => setPicking(null)}
-              onChange={(e) => {
-                e.stopPropagation();
-                const targetElId = e.currentTarget.value;
-                if (targetElId) {
-                  connect(targetElId, row.id, kind); // source=element, target=requirement
-                  // connect() selects the new relationship; keep the requirement
-                  // row selected so its highlight doesn't vanish.
-                  select(row.id);
-                }
+            <RefPicker
+              placeholder={`Link ${column.label.toLowerCase()}…`}
+              candidates={linkCandidates(row.id).map((c) => ({ id: c.id, text: `${label(c)} «${shortKw(c.eClass)}»` }))}
+              onPick={(targetElId) => {
+                connect(targetElId, row.id, kind); // source=element, target=requirement
+                // connect() selects the new relationship; keep the requirement
+                // row selected so its highlight doesn't vanish.
+                select(row.id);
                 setPicking(null);
               }}
-            >
-              <option value="" disabled>
-                Link {column.label.toLowerCase()}…
-              </option>
-              {linkCandidates(row.id).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {label(c)} «{shortKw(c.eClass)}»
-                </option>
-              ))}
-            </select>
+              onCancel={() => setPicking(null)}
+            />
           ) : (
             <button
               className="req-ref-add"
@@ -582,6 +566,74 @@ export function RequirementsTable(): JSX.Element {
 }
 
 /** A compact metaclass keyword for the chip/name hint. */
+/**
+ * Pick one element to link: type to narrow the list, then click one or press
+ * Enter for the highlighted one; Escape or leaving the field cancels. Typing
+ * never links anything — the native <select> this replaces linked on its first
+ * change, so typing "acknowledgeReports" to find it linked whatever began with
+ * "a", and a model with hundreds of candidates was a long list to scroll.
+ */
+function RefPicker(props: {
+  placeholder: string;
+  candidates: { id: string; text: string }[];
+  onPick: (id: string) => void;
+  onCancel: () => void;
+}): JSX.Element {
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const q = query.trim().toLowerCase();
+  const matches = (q ? props.candidates.filter((c) => c.text.toLowerCase().includes(q)) : props.candidates).slice(0, 12);
+  const pick = (i: number): void => {
+    const c = matches[i];
+    if (c) props.onPick(c.id);
+  };
+  return (
+    <span className="req-ref-picker-wrap" onClick={(e) => e.stopPropagation()}>
+      <input
+        className="req-ref-picker"
+        data-testid="req-ref-picker"
+        autoFocus
+        placeholder={props.placeholder}
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setActive(0);
+        }}
+        onBlur={props.onCancel}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') pick(active);
+          else if (e.key === 'Escape') props.onCancel();
+          else if (e.key === 'ArrowDown') setActive((a) => Math.min(a + 1, matches.length - 1));
+          else if (e.key === 'ArrowUp') setActive((a) => Math.max(a - 1, 0));
+          else return;
+          e.preventDefault();
+        }}
+      />
+      <span className="req-ref-options" role="listbox">
+        {matches.length === 0 && <span className="req-ref-none">No match</span>}
+        {matches.map((c, i) => (
+          <button
+            key={c.id}
+            type="button"
+            role="option"
+            aria-selected={i === active}
+            className={`req-ref-option${i === active ? ' is-active' : ''}`}
+            data-testid="req-ref-option"
+            data-element-id={c.id}
+            // mousedown, not click: the input's blur would close the list first.
+            onMouseDown={(e) => {
+              e.preventDefault();
+              props.onPick(c.id);
+            }}
+          >
+            {c.text}
+          </button>
+        ))}
+      </span>
+    </span>
+  );
+}
+
 function shortKw(eClass: string): string {
   return eClass.replace(/Definition$/, ' def').replace(/Usage$/, '');
 }

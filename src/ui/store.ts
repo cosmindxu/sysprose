@@ -94,7 +94,7 @@ import {
 // Import the JSON-free resolver directly; the multi-MB full library is loaded
 // asynchronously via a dynamic import (see loadStandardLibraryAsync) so it is
 // code-split into a lazy chunk and never blocks first paint.
-import { resolveTypeReferences } from '@library/resolve';
+import { resolveDeclaredTypeName, resolveTypeReferences } from '@library/resolve';
 import { validate, type Diagnostic } from '@validation/index';
 import {
   ModelApi,
@@ -262,6 +262,8 @@ export interface AppState {
    * not undo the arranging. Auto-layout clears the current diagram's pins.
    */
   diagramPins: Record<string, Record<string, { x: number; y: number }>>;
+  /** True while a graph view is being laid out (the layout runs off-page). */
+  diagramLayoutPending: boolean;
   /** Allocation-matrix projection — populated only while `activeView === 'allocation'`. */
   matrix: AllocationMatrix | null;
   /** Sequence-diagram projection — populated only while `activeView === 'sequence'`. */
@@ -436,6 +438,14 @@ export interface AppState {
   createElement(eClass: string, ownerId?: ElementId | null, name?: string): ElementId;
   updateElement(id: ElementId, patch: Partial<Omit<ElementRecord, 'id' | 'ownerId'>>): void;
   setAttr(id: ElementId, key: string, value: AttrValue): void;
+  /**
+   * Type a usage by name, as the text `part x : Name` would: the name is
+   * resolved the way a loaded model's is (the element's scopes, then the
+   * standard library) and the usage's typing is replaced by one to that
+   * definition. An empty name removes the typing; a name that resolves to
+   * nothing leaves the model as it is (the text field keeps what was typed).
+   */
+  bindType(id: ElementId, name: string): void;
   /**
    * Set a requirement's ID — the `<R1>` short name the file keeps — or clear it
    * with an empty value. ONE undo step; the same value again is not a change
@@ -931,6 +941,16 @@ function randomSelf(): { name: string; color: string } {
   return { name, color };
 }
 
+/** Relationships the parser makes their source own (see `connect`). */
+const OWNED_BY_SOURCE = new Set([
+  'FeatureTyping',
+  'Specialization',
+  'Subclassification',
+  'Subsetting',
+  'Redefinition',
+  'ReferenceSubsetting',
+]);
+
 /** Counts rebuilds, so only the latest started one publishes its layout. */
 let diagramGeneration = 0;
 
@@ -1028,6 +1048,15 @@ const RECOMPUTE_DEBOUNCE_MS = 80;
 const RECOMPUTE_MAX_WAIT_MS = 250;
 let recomputeTimer: ReturnType<typeof setTimeout> | null = null;
 let recomputeDeadline = 0;
+/**
+ * How long the last recompute took. On a large model a recompute is itself a
+ * few hundred milliseconds (validation, serialization and the diagram build of
+ * a 3,700-element model: ~175 ms), so running one every 250 ms of typing left
+ * the keyboard waiting between keystrokes. The waits above are therefore
+ * floors: the quiet period grows to 1.5×, and the cap to 4×, the last
+ * recompute's own duration.
+ */
+let lastRecomputeMs = 0;
 // While a store command that OWNS its derived state (sets diagnostics/text
 // synchronously) is mutating the model, suppress the collab model-subscribe
 // listener's auto-scheduled recompute — otherwise that listener, which fires
@@ -1162,11 +1191,13 @@ export const useAppStore = create<AppState>((set, get) => {
    * model edit); remote CRDT applies pass `false` to preserve unapplied edits.
    */
   function recomputeNow(forceText: boolean): void {
+    const started = performance.now();
     const { model, textDirty, textBuffer } = get();
     const patch: Partial<AppState> = { diagnostics: safeValidate(model) };
     if (forceText || !textDirty) Object.assign(patch, textView(model, textBuffer));
     set(patch);
     void get().rebuildDiagram();
+    lastRecomputeMs = performance.now() - started;
   }
 
   /**
@@ -1177,9 +1208,11 @@ export const useAppStore = create<AppState>((set, get) => {
   function scheduleRecompute(forceText: boolean): void {
     recomputePendingForce = recomputePendingForce || forceText;
     const now = Date.now();
-    if (recomputeTimer === null) recomputeDeadline = now + RECOMPUTE_MAX_WAIT_MS;
+    const quiet = Math.max(RECOMPUTE_DEBOUNCE_MS, 1.5 * lastRecomputeMs);
+    const cap = Math.max(RECOMPUTE_MAX_WAIT_MS, 4 * lastRecomputeMs);
+    if (recomputeTimer === null) recomputeDeadline = now + cap;
     else clearTimeout(recomputeTimer);
-    const wait = Math.max(0, Math.min(RECOMPUTE_DEBOUNCE_MS, recomputeDeadline - now));
+    const wait = Math.max(0, Math.min(quiet, recomputeDeadline - now));
     recomputeTimer = setTimeout(() => {
       recomputeTimer = null;
       const force = recomputePendingForce;
@@ -1243,6 +1276,7 @@ export const useAppStore = create<AppState>((set, get) => {
     focusId: null,
     diagramRootId: null,
     diagramPins: {},
+    diagramLayoutPending: false,
     expandedIds: new Set(userRootIds(initialModel)),
     activeView: 'general',
     diagram: null,
@@ -1773,13 +1807,14 @@ export const useAppStore = create<AppState>((set, get) => {
         const graph = buildDiagram(model, activeView, rootId, {
           ...(activeView === 'tree' ? { treeExpanded: treeExpansion(model, get()) } : {}),
         });
+        set({ diagramLayoutPending: true });
         const laid = applyPins(await layoutDiagram(graph), get().diagramPins[diagramKey(activeView, scoped)]);
         if (generation !== diagramGeneration) return; // a newer rebuild owns the canvas
-        set({ diagram: laid });
+        set({ diagram: laid, diagramLayoutPending: false });
       } catch (err) {
         console.error('rebuildDiagram failed', err);
         if (generation !== diagramGeneration) return;
-        set({ diagram: { nodes: [], edges: [], viewKind: get().activeView } });
+        set({ diagram: { nodes: [], edges: [], viewKind: get().activeView }, diagramLayoutPending: false });
       }
     },
 
@@ -1809,6 +1844,31 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!model.has(id)) return;
       pushUndo();
       model.update(id, patch);
+      afterMutation();
+    },
+
+    bindType(id, name) {
+      const { model } = get();
+      const el = model.get(id);
+      if (!el) return;
+      const query = name.trim();
+      const typings = model.relationshipsFrom(id).filter((r) => r.eClass === 'FeatureTyping');
+      let targetId: ElementId | null = null;
+      if (query) {
+        const target = resolveDeclaredTypeName(model, query, el.ownerId, el.id);
+        if (!target || target.id === el.id) return;
+        if (typings.length === 1 && typings[0]!.target?.[0] === target.id) return; // typed so already
+        targetId = target.id;
+      } else if (typings.length === 0) {
+        return;
+      }
+      pushUndo();
+      withCommandMutation(() =>
+        model.transaction(() => {
+          for (const t of typings) model.remove(t.id);
+          if (targetId) model.create('FeatureTyping', { ownerId: id, source: [id], target: [targetId] });
+        }),
+      );
       afterMutation();
     },
 
@@ -2035,7 +2095,11 @@ export const useAppStore = create<AppState>((set, get) => {
         throw new Error('connect: source or target does not exist');
       }
       pushUndo();
-      const ownerId = model.get(sourceId)?.ownerId ?? null;
+      // A typing or specialization belongs to the element it types / the
+      // specific element, as the parser makes it — so a line drawn with the
+      // palette saves as `part x : T` / `part def S :> T`, not a separate
+      // statement. Every other relationship goes beside its source.
+      const ownerId = OWNED_BY_SOURCE.has(kind) ? sourceId : (model.get(sourceId)?.ownerId ?? null);
       const edge = model.create(kind, {
         ownerId,
         source: [sourceId],

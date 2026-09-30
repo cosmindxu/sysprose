@@ -779,3 +779,49 @@ describe('useAppStore.solveParametric — the Solve rows carry their units (I6)'
     expect(rows).toContain('Feasibility: no violated inequality constraint.');
   });
 });
+
+describe('useAppStore — typing by name, and who owns a drawn typing', () => {
+  function load(text: string): void {
+    useAppStore.setState({ model: parseModel(text).model, undoStack: [], redoStack: [], selectionId: null, selectionIds: [] });
+  }
+  const byName = (n: string) => st().model.all().find((e) => e.declaredName === n)!;
+  const typings = (id: string) =>
+    st()
+      .model.relationshipsFrom(id)
+      .filter((r) => r.eClass === 'FeatureTyping')
+      .map((r) => st().model.get(r.target![0]!)?.declaredName);
+
+  it('a typing or specialization drawn with a tool belongs to its source, like a parsed one', () => {
+    load('package P { part def T; part def S; part x; requirement r; }');
+    const typing = st().connect(byName('x').id, byName('T').id, 'FeatureTyping');
+    expect(st().model.get(typing)!.ownerId).toBe(byName('x').id);
+    const spec = st().connect(byName('S').id, byName('T').id, 'Specialization');
+    expect(st().model.get(spec)!.ownerId).toBe(byName('S').id);
+    // Any other relationship goes beside its source.
+    const sat = st().connect(byName('x').id, byName('r').id, 'Satisfy');
+    expect(st().model.get(sat)!.ownerId).toBe(byName('P').id);
+  });
+
+  it('bindType types a usage by a name that resolves, replacing its old type', () => {
+    load('package P { part def Engine; part def Motor; part e : Engine; }');
+    const e = byName('e').id;
+    expect(typings(e)).toEqual(['Engine']);
+    st().bindType(e, 'Motor');
+    expect(typings(e)).toEqual(['Motor']);
+    expect(st().model.relationshipsFrom(e).find((r) => r.eClass === 'FeatureTyping')!.ownerId).toBe(e);
+    // One undo step restores the old type.
+    st().undo();
+    expect(typings(byName('e').id)).toEqual(['Engine']);
+  });
+
+  it('bindType leaves the model alone for an unknown name, and an empty name removes the type', () => {
+    load('package P { part def Engine; part e : Engine; }');
+    const e = byName('e').id;
+    const undoDepth = st().undoStack.length;
+    st().bindType(e, 'NoSuchThing');
+    expect(typings(e)).toEqual(['Engine']);
+    expect(st().undoStack.length).toBe(undoDepth);
+    st().bindType(e, '');
+    expect(typings(e)).toEqual([]);
+  });
+});

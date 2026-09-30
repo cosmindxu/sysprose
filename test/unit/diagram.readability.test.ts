@@ -440,3 +440,52 @@ describe('thoroughnessFor', () => {
     expect(Number(thoroughnessFor(20))).toBeGreaterThan(Number(thoroughnessFor(1000)));
   });
 });
+
+describe('flows, state-machine starts and constraint expressions', () => {
+  const { model } = parseModel(`package P {
+    part def Worker {
+        port inp;
+        port outp;
+    }
+    action produce { out item made; }
+    action consume { in item taken; }
+    flow handOver of Widget from produce.made to consume.taken;
+    part def Widget;
+    state def Modes {
+        entry; then Idle;
+        state Idle;
+        state Busy;
+        transition first Idle then Busy;
+    }
+    constraint { widgetCount <= 12 }
+}`);
+
+  it('draws an object flow between the actions at its ends, labelled with what flows', () => {
+    const g = buildDiagram(model, 'action');
+    const flows = g.edges.filter((e) => e.kind === 'flow');
+    expect(flows).toHaveLength(1);
+    const name = (id: string) => g.nodes.find((n) => n.id === id)!.label;
+    expect([name(flows[0]!.source), name(flows[0]!.target)]).toEqual(['produce', 'consume']);
+    expect(flows[0]!.label).toBe('Widget');
+  });
+
+  it('leaves a state machine\'s start point out of the action view', () => {
+    const g = buildDiagram(model, 'action');
+    expect(g.nodes.map((n) => n.label)).toEqual(expect.arrayContaining(['produce', 'consume']));
+    expect(g.nodes.every((n) => !/Initial|Entry/.test(n.kind))).toBe(true);
+  });
+
+  it('gives a constraint box room for its expression', () => {
+    const plain = intrinsicSize({ id: 'a', elementId: 'a', kind: 'ConstraintUsage', label: '', data: { name: 'c' } });
+    const withExpr = intrinsicSize({
+      id: 'b',
+      elementId: 'b',
+      kind: 'ConstraintUsage',
+      label: '',
+      data: { name: 'c', attrs: { expression: 'coordination.areaUnderWatchFraction >= 0.9 and coordination.coverageLossAfterMemberLossFraction <= 0.25' } },
+    });
+    expect(withExpr.h).toBeGreaterThan(plain.h);
+    expect(withExpr.w).toBeLessThanOrEqual(420 + 1);
+  });
+});
+

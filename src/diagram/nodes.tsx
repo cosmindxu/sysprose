@@ -70,6 +70,27 @@ const compartmentStyle: CSSProperties = {
   color: 'var(--node-fg)',
 };
 
+/**
+ * A constraint's expression, drawn in its box as `{ … }` — the one thing a
+ * parametric diagram of unnamed constraints has to say. Wraps rather than
+ * clips; the layout sizes the box for the lines (see `intrinsicSize`).
+ */
+const expressionStyle: CSSProperties = {
+  ...compartmentStyle,
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  textAlign: 'left',
+};
+
+/** The constraint expression a node carries, if any. */
+export function constraintExpression(data: Record<string, unknown> | SysmlNodeData): string | undefined {
+  const d = data as Record<string, unknown>;
+  const attrs = (d.attrs ?? {}) as Record<string, unknown>;
+  const e = attrs.expression;
+  return typeof e === 'string' && e.trim() ? e.trim() : undefined;
+}
+
 /** Subtle default handles for node-to-node relationship edges. */
 const bodyHandleStyle: CSSProperties = { width: 7, height: 7, background: 'var(--node-muted)', border: 'none' };
 /** Visible boundary-port handle (interconnection view). */
@@ -441,7 +462,10 @@ export function SysmlNode({ data }: NodeProps): JSX.Element {
       <Handle type="source" position={Position.Right} className="body-handle" style={bodyHandleStyle} />
       <div style={{ ...headerStyle, ...variantHeaderStyle(variant) }}>
         {keywordLabel ? <div style={keywordStyle}>{keywordLabel}</div> : null}
-        <div style={{ ...nameStyle, ...(isAbstract ? { fontStyle: 'italic' } : {}) }}>{name}</div>
+        {/* An unnamed constraint is its expression: the metaclass is not a name. */}
+        {!(d as Record<string, unknown>).unnamed || !constraintExpression(d) ? (
+          <div style={{ ...nameStyle, ...(isAbstract ? { fontStyle: 'italic' } : {}) }}>{name}</div>
+        ) : null}
         {badges.length > 0 && (
           <div style={badgeRowStyle}>
             {badges.map((b) => (
@@ -452,6 +476,11 @@ export function SysmlNode({ data }: NodeProps): JSX.Element {
           </div>
         )}
       </div>
+      {constraintExpression(d) && (
+        <div style={expressionStyle} data-testid="node-expression">
+          {`{ ${constraintExpression(d)} }`}
+        </div>
+      )}
       {attributes.length > 0 && (
         <div style={compartmentStyle}>
           {attributes.map((a, i) => (

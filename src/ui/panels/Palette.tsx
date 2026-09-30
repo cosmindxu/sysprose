@@ -113,7 +113,15 @@ const TOOLS_BY_VIEW: Record<ViewKind, ToolGroup[]> = {
     },
     {
       title: 'Edges',
-      tools: [EDGE('Specialization', 'Specialize'), EDGE('FeatureTyping', 'Typed by')],
+      // The dependency lines this view draws can be drawn here too: a satisfier
+      // that has lost its requirement is not in the Requirement view any more.
+      tools: [
+        EDGE('Specialization', 'Specialize'),
+        EDGE('FeatureTyping', 'Typed by'),
+        EDGE('Satisfy', 'Satisfy'),
+        EDGE('Allocation', 'Allocate'),
+        EDGE('Trace', 'Trace'),
+      ],
     },
   ],
   interconnection: [

@@ -107,8 +107,9 @@ the requirements they have to meet.
    ports instead of the whole model. Scope follows **containment**, so scope to
    the *definition* that owns the parts: the `uav` box beside it is a usage typed
    by `AirVehicle` (`part uav : AirVehicle;`) and owns nothing, so scoping to it
-   draws one box and no edges. To undo it, right-click any node → **Show whole
-   model** — there is no other indicator that a scope is active.
+   draws one box and no edges. While a scope is set, the chip **Diagrams:
+   AirVehicle** at the start of the breadcrumb says so; its **×** (or right-click
+   any node → **Show whole model**) shows the whole model again.
 3. **Read the requirements.** Switch to the **Requirements** view. One row per
    requirement: an outline number, its text, and a *Satisfied By* chip pointing
    at `uav`. The **ID** column reads `(id)` on both rows, and that is correct —
@@ -144,7 +145,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:133-247`, `src/ui/panels/Toolbar.tsx:396-545`,
+**Source of truth:** `src/ui/App.tsx:136-250`, `src/ui/panels/Toolbar.tsx:396-545`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -276,9 +277,16 @@ edges), and an **allocation** view needs `allocate x to y` — a `satisfy` will
 not populate it.
 
 A graph view can be narrowed to one subtree — right-click a node → **Scope
-diagram to this**. That is what makes an interconnection diagram of one assembly readable.
-**There is no on-screen indicator that a scope is active**; the breadcrumb above
-the canvas shows the *selection* path, not the scope.
+diagram to this**, or **⊞** on its row in the Explorer (the way to scope to a
+package, which most views draw no box for). That is what makes an
+interconnection diagram of one assembly readable, and a layered model readable
+one layer at a time. While a scope is set, a chip at the start of the breadcrumb
+says so — **Diagrams: SA** — and its **×** shows the whole model again. A
+different view or scope opens fitted to the canvas.
+
+The bottom panel (Problems, Checks, Text, …) folds down to its tabs with the
+**▾** at the end of its tab strip, giving the diagram the room; clicking any tab
+opens it again.
 
 ### Diagrams
 
@@ -299,11 +307,11 @@ runs it in a terminal instead of a verdict nobody measured.
 |---|---|---|---|
 | General | Definitions and usages as boxes with attribute and port compartments; composition ◆, reference ◇, specialization ▷ and satisfy/allocate edges | What are the parts of this system, and how do they relate? | `tb-view-general` |
 | Interconnection | Parts nested inside their parent, ports on the boundaries, connections port-to-port | What is wired to what? | `tb-view-interconnection` |
-| Action | Action nodes plus initial ●, decision ◇, fork/join ≡ and done ◉ control nodes, joined by successions | What happens, in what order? | `tb-view-action` |
+| Action | Action nodes plus initial ●, decision ◇, fork/join ≡ and done ◉ control nodes, joined by successions; a `flow` between two actions' parameters is drawn between the actions, labelled with what it carries | What happens, in what order, and what passes between the steps? | `tb-view-action` |
 | State | States and transitions labelled `trigger [guard] / effect` | What modes does it have, and what moves it between them? | `tb-view-state` |
 | Requirement | Requirements with their satisfy / refine / verify endpoints | Which requirements exist, and what meets them? | `tb-view-requirement` |
 | Tree | Pure containment, one branch at a time: a box that owns more shows **+N**; click it to open that branch (the Explorer opens with it), **−** to close it | What owns what? | `tb-view-tree` |
-| Parametric | Constraint nodes and the parameters bound into them | Which equations connect which values? | `tb-view-parametric` |
+| Parametric | Constraint nodes, each showing its expression in a monospace compartment (an unnamed one is headed by the expression alone), and the parameters bound into them | Which equations connect which values? | `tb-view-parametric` |
 | Case | Use cases and the cases that include them | What is the system for? | `tb-view-case` |
 | Sequence | Lifelines and time-ordered messages, falling back to control flow when the model has no explicit flows | Who talks to whom, in what order? | `tb-view-sequence` |
 | Geometry | One primitive solid per structural part, from `shape` / `position` / `size` / `color` attributes, orbitable in 3D | Roughly how big is it, and what is inside what? | `tb-view-geometry` |
@@ -359,7 +367,9 @@ view that showed the clauses and hid the refusals would let you believe a
 requirement was fully encoded when half its body had been turned away.
 
 The Requirements view edits the model directly: adding a chip creates the
-backing relationship, and ✕ deletes it. A cell with a closed list of values is a
+backing relationship, and ✕ deletes it. **+** on a chip cell opens a search box:
+typing narrows the list of candidates and links nothing; a click (or Enter on
+the highlighted one) makes the link, and Escape closes it. A cell with a closed list of values is a
 drop-down offering exactly what a write will accept; the rest are click-to-edit
 text. **Kind** says what a row is for — a `prose` or `prompt` row stays in the
 grid, labelled, and is left out of the coverage figure rather than counted as a
@@ -408,9 +418,30 @@ rename, drag to reparent, delete), the canvas (draw with the palette, drag,
 right-click), the Properties panel (every field of the selection), and the
 Requirements table.
 
+**Drawing on the canvas.** Pick a tool in the palette and a strip at the top of
+the canvas says what the next click does: for a box, *click empty canvas to
+place it under the selection, or a box to place it inside*; for a line, *click
+the source box, then the target* — once the source is picked it is outlined and
+the strip asks for the target. **Esc** puts the tool down at any point. The
+General view's palette draws every dependency the views show — **Specialize**,
+**Typed by**, **Satisfy**, **Allocate**, **Trace** — so a line whose other end
+has left a view (a satisfier whose requirement was deleted, say) can still be
+drawn where both ends are. A typing, specialization or subsetting line belongs
+to the box it starts from; any other line to the source's owner.
+
+**Typing a part in Properties.** The **Type** field shows what the selection is
+typed by. Type the name of a definition and press Enter (or leave the field):
+the name is looked up the way the text would look it up, and the typing is
+bound, replacing the old one — the diagram draws the new `: Type` and any
+typing line at once. A name that resolves to nothing is kept as text, as the
+notation would keep it, and an empty field removes the typing. One undo takes
+it back.
+
 The tree and Properties update instantly. The diagram, the Problems list and the
 Text tab are *derived*, and they lag a burst of edits by up to 250 ms. That is
-deliberate: it keeps typing responsive.
+deliberate: it keeps typing responsive. On a large model, where working them out
+takes a while itself, the lag grows with it — up to four times the last
+recompute — so the keyboard is never kept waiting.
 
 ### The Text tab, in both directions
 
@@ -418,6 +449,10 @@ deliberate: it keeps typing responsive.
   edit, and the indicator under the editor reads *in sync with model*.
 - **Text → model** happens only when you press **Apply text → model**. Until you
   do, the indicator reads *modified — not yet applied*.
+- **Parse findings** sit in a strip under the editor. Errors are shown in full;
+  warnings alone fold to one line — *▸ 12 parse warnings — also listed under
+  Problems* — which a click opens, so a model with a few warnings still leaves
+  the text most of the panel.
 
 > ### ⚠ Apply text → model replaces the entire model
 >
@@ -443,8 +478,8 @@ deliberate: it keeps typing responsive.
 Undo is 50 snapshots deep, it covers model changes (not view changes, not the
 theme), and any new edit clears the redo stack. Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:890-1040` (the recompute cycle),
-`1873-1896` (`applyText`), `2260-2298` (undo), `2395-2416` (the post-apply
+**Source of truth:** `src/ui/store.ts:900-1069` (the recompute cycle),
+`2361-2397` (`applyText`), `2772-2808` (undo), `2960-2979` (the post-apply
 refresh); `src/ui/panels/TextEditor.tsx`;
 `test/e2e/text-apply-contract.spec.ts:30` (the one-undo guarantee, as a test).
 
@@ -2543,8 +2578,8 @@ it, every one of these engines is an importable function — `checkText`,
 `modelMetrics`, `requirementSatisfaction`, `whereUsed`, `analysisReport`,
 `buildGrid`, `buildDSM`, `buildPlan` — with no DOM anywhere in them.
 
-**Source of truth:** `src/ui/store.ts:1855-1981` (the four buttons),
-`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:42-67`
+**Source of truth:** `src/ui/store.ts:1915-2041` (the four buttons),
+`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:42-69`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -2813,7 +2848,7 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 `modelDescription.xml` for the selected block.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:529-549`, `2020-2069`, `src/ui/App.tsx:74-78`,
+`src/ui/store.ts:539-559`, `2424-2454`, `src/ui/App.tsx:77-81`,
 `test/e2e/persistence-reload.spec.ts`.
 
 ---
@@ -2936,6 +2971,7 @@ quietly go stale.
 | Explorer search | Filters to matches and their ancestors; `/` focuses it, Escape clears | `explorer-search` |
 | Library toggle | Shows the bundled standard library in the tree (off by default) | `explorer-library-toggle` |
 | Focus a subtree | Narrows the Explorer to one element; the chip clears it | `tree-focus`, `explorer-focus`, `explorer-focus-clear` |
+| Scope the diagrams | ⊞ on a row draws only that element's subtree in every graph view; the breadcrumb's **Diagrams:** chip and its × clear it | `tree-scope`, `scope-chip`, `scope-clear` |
 | Add child / rename / delete | Per-row tree editing | `tree-add`, `tree-rename`, `tree-delete` |
 | Properties fields | Name, type, value, multiplicity, direction, documentation, requirement id and text | `prop-name`, `prop-type`, `prop-value`, `prop-doc` |
 | Statement kind | What the selected element is for — requirement / prose / prompt — offered wherever the notation can carry the keyword, which is most declarations and not only requirements | `prop-statement-kind` |
@@ -2951,15 +2987,19 @@ quietly go stale.
 | Fit / zoom to selection / snap / auto-layout | The canvas mini-toolbar | `diagram-fit`, `diagram-fit-selection`, `diagram-snap`, `diagram-autolayout` |
 | Scope diagram to this / Show whole model | Narrow every drawable view to one subtree, and clear it | `node-ctx-scope`, `node-ctx-scope-clear` |
 | Legend | The notation families present in this view, docked bottom-left beside the zoom controls | `diagram-legend`, `legend-toggle` |
-| Overview map | The minimap. On a canvas narrower than 720 px it is a toggle, so it cannot cover the legend | `minimap-toggle` |
+| Overview map | The minimap. On a canvas narrower than 1100 px it is a toggle — **▸ Map** — so it cannot cover the legend or the diagram | `minimap-toggle` |
+| Tool hint | While a palette tool is armed, what the next click does, and that Esc cancels | `canvas-tool-hint` |
 
 ### Bottom panel
+
+The **▾** at the end of the tab strip folds the panel down to its tabs
+(`bottom-collapse`); **▴**, or any tab, opens it again.
 
 | Tab | What it is | Test id |
 |---|---|---|
 | Problems | One shared list, overwritten by Validate / Check / Simulate / Solve / parse | `tab-problems` |
 | Checks | What each palette check last said: verdict, summary, and each finding with its code — click a finding to select the element it names. A result from before the last edit is marked stale rather than shown as current | `tab-checks`, `checks-result`, `checks-row`, `checks-row-select`, `checks-clear` |
-| Text | The model as editable text, with **Apply text → model** | `tab-text`, `text-editor`, `text-apply` |
+| Text | The model as editable text, with **Apply text → model**; parse warnings fold to one line | `tab-text`, `text-editor`, `text-apply`, `text-editor-diags-toggle` |
 | API Console | A console over the live SDK: queries, metrics, requirement satisfaction, where-used, commit | `tab-api`, `api-query`, `api-run`, `api-metrics` |
 | Simulation | The interactive stepper: target, start, play, step, inject, scrub | `tab-simulation`, `sim-target`, `sim-start`, `sim-step`, `sim-inject` |
 | Versions | Commits, branches and a 3-way merge over the working model — in memory only | `tab-versions`, `version-commit-btn`, `version-branch-new`, `version-merge-btn` |
@@ -2985,4 +3025,4 @@ Plain keys are suppressed while you are typing in a field.
 
 There is no `Ctrl+N`; **New** is a button only.
 
-**Source of truth:** `src/ui/commands.ts:111-213`, `src/ui/App.tsx:112-128`.
+**Source of truth:** `src/ui/commands.ts:111-213`, `src/ui/App.tsx:115-131`.

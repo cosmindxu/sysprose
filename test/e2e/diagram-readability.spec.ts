@@ -128,3 +128,69 @@ test('the tree grows one branch at a time', async ({ page }) => {
   await expect.poll(count).toBe(before);
   expect(errors).toEqual([]);
 });
+
+/** A model big enough that its whole drawing and one package's differ a lot. */
+function layeredModel(): string {
+  const pkg = (name: string) =>
+    `    package ${name} {\n` +
+    // Loose boxes pack into a block, so one package is a small part of the whole.
+    Array.from({ length: 40 }, (_, i) => `        part def ${name}Block${i};`).join('\n') +
+    '\n    }';
+  return `package Layered {\n${['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta'].map(pkg).join('\n')}\n}\n`;
+}
+
+/** How much of the canvas the drawn boxes fill (the larger of the two ratios), and the zoom. */
+async function fill(page: Page): Promise<{ ratio: number; zoom: number }> {
+  return page.evaluate(() => {
+    const c = document.querySelector('[data-testid="diagram-canvas"]')!.getBoundingClientRect();
+    const boxes = [...document.querySelectorAll('.react-flow__node')].map((n) => n.getBoundingClientRect());
+    const x0 = Math.min(...boxes.map((b) => b.left));
+    const x1 = Math.max(...boxes.map((b) => b.right));
+    const y0 = Math.min(...boxes.map((b) => b.top));
+    const y1 = Math.max(...boxes.map((b) => b.bottom));
+    const m = /scale\(([\d.]+)\)/.exec((document.querySelector('.react-flow__viewport') as HTMLElement).style.transform);
+    return { ratio: Math.max((x1 - x0) / c.width, (y1 - y0) / c.height), zoom: m ? Number(m[1]) : 1 };
+  });
+}
+
+test('scoping to one package opens it fitted, says so, and can be undone', async ({ page }) => {
+  const errors = captureErrors(page);
+  await page.route('**/layered/Layered.sysml', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/plain', body: layeredModel() }),
+  );
+  await page.goto('/?model=layered/Layered.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 60_000 });
+  await page.waitForFunction(() => (window as unknown as { sysml?: { roots: () => { declaredName?: string }[] } }).sysml?.roots().some((r) => r.declaredName === 'Layered'));
+  await expect.poll(async () => (await current(page))?.nodes.length).toBe(240);
+
+  // Scope to Beta from the Explorer.
+  const betaId = await findElementId(page, 'Package', 'Beta');
+  const row = page.locator(`[data-testid="tree-node"][data-elementid="${betaId}"]`);
+  await row.hover();
+  await row.getByTestId('tree-scope').click();
+  await expect.poll(async () => (await current(page))?.nodes.length).toBe(40);
+  await expect(page.getByTestId('scope-chip')).toContainText('Beta');
+
+  // The drawing is fitted to Beta, not left at the whole model's zoom.
+  await expect
+    .poll(async () => {
+      const f = await fill(page);
+      return f.ratio >= 0.5 || f.zoom >= 0.999;
+    }, { timeout: 15_000 })
+    .toBe(true);
+
+  // The chip's × shows the whole model again.
+  await page.getByTestId('scope-clear').click();
+  await expect.poll(async () => (await current(page))?.nodes.length).toBe(240);
+  await expect(page.getByTestId('scope-chip')).toHaveCount(0);
+
+  // Folding the bottom panel leaves its tabs and gives the canvas the room.
+  const before = (await page.getByTestId('diagram-canvas').boundingBox())!.height;
+  await page.getByTestId('bottom-collapse').click();
+  await expect.poll(async () => (await page.getByTestId('diagram-canvas').boundingBox())!.height).toBeGreaterThan(before + 100);
+  await expect(page.getByTestId('tab-problems')).toBeVisible();
+  await page.getByTestId('tab-problems').click();
+  await expect.poll(async () => (await page.getByTestId('diagram-canvas').boundingBox())!.height).toBeLessThan(before + 5);
+  expect(errors).toEqual([]);
+});
+

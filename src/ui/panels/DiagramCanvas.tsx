@@ -52,8 +52,13 @@ import { NodeContextMenu } from './NodeContextMenu';
 import { PaneContextMenu } from './PaneContextMenu';
 import { Legend } from './Legend';
 
-/** Canvas width (px) below which the minimap becomes a toggle so it cannot cover the legend. */
-const MINIMAP_MIN_CANVAS = 720;
+/**
+ * Canvas width (px) below which the minimap becomes a toggle ("Map"). It first
+ * guarded the legend; it is set this wide because a permanent minimap sits over
+ * the drawing's bottom-right corner, and on a laptop-sized canvas (~830 px)
+ * that corner held boxes a reader needed — fitted diagrams put content there.
+ */
+const MINIMAP_MIN_CANVAS = 1100;
 /** Lowest zoom: far enough out that Fit shows a whole large model. */
 const MIN_ZOOM = 0.02;
 
@@ -143,10 +148,21 @@ function DiagramCanvasInner(): JSX.Element {
   const setPendingSource = usePaletteStore((s) => s.setPendingSource);
   const resetTool = usePaletteStore((s) => s.reset);
 
+  // Escape puts an armed palette tool (or a half-drawn connection) down.
+  useEffect(() => {
+    if (tool.mode === 'select') return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') usePaletteStore.getState().reset();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tool.mode]);
+
   const rf = useReactFlow();
-  const diagramRootId = useAppStore((s) => s.diagramRootId);
   /** The view + scope the viewport was last fitted to (see the rebuild effect). */
   const fittedIdentity = useRef<string | null>(null);
+  /** The node ids a fit is waiting for — see the fit effect below. */
+  const pendingFit = useRef<string[] | null>(null);
   const [snap, setSnap] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
@@ -215,14 +231,40 @@ function DiagramCanvasInner(): JSX.Element {
     // canvas. So does an empty diagram getting its first boxes, which could
     // otherwise land off-screen. A rebuild of the SAME diagram (an edit, a
     // tree branch opened) keeps the reader's viewport.
-    const identity = `${diagram.viewKind}|${diagramRootId ?? ''}|${diagram.nodes.length > 0}`;
+    // The scope is read HERE, when the new diagram arrives — not subscribed to:
+    // scoping changes it before the rebuild finishes, and reacting then marked
+    // the OLD drawing as the scoped one, so the real one was never fitted.
+    const scope = useAppStore.getState().diagramRootId;
+    const identity = `${diagram.viewKind}|${scope ?? ''}|${diagram.nodes.length > 0}`;
     if (fittedIdentity.current !== identity) {
       fittedIdentity.current = identity;
-      // Never past 100%: a lone box blown up to fill the canvas reads no better
-      // and covers the space where the next one would be placed.
-      requestAnimationFrame(() => void rf.fitView({ padding: 0.15, maxZoom: 1 }));
+      pendingFit.current = rfNodes.map((n) => n.id);
     }
-  }, [diagram, setNodes, setEdges, setDropTarget, diagramRootId, rf]);
+  }, [diagram, setNodes, setEdges, setDropTarget]);
+
+  // The fit itself waits, frame by frame, until React Flow's own store holds
+  // exactly the new diagram's nodes. Fitting as soon as they were handed over
+  // fitted the OLD drawing's bounds: scoped from a whole model down to one
+  // layer, the layer came out a speck in a corner.
+  useEffect(() => {
+    const want = pendingFit.current;
+    if (!want) return;
+    let frame = 0;
+    let raf = 0;
+    const tryFit = (): void => {
+      const have = rf.getNodes();
+      if (have.length === want.length && want.every((id) => rf.getNode(id))) {
+        pendingFit.current = null;
+        // Never past 100%: a lone box blown up to fill the canvas reads no
+        // better and covers the space where the next one would be placed.
+        void rf.fitView({ padding: 0.15, maxZoom: 1 });
+      } else if (++frame < 120) {
+        raf = requestAnimationFrame(tryFit);
+      }
+    };
+    raf = requestAnimationFrame(tryFit);
+    return () => cancelAnimationFrame(raf);
+  }, [nodes, rf]);
 
   // Reflect the current model selection as React Flow selection.
   //
@@ -610,6 +652,17 @@ function DiagramCanvasInner(): JSX.Element {
         <Panel position="bottom-left" className="diagram-legend-panel">
           <Legend edges={diagram?.edges ?? []} />
         </Panel>
+        {tool.mode !== 'select' && (
+          <Panel position="top-center">
+            <div className="canvas-tool-hint" data-testid="canvas-tool-hint" role="status">
+              {tool.mode === 'node'
+                ? 'Click empty canvas to place it under the selection, or a box to place it inside · Esc cancels'
+                : pendingSource
+                  ? 'Now click the target box · Esc cancels'
+                  : 'Click the source box, then the target'}
+            </div>
+          </Panel>
+        )}
         <Panel position="top-right">
           <div className="diagram-minibar" data-testid="diagram-minibar">
             <button

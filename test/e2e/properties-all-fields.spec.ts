@@ -86,8 +86,23 @@ test('properties edits identity/usage/port/requirement/transition/doc/unit field
   await page.getByTestId('prop-shortName').fill('EC');
   await expect.poll(() => readField(page, engineId, 'declaredShortName')).toBe('EC');
 
+  // The Type field shows the element's real type (engine is `part engine : Engine`)…
+  await expect(page.getByTestId('prop-type')).toHaveValue('Engine');
+  // …keeps a name that resolves to nothing as text…
+  await page.getByTestId('prop-type').fill('NoSuchType');
+  await expect.poll(() => readAttr(page, engineId, 'type')).toBe('NoSuchType');
+  // …and on Enter types the element by a name that resolves.
   await page.getByTestId('prop-type').fill('Engine');
+  await page.getByTestId('prop-type').press('Enter');
   await expect.poll(() => readAttr(page, engineId, 'type')).toBe('Engine');
+  await expect
+    .poll(() =>
+      page.evaluate((id) => {
+        const api = (window as unknown as { sysml: { traverse: (i: string, k: string) => { declaredName?: string }[] } }).sysml;
+        return api.traverse(id, 'FeatureTyping').map((t) => t.declaredName);
+      }, engineId),
+    )
+    .toEqual(['Engine']);
 
   await page.getByTestId('prop-multiplicity').fill('0..1');
   await expect.poll(() => readAttr(page, engineId, 'multiplicity')).toBe('0..1');

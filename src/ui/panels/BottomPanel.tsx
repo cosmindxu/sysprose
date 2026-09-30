@@ -565,7 +565,8 @@ function VersionsTab(): JSX.Element {
 
 /* ──────────────────────────────── Shell ─────────────────────────────────── */
 
-export function BottomPanel(): JSX.Element {
+export function BottomPanel(props: { collapsed?: boolean; onToggleCollapsed?: () => void } = {}): JSX.Element {
+  const { collapsed = false, onToggleCollapsed } = props;
   const [tab, setTab] = useState<Tab>('problems');
   const problemCount = useAppStore((s) => s.diagnostics.length);
 
@@ -593,11 +594,27 @@ export function BottomPanel(): JSX.Element {
             key={t.id}
             data-testid={t.testid}
             className={`bottom-tab ${tab === t.id ? 'is-active' : ''}`}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              setTab(t.id);
+              // A tab of a folded panel opens it on that tab.
+              if (collapsed) onToggleCollapsed?.();
+            }}
           >
             {t.label}
           </button>
         ))}
+        {onToggleCollapsed && (
+          <button
+            className="bottom-collapse"
+            data-testid="bottom-collapse"
+            title={collapsed ? 'Show the panel' : 'Fold the panel down to its tabs, for more diagram'}
+            aria-label={collapsed ? 'Show the panel' : 'Fold the panel'}
+            aria-expanded={!collapsed}
+            onClick={onToggleCollapsed}
+          >
+            {collapsed ? '▴' : '▾'}
+          </button>
+        )}
       </div>
       <div className="bottom-content">
         {tab === 'problems' && <ProblemsTab />}

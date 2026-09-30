@@ -93,10 +93,15 @@ function edgeNames(model: Model, walk: ExploreResult): string[] {
  * sentence a list quietly stops being true of. The pre-filter is a strict
  * superset: a state machine is an element owning a `TransitionUsage` or a
  * `Succession`, and neither is writable without one of these two words.
+ *
+ * Build and test outputs are not the tree: a model copied next to a build to
+ * preview it (`dist/model/`, as the README's tutorial recipe does) would
+ * otherwise count as a source.
  */
+const NOT_SOURCES = new Set(['node_modules', 'dist', 'release', 'test-results', 'playwright-report']);
 function sysmlFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(root(dir), { withFileTypes: true })) {
-    if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+    if (NOT_SOURCES.has(entry.name) || entry.name.startsWith('.')) continue;
     const p = join(dir, entry.name);
     if (entry.isDirectory()) sysmlFiles(p, out);
     else if (entry.name.endsWith('.sysml') && /\btransition\b|\bfirst\b/.test(read(p))) out.push(p);

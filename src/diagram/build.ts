@@ -47,6 +47,9 @@ const CONNECTION_USAGE_KINDS = new Set([
   'ConnectionUsage',
   'InterfaceUsage',
   'FlowUsage',
+  // `flow of X from a.p to b.q` parses as a Flow: until it was listed here no
+  // view drew one (the drone-swarm OA has 33, the SA 21).
+  'Flow',
   'BindingConnectorAsUsage',
   'SuccessionFlow',
 ]);
@@ -94,6 +97,8 @@ function nodeData(model: Model, el: ElementRecord, extra: Record<string, unknown
     isUsage: isUsage(el.eClass),
     attrs: el.attrs,
     qualifiedName: model.qualifiedName(el.id),
+    // No declared name: the label above falls back to the metaclass.
+    unnamed: !el.declaredName && !el.declaredShortName,
     ...extra,
   };
 }
@@ -293,17 +298,24 @@ function buildInterconnection(model: Model, scope: Set<ElementId>, rootId?: Elem
     const tgt = el.target?.[0];
     if (!src || !tgt) continue;
     if (!portOwnerInScope(src) || !portOwnerInScope(tgt)) continue;
+    const isFlow = el.eClass === 'Flow' || el.eClass === 'FlowUsage';
     edges.push({
       id: `conn:${el.id}`,
       elementId: el.id,
       source: src,
       target: tgt,
-      kind: 'connection',
-      label: el.declaredName,
+      kind: isFlow ? 'flow' : 'connection',
+      label: el.declaredName ?? (isFlow ? flowPayloadName(el) : undefined),
     });
   }
 
   return { nodes, edges, viewKind: 'interconnection' };
+}
+
+/** The short name of what a flow carries (`of Common::X` → `X`), if any. */
+function flowPayloadName(el: ElementRecord): string | undefined {
+  const p = el.attrs.payload;
+  return typeof p === 'string' && p.trim() ? p.split('::').pop() : undefined;
 }
 
 /* ─────────────────────────────── action ────────────────────────────────── */
@@ -319,6 +331,9 @@ function buildAction(model: Model, scope: Set<ElementId>): DiagramGraph {
     const isAction = el.eClass.endsWith('ActionUsage');
     const isCtrl = isControlNode(el.eClass);
     if (!isAction && !isCtrl) continue;
+    // A state machine's `start` point belongs to the state view: in the action
+    // view it was a loose ● beside actions it has nothing to do with.
+    if (isCtrl && /State(Definition|Usage)$/.test(model.get(el.ownerId ?? '')?.eClass ?? '')) continue;
     nodes.push({
       id: el.id,
       elementId: el.id,
@@ -337,6 +352,21 @@ function buildAction(model: Model, scope: Set<ElementId>): DiagramGraph {
     const tgt = el.target?.[0];
     if (!src || !tgt || !nodeIds.has(src) || !nodeIds.has(tgt)) continue;
     edges.push({ id: `succ:${el.id}`, elementId: el.id, source: src, target: tgt, kind: 'succession' });
+  }
+
+  // Object flows between actions (`flow of X from a.out to b.in`): drawn from
+  // the action owning each end to the other, labelled with what flows.
+  const actionOf = (id: ElementId | undefined): ElementId | undefined => {
+    for (let cur = id; cur; cur = model.get(cur)?.ownerId ?? undefined) if (nodeIds.has(cur)) return cur;
+    return undefined;
+  };
+  for (const el of model.all()) {
+    if (!scope.has(el.id)) continue;
+    if (el.eClass !== 'Flow' && el.eClass !== 'FlowUsage') continue;
+    const src = actionOf(el.source?.[0]);
+    const tgt = actionOf(el.target?.[0]);
+    if (!src || !tgt || src === tgt) continue;
+    edges.push({ id: `flow:${el.id}`, elementId: el.id, source: src, target: tgt, kind: 'flow', label: flowPayloadName(el) ?? el.declaredName, reconnectable: false });
   }
 
   return { nodes, edges, viewKind: 'action' };

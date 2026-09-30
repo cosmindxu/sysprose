@@ -57,6 +57,8 @@ export function App(): JSX.Element {
         scopeRoot: () => useAppStore.getState().diagramRootId,
         /** The laid-out projection currently on screen. */
         current: () => useAppStore.getState().diagram,
+        /** True while a diagram is being laid out — its drawing is about to change. */
+        busy: () => useAppStore.getState().diagramLayoutPending,
       },
     };
     void rebuildDiagram();
@@ -70,6 +72,7 @@ export function App(): JSX.Element {
   const [propertiesW, setPropertiesW] = useState(300);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const [propertiesCollapsed, setPropertiesCollapsed] = useState(false);
+  const [bottomCollapsed, setBottomCollapsed] = useState(false);
   const startResize = (which: 'explorer' | 'properties') => (e: React.PointerEvent) => {
     e.preventDefault();
     const el = e.currentTarget as HTMLElement;
@@ -238,8 +241,8 @@ export function App(): JSX.Element {
           </>
         )}
       </div>
-      <div className="app-bottom">
-        <BottomPanel />
+      <div className={`app-bottom${bottomCollapsed ? ' is-collapsed' : ''}`} data-testid="app-bottom">
+        <BottomPanel collapsed={bottomCollapsed} onToggleCollapsed={() => setBottomCollapsed((c) => !c)} />
       </div>
     </div>
   );

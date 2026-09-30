@@ -483,24 +483,40 @@ export function forceLayout(
     if (!pos.has(e.source) || !pos.has(e.target)) continue;
     edges.push([e.source, e.target, e.weight > 0 ? e.weight : 1]);
   }
+  // Positions and displacements in flat arrays, indexed like `nodes`, and a
+  // plain square root instead of Math.hypot (whose overflow guard these
+  // magnitudes never need): the same algorithm without ~280 million Map lookups
+  // and hypot calls on a 1,361-node model.
+  const norm = (x: number, y: number): number => Math.sqrt(x * x + y * y);
+  const index = new Map<string, number>();
+  nodes.forEach((id, i) => index.set(id, i));
+  const px = new Float64Array(n);
+  const py = new Float64Array(n);
+  nodes.forEach((id, i) => {
+    const p = pos.get(id)!;
+    px[i] = p.x;
+    py[i] = p.y;
+  });
+  const es = edges.map(([s, t, w]) => [index.get(s)!, index.get(t)!, w] as const);
+  const dxs = new Float64Array(n);
+  const dys = new Float64Array(n);
   let temp = Math.min(W, H) * 0.1;
   const cool = temp / (iterations + 1);
-  const disp = new Map<string, Point>();
   for (let it = 0; it < iterations; it++) {
-    for (const id of nodes) disp.set(id, { x: 0, y: 0 });
+    dxs.fill(0);
+    dys.fill(0);
     // Repulsion (O(n²) — fine for analysis-scale graphs; capped by node count).
     for (let i = 0; i < n; i++) {
-      const a = pos.get(nodes[i])!;
-      const da = disp.get(nodes[i])!;
+      const ax = px[i]!;
+      const ay = py[i]!;
       for (let j = i + 1; j < n; j++) {
-        const b = pos.get(nodes[j])!;
-        let dx = a.x - b.x;
-        let dy = a.y - b.y;
-        let dist = Math.hypot(dx, dy);
+        let dx = ax - px[j]!;
+        let dy = ay - py[j]!;
+        let dist = norm(dx, dy);
         if (dist < 0.01) {
-          dx = (hashSeed(nodes[i] + nodes[j]) % 100) / 100 - 0.5 + 0.01;
-          dy = (hashSeed(nodes[j] + nodes[i]) % 100) / 100 - 0.5 + 0.01;
-          dist = Math.hypot(dx, dy);
+          dx = (hashSeed(nodes[i]! + nodes[j]!) % 100) / 100 - 0.5 + 0.01;
+          dy = (hashSeed(nodes[j]! + nodes[i]!) % 100) / 100 - 0.5 + 0.01;
+          dist = norm(dx, dy);
           if (dist < 1e-6) {
             // Both jitter components hashed to ~0 — nudge deterministically so
             // the repulsion below never divides by zero (→ NaN positions).
@@ -512,45 +528,39 @@ export function forceLayout(
         const force = (k * k) / dist;
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
-        da.x += fx;
-        da.y += fy;
-        const db = disp.get(nodes[j])!;
-        db.x -= fx;
-        db.y -= fy;
+        dxs[i]! += fx;
+        dys[i]! += fy;
+        dxs[j]! -= fx;
+        dys[j]! -= fy;
       }
     }
     // Attraction along edges.
-    for (const [s, t, w] of edges) {
-      const a = pos.get(s)!;
-      const b = pos.get(t)!;
-      const dx = a.x - b.x;
-      const dy = a.y - b.y;
-      const dist = Math.max(0.01, Math.hypot(dx, dy));
+    for (const [s, t, w] of es) {
+      const dx = px[s]! - px[t]!;
+      const dy = py[s]! - py[t]!;
+      const dist = Math.max(0.01, norm(dx, dy));
       const force = ((dist * dist) / k) * w;
       const fx = (dx / dist) * force;
       const fy = (dy / dist) * force;
-      disp.get(s)!.x -= fx;
-      disp.get(s)!.y -= fy;
-      disp.get(t)!.x += fx;
-      disp.get(t)!.y += fy;
+      dxs[s]! -= fx;
+      dys[s]! -= fy;
+      dxs[t]! += fx;
+      dys[t]! += fy;
     }
     // Gravity toward the centre (keeps disconnected parts on-screen).
-    for (const id of nodes) {
-      const p = pos.get(id)!;
-      const d = disp.get(id)!;
-      d.x -= p.x * gravity;
-      d.y -= p.y * gravity;
+    for (let i = 0; i < n; i++) {
+      dxs[i]! -= px[i]! * gravity;
+      dys[i]! -= py[i]! * gravity;
     }
     // Apply displacement, capped by the current temperature.
-    for (const id of nodes) {
-      const d = disp.get(id)!;
-      const len = Math.max(0.01, Math.hypot(d.x, d.y));
-      const p = pos.get(id)!;
-      p.x += (d.x / len) * Math.min(len, temp);
-      p.y += (d.y / len) * Math.min(len, temp);
+    for (let i = 0; i < n; i++) {
+      const len = Math.max(0.01, norm(dxs[i]!, dys[i]!));
+      px[i]! += (dxs[i]! / len) * Math.min(len, temp);
+      py[i]! += (dys[i]! / len) * Math.min(len, temp);
     }
     temp = Math.max(0, temp - cool);
   }
+  nodes.forEach((id, i) => pos.set(id, { x: px[i]!, y: py[i]! }));
   return pos;
 }
 

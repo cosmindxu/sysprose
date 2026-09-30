@@ -120,6 +120,8 @@ function TreeRow({
   const setDragOverId = useAppStore((s) => s.setDragOverId);
   const setPickerId = useAppStore((s) => s.setPickerId);
   const setFocusId = useAppStore((s) => s.setFocusId);
+  const setDiagramRoot = useAppStore((s) => s.setDiagramRoot);
+  const isScope = useAppStore((s) => s.diagramRootId === id);
 
   // The element may have been deleted: render nothing until the parent's
   // child-ids selector removes this row. Hooks above run unconditionally.
@@ -238,6 +240,18 @@ function TreeRow({
             }}
           >
             ◎
+          </button>
+          <button
+            data-testid="tree-scope"
+            title={isScope ? 'The diagrams show only this — click to show the whole model' : 'Show only this in the diagrams'}
+            aria-pressed={isScope}
+            className={isScope ? 'is-active' : undefined}
+            onClick={(e) => {
+              e.stopPropagation();
+              setDiagramRoot(isScope ? null : id);
+            }}
+          >
+            ⊞
           </button>
           <button
             data-testid="tree-add"

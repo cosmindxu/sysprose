@@ -137,6 +137,9 @@ const LABEL_FONT = `10px ${FONT_FAMILY}`;
 const NAME_FONT = `600 12px ${FONT_FAMILY}`;
 const KEYWORD_FONT = `italic 10px ${FONT_FAMILY}`;
 const ROW_FONT = `11px ${FONT_FAMILY}`;
+const MONO_FONT = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+/** Widest a constraint box grows for its expression before the text wraps. */
+const EXPRESSION_MAX_W = 420;
 
 /** Text of a compartment row as the node renders it (`compartmentLabel`, nodes.tsx). */
 function rowText(row: unknown): string {
@@ -177,13 +180,24 @@ export function intrinsicSize(node: DiagramNode): { w: number; h: number } {
     ...ports.map((p) => textWidth(rowText(p), ROW_FONT, 6.2) + 13),
   ) + 2 * 8 + 2 * 2;
   let w = Math.ceil(Math.max(140, headerW, rowsW) + 8);
+  // A constraint shows its expression as `{ … }`, wrapped past EXPRESSION_MAX_W.
+  const attrsBag = (data.attrs ?? {}) as Record<string, unknown>;
+  const expression = typeof attrsBag.expression === 'string' && attrsBag.expression.trim() ? `{ ${attrsBag.expression.trim()} }` : '';
+  let expressionLines = 0;
+  if (expression) {
+    const textW = textWidth(expression, MONO_FONT, 6.7);
+    w = Math.max(w, Math.ceil(Math.min(EXPRESSION_MAX_W, textW + 2 * 8 + 2 * 2 + 8)));
+    expressionLines = Math.max(1, Math.ceil(textW / (w - 2 * 8 - 2 * 2 - 8)));
+  }
   // The tree's expand/collapse control sits inside the right edge; the header is
   // centred, so room is kept on both sides.
   if (typeof data.treeHidden === 'number' || data.treeExpanded === true) w += 2 * 30;
   // Header: 4 px padding top and bottom, 13 px keyword line, 15 px name line.
   const header = 4 + 13 + 15 + 4 + 1;
   const compartments =
-    (attrs.length ? 7 + attrs.length * 14 : 0) + (ports.length ? 7 + ports.length * 14 : 0);
+    (attrs.length ? 7 + attrs.length * 14 : 0) +
+    (ports.length ? 7 + ports.length * 14 : 0) +
+    (expressionLines ? 7 + expressionLines * 15 : 0);
   // Breathing room above and below the centred content, and the borders.
   let h = Math.ceil(Math.max(56, header + compartments + 16 + 4));
   if (ELLIPSE_KINDS.has(node.kind)) {

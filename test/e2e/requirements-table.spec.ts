@@ -71,12 +71,14 @@ test('requirements table: add/edit requirement, link + unlink a satisfier', asyn
   await newRow.getByTestId('req-ref-add').first().click();
   const picker = page.getByTestId('req-ref-picker');
   await expect(picker).toBeVisible();
-  // Pick the first real candidate (the disabled placeholder is excluded).
-  const optionValues = await picker.locator('option').evaluateAll((os) =>
-    (os as HTMLOptionElement[]).filter((o) => !o.disabled).map((o) => o.value),
-  );
-  expect(optionValues.length).toBeGreaterThan(0);
-  await picker.selectOption(optionValues[0]);
+  // Typing only narrows the list: nothing is linked until a candidate is chosen.
+  const options = page.getByTestId('req-ref-option');
+  expect(await options.count()).toBeGreaterThan(0);
+  const firstText = (await options.first().textContent())!;
+  await picker.fill(firstText.slice(0, 3));
+  await expect(newRow.getByTestId('req-ref-chip')).toHaveCount(0);
+  // Choose the first match.
+  await page.getByTestId('req-ref-option').first().click();
 
   // Exactly one chip appears on this row; clicking it selects the target (no error).
   const chip = newRow.getByTestId('req-ref-chip');

@@ -37,10 +37,16 @@ const Geometry3DView = lazy(() =>
   import('@diagram/Geometry3DView').then((m) => ({ default: m.Geometry3DView })),
 );
 
-/** Scroll container for the SVG/table-based (non-React-Flow) views. */
+/**
+ * Scroll container for the SVG/table-based (non-React-Flow) views. Keyed by
+ * view: without the key React reused one scrolling element for every such
+ * view, so a view opened at the scroll offset the previous one was left at —
+ * a sequence diagram scrolled past all its messages, say.
+ */
 function ScrollBox({ testid, children }: { testid: string; children: React.ReactNode }): JSX.Element {
   return (
     <div
+      key={testid}
       data-testid={testid}
       style={{ width: '100%', height: '100%', overflow: 'auto', padding: 12, boxSizing: 'border-box' }}
     >

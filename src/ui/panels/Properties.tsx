@@ -117,6 +117,7 @@ export function Properties(): JSX.Element {
   const selectionId = useAppStore((s) => s.selectionId);
   const updateElement = useAppStore((s) => s.updateElement);
   const setAttr = useAppStore((s) => s.setAttr);
+  const bindType = useAppStore((s) => s.bindType);
   const setRequirementShortId = useAppStore((s) => s.setRequirementShortId);
   const createElement = useAppStore((s) => s.createElement);
   const select = useAppStore((s) => s.select);
@@ -127,6 +128,13 @@ export function Properties(): JSX.Element {
   void rev;
 
   const el = selectionId ? model.get(selectionId) : undefined;
+  /** The name of the definition the selection is typed by, when it is typed. */
+  const typedName = el
+    ? (model.relationshipsFrom(el.id)
+        .filter((r) => r.eClass === 'FeatureTyping')
+        .map((r) => model.get(r.target?.[0] ?? '')?.declaredName ?? '')
+        .find(Boolean) ?? '')
+    : '';
 
   // Where-used / impact: the distinct elements that reference the selection via
   // any relationship or typing. Recomputed on selection + every mutation (`rev`).
@@ -423,8 +431,15 @@ export function Properties(): JSX.Element {
             <input
               data-testid="prop-type"
               placeholder="type name reference"
-              value={attrString(el, 'type')}
+              // Shows the element's real type when it has one and no typed text.
+              value={attrString(el, 'type') || typedName}
               onChange={(e) => setAttrOrClear('type', e.target.value)}
+              // Enter / leaving the field types the element by that name —
+              // then the Typed-by line appears, as for `part x : Name`.
+              onBlur={(e) => bindType(id, e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') bindType(id, e.currentTarget.value);
+              }}
             />
           </div>
         )}

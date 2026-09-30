@@ -18,7 +18,7 @@
  *   and applying it is the way out of that state.
  */
 
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store';
 import type { Diagnostic } from '@validation/index';
 import './panels.css';
@@ -107,15 +107,42 @@ export function TextEditor(): JSX.Element {
       </div>
 
       {parseDiags.length > 0 && (
-        <div className="text-editor-diags">
-          {parseDiags.map((d) => (
-            <div key={d.id} className={`text-editor-diag ${d.severity}`}>
-              <span className="problem-sev">{d.severity}</span>
-              <span>{d.message}</span>
-            </div>
-          ))}
-        </div>
+        <ParseDiagnostics diags={parseDiags} />
       )}
+    </div>
+  );
+}
+
+/**
+ * The parse findings under the editor. Errors are shown open — the text did not
+ * parse and the reader must see why. Warnings alone fold to one line (they are
+ * all in the Problems tab too): 43 of them used to fill the strip and leave the
+ * editor two lines of text.
+ */
+function ParseDiagnostics({ diags }: { diags: Diagnostic[] }): JSX.Element {
+  const hasError = diags.some((d) => d.severity === 'error');
+  const [open, setOpen] = useState(false);
+  const shown = hasError || open;
+  return (
+    <div className="text-editor-diags" data-testid="text-editor-diags" data-open={shown || undefined}>
+      {!hasError && (
+        <button
+          className="text-editor-diags-toggle"
+          data-testid="text-editor-diags-toggle"
+          aria-expanded={shown}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {shown ? '▾' : '▸'} {diags.length} parse warning{diags.length === 1 ? '' : 's'}
+          {shown ? '' : ' — also listed under Problems'}
+        </button>
+      )}
+      {shown &&
+        diags.map((d) => (
+          <div key={d.id} className={`text-editor-diag ${d.severity}`}>
+            <span className="problem-sev">{d.severity}</span>
+            <span>{d.message}</span>
+          </div>
+        ))}
     </div>
   );
 }
