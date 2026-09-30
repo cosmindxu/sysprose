@@ -69,7 +69,31 @@ async function armNodeAndPlace(page: Page, nodeKind: string): Promise<string> {
   const after = await idsOfType(page, nodeKind);
   const created = after.find((id) => !before.includes(id));
   if (!created) throw new Error(`no new ${nodeKind} id found`);
+  await settled(page, [created]);
   return created;
+}
+
+/**
+ * Wait until the relayout that draws `ids` has landed (layout runs in a worker,
+ * so on a slow machine it can arrive well after the click that caused it) and
+ * their boxes have stopped moving (the view may be fitted once they appear).
+ */
+async function settled(page: Page, ids: string[]): Promise<void> {
+  await page.waitForFunction((want) => {
+    const d = (window as unknown as { sysprose: { diagram: { current: () => { nodes: { id: string }[] } | null } } })
+      .sysprose.diagram.current();
+    return !!d && want.every((id) => d.nodes.some((n) => n.id === id));
+  }, ids);
+  let last = '';
+  await expect
+    .poll(async () => {
+      const boxes = await Promise.all(ids.map((id) => page.locator(`.react-flow__node[data-id="${id}"]`).boundingBox()));
+      const key = JSON.stringify(boxes.map((b) => b && [Math.round(b.x), Math.round(b.y), Math.round(b.width)]));
+      const same = key === last;
+      last = key;
+      return same && !key.includes('null');
+    }, { intervals: [200] })
+    .toBe(true);
 }
 
 interface ViewCfg {
@@ -147,7 +171,8 @@ for (const cfg of VIEWS) {
         srcId = firstId;
         tgtId = await armNodeAndPlace(page, cfg.nodeKind);
       }
-      await page.waitForTimeout(400);
+      // Aim only once both endpoints are drawn and still.
+      await settled(page, [srcId, tgtId]);
 
       const rfNode = (id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
       await expect(rfNode(srcId)).toBeVisible();

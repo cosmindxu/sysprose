@@ -212,12 +212,15 @@ function DiagramCanvasInner(): JSX.Element {
     setEdges(rfEdges);
     // A different diagram (another view, another scope) opens fitted: the old
     // viewport pointed at the old drawing, so the new one could open on empty
-    // canvas. A rebuild of the SAME diagram (an edit, a tree branch opened)
-    // keeps the reader's viewport.
-    const identity = `${diagram.viewKind}|${diagramRootId ?? ''}`;
+    // canvas. So does an empty diagram getting its first boxes, which could
+    // otherwise land off-screen. A rebuild of the SAME diagram (an edit, a
+    // tree branch opened) keeps the reader's viewport.
+    const identity = `${diagram.viewKind}|${diagramRootId ?? ''}|${diagram.nodes.length > 0}`;
     if (fittedIdentity.current !== identity) {
       fittedIdentity.current = identity;
-      requestAnimationFrame(() => void rf.fitView({ padding: 0.15 }));
+      // Never past 100%: a lone box blown up to fill the canvas reads no better
+      // and covers the space where the next one would be placed.
+      requestAnimationFrame(() => void rf.fitView({ padding: 0.15, maxZoom: 1 }));
     }
   }, [diagram, setNodes, setEdges, setDropTarget, diagramRootId, rf]);
 
@@ -574,9 +577,11 @@ function DiagramCanvasInner(): JSX.Element {
         onNodeDragStop={onNodeDragStop}
         nodeDragThreshold={4}
         deleteKeyCode={null}
-        fitView
-        // Fit must reach the whole drawing, however large; React Flow's default
-        // floor (0.5) left most of a big model off-screen with no way to see it.
+        // No `fitView` prop: the canvas fits in the rebuild effect, in the same
+        // step that draws the new diagram (view, scope, or an empty view's first
+        // boxes), not whenever React Flow later measures the nodes. Fit must
+        // reach the whole drawing, however large; React Flow's default floor
+        // (0.5) left most of a big model off-screen.
         minZoom={MIN_ZOOM}
         snapToGrid={snap}
         snapGrid={[20, 20]}
