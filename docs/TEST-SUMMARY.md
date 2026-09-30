@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 153
-- **Tests:** 3381 total — 3381 passed, 0 failed, 0 skipped
+- **Files:** 154
+- **Tests:** 3396 total — 3396 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -93,6 +93,7 @@
 | test/unit/langium.direction.test.ts | 5 | 0 | 0 |
 | test/unit/langium.grammar.test.ts | 46 | 0 | 0 |
 | test/unit/library.load.test.ts | 13 | 0 | 0 |
+| test/unit/linked-model.test.ts | 15 | 0 | 0 |
 | test/unit/paste.test.ts | 7 | 0 | 0 |
 | test/unit/persistence.io.test.ts | 23 | 0 | 0 |
 | test/unit/planning.test.ts | 25 | 0 | 0 |
