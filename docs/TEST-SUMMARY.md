@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 154
-- **Tests:** 3396 total — 3396 passed, 0 failed, 0 skipped
+- **Files:** 155
+- **Tests:** 3427 total — 3427 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -76,9 +76,10 @@
 | test/unit/diagram.geometry3d.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.grid.test.ts | 12 | 0 | 0 |
 | test/unit/diagram.layout.test.ts | 4 | 0 | 0 |
-| test/unit/diagram.layout2.test.ts | 6 | 0 | 0 |
+| test/unit/diagram.layout2.test.ts | 7 | 0 | 0 |
 | test/unit/diagram.matrix.test.ts | 10 | 0 | 0 |
 | test/unit/diagram.parametric.test.ts | 10 | 0 | 0 |
+| test/unit/diagram.readability.test.ts | 30 | 0 | 0 |
 | test/unit/diagram.sequence.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.svg-export.test.ts | 17 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
