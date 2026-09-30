@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { captureErrors, gotoApp, openTab, shot } from './fixtures';
+import { captureErrors, gotoApp, openTab, shot, treeName } from './fixtures';
 
 test('Problems tab lists validation issues and a row selects its element', async ({ page }) => {
   const errors = captureErrors(page);
@@ -20,7 +20,7 @@ test('Problems tab lists validation issues and a row selects its element', async
   // Introduce a duplicate name: add a 2nd PartDefinition under the root and
   // rename it to the existing "Vehicle".
   const rootRow = page.locator('[data-elementid]').filter({ hasText: 'VehicleModel' }).first();
-  await rootRow.click();
+  await treeName(rootRow).click();
   await rootRow.getByTestId('tree-add').click();
   await page.locator('.tree-picker-select').selectOption('PartDefinition');
 
@@ -33,7 +33,7 @@ test('Problems tab lists validation issues and a row selects its element', async
     return (parts.find((p) => !p.declaredName) ?? parts[parts.length - 1]).id;
   });
   const newRow = page.locator(`[data-elementid="${newId}"]`).first();
-  await newRow.dblclick();
+  await treeName(newRow).dblclick();
   const rename = page.getByTestId('tree-rename');
   await rename.fill('Vehicle');
   await rename.press('Enter');
@@ -99,7 +99,7 @@ test('Text tab serializes, applies an edit, and regenerates from the model', asy
 
   // Mutating the model via the Explorer regenerates the text automatically.
   const gearRow = page.locator('[data-elementid]').filter({ hasText: 'Gearbox' }).first();
-  await gearRow.dblclick();
+  await treeName(gearRow).dblclick();
   const rename = page.getByTestId('tree-rename');
   await rename.fill('Transmission');
   await rename.press('Enter');

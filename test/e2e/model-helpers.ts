@@ -12,7 +12,7 @@
  */
 
 import { type Page, expect } from '@playwright/test';
-import { selectElementById } from './fixtures';
+import { selectElementById, treeName } from './fixtures';
 
 /** SDK shape (subset) reached through `window.sysml` inside page.evaluate. */
 interface HelperSdk {
@@ -103,7 +103,7 @@ export async function addChild(page: Page, ownerId: string, eClass: string): Pro
 /** Rename an element through the Explorer's inline rename box (dblclick → Enter). */
 export async function renameInTree(page: Page, id: string, name: string): Promise<void> {
   await selectElementById(page, id);
-  await page.locator(`[data-elementid="${id}"]`).first().dblclick();
+  await treeName(page.locator(`[data-elementid="${id}"]`).first()).dblclick();
   const input = page.getByTestId('tree-rename');
   await expect(input).toBeVisible();
   await input.fill(name);

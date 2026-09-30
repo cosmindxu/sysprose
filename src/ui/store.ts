@@ -1070,6 +1070,14 @@ let autoRecomputeSuppressed = false;
 // pass `false` so they never clobber the user's in-progress text edits.
 let recomputePendingForce = false;
 
+/**
+ * True while an edit's recompute is still waiting out its quiet period: the
+ * diagram, Problems and the Text tab do not show that edit yet.
+ */
+export function recomputePending(): boolean {
+  return recomputeTimer !== null;
+}
+
 /* ────────────── evidence in the app: read-only, and paid for once ────────── */
 
 /**

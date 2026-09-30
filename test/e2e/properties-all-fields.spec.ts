@@ -14,7 +14,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { captureErrors, gotoApp, findElementId, selectElementById, shot } from './fixtures';
+import { captureErrors, gotoApp, findElementId, selectElementById, shot, treeName } from './fixtures';
 
 /** Read an element attribute through the live SDK. */
 function readAttr(page: Page, id: string, key: string): Promise<unknown> {
@@ -184,7 +184,7 @@ test('properties edits identity/usage/port/requirement/transition/doc/unit field
         .elementsOfType('TransitionUsage')
         .map((x) => x.id),
   );
-  await rootRow.click();
+  await treeName(rootRow).click();
   await rootRow.getByTestId('tree-add').click();
   await page.locator('.tree-picker-select').selectOption('TransitionUsage');
   const transId = await page.evaluate((before: string[]) => {

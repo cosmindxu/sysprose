@@ -145,7 +145,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:136-250`, `src/ui/panels/Toolbar.tsx:396-545`,
+**Source of truth:** `src/ui/App.tsx:139-253`, `src/ui/panels/Toolbar.tsx:396-545`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -479,7 +479,7 @@ Undo is 50 snapshots deep, it covers model changes (not view changes, not the
 theme), and any new edit clears the redo stack. Copy is not undoable; paste is.
 
 **Source of truth:** `src/ui/store.ts:900-1069` (the recompute cycle),
-`2361-2397` (`applyText`), `2772-2808` (undo), `2960-2979` (the post-apply
+`2369-2405` (`applyText`), `2780-2816` (undo), `2968-2987` (the post-apply
 refresh); `src/ui/panels/TextEditor.tsx`;
 `test/e2e/text-apply-contract.spec.ts:30` (the one-undo guarantee, as a test).
 
@@ -2578,8 +2578,8 @@ it, every one of these engines is an importable function — `checkText`,
 `modelMetrics`, `requirementSatisfaction`, `whereUsed`, `analysisReport`,
 `buildGrid`, `buildDSM`, `buildPlan` — with no DOM anywhere in them.
 
-**Source of truth:** `src/ui/store.ts:1915-2041` (the four buttons),
-`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:42-69`
+**Source of truth:** `src/ui/store.ts:1923-2049` (the four buttons),
+`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:42-72`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -2848,7 +2848,7 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 `modelDescription.xml` for the selected block.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:539-559`, `2424-2454`, `src/ui/App.tsx:77-81`,
+`src/ui/store.ts:539-559`, `2432-2462`, `src/ui/App.tsx:80-84`,
 `test/e2e/persistence-reload.spec.ts`.
 
 ---
@@ -3025,4 +3025,4 @@ Plain keys are suppressed while you are typing in a field.
 
 There is no `Ctrl+N`; **New** is a button only.
 
-**Source of truth:** `src/ui/commands.ts:111-213`, `src/ui/App.tsx:115-131`.
+**Source of truth:** `src/ui/commands.ts:111-213`, `src/ui/App.tsx:118-134`.

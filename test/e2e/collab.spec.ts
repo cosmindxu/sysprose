@@ -21,7 +21,7 @@
  */
 
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
-import { captureErrors, shot } from './fixtures';
+import { captureErrors, shot, treeName } from './fixtures';
 
 /** Loosely-typed SDK surface used inside page.evaluate. */
 interface SysmlSdk {
@@ -119,7 +119,7 @@ test('two users collaborate: presence + element convergence + remote-selection h
     // publish the selection over awareness.
     const page1Row = page1.locator(`[data-elementid="${newId}"]`).first();
     await expect(page1Row).toBeVisible({ timeout: SYNC });
-    await page1Row.click();
+    await treeName(page1Row).click();
 
     // page2 renders the remote-selection ring (peer colour) on that row.
     await expect(page2Row).toHaveAttribute('data-remote-selected', /.+/, { timeout: SYNC });

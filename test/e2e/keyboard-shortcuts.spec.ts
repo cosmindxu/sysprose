@@ -13,7 +13,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { gotoApp, shot } from './fixtures';
+import { gotoApp, shot, treeName } from './fixtures';
 
 function countOfType(page: Page, eClass: string): Promise<number> {
   return page.evaluate(
@@ -31,7 +31,7 @@ test('undo/redo/save keyboard shortcuts drive the model', async ({ page }) => {
 
   // Create a PartDefinition under the root so there is a change to undo.
   const rootRow = page.locator('[data-elementid]').filter({ hasText: 'VehicleModel' }).first();
-  await rootRow.click();
+  await treeName(rootRow).click();
   await rootRow.getByTestId('tree-add').click();
   await page.locator('.tree-picker-select').selectOption('PartDefinition');
   await expect.poll(() => countOfType(page, 'PartDefinition')).toBe(before + 1);

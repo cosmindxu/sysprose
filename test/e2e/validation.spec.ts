@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { gotoApp, openTab, shot } from './fixtures';
+import { gotoApp, openTab, shot, treeName } from './fixtures';
 
 test('validation flags a duplicate name and the problem row selects the element', async ({
   page,
@@ -16,7 +16,7 @@ test('validation flags a duplicate name and the problem row selects the element'
   // Root "VehicleModel" already owns a `part def Vehicle`. Add a second
   // PartDefinition under the same owner and name it "Vehicle" → duplicate.
   const rootRow = page.locator('[data-elementid]').filter({ hasText: 'VehicleModel' }).first();
-  await rootRow.click();
+  await treeName(rootRow).click();
   await rootRow.getByTestId('tree-add').click();
   await page.locator('.tree-picker-select').selectOption('PartDefinition');
 
@@ -29,7 +29,7 @@ test('validation flags a duplicate name and the problem row selects the element'
   });
 
   const newRow = page.locator(`[data-elementid="${newId}"]`).first();
-  await newRow.dblclick();
+  await treeName(newRow).dblclick();
   const rename = page.getByTestId('tree-rename');
   await rename.fill('Vehicle');
   await rename.press('Enter');

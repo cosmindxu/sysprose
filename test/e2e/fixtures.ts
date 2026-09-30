@@ -8,7 +8,7 @@
  * label text or row indices.
  */
 
-import { type Page, expect } from '@playwright/test';
+import { type Locator, type Page, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 
 export const SHOT_DIR = 'test-results/screenshots';
@@ -97,7 +97,44 @@ export async function selectElementById(page: Page, id: string): Promise<void> {
 
   const row = page.locator(`[data-elementid="${id}"]`).first();
   await row.waitFor({ state: 'visible' });
-  await row.click();
+  await treeName(row).click();
+}
+
+/**
+ * The name in a tree row — where a user clicks it. A row's centre is not safe:
+ * in a narrow Explorer the row's action buttons (◎ ⊞ + ✎ ✕) reach it, and a
+ * click there focuses or scopes instead of selecting.
+ */
+export function treeName(row: Locator): Locator {
+  return row.locator('.tree-label').first();
+}
+
+/**
+ * Wait until the diagram shows the model as it is now: no edit's recompute
+ * still waiting, no layout running, and the boxes no longer moving. Layout
+ * runs in a worker, so on a slow machine it lands well after the edit; a click
+ * aimed at a box before then can hit where the box used to be.
+ */
+export async function diagramSettled(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => !(window as unknown as { sysprose: { diagram: { busy: () => boolean } } }).sysprose.diagram.busy(),
+  );
+  let last = '';
+  await expect
+    .poll(
+      async () => {
+        const key = await page.evaluate(() =>
+          [...document.querySelectorAll('.react-flow__node')]
+            .map((n) => (n as HTMLElement).style.transform)
+            .join(';'),
+        );
+        const same = key === last;
+        last = key;
+        return same;
+      },
+      { intervals: [200] },
+    )
+    .toBe(true);
 }
 
 /** Open a bottom-panel tab by its data-testid. */

@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react';
 import '@xyflow/react/dist/style.css';
 import './layout.css';
 
-import { useAppStore } from './store';
+import { recomputePending, useAppStore } from './store';
 import { handleShortcut } from './commands';
 
 import { Toolbar } from './panels/Toolbar';
@@ -57,8 +57,11 @@ export function App(): JSX.Element {
         scopeRoot: () => useAppStore.getState().diagramRootId,
         /** The laid-out projection currently on screen. */
         current: () => useAppStore.getState().diagram,
-        /** True while a diagram is being laid out — its drawing is about to change. */
-        busy: () => useAppStore.getState().diagramLayoutPending,
+        /**
+         * True while the drawing is about to change: an edit's recompute is
+         * still waiting, or a diagram is being laid out.
+         */
+        busy: () => recomputePending() || useAppStore.getState().diagramLayoutPending,
       },
     };
     void rebuildDiagram();

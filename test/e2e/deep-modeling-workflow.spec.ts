@@ -10,7 +10,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { captureErrors, gotoApp, selectElementById, shot } from './fixtures';
+import { captureErrors, gotoApp, selectElementById, shot, treeName } from './fixtures';
 
 test.setTimeout(600_000);
 
@@ -104,7 +104,7 @@ async function createChild(page: Page, ownerId: string, eClass: string): Promise
 /** Rename an element through its explorer row double-click. */
 async function renameViaExplorer(page: Page, id: string, name: string): Promise<void> {
   await selectElementById(page, id);
-  await page.locator(`[data-elementid="${id}"]`).first().dblclick();
+  await treeName(page.locator(`[data-elementid="${id}"]`).first()).dblclick();
   await page.getByTestId('tree-rename').fill(name);
   await page.getByTestId('tree-rename').press('Enter');
   await expect

@@ -19,7 +19,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { captureErrors, gotoApp, openTab, shot } from './fixtures';
+import { captureErrors, gotoApp, openTab, shot, treeName } from './fixtures';
 
 /** Count model elements of a metaclass via the live SDK. */
 function countOfType(page: Page, eClass: string): Promise<number> {
@@ -70,7 +70,7 @@ test('New resets the model, Save persists it, and Open restores the saved projec
     return (parts.find((p) => !p.declaredName) ?? parts[parts.length - 1]).id;
   });
   const markerRow = page.locator(`[data-elementid="${markerId}"]`).first();
-  await markerRow.dblclick();
+  await treeName(markerRow).dblclick();
   const rename = page.getByTestId('tree-rename');
   await rename.fill('RoundTripMarker');
   await rename.press('Enter');
@@ -126,7 +126,7 @@ test('Validate populates Problems and Check surfaces constraint-check results', 
 
   // Add a duplicate `Vehicle` PartDefinition sibling to trip the validator.
   const rootRow = page.locator('[data-elementid]').filter({ hasText: 'VehicleModel' }).first();
-  await rootRow.click();
+  await treeName(rootRow).click();
   await rootRow.getByTestId('tree-add').click();
   await page.locator('.tree-picker-select').selectOption('PartDefinition');
   const dupId = await page.evaluate(() => {
@@ -136,7 +136,7 @@ test('Validate populates Problems and Check surfaces constraint-check results', 
     return (parts.find((p) => !p.declaredName) ?? parts[parts.length - 1]).id;
   });
   const dupRow = page.locator(`[data-elementid="${dupId}"]`).first();
-  await dupRow.dblclick();
+  await treeName(dupRow).dblclick();
   await page.getByTestId('tree-rename').fill('Vehicle');
   await page.getByTestId('tree-rename').press('Enter');
 

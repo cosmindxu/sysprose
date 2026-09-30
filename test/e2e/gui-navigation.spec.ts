@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { captureErrors, gotoApp, shot } from './fixtures';
+import { captureErrors, gotoApp, shot, treeName } from './fixtures';
 
 type Sysml = { elementsOfType(k: string): { id: string; declaredName?: string }[] };
 
@@ -28,7 +28,7 @@ test('navigation: type icons, breadcrumb path, cross-tree hover link', async ({ 
   );
   expect(engineId).toBeTruthy();
   await page.getByTestId('explorer-search').fill('engine');
-  await page.locator(`[data-testid="tree-node"][data-elementid="${engineId}"]`).click();
+  await treeName(page.locator(`[data-testid="tree-node"][data-elementid="${engineId}"]`)).click();
 
   const crumbs = page.getByTestId('breadcrumb-item');
   await expect(crumbs.last()).toHaveText('engine'); // selection is the last segment

@@ -7,7 +7,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { gotoApp, openTab, shot } from './fixtures';
+import { gotoApp, openTab, shot, treeName } from './fixtures';
 
 test('text editor serializes, applies edits, and regenerates from model', async ({ page }) => {
   await gotoApp(page);
@@ -48,7 +48,7 @@ test('text editor serializes, applies edits, and regenerates from model', async 
 
   // ── Mutate the model via the Explorer; the text regenerates automatically ──
   const wheelRow = page.locator('[data-elementid]').filter({ hasText: 'Wheel' }).first();
-  await wheelRow.dblclick();
+  await treeName(wheelRow).dblclick();
   const rename = page.getByTestId('tree-rename');
   await rename.fill('Wheel2');
   await rename.press('Enter');

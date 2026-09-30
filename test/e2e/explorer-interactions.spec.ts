@@ -11,7 +11,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { captureErrors, gotoApp, findElementId, shot } from './fixtures';
+import { captureErrors, gotoApp, findElementId, shot, treeName } from './fixtures';
 
 function countOfType(page: Page, eClass: string): Promise<number> {
   return page.evaluate(
@@ -53,7 +53,7 @@ async function addChild(
   eClass: string,
 ): Promise<string> {
   const before = await idsOfType(page, eClass);
-  await ownerRow.click();
+  await treeName(ownerRow).click();
   await ownerRow.getByTestId('tree-add').click();
   await page.locator('.tree-picker-select').selectOption(eClass);
   await expect.poll(async () => (await idsOfType(page, eClass)).length).toBe(before.length + 1);
@@ -98,7 +98,7 @@ test('explorer expand/collapse, multi-metaclass create, rename, delete-cascade, 
   // ── Inline rename: dblclick + Enter commits ──
   const renameTargetId = await addChild(page, rootRow, 'PartDefinition');
   const renameRow = page.locator(`[data-elementid="${renameTargetId}"]`).first();
-  await renameRow.dblclick();
+  await treeName(renameRow).dblclick();
   await page.getByTestId('tree-rename').fill('Renamed1');
   await page.getByTestId('tree-rename').press('Enter');
   await expect
@@ -114,7 +114,7 @@ test('explorer expand/collapse, multi-metaclass create, rename, delete-cascade, 
     .toBe('Renamed1');
 
   // ── Inline rename: Escape cancels (name unchanged) ──
-  await renameRow.dblclick();
+  await treeName(renameRow).dblclick();
   await page.getByTestId('tree-rename').fill('ShouldNotStick');
   await page.getByTestId('tree-rename').press('Escape');
   await expect
@@ -157,13 +157,13 @@ test('explorer expand/collapse, multi-metaclass create, rename, delete-cascade, 
   // ── Drag-and-drop reparent: drag "DragSrc" onto "DragDst" ──
   const srcId = await addChild(page, rootRow, 'Package');
   const srcRow = page.locator(`[data-elementid="${srcId}"]`).first();
-  await srcRow.dblclick();
+  await treeName(srcRow).dblclick();
   await page.getByTestId('tree-rename').fill('DragSrc');
   await page.getByTestId('tree-rename').press('Enter');
 
   const dstId = await addChild(page, rootRow, 'Package');
   const dstRow = page.locator(`[data-elementid="${dstId}"]`).first();
-  await dstRow.dblclick();
+  await treeName(dstRow).dblclick();
   await page.getByTestId('tree-rename').fill('DragDst');
   await page.getByTestId('tree-rename').press('Enter');
 

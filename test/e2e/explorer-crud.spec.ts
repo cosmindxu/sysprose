@@ -5,7 +5,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { gotoApp, shot } from './fixtures';
+import { gotoApp, shot, treeName } from './fixtures';
 
 test('explorer create / rename / select / delete round-trip', async ({ page }) => {
   await gotoApp(page);
@@ -22,7 +22,7 @@ test('explorer create / rename / select / delete round-trip', async ({ page }) =
 
   // Root row (the sample "VehicleModel" package) is initially selected.
   const rootRow = page.locator('[data-elementid]').filter({ hasText: 'VehicleModel' }).first();
-  await rootRow.click();
+  await treeName(rootRow).click();
 
   // ── Add a Package child via the root row's "+" (tree-add) + metaclass pick ──
   await rootRow.getByTestId('tree-add').click();
@@ -42,7 +42,7 @@ test('explorer create / rename / select / delete round-trip', async ({ page }) =
 
   const newPkgRow = page.locator(`[data-elementid="${newPkgId}"]`).first();
   await expect(newPkgRow).toBeVisible();
-  await newPkgRow.click();
+  await treeName(newPkgRow).click();
 
   // ── Add a PartDefinition under the new package ──
   const partDefsBefore = await countOfType('PartDefinition');
@@ -64,7 +64,7 @@ test('explorer create / rename / select / delete round-trip', async ({ page }) =
   await shot(page, '02a-created');
 
   // ── Rename it inline via tree-rename ──
-  await partRow.dblclick();
+  await treeName(partRow).dblclick();
   const renameInput = page.getByTestId('tree-rename');
   await expect(renameInput).toBeVisible();
   await renameInput.fill('Gearbox');
@@ -81,7 +81,7 @@ test('explorer create / rename / select / delete round-trip', async ({ page }) =
   await expect(partRow.getByText('Gearbox')).toBeVisible();
 
   // ── Select it and confirm the Properties panel reflects the selection ──
-  await partRow.click();
+  await treeName(partRow).click();
   await expect(page.getByTestId('prop-name')).toHaveValue('Gearbox');
 
   await shot(page, '02b-renamed-selected');

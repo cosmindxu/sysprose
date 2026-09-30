@@ -4,7 +4,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { gotoApp, shot } from './fixtures';
+import { gotoApp, shot, treeName } from './fixtures';
 
 const countOfType = (page: import('@playwright/test').Page, eClass: string) =>
   page.evaluate(
@@ -21,7 +21,7 @@ test('undo restores and redo reapplies a create', async ({ page }) => {
 
   // ── Make a change: add a PartDefinition under the root package ──
   const rootRow = page.locator('[data-elementid]').filter({ hasText: 'VehicleModel' }).first();
-  await rootRow.click();
+  await treeName(rootRow).click();
   await rootRow.getByTestId('tree-add').click();
   await page.locator('.tree-picker-select').selectOption('PartDefinition');
   await expect.poll(() => countOfType(page, 'PartDefinition')).toBe(before + 1);

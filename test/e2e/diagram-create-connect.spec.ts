@@ -10,7 +10,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { captureErrors, findElementId, gotoApp, shot } from './fixtures';
+import { captureErrors, findElementId, gotoApp, shot, diagramSettled } from './fixtures';
 
 const countOfType = (page: import('@playwright/test').Page, eClass: string) =>
   page.evaluate(
@@ -48,12 +48,14 @@ test('interconnection: add part + port, connect two nodes, then all views render
   await page.locator('[data-testid="palette-tool"][data-kind="PartUsage"]').click();
   await rfNode(vehicleDefId).click(HEAD);
   await expect.poll(() => countOfType(page, 'PartUsage')).toBe(partsBefore + 1);
+  await diagramSettled(page); // the next click aims at a box the new part moved
 
   // ── Add a Port via the palette node tool ──
   const portsBefore = await countOfType(page, 'PortUsage');
   await page.locator('[data-testid="palette-tool"][data-kind="PortUsage"]').click();
   await rfNode(engineDefId).click(HEAD);
   await expect.poll(() => countOfType(page, 'PortUsage')).toBe(portsBefore + 1);
+  await diagramSettled(page);
 
   await shot(page, '04b-after-add');
 
