@@ -65,7 +65,7 @@ export function toReactFlowEdge(e: DiagramEdge, graph: DiagramGraph): Edge {
     type: 'sysml',
     label: e.label,
     reconnectable,
-    data: { kind: e.kind, elementId: e.elementId, label: e.label },
+    data: { kind: e.kind, elementId: e.elementId, label: e.label, route: e.route, routeFrom: e.routeFrom, labelAt: e.labelAt, hideKeyword: e.hideKeyword },
   };
 }
 

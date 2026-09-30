@@ -45,20 +45,20 @@ and stored queries (`src/api/rest.ts:113,292,429`). Payload
 `aaa…!` names blocks the event loop. CVSS-ish 7.5.
 
 ### C4. Main-thread ELK layout on every mutation, no debounce `[PROVEN]` · Performance
-`src/ui/store.ts:577`, `src/diagram/layout.ts:15,207` — `afterMutation()` calls
+`src/ui/store.ts:589`, `src/diagram/layout.ts:32,207` — `afterMutation()` calls
 `void rebuildDiagram()` on every `createElement/updateElement/setAttr/reparent/
 connect/deleteElement`, including remote CRDT applies. `layout.ts` imports the
 **synchronous bundled** `elkjs/lib/elk.bundled.js`; the `await` only defers a
 microtask. Breaks down: visible jank > ~100 nodes, multi-second freezes > ~1 k.
 
 ### C5. `afterMutation` runs full validation (18 rules) + full serialize + diagram rebuild on every edit `[PROVEN]` · Performance
-`src/ui/store.ts:569-578` — three model-wide passes per keystroke-equivalent
+`src/ui/store.ts:581-590` — three model-wide passes per keystroke-equivalent
 edit. The `constraint-violation` and `dimensional-consistency` rules
 (`validation/rules.ts:571,600`) nest full semantics-engine work inside the
 per-element loop → effectively O(n²) on every mutation.
 
 ### C6. `pushUndo` retains up to 50 full deep clones of the model `[PROVEN]` · Performance
-`src/ui/store.ts:555-562`, `src/core/model.ts:464` (`structuredCloneSafe`) —
+`src/ui/store.ts:567-574`, `src/core/model.ts:464` (`structuredCloneSafe`) —
 `UNDO_LIMIT = 50`. With the ~38 k-element library loaded, every mutation
 retains a full snapshot; a session can hold **>500 MB** of retained JS
 objects.
@@ -139,8 +139,8 @@ build, per solver scope filter. Deeply-branched 5 k-element trees ⇒ tens of
 millions of ops per call.
 
 ### H5. `Explorer`, `SysmlNode`, `ControlNode` not `React.memo`-ized; `decoratedNodes` creates new node identities on every selection change `[PROVEN]` · Performance
-`src/ui/panels/Explorer.tsx:43`, `src/diagram/nodes.tsx:335,446`,
-`src/ui/panels/DiagramCanvas.tsx:108-121` — React Flow re-renders every node
+`src/ui/panels/Explorer.tsx:43`, `src/diagram/nodes.tsx:386,446`,
+`src/ui/panels/DiagramCanvas.tsx:111-124` — React Flow re-renders every node
 on any selection change.
 
 ### H6. `resolve-names` / `featuring` memoization caches (`WeakMap<Model, Map>`) are never invalidated on mutation `[PROVEN]` · Correctness + Performance
@@ -253,7 +253,7 @@ reachable only via deep-import from one test.
 | M9 | Correctness | `requirement-subject` accepts an arbitrary string without verifying it resolves | `src/validation/rules.ts:321-330` |
 | M10 | Correctness | `port-direction` warns on every directionless port (KerML defaults direction) | `src/validation/rules.ts:241-259` |
 | M11 | Conformance | `conforms` ignores implicit library bases (KerML semantic-metamodel specialization) | `src/semantics/conformance.ts:21-24` |
-| M12 | Diagram | `buildAction` only matches `eClass==='ActionUsage'`, silently dropping `AcceptActionUsage`/`SendActionUsage`/`AssignmentActionUsage`/etc. | `src/diagram/build.ts:263-275` |
+| M12 | Diagram | `buildAction` only matches `eClass==='ActionUsage'`, silently dropping `AcceptActionUsage`/`SendActionUsage`/`AssignmentActionUsage`/etc. | `src/diagram/build.ts:304-316` |
 | M13 | Diagram | Specialization edges collapse 5 relationship kinds onto 2 visual kinds | `src/diagram/build.ts:57-60,185-194` |
 | M14 | Type-safety | `query.ts:267` projects-and-casts a `Record<string,unknown>` to `ElementRecord`; consumers reading `.source`/`.eClass` after `select` get garbage | `src/api/query.ts:264-268` |
 | M15 | Type-safety | `persistence/io.ts:244` casts untyped JSON attrs to `AttrValue` | `src/persistence/io.ts:263` |

@@ -254,6 +254,14 @@ export interface AppState {
   expandedIds: Set<ElementId>;
   activeView: ViewKind;
   diagram: DiagramGraph | null;
+  /**
+   * Boxes the user has moved by hand, per diagram (view + scope — see
+   * {@link diagramKey}): node id → position (parent-relative, as React Flow
+   * reports it). Every rebuild lays the diagram out afresh and then puts these
+   * boxes back where the user left them, so an edit elsewhere in the model does
+   * not undo the arranging. Auto-layout clears the current diagram's pins.
+   */
+  diagramPins: Record<string, Record<string, { x: number; y: number }>>;
   /** Allocation-matrix projection — populated only while `activeView === 'allocation'`. */
   matrix: AllocationMatrix | null;
   /** Sequence-diagram projection — populated only while `activeView === 'sequence'`. */
@@ -385,6 +393,10 @@ export interface AppState {
   expand(id: ElementId, open?: boolean): void;
   setActiveView(v: ViewKind): void;
   rebuildDiagram(): Promise<void>;
+  /** Keep hand-moved boxes where they were dropped, across rebuilds. */
+  pinNodePositions(moved: ReadonlyMap<string, { x: number; y: number }>): void;
+  /** Forget the current diagram's hand-moved boxes and lay it out afresh. */
+  autoLayout(): Promise<void>;
   /** Merge a patch into the Graph Analysis config and rebuild the projection. */
   setAnalysisConfig(patch: Partial<AnalysisConfig>): void;
   /** Merge a patch into the Planning config and rebuild the plan projection. */
@@ -919,6 +931,47 @@ function randomSelf(): { name: string; color: string } {
   return { name, color };
 }
 
+/** Counts rebuilds, so only the latest started one publishes its layout. */
+let diagramGeneration = 0;
+
+/** One diagram's identity for hand-placed boxes: its view and its scope root. */
+function diagramKey(view: ViewKind, rootId: ElementId | null): string {
+  return `${view}|${rootId ?? ''}`;
+}
+
+/**
+ * Put hand-moved boxes back after a fresh layout. Only boxes still in the
+ * diagram are moved; the edges touching them stop following their laid-out
+ * route (it no longer fits) and float between the boxes instead.
+ */
+function applyPins(
+  graph: DiagramGraph,
+  pins: Record<string, { x: number; y: number }> | undefined,
+): DiagramGraph {
+  if (!pins) return graph;
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) => (pins[n.id] ? { ...n, position: { ...pins[n.id]! } } : n)),
+  };
+}
+
+/**
+ * What the tree view shows open: the Explorer's expanded elements, plus every
+ * ancestor of the selection, so a selected element is always in the tree.
+ */
+function treeExpansion(
+  model: Model,
+  s: { expandedIds: ReadonlySet<ElementId>; selectionIds: ElementId[]; selectionId: ElementId | null },
+): Set<ElementId> {
+  const open = new Set<ElementId>(s.expandedIds);
+  const selected = new Set<ElementId>(s.selectionIds);
+  if (s.selectionId) selected.add(s.selectionId);
+  for (const id of selected) {
+    for (let cur = model.get(id)?.ownerId ?? null; cur; cur = model.get(cur)?.ownerId ?? null) open.add(cur);
+  }
+  return open;
+}
+
 /** Read the default collab URL (`collabUrl=`) and auto-connect room (`room=`) from the page URL. */
 function collabDefaultsFromUrl(): { url: string; room: string | null } {
   let url = 'ws://localhost:1234';
@@ -1189,6 +1242,7 @@ export const useAppStore = create<AppState>((set, get) => {
     pickerId: null,
     focusId: null,
     diagramRootId: null,
+    diagramPins: {},
     expandedIds: new Set(userRootIds(initialModel)),
     activeView: 'general',
     diagram: null,
@@ -1401,15 +1455,48 @@ export const useAppStore = create<AppState>((set, get) => {
         else next.add(id);
         return { expandedIds: next };
       });
+      // The tree view grows with the Explorer's expansion.
+      if (get().activeView === 'tree') void get().rebuildDiagram();
     },
 
     expand(id, open = true) {
+      const was = get().expandedIds.has(id);
       set((s) => {
         const next = new Set(s.expandedIds);
         if (open) next.add(id);
         else next.delete(id);
         return { expandedIds: next };
       });
+      if (was !== open && get().activeView === 'tree') void get().rebuildDiagram();
+    },
+
+    pinNodePositions(moved) {
+      set((s) => {
+        if (!s.diagram) return {};
+        const key = diagramKey(s.activeView, s.diagramRootId);
+        const pins = { ...(s.diagramPins[key] ?? {}) };
+        for (const [id, p] of moved) pins[id] = { x: p.x, y: p.y };
+        return {
+          diagramPins: { ...s.diagramPins, [key]: pins },
+          diagram: {
+            ...s.diagram,
+            nodes: s.diagram.nodes.map((dn) => {
+              const p = moved.get(dn.id);
+              return p ? { ...dn, position: { x: p.x, y: p.y } } : dn;
+            }),
+          },
+        };
+      });
+    },
+
+    async autoLayout() {
+      set((s) => {
+        const key = diagramKey(s.activeView, s.diagramRootId);
+        if (!(key in s.diagramPins)) return {};
+        const { [key]: _dropped, ...rest } = s.diagramPins;
+        return { diagramPins: rest };
+      });
+      await get().rebuildDiagram();
     },
 
     setActiveView(v) {
@@ -1560,6 +1647,10 @@ export const useAppStore = create<AppState>((set, get) => {
      */
     async rebuildDiagram() {
       const { model, activeView } = get();
+      // Layout is asynchronous and its cost grows with the diagram, so a slow
+      // rebuild (the whole model) can finish after a fast later one (a scoped
+      // view, another view) — and must not overwrite it with a stale diagram.
+      const generation = ++diagramGeneration;
 
       if (activeView === 'allocation') {
         try {
@@ -1679,11 +1770,15 @@ export const useAppStore = create<AppState>((set, get) => {
         const scoped = validDiagramRoot(get().diagramRootId, model);
         if (scoped !== get().diagramRootId) set({ diagramRootId: scoped });
         const rootId = scoped ?? undefined;
-        const graph = buildDiagram(model, activeView, rootId);
-        const laid = await layoutDiagram(graph);
+        const graph = buildDiagram(model, activeView, rootId, {
+          ...(activeView === 'tree' ? { treeExpanded: treeExpansion(model, get()) } : {}),
+        });
+        const laid = applyPins(await layoutDiagram(graph), get().diagramPins[diagramKey(activeView, scoped)]);
+        if (generation !== diagramGeneration) return; // a newer rebuild owns the canvas
         set({ diagram: laid });
       } catch (err) {
         console.error('rebuildDiagram failed', err);
+        if (generation !== diagramGeneration) return;
         set({ diagram: { nodes: [], edges: [], viewKind: get().activeView } });
       }
     },

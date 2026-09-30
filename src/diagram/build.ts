@@ -121,6 +121,14 @@ export interface BuildDiagramOptions {
    * library. Defaults to `true`.
    */
   excludeLibrary?: boolean;
+  /**
+   * Tree view only: the elements whose children are shown. When given, the
+   * tree grows only under these (and always under the scope root), and every
+   * collapsed box that owns more says how many (`data.treeHidden`) — a
+   * 2,000-element tree read one level at a time instead of as one picture a
+   * hundred screens tall. Omitted, the whole tree is drawn.
+   */
+  treeExpanded?: ReadonlySet<ElementId>;
 }
 
 /* ─────────────────────────────── general ───────────────────────────────── */
@@ -136,7 +144,39 @@ function isStructuralNode(eClass: string): boolean {
   return isDefinition(eClass) || isUsage(eClass);
 }
 
-function buildGeneral(model: Model, scope: Set<ElementId>): DiagramGraph {
+/**
+ * Reading order for a diagram that spans several packages: when every box lies
+ * in one of the scope root's child packages — a layered model's Kinds, Common,
+ * OA, SA, LA, PA, EPBS — each box is tagged with its package's position
+ * (`data.layoutPartition`), and the layout keeps the packages in that order,
+ * left to right, as columns. A reader then meets the model in the order it was
+ * written; measured on the drone-swarm model's general view, it also removes a
+ * third of the crossings. Nothing is tagged unless at least two packages hold
+ * boxes and no box sits outside them.
+ */
+function assignPackagePartitions(model: Model, nodes: DiagramNode[], rootId?: ElementId): void {
+  const roots = rootId ? [rootId] : model.all().filter((e) => e.ownerId === null && e.attrs.isLibrary !== true).map((e) => e.id);
+  if (roots.length !== 1) return;
+  const root = roots[0]!;
+  const lanes = model.children(root).filter((c) => CONTAINER_KINDS.has(c.eClass)).map((c) => c.id);
+  if (lanes.length < 2) return;
+  const laneOf = (id: ElementId): number => {
+    let cur: ElementId | null = id;
+    let prev: ElementId | null = null;
+    while (cur && cur !== root) {
+      prev = cur;
+      cur = model.get(cur)?.ownerId ?? null;
+    }
+    return cur === root && prev ? lanes.indexOf(prev) : -1;
+  };
+  const assigned = nodes.map((n) => laneOf(n.elementId));
+  if (assigned.some((l) => l < 0) || new Set(assigned).size < 2) return;
+  nodes.forEach((n, i) => {
+    n.data = { ...n.data, layoutPartition: assigned[i] };
+  });
+}
+
+function buildGeneral(model: Model, scope: Set<ElementId>, rootId?: ElementId): DiagramGraph {
   const nodes: DiagramNode[] = [];
   const nodeIds = new Set<ElementId>();
 
@@ -194,6 +234,7 @@ function buildGeneral(model: Model, scope: Set<ElementId>): DiagramGraph {
     }
   }
 
+  assignPackagePartitions(model, nodes, rootId);
   return { nodes, edges, viewKind: 'general' };
 }
 
@@ -407,17 +448,58 @@ function buildRequirement(model: Model, scope: Set<ElementId>): DiagramGraph {
 
 /* ──────────────────────────────── tree ─────────────────────────────────── */
 
-function buildTree(model: Model, scope: Set<ElementId>): DiagramGraph {
+/**
+ * Element kinds the tree leaves out: an element's documentation is its own
+ * text, shown in Properties — as a box of its own it doubled a model's size
+ * and said nothing a reader of the tree needs.
+ */
+const TREE_OMITTED_KINDS = new Set(['Documentation']);
+
+/**
+ * The containment tree, drawn as a tree: one box per element, one line from
+ * each owner to what it owns. Boxes are NOT nested inside their owners — the
+ * lines carry the containment, and a nested box would put every line inside
+ * the box it leaves.
+ */
+function buildTree(
+  model: Model,
+  scope: Set<ElementId>,
+  rootId?: ElementId,
+  expanded?: ReadonlySet<ElementId>,
+): DiagramGraph {
+  const inTree = (el: { id: ElementId; eClass: string }): boolean =>
+    scope.has(el.id) && !isRelationship(el.eClass) && !TREE_OMITTED_KINDS.has(el.eClass);
+  const opened = (id: ElementId): boolean => !expanded || id === rootId || expanded.has(id);
+  // Visible: a top of the scope, or the child of a visible, opened owner.
+  const visible = new Map<ElementId, boolean>();
+  const isVisible = (id: ElementId): boolean => {
+    const known = visible.get(id);
+    if (known !== undefined) return known;
+    const el = model.get(id);
+    let v = false;
+    if (el && inTree(el)) {
+      const owner = el.ownerId && scope.has(el.ownerId) ? el.ownerId : null;
+      v = owner === null || (opened(owner) && isVisible(owner));
+    }
+    visible.set(id, v);
+    return v;
+  };
   const nodes: DiagramNode[] = [];
   const nodeIds = new Set<ElementId>();
   for (const el of model.all()) {
-    if (!scope.has(el.id) || isRelationship(el.eClass)) continue;
+    if (!isVisible(el.id)) continue;
+    const kids = expanded ? model.children(el.id).filter(inTree).length : 0;
+    const extra: Record<string, unknown> = {};
+    if (kids > 0 && el.id !== rootId) {
+      if (opened(el.id)) extra.treeExpanded = true;
+      else extra.treeHidden = kids;
+    }
     nodes.push({
       id: el.id,
       elementId: el.id,
       kind: el.eClass,
       label: labelOf(el),
-      data: nodeData(model, el),
+      data: nodeData(model, el, extra),
     });
     nodeIds.add(el.id);
   }
@@ -426,7 +508,6 @@ function buildTree(model: Model, scope: Set<ElementId>): DiagramGraph {
   for (const n of nodes) {
     const el = model.get(n.elementId)!;
     if (el.ownerId && nodeIds.has(el.ownerId)) {
-      n.parentId = el.ownerId;
       edges.push({
         id: `own:${el.ownerId}->${el.id}`,
         source: el.ownerId,
@@ -733,7 +814,7 @@ export function buildDiagram(
   const scope = scopeIds(model, rootId, opts.excludeLibrary ?? true);
   switch (viewKind) {
     case 'general':
-      return buildGeneral(model, scope);
+      return buildGeneral(model, scope, rootId);
     case 'interconnection':
       return buildInterconnection(model, scope, rootId);
     case 'action':
@@ -743,7 +824,7 @@ export function buildDiagram(
     case 'requirement':
       return buildRequirement(model, scope);
     case 'tree':
-      return buildTree(model, scope);
+      return buildTree(model, scope, rootId, opts.treeExpanded);
     case 'parametric':
       return buildParametric(model, scope);
     case 'geometry':

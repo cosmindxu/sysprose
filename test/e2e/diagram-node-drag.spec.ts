@@ -37,9 +37,12 @@ test('dragging a node to empty canvas persists position without reparent or undo
   await shot(page, 'drag-a-before');
 
   // Find a screen point inside the canvas that overlaps no node and no overlay
-  // (controls / minimap / legend / minibar) — a genuine empty drop target.
-  const empty = await page.evaluate(() => {
+  // (controls / minimap / legend / minibar) — a genuine empty drop target, and
+  // far enough from the node (120 px) that the move is unmistakable wherever
+  // the fitted viewport happens to place the diagram.
+  const empty = await page.evaluate((from) => {
     const canvas = document.querySelector('[data-testid="diagram-canvas"]')!.getBoundingClientRect();
+    const far = (x: number, y: number) => Math.hypot(x - from.x, y - from.y) >= 120;
     const blockers = [
       ...document.querySelectorAll(
         '.react-flow__node, .react-flow__panel, .react-flow__controls, .react-flow__minimap, .react-flow__attribution',
@@ -50,11 +53,11 @@ test('dragging a node to empty canvas persists position without reparent or undo
     // Scan outward from the vertical middle for an empty column.
     for (let y = canvas.top + canvas.height / 2; y < canvas.bottom - 40; y += 20) {
       for (let x = canvas.left + 40; x < canvas.right - 40; x += 20) {
-        if (!hits(x, y)) return { x, y };
+        if (!hits(x, y) && far(x, y)) return { x, y };
       }
     }
     return null;
-  });
+  }, { x: before.x + before.width / 2, y: before.y + before.height / 2 });
   if (!empty) throw new Error('no empty canvas point found');
 
   // Grab the node near its header and drag it to the empty point.

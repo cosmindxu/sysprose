@@ -11,13 +11,14 @@
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
+  getSmoothStepPath,
   useInternalNode,
   type EdgeProps,
   type InternalNode,
 } from '@xyflow/react';
 import type { CSSProperties } from 'react';
 import { getEdgeEndpoints, shapeForKind, type ShapedNode } from './geometry';
+import type { Point } from './types';
 
 /** Marker ids for each SysML edge kind (referenced via `markerStart`/`markerEnd`). */
 export const MARKER = {
@@ -143,11 +144,13 @@ function EdgeBody(props: {
   labelX: number;
   labelY: number;
   label?: unknown;
+  hideKeyword?: boolean;
 }): JSX.Element {
   const spec = edgeStyleFor(props.kind);
   // Fall back to the SysML «keyword» for the dependency family (satisfy/allocate/…)
-  // so those dashed connectors are self-describing even without a model label.
-  const text = props.label ?? (spec.keyword ? `«${spec.keyword}»` : undefined);
+  // so those dashed connectors are self-describing even without a model label —
+  // unless the layout found every such label in the diagram would be the same.
+  const text = props.label ?? (spec.keyword && !props.hideKeyword ? `«${spec.keyword}»` : undefined);
   return (
     <>
       <BaseEdge
@@ -177,25 +180,146 @@ function EdgeBody(props: {
   );
 }
 
+/* ───────────────────────── routed (laid-out) edges ─────────────────────── */
+
+/** Corner radius of a drawn route: soft enough to follow, small enough to stay orthogonal. */
+const CORNER_RADIUS = 6;
+
 /**
- * Handle-anchored bezier — the original behaviour. Used for PORT edges
- * (interconnection / IBD ConnectionUsages) whose endpoints React Flow has
- * already resolved to a specific boundary-port handle, so their routing must NOT
- * be recomputed. The `sourceX/Y`…`targetPosition` props already sit on the ports.
+ * SVG path along an orthogonal polyline, each corner rounded by up to `radius`
+ * (less where a segment is too short for it). Pure; exported for tests.
+ */
+export function roundedPath(points: Point[], radius = CORNER_RADIUS): string {
+  if (points.length === 0) return '';
+  const p0 = points[0]!;
+  let d = `M ${p0.x} ${p0.y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1]!;
+    const cur = points[i]!;
+    const next = points[i + 1]!;
+    const lin = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+    const lout = Math.hypot(next.x - cur.x, next.y - cur.y);
+    const r = Math.min(radius, lin / 2, lout / 2);
+    if (r < 0.5) {
+      d += ` L ${cur.x} ${cur.y}`;
+      continue;
+    }
+    const ax = cur.x - ((cur.x - prev.x) / lin) * r;
+    const ay = cur.y - ((cur.y - prev.y) / lin) * r;
+    const bx = cur.x + ((next.x - cur.x) / lout) * r;
+    const by = cur.y + ((next.y - cur.y) / lout) * r;
+    d += ` L ${ax} ${ay} Q ${cur.x} ${cur.y} ${bx} ${by}`;
+  }
+  const last = points[points.length - 1]!;
+  return `${d} L ${last.x} ${last.y}`;
+}
+
+/**
+ * Where a route's label goes: the middle of its longest segment, so the label
+ * sits on the line it names and reads horizontally. Pure; exported for tests.
+ */
+export function routeLabelPoint(points: Point[]): Point {
+  let best = { x: points[0]?.x ?? 0, y: points[0]?.y ?? 0 };
+  let bestLen = -1;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len > bestLen) {
+      bestLen = len;
+      best = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+  }
+  return best;
+}
+
+const aligned = (a: number, b: number): boolean => Math.abs(a - b) < 0.5;
+
+/**
+ * Move a route's first and last points onto `start` and `end` (where the
+ * renderer actually anchors the edge — a port handle, say) while keeping every
+ * segment horizontal or vertical: the neighbouring bend point slides with the
+ * end it belongs to. Pure; exported for tests.
+ */
+export function fitRouteToEnds(route: Point[], start: Point, end: Point): Point[] {
+  const pts = route.map((p) => ({ ...p }));
+  if (pts.length < 2) return [start, end];
+  if (pts.length === 2) {
+    if (aligned(start.y, end.y) || aligned(start.x, end.x)) return [start, end];
+    const horizontal = Math.abs(end.x - start.x) >= Math.abs(end.y - start.y);
+    if (horizontal) {
+      const mx = (start.x + end.x) / 2;
+      return [start, { x: mx, y: start.y }, { x: mx, y: end.y }, end];
+    }
+    const my = (start.y + end.y) / 2;
+    return [start, { x: start.x, y: my }, { x: end.x, y: my }, end];
+  }
+  const slide = (endIdx: number, nextIdx: number, to: Point): void => {
+    const e = pts[endIdx]!;
+    const n = pts[nextIdx]!;
+    if (aligned(e.y, n.y)) n.y = to.y; // horizontal first segment: keep it horizontal
+    else n.x = to.x; // vertical first segment: keep it vertical
+    pts[endIdx] = { ...to };
+  };
+  slide(0, 1, start);
+  slide(pts.length - 1, pts.length - 2, end);
+  return pts;
+}
+
+/** Whether a laid-out route still fits: neither end box has moved since layout. */
+export function routeIsCurrent(
+  routeFrom: { source: Point; target: Point } | undefined,
+  source: Point | undefined,
+  target: Point | undefined,
+): boolean {
+  if (!routeFrom || !source || !target) return false;
+  const near = (a: Point, b: Point): boolean => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5;
+  return near(routeFrom.source, source) && near(routeFrom.target, target);
+}
+
+/** The laid-out route carried in an edge's data, when it is still current. */
+function currentRoute(
+  data: Record<string, unknown> | undefined,
+  sourceNode: InternalNode | undefined,
+  targetNode: InternalNode | undefined,
+): Point[] | null {
+  const route = data?.route as Point[] | undefined;
+  if (!route || route.length < 2) return null;
+  const current = routeIsCurrent(
+    data?.routeFrom as { source: Point; target: Point } | undefined,
+    sourceNode?.internals.positionAbsolute,
+    targetNode?.internals.positionAbsolute,
+  );
+  return current ? route : null;
+}
+
+/**
+ * Port edges (interconnection / IBD ConnectionUsages), anchored on the port
+ * handles React Flow resolved. They follow the laid-out route, fitted onto the
+ * handles; once an end box has been moved by hand they step orthogonally
+ * between the two handles instead.
  */
 function HandleEdge(props: EdgeProps): JSX.Element {
-  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, label } = props;
-  const kind = String((data as Record<string, unknown> | undefined)?.kind ?? 'default');
-  const [path, labelX, labelY] = getBezierPath({
+  const { id, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, label } = props;
+  const d = data as Record<string, unknown> | undefined;
+  const kind = String(d?.kind ?? 'default');
+  const explicit = label ?? d?.label;
+  const route = currentRoute(d, useInternalNode(source), useInternalNode(target));
+  if (route) {
+    const pts = fitRouteToEnds(route, { x: sourceX, y: sourceY }, { x: targetX, y: targetY });
+    const at = (d?.labelAt as Point | undefined) ?? routeLabelPoint(pts);
+    return <EdgeBody id={id} kind={kind} path={roundedPath(pts)} labelX={at.x} labelY={at.y} label={explicit} hideKeyword={d?.hideKeyword === true} />;
+  }
+  const [path, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
     targetX,
     targetY,
     sourcePosition,
     targetPosition,
+    borderRadius: CORNER_RADIUS,
   });
-  const explicit = label ?? (data as Record<string, unknown> | undefined)?.label;
-  return <EdgeBody id={id} kind={kind} path={path} labelX={labelX} labelY={labelY} label={explicit} />;
+  return <EdgeBody id={id} kind={kind} path={path} labelX={labelX} labelY={labelY} label={explicit} hideKeyword={d?.hideKeyword === true} />;
 }
 
 /** Reduce a React Flow internal node to the geometry the router needs. */
@@ -209,39 +333,48 @@ function shapedFromInternal(node: InternalNode): ShapedNode {
 }
 
 /**
- * Shape-aware FLOATING edge (the fix): reads both endpoints' measured
- * position+size and rendered shape, then lands the connector exactly on each
- * node's outline facing the other node — so multiple edges leaving one box fan
- * out to the correct borders instead of stacking on the bottom-centre handle.
+ * Node-to-node edges. While both end boxes sit where the layout put them, the
+ * edge is drawn along its laid-out route, which runs around every other box.
+ * Once a box has been moved by hand, the edge FLOATS: it lands on each box's
+ * outline facing the other (shape-aware, so edges leaving one box fan out to
+ * the right borders) and steps orthogonally between the two.
  */
 export function FloatingEdge(props: EdgeProps): JSX.Element {
   const { id, source, target, data, label } = props;
   const sourceNode = useInternalNode(source);
   const targetNode = useInternalNode(target);
-  const kind = String((data as Record<string, unknown> | undefined)?.kind ?? 'default');
-  const explicit = label ?? (data as Record<string, unknown> | undefined)?.label;
+  const d = data as Record<string, unknown> | undefined;
+  const kind = String(d?.kind ?? 'default');
+  const explicit = label ?? d?.label;
   if (!sourceNode || !targetNode) return <></>;
+  const route = currentRoute(d, sourceNode, targetNode);
+  if (route) {
+    const at = (d?.labelAt as Point | undefined) ?? routeLabelPoint(route);
+    return <EdgeBody id={id} kind={kind} path={roundedPath(route)} labelX={at.x} labelY={at.y} label={explicit} hideKeyword={d?.hideKeyword === true} />;
+  }
   const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeEndpoints(
     shapedFromInternal(sourceNode),
     shapedFromInternal(targetNode),
   );
-  const [path, labelX, labelY] = getBezierPath({
+  const [path, labelX, labelY] = getSmoothStepPath({
     sourceX: sx,
     sourceY: sy,
     sourcePosition: sourcePos,
     targetX: tx,
     targetY: ty,
     targetPosition: targetPos,
+    borderRadius: CORNER_RADIUS,
   });
-  return <EdgeBody id={id} kind={kind} path={path} labelX={labelX} labelY={labelY} label={explicit} />;
+  return <EdgeBody id={id} kind={kind} path={path} labelX={labelX} labelY={labelY} label={explicit} hideKeyword={d?.hideKeyword === true} />;
 }
 
 /**
  * The data-driven SysML edge (registered as the default `sysml` edge type). It
  * dispatches per-edge: an edge carrying an explicit port handle
  * (`sourceHandleId`/`targetHandleId`, set by {@link toReactFlowEdge} for
- * interconnection/IBD port-to-port connectors) keeps the handle-anchored bezier;
- * every other edge floats onto the node outlines via {@link FloatingEdge}.
+ * interconnection/IBD port-to-port connectors) stays anchored on its handles;
+ * every other edge is drawn by {@link FloatingEdge}. Both follow the laid-out
+ * orthogonal route while it is current.
  */
 export function SysmlEdge(props: EdgeProps): JSX.Element {
   const isPortEdge = props.sourceHandleId != null || props.targetHandleId != null;

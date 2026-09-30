@@ -299,7 +299,6 @@ export function Toolbar(): JSX.Element {
   const runConstraintCheck = useAppStore((s) => s.runConstraintCheck);
   const simulate = useAppStore((s) => s.simulate);
   const solveParametric = useAppStore((s) => s.solveParametric);
-  const rebuildDiagram = useAppStore((s) => s.rebuildDiagram);
   const setActiveView = useAppStore((s) => s.setActiveView);
   const undo = useAppStore((s) => s.undo);
   const redo = useAppStore((s) => s.redo);
@@ -469,7 +468,7 @@ export function Toolbar(): JSX.Element {
     'tb-import-fmi': { label: 'Import FMI', testid: 'tb-import-fmi', onClick: () => void onImportFmi(), title: 'Import an FMI 3.0 modelDescription.xml as a SysML block' },
     'tb-simulate': { label: 'Simulate', testid: 'tb-simulate', onClick: () => simulate(), title: 'Simulate the active action flow / state machine' },
     'tb-solve': { label: 'Solve', testid: 'tb-solve', onClick: () => solveParametric(), title: 'Solve parametric constraints & evaluate measures of effectiveness' },
-    'tb-layout': { label: 'Auto-layout', testid: 'tb-layout', onClick: () => void rebuildDiagram(), disabled: !isGraphView, title: graphOnlyTitle('Re-run auto-layout') },
+    'tb-layout': { label: 'Auto-layout', testid: 'tb-layout', onClick: () => void useAppStore.getState().autoLayout(), disabled: !isGraphView, title: graphOnlyTitle('Lay the diagram out afresh, forgetting boxes moved by hand') },
   };
   const command = (id: (typeof COLLAPSE_ORDER)[number]): JSX.Element | null => {
     if (collapsed.has(id)) return null;

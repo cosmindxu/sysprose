@@ -47,9 +47,24 @@ async function armNodeAndPlace(page: Page, nodeKind: string): Promise<string> {
   );
   await expect(tool).toBeVisible();
   await tool.click();
-  // A node-tool click creates the element whether it lands on the pane
-  // (onPaneClick) or an existing node (onNodeClick) — force past any overlap.
-  await page.locator('.react-flow__pane').click({ force: true, position: { x: 24, y: 24 } });
+  // Place on EMPTY pane: a node-tool click on an existing node creates the new
+  // element inside it, and where the nodes sit depends on the fitted viewport
+  // (a lone use case, fitted and drawn as a wide ellipse, can cover the corner).
+  const spot = await page.evaluate(() => {
+    const pane = document.querySelector('.react-flow__pane')!.getBoundingClientRect();
+    const blockers = [
+      ...document.querySelectorAll('.react-flow__node, .react-flow__panel, .react-flow__controls, .react-flow__minimap'),
+    ].map((n) => n.getBoundingClientRect());
+    const free = (x: number, y: number) =>
+      !blockers.some((r) => x >= r.left - 16 && x <= r.right + 16 && y >= r.top - 16 && y <= r.bottom + 16);
+    for (let y = pane.top + 24; y < pane.bottom - 24; y += 16) {
+      for (let x = pane.left + 24; x < pane.right - 24; x += 16) {
+        if (free(x, y)) return { x: x - pane.left, y: y - pane.top };
+      }
+    }
+    return { x: 24, y: 24 };
+  });
+  await page.locator('.react-flow__pane').click({ force: true, position: spot });
   await expect.poll(() => countOfType(page, nodeKind)).toBe(before.length + 1);
   const after = await idsOfType(page, nodeKind);
   const created = after.find((id) => !before.includes(id));

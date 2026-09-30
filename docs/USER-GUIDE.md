@@ -144,7 +144,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:133-247`, `src/ui/panels/Toolbar.tsx:397-546`,
+**Source of truth:** `src/ui/App.tsx:133-247`, `src/ui/panels/Toolbar.tsx:396-545`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -302,11 +302,41 @@ runs it in a terminal instead of a verdict nobody measured.
 | Action | Action nodes plus initial ●, decision ◇, fork/join ≡ and done ◉ control nodes, joined by successions | What happens, in what order? | `tb-view-action` |
 | State | States and transitions labelled `trigger [guard] / effect` | What modes does it have, and what moves it between them? | `tb-view-state` |
 | Requirement | Requirements with their satisfy / refine / verify endpoints | Which requirements exist, and what meets them? | `tb-view-requirement` |
-| Tree | Pure containment, laid out as a graph | What owns what? | `tb-view-tree` |
+| Tree | Pure containment, one branch at a time: a box that owns more shows **+N**; click it to open that branch (the Explorer opens with it), **−** to close it | What owns what? | `tb-view-tree` |
 | Parametric | Constraint nodes and the parameters bound into them | Which equations connect which values? | `tb-view-parametric` |
 | Case | Use cases and the cases that include them | What is the system for? | `tb-view-case` |
 | Sequence | Lifelines and time-ordered messages, falling back to control flow when the model has no explicit flows | Who talks to whom, in what order? | `tb-view-sequence` |
 | Geometry | One primitive solid per structural part, from `shape` / `position` / `size` / `color` attributes, orbitable in 3D | Roughly how big is it, and what is inside what? | `tb-view-geometry` |
+
+#### How the diagrams are laid out
+
+Every graph view reads **left to right**: owner before part, first step before
+last, the initial state before the ones it leads to, the root of a tree before
+its leaves. The layout keeps to the readability criteria of the UML-layout
+literature (Sun & Wong, IWPC 2005, after Purchase): no box overlaps another, no
+connector runs through a box it does not connect, connectors run horizontally
+and vertically and cross as little as the graph allows, and labels sit where
+the layout made room for them — never on a box, a line or another label.
+
+- **Many pieces become rows, not a strip.** A view's disconnected pieces are
+  laid out one by one and packed row by row to about the screen's proportions:
+  the largest piece top-left, then single boxes grouped by kind.
+- **A layered model reads layer by layer.** When a General view spans a
+  model's top-level packages (Kinds, Common, OA, SA, LA, PA, EPBS, say), they
+  become columns in that order.
+- **A label that would say the same thing on every line is left off.** When
+  every dependency in a view is of one kind — the Requirement view's
+  `«satisfy»`, for instance — the keyword is dropped and lines that leave one
+  box share a trunk; a view that mixes kinds keeps its keywords.
+- **Large models:** scope the view to a package (the diagram shows one layer at
+  a time) — a whole model's General view is an overview, not a page. Layout
+  runs in a background worker, so a large diagram never freezes the page.
+
+**Arranging by hand.** Drag a box and it stays where you drop it, through model
+edits and view switches; its connectors step around to meet it. **Auto-layout**
+(toolbar, or the canvas mini-toolbar) forgets the boxes you moved in the
+current diagram and lays it out afresh. Moves are kept per view and scope, for
+the session.
 
 ### Tables
 
@@ -413,7 +443,7 @@ deliberate: it keeps typing responsive.
 Undo is 50 snapshots deep, it covers model changes (not view changes, not the
 theme), and any new edit clears the redo stack. Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:878-987` (the recompute cycle),
+**Source of truth:** `src/ui/store.ts:890-1040` (the recompute cycle),
 `1873-1896` (`applyText`), `2260-2298` (undo), `2395-2416` (the post-apply
 refresh); `src/ui/panels/TextEditor.tsx`;
 `test/e2e/text-apply-contract.spec.ts:30` (the one-undo guarantee, as a test).
@@ -2513,7 +2543,7 @@ it, every one of these engines is an importable function — `checkText`,
 `modelMetrics`, `requirementSatisfaction`, `whereUsed`, `analysisReport`,
 `buildGrid`, `buildDSM`, `buildPlan` — with no DOM anywhere in them.
 
-**Source of truth:** `src/ui/store.ts:1760-1886` (the four buttons),
+**Source of truth:** `src/ui/store.ts:1855-1981` (the four buttons),
 `src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:42-67`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -2783,7 +2813,7 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 `modelDescription.xml` for the selected block.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:517-537`, `2020-2069`, `src/ui/App.tsx:74-78`,
+`src/ui/store.ts:529-549`, `2020-2069`, `src/ui/App.tsx:74-78`,
 `test/e2e/persistence-reload.spec.ts`.
 
 ---

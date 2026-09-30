@@ -73,7 +73,7 @@ export const COMMANDS: Command[] = [
   {
     id: 'tb-layout',
     label: 'Auto-layout',
-    run: () => useAppStore.getState().rebuildDiagram(),
+    run: () => useAppStore.getState().autoLayout(),
   },
   {
     id: 'tb-undo',

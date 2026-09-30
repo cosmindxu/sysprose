@@ -18,7 +18,8 @@
  */
 
 import { TEXTUAL_KEYWORD } from '@core/index';
-import { edgeStyleFor, MARKER } from './edges';
+import { edgeStyleFor, MARKER, roundedPath, routeIsCurrent, routeLabelPoint } from './edges';
+import { edgeLabelText } from './edge-labels';
 import { getEdgeEndpoints, shapeForKind, type NodeShape, type ShapedNode } from './geometry';
 import type { DiagramGraph, DiagramNode } from './types';
 
@@ -249,8 +250,10 @@ function markerDefs(): string {
 /**
  * Render `graph` (already laid out — its nodes carry `position`/`size`) into a
  * standalone `<svg>` string. Nodes are drawn in their SysML shapes at their
- * positions; edges are straight connectors clipped to the shape borders via
- * {@link getEdgeEndpoints}, styled per kind via {@link edgeStyleFor}. The
+ * positions; edges follow the orthogonal route the layout found (around every
+ * box they do not connect), or — for an edge whose end box was moved by hand
+ * since — a straight connector clipped to the shape borders via
+ * {@link getEdgeEndpoints}; styled per kind via {@link edgeStyleFor}. The
  * `viewBox` encloses every node (plus `opts.padding`). Deterministic.
  */
 export function svgFromDiagram(graph: DiagramGraph, opts: SvgExportOptions = {}): string {
@@ -317,23 +320,34 @@ export function svgFromDiagram(graph: DiagramGraph, opts: SvgExportOptions = {})
     const markerStart = spec.markerStart ? ` marker-start="url(#${spec.markerStart})"` : '';
     const markerEnd = spec.markerEnd ? ` marker-end="url(#${spec.markerEnd})"` : '';
 
-    const sShaped: ShapedNode = { x: s.x + s.w / 2, y: s.y + s.h / 2, w: s.w, h: s.h, shape: s.shape };
-    const tShaped: ShapedNode = { x: t.x + t.w / 2, y: t.y + t.h / 2, w: t.w, h: t.h, shape: t.shape };
-    const { sx, sy, tx, ty } = getEdgeEndpoints(sShaped, tShaped);
+    let d: string;
+    let label: { x: number; y: number };
+    const routed = edge.route && routeIsCurrent(edge.routeFrom, { x: s.x, y: s.y }, { x: t.x, y: t.y });
+    if (routed) {
+      const pts = edge.route!.map((p) => ({ x: Number(num(p.x)), y: Number(num(p.y)) }));
+      d = roundedPath(pts);
+      label = edge.labelAt ?? routeLabelPoint(pts);
+    } else {
+      const sShaped: ShapedNode = { x: s.x + s.w / 2, y: s.y + s.h / 2, w: s.w, h: s.h, shape: s.shape };
+      const tShaped: ShapedNode = { x: t.x + t.w / 2, y: t.y + t.h / 2, w: t.w, h: t.h, shape: t.shape };
+      const { sx, sy, tx, ty } = getEdgeEndpoints(sShaped, tShaped);
+      d = `M ${num(sx)} ${num(sy)} L ${num(tx)} ${num(ty)}`;
+      label = { x: (sx + tx) / 2, y: (sy + ty) / 2 - 3 - 3.5 };
+    }
 
     edgeSvg.push(
       `<path data-edge-id="${escapeXml(edge.id)}" data-kind="${escapeXml(edge.kind)}" ` +
-        `d="M ${num(sx)} ${num(sy)} L ${num(tx)} ${num(ty)}" fill="none" ` +
+        `d="${d}" fill="none" ` +
         `stroke="${stroke}" stroke-width="1.5"${dash}${markerStart}${markerEnd} />`,
     );
 
-    // Edge label: the explicit model label, else the «keyword» for the dependency family.
-    const labelText = edge.label ?? (spec.keyword ? `«${spec.keyword}»` : undefined);
+    // Edge label: the explicit model label, else the «keyword» for the dependency
+    // family (unless the layout dropped it as repetition) — centred where the
+    // layout made room for it.
+    const labelText = edgeLabelText(edge);
     if (withLabels && labelText) {
-      const mx = (sx + tx) / 2;
-      const my = (sy + ty) / 2;
       edgeSvg.push(
-        `<text x="${num(mx)}" y="${num(my - 3)}" text-anchor="middle" ` +
+        `<text x="${num(label.x)}" y="${num(label.y + 3.5)}" text-anchor="middle" ` +
           `font-family="${escapeXml(fontFamily)}" font-size="10" fill="${NAME_INK}">` +
           `${escapeXml(labelText)}</text>`,
       );

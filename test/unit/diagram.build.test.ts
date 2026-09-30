@@ -76,14 +76,14 @@ describe('buildDiagram — tree view (sample)', () => {
     expect(g.nodes.find((n) => n.kind === 'Satisfy')).toBeUndefined();
   });
 
-  it('wires containment edges and parentId nesting', () => {
+  it('draws containment as lines from owner to owned, not as nested boxes', () => {
     expect(g.edges).toHaveLength(9);
     expect(g.edges.every((e) => e.kind === 'containment')).toBe(true);
     const engine = nodeByLabel(g, 'engine');
     const vehicle = nodeByLabel(g, 'vehicle');
-    expect(engine.parentId).toBe(vehicle.elementId);
-    const root = nodeByLabel(g, 'VehicleModel');
-    expect(root.parentId).toBeUndefined();
+    expect(g.edges.some((e) => e.source === vehicle.elementId && e.target === engine.elementId)).toBe(true);
+    // Nesting the boxes would put every containment line inside the box it leaves.
+    expect(g.nodes.every((n) => n.parentId === undefined)).toBe(true);
   });
 });
 

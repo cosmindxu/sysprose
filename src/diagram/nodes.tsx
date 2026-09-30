@@ -14,6 +14,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { memo, type CSSProperties } from 'react';
 import { TEXTUAL_KEYWORD, isRequirement } from '@core/index';
+import { requestNodeAction } from './node-actions';
 
 /* ────────────────────────────── styling ────────────────────────────────── */
 
@@ -313,6 +314,56 @@ export function portSymbolFor(data: unknown): PortSymbol {
   return { shape, conjugated };
 }
 
+/** The tree view's expand/collapse control, on a box's right edge. */
+const treeToggleStyle: CSSProperties = {
+  position: 'absolute',
+  right: 4,
+  top: '50%',
+  transform: 'translateY(-50%)',
+  minWidth: 22,
+  height: 20,
+  padding: '0 5px',
+  borderRadius: 10,
+  border: '1px solid var(--node-line)',
+  background: 'var(--node-bg)',
+  color: 'var(--node-fg)',
+  fontSize: 11,
+  lineHeight: '18px',
+  fontWeight: 600,
+  cursor: 'pointer',
+  zIndex: 1,
+};
+
+/**
+ * Tree view: a collapsed box that owns more shows "+N" (how many it hides); an
+ * expanded one shows "−". Clicking asks the canvas to toggle the branch — the
+ * same expansion the Explorer shows, so the two stay in step.
+ */
+function TreeToggle({ data }: { data: SysmlNodeData }): JSX.Element | null {
+  const d = data as Record<string, unknown>;
+  const hidden = typeof d.treeHidden === 'number' ? d.treeHidden : 0;
+  const expanded = d.treeExpanded === true;
+  const elementId = typeof d.elementId === 'string' ? d.elementId : null;
+  if (!elementId || (!hidden && !expanded)) return null;
+  return (
+    <button
+      type="button"
+      className="nodrag nopan"
+      data-testid="tree-toggle"
+      data-expanded={expanded || undefined}
+      title={expanded ? 'Collapse this branch' : `Show the ${hidden} element${hidden === 1 ? '' : 's'} it owns`}
+      aria-label={expanded ? 'Collapse' : `Expand (${hidden})`}
+      style={treeToggleStyle}
+      onClick={(e) => {
+        e.stopPropagation();
+        requestNodeAction({ type: 'tree-toggle', elementId });
+      }}
+    >
+      {expanded ? '−' : `+${hidden}`}
+    </button>
+  );
+}
+
 /* ─────────────────────────── node adornments ───────────────────────────── */
 
 /** Truthy test for a modifier flag on either the data payload or its attrs bag. */
@@ -384,8 +435,10 @@ export function SysmlNode({ data }: NodeProps): JSX.Element {
       {/* Default (unnamed) handles so node-to-node relationship edges — composition,
           feature typing, specialization, satisfy/allocate, containment — attach and
           render in EVERY view. React Flow drops edges that have no handle to bind. */}
-      <Handle type="target" position={Position.Top} className="body-handle" style={bodyHandleStyle} />
-      <Handle type="source" position={Position.Bottom} className="body-handle" style={bodyHandleStyle} />
+      {/* Diagrams read left to right, so a box takes connections in on its left
+          and sends them out on its right. */}
+      <Handle type="target" position={Position.Left} className="body-handle" style={bodyHandleStyle} />
+      <Handle type="source" position={Position.Right} className="body-handle" style={bodyHandleStyle} />
       <div style={{ ...headerStyle, ...variantHeaderStyle(variant) }}>
         {keywordLabel ? <div style={keywordStyle}>{keywordLabel}</div> : null}
         <div style={{ ...nameStyle, ...(isAbstract ? { fontStyle: 'italic' } : {}) }}>{name}</div>
@@ -431,6 +484,7 @@ export function SysmlNode({ data }: NodeProps): JSX.Element {
           })}
         </div>
       )}
+      <TreeToggle data={d} />
       {/* Boundary ports (interconnection): each exposes BOTH a source and a target
           handle sharing the port id, so a ConnectionUsage can bind it as either end. */}
       {boundaryPorts.flatMap((p) => {

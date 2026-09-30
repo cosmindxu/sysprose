@@ -88,6 +88,29 @@ export interface DiagramEdge {
    * spurious endpoint the projection ignores.
    */
   reconnectable?: boolean;
+  /**
+   * The orthogonal route {@link layoutDiagram} found for this edge, in absolute
+   * diagram coordinates, first point on the source box, last on the target. It
+   * runs around every box it does not connect, so the renderer draws it as is —
+   * while `routeFrom` still matches where its end boxes are.
+   */
+  route?: Point[];
+  /** Absolute positions of the source and target boxes when `route` was made. */
+  routeFrom?: { source: Point; target: Point };
+  /** Centre of the edge's label, where the layout made room for it. */
+  labelAt?: Point;
+  /**
+   * Leave off the kind's default «keyword» label: set by the layout when every
+   * such label in the diagram would say the same thing (see
+   * `keywordLabelsAreRepetition`). An explicit `label` is still drawn.
+   */
+  hideKeyword?: boolean;
+}
+
+/** A point in diagram coordinates. */
+export interface Point {
+  x: number;
+  y: number;
 }
 
 /** A complete diagram projection for one view kind. */

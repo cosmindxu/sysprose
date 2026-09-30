@@ -14,6 +14,7 @@ import {
   type AnalysisConfig,
   type DSMModel,
   type GraphAnalysisModel,
+  declutterLabels,
 } from '@diagram/index';
 import './panels.css';
 
@@ -201,6 +202,26 @@ function GraphSvg(props: {
 
   const box = vb ?? { x: -500, y: -500, w: 1000, h: 1000 };
 
+  // Labels: a fixed 11 px on screen, and only as many as fit without
+  // overlapping each other or a dot — zooming in reveals more.
+  const [pxWidth, setPxWidth] = useState(800);
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = (): void => setPxWidth(el.clientWidth || 800);
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
+  const unitsPerPx = box.w / Math.max(1, pxWidth);
+  const labelFontPx = 11;
+  const shownLabels = useMemo(
+    () => new Set(declutterLabels(analysis.nodes, box, unitsPerPx, labelFontPx, selectionId).map((l) => l.id)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [analysis.nodes, box.x, box.y, box.w, box.h, unitsPerPx, selectionId],
+  );
+
   // Zoom-about-cursor via a NATIVE non-passive wheel listener — React's wheel
   // handler is passive, so `preventDefault()` there throws a console error and
   // can't block the browser's ctrl+wheel zoom.
@@ -282,15 +303,24 @@ function GraphSvg(props: {
                   stroke={selected ? 'var(--accent)' : '#fff'}
                   strokeWidth={selected ? n.size * 0.4 + 1.5 : 1}
                 />
-                <text
-                  x={n.size + 2}
-                  y={3}
-                  fontSize={Math.max(6, box.w / 130)}
-                  fill="var(--text, #2d3748)"
-                  style={{ pointerEvents: 'none', userSelect: 'none' }}
-                >
-                  {n.label}
-                </text>
+                {shownLabels.has(n.id) && (
+                  <text
+                    x={n.size + 2 * unitsPerPx}
+                    y={0}
+                    dominantBaseline="middle"
+                    fontSize={labelFontPx * unitsPerPx}
+                    fill="var(--text, #2d3748)"
+                    // A halo in the background colour keeps a label legible where
+                    // it passes over a line or a smaller dot.
+                    stroke="var(--bg, #fff)"
+                    strokeWidth={3 * unitsPerPx}
+                    paintOrder="stroke"
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {n.label}
+                  </text>
+                )}
+                <title>{n.label}</title>
               </g>
             );
           })}

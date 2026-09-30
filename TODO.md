@@ -42,3 +42,15 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       clause as `N more clause(s) inherited from X`, while `contracts` in the terminal prints its body
       marked `(inherited)`. Either show the body in the app, or record the difference as deliberate
       in `docs/USER-GUIDE.md`.
+- [ ] **Label the layer columns of a partitioned General view.** When a view spans a model's
+      top-level packages, the layout keeps them as left-to-right columns
+      (`assignPackagePartitions`, `src/diagram/build.ts`), but nothing on the canvas names the
+      columns. Draw a header per column (the package name, above its x-range) so the reading
+      order is visible, not only felt.
+- [ ] **Keep hand-placed boxes with the saved project.** `diagramPins` (`src/ui/store.ts`) holds
+      the boxes a user moved, per view and scope, for the session only; Save/Open drop them.
+      Persist them beside the model in the project store (never in the `.sysml` text).
+- [ ] **Cut the crossings of one-layer General views with hub requirements.** Scoped to the
+      drone-swarm model's `OA`, the General view still has ~110 crossings, most of them long
+      `«trace»` / `«satisfy»` lines converging on a few hubs (`memberA` takes ~20). Try routing
+      those dependency kinds as merged hyperedges of their own, or placing hubs by barycentre.

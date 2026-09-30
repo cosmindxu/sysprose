@@ -3,6 +3,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './ui/App';
+import { installWorkerLayout } from './ui/elk-worker';
+
+// Diagram layout runs in a worker, so large diagrams never freeze the page.
+installWorkerLayout();
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('Root element #root not found');

@@ -2,8 +2,8 @@
  * Unit tests for the *tuned* elkjs layout policy (task M5):
  *  - elkPortSide maps in→WEST / out→EAST (and the boundary sides).
  *  - layoutOptionsFor uses the layered algorithm, orthogonal edge routing,
- *    hierarchical nesting, and a per-view primary direction (top-down for the
- *    hierarchical/behavioural views, left-right otherwise).
+ *    compound (INCLUDE_CHILDREN) layout only for pieces with nested boxes, and
+ *    left-to-right flow in every view.
  *  - layoutDiagram still positions & sizes every node and nests children.
  */
 
@@ -34,32 +34,32 @@ describe('elkPortSide — in→WEST / out→EAST port-side policy', () => {
 });
 
 describe('layoutOptionsFor — layered + orthogonal + per-view direction', () => {
-  it('always uses the layered algorithm with orthogonal routing and nesting', () => {
+  it('always uses the layered algorithm with orthogonal routing', () => {
     for (const vk of ['general', 'interconnection', 'tree', 'state'] as const) {
       const o = layoutOptionsFor(vk);
       expect(o['elk.algorithm']).toBe('layered');
       expect(o['elk.edgeRouting']).toBe('ORTHOGONAL');
-      expect(o['elk.hierarchyHandling']).toBe('INCLUDE_CHILDREN');
       expect(Number(o['elk.spacing.nodeNode'])).toBeGreaterThan(0);
     }
   });
 
-  it('flows hierarchical/behavioural views top-down, others left-right', () => {
-    expect(layoutDirectionFor('tree')).toBe('DOWN');
-    expect(layoutDirectionFor('requirement')).toBe('DOWN');
-    expect(layoutDirectionFor('state')).toBe('DOWN');
-    expect(layoutDirectionFor('action')).toBe('DOWN');
-    expect(layoutDirectionFor('case')).toBe('DOWN');
-    expect(layoutDirectionFor('general')).toBe('RIGHT');
-    expect(layoutDirectionFor('interconnection')).toBe('RIGHT');
-    // The direction option is surfaced in the root options bag.
-    expect(layoutOptionsFor('tree')['elk.direction']).toBe('DOWN');
-    expect(layoutOptionsFor('general')['elk.direction']).toBe('RIGHT');
+  it('switches on compound layout only for pieces with nested boxes', () => {
+    // ELK's compound mode does not pack disconnected pieces, so a flat view that
+    // used it came out as one strip hundreds of screens long.
+    expect(layoutOptionsFor('general')['elk.hierarchyHandling']).toBe('SEPARATE_CHILDREN');
+    expect(layoutOptionsFor('interconnection', true)['elk.hierarchyHandling']).toBe('INCLUDE_CHILDREN');
+  });
+
+  it('flows every view left to right', () => {
+    for (const vk of ['tree', 'requirement', 'state', 'action', 'case', 'general', 'interconnection', 'parametric'] as const) {
+      expect(layoutDirectionFor(vk)).toBe('RIGHT');
+      expect(layoutOptionsFor(vk)['elk.direction']).toBe('RIGHT');
+    }
   });
 });
 
 describe('layoutDiagram — positions every node under the tuned policy', () => {
-  it('assigns finite positions and positive sizes for a top-down view', async () => {
+  it('assigns finite positions and positive sizes for the tree view', async () => {
     const m = buildSampleModel();
     const g = await layoutDiagram(buildDiagram(m, 'tree'));
     expect(g.nodes.length).toBeGreaterThan(0);

@@ -8,7 +8,7 @@
  *  - Node click → `store.select(elementId)` (unless a palette tool is armed).
  *  - Node drag end → persist the new position back into `store.diagram` so the
  *    manual layout tweak survives until the next rebuild.
- *  - Auto-layout affordance → `store.rebuildDiagram()`.
+ *  - Auto-layout affordance → `store.autoLayout()` (forgets hand-moved boxes).
  *  - Connection gestures → `store.connect(source, target, kind)`, where `kind`
  *    is the armed edge tool's metaclass, or a sensible default for the active
  *    view. Two ways to draw: React Flow handle-drag (`onConnect`) and palette
@@ -44,6 +44,7 @@ import {
   toReactFlow,
   type DiagramGraph,
   type ViewKind,
+  setNodeActionHandler,
 } from '@diagram/index';
 import { useAppStore } from '../store';
 import { usePaletteStore } from './Palette';
@@ -53,6 +54,8 @@ import { Legend } from './Legend';
 
 /** Canvas width (px) below which the minimap becomes a toggle so it cannot cover the legend. */
 const MINIMAP_MIN_CANVAS = 720;
+/** Lowest zoom: far enough out that Fit shows a whole large model. */
+const MIN_ZOOM = 0.02;
 
 /** A memoised decorated node plus the base node it was derived from (H5-b). */
 interface DecoratedNode {
@@ -119,7 +122,16 @@ function DiagramCanvasInner(): JSX.Element {
   const selectionIds = useAppStore((s) => s.selectionIds);
   const select = useAppStore((s) => s.select);
   const setSelection = useAppStore((s) => s.setSelection);
-  const rebuildDiagram = useAppStore((s) => s.rebuildDiagram);
+  const toggleExpand = useAppStore((s) => s.toggleExpand);
+
+  // Node controls (the tree's expand/collapse) reach the store through here.
+  useEffect(
+    () =>
+      setNodeActionHandler((a) => {
+        if (a.type === 'tree-toggle') toggleExpand(a.elementId);
+      }),
+    [toggleExpand],
+  );
   const createElement = useAppStore((s) => s.createElement);
   const connect = useAppStore((s) => s.connect);
   const updateElement = useAppStore((s) => s.updateElement);
@@ -132,6 +144,9 @@ function DiagramCanvasInner(): JSX.Element {
   const resetTool = usePaletteStore((s) => s.reset);
 
   const rf = useReactFlow();
+  const diagramRootId = useAppStore((s) => s.diagramRootId);
+  /** The view + scope the viewport was last fitted to (see the rebuild effect). */
+  const fittedIdentity = useRef<string | null>(null);
   const [snap, setSnap] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
@@ -195,7 +210,16 @@ function DiagramCanvasInner(): JSX.Element {
     const { nodes: rfNodes, edges: rfEdges } = toReactFlow(diagram);
     setNodes(rfNodes);
     setEdges(rfEdges);
-  }, [diagram, setNodes, setEdges, setDropTarget]);
+    // A different diagram (another view, another scope) opens fitted: the old
+    // viewport pointed at the old drawing, so the new one could open on empty
+    // canvas. A rebuild of the SAME diagram (an edit, a tree branch opened)
+    // keeps the reader's viewport.
+    const identity = `${diagram.viewKind}|${diagramRootId ?? ''}`;
+    if (fittedIdentity.current !== identity) {
+      fittedIdentity.current = identity;
+      requestAnimationFrame(() => void rf.fitView({ padding: 0.15 }));
+    }
+  }, [diagram, setNodes, setEdges, setDropTarget, diagramRootId, rf]);
 
   // Reflect the current model selection as React Flow selection.
   //
@@ -519,20 +543,9 @@ function DiagramCanvasInner(): JSX.Element {
           return;
         }
       }
-      // No reparent: persist the manual position tweak for EVERY dragged node into
-      // store.diagram (local layout) so it survives until the next rebuild.
-      const moved = new Map(nodes.map((n) => [n.id, n.position]));
-      useAppStore.setState((s) => {
-        if (!s.diagram) return {};
-        const next = {
-          ...s.diagram,
-          nodes: s.diagram.nodes.map((dn) => {
-            const pos = moved.get(dn.id);
-            return pos ? { ...dn, position: { x: pos.x, y: pos.y } } : dn;
-          }),
-        };
-        return { diagram: next };
-      });
+      // No reparent: pin EVERY dragged box where it was dropped, so the arranging
+      // survives rebuilds (a model edit, a view switch) until Auto-layout.
+      useAppStore.getState().pinNodePositions(new Map(nodes.map((n) => [n.id, n.position])));
     },
     [canReparent, model, draggedRootsFrom, candidatesAtPointer, setDropTarget, reparentMany],
   );
@@ -562,6 +575,9 @@ function DiagramCanvasInner(): JSX.Element {
         nodeDragThreshold={4}
         deleteKeyCode={null}
         fitView
+        // Fit must reach the whole drawing, however large; React Flow's default
+        // floor (0.5) left most of a big model off-screen with no way to see it.
+        minZoom={MIN_ZOOM}
         snapToGrid={snap}
         snapGrid={[20, 20]}
         proOptions={{ hideAttribution: true }}
@@ -622,8 +638,8 @@ function DiagramCanvasInner(): JSX.Element {
               type="button"
               className="diagram-autolayout"
               data-testid="diagram-autolayout"
-              title="Re-run automatic layout"
-              onClick={() => void rebuildDiagram()}
+              title="Lay the diagram out afresh, forgetting boxes moved by hand"
+              onClick={() => void useAppStore.getState().autoLayout()}
             >
               Auto-layout
             </button>
