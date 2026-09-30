@@ -169,6 +169,49 @@ body {
   font-size: 0.95rem;
 }
 
+/* `?model=` link strip (LinkedModelBanner) — one line under the toolbar. */
+.linked-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+.linked-banner > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.linked-banner code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.linked-banner-failed {
+  color: var(--error);
+  background: var(--bg-muted);
+}
+.linked-banner-link {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--accent);
+}
+.linked-banner-close {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .app-body {
   flex: 1 1 auto;
   display: flex;

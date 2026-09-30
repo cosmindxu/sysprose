@@ -352,6 +352,7 @@ Sysprose is a pure static SPA — no backend needed. `vite.config.ts` uses `base
 
 - **GitHub Pages:** enable Pages (Settings → Pages → GitHub Actions); `.github/workflows/deploy-pages.yml` builds and deploys on push to `main`.
 - **Any static host:** `npm run build` → serve `dist/` (Netlify, S3, nginx, `python -m http.server`, …).
+- **Open a model from a link:** `?model=<url>` fetches a `.sysml` (or model JSON) file and opens it in place of the sample; `?source=<url>` adds a "Propose a change" link beside it. A path relative to the page is fetched same-origin — deploy `dist/` with your model next to it (`?model=model/My.sysml`) for a one-link view of your project. Absolute URLs must be http(s) and allowed by the CSP `connect-src` in `index.html`, which admits `https://raw.githubusercontent.com`. Nothing is persisted: each visit fetches the file again, and edits stay in the browser until saved or exported (`src/ui/linked-model.ts`).
 - **Optional OMG API server (REST + OSLC):** `npm run serve`, or containerized:
   ```bash
   docker build -t sysprose-api . && docker run -p 5178:5178 sysprose-api   # OpenAPI at :5178/openapi.json

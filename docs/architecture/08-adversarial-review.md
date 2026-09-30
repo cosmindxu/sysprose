@@ -45,20 +45,20 @@ and stored queries (`src/api/rest.ts:113,292,429`). Payload
 `aaa…!` names blocks the event loop. CVSS-ish 7.5.
 
 ### C4. Main-thread ELK layout on every mutation, no debounce `[PROVEN]` · Performance
-`src/ui/store.ts:562`, `src/diagram/layout.ts:15,207` — `afterMutation()` calls
+`src/ui/store.ts:577`, `src/diagram/layout.ts:15,207` — `afterMutation()` calls
 `void rebuildDiagram()` on every `createElement/updateElement/setAttr/reparent/
 connect/deleteElement`, including remote CRDT applies. `layout.ts` imports the
 **synchronous bundled** `elkjs/lib/elk.bundled.js`; the `await` only defers a
 microtask. Breaks down: visible jank > ~100 nodes, multi-second freezes > ~1 k.
 
 ### C5. `afterMutation` runs full validation (18 rules) + full serialize + diagram rebuild on every edit `[PROVEN]` · Performance
-`src/ui/store.ts:554-563` — three model-wide passes per keystroke-equivalent
+`src/ui/store.ts:569-578` — three model-wide passes per keystroke-equivalent
 edit. The `constraint-violation` and `dimensional-consistency` rules
 (`validation/rules.ts:571,600`) nest full semantics-engine work inside the
 per-element loop → effectively O(n²) on every mutation.
 
 ### C6. `pushUndo` retains up to 50 full deep clones of the model `[PROVEN]` · Performance
-`src/ui/store.ts:540-547`, `src/core/model.ts:464` (`structuredCloneSafe`) —
+`src/ui/store.ts:555-562`, `src/core/model.ts:464` (`structuredCloneSafe`) —
 `UNDO_LIMIT = 50`. With the ~38 k-element library loaded, every mutation
 retains a full snapshot; a session can hold **>500 MB** of retained JS
 objects.
@@ -256,7 +256,7 @@ reachable only via deep-import from one test.
 | M12 | Diagram | `buildAction` only matches `eClass==='ActionUsage'`, silently dropping `AcceptActionUsage`/`SendActionUsage`/`AssignmentActionUsage`/etc. | `src/diagram/build.ts:263-275` |
 | M13 | Diagram | Specialization edges collapse 5 relationship kinds onto 2 visual kinds | `src/diagram/build.ts:57-60,185-194` |
 | M14 | Type-safety | `query.ts:267` projects-and-casts a `Record<string,unknown>` to `ElementRecord`; consumers reading `.source`/`.eClass` after `select` get garbage | `src/api/query.ts:264-268` |
-| M15 | Type-safety | `persistence/io.ts:244` casts untyped JSON attrs to `AttrValue` | `src/persistence/io.ts:244` |
+| M15 | Type-safety | `persistence/io.ts:244` casts untyped JSON attrs to `AttrValue` | `src/persistence/io.ts:263` |
 | M16 | Test-quality | OSLC/RDF tests assert only substring presence, never parse emitted Turtle/RDF-XML back into triples | `test/server/oslc-rdf.test.ts`, `test/server/oslc-shapes.test.ts` |
 | M17 | Test-quality | Cached `test-results/e2e-results.json` records only 10 of the 39 claimed specs | `test-results/e2e-results.json` |
 | M18 | Test-quality | 5× duplication of the element-signature comparison helper across test files, with drift | `test/unit/text.roundtrip.test.ts:25-54` + 4 others |

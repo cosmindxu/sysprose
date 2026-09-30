@@ -154,6 +154,7 @@ import {
 } from '@diagram/index';
 import {
   createDefaultStore,
+  detectFormat,
   downloadText,
   exportModel as ioExportModel,
   importModel as ioImportModel,
@@ -180,6 +181,12 @@ import {
 } from '@semantics/index';
 import { parseModelDescription, importFmiBlock } from '@interop/index';
 import { GENERATOR_ID, LEGACY_STORAGE_DB } from '../branding';
+import {
+  fetchLinkedModel,
+  linkedModelFromUrl,
+  resolveHttpUrl,
+  type LinkedModel,
+} from './linked-model';
 
 /** Max number of undo snapshots retained. */
 const UNDO_LIMIT = 50;
@@ -320,6 +327,14 @@ export interface AppState {
    * tests ever observe the (idempotent, undo-free) library merge mid-session.
    */
   libraryReady: boolean;
+
+  /**
+   * The model named by the page's `?model=` link, or null when the session was
+   * not opened from one. While `status` is 'loading' the App keeps its loading
+   * gate up, so a linked visit never shows the sample model first. See
+   * `src/ui/linked-model.ts`.
+   */
+  linkedModel: (LinkedModel & { status: 'loading' | 'loaded' | 'failed'; error?: string }) | null;
 
   // ── Real-time collaboration (Yjs CRDT + presence) ────────────────────────
   /** Live collaboration status, room, transport URL, self identity + remote peers. */
@@ -1207,6 +1222,8 @@ export const useAppStore = create<AppState>((set, get) => {
     rev: 0,
     // Flips true once loadStandardLibraryAsync (kicked off below) settles.
     libraryReady: false,
+    // Set by the `?model=` kickoff below, before the first render.
+    linkedModel: null,
 
     collab: {
       connected: false,
@@ -2663,6 +2680,61 @@ useAppStore.subscribe((state) => {
       }
     });
   }
+}
+
+// Open the model named by `?model=` (see src/ui/linked-model.ts). The status is
+// set SYNCHRONOUSLY, before the first render, so the App's loading gate stays
+// up until the linked model is in place. The fetch runs alongside the boot-time
+// library load; the model is applied only once that load has settled, so the
+// linked text replaces a fully initialized model, never one mid-merge.
+{
+  const { model: modelParam, source: sourceParam } = linkedModelFromUrl();
+  if (modelParam) {
+    const base = window.location.href;
+    const url = resolveHttpUrl(modelParam, base);
+    const sourceUrl = sourceParam ? resolveHttpUrl(sourceParam, base) : null;
+    const linked: LinkedModel = { url: url?.href ?? modelParam, source: sourceUrl?.href ?? null };
+    useAppStore.setState({ linkedModel: { ...linked, status: 'loading' } });
+    void (async () => {
+      try {
+        if (!url) throw new Error('only http(s) URLs or paths relative to this page are accepted');
+        const text = await fetchLinkedModel(url);
+        await whenLibraryReady();
+        const fmt = detectFormat(url.pathname, text);
+        const st = useAppStore.getState();
+        if (fmt === 'sysml') {
+          // The text path, not importModel: applyText keeps the parse result, so
+          // the Problems panel is exactly what editing this text would show —
+          // including retracting specialization warnings the library resolves,
+          // which an import (no retained parse result) keeps standing.
+          st.setTextBuffer(text);
+          st.applyText();
+        } else {
+          st.importModel(text, fmt);
+        }
+        // The linked model is where this session starts: Undo must not step
+        // back into the sample model it replaced.
+        useAppStore.setState({ undoStack: [], redoStack: [], linkedModel: { ...linked, status: 'loaded' } });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        console.error(`could not open linked model ${modelParam}: ${error}`);
+        await whenLibraryReady();
+        useAppStore.setState({ linkedModel: { ...linked, status: 'failed', error } });
+      }
+    })();
+  }
+}
+
+/** Resolve once the boot-time standard-library load has settled. */
+function whenLibraryReady(): Promise<void> {
+  if (useAppStore.getState().libraryReady) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = useAppStore.subscribe((s) => {
+      if (!s.libraryReady) return;
+      unsubscribe();
+      resolve();
+    });
+  });
 }
 
 /* ─────────────────────── Asynchronous standard-library load ──────────────── */

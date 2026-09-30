@@ -128,10 +128,10 @@ flowchart TB
     class validate,serialize,layout,pushUndo hot
 ```
 
-- **Debounced diagram rebuild.** `afterMutation` (`src/ui/store.ts:569-578`) runs
+- **Debounced diagram rebuild.** `afterMutation` (`src/ui/store.ts:584-593`) runs
   `safeValidate` + `textView` synchronously per mutation, then coalesces the
   diagram rebuild behind an 80 ms debounce (`REBUILD_DEBOUNCE_MS`/`scheduleRebuild`,
-  `src/ui/store.ts:544-552`) so a burst of edits triggers one ELK layout. A single
+  `src/ui/store.ts:559-567`) so a burst of edits triggers one ELK layout. A single
   `setAttr` (e.g. typing in Properties) still re-validates and re-serializes the
   whole model.
 - **ELK is the synchronous bundled build** (`src/diagram/layout.ts:15`), so the
@@ -166,7 +166,7 @@ sequenceDiagram
     Note over S: afterMutation() → rev++, rebuildDiagram()
 ```
 
-- Typing does **not** parse — only the explicit "Apply" does (`src/ui/store.ts:918-941`).
+- Typing does **not** parse — only the explicit "Apply" does (`src/ui/store.ts:933-956`).
 - `parseModel` is whole-document; there is **no incremental parsing**.
 - `textView` is the only writer of `textBuffer`. When the model cannot be
   written as text at all — a note body carrying the sequence that ends a note, a

@@ -20,7 +20,7 @@ export {
 } from './store';
 
 export type { ModelFormat, ImportResult } from './io';
-export { exportModel, importModel } from './io';
+export { detectFormat, exportModel, importModel } from './io';
 
 export type { OpenedFile } from './file';
 export { downloadText, downloadBytes, openTextFile, MIME_BY_EXTENSION } from './file';

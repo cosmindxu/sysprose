@@ -84,6 +84,25 @@ export function importModel(text: string, format: ModelFormat): ImportResult {
   }
 }
 
+/** Infer the import {@link ModelFormat} from a filename + its contents. */
+export function detectFormat(name: string, content: string): ModelFormat {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.sysml') || lower.endsWith('.txt')) return 'sysml';
+  if (lower.endsWith('.json')) {
+    try {
+      const obj = JSON.parse(content) as Record<string, unknown>;
+      // Native snapshots carry `rootIds`; the OMG API graph carries `@type`/`rootElement`.
+      if (Array.isArray((obj as { rootIds?: unknown }).rootIds)) return 'model-json';
+      if ('@type' in obj || 'rootElement' in obj) return 'api-json';
+    } catch {
+      /* fall through */
+    }
+    return 'model-json';
+  }
+  // Unknown extension: sniff for a leading JSON object.
+  return content.trimStart().startsWith('{') ? 'model-json' : 'sysml';
+}
+
 /** Import failure with a human-readable reason (vs. a raw SyntaxError). */
 export class ImportError extends Error {
   constructor(message: string) {

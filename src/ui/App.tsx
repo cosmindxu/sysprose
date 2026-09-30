@@ -23,6 +23,8 @@ import { Breadcrumb } from './panels/Breadcrumb';
 import { Palette, viewHasPalette } from './panels/Palette';
 import { Properties } from './panels/Properties';
 import { BottomPanel } from './panels/BottomPanel';
+import { LinkedModelBanner } from './panels/LinkedModelBanner';
+import { modelFileName } from './linked-model';
 
 export function App(): JSX.Element {
   const api = useAppStore((s) => s.api);
@@ -30,6 +32,7 @@ export function App(): JSX.Element {
   const runValidation = useAppStore((s) => s.runValidation);
   const libraryReady = useAppStore((s) => s.libraryReady);
   const activeView = useAppStore((s) => s.activeView);
+  const linkedModel = useAppStore((s) => s.linkedModel);
 
   // One-time bootstrap: expose the SDK and build the initial projection — but
   // only AFTER the standard library has settled into the model. Withholding
@@ -129,10 +132,16 @@ export function App(): JSX.Element {
   // NOT render the SDK-backed body (Explorer / diagram-canvas / Properties), so
   // the E2E fixtures — which wait for `diagram-canvas` + `window.sysml` — only
   // proceed once the model has settled.
-  if (!libraryReady) {
+  // A `?model=` link holds the same gate until its model is in place, so the
+  // sample model never flashes up first.
+  if (!libraryReady || linkedModel?.status === 'loading') {
     return (
       <div className="app app-loading" data-testid="app-loading">
-        <div className="app-loading-msg">Loading standard library…</div>
+        <div className="app-loading-msg">
+          {libraryReady && linkedModel
+            ? `Loading ${modelFileName(linkedModel.url)}…`
+            : 'Loading standard library…'}
+        </div>
       </div>
     );
   }
@@ -140,6 +149,7 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <Toolbar />
+      <LinkedModelBanner />
       <div className="app-body">
         {explorerCollapsed ? (
           <button

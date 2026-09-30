@@ -17,7 +17,7 @@ import { useRovingMenu } from './useRovingMenu';
 import { Collaborate } from './Collaborate';
 import { VIEW_COMMANDS } from '../commands';
 import { svgFromDiagram, type DiagramGraph, type ViewKind } from '@diagram/index';
-import { downloadText, downloadBytes, openTextFile, type ModelFormat } from '@persistence/index';
+import { detectFormat, downloadText, downloadBytes, openTextFile } from '@persistence/index';
 import { exportFmu, fmiModelDescription } from '@interop/index';
 import { PRODUCT_NAME } from '../../branding';
 import { Popover, isInside } from './Popover';
@@ -228,25 +228,6 @@ function ToolbarMenu(props: { label: string; testid: string; items: MenuItem[]; 
       )}
     </div>
   );
-}
-
-/** Infer the import {@link ModelFormat} from a filename + its contents. */
-function detectFormat(name: string, content: string): ModelFormat {
-  const lower = name.toLowerCase();
-  if (lower.endsWith('.sysml') || lower.endsWith('.txt')) return 'sysml';
-  if (lower.endsWith('.json')) {
-    try {
-      const obj = JSON.parse(content) as Record<string, unknown>;
-      // Native snapshots carry `rootIds`; the OMG API graph carries `@type`/`rootElement`.
-      if (Array.isArray((obj as { rootIds?: unknown }).rootIds)) return 'model-json';
-      if ('@type' in obj || 'rootElement' in obj) return 'api-json';
-    } catch {
-      /* fall through */
-    }
-    return 'model-json';
-  }
-  // Unknown extension: sniff for a leading JSON object.
-  return content.trimStart().startsWith('{') ? 'model-json' : 'sysml';
 }
 
 /** Read the `width`/`height` (px) declared on the root `<svg>` of a serialized SVG. */

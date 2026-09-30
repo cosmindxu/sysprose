@@ -44,7 +44,7 @@ C4Container
   (`validation/`), KerML semantics (`semantics/`), OMG API/SDK/Query/analytics
   (`api/`), diagram builders + renderers (`diagram/`), persistence
   (`persistence/`), UI (`ui/`), and the collab client (`collab/`).
-- **Exposed automation surface:** `window.sysml` (`src/ui/App.tsx:40`) — the
+- **Exposed automation surface:** `window.sysml` (`src/ui/App.tsx:43`) — the
   `ModelApi` SDK, equivalent in power to DevTools, intentionally unsandboxed.
 
 ### REST / OSLC API (`src/server/`, `Dockerfile`)

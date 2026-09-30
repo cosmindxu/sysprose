@@ -144,7 +144,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:130-237`, `src/ui/panels/Toolbar.tsx:416-565`,
+**Source of truth:** `src/ui/App.tsx:133-247`, `src/ui/panels/Toolbar.tsx:397-546`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -360,7 +360,7 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:52-69`
-(the grouping); `src/ui/store.ts:217-231` (the diagram scope).
+(the grouping); `src/ui/store.ts:224-238` (the diagram scope).
 
 ---
 
@@ -413,7 +413,7 @@ deliberate: it keeps typing responsive.
 Undo is 50 snapshots deep, it covers model changes (not view changes, not the
 theme), and any new edit clears the redo stack. Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:863-972` (the recompute cycle),
+**Source of truth:** `src/ui/store.ts:878-987` (the recompute cycle),
 `1873-1896` (`applyText`), `2260-2298` (undo), `2395-2416` (the post-apply
 refresh); `src/ui/panels/TextEditor.tsx`;
 `test/e2e/text-apply-contract.spec.ts:30` (the one-undo guarantee, as a test).
@@ -2513,8 +2513,8 @@ it, every one of these engines is an importable function — `checkText`,
 `modelMetrics`, `requirementSatisfaction`, `whereUsed`, `analysisReport`,
 `buildGrid`, `buildDSM`, `buildPlan` — with no DOM anywhere in them.
 
-**Source of truth:** `src/ui/store.ts:1743-1869` (the four buttons),
-`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:39-64`
+**Source of truth:** `src/ui/store.ts:1760-1886` (the four buttons),
+`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:42-67`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -2783,7 +2783,7 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 `modelDescription.xml` for the selected block.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:502-522`, `2020-2069`, `src/ui/App.tsx:71-75`,
+`src/ui/store.ts:517-537`, `2020-2069`, `src/ui/App.tsx:74-78`,
 `test/e2e/persistence-reload.spec.ts`.
 
 ---
@@ -2834,7 +2834,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:170`,
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:171`,
 `863-910`, `2544-2585`, `src/ui/panels/Toolbar.tsx:85-94`, `191-234`,
 `src/api/analytics.ts:1225-1232`, `src/ui/commands.ts:111-213`.
 
@@ -2955,4 +2955,4 @@ Plain keys are suppressed while you are typing in a field.
 
 There is no `Ctrl+N`; **New** is a button only.
 
-**Source of truth:** `src/ui/commands.ts:111-213`, `src/ui/App.tsx:109-125`.
+**Source of truth:** `src/ui/commands.ts:111-213`, `src/ui/App.tsx:112-128`.
