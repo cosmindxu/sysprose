@@ -77,8 +77,9 @@ function scopeWith(model: Model, contextId: ElementId, inFlight: Set<ElementId>)
  * number it fixes was only ever computed outside the tool.
  *
  * Only a direct feature of `contextId` (a bare name, not a dotted chain), and
- * only an equation owned by the same context whose one side is that bare
- * name: the defining equation of a feature is written where the feature is.
+ * only an ASSERTED equation owned by the same context whose one side is that
+ * bare name: the defining equation of a feature is written where the feature
+ * is, and it is a fact the model states, not a check (see {@link isAsserted}).
  * The feature goes on `inFlight` while its other side is evaluated, so
  * `x == y + 1` beside `y == x - 1` answers `undefined`, not a hang.
  */
@@ -118,18 +119,35 @@ function valueDefinedByEquation(
   return isRefusalReason(judged.reason) ? undefined : value;
 }
 
-/** An equation `name == <expr>` (either way round) among the constraints `ownerId` owns. */
+/** An asserted equation `name == <expr>` (either way round) among the constraints `ownerId` owns. */
 function definingEquationFor(
   model: Model,
   ownerId: ElementId,
   name: string,
 ): { constraint: ElementRecord; definition: ExprNode } | undefined {
   for (const c of model.children(ownerId)) {
-    if (c.eClass !== 'ConstraintUsage') continue;
+    if (!isAsserted(c)) continue;
     const side = definedSide(c, name);
     if (side) return { constraint: c, definition: side };
   }
   return undefined;
+}
+
+/**
+ * Is `el` an `assert constraint` — the one constraint whose equation may
+ * DEFINE a value? An assert states a fact about the model; a `require` or
+ * `assume` clause, and a plain `constraint` usage, are checks of values the
+ * model gives elsewhere. Reading those as definitions too made a brief's test
+ * condition, `require constraint { jammedFraction == 0.5 }` on a measure that
+ * carries no value by design, report "defines jammedFraction = 0.5" — a value
+ * the model never stated — while the budget beside it (`<= 12`) read "has no
+ * value anywhere". The verification lane already files the roles this way
+ * (`assert` an axiom, `require` an obligation: `roleOf` in obligations.ts),
+ * so the literal reading now agrees with it. The mapper records the clause
+ * keyword on `attrs.requirementRole`, wherever the clause is written.
+ */
+function isAsserted(el: ElementRecord): boolean {
+  return el.eClass === 'ConstraintUsage' && el.attrs.requirementRole === 'assert';
 }
 
 /**
@@ -153,12 +171,13 @@ function definedSide(constraint: ElementRecord, name: string): ExprNode | undefi
 }
 
 /**
- * The feature an equation-shaped constraint defines — its bare name, when the
- * constraint reads `name == <expr>` and `name` is a valueless feature of the
- * constraint's owner — or `undefined` for any other constraint.
+ * The feature an asserted equation defines — its bare name, when the
+ * constraint is an `assert constraint` reading `name == <expr>` and `name` is
+ * a valueless feature of the constraint's owner — or `undefined` for any other
+ * constraint, a `require`d equation of the same shape included.
  */
 export function definedFeatureOf(model: Model, constraint: ElementRecord): ElementRecord | undefined {
-  if (constraint.ownerId == null) return undefined;
+  if (constraint.ownerId == null || !isAsserted(constraint)) return undefined;
   const expr = constraint.attrs.expression;
   if (typeof expr !== 'string') return undefined;
   let node: ExprNode;

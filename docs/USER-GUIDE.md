@@ -311,7 +311,7 @@ runs it in a terminal instead of a verdict nobody measured.
 | State | States and transitions labelled `trigger [guard] / effect` | What modes does it have, and what moves it between them? | `tb-view-state` |
 | Requirement | Requirements with their satisfy / refine / verify endpoints | Which requirements exist, and what meets them? | `tb-view-requirement` |
 | Tree | Pure containment, one branch at a time: a box that owns more shows **+N**; click it to open that branch (the Explorer opens with it), **−** to close it | What owns what? | `tb-view-tree` |
-| Parametric | Constraint nodes, each showing its expression in a monospace compartment (an unnamed one is headed by the expression alone), and the parameters bound into them. An attribute that states no value beside `assert constraint { x == … }` takes the value the equation fixes — Problems reads *Constraint satisfied: defines x = …* — so an estimate can be arithmetic over the model's own values rather than a literal; an equation the unit-aware evaluator refuses (two dimensions, an offset scale) defines nothing | Which equations connect which values? | `tb-view-parametric` |
+| Parametric | Constraint nodes, each showing its expression in a monospace compartment (an unnamed one is headed by the expression alone), and the parameters bound into them. An attribute that states no value beside an asserted equation, `assert constraint { x == … }`, takes the value the equation fixes — Problems reads *Constraint satisfied: defines x = …* — so an estimate can be arithmetic over the model's own values rather than a literal. Only an asserted equation defines: the same equation as a `require constraint`, a plain `constraint` or a requirement's `require`/`assume` is a check of a value given elsewhere, and with none given it cannot be evaluated (*x has no value anywhere and nothing specialises it*); an equation the unit-aware evaluator refuses (two dimensions, an offset scale) defines nothing | Which equations connect which values? | `tb-view-parametric` |
 | Case | Use cases and the cases that include them | What is the system for? | `tb-view-case` |
 | Sequence | Lifelines and time-ordered messages, falling back to control flow when the model has no explicit flows | Who talks to whom, in what order? | `tb-view-sequence` |
 | Geometry | One primitive solid per structural part, from `shape` / `position` / `size` / `color` attributes, orbitable in 3D | Roughly how big is it, and what is inside what? | `tb-view-geometry` |
@@ -528,7 +528,7 @@ are.** A brief often states its targets once, on abstract measures that carry
 no value (`package Common { attribute m : Real; require constraint t { m >= 0.9
 } }`), and each layer gives its own estimate as a feature that subsets or
 redefines the measure (`LA::m :> Common::m = 0.78`, `PA::m :> Common::m`
-fixed by an equation). `t` itself stays *could not be evaluated*, because the
+fixed by an asserted equation). `t` itself stays *could not be evaluated*, because the
 layers may disagree and no one value belongs to `Common` — but its message now
 says why (`m has no value here; evaluated per specialisation: LA::m, PA::m`, or
 `… nothing specialises it`), and the target is judged once per layer through

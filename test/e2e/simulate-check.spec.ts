@@ -56,13 +56,22 @@ async function authorBehaviors(page: import('@playwright/test').Page): Promise<v
       declaredName: 'massWithinLimit',
       attrs: { expression: 'mass < 2000' },
     });
-    // An equation that defines a valueless feature (CV-17): Check says what it
-    // fixes, not only that it holds.
+    // An ASSERTED equation that defines a valueless feature (CV-17): Check
+    // says what it fixes, not only that it holds. `requirementRole: 'assert'`
+    // is the element `assert constraint payloadDefinition { … }` parses to.
     api.create('AttributeUsage', { ownerId: vehicle!.id, declaredName: 'payloadE2E' });
     api.create('ConstraintUsage', {
       ownerId: vehicle!.id,
       declaredName: 'payloadDefinition',
-      attrs: { expression: 'payloadE2E == mass / 3' },
+      attrs: { expression: 'payloadE2E == mass / 3', requirementRole: 'assert' },
+    });
+    // The same equation REQUIRED is a check, never a definition: with no
+    // value given for the feature anywhere, Check cannot evaluate it.
+    api.create('AttributeUsage', { ownerId: vehicle!.id, declaredName: 'cargoE2E' });
+    api.create('ConstraintUsage', {
+      ownerId: vehicle!.id,
+      declaredName: 'cargoCondition',
+      attrs: { expression: 'cargoE2E == mass / 3', requirementRole: 'require' },
     });
     // A target over a measure with no value of its own, read through the
     // feature that specialises it in another package: Check lists the reading
@@ -130,6 +139,17 @@ test('Simulate lists action-flow and state-machine traces; Check lists constrain
   await expect(
     page.getByTestId('problem-row').filter({ hasText: 'Constraint satisfied: defines payloadE2E = 500' }).first(),
   ).toBeVisible();
+  await expect(
+    page
+      .getByTestId('problem-row')
+      .filter({
+        hasText:
+          'Constraint could not be evaluated ("cargoE2E == mass / 3"): ' +
+          'Could not evaluate: cargoE2E has no value anywhere and nothing specialises it.',
+      })
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByTestId('problem-row').filter({ hasText: 'defines cargoE2E' })).toHaveCount(0);
   await expect(
     page
       .getByTestId('problem-row')

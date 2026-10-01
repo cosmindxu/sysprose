@@ -167,6 +167,57 @@ describe('semantics — a valueless feature fixed by an equation beside it (CV-1
     const check = checkConstraints(m).find((c) => c.expression.startsWith('b =='))!;
     expect(check.result).toBe('violated');
   });
+
+  // Only an ASSERTED equation defines. The same equation as a `require`, a
+  // plain `constraint` or a requirement's `assume` is a check of a value the
+  // model gives elsewhere — a brief's test condition, `require constraint {
+  // jammed == 0.5 }` on a measure with no value, read "defines jammed = 0.5".
+  it.each([
+    ['require constraint', 'require constraint { watched == fleet * share }'],
+    ['plain constraint', 'constraint { watched == fleet * share }'],
+    ['named require constraint', 'require constraint condition { watched == fleet * share }'],
+  ])('does not read a %s as a definition', (_kind, clause) => {
+    const m = parseModel(`package LA {
+      attribute fleet = 12;
+      attribute share = 0.05;
+      attribute watched;
+      ${clause}
+    }`).model;
+    const la = m.all().find((e) => e.declaredName === 'LA')!;
+    expect(scopeFor(m, la.id)('watched')).toBeUndefined();
+    const watched = m.all().find((e) => e.declaredName === 'watched')!;
+    expect((evaluateFeatureValue(m, watched.id) as { unknown?: boolean }).unknown).toBe(true);
+    const check = checkConstraints(m).find((c) => c.expression === 'watched == fleet * share')!;
+    expect(check.result).toBe('unknown');
+    expect(check.message).toBe('Could not evaluate: watched has no value anywhere and nothing specialises it');
+  });
+
+  it('does not read a requirement’s assume or require as a definition', () => {
+    const m = parseModel(`package P {
+      requirement def R {
+        attribute x;
+        attribute y;
+        assume constraint { x == 2 }
+        require constraint { y == x * 3 }
+      }
+    }`).model;
+    const r = m.all().find((e) => e.declaredName === 'R')!;
+    expect(scopeFor(m, r.id)('x')).toBeUndefined();
+    expect(scopeFor(m, r.id)('y')).toBeUndefined();
+    for (const c of checkConstraints(m)) {
+      expect(c.result, c.expression).toBe('unknown');
+      expect(c.message, c.expression).not.toMatch(/defines/);
+    }
+  });
+
+  it('reads the same equation as a definition once it is asserted', () => {
+    const m = parseModel(
+      'package LA { attribute fleet = 12; attribute share = 0.05; attribute watched; assert constraint { watched == fleet * share } }',
+    ).model;
+    const check = checkConstraints(m).find((c) => c.expression === 'watched == fleet * share')!;
+    expect(check.result).toBe('satisfied');
+    expect(check.message).toBe('Constraint satisfied: defines watched = 0.6');
+  });
 });
 
 /*
@@ -293,6 +344,25 @@ describe('checkConstraints — a target read through the features that specialis
       'Common::t (m >= 0.9) could not be evaluated for PA: 2 features in PA specialise m (PA::a, PA::b); ' +
         'no one of them is the estimate',
     );
+  });
+
+  it('reads a specialiser fixed by an asserted equation, and only an asserted one', () => {
+    // BRIEF's LA layer with its equation's keyword varied: the asserted one is
+    // the estimate, the same equation as a check gives the layer no value.
+    const read = (keyword: string) => {
+      const src = BRIEF.replace('assert constraint { m == fleet * share }', `${keyword} { m == fleet * share }`);
+      expect(src.includes('assert constraint { m =='), keyword).toBe(keyword === 'assert constraint');
+      const [la] = checkOf(model(src), 'B::Common::t').instances!;
+      return [la.result, la.value, la.message];
+    };
+    expect(read('assert constraint')).toEqual(['violated', 0.6, 'LA::m = 0.6 misses Common::t (m >= 0.9)']);
+    for (const keyword of ['require constraint', 'constraint']) {
+      expect(read(keyword), keyword).toEqual([
+        'unknown',
+        undefined,
+        'Common::t (m >= 0.9) could not be evaluated for LA: LA::m has no value and no defining equation',
+      ]);
+    }
   });
 
   it('gives an unknown instance, not a skipped one, for a specialiser with no value', () => {
