@@ -202,7 +202,13 @@ async function emptyCanvasPoint() {
     const pane = document.querySelector('.react-flow__pane').getBoundingClientRect();
     const blockers = [...document.querySelectorAll('.react-flow__node, .react-flow__panel, .react-flow__controls, .react-flow__minimap, .react-flow__edge-label, [data-testid="edge-label"]')]
       .map((n) => n.getBoundingClientRect());
-    const free = (x, y) => !blockers.some((r) => x >= r.left - 40 && x <= r.right + 40 && y >= r.top - 40 && y <= r.bottom + 40);
+    // Clear of every box, and the pane itself under the pointer: an edge's
+    // invisible hit path (about 20 px wide) is not a box, and a click on it
+    // places nothing — measured on the LA tutorial: once a fifth equation moved
+    // the layout, its Part click on "empty canvas" created no part.
+    const free = (x, y) =>
+      !blockers.some((r) => x >= r.left - 40 && x <= r.right + 40 && y >= r.top - 40 && y <= r.bottom + 40) &&
+      document.elementFromPoint(x, y)?.classList.contains('react-flow__pane') === true;
     const cx = pane.left + pane.width / 2;
     const cy = pane.top + pane.height / 2;
     let best = null;
