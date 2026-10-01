@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { captureErrors, findElementId, gotoApp, openTab, shot } from './fixtures';
+import { captureErrors, findElementId, gotoApp, openTab, revealNode, shot } from './fixtures';
 import { exists, nameOf, setPropName } from './model-helpers';
 
 test('a Properties rename lands in the tree, on the diagram node, and in the text', async ({
@@ -65,8 +65,8 @@ test('deleting a node on the canvas removes it from the tree and from the notati
   const editor = page.getByTestId('text-editor');
   expect(await editor.inputValue()).toContain('part def Engine');
 
-  // ── Delete via the node context menu ──
-  await node.click({ button: 'right', force: true, position: { x: 8, y: 6 } });
+  // ── Delete via the node context menu (never a forced click: see revealNode) ──
+  await node.click({ button: 'right', position: await revealNode(page, engineDefId) });
   await expect(page.getByTestId('node-ctx-menu')).toBeVisible();
   await page.getByTestId('node-ctx-delete').click();
 

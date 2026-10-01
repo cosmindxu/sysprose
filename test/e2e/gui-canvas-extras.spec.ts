@@ -13,12 +13,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { captureErrors, gotoApp, openTab, shot } from './fixtures';
-
-/** The React Flow viewport transform (pan/zoom), as a string. */
-async function transform(page: Page): Promise<string> {
-  return page.locator('.react-flow__viewport').evaluate((el) => (el as HTMLElement).style.transform);
-}
+import { captureErrors, gotoApp, openTab, shot, viewportTransform } from './fixtures';
 
 /** Positions of the laid-out nodes, as a comparable string. */
 async function positions(page: Page): Promise<string> {
@@ -40,7 +35,7 @@ test('the pane menu fits the view and the mini-toolbar re-runs auto-layout', asy
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 - 220, box.y + box.height / 2 - 160, { steps: 8 });
   await page.mouse.up();
-  const panned = await transform(page);
+  const panned = await viewportTransform(page);
 
   // Dispatch the contextmenu on the pane itself — a positioned mouse right-click
   // risks landing on a node (this test has just panned the graph around).
@@ -55,7 +50,7 @@ test('the pane menu fits the view and the mini-toolbar re-runs auto-layout', asy
 
   // The menu closes and the viewport is no longer where the pan left it.
   await expect(page.getByTestId('pane-ctx-menu')).toHaveCount(0);
-  await expect.poll(() => transform(page)).not.toBe(panned);
+  await expect.poll(() => viewportTransform(page)).not.toBe(panned);
   await shot(page, 'canvas-extras-a-fit');
 
   // ── Auto-layout re-lays the graph: nodes are re-placed, none is lost ──

@@ -10,7 +10,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { captureErrors, gotoApp, selectElementById, shot, treeName } from './fixtures';
+import { captureErrors, gotoApp, revealNode, selectElementById, shot, treeName } from './fixtures';
 
 test.setTimeout(600_000);
 
@@ -193,22 +193,30 @@ test('deep modeling session: powertrain from scratch → text → validate → u
   await expect(
     page.locator(`.react-flow__node[data-id="${transUsage}"]`),
   ).toBeVisible();
+  // Click the header corners revealNode returns, never with `force` (see
+  // revealNode); both ends are revealed before the tool is armed. A fit that
+  // reveals one end moves the other, so the source is read again.
+  await revealNode(page, engUsage);
+  await revealNode(page, transUsage);
+  const src = await revealNode(page, engUsage);
   const edgesBefore = await countOfType(page, 'ConnectionUsage');
   await page
     .locator(`[data-testid="palette-tool"][data-kind="ConnectionUsage"][data-tooltype="edge"]`)
     .first()
     .click();
-  const HEAD = { force: true, position: { x: 8, y: 6 } } as const;
-  // Click via raw mouse at the box centre: React re-renders nodes after the
-  // first click (pendingSource decoration), which can detach a locator click.
-  const clickNodeCenter = async (id: string): Promise<void> => {
+  // Click the target via raw mouse: React re-renders nodes after the first
+  // click (pendingSource decoration), which can detach a locator click. A raw
+  // click never scrolls and has no hit-target check, so revealNode is all that
+  // keeps it on the node: it checks that the point is this node's, on canvas.
+  const clickNodeRaw = async (id: string): Promise<void> => {
+    const at = await revealNode(page, id);
     const box = await page.locator(`.react-flow__node[data-id="${id}"]`).boundingBox();
     if (!box) throw new Error(`node ${id} not found`);
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.click(box.x + at.x, box.y + at.y);
   };
-  await page.locator(`.react-flow__node[data-id="${engUsage}"]`).click(HEAD);
+  await page.locator(`.react-flow__node[data-id="${engUsage}"]`).click({ position: src });
   await page.waitForTimeout(400);
-  await clickNodeCenter(transUsage);
+  await clickNodeRaw(transUsage);
   await expect.poll(() => countOfType(page, 'ConnectionUsage')).toBe(edgesBefore + 1);
   const wired = await page.evaluate(
     ({ src, tgt }) =>

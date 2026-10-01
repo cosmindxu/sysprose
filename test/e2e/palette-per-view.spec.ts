@@ -21,7 +21,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { captureErrors, findElementId, gotoApp, selectElementById, shot } from './fixtures';
+import { captureErrors, findElementId, gotoApp, revealNode, selectElementById, shot } from './fixtures';
 
 interface SdkLite {
   elementsOfType: (t: string) => { id: string }[];
@@ -178,13 +178,18 @@ for (const cfg of VIEWS) {
       await expect(rfNode(srcId)).toBeVisible();
       await expect(rfNode(tgtId)).toBeVisible();
 
+      // Click the header corners revealNode returns, never with `force` (see
+      // revealNode); both ends are revealed before the tool is armed. A fit
+      // that reveals one end moves the other, so the source is read again.
+      await revealNode(page, srcId);
+      const tgt = await revealNode(page, tgtId);
+      const src = await revealNode(page, srcId);
       const edgesBefore = await countOfType(page, edgeKind);
       await page
         .locator(`[data-testid="palette-tool"][data-kind="${edgeKind}"][data-tooltype="edge"]`)
         .click();
-      const HEAD = { force: true, position: { x: 8, y: 6 } } as const;
-      await rfNode(srcId).click(HEAD); // arm source
-      await rfNode(tgtId).click(HEAD); // resolve target → connect()
+      await rfNode(srcId).click({ position: src }); // arm source
+      await rfNode(tgtId).click({ position: tgt }); // resolve target → connect()
 
       await expect.poll(() => countOfType(page, edgeKind)).toBe(edgesBefore + 1);
 

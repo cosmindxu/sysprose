@@ -9,7 +9,7 @@
  * feature chains `m1.o` / `m2.i` — not the boxes.
  */
 import { test, expect, type Page } from '@playwright/test';
-import { captureErrors, treeName } from './fixtures';
+import { captureErrors, selectElementById, treeName, viewportSettled } from './fixtures';
 
 const FIXTURE = `package R {
     metadata def Hazard;
@@ -37,6 +37,24 @@ async function open(page: Page): Promise<void> {
 const idOf = (page: Page, q: string): Promise<string> =>
   page.evaluate((qn) => (window as unknown as { sysml: Sdk }).sysml.byName(qn)!.id, q);
 
+/**
+ * A port's handle on a part, where a click on the port lands. A boundary port
+ * draws a source and a target handle on one spot, one for each end it can be,
+ * so the later one, on top, is the one the pointer reaches.
+ */
+const portHandle = (page: Page, part: string, port: string) =>
+  page.locator(`.react-flow__node[data-id="${part}"] .react-flow__handle[data-handleid="${part}/${port}"]`).last();
+
+/**
+ * Zoom the canvas to one part, so that its port handles are big enough to hit.
+ * A whole-diagram fit would shrink them instead.
+ */
+async function zoomTo(page: Page, id: string): Promise<void> {
+  await selectElementById(page, id);
+  await page.getByTestId('diagram-fit-selection').click();
+  await viewportSettled(page);
+}
+
 async function text(page: Page): Promise<string> {
   await page.getByTestId('tab-text').click();
   return page.getByTestId('text-editor').inputValue();
@@ -51,10 +69,15 @@ test('an interface is drawn port to port, on the ports the parts have through th
   );
   const [m1, m2, o, i] = await Promise.all(['R::m1', 'R::m2', 'R::M::o', 'R::M::i'].map((q) => idOf(page, q)));
 
+  // Each part is zoomed to before its handle is clicked, and never with `force`
+  // (see revealNode in fixtures.ts). Selecting m2 in the Explorer keeps the armed tool and its
+  // pending end.
+  await zoomTo(page, m1);
   await page.locator('[data-testid="palette-tool"][data-kind="InterfaceUsage"]').click();
   await expect(page.getByTestId('canvas-tool-hint')).toContainText('port');
-  await page.locator(`.react-flow__node[data-id="${m1}"] .react-flow__handle.source[data-handleid="${m1}/${o}"]`).click({ force: true });
-  await page.locator(`.react-flow__node[data-id="${m2}"] .react-flow__handle.target[data-handleid="${m2}/${i}"]`).click({ force: true });
+  await portHandle(page, m1, o).click();
+  await zoomTo(page, m2);
+  await portHandle(page, m2, i).click();
 
   await expect.poll(() => text(page)).toContain('interface connect m1.o to m2.i;');
   // One interface, and no box-to-box one beside it.
@@ -74,7 +97,9 @@ test('Properties writes a #Tag and a requirement subject into the text', async (
   await page.getByTestId('prop-subject').press('Enter');
 
   await expect.poll(() => text(page)).toContain('#Hazard requirement H {');
-  expect(await text(page)).toContain('subject holder : M;');
+  // Polled too: the subject can land in a later recompute than the tag, and a
+  // single read after the tag's poll failed 3–4 of 8 runs under load.
+  await expect.poll(() => text(page)).toContain('subject holder : M;');
   // The tag resolves to the model's own metadata def.
   await expect(page.getByTestId('prop-keyword-reading')).toHaveText('R::Hazard');
   expect(errors).toEqual([]);

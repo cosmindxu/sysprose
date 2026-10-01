@@ -10,7 +10,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { captureErrors, findElementId, gotoApp, shot, diagramSettled } from './fixtures';
+import { captureErrors, findElementId, gotoApp, shot, diagramSettled, revealNode } from './fixtures';
 
 const countOfType = (page: import('@playwright/test').Page, eClass: string) =>
   page.evaluate(
@@ -40,30 +40,38 @@ test('interconnection: add part + port, connect two nodes, then all views render
   await expect(rfNode(vehicleDefId)).toBeVisible();
   await expect(rfNode(engineDefId)).toBeVisible();
 
-  // Click the node's header corner (force: a nested child may overlap the body).
-  const HEAD = { force: true, position: { x: 8, y: 6 } } as const;
+  // Every node click aims at the header corner revealNode returns (a nested
+  // child may overlap the body), never with `force`: see revealNode. Each node
+  // is revealed before its tool is armed, so no Fit is clicked mid-gesture.
 
   // ── Add a Part via the palette node tool (arm, then click a frame node) ──
   const partsBefore = await countOfType(page, 'PartUsage');
+  const vehicleHead = await revealNode(page, vehicleDefId);
   await page.locator('[data-testid="palette-tool"][data-kind="PartUsage"]').click();
-  await rfNode(vehicleDefId).click(HEAD);
+  await rfNode(vehicleDefId).click({ position: vehicleHead });
   await expect.poll(() => countOfType(page, 'PartUsage')).toBe(partsBefore + 1);
   await diagramSettled(page); // the next click aims at a box the new part moved
 
   // ── Add a Port via the palette node tool ──
   const portsBefore = await countOfType(page, 'PortUsage');
+  const engineHead = await revealNode(page, engineDefId);
   await page.locator('[data-testid="palette-tool"][data-kind="PortUsage"]').click();
-  await rfNode(engineDefId).click(HEAD);
+  await rfNode(engineDefId).click({ position: engineHead });
   await expect.poll(() => countOfType(page, 'PortUsage')).toBe(portsBefore + 1);
   await diagramSettled(page);
 
   await shot(page, '04b-after-add');
 
   // ── Draw a connection between two distinct nodes (click-to-connect) ──
+  // A fit that reveals one end moves the other, so the source is read again
+  // once the target is in view.
+  await revealNode(page, vehicleDefId);
+  const tgt = await revealNode(page, engineDefId);
+  const src = await revealNode(page, vehicleDefId);
   const connBefore = await countOfType(page, 'ConnectionUsage');
   await page.locator('[data-testid="palette-tool"][data-kind="ConnectionUsage"]').click();
-  await rfNode(vehicleDefId).click(HEAD); // arm source
-  await rfNode(engineDefId).click(HEAD); // resolve target → connect()
+  await rfNode(vehicleDefId).click({ position: src }); // arm source
+  await rfNode(engineDefId).click({ position: tgt }); // resolve target → connect()
   await expect.poll(() => countOfType(page, 'ConnectionUsage')).toBe(connBefore + 1);
 
   // The drawn edge appears in the model wired between the two chosen endpoints.
