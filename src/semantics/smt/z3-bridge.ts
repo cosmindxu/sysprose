@@ -80,7 +80,10 @@
  *    single-threaded build (a run with it on died at iteration 5), and a fresh
  *    context or module per check died faster, because what races is the
  *    module's own allocator; switching finalizers off instead fills the fixed
- *    2 GB heap in ~17 iterations.
+ *    2 GB heap in ~17 iterations. Reported upstream, with the process-wide
+ *    lock and the 600 s keep-alive timer an abandoned call leaves behind:
+ *    https://github.com/Z3Prover/z3/issues/10999 — when a `z3-solver` release
+ *    fixes them, the deferral, the lock release and the CLI exit can go.
  *
  * WHY SMT-LIB2 TEXT RATHER THAN THE `Context` OBJECT API. The encoder
  * ({@link ./encode}) builds a SCRIPT, and this bridge asserts it with
