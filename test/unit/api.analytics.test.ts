@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import { loadModelText } from '@text/load';
+import { parseModel } from '@text/index';
 import {
   ModelApi,
   countByMetaclass,
@@ -17,6 +18,7 @@ import {
   constraintReport,
   promptsFor,
   signatureCensus,
+  verifyModel,
   type SignatureCensus,
 } from '@api/index';
 import { setStatementKind } from '@semantics/index';
@@ -1703,5 +1705,50 @@ describe('analytics — the signature census', () => {
     expect(report.connectionCount).toBe(0);
     expect(report.portCount).toBe(2);
     expect(report.connectedPortCount).toBe(0);
+  });
+});
+
+/**
+ * A target over a measure with no value of its own (`Common::m`) is read once
+ * per context through the feature that specialises the measure there. The
+ * report carries those readings on the target's entry — the app's Check lists
+ * them from here — while the target itself stays unknown: the layers may
+ * disagree, and no one value is invented for Common. The engines read the same
+ * numeric surface, so the target is not evaluable to them either.
+ */
+describe('analytics — constraintReport carries a target read per specialisation', () => {
+  const BRIEF = `package B {
+  package Common {
+    attribute m : ScalarValues::Real;
+    require constraint t { m >= 0.9 }
+  }
+  package LA {
+    attribute fleet = 12;
+    attribute share = 0.05;
+    attribute m :> Common::m;
+    assert constraint { m == fleet * share }
+  }
+  package PA {
+    attribute m :> Common::m = 0.95;
+  }
+}`;
+
+  it('lists the instances on the target’s entry and keeps the target counted as unknown', () => {
+    const r = constraintReport(parseModel(BRIEF).model);
+    const t = r.constraints.find((c) => c.expression === 'm >= 0.9')!;
+    expect(t.result).toBe('unknown');
+    expect(t.instances!.map((i) => [i.context, i.result, i.message])).toEqual([
+      ['LA', 'violated', 'LA::m = 0.6 misses Common::t (m >= 0.9)'],
+      ['PA', 'satisfied', 'PA::m = 0.95 meets Common::t (m >= 0.9)'],
+    ]);
+    expect(r.unknown).toBe(1);
+    expect(r.violated).toBe(0);
+  });
+
+  it('leaves the literal engine reading the Common target as not evaluable, never refuted or holding', async () => {
+    const { model: m } = await loadModelText(BRIEF);
+    const { results } = await verifyModel(m!, { engine: 'literal' });
+    const t = results.find((v) => v.expression === 'm >= 0.9')!;
+    expect(t.claim).toBe('inconclusive');
   });
 });

@@ -508,7 +508,7 @@ refresh); `src/ui/panels/TextEditor.tsx`;
 
 | Button | What it runs | What you get |
 |---|---|---|
-| **Validate** | the rule engine (25 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
+| **Validate** | the rule engine (26 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
 | **Solve** | the numeric solver and the measures of effectiveness | solved values, violations, unknowns, and a feasibility verdict |
@@ -522,6 +522,25 @@ Two names worth separating:
 - **`feasible` means "no *known* violation."** A relation neither engine could
   judge is reported under *unknowns* and leaves the flag true. Read the two
   together; an unjudged constraint is not a satisfied one.
+
+**A target on a measure with no value of its own is read where the values
+are.** A brief often states its targets once, on abstract measures that carry
+no value (`package Common { attribute m : Real; require constraint t { m >= 0.9
+} }`), and each layer gives its own estimate as a feature that subsets or
+redefines the measure (`LA::m :> Common::m = 0.78`, `PA::m :> Common::m`
+fixed by an equation). `t` itself stays *could not be evaluated*, because the
+layers may disagree and no one value belongs to `Common` — but its message now
+says why (`m has no value here; evaluated per specialisation: LA::m, PA::m`, or
+`… nothing specialises it`), and the target is judged once per layer through
+that layer's estimate, by the same unit rules as any other check. Check lists
+each reading as its own row under the target, and Validate and `npm run check`
+report it as `validation/target-by-specialisation` at the estimate: a
+**warning** when it misses (`LA::m = 0.78 misses Common::t (m >= 0.9)`),
+**info** when it meets the target or cannot be read — two estimates of one
+measure in the same layer, or a layer that specialises only some of the
+measures a target names, are named rather than guessed between. A miss is its
+own code, not a `constraint-violation`, because an estimate that misses is a
+result to record, not a contradiction in the model.
 
 ### The Problems panel is one list
 
@@ -2865,7 +2884,7 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 `modelDescription.xml` for the selected block.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:570-590`, `2570-2600`, `src/ui/App.tsx:80-84`,
+`src/ui/store.ts:570-590`, `2589-2619`, `src/ui/App.tsx:80-84`,
 `test/e2e/persistence-reload.spec.ts`.
 
 ---

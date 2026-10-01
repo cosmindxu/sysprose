@@ -902,3 +902,61 @@ describe('useAppStore — interfaces drawn port to port, tags and subjects', () 
   });
 });
 
+/**
+ * The app's Check lists what the constraint report says, row for row:
+ * `runConstraintCheck` drops the validator's own constraint rows and re-lists
+ * `constraintReport` in their place. A target over a valueless measure gets one
+ * row per context that specialises the measure — navigable to the specialiser,
+ * worded as the validator words it — and an equation that defines a valueless
+ * feature still says what it defines (0b09f65).
+ */
+const BRIEF_TARGETS = `package B {
+  package Common {
+    attribute m : ScalarValues::Real;
+    require constraint t { m >= 0.9 }
+  }
+  package LA {
+    attribute fleet = 12;
+    attribute share = 0.05;
+    attribute m :> Common::m;
+    assert constraint { m == fleet * share }
+  }
+  package PA {
+    attribute m :> Common::m = 0.95;
+  }
+}`;
+
+describe('store — Check lists one row per specialisation of a target', () => {
+  beforeEach(() => {
+    useAppStore.setState({ model: new Model(), undoStack: [], redoStack: [], diagnostics: [] });
+  });
+
+  it('follows the target’s own row with a row per context, at the specialiser', () => {
+    const model = parseModel(BRIEF_TARGETS).model;
+    useAppStore.setState({ model });
+    st().runConstraintCheck();
+    const id = (q: string) => model.all().find((e) => model.qualifiedName(e.id) === q)!.id;
+    const rows = st().diagnostics.filter((d) => d.ruleId === 'constraint-check');
+    const at = rows.findIndex((d) => d.elementId === id('B::Common::t'));
+    expect(rows[at].message).toBe(
+      'Constraint could not be evaluated ("m >= 0.9"): Could not evaluate: m has no value here; ' +
+        'evaluated per specialisation: LA::m, PA::m.',
+    );
+    expect(rows.slice(at + 1, at + 3).map((d) => [d.severity, d.elementId, d.message])).toEqual([
+      ['warning', id('B::LA::m'), 'LA::m = 0.6 misses Common::t (m >= 0.9)'],
+      ['info', id('B::PA::m'), 'PA::m = 0.95 meets Common::t (m >= 0.9)'],
+    ]);
+    // The validator's own rows for the same findings are not listed twice.
+    expect(st().diagnostics.filter((d) => d.ruleId === 'target-by-specialisation')).toEqual([]);
+    expect(st().diagnostics.filter((d) => d.ruleId === 'constraint-violation')).toEqual([]);
+  });
+
+  it('still says what an equation defines', () => {
+    const model = parseModel(BRIEF_TARGETS).model;
+    useAppStore.setState({ model });
+    st().runConstraintCheck();
+    expect(st().diagnostics.map((d) => d.message)).toContain(
+      'Constraint satisfied: defines m = 0.6 (m == fleet * share)',
+    );
+  });
+});

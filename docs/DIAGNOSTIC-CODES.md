@@ -399,6 +399,13 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 - **Fires when:** A constraint or requirement expression is violated, or cannot be evaluated.
 - **Hint given:** Check the constraint expression and the values it reads; an unevaluable constraint usually references a feature with no value, or compares two different physical dimensions — read the message, which names the actual fault.
 
+### `validation/target-by-specialisation`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A target written over a measure that has no value where it is stated (`Common::m >= 0.9`) is read through a feature that subsets or redefines the measure in another context (`LA::m :> Common::m`): one finding per context, at that feature — a warning when its value misses the target, info when it meets it or cannot be read.
+- **Hint given:** A miss is a fact about the estimate, not a fault in the model: change the design if the target must be met, not the number to meet it. An info that could not be read names why — a context with two features that specialise the measure, a body that names a measure the context does not specialise, or a specialiser with no value and no defining equation.
+
 ### `validation/dimensional-consistency`
 
 - **Severity:** warning
@@ -798,4 +805,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*103 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*104 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

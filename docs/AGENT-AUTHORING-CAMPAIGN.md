@@ -136,8 +136,8 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **103 catalogue codes** in
-`src/text/langium/diagnostic-codes.ts` and **25 validation rules** in
+`npm run check` is what raises it — beside **104 catalogue codes** in
+`src/text/langium/diagnostic-codes.ts` and **26 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
 `RULES.length`.

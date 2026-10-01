@@ -970,7 +970,7 @@ const constraintViolation: ValidationRule = {
   run(model) {
     const mk = diagBuilder(this.id, this.severity);
     const out: Diagnostic[] = [];
-    for (const check of checkConstraints(model)) {
+    for (const check of sweepConstraints(model)) {
       const el = model.get(check.id);
       if (!el || isLibraryElement(el)) continue;
       if (isNonNormativeStatement(model, el.id)) continue;
@@ -985,6 +985,67 @@ const constraintViolation: ValidationRule = {
     return out;
   },
 };
+
+/**
+ * (15b) A target over a measure that has no value where it is written, read
+ * once per context through the feature that specialises the measure there —
+ * the specialisation instances {@link checkConstraints} attaches to a check.
+ *
+ * `package Common { attribute m : Real; require constraint t { m >= 0.9 } }`
+ * with `LA::m :> Common::m = 0.78` and `PA::m :> Common::m = 0.95` answers
+ * `t` unknown — `constraint-violation` still says so, and now says why — and
+ * this rule reports one finding per context, ANCHORED AT THE SPECIALISER: the
+ * line it points at is the estimate that misses, in the context that can
+ * change it, and a tool that sorts findings by where they sit (a layer's own
+ * versus one it inherits) sees an `LA` miss as `LA`'s.
+ *
+ * A miss is a warning; a met target, or one the context could not answer, is
+ * info. It is its own rule, not a `constraint-violation` warning, because a
+ * target an estimate misses is a fact about the design — often the very
+ * finding a trade study exists to record — not a contradiction in the model,
+ * and a caller that gates on `constraint-violation` must not start failing on
+ * it. The `#prose` / `#prompt` exemption is the same as that rule's.
+ */
+const targetBySpecialisation: ValidationRule = {
+  id: 'target-by-specialisation',
+  description: 'A target over a valueless measure, read once per context through the feature that specialises it.',
+  severity: 'warning',
+  run(model) {
+    const mk = diagBuilder(this.id, this.severity);
+    const out: Diagnostic[] = [];
+    for (const check of takeSweep(model)) {
+      if (!check.instances) continue;
+      const el = model.get(check.id);
+      if (!el || isLibraryElement(el)) continue;
+      if (isNonNormativeStatement(model, el.id)) continue;
+      for (const inst of check.instances) {
+        out.push(mk(inst.message, inst.featureId, inst.result === 'violated' ? 'warning' : 'info'));
+      }
+    }
+    return out;
+  },
+};
+
+/**
+ * One {@link checkConstraints} sweep for the two rules that read it. The UI
+ * validates on every edit, so `target-by-specialisation` (which runs right
+ * after `constraint-violation`) TAKES the sweep the first rule left rather
+ * than walking every constraint and every specialiser again. Taken, not
+ * shared: an entry is used once and only at the revision it was made at, so a
+ * later run never reads a sweep of a model that has moved on.
+ */
+type Sweep = ReturnType<typeof checkConstraints>;
+const lastSweep = new WeakMap<Model, { rev: number; checks: Sweep }>();
+function sweepConstraints(model: Model): Sweep {
+  const checks = checkConstraints(model);
+  lastSweep.set(model, { rev: model.rev, checks });
+  return checks;
+}
+function takeSweep(model: Model): Sweep {
+  const hit = lastSweep.get(model);
+  lastSweep.delete(model);
+  return hit && hit.rev === model.rev ? hit.checks : checkConstraints(model);
+}
 
 /**
  * (16) A feature typed by an ISQ quantity kind whose value carries a unit of a
@@ -1383,6 +1444,7 @@ export const RULES: ValidationRule[] = [
   valueTypeMismatch,
   redefinitionConformance,
   constraintViolation,
+  targetBySpecialisation,
   dimensionalConsistency,
   unknownUnit,
   derivedDimensionMismatch,

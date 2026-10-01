@@ -6,7 +6,7 @@ import { loadStandardLibrary } from '../../src/library/index';
 import { modelVersionOf, obligationDigest, proofScopeOf } from '@api/index';
 import { obligationsOf } from '@semantics/obligations';
 import { loadModelText } from '@text/load';
-import { serializeElement } from '@text/index';
+import { parseModel, serializeElement } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
   effectiveFeatures,
@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 25 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(25);
+  it('exposes all 26 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(26);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -1374,5 +1374,73 @@ describe('validate() aggregation & ordering', () => {
     f.partDef('Dup', p.id);
     const ids = validate(m).map((d) => d.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+/**
+ * (15b) A target over a valueless measure, read once per context through the
+ * feature that specialises the measure there: one finding per context, at the
+ * specialiser — a miss a warning, a met or unreadable one info.
+ */
+const BRIEF_TARGETS = `package B {
+  package Common {
+    attribute m : ScalarValues::Real;
+    require constraint t { m >= 0.9 }
+  }
+  package LA {
+    attribute fleet = 12;
+    attribute share = 0.05;
+    attribute m :> Common::m;
+    assert constraint { m == fleet * share }
+  }
+  package PA {
+    attribute m :> Common::m = 0.95;
+  }
+}`;
+
+describe('validation — target-by-specialisation', () => {
+  const parsed = (src: string): Model => parseModel(src).model;
+  const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+
+  it('reports one finding per context, at the specialiser: a miss is a warning, a met target info', () => {
+    const m = parsed(BRIEF_TARGETS);
+    const diags = runRule(m, 'target-by-specialisation');
+    expect(diags.map((d) => [d.severity, d.elementId, d.message])).toEqual([
+      ['warning', named(m, 'B::LA::m').id, 'LA::m = 0.6 misses Common::t (m >= 0.9)'],
+      ['info', named(m, 'B::PA::m').id, 'PA::m = 0.95 meets Common::t (m >= 0.9)'],
+    ]);
+  });
+
+  it('keeps the target’s own constraint-violation info, with the message that says why', () => {
+    const m = parsed(BRIEF_TARGETS);
+    const own = validate(m).filter((d) => d.ruleId === 'constraint-violation');
+    expect(own).toHaveLength(1);
+    expect(own[0].severity).toBe('info');
+    expect(own[0].message).toBe(
+      'Constraint could not be evaluated ("m >= 0.9"): Could not evaluate: m has no value here; ' +
+        'evaluated per specialisation: LA::m, PA::m.',
+    );
+  });
+
+  it('reports an unreadable context as info, and nothing for a target nothing specialises', () => {
+    const m = parsed(`package Common { attribute m : Real; constraint t { m >= 0.9 } attribute b : Real; constraint u { b <= 1 } }
+      package PA { attribute x :> Common::m = 0.5; attribute y :> Common::m = 0.95; }`);
+    const diags = runRule(m, 'target-by-specialisation');
+    expect(diags).toHaveLength(1);
+    expect(diags[0].severity).toBe('info');
+  });
+
+  it('is silent for a #prose target, as constraint-violation is', () => {
+    const m = parsed(`package Common { attribute m : Real; #prose constraint t { m >= 0.9 } }
+      package LA { attribute m :> Common::m = 0.5; }`);
+    expect(runRule(m, 'target-by-specialisation')).toEqual([]);
+  });
+
+  it('runs inside validate under its own code, after the sweep constraint-violation took', async () => {
+    const { diagnostics } = (await loadModelText(BRIEF_TARGETS)).report;
+    const ours = diagnostics.filter((d) => d.code === 'validation/target-by-specialisation');
+    expect(ours.map((d) => d.severity)).toEqual(['warning', 'info']);
+    // Anchored at the estimate's line, not the target's.
+    expect(ours.map((d) => d.range?.start.line)).toEqual([9, 13]);
   });
 });

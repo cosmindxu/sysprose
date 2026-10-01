@@ -9,7 +9,8 @@
  *    `attrs.expression` against its owner scope.
  *  - {@link checkConstraints} — parse and evaluate every ConstraintUsage /
  *    RequirementUsage that carries a boolean expression, classifying each as
- *    satisfied / violated / unknown.
+ *    satisfied / violated / unknown, and reading one that names a valueless
+ *    measure through the features that specialise it, once per context.
  */
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
@@ -17,12 +18,18 @@ import { effectiveFeatures } from './inheritance';
 import { evaluate, parseExpr, type EvalResult, type ExprNode } from './expr';
 import { DIMENSIONLESS, UNIT_REGISTRY, dimEqual, dimToString, type Dimension } from './units';
 import {
+  describeReason,
   dimensionClaimDetail,
+  equationDerivation,
   evaluateConstraintQuantityDetailed,
   isRefusalReason,
   quantityKindOf,
+  quantityRefsIn,
+  type ConstraintQuantityOptions,
   type ConstraintQuantityResult,
   type DerivationMemo,
+  type FeatureDerivation,
+  type Quantity,
 } from './units-eval';
 
 /** A resolver from a (possibly dotted) name to a known value, or `undefined`. */
@@ -294,6 +301,64 @@ export interface ConstraintCheck {
   expression: string;
   result: 'satisfied' | 'violated' | 'unknown';
   message: string;
+  /**
+   * The body read once per context through the features that specialise a
+   * measure it names — set only when the measure has no value where the
+   * constraint is written and something specialises it. `result` stays the
+   * constraint's own answer (`unknown`): the instances are readings of it
+   * elsewhere, and two contexts may disagree. See {@link SpecialisationInstance}.
+   */
+  instances?: SpecialisationInstance[];
+}
+
+/**
+ * One reading of a target through the features that specialise the measure it
+ * names, in one context.
+ *
+ * The shape is a brief's: `package Common { attribute m : Real; require
+ * constraint t { m >= 0.9 } }` states the target on an abstract measure that
+ * carries no value by design, and each layer gives its own estimate as a
+ * feature that subsets or redefines it (`package LA { attribute m :>
+ * Common::m = 0.78; }`). Every value of `LA::m` is a value of `Common::m`, so
+ * an estimate that misses the target is a real miss — but `LA` and `PA` may
+ * disagree, so no single value is invented for `Common`: the target is read
+ * once per context, and the constraint's own verdict stays unknown.
+ */
+export interface SpecialisationInstance {
+  /** The namespace the specialiser is written in (`LA`, `PA`): the instance's context. */
+  contextId: ElementId;
+  /** The context's name, as the messages print it. */
+  context: string;
+  /**
+   * The feature the instance is anchored at: the specialiser of the first
+   * measure the body names (a context that specialises none of them is never
+   * an instance).
+   */
+  featureId: ElementId;
+  /** The anchor's fully qualified name. */
+  qualifiedName: string;
+  /** The anchor's value, when it has one that could be read. */
+  value?: number | boolean | string;
+  /** Each measure the body names, and the feature that stands for it in this context. */
+  bindings: SpecialisationBinding[];
+  result: 'satisfied' | 'violated' | 'unknown';
+  /**
+   * The finding, worded for the specialiser it is anchored at —
+   * `LA::m = 0.78 misses Common::t (m >= 0.9)` — and shared by the validator
+   * and the app's Check, so both say the same thing.
+   */
+  message: string;
+}
+
+/** One measure of a {@link SpecialisationInstance}, bound to its specialiser. */
+export interface SpecialisationBinding {
+  /** The bare name the body reads. */
+  name: string;
+  featureId: ElementId;
+  qualifiedName: string;
+  value?: number | boolean | string;
+  /** The unit the value is written in, when it carries one. */
+  unit?: string;
 }
 
 /**
@@ -301,6 +366,10 @@ export interface ConstraintCheck {
  * expression (`attrs.expression`, e.g. from a `require { … }` clause) against a
  * scope built from its subject context (its owner, then itself), classifying
  * each as satisfied / violated / unknown.
+ *
+ * A constraint left unknown because it names a measure with no value where it
+ * is written is also read through the features that specialise that measure,
+ * once per context — see {@link SpecialisationInstance}.
  */
 export function checkConstraints(model: Model): ConstraintCheck[] {
   const out: ConstraintCheck[] = [];
@@ -310,139 +379,563 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
     const expr = el.attrs.expression;
     if (typeof expr !== 'string' || expr.trim() === '') continue;
 
+    const judged = judgeConstraint(model, el, expr, memo);
     const check: ConstraintCheck = {
       id: el.id,
       ownerId: el.ownerId,
       expression: expr,
-      result: 'unknown',
-      message: '',
+      result: judged.result,
+      message: judged.message,
     };
-
-    let node;
-    try {
-      node = parseExpr(expr);
-    } catch (e) {
-      // The scalar grammar rejects unit literals (`2000 [kg]`); retry with the
-      // unit-aware evaluator before giving up. When the text does carry a
-      // bracket, the unit-aware reason is the real one — "Unexpected character
-      // '['" told the author the intended syntax was illegal.
-      const ua = applyUnitAware(check, model, el, expr, memo);
-      if (ua !== true) {
-        check.result = 'unknown';
-        if (!expr.includes('[') || ua.detail === undefined) {
-          check.message = `Could not parse expression: ${(e as Error).message}`;
-        } else if (ua.reason === 'parse') {
-          // Both parsers refused, but the bracket is not the fault: the body
-          // mixes a legal unit literal with syntax neither grammar has (a call
-          // such as `DurationOf(x) <= 48 [h]`, an index, a string).
-          check.message =
-            'Could not evaluate: the body combines a unit literal with syntax the unit-aware evaluator does not ' +
-            `support (a call, an index or a string literal) — the \`[unit]\` itself is legal; ${ua.detail}`;
-        } else {
-          check.message = `Could not evaluate: ${ua.detail}`;
-        }
-      }
-      out.push(check);
-      continue;
-    }
-
-    // UNIT-AWARE FIRST, scalar as the fallback. The scalar evaluator is
-    // unit-blind: it compares raw magnitudes, so `640 [Wh]` against `650 [W]`
-    // and `45 [min]` produced a confident, WRONG verdict, and the unit-aware
-    // evaluator was only consulted once the scalar one had already failed.
-    // Unit-aware goes first now; but it answers `unknown` for a dimensioned
-    // feature compared with a bare literal (`mtow [kg] <= 25.0` — a unit
-    // literal in the body, `<= 25.0 [kg]`, now parses and reaches it verbatim,
-    // yet a bare literal is still what most bodies spell), so the scalar path
-    // remains the fallback for exactly those, not a hard switch.
-    const ua = applyUnitAware(check, model, el, expr, memo);
-    if (ua === true) {
-      out.push(check);
-      continue;
-    }
-    // A reasoned refusal is not a gap the scalar path may fill: arithmetic on
-    // an offset scale (`dT == t2 - t1` in °C), a derived feature whose
-    // dimension disagrees with its type, and a comparison of two genuinely
-    // different dimensions (`d [m] >= t [s]` — `dimension-clash`) all read as
-    // plausible raw magnitudes there, and that is precisely the wrong answer
-    // being refused. `dimension` is deliberately NOT a refusal: it is the same
-    // predicate with a DIMENSIONLESS side (`mtow [kg] <= 25.0`), the
-    // bare-literal contract, where reading the literal in the feature's
-    // declared unit is what the author meant — that is the fallback below.
-    // The membership test lives in units-eval, beside the reasons themselves.
-    if (isRefusalReason(ua.reason)) {
-      check.result = 'unknown';
-      check.message = `Could not evaluate: ${ua.detail}`;
-      out.push(check);
-      continue;
-    }
-
-    // The bare-literal contract holds for a LITERAL-valued feature: its
-    // declared unit is the unit the literal is read in. It does not hold for a
-    // DERIVED feature — `endurance = capacity * fraction / power` is 2835.7 s
-    // or 0.7877 Wh/W depending on who reads it, and the scalar path reads raw
-    // magnitudes — so a derived dimensioned feature is never compared as a
-    // bare number: answer unknown and name the repair.
-    const refusal = derivedBareLiteralRefusal(model, el, node, memo);
-    if (refusal) {
-      check.result = 'unknown';
-      check.message = refusal;
-      out.push(check);
-      continue;
-    }
-
-    // Scope from the owner (subject context) merged with the constraint itself.
-    const scope = combinedScope(model, el);
-    const r = evaluate(node, scope);
-    if ('unknown' in r) {
-      check.result = 'unknown';
-      check.message = 'Could not evaluate: a referenced value is unknown';
-    } else if (r.value === true) {
-      check.result = 'satisfied';
-      // An equation that fixes a valueless feature is not a check that passed
-      // but a definition that was read: say what it fixed the feature to.
-      const defined = definedFeatureOf(model, el);
-      const value = defined ? scope(defined.declaredName!) : undefined;
-      check.message =
-        defined && typeof value === 'number'
-          ? `Constraint satisfied: defines ${defined.declaredName} = ${Number(value.toPrecision(6))}`
-          : 'Constraint satisfied';
-    } else if (r.value === false) {
-      check.result = 'violated';
-      check.message = `Constraint violated: ${expr}`;
-    } else {
-      check.result = 'unknown';
-      check.message = 'Expression did not evaluate to a boolean';
-    }
+    if (judged.gap) readThroughSpecialisers(model, el, expr, check, memo);
     out.push(check);
   }
   return out;
 }
 
+/** A name a target is read through: the specialiser standing for a measure. */
+interface Bound {
+  featureId: ElementId;
+  /** The scalar value, as the scalar scope would answer it. */
+  value: unknown;
+  /** The same value as a quantity, for the unit-aware path (absent for a boolean). */
+  quantity?: Quantity;
+  /**
+   * The derivation a defining equation gives the feature (CV-17), which its
+   * own derivation record cannot carry: it states no value to derive.
+   */
+  derivation?: FeatureDerivation;
+}
+
+/** What one pass of the pipeline made of a constraint. */
+interface Judgement {
+  result: 'satisfied' | 'violated' | 'unknown';
+  message: string;
+  /**
+   * True when the answer is unknown only because a referenced value is
+   * missing — not a refusal, not a parse failure — so reading the body
+   * through a specialiser of the missing measure may answer it.
+   */
+  gap: boolean;
+}
+
 /**
- * Try to classify a constraint with the unit-aware evaluator, writing the
- * outcome onto `check`. Returns `true` when it produced a definitive
- * satisfied/violated verdict, else the detailed inconclusive result.
+ * The one pipeline every constraint is judged by — unit-aware first, then the
+ * refusals, then the scalar path — with `bindings` naming the features that
+ * stand for some of its names (a target read through a specialiser). A target
+ * read in another context is judged by exactly the rules its own context
+ * would be: a second, scalar-only evaluator here would hand a dimensioned
+ * specialiser the raw-magnitude verdict the refusals exist to prevent.
  */
-function applyUnitAware(
-  check: ConstraintCheck,
+function judgeConstraint(
   model: Model,
   el: ElementRecord,
   expr: string,
   memo: DerivationMemo,
-): true | ConstraintQuantityResult {
-  const ua = evaluateConstraintQuantityDetailed(model, el, { memo });
-  if (ua.verdict === 'satisfied') {
-    check.result = 'satisfied';
-    check.message = 'Constraint satisfied';
-    return true;
+  bindings?: ReadonlyMap<string, Bound>,
+): Judgement {
+  const uaOpts: ConstraintQuantityOptions = bindings
+    ? { memo, bind: (name) => bindings.get(name)?.quantity }
+    : { memo };
+
+  let node;
+  try {
+    node = parseExpr(expr);
+  } catch (e) {
+    // The scalar grammar rejects unit literals (`2000 [kg]`); retry with the
+    // unit-aware evaluator before giving up. When the text does carry a
+    // bracket, the unit-aware reason is the real one — "Unexpected character
+    // '['" told the author the intended syntax was illegal.
+    const ua = unitAwareVerdict(model, el, expr, uaOpts);
+    if ('gap' in ua) return ua;
+    if (!expr.includes('[') || ua.detail === undefined) {
+      return { result: 'unknown', message: `Could not parse expression: ${(e as Error).message}`, gap: false };
+    }
+    if (ua.reason === 'parse') {
+      // Both parsers refused, but the bracket is not the fault: the body
+      // mixes a legal unit literal with syntax neither grammar has (a call
+      // such as `DurationOf(x) <= 48 [h]`, an index, a string).
+      return {
+        result: 'unknown',
+        message:
+          'Could not evaluate: the body combines a unit literal with syntax the unit-aware evaluator does not ' +
+          `support (a call, an index or a string literal) — the \`[unit]\` itself is legal; ${ua.detail}`,
+        gap: false,
+      };
+    }
+    return { result: 'unknown', message: `Could not evaluate: ${ua.detail}`, gap: ua.reason === 'unresolved' };
   }
-  if (ua.verdict === 'violated') {
-    check.result = 'violated';
-    check.message = `Constraint violated: ${expr}`;
-    return true;
+
+  // UNIT-AWARE FIRST, scalar as the fallback. The scalar evaluator is
+  // unit-blind: it compares raw magnitudes, so `640 [Wh]` against `650 [W]`
+  // and `45 [min]` produced a confident, WRONG verdict, and the unit-aware
+  // evaluator was only consulted once the scalar one had already failed.
+  // Unit-aware goes first now; but it answers `unknown` for a dimensioned
+  // feature compared with a bare literal (`mtow [kg] <= 25.0` — a unit
+  // literal in the body, `<= 25.0 [kg]`, now parses and reaches it verbatim,
+  // yet a bare literal is still what most bodies spell), so the scalar path
+  // remains the fallback for exactly those, not a hard switch.
+  const ua = unitAwareVerdict(model, el, expr, uaOpts);
+  if ('gap' in ua) return ua;
+  // A reasoned refusal is not a gap the scalar path may fill: arithmetic on
+  // an offset scale (`dT == t2 - t1` in °C), a derived feature whose
+  // dimension disagrees with its type, and a comparison of two genuinely
+  // different dimensions (`d [m] >= t [s]` — `dimension-clash`) all read as
+  // plausible raw magnitudes there, and that is precisely the wrong answer
+  // being refused. `dimension` is deliberately NOT a refusal: it is the same
+  // predicate with a DIMENSIONLESS side (`mtow [kg] <= 25.0`), the
+  // bare-literal contract, where reading the literal in the feature's
+  // declared unit is what the author meant — that is the fallback below.
+  // The membership test lives in units-eval, beside the reasons themselves.
+  if (isRefusalReason(ua.reason)) {
+    return { result: 'unknown', message: `Could not evaluate: ${ua.detail}`, gap: false };
   }
+
+  // The bare-literal contract holds for a LITERAL-valued feature: its
+  // declared unit is the unit the literal is read in. It does not hold for a
+  // DERIVED feature — `endurance = capacity * fraction / power` is 2835.7 s
+  // or 0.7877 Wh/W depending on who reads it, and the scalar path reads raw
+  // magnitudes — so a derived dimensioned feature is never compared as a
+  // bare number: answer unknown and name the repair.
+  const refusal = derivedBareLiteralRefusal(model, el, node, memo, bindings);
+  if (refusal) return { result: 'unknown', message: refusal, gap: false };
+
+  // Scope from the owner (subject context) merged with the constraint itself.
+  const own = combinedScope(model, el);
+  const scope: Scope = bindings
+    ? (name) => {
+        const bound = bindings.get(name);
+        return bound !== undefined ? bound.value : own(name);
+      }
+    : own;
+  const r = evaluate(node, scope);
+  if ('unknown' in r) {
+    return { result: 'unknown', message: 'Could not evaluate: a referenced value is unknown', gap: true };
+  }
+  if (r.value === true) {
+    // An equation that fixes a valueless feature is not a check that passed
+    // but a definition that was read: say what it fixed the feature to.
+    const defined = bindings ? undefined : definedFeatureOf(model, el);
+    const value = defined ? scope(defined.declaredName!) : undefined;
+    return {
+      result: 'satisfied',
+      message:
+        defined && typeof value === 'number'
+          ? `Constraint satisfied: defines ${defined.declaredName} = ${Number(value.toPrecision(6))}`
+          : 'Constraint satisfied',
+      gap: false,
+    };
+  }
+  if (r.value === false) return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false };
+  return { result: 'unknown', message: 'Expression did not evaluate to a boolean', gap: false };
+}
+
+/**
+ * The unit-aware evaluator's definitive verdict as a {@link Judgement}, or
+ * the detailed inconclusive result for the caller to classify.
+ */
+function unitAwareVerdict(
+  model: Model,
+  el: ElementRecord,
+  expr: string,
+  opts: ConstraintQuantityOptions,
+): Judgement | ConstraintQuantityResult {
+  const ua = evaluateConstraintQuantityDetailed(model, el, opts);
+  if (ua.verdict === 'satisfied') return { result: 'satisfied', message: 'Constraint satisfied', gap: false };
+  if (ua.verdict === 'violated') return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false };
   return ua;
+}
+
+/* ─────────────── A target read through the features that specialise its measure ─────────────── */
+
+/** A measure a body names, as the constraint's own context declares it. */
+interface Measure {
+  name: string;
+  feature: ElementRecord;
+}
+
+/** Every feature that specialises one measure, transitively, grouped by context. */
+interface Specialisers {
+  byContext: Map<ElementId | null, ElementRecord[]>;
+  /** Specialiser id → the features it directly subsets or redefines (within the walk). */
+  parents: Map<ElementId, Set<ElementId>>;
+}
+
+/**
+ * Read an unknown constraint through the features that specialise the
+ * measures it names, once per context, and say on `check` why its own answer
+ * is unknown. See {@link SpecialisationInstance} for the shape this serves.
+ *
+ * A measure is a bare name the body reads that denotes a VALUELESS feature of
+ * the constraint's owner, with no value the scope can find for it (a defining
+ * equation beside it already answers it). Its specialisers are the features
+ * that subset or redefine it, transitively (`PA::m :>> LA::m :> Common::m`),
+ * each in the context — the namespace — it is written in. Per context:
+ *  - one chain of specialisers (`b :> a :> Common::m`, both in `LA`) gives
+ *    the deepest that states a value or has a defining equation;
+ *  - two that are not on one chain (`PA::m` and `PA::n`, both `:> Common::m`)
+ *    are not one estimate, and the context's instance is unknown, naming both;
+ *  - a context that specialises some of the body's measures but not all is
+ *    unknown, naming what it lacks, rather than half-read.
+ * A name that already has a value where the constraint is written is read as
+ * that value — unless the context specialises it with a value of its own (a
+ * usage redefining its definition's default), which is then the one that
+ * counts there.
+ */
+function readThroughSpecialisers(
+  model: Model,
+  el: ElementRecord,
+  expr: string,
+  check: ConstraintCheck,
+  memo: DerivationMemo,
+): void {
+  if (el.ownerId == null) return;
+  const names = bareNamesIn(expr);
+  if (names.length === 0) return;
+  const scope = combinedScope(model, el);
+  const owned = effectiveFeatures(model, el.ownerId);
+  const missing: Measure[] = [];
+  const valued: Measure[] = [];
+  for (const name of names) {
+    if (scope(name) === undefined) {
+      const feature = owned.find((f) => f.declaredName === name && !hasValue(f));
+      if (feature) missing.push({ name, feature });
+    } else {
+      const feature = owned.find((f) => f.declaredName === name && hasValue(f));
+      if (feature) valued.push({ name, feature });
+    }
+  }
+  if (missing.length === 0) return;
+
+  const walks = new Map<string, Specialisers>();
+  for (const m of [...missing, ...valued]) walks.set(m.name, specialisersOf(model, m.feature));
+
+  // Contexts in the order the walk met them, from the measures with no value
+  // only: a context that merely overrides a valued name has nothing to answer.
+  const contexts: (ElementId | null)[] = [];
+  for (const m of missing) {
+    for (const ctx of walks.get(m.name)!.byContext.keys()) if (!contexts.includes(ctx)) contexts.push(ctx);
+  }
+
+  // The constraint's own message says WHY it is unknown, and where it was read instead.
+  const target = targetName(model, el);
+  const why = missing.map((m) => {
+    const walk = walks.get(m.name)!;
+    if (walk.byContext.size === 0) return `${m.name} has no value anywhere and nothing specialises it`;
+    const shown: string[] = [];
+    for (const cands of walk.byContext.values()) {
+      const pick = chooseSpecialiser(model, cands, walk);
+      for (const f of 'ambiguous' in pick ? pick.ambiguous : [pick.feature]) shown.push(shortName(model, f, m.name));
+    }
+    return `${m.name} has no value here; evaluated per specialisation: ${shown.join(', ')}`;
+  });
+  check.message = `Could not evaluate: ${why.join('; ')}`;
+  if (contexts.length === 0) return;
+
+  const instances: SpecialisationInstance[] = [];
+  for (const ctx of contexts) {
+    const contextName = ctx != null ? nameOf(model.get(ctx)) : '(top level)';
+    const bindings = new Map<string, Bound>();
+    const shown: SpecialisationBinding[] = [];
+    let anchor: ElementRecord | undefined;
+    let reason: string | undefined;
+
+    for (const m of missing) {
+      const cands = walks.get(m.name)!.byContext.get(ctx);
+      if (!cands) {
+        reason ??= `${contextName} does not specialise ${m.name}`;
+        continue;
+      }
+      const pick = chooseSpecialiser(model, cands, walks.get(m.name)!);
+      anchor ??= 'ambiguous' in pick ? pick.ambiguous[0] : pick.feature;
+      if ('ambiguous' in pick) {
+        reason ??=
+          `${pick.ambiguous.length} features in ${contextName} specialise ${m.name} ` +
+          `(${pick.ambiguous.map((f) => shortName(model, f, m.name)).join(', ')}); no one of them is the estimate`;
+        continue;
+      }
+      const read = readSpecialiser(model, pick.feature, m.name, memo);
+      const binding: SpecialisationBinding = {
+        name: m.name,
+        featureId: pick.feature.id,
+        qualifiedName: model.qualifiedName(pick.feature.id),
+      };
+      if ('bound' in read) {
+        Object.assign(binding, displayOf(read.bound));
+        bindings.set(m.name, read.bound);
+      } else {
+        reason ??= read.reason;
+      }
+      shown.push(binding);
+    }
+
+    // A valued name the context overrides with a value of its own reads as that.
+    for (const m of valued) {
+      const cands = walks.get(m.name)!.byContext.get(ctx);
+      if (!cands) continue;
+      const pick = chooseSpecialiser(model, cands, walks.get(m.name)!);
+      if ('ambiguous' in pick) {
+        reason ??=
+          `${pick.ambiguous.length} features in ${contextName} specialise ${m.name} ` +
+          `(${pick.ambiguous.map((f) => shortName(model, f, m.name)).join(', ')}); no one of them is the estimate`;
+        continue;
+      }
+      const read = readSpecialiser(model, pick.feature, m.name, memo);
+      if ('bound' in read) bindings.set(m.name, read.bound);
+      else if (read.refused) reason ??= read.reason;
+    }
+
+    if (!anchor) continue; // unreachable: the context came from a measure's walk
+    const judged: Judgement = reason
+      ? { result: 'unknown', message: reason, gap: false }
+      : judgeConstraint(model, el, expr, memo, bindings);
+    const value = shown.find((b) => b.featureId === anchor!.id)?.value;
+    const instance: SpecialisationInstance = {
+      contextId: ctx ?? anchor.id,
+      context: contextName,
+      featureId: anchor.id,
+      qualifiedName: model.qualifiedName(anchor.id),
+      bindings: shown,
+      result: judged.result,
+      message: instanceMessage(model, judged, shown, contextName, target, expr),
+    };
+    if (value !== undefined) instance.value = value;
+    instances.push(instance);
+  }
+  if (instances.length > 0) check.instances = instances;
+}
+
+/** The finding an instance reports, worded for the specialiser it is anchored at. */
+function instanceMessage(
+  model: Model,
+  judged: Judgement,
+  shown: SpecialisationBinding[],
+  contextName: string,
+  target: string,
+  expr: string,
+): string {
+  if (judged.result !== 'unknown') {
+    const values = shown
+      .map((b) => `${shortName(model, model.get(b.featureId), b.name)} = ${b.value ?? '?'}${b.unit ? ` [${b.unit}]` : ''}`)
+      .join(', ');
+    return `${values} ${judged.result === 'violated' ? 'misses' : 'meets'} ${target} (${expr})`;
+  }
+  const why = judged.message.replace(/^Could not evaluate: /, '');
+  return `${target} (${expr}) could not be evaluated for ${contextName}: ${why}`;
+}
+
+/**
+ * Every feature that subsets or redefines `measure`, transitively, grouped by
+ * the namespace it is written in. `source` is the specialiser on both
+ * relationships; a cycle (`a :> b`, `b :> a`) is walked once; library
+ * features are never a user's estimate.
+ */
+function specialisersOf(model: Model, measure: ElementRecord): Specialisers {
+  const byContext = new Map<ElementId | null, ElementRecord[]>();
+  const parents = new Map<ElementId, Set<ElementId>>();
+  const queue: ElementId[] = [measure.id];
+  while (queue.length > 0) {
+    const general = queue.shift()!;
+    for (const r of model.relationshipsTo(general)) {
+      if (r.eClass !== 'Subsetting' && r.eClass !== 'Redefinition') continue;
+      for (const s of r.source ?? []) {
+        const specific = model.get(s);
+        if (!specific || specific.attrs.isLibrary === true) continue;
+        const seen = parents.get(s);
+        if (seen) {
+          seen.add(general);
+          continue;
+        }
+        if (s === measure.id) continue;
+        parents.set(s, new Set([general]));
+        const list = byContext.get(specific.ownerId);
+        if (list) list.push(specific);
+        else byContext.set(specific.ownerId, [specific]);
+        queue.push(s);
+      }
+    }
+  }
+  return { byContext, parents };
+}
+
+/**
+ * The specialiser that stands for a measure in one context: of a chain, the
+ * deepest that states a value or has a defining equation (else the deepest,
+ * which then reads as "no value"); of two that are not on one chain, neither.
+ */
+function chooseSpecialiser(
+  model: Model,
+  candidates: ElementRecord[],
+  walk: Specialisers,
+): { feature: ElementRecord } | { ambiguous: ElementRecord[] } {
+  if (candidates.length === 1) return { feature: candidates[0]! };
+  // Ordered by the specialisation relation itself, not by distance from the
+  // measure: `a :> Common::m, b` beside `b :> Common::m` puts both one step
+  // from it, and a distance sort then left them in declaration order — the
+  // verdict flipped when the two lines were swapped. A feature's rank is how
+  // many of the others it specialises; on one chain the ranks are distinct.
+  const rank = new Map(
+    candidates.map((f) => [f.id, candidates.filter((g) => g !== f && specialises(f.id, g.id, walk.parents)).length]),
+  );
+  const sorted = [...candidates].sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+  for (let i = 1; i < sorted.length; i++) {
+    if (!specialises(sorted[i]!.id, sorted[i - 1]!.id, walk.parents)) return { ambiguous: sorted };
+  }
+  const defined = sorted.filter((f) => hasValue(f) || hasDefiningEquation(model, f));
+  return { feature: defined[defined.length - 1] ?? sorted[sorted.length - 1]! };
+}
+
+/** Does `specific` reach `general` over the walk's parent links? */
+function specialises(specific: ElementId, general: ElementId, parents: Map<ElementId, Set<ElementId>>): boolean {
+  const seen = new Set<ElementId>();
+  const stack = [specific];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (id === general) return true;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const p of parents.get(id) ?? []) stack.push(p);
+  }
+  return false;
+}
+
+/**
+ * A specialiser's value, as both pipelines read it: the scalar value its own
+ * context gives it (a literal, an expression, or the equation beside it —
+ * CV-17), and the same value as a quantity: a value's derivation, or the
+ * equation's defining side read by the unit-aware evaluator. A derivation it
+ * refuses (a dimension that disagrees with the declared type, an offset
+ * scale) is refused here too, and a dimensioned feature with no quantity is
+ * not compared — neither is ever read as a raw magnitude.
+ */
+function readSpecialiser(
+  model: Model,
+  feature: ElementRecord,
+  measure: string,
+  memo: DerivationMemo,
+): { bound: Bound } | { reason: string; refused: boolean } {
+  const name = shortName(model, feature, measure);
+  // A feature fixed by an equation beside it states no value to derive: its
+  // quantity is the equation's defining side, read by the unit-aware evaluator.
+  const equation =
+    !hasValue(feature) && feature.ownerId != null && feature.declaredName
+      ? definingEquationFor(model, feature.ownerId, feature.declaredName)
+      : undefined;
+  const expression = equation?.constraint.attrs.expression;
+  const byEquation =
+    typeof expression === 'string' ? equationDerivation(model, feature.id, expression, memo) : undefined;
+  const d = byEquation ?? dimensionClaimDetail(model, feature.id, memo);
+  if (isRefusalReason(d.reason)) {
+    const detail =
+      d.reason === 'mismatch' || d.reason === 'offset'
+        ? describeReason(d.reason, name)
+        : `"${name}" cannot be derived: ${describeReason(d.reason!, d.detail)}`;
+    return { reason: detail, refused: true };
+  }
+  const ev = evaluateFeatureValue(model, feature.id);
+  const value = 'value' in ev ? ev.value : undefined;
+  if (value === undefined || value === null) {
+    return {
+      reason:
+        hasValue(feature) || hasDefiningEquation(model, feature)
+          ? `${name} has no value that could be evaluated`
+          : `${name} has no value and no defining equation`,
+      refused: false,
+    };
+  }
+  // Without a quantity the scalar stands in for one only when it IS one: a
+  // dimensionless number. Labelling the unit-blind scalar of a dimensioned
+  // derivation with its kind read `640 [Wh] / 650 [W]` as 0.98 s, a confident
+  // miss of `>= 45.0 [min]` by a value of 59 min; and bound as a bare scalar
+  // it still missed `>= 45.0`. A dimensioned feature whose value could not be
+  // read as a quantity is not compared at all.
+  let quantity = d.q;
+  if (!quantity && typeof value === 'number') {
+    const kind = quantityKindOf(model, feature.id);
+    if (kind.dimension && !dimEqual(kind.dimension, DIMENSIONLESS)) {
+      const why = d.reason ? `: ${describeReason(d.reason, d.detail)}` : '';
+      return {
+        reason:
+          `${name} (${kind.name ?? dimToString(kind.dimension)}) has no value that could be read as a ` +
+          `quantity${why}, and its raw number is not compared`,
+        refused: false,
+      };
+    }
+    quantity = { magnitude: value, dimension: DIMENSIONLESS };
+  }
+  return {
+    bound: {
+      featureId: feature.id,
+      value,
+      ...(quantity ? { quantity } : {}),
+      ...(byEquation?.q ? { derivation: byEquation } : {}),
+    },
+  };
+}
+
+function hasValue(f: ElementRecord): boolean {
+  return f.attrs.value !== undefined && f.attrs.value !== null;
+}
+
+function hasDefiningEquation(model: Model, f: ElementRecord): boolean {
+  return f.ownerId != null && !!f.declaredName && definingEquationFor(model, f.ownerId, f.declaredName) !== undefined;
+}
+
+/** The bare (undotted) names a body reads, once each, in source order. */
+function bareNamesIn(expr: string): string[] {
+  let refs: string[] | undefined;
+  try {
+    refs = referencedNames(parseExpr(expr));
+  } catch {
+    refs = quantityRefsIn(expr);
+  }
+  return [...new Set((refs ?? []).filter((n) => !n.includes('.')))];
+}
+
+/** `Common::t`, or "a constraint in Common" for an unnamed one. */
+function targetName(model: Model, el: ElementRecord): string {
+  const owner = el.ownerId != null ? model.get(el.ownerId) : undefined;
+  const ownerName = nameOf(owner);
+  const own = el.declaredName ?? el.declaredShortName;
+  return own ? `${ownerName}::${own}` : `a constraint in ${ownerName}`;
+}
+
+/**
+ * `LA::m` — the context's name and the feature's, as the findings print it.
+ * An unnamed redefinition (`attribute :>> mass = 5`) is named by the measure
+ * it redefines, as the notation means it to be.
+ */
+function shortName(model: Model, f: ElementRecord | undefined, measure?: string): string {
+  if (!f) return '?';
+  const own = f.declaredName ?? f.declaredShortName ?? measure ?? nameOf(f);
+  const owner = f.ownerId != null ? model.get(f.ownerId) : undefined;
+  return owner ? `${nameOf(owner)}::${own}` : own;
+}
+
+function nameOf(el: ElementRecord | undefined): string {
+  if (!el) return '?';
+  return el.declaredName ?? el.declaredShortName ?? `«${el.eClass}»`;
+}
+
+/**
+ * A bound value as an instance reports it, to six significant figures. A
+ * dimensioned quantity is shown as it was COMPARED — in its own unit, or in
+ * the coherent SI unit when it carries none (a derivation): the scalar
+ * `0.9846` of `640 [Wh] / 650 [W]` is hours to no one, and printed beside
+ * `>= 45.0 [min]` it read as a miss of a target it meets.
+ */
+function displayOf(b: Bound): { value?: number | boolean | string; unit?: string } {
+  const round = (n: number): number => (Number.isFinite(n) ? Number(n.toPrecision(6)) : n);
+  const q = b.quantity;
+  if (q && !dimEqual(q.dimension, DIMENSIONLESS)) {
+    if (q.unit) return { value: round(q.magnitude), unit: q.unit };
+    const [unit] = unitsOfDimension(q.dimension);
+    return unit && unit !== 'unit' ? { value: round(q.magnitude), unit } : { value: round(q.magnitude) };
+  }
+  const v = b.value;
+  if (typeof v === 'number') return { value: round(v) };
+  if (typeof v === 'boolean' || typeof v === 'string') return { value: v };
+  return {};
 }
 
 /**
@@ -460,13 +953,17 @@ function derivedBareLiteralRefusal(
   el: ElementRecord,
   node: ExprNode,
   memo: DerivationMemo,
+  bindings?: ReadonlyMap<string, Bound>,
 ): string | undefined {
   const ownerIds = el.ownerId != null ? featureIdsFor(model, el.ownerId) : undefined;
   const selfIds = featureIdsFor(model, el.id);
   for (const name of referencedNames(node)) {
-    const id = ownerIds?.get(name) ?? selfIds.get(name);
+    // A name read through a specialiser is that feature here: its derivation
+    // is the one a bare literal would be compared against.
+    const bound = bindings?.get(name);
+    const id = bound?.featureId ?? ownerIds?.get(name) ?? selfIds.get(name);
     if (id === undefined) continue;
-    const derivation = dimensionClaimDetail(model, id, memo);
+    const derivation = bound?.derivation ?? dimensionClaimDetail(model, id, memo);
     const d = derivation.derived;
     if (!d || dimEqual(d, DIMENSIONLESS)) continue;
     const literal = firstNumericLiteral(node) ?? '45.0';

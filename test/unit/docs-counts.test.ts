@@ -505,7 +505,7 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
   {
     file: 'docs/FEATURE-PARITY.md',
     what: 'the validation.rules case count',
-    pattern: /`U validation\.rules` \(25 rules, (\d+) cases\)/,
+    pattern: /`U validation\.rules` \(26 rules, (\d+) cases\)/,
     actual: () => caseCount('test/unit/validation.rules.test.ts'),
   },
   {

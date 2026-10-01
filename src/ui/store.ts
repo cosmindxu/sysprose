@@ -1064,7 +1064,7 @@ const initialModel = buildSampleModel();
 const initialApi = new ModelApi(initialModel);
 const initialServer = new SysmlApiServer(initialModel);
 
-// Coalesce the per-mutation RECOMPUTE — validation (25 rules), textual
+// Coalesce the per-mutation RECOMPUTE — validation (26 rules), textual
 // re-serialization, and the ELK diagram rebuild — into a single pass after a
 // burst of edits settles, instead of running all three synchronously on every
 // edit (findings C4, C5, L6 — the dominant large-model cost). `rev` is bumped
@@ -2267,13 +2267,21 @@ export const useAppStore = create<AppState>((set, get) => {
      * Run the KerML constraint/requirement checker and surface every result in
      * the Problems list: satisfied → info, violated → warning, unknown → info,
      * each navigable to its owning constraint. Structural validation findings
-     * are kept, but the validator's own `constraint-violation` rows are dropped
-     * here to avoid double-listing the constraints we re-report in full.
+     * are kept, but the validator's own `constraint-violation` and
+     * `target-by-specialisation` rows are dropped here to avoid double-listing
+     * the constraints we re-report in full.
+     *
+     * A target over a valueless measure (`Common::m >= 0.9`) also gets one row
+     * per context that specialises the measure, right after its own row and
+     * worded as the validator words it — `LA::m = 0.78 misses Common::t (…)` —
+     * navigable to the specialiser, the estimate the row is about.
      */
     runConstraintCheck() {
       cancelRecompute();
       const { model } = get();
-      const base = safeValidate(model).filter((d) => d.ruleId !== 'constraint-violation');
+      const base = safeValidate(model).filter(
+        (d) => d.ruleId !== 'constraint-violation' && d.ruleId !== 'target-by-specialisation',
+      );
       let report;
       try {
         report = constraintReport(model);
@@ -2281,23 +2289,34 @@ export const useAppStore = create<AppState>((set, get) => {
         console.error('constraint check failed', err);
         report = { total: 0, satisfied: 0, violated: 0, unknown: 0, constraints: [] };
       }
-      const constraintDiags: Diagnostic[] = report.constraints.map((c, i) => ({
-        id: `constraint-check#${i}`,
-        ruleId: 'constraint-check',
-        severity: c.result === 'violated' ? 'warning' : 'info',
-        message:
-          c.result === 'satisfied'
-            ? // An equation that defines a valueless feature (CV-17) says what it
-              // defines and the value it fixes; the bare expression would hide
-              // the one number the user is looking for.
-              c.message.startsWith('Constraint satisfied: defines')
-              ? `${c.message} (${c.expression})`
-              : `Constraint satisfied: ${c.expression}`
-            : c.result === 'violated'
-              ? c.message
-              : `Constraint could not be evaluated ("${c.expression}"): ${c.message}.`,
-        elementId: c.id,
-      }));
+      const constraintDiags: Diagnostic[] = report.constraints.flatMap((c, i) => [
+        {
+          id: `constraint-check#${i}`,
+          ruleId: 'constraint-check',
+          severity: c.result === 'violated' ? 'warning' : 'info',
+          message:
+            c.result === 'satisfied'
+              ? // An equation that defines a valueless feature (CV-17) says what it
+                // defines and the value it fixes; the bare expression would hide
+                // the one number the user is looking for.
+                c.message.startsWith('Constraint satisfied: defines')
+                ? `${c.message} (${c.expression})`
+                : `Constraint satisfied: ${c.expression}`
+              : c.result === 'violated'
+                ? c.message
+                : `Constraint could not be evaluated ("${c.expression}"): ${c.message}.`,
+          elementId: c.id,
+        } satisfies Diagnostic,
+        ...(c.instances ?? []).map(
+          (inst, j): Diagnostic => ({
+            id: `constraint-check#${i}.${j}`,
+            ruleId: 'constraint-check',
+            severity: inst.result === 'violated' ? 'warning' : 'info',
+            message: inst.message,
+            elementId: inst.featureId,
+          }),
+        ),
+      ]);
       set({ diagnostics: [...base, ...constraintDiags] });
     },
 

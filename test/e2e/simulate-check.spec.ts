@@ -6,7 +6,8 @@
  *  - tb-simulate on the STATE view drives the state machine and lists its state
  *    trace;
  *  - tb-check evaluates constraints/requirements and surfaces constraint-check
- *    rows (satisfied/violated) in Problems.
+ *    rows (satisfied/violated) in Problems, plus one row per context for a
+ *    target over a valueless measure that another package specialises.
  *
  * The behaviors/constraint are authored on the live model through
  * `window.sysml`; simulate/check read the model directly, so no diagram render
@@ -63,6 +64,23 @@ async function authorBehaviors(page: import('@playwright/test').Page): Promise<v
       declaredName: 'payloadDefinition',
       attrs: { expression: 'payloadE2E == mass / 3' },
     });
+    // A target over a measure with no value of its own, read through the
+    // feature that specialises it in another package: Check lists the reading
+    // as its own row, at the estimate (target-by-specialisation).
+    const common = api.create('Package', { declaredName: 'CommonE2E' });
+    const measure = api.create('AttributeUsage', { ownerId: common.id, declaredName: 'coverageE2E' });
+    api.create('ConstraintUsage', {
+      ownerId: common.id,
+      declaredName: 'coverageTargetE2E',
+      attrs: { expression: 'coverageE2E >= 0.9' },
+    });
+    const layer = api.create('Package', { declaredName: 'LayerE2E' });
+    const estimate = api.create('AttributeUsage', {
+      ownerId: layer.id,
+      declaredName: 'coverageE2E',
+      attrs: { value: '0.5' },
+    });
+    api.create('Subsetting', { ownerId: estimate.id, source: [estimate.id], target: [measure.id] });
   });
 }
 
@@ -111,6 +129,12 @@ test('Simulate lists action-flow and state-machine traces; Check lists constrain
   ).toBeVisible();
   await expect(
     page.getByTestId('problem-row').filter({ hasText: 'Constraint satisfied: defines payloadE2E = 500' }).first(),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByTestId('problem-row')
+      .filter({ hasText: 'LayerE2E::coverageE2E = 0.5 misses CommonE2E::coverageTargetE2E (coverageE2E >= 0.9)' })
+      .first(),
   ).toBeVisible();
   await shot(page, 'simcheck-check');
 

@@ -479,6 +479,32 @@ export function unitRefsIn(text: string): string[] {
   }
 }
 
+/**
+ * The (possibly dotted) names a unit-aware expression reads, in source order,
+ * or `undefined` when the text is not one. The scalar grammar rejects a unit
+ * literal (`m <= 60 [min]`), so a caller that must know WHICH features such a
+ * body reads asks here rather than through `parseExpr`.
+ */
+export function quantityRefsIn(text: string): string[] | undefined {
+  let node: QNode;
+  try {
+    node = new QParser(lexQ(text)).parse();
+  } catch {
+    return undefined;
+  }
+  const out: string[] = [];
+  const walk = (n: QNode): void => {
+    if (n.kind === 'ref') out.push(n.path);
+    else if (n.kind === 'unit' || n.kind === 'unary') walk(n.operand);
+    else if (n.kind === 'binary') {
+      walk(n.left);
+      walk(n.right);
+    }
+  };
+  walk(node);
+  return out;
+}
+
 const Q_PRECEDENCE: Record<string, number> = {
   or: 2,
   and: 3,
@@ -1190,7 +1216,14 @@ function deriveFeatureUncached(
   // (`t3 : TemperatureValue = t1`, arithmetic on one already answered
   // `offset`), and a reference IS the same point on the scale: it keeps its
   // `absolute` flag, so it may still be ordered and still refuses arithmetic.
+  return judgeDerivation(model, id, q);
+}
 
+/**
+ * Judge a derived quantity against the feature's declared kind: the one claim
+ * check both a value expression and a defining equation go through.
+ */
+function judgeDerivation(model: Model, id: ElementId, q: Quantity): FeatureDerivation {
   const derived = q.dimension;
   const qk = quantityKindOf(model, id);
   const typeName = declaredTypeName(model, id);
@@ -1212,6 +1245,43 @@ function deriveFeatureUncached(
     return { ...base, claim: 'mismatch', reason: 'mismatch' };
   }
   return { ...base, q };
+}
+
+/**
+ * The derivation of a feature that STATES no value but is fixed by an
+ * equation beside it — the CV-17 shape, `attribute e : DurationValue;
+ * assert constraint { e == c / p }` — as a quantity: the defining side
+ * evaluated in the feature's owner scope, then judged against the declared
+ * kind exactly as a value expression is. The scalar scope reads that side
+ * unit-blind (`640 [Wh] / 650 [W]` is 0.9846, hours to no one), so a caller
+ * that needs the feature as a QUANTITY asks here, never labels the scalar
+ * with the kind's dimension. `equation` is the defining constraint's body;
+ * a body that is not `name == <expr>` (either way round) answers `unresolved`.
+ */
+export function equationDerivation(
+  model: Model,
+  featureId: ElementId,
+  equation: string,
+  memo: DerivationMemo = new Map(),
+): FeatureDerivation {
+  const feat = model.get(featureId);
+  const name = feat?.declaredName;
+  if (!feat || !name || feat.ownerId == null) return claimOnly('unknown', 'unresolved');
+  let node: QNode;
+  try {
+    node = new QParser(lexQ(equation)).parse();
+  } catch {
+    return claimOnly('unknown', 'parse');
+  }
+  if (node.kind !== 'binary' || (node.op !== '==' && node.op !== '=')) return claimOnly('unknown', 'unresolved');
+  const isName = (n: QNode): boolean => n.kind === 'ref' && n.path === name;
+  const side = isName(node.left) ? node.right : isName(node.right) ? node.left : undefined;
+  if (!side) return claimOnly('unknown', 'unresolved');
+  const inFlight = new Set<ElementId>([featureId]);
+  const r = evalQ(side, quantityScopeFor(model, feat.ownerId, inFlight, memo), 0);
+  if (isQUnknown(r)) return claimOnly('unknown', r.reason, r.detail);
+  if (!('q' in r)) return { claim: 'unknown', b: r.b };
+  return judgeDerivation(model, featureId, r.q);
 }
 
 /** The {@link DimensionClaim} of a feature's value. */
@@ -1255,6 +1325,14 @@ export interface ConstraintQuantityOptions {
    * unknown — a `mismatch` or `offset` refusal stays a refusal.
    */
   fallback?: (name: string) => Quantity | undefined;
+  /**
+   * A resolver consulted BEFORE the model scopes: the name denotes this
+   * quantity, whatever the constraint's own context says. A target judged
+   * through a feature that specialises the measure it names reads that
+   * feature's value — including where the context it is written in states a
+   * default the specialiser overrides, which `fallback` cannot reach.
+   */
+  bind?: (name: string) => Quantity | undefined;
   /** Absolute tolerance for `==`/`!=`/comparisons (a solver's, typically). */
   absTol?: number;
   /** A derivation cache shared across the constraints of one sweep. */
@@ -1305,6 +1383,8 @@ export function evaluateConstraintQuantityDetailed(
   const ownerScope = el.ownerId != null ? quantityScopeFor(model, el.ownerId, inFlight, memo) : undefined;
   const selfScope = quantityScopeFor(model, el.id, inFlight, memo);
   const scope: QScope = (name) => {
+    const bound = opts.bind?.(name);
+    if (bound !== undefined) return { q: bound };
     const fromOwner = ownerScope?.(name);
     if (fromOwner !== undefined) return fromOwner;
     const fromSelf = selfScope(name);

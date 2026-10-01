@@ -56,6 +56,8 @@ export {
   checkConstraints,
   type Scope,
   type ConstraintCheck,
+  type SpecialisationInstance,
+  type SpecialisationBinding,
 } from './evaluate-model';
 export {
   runActionFlow,
