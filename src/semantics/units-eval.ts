@@ -199,7 +199,7 @@ function kindOfName(
  * The ISQ quantity-kind of a feature (via its FeatureTyping target or its
  * `attrs.type` / `attrs.typeRef` name): its {@link Dimension} and declared name.
  */
-function quantityKindOf(
+export function quantityKindOf(
   model: Model,
   featureId: ElementId,
 ): { dimension?: Dimension; name?: string } {

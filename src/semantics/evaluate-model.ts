@@ -20,6 +20,7 @@ import {
   dimensionClaimDetail,
   evaluateConstraintQuantityDetailed,
   isRefusalReason,
+  quantityKindOf,
   type ConstraintQuantityResult,
   type DerivationMemo,
 } from './units-eval';
@@ -54,8 +55,121 @@ function scopeWith(model: Model, contextId: ElementId, inFlight: Set<ElementId>)
   const ids = featureIdsFor(model, contextId);
   return (name: string) => {
     const id = ids.get(name);
-    return id === undefined ? undefined : valueOfFeature(model, id, inFlight);
+    if (id !== undefined) return valueOfFeature(model, id, inFlight);
+    return valueDefinedByEquation(model, contextId, name, inFlight);
   };
+}
+
+/**
+ * The value of a feature that STATES none but is fixed by an equation beside
+ * it: `attribute est; assert constraint { est == a * b / c }` gives `est` the
+ * value of the right-hand side. This is the CV-17 shape — an estimate that is
+ * arithmetic over the layer's own values rather than a literal — and until
+ * now the evaluator did not read it: the constraint reported "a referenced
+ * value is unknown", the feature had no value anywhere in the app, and the
+ * number it fixes was only ever computed outside the tool.
+ *
+ * Only a direct feature of `contextId` (a bare name, not a dotted chain), and
+ * only an equation owned by the same context whose one side is that bare
+ * name: the defining equation of a feature is written where the feature is.
+ * The feature goes on `inFlight` while its other side is evaluated, so
+ * `x == y + 1` beside `y == x - 1` answers `undefined`, not a hang.
+ */
+function valueDefinedByEquation(
+  model: Model,
+  contextId: ElementId,
+  name: string,
+  inFlight: Set<ElementId>,
+): unknown {
+  if (name.includes('.')) return undefined;
+  const feature = effectiveFeatures(model, contextId).find(
+    (f) => f.declaredName === name && (f.attrs.value === undefined || f.attrs.value === null),
+  );
+  if (!feature || inFlight.has(feature.id)) return undefined;
+  const equation = definingEquationFor(model, contextId, name);
+  if (!equation) return undefined;
+  inFlight.add(feature.id);
+  let value: unknown;
+  try {
+    const r = evaluate(equation.definition, scopeWith(model, contextId, inFlight));
+    value = 'value' in r && (typeof r.value === 'number' || typeof r.value === 'boolean') ? r.value : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    inFlight.delete(feature.id);
+  }
+  if (typeof value !== 'number') return value;
+  // The equation must also hold as QUANTITIES, with the feature read as that
+  // number in its declared kind: `t == d` across a duration and a length is a
+  // dimension clash, `dT == t1` on an offset scale is refused — neither fills
+  // its feature with a raw magnitude, because the refusal is the answer.
+  const kind = quantityKindOf(model, feature.id);
+  const asQuantity = { magnitude: value, dimension: kind.dimension ?? DIMENSIONLESS };
+  const judged = evaluateConstraintQuantityDetailed(model, equation.constraint, {
+    fallback: (ref) => (ref === name ? asQuantity : undefined),
+  });
+  return isRefusalReason(judged.reason) ? undefined : value;
+}
+
+/** An equation `name == <expr>` (either way round) among the constraints `ownerId` owns. */
+function definingEquationFor(
+  model: Model,
+  ownerId: ElementId,
+  name: string,
+): { constraint: ElementRecord; definition: ExprNode } | undefined {
+  for (const c of model.children(ownerId)) {
+    if (c.eClass !== 'ConstraintUsage') continue;
+    const side = definedSide(c, name);
+    if (side) return { constraint: c, definition: side };
+  }
+  return undefined;
+}
+
+/**
+ * When `constraint` reads `name == <expr>` or `<expr> == name`, the `<expr>`
+ * side; else `undefined`. `=` is the same equation in the solver's spelling.
+ */
+function definedSide(constraint: ElementRecord, name: string): ExprNode | undefined {
+  const expr = constraint.attrs.expression;
+  if (typeof expr !== 'string') return undefined;
+  let node: ExprNode;
+  try {
+    node = parseExpr(expr);
+  } catch {
+    return undefined;
+  }
+  if (node.kind !== 'binary' || (node.op !== '==' && node.op !== '=')) return undefined;
+  const isName = (n: ExprNode): boolean => n.kind === 'ref' && n.path.length === 1 && n.path[0] === name;
+  if (isName(node.left)) return node.right;
+  if (isName(node.right)) return node.left;
+  return undefined;
+}
+
+/**
+ * The feature an equation-shaped constraint defines — its bare name, when the
+ * constraint reads `name == <expr>` and `name` is a valueless feature of the
+ * constraint's owner — or `undefined` for any other constraint.
+ */
+export function definedFeatureOf(model: Model, constraint: ElementRecord): ElementRecord | undefined {
+  if (constraint.ownerId == null) return undefined;
+  const expr = constraint.attrs.expression;
+  if (typeof expr !== 'string') return undefined;
+  let node: ExprNode;
+  try {
+    node = parseExpr(expr);
+  } catch {
+    return undefined;
+  }
+  if (node.kind !== 'binary' || (node.op !== '==' && node.op !== '=')) return undefined;
+  for (const side of [node.left, node.right]) {
+    if (side.kind !== 'ref' || side.path.length !== 1) continue;
+    const name = side.path[0]!;
+    const feature = effectiveFeatures(model, constraint.ownerId).find(
+      (f) => f.declaredName === name && (f.attrs.value === undefined || f.attrs.value === null),
+    );
+    if (feature) return feature;
+  }
+  return undefined;
 }
 
 /**
@@ -151,7 +265,14 @@ export function evaluateFeatureValue(model: Model, featureId: ElementId): EvalRe
   const el = model.get(featureId);
   if (!el) return { unknown: true };
   const raw = el.attrs.value !== undefined ? el.attrs.value : el.attrs.expression;
-  if (raw === undefined || raw === null) return { unknown: true };
+  if (raw === undefined || raw === null) {
+    // No value of its own: the equation beside it may fix one (CV-17).
+    if (el.declaredName && el.ownerId != null) {
+      const v = scopeFor(model, el.ownerId)(el.declaredName);
+      if (v !== undefined) return { value: v };
+    }
+    return { unknown: true };
+  }
   if (typeof raw === 'number' || typeof raw === 'boolean') return { value: raw };
   if (typeof raw !== 'string') return { unknown: true };
   const scope = scopeFor(model, el.ownerId ?? featureId);
@@ -278,7 +399,14 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       check.message = 'Could not evaluate: a referenced value is unknown';
     } else if (r.value === true) {
       check.result = 'satisfied';
-      check.message = 'Constraint satisfied';
+      // An equation that fixes a valueless feature is not a check that passed
+      // but a definition that was read: say what it fixed the feature to.
+      const defined = definedFeatureOf(model, el);
+      const value = defined ? scope(defined.declaredName!) : undefined;
+      check.message =
+        defined && typeof value === 'number'
+          ? `Constraint satisfied: defines ${defined.declaredName} = ${Number(value.toPrecision(6))}`
+          : 'Constraint satisfied';
     } else if (r.value === false) {
       check.result = 'violated';
       check.message = `Constraint violated: ${expr}`;

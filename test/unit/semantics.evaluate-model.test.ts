@@ -121,3 +121,46 @@ describe('semantics — a self-typed feature does not blow the name walk', () =>
     expect(() => validate(model)).not.toThrow();
   });
 });
+
+describe('semantics — a valueless feature fixed by an equation beside it (CV-17)', () => {
+  const SRC = `package LA {
+    attribute fleet = 12;
+    attribute flight = 40;
+    attribute transit = 7.41;
+    attribute swap = 20;
+    attribute share = 0.12;
+    #Estimate attribute watched;
+    assert constraint { watched == fleet * ((flight - transit) / (flight + swap)) * share }
+    require constraint target { watched >= 0.9 }
+  }`;
+
+  it('gives the feature the value the equation fixes, in the scope and in evaluateFeatureValue', () => {
+    const m = parseModel(SRC).model;
+    const la = m.all().find((e) => e.declaredName === 'LA')!;
+    expect(scopeFor(m, la.id)('watched')).toBeCloseTo(0.78216, 5);
+    const watched = m.all().find((e) => e.declaredName === 'watched')!;
+    expect((evaluateFeatureValue(m, watched.id) as { value: number }).value).toBeCloseTo(0.78216, 5);
+  });
+
+  it('reads the equation as a definition and judges the target by the value it fixes', () => {
+    const checks = checkConstraints(parseModel(SRC).model);
+    const equation = checks.find((c) => c.expression.startsWith('watched =='))!;
+    expect(equation.result).toBe('satisfied');
+    expect(equation.message).toBe('Constraint satisfied: defines watched = 0.78216');
+    const target = checks.find((c) => c.expression === 'watched >= 0.9')!;
+    expect(target.result).toBe('violated');
+  });
+
+  it('answers unknown, not a hang, for two equations that define each other', () => {
+    const m = parseModel('package P { attribute x; attribute y; assert constraint { x == y + 1 } assert constraint { y == x - 1 } }').model;
+    const p = m.all().find((e) => e.declaredName === 'P')!;
+    expect(scopeFor(m, p.id)('x')).toBeUndefined();
+    for (const c of checkConstraints(m)) expect(c.result).toBe('unknown');
+  });
+
+  it('leaves a feature that states a value alone, even beside an equation that disagrees', () => {
+    const m = parseModel('package P { attribute a = 2; attribute b = 5; assert constraint { b == a * 2 } }').model;
+    const check = checkConstraints(m).find((c) => c.expression.startsWith('b =='))!;
+    expect(check.result).toBe('violated');
+  });
+});

@@ -83,7 +83,7 @@ import {
   type RefusalReason,
 } from './contracts';
 import { isLiteralValueAxiom } from './consistency';
-import { evaluate } from './expr';
+import { evaluate, type EvalResult, type ExprNode } from './expr';
 import { isFreedValueAxiom, obligationsOf, type Obligation } from './obligations';
 import {
   encodeRelation,
@@ -648,7 +648,7 @@ function confirmBoundWitness(
       if (typeof raw === 'boolean') return raw;
       return raw * v.factor + v.offset;
     };
-    const out = evaluate(node, scope);
+    const out = rereadEquality(node, scope) ?? evaluate(node, scope);
     if (!('value' in out)) {
       return `\`${row.row.expression}\` could not be re-read at the point the solver chose`;
     }
@@ -689,6 +689,28 @@ function confirmBoundWitness(
     }
   }
   return { ok: true };
+}
+
+/**
+ * An equation re-read as arithmetic, not as bit-identity.
+ *
+ * z3 computes `12 × (40 − 7.41) / 60 × 0.12` as the rational 0.78216 and
+ * assigns the defined feature exactly that; this evaluator computes the same
+ * expression in floating point and gets 0.7821600000000001, and `===` between
+ * the two is false — so every bound that passed through an equation was
+ * "not confirmed" by the tool's own arithmetic, which was in fact confirming
+ * it. A relative tolerance of 1e-9 is far below anything a quantity in a
+ * model states, and far above floating-point noise. Only a top-level `==` or
+ * `!=` whose sides are both numbers is read this way; everything else goes
+ * through `evaluate` unchanged.
+ */
+function rereadEquality(node: ExprNode, scope: (name: string) => unknown): EvalResult | undefined {
+  if (node.kind !== 'binary' || (node.op !== '==' && node.op !== '=' && node.op !== '!=')) return undefined;
+  const l = evaluate(node.left, scope);
+  const r = evaluate(node.right, scope);
+  if (!('value' in l) || !('value' in r) || typeof l.value !== 'number' || typeof r.value !== 'number') return undefined;
+  const close = Math.abs(l.value - r.value) <= 1e-9 * Math.max(1, Math.abs(l.value), Math.abs(r.value));
+  return { value: node.op === '!=' ? !close : close };
 }
 
 /**
