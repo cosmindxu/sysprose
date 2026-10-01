@@ -4958,6 +4958,81 @@ fixtures set (2.5–2.9 GB before and after). Mutation: with the cache-drop remo
 bridge's death path, the unit case "the next loadZ3 pays init again" is red
 while the throw assertion stays green. Counts re-measured from this gate.
 
+**Defect D5, resolved — the solver was killed by its own finalizers.** The
+death the paragraph above made survivable was reproduced on 2026-10-01, under
+an in-process caller running 50 solver calls per iteration (bounds over twelve
+measures at two layers, a verify and a consistency run) beside other heavy
+processes, and its cause found. `z3-solver` 5.2.0 frees every Solver,
+Optimize, Model and term wrapper from one `FinalizationRegistry` whose
+callbacks are bare `Z3.*_dec_ref` calls; V8 runs them on the main thread when
+it collects the last checks' objects, and, traced, every one of them ran while
+the next `check()` was executing on its pthread. The shipped libz3 is built
+`--single-threaded`, so no allocator in it takes a lock: the main-thread frees
+corrupt the heap the solver thread allocates from, and later the solver, or a
+free, dereferences garbage — `memory access out of bounds` in
+`mpz_manager::big_set` and `small_object_allocator::allocate`, `corrupted its
+heap memory area`, a `core_hashtable::find_core` frame: the family the
+`hashtable.h:445` assertion on CI belongs to. Load lengthens the checks and
+lands more collections inside them. With four to five reproduction processes
+running at once (load average 12–27), 4 of 5 unguarded processes died within
+10 iterations and all 8 within 21. Three other repairs were measured and fail:
+`Z3_enable_concurrent_dec_ref`, the API meant for exactly this, is compiled
+out of a single-threaded build (a run with it on died at iteration 5); a
+fresh module per iteration died sooner, because what races is the module's
+own allocator; and switching finalizers off filled the fixed 2 GB heap in ~17
+iterations. Deferring them until no check is in flight held: 0 traps in 66
+iterations (~3,300 calls). So `src/semantics/smt/z3-bridge.ts` now builds
+`z3-solver`'s registry through a subclass — on `globalThis` only around the
+`import` and `init()`, and always restored to the original constructor — that
+holds a callback while its module has a check in flight and runs the queue
+once the check has settled. Never on the death path, where the queued frees
+would land in a heap the trap just showed to be corrupt (three investigation
+runs died exactly so, on the main thread, inside z3's context destructor),
+and never for a module found dead or terminated; after a plain
+`resetZ3Cache()` they still run, because a backend made earlier still uses
+that module. The whole check, from `new Solver()` to its last read, is the
+module's exclusive region, since making the solver, setting its parameters and
+`fromString` are main-thread z3 calls too; checks on one module queue rather
+than overlap; and the solver, optimiser and model are released explicitly, so
+the heavy frees happen between checks — a release that traps is a death like
+any other, since it is that same free into a corrupt heap, which a finalizer
+used to raise loudly. The handling above is unchanged: a
+death is still detected, dropped and re-initialised — and a dropped module now
+also gives back the one lock `z3-solver` keeps for the whole process. Every
+`check()` of every module runs under a single module-level async mutex, and a
+check abandoned on a dead or terminated module never settles, so it held that
+lock for good: the fresh module's first check waited on it past its budget
+and the 30 s margin and was counted a second death (measured: a trivial check
+answered `Z3ModuleDeadError` after 32.6 s, and `sat` in 0.5 s with the lock
+given back). The bridge records the instance a check of its own takes, and
+whether that module's check still holds it; `classify()` and
+`resetZ3Cache({ terminate: true })` release it only then — never on a plain
+reset, and never for a module whose lock another module's check holds — and a
+check still queued on the lock when its module goes gives it straight back
+when its turn comes, without running anything on the module. `sysprose`
+itself ends once its output has drained after a run in which a module died,
+rather than wait out the 600 s keep-alive timer `z3-solver` leaves for the
+abandoned call (`threadTimeouts` in `z3-built.js`, which only that call's own
+completion clears); a run with no death ends as it always did. The death suite
+gained 20 cases on its fake, which takes its own process-wide
+`async-mutex` lock around each check as `z3-solver` does (held while in flight
+and run once settled, dropped on a death or a terminate, kept across a plain
+reset, a trapping flush or release reported as a death, no second solver
+built under a running check, one release per object, the lock given back on a
+terminate and on a hang, passed on by a discarded module's queued check, and
+kept otherwise, and the command's own ending); each of seventeen mutations of
+the bridge, and four of that ending, turns at least one of them red. `test/integration/smt-z3.integration.test.ts`
+pins the lock on the real solver: an undecidable check abandoned by a
+terminate, then a fresh module answers in under a second (red, at 35.5 s, with
+the release removed). `test/campaign/z3-soak.soak.ts` (`npm run soak:z3`;
+collected only under `SYSPROSE_SOAK=1`, so the default run neither runs nor
+skips it) drives the real module through 204 bounds checks and 34
+verify runs over `bounds-uav.sysml`, forcing a collection every ~15 checks: no
+trap, no death, 10,129 callbacks held under a check, z3's heap at most 8.6 MB
+(184.6 MB with every free switched off). It shows the deferral exercised, not
+the fix proved — with the deferral off it was clean three times too; the
+evidence for the fix is the reproduction.
+
 **The `recovery` pattern: a branching-time question answered by a branching-time
 algorithm, at the one position where the walk exists and the search has not run
 (model-checking plan §3.2b).** `pattern=recovery, scope=globally, p=state

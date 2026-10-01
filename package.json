@@ -22,6 +22,7 @@
     "check": "tsx scripts/sysml-check.ts",
     "sysprose": "tsx scripts/sysprose.ts",
     "campaign": "vitest run test/campaign",
+    "soak:z3": "SYSPROSE_SOAK=1 NODE_OPTIONS=--expose-gc vitest run test/campaign/z3-soak.soak.ts",
     "codes": "tsx scripts/gen-diagnostic-codes.ts",
     "commands": "tsx scripts/gen-cli-reference.ts",
     "bench": "tsx scripts/agent-repair-bench.ts",

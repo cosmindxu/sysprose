@@ -36,6 +36,7 @@ import {
   loadZ3,
   rationalToNumber,
   resetZ3Cache,
+  z3DeathCount,
   z3Disabled,
   type Z3Backend,
 } from '@semantics/smt/z3-bridge';
@@ -365,6 +366,58 @@ describe('a long run of checks does not grow the heap without bound', () => {
       expect(grew, `200 checks grew RSS by ${grew.toFixed(0)} MB`).toBeLessThan(400);
     },
     120_000,
+  );
+});
+
+/**
+ * `z3-solver` runs every check of every module under ONE process-wide async
+ * mutex, and a check abandoned on a terminated module never settles. Before the
+ * bridge gave that lock back, the fresh module's first check waited on it past
+ * its budget plus the 30 s margin and was counted a second death (measured:
+ * `Z3ModuleDeadError` after 32.6 s; 0.5 s with the lock released by hand).
+ *
+ * The abandoned check is {@link HARD}, which z3 cannot decide, under a budget
+ * no part of this file outlasts — the investigation's probe used a nonlinear
+ * real script that answers in ~0.3 s here, too close to the reset to be sure it
+ * was still running. The file's own `backend` is left alone: the module that is
+ * terminated is a fresh one, made after a plain reset kept the shared one alive.
+ */
+describe('a terminated module’s abandoned check does not hold up the next module', () => {
+  withZ3(
+    'a fresh module answers within 5 s, and nothing is counted dead',
+    async () => {
+      resetZ3Cache();
+      const a = await loadZ3();
+      if (a.absent) throw new Error(a.reason);
+      let orphanSettled = false;
+      // Rejected 30 s past its budget by the bridge's guard, by which time this file is done.
+      const orphan = a.check(HARD, { timeoutMs: 60_000 }).then(
+        () => (orphanSettled = true),
+        () => (orphanSettled = true),
+      );
+      await new Promise((r) => setTimeout(r, 300));
+      expect(orphanSettled, 'the undecidable check answered: nothing was abandoned').toBe(false);
+      const deaths = z3DeathCount();
+      resetZ3Cache({ terminate: true });
+
+      const b = await loadZ3();
+      if (b.absent) throw new Error(b.reason);
+      const trivial = script([
+        { kind: 'axiom', name: 'UAV::uav::mtow', term: AXIOM },
+        { kind: 'goal', name: 'R', term: `(>= ${MTOW} 30.0)` },
+      ]);
+      const t0 = performance.now();
+      const r = await b.check(trivial, { timeoutMs: 5000 });
+      const wall = performance.now() - t0;
+      expect(r.status).toBe('unsat');
+      expect(wall, 'the fresh module waited on the abandoned check’s lock').toBeLessThan(5000);
+      expect(z3DeathCount(), 'the fresh module was counted dead').toBe(deaths);
+      expect(orphanSettled, 'the abandoned check settled, so the lock was never in question').toBe(false);
+      void orphan;
+      // The shared `backend` is a third module, kept by the plain reset, and it still answers.
+      if (backend) expect((await backend.check(trivial)).status).toBe('unsat');
+    },
+    60_000,
   );
 });
 
