@@ -59,7 +59,7 @@ C4Context
 ## Key invariants
 
 1. **Serverless by default.** The browser app talks to the *in-process*
-   `SysmlApiServer` / `OslcServer` facades directly (`src/ui/store.ts:574`). The
+   `SysmlApiServer` / `OslcServer` facades directly (`src/ui/store.ts:605`). The
    HTTP server is a thin translation layer over those same facades
    (`src/server/app.ts:141-168`).
 2. **Standards-native model.** The in-memory `Model` mirrors the OMG SysML v2

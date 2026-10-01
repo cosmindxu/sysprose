@@ -45,20 +45,20 @@ and stored queries (`src/api/rest.ts:113,292,429`). Payload
 `aaa…!` names blocks the event loop. CVSS-ish 7.5.
 
 ### C4. Main-thread ELK layout on every mutation, no debounce `[PROVEN]` · Performance
-`src/ui/store.ts:599`, `src/diagram/layout.ts:32,207` — `afterMutation()` calls
+`src/ui/store.ts:630`, `src/diagram/layout.ts:32,207` — `afterMutation()` calls
 `void rebuildDiagram()` on every `createElement/updateElement/setAttr/reparent/
 connect/deleteElement`, including remote CRDT applies. `layout.ts` imports the
 **synchronous bundled** `elkjs/lib/elk.bundled.js`; the `await` only defers a
 microtask. Breaks down: visible jank > ~100 nodes, multi-second freezes > ~1 k.
 
 ### C5. `afterMutation` runs full validation (18 rules) + full serialize + diagram rebuild on every edit `[PROVEN]` · Performance
-`src/ui/store.ts:591-600` — three model-wide passes per keystroke-equivalent
+`src/ui/store.ts:622-631` — three model-wide passes per keystroke-equivalent
 edit. The `constraint-violation` and `dimensional-consistency` rules
 (`validation/rules.ts:571,600`) nest full semantics-engine work inside the
 per-element loop → effectively O(n²) on every mutation.
 
 ### C6. `pushUndo` retains up to 50 full deep clones of the model `[PROVEN]` · Performance
-`src/ui/store.ts:577-584`, `src/core/model.ts:464` (`structuredCloneSafe`) —
+`src/ui/store.ts:608-615`, `src/core/model.ts:464` (`structuredCloneSafe`) —
 `UNDO_LIMIT = 50`. With the ~38 k-element library loaded, every mutation
 retains a full snapshot; a session can hold **>500 MB** of retained JS
 objects.
@@ -69,7 +69,7 @@ set by the parser (`src/text/parser.ts:427-432`). `parse(serialize(parse(x)))`
 differs from `parse(x)`.
 
 ### C8. Round-trip loses `attrs.expression` when an element has body members `[PROVEN]` · Correctness
-`src/text/serializer.ts:189-198` — the body expression is emitted only when
+`src/text/serializer.ts:192-201` — the body expression is emitted only when
 `lines.length === 0`. A `ConstraintUsage`/`CalculationUsage` with both nested
 members and a `{ expr }` body silently loses the expression.
 
@@ -140,7 +140,7 @@ millions of ops per call.
 
 ### H5. `Explorer`, `SysmlNode`, `ControlNode` not `React.memo`-ized; `decoratedNodes` creates new node identities on every selection change `[PROVEN]` · Performance
 `src/ui/panels/Explorer.tsx:43`, `src/diagram/nodes.tsx:407,446`,
-`src/ui/panels/DiagramCanvas.tsx:116-129` — React Flow re-renders every node
+`src/ui/panels/DiagramCanvas.tsx:127-140` — React Flow re-renders every node
 on any selection change.
 
 ### H6. `resolve-names` / `featuring` memoization caches (`WeakMap<Model, Map>`) are never invalidated on mutation `[PROVEN]` · Correctness + Performance
@@ -197,7 +197,7 @@ element identity that is stable across commits; here it is recovered *post
 hoc* by id equality, which breaks if any operation regenerates ids.
 
 ### H16. `formatValue` corrupts non-primitive `attrs.value` `[PROVEN]` · Correctness
-`src/text/serializer.ts:311-315` — reduces to `String(v)` for any
+`src/text/serializer.ts:314-318` — reduces to `String(v)` for any
 non-number/non-Boolean. An object/array value (allowed by `AttrValue`,
 `metamodel.ts:29-36`) emits `= [object Object]`.
 
@@ -253,7 +253,7 @@ reachable only via deep-import from one test.
 | M9 | Correctness | `requirement-subject` accepts an arbitrary string without verifying it resolves | `src/validation/rules.ts:321-330` |
 | M10 | Correctness | `port-direction` warns on every directionless port (KerML defaults direction) | `src/validation/rules.ts:241-259` |
 | M11 | Conformance | `conforms` ignores implicit library bases (KerML semantic-metamodel specialization) | `src/semantics/conformance.ts:21-24` |
-| M12 | Diagram | `buildAction` only matches `eClass==='ActionUsage'`, silently dropping `AcceptActionUsage`/`SendActionUsage`/`AssignmentActionUsage`/etc. | `src/diagram/build.ts:310-328` |
+| M12 | Diagram | `buildAction` only matches `eClass==='ActionUsage'`, silently dropping `AcceptActionUsage`/`SendActionUsage`/`AssignmentActionUsage`/etc. | `src/diagram/build.ts:325-370` |
 | M13 | Diagram | Specialization edges collapse 5 relationship kinds onto 2 visual kinds | `src/diagram/build.ts:60-63,185-194` |
 | M14 | Type-safety | `query.ts:267` projects-and-casts a `Record<string,unknown>` to `ElementRecord`; consumers reading `.source`/`.eClass` after `select` get garbage | `src/api/query.ts:264-268` |
 | M15 | Type-safety | `persistence/io.ts:244` casts untyped JSON attrs to `AttrValue` | `src/persistence/io.ts:263` |

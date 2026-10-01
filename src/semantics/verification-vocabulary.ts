@@ -39,8 +39,9 @@
  * `metadata def <exceptional> ExceptionalOutcome;` parses, checks clean and
  * round-trips byte-identically. The `SemanticMetadata` shape the library's own
  * `ParametersOfInterestMetadata` uses for `<moe>` / `<mop>` does not — its
- * `:>> baseType = xs meta SysML::Usage;` produces three
- * `ref/unresolved-specialization` warnings today and the serializer rewrites
+ * `:>> baseType = xs meta SysML::Usage;` produces two
+ * `ref/unresolved-specialization` warnings today (its `:>>` redefinitions) and
+ * the serializer rewrites
  * the qualified name. `test/unit/semantics.keywords.test.ts` pins that
  * measurement so nobody ships the second shape by mistake.
  *

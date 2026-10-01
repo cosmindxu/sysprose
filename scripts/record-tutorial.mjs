@@ -39,7 +39,8 @@
  *   only, through the model API) {"js": "…"} (setup only)
  * Targets T: "view:<kind>", "tree:<QName>", "tree-scope:<QName>",
  *   "tree-twisty:<QName>", "node:<QName>", "tree-toggle:<QName>" (a tree-view
- *   box's +N / −), "palette:<Kind>:<node|edge>",
+ *   box's +N / −), "port:<part QName>><port name>" (a port handle on a part's
+ *   box, interconnection), "palette:<Kind>:<node|edge>",
  *   "testid:<id>", "css:<selector>", "pane:empty" (an empty canvas point).
  */
 
@@ -167,6 +168,19 @@ async function locate(target) {
       return page.locator(`[data-testid="tree-node"][data-elementid="${await idOf(arg)}"] .tree-twisty`).first();
     case 'node':
       return page.locator(`.react-flow__node[data-id="${await idOf(arg)}"]`).first();
+    case 'port': {
+      // `port:<part QName>><port name>` — the handle of that port on that part's
+      // box (its own port, or one it has through its type).
+      const [partQ, portName] = arg.split('>');
+      const partId = await idOf(partQ);
+      const handle = await page.evaluate(
+        ({ partId, portName }) =>
+          window.sysprose.diagram.current()?.nodes.find((n) => n.id === partId)?.ports?.find((p) => p.label === portName)?.id ?? null,
+        { partId, portName },
+      );
+      if (!handle) throw new Error(`no port ${portName} on ${partQ} in this diagram`);
+      return page.locator(`.react-flow__node[data-id="${partId}"] .react-flow__handle.source[data-handleid="${handle}"]`).first();
+    }
     case 'tree-toggle':
       return page.locator(`.react-flow__node[data-id="${await idOf(arg)}"] [data-testid="tree-toggle"]`).first();
     case 'palette': {

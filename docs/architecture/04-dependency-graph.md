@@ -196,7 +196,7 @@ has not been revised to match.
 |---|---|---|:-:|
 | `ParseResult` / `ParseDiagnostic` | `{ model, diagnostics }` / `{ message, line, column, severity }` | `src/text/parser.ts:33-44` | ✅ exact |
 | `Diagnostic` | `{ id, ruleId, severity, message, elementId? }` | `src/validation/types.ts:19-30` | ✅ additive `id` |
-| `DiagramNode/Edge/Graph` | per plan | `src/diagram/types.ts:40-82` | ✅ exact |
+| `DiagramNode/Edge/Graph` | per plan | `src/diagram/types.ts:40-90` | ✅ exact |
 | `QueryResult` | `{ commitId, elements, total }` | `src/api/query.ts:105-111` | ✅ additive `nextCursor?` |
 
 Contracts are stable and only grew additively. The drift is in *module

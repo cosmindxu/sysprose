@@ -73,6 +73,25 @@ function addFeatureTyping(model: Model, featureId: ElementId, typeId: ElementId)
 }
 
 /**
+ * Create the relationship a resolved `:>` would have had at parse time — a
+ * Subclassification from a definition, a Subsetting from a usage, owned by its
+ * source — and drop the name it replaces from `attrs.specializes`, which is
+ * also what retracts the name's "Unresolved reference" warning.
+ */
+function addSpecialization(model: Model, id: ElementId, targetId: ElementId, name: string): void {
+  const el = model.get(id);
+  if (!el) return;
+  model.create(el.eClass.endsWith('Definition') ? 'Subclassification' : 'Subsetting', {
+    ownerId: id,
+    source: [id],
+    target: [targetId],
+  });
+  const rest = (el.attrs.specializes as string[]).filter((n) => n !== name);
+  if (rest.length > 0) model.setAttrs(id, { specializes: rest });
+  else clearAttr(model, id, 'specializes');
+}
+
+/**
  * True when `type` is a member of the `ScalarValues` library package (e.g.
  * `Real`, `Integer`, `Boolean`, `String`). Attribute typings are only bound to
  * scalar value types per the module brief.
@@ -181,6 +200,11 @@ interface PendingBinding {
   elementId: ElementId;
   targetId: ElementId;
   clearTypeRef: boolean;
+  /**
+   * Set for a `:>` the parse left unresolved: the name as written, to drop
+   * from `attrs.specializes` once the relationship stands in for it.
+   */
+  specializes?: string;
 }
 
 /**
@@ -211,7 +235,24 @@ export function resolveTypeReferences(model: Model): number {
     for (const el of model.all()) {
       if (el.attrs.isLibrary === true) continue; // never touch library content
 
-      // (1) Plain feature typing preserved as attrs.typeRef (PartUsage, PortUsage…).
+      // (1) A `:>` the parse could not resolve, kept as a name in
+      //     attrs.specializes — `attribute def ConfidenceLevel :> ScalarValues::Real;`,
+      //     `part def P :> Parts::Part;`. The parse resolves within the file
+      //     only, so every specialization of a library definition landed here
+      //     and stayed a bare string with a standing warning, while the same
+      //     name after `:` was bound by (2) and (3). Same resolution chain as a typing.
+      const specializes = el.attrs.specializes;
+      if (Array.isArray(specializes)) {
+        for (const name of specializes) {
+          if (typeof name !== 'string' || name.trim() === '') continue;
+          const target = resolveDeclaredTypeName(model, name, el.ownerId, el.id);
+          if (target && target.id !== el.id) {
+            pending.push({ elementId: el.id, targetId: target.id, clearTypeRef: false, specializes: name });
+          }
+        }
+      }
+
+      // (2) Plain feature typing preserved as attrs.typeRef (PartUsage, PortUsage…).
       const typeRef = el.attrs.typeRef;
       if (typeof typeRef === 'string' && typeRef.trim() !== '') {
         if (hasResolvedFeatureTyping(model, el)) {
@@ -225,7 +266,7 @@ export function resolveTypeReferences(model: Model): number {
         continue;
       }
 
-      // (2) Attribute typing preserved as an attrs.type string naming a
+      // (3) Attribute typing preserved as an attrs.type string naming a
       //     ScalarValues type. Keep the display string; add the semantic link.
       if (el.eClass === 'AttributeUsage') {
         const type = el.attrs.type;
@@ -249,8 +290,12 @@ export function resolveTypeReferences(model: Model): number {
     model.transaction(() => {
       for (const id of redundant) clearAttr(model, id, 'typeRef');
       for (const b of pending) {
-        addFeatureTyping(model, b.elementId, b.targetId);
-        if (b.clearTypeRef) clearAttr(model, b.elementId, 'typeRef');
+        if (b.specializes !== undefined) {
+          addSpecialization(model, b.elementId, b.targetId, b.specializes);
+        } else {
+          addFeatureTyping(model, b.elementId, b.targetId);
+          if (b.clearTypeRef) clearAttr(model, b.elementId, 'typeRef');
+        }
         resolved++;
       }
     });

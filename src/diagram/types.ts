@@ -41,6 +41,14 @@ export interface DiagramPort {
   side: string;
   /** Human-readable port label. */
   label: string;
+  /**
+   * Set for a port the part has through its TYPE rather than as a member of
+   * its own (`part memberA : SwarmMember` shows SwarmMember's ports): the box
+   * and the definition's port. The id is then synthetic — unique per box, since
+   * the same definition port appears on every part of that type — and a
+   * connection drawn to it ends on the feature chain `memberA.meshOut`.
+   */
+  inherited?: { owner: string; port: string };
 }
 
 /** A renderable box/shape projected from a model element. */

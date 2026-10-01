@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { Model, ModelFactory, buildSampleModel } from '@core/index';
 import { buildDiagram } from '@diagram/build';
+import { parseModel, resolveConnectorFeatureChains } from '@text/index';
 import type { DiagramGraph, DiagramNode } from '@diagram/types';
 
 /** Find the single node whose label matches. */
@@ -222,5 +223,28 @@ describe('buildDiagram — specialization + reference edges (fixture)', () => {
     expect(reference).toHaveLength(1);
     expect(reference[0].source).toBe(host.id);
     expect(reference[0].target).toBe(ref.id);
+  });
+});
+
+describe('interconnection: the ports a part has through its type', () => {
+  it('are drawn on the part, once, and a port a connection already made is not repeated', () => {
+    const m = parseModel(`package R {
+      port def P;
+      part def M { out port o : P; in port i : ~P; }
+      part m1 : M;
+      part m2 : M;
+      connection connect m1.o to m2.i;
+    }`).model;
+    resolveConnectorFeatureChains(m);
+    const g = buildDiagram(m, 'interconnection');
+    const portsOf = (name: string) =>
+      g.nodes.find((n) => n.label.includes(name) && n.kind === 'PartUsage')!.ports!.map((p) => [p.label, !!p.inherited]);
+    // m1 has `o` as its own (made by the connection's end) and `i` through M.
+    expect(portsOf('m1').sort()).toEqual([['i', true], ['o', false]].sort());
+    expect(portsOf('m2').sort()).toEqual([['i', false], ['o', true]].sort());
+    // Every port id is unique, though both parts show M's ports.
+    const ids = g.nodes.flatMap((n) => n.ports ?? []).map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(g.edges.filter((e) => e.kind === 'connection')).toHaveLength(1);
   });
 });

@@ -160,7 +160,7 @@ import/export across `model-json`, `sysml`, and `api-json` formats.
 **Responsibility:** Explorer, Canvas (React Flow), Palette, Properties, Text
 Editor, Toolbar, Bottom Panel, Collaborate panel, command palette.
 **Public surface:** `App`, the `useAppStore` zustand store, commands.
-**Notable:** the store directly instantiates `Y.Doc` (`src/ui/store.ts:2569`),
+**Notable:** the store directly instantiates `Y.Doc` (`src/ui/store.ts:2707`),
 bypassing the `collab/` abstraction; and reaches past `@diagram/index` into
 `@xyflow/react` for ~12 primitives (`08 §C`).
 

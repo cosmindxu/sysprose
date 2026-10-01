@@ -24,6 +24,11 @@
 }
 
 /* The canvas's own word on what the armed palette tool will do next. */
+/* The hint only says what a click does; a click on it goes through to the
+   canvas, or a click aimed at the empty top of a narrow canvas did nothing. */
+.react-flow__panel.canvas-tool-hint-panel {
+  pointer-events: none;
+}
 .canvas-tool-hint {
   padding: 4px 10px;
   border-radius: 12px;

@@ -46,7 +46,7 @@ import {
   type ViewKind,
   setNodeActionHandler,
 } from '@diagram/index';
-import { useAppStore } from '../store';
+import { useAppStore, type PortEnd } from '../store';
 import { usePaletteStore } from './Palette';
 import { NodeContextMenu } from './NodeContextMenu';
 import { PaneContextMenu } from './PaneContextMenu';
@@ -110,6 +110,17 @@ function elementIdOf(graph: DiagramGraph | null, rfNodeId: string): string | nul
   return n?.elementId ?? null;
 }
 
+/** Connection kinds whose ends are ports when drawn handle to handle. */
+const PORT_CONNECTION_KINDS = new Set(['ConnectionUsage', 'InterfaceUsage']);
+
+/** The port a handle stands for, as a connection end — or null for a body handle. */
+function portEndOf(graph: DiagramGraph | null, rfNodeId: string, handleId: string | null | undefined): PortEnd | null {
+  if (!handleId) return null;
+  const port = graph?.nodes.find((dn) => dn.id === rfNodeId)?.ports?.find((p) => p.id === handleId);
+  if (!port) return null;
+  return port.inherited ? { owner: port.inherited.owner, port: port.inherited.port } : { port: port.id };
+}
+
 /** Client-space pointer coords from a React Flow drag event (mouse or touch). */
 function pointerXY(evt: MouseEvent | TouchEvent): { x: number; y: number } | null {
   if ('clientX' in evt) return { x: evt.clientX, y: evt.clientY };
@@ -139,6 +150,9 @@ function DiagramCanvasInner(): JSX.Element {
   );
   const createElement = useAppStore((s) => s.createElement);
   const connect = useAppStore((s) => s.connect);
+  const connectPorts = useAppStore((s) => s.connectPorts);
+  /** The port picked with the source click, when that click was on a port handle. */
+  const pendingPort = useRef<PortEnd | null>(null);
   const updateElement = useAppStore((s) => s.updateElement);
   const reparentMany = useAppStore((s) => s.reparentMany);
   const simActiveStates = useAppStore((s) => s.simActiveStates);
@@ -339,11 +353,26 @@ function DiagramCanvasInner(): JSX.Element {
   const onConnect = useCallback(
     (params: Connection) => {
       if (!params.source || !params.target) return;
+      // Port to port (interconnection): the ends are the PORTS, not the boxes —
+      // `connect memberA.meshOut to memberB.meshIn`, not `connect memberA to memberB`.
+      const kind = tool.mode === 'edge' ? tool.eClass : DEFAULT_EDGE_KIND[activeView];
+      const from = portEndOf(diagram, params.source, params.sourceHandle);
+      const to = portEndOf(diagram, params.target, params.targetHandle);
+      if (from && to && PORT_CONNECTION_KINDS.has(kind)) {
+        try {
+          connectPorts(kind, from, to);
+        } catch (err) {
+          console.error('connect failed', err);
+        } finally {
+          resetTool();
+        }
+        return;
+      }
       const src = elementIdOf(diagram, params.source);
       const tgt = elementIdOf(diagram, params.target);
       if (src && tgt) doConnect(src, tgt);
     },
-    [diagram, doConnect],
+    [diagram, doConnect, tool, activeView, connectPorts, resetTool],
   );
 
   // Box-select (Shift+drag, React Flow's default) → sync the boxed nodes into
@@ -410,10 +439,28 @@ function DiagramCanvasInner(): JSX.Element {
       }
 
       if (tool.mode === 'edge') {
+        // A click on a port handle picks the PORT as the end (interconnection):
+        // `connect memberA.meshOut to memberB.meshIn` rather than the boxes.
+        const handleId =
+          (evt.target as Element | null)?.closest?.('.react-flow__handle')?.getAttribute('data-handleid') ?? null;
+        const portEnd = PORT_CONNECTION_KINDS.has(tool.eClass) ? portEndOf(diagram, node.id, handleId) : null;
         if (!pendingSource) {
+          pendingPort.current = portEnd;
           setPendingSource(elementId);
         } else {
-          doConnect(pendingSource, elementId);
+          const fromPort = pendingPort.current;
+          pendingPort.current = null;
+          if (fromPort && portEnd) {
+            try {
+              connectPorts(tool.eClass, fromPort, portEnd);
+            } catch (err) {
+              console.error('connect failed', err);
+            } finally {
+              resetTool();
+            }
+          } else {
+            doConnect(pendingSource, elementId);
+          }
         }
         return;
       }
@@ -421,7 +468,7 @@ function DiagramCanvasInner(): JSX.Element {
       // ⌘/Ctrl/Shift-click extends the multi-selection; a plain click replaces it.
       select(elementId, { additive: evt.shiftKey || evt.ctrlKey || evt.metaKey });
     },
-    [tool, pendingSource, createElement, resetTool, setPendingSource, doConnect, select],
+    [tool, pendingSource, createElement, resetTool, setPendingSource, doConnect, select, diagram, connectPorts],
   );
 
   /* ───────────────────────────── pane clicks ─────────────────────────────── */
@@ -653,13 +700,15 @@ function DiagramCanvasInner(): JSX.Element {
           <Legend edges={diagram?.edges ?? []} />
         </Panel>
         {tool.mode !== 'select' && (
-          <Panel position="top-center">
+          <Panel position="top-center" className="canvas-tool-hint-panel">
             <div className="canvas-tool-hint" data-testid="canvas-tool-hint" role="status">
               {tool.mode === 'node'
                 ? 'Click empty canvas to place it under the selection, or a box to place it inside · Esc cancels'
                 : pendingSource
                   ? 'Now click the target box · Esc cancels'
-                  : 'Click the source box, then the target'}
+                  : activeView === 'interconnection'
+                    ? 'Click the source port (or box), then the target'
+                    : 'Click the source box, then the target'}
             </div>
           </Panel>
         )}

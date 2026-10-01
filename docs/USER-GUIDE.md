@@ -400,7 +400,7 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:52-69`
-(the grouping); `src/ui/store.ts:224-238` (the diagram scope).
+(the grouping); `src/ui/store.ts:235-249` (the diagram scope).
 
 ---
 
@@ -436,6 +436,23 @@ bound, replacing the old one — the diagram draws the new `: Type` and any
 typing line at once. A name that resolves to nothing is kept as text, as the
 notation would keep it, and an empty field removes the typing. One undo takes
 it back.
+
+**Wiring ports.** In the Interconnection view a part shows its ports on its
+edges — the ones it declares, and the ones it has through its type
+(`part memberA : SwarmMember` shows SwarmMember's ports). Pick **Connection** or
+**Interface** in the palette and click a port handle on one part, then one on
+the other: the line ends on the PORTS, written as feature chains —
+`interface connect memberA.meshOut to memberB.meshIn;` — exactly what the text
+form parses to. Name it and give it its interface definition in Properties
+(Name, Type). Clicking two boxes instead of two ports still connects the parts.
+
+**Tags and a requirement's subject.** **Tags** in Properties holds the `#Tag`
+keywords written on the element (`#Hazard #Accepted`); Enter writes them, and
+the Keywords list under it says what each one resolves to. A statement kind
+(`#prose`, `#prompt`) stays with the Kind control. On a requirement, **Subject**
+takes `name : Type` (`holder : SwarmMember`) and writes `subject holder :
+SwarmMember;`; an empty field removes it, and a type that names nothing is not
+written.
 
 The tree and Properties update instantly. The diagram, the Problems list and the
 Text tab are *derived*, and they lag a burst of edits by up to 250 ms. That is
@@ -478,8 +495,8 @@ recompute — so the keyboard is never kept waiting.
 Undo is 50 snapshots deep, it covers model changes (not view changes, not the
 theme), and any new edit clears the redo stack. Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:900-1069` (the recompute cycle),
-`2369-2405` (`applyText`), `2780-2816` (undo), `2968-2987` (the post-apply
+**Source of truth:** `src/ui/store.ts:931-1100` (the recompute cycle),
+`2507-2543` (`applyText`), `2918-2954` (undo), `3106-3125` (the post-apply
 refresh); `src/ui/panels/TextEditor.tsx`;
 `test/e2e/text-apply-contract.spec.ts:30` (the one-undo guarantee, as a test).
 
@@ -2578,7 +2595,7 @@ it, every one of these engines is an importable function — `checkText`,
 `modelMetrics`, `requirementSatisfaction`, `whereUsed`, `analysisReport`,
 `buildGrid`, `buildDSM`, `buildPlan` — with no DOM anywhere in them.
 
-**Source of truth:** `src/ui/store.ts:1923-2049` (the four buttons),
+**Source of truth:** `src/ui/store.ts:1954-2137` (the four buttons),
 `src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:42-72`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
@@ -2848,7 +2865,7 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 `modelDescription.xml` for the selected block.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:539-559`, `2432-2462`, `src/ui/App.tsx:80-84`,
+`src/ui/store.ts:570-590`, `2570-2600`, `src/ui/App.tsx:80-84`,
 `test/e2e/persistence-reload.spec.ts`.
 
 ---
@@ -2866,8 +2883,6 @@ Stated plainly, because finding these out by surprise is worse.
   ([§5](#5-authoring-and-the-one-dangerous-button)).
 - **Undo is bounded and model-only.** View changes, scoping and the theme are
   not undoable.
-- **The diagram scope is invisible.** Only the right-click menu tells you it is
-  set, and only by offering to clear it.
 - **PNG export is a white-background rasterisation** of the SVG at 2×. Dark
   theme is not honoured. SVG and PNG export, and Auto-layout, are disabled off a
   graph view — the greyed control's tooltip says why.
@@ -2974,6 +2989,8 @@ quietly go stale.
 | Scope the diagrams | ⊞ on a row draws only that element's subtree in every graph view; the breadcrumb's **Diagrams:** chip and its × clear it | `tree-scope`, `scope-chip`, `scope-clear` |
 | Add child / rename / delete | Per-row tree editing | `tree-add`, `tree-rename`, `tree-delete` |
 | Properties fields | Name, type, value, multiplicity, direction, documentation, requirement id and text | `prop-name`, `prop-type`, `prop-value`, `prop-doc` |
+| Tags | The `#Tag` keywords written on the element, applied on Enter or on leaving the field; a statement kind stays with the Kind control | `prop-tags` |
+| Subject | A requirement's subject as `name : Type`, applied on Enter; empty removes it | `prop-subject` |
 | Statement kind | What the selected element is for — requirement / prose / prompt — offered wherever the notation can carry the keyword, which is most declarations and not only requirements | `prop-statement-kind` |
 | Requirement attributes | The nine management facets of a requirement — status, verdict, risk, priority, criticality, rationale, source, owner, verificationMethod — one control each, named `prop-rm-<facet>` after the key it writes | `prop-req-attrs` |
 | Requirement facet cells | The same ten facets as columns in the Requirements table — a drop-down (`req-attr-select`) where the key has a closed list, click-to-edit text (`req-attr-input`) where it does not; disabled, with the reason on the cell, on a row whose declaration could not be parsed | `req-attr-cell` |

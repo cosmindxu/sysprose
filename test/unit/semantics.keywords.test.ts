@@ -294,12 +294,15 @@ describe('the shipped verification vocabulary', () => {
    *
    * `ParametersOfInterestMetadata` writes `<moe>` and `<mop>` as
    * `:> SemanticMetadata` with an `annotatedElement` redefinition and a
-   * `baseType` binding. Measured here: three unresolved-specialization warnings
-   * on a file that is otherwise clean, and a body that does not come back the
-   * way it went in. A vocabulary that cannot be pasted into a user's file
-   * without three warnings is not a vocabulary that can be shipped.
+   * `baseType` binding. Measured here: two unresolved-specialization warnings —
+   * the `:>> annotatedElement` and `:>> baseType` redefinitions — on a file that
+   * is otherwise clean, and a body that does not come back the way it went in.
+   * (It was three until the library binder learned to bind a `:>` to a library
+   * definition: `:> SemanticMetadata` itself now resolves, as it should.) A
+   * vocabulary that cannot be pasted into a user's file without warnings is not
+   * a vocabulary that can be shipped.
    */
-  it('is not the SemanticMetadata shape, which costs three warnings and a rewrite', async () => {
+  it('is not the SemanticMetadata shape, which costs two warnings and a rewrite', async () => {
     const semantic = `package SysproseVerification {
     attribute exceptionalOutcomes[*] nonunique;
     metadata def <exceptional> ExceptionalOutcome :> SemanticMetadata {
@@ -310,8 +313,11 @@ describe('the shipped verification vocabulary', () => {
     const report = await checkText(semantic, { library: 'full' });
     expect(report.summary.errors).toBe(0);
     expect(
-      report.diagnostics.filter((d) => d.code === 'ref/unresolved-specialization').length,
-    ).toBe(3);
+      report.diagnostics.filter((d) => d.code === 'ref/unresolved-specialization').map((d) => d.message),
+    ).toEqual([
+      expect.stringContaining('annotatedElement'),
+      expect.stringContaining('baseType'),
+    ]);
     // And the round trip is not the identity: the redefinition comes back in
     // the serializer's own order.
     expect(serializeModel(parseModel(semantic).model)).not.toBe(semantic);

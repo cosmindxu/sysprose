@@ -20,10 +20,13 @@ ReactDOM.createRoot(rootEl).render(
 // Register the service worker (production only) so the app is installable and
 // works offline. Network-first, so it's transparent while online. `import.meta.env`
 // is Vite-injected; cast to read PROD without pulling in vite/client types.
+// The path is RELATIVE, like the build (`base: './'`): `/sw.js` named the root
+// of the host, which on a project page (`…github.io/sysprose/`) is somebody
+// else's path and answered 404, so the app never had its worker there.
 const isProd = (import.meta as unknown as { env?: { PROD?: boolean } }).env?.PROD === true;
 if ('serviceWorker' in navigator && isProd) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {
       /* offline support is best-effort */
     });
   });

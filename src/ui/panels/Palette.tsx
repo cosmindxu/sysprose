@@ -131,7 +131,9 @@ const TOOLS_BY_VIEW: Record<ViewKind, ToolGroup[]> = {
     },
     {
       title: 'Edges',
-      tools: [EDGE('ConnectionUsage', 'Connection')],
+      // Drawn box to box, or port to port (a handle on each box's edge): the
+      // ends are then the ports, as in `interface i : I connect a.p to b.q`.
+      tools: [EDGE('ConnectionUsage', 'Connection'), EDGE('InterfaceUsage', 'Interface')],
     },
   ],
   action: [

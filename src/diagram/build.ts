@@ -263,10 +263,25 @@ function buildInterconnection(model: Model, scope: Set<ElementId>, rootId?: Elem
   const candidates = model.all().filter((el) => scope.has(el.id) && partKinds.has(el.eClass));
 
   for (const el of candidates) {
-    const ports: DiagramPort[] = model
-      .children(el.id)
-      .filter((c) => c.eClass === 'PortUsage')
-      .map((p) => ({ id: p.id, side: directionSide(p.attrs.direction), label: labelOf(p) }));
+    const own = model.children(el.id).filter((c) => c.eClass === 'PortUsage');
+    const ports: DiagramPort[] = own.map((p) => ({ id: p.id, side: directionSide(p.attrs.direction), label: labelOf(p) }));
+    // A part usage also has the ports of its definition — `part memberA :
+    // SwarmMember` has SwarmMember's meshOut — and an interconnection diagram
+    // draws them on the usage's box, so a connection can be drawn to one. A
+    // port the usage already has as a member of its own (declared, or made by a
+    // connection that ends on `memberA.meshOut`) is not repeated.
+    if (!el.eClass.endsWith('Definition')) {
+      const ownNames = new Set(own.map((p) => p.declaredName));
+      for (const p of definitionPorts(model, el)) {
+        if (ownNames.has(p.declaredName)) continue;
+        ports.push({
+          id: `${el.id}/${p.id}`,
+          side: directionSide(p.attrs.direction),
+          label: labelOf(p),
+          inherited: { owner: el.id, port: p.id },
+        });
+      }
+    }
     nodes.push({
       id: el.id,
       elementId: el.id,
@@ -310,6 +325,33 @@ function buildInterconnection(model: Model, scope: Set<ElementId>, rootId?: Elem
   }
 
   return { nodes, edges, viewKind: 'interconnection' };
+}
+
+/** The named ports a usage's definition (and its supertypes) declare. */
+function definitionPorts(model: Model, el: ElementRecord): ElementRecord[] {
+  const out: ElementRecord[] = [];
+  const seen = new Set<string>();
+  const types = model
+    .relationshipsFrom(el.id)
+    .filter((r) => r.eClass === 'FeatureTyping')
+    .map((r) => r.target?.[0])
+    .filter((t): t is ElementId => !!t);
+  const visited = new Set<ElementId>();
+  while (types.length > 0) {
+    const t = types.shift()!;
+    if (visited.has(t)) continue;
+    visited.add(t);
+    for (const c of model.children(t)) {
+      if (c.eClass === 'PortUsage' && c.declaredName && !seen.has(c.declaredName)) {
+        seen.add(c.declaredName);
+        out.push(c);
+      }
+    }
+    for (const r of model.relationshipsFrom(t)) {
+      if (r.eClass === 'Subclassification' && r.target?.[0]) types.push(r.target[0]);
+    }
+  }
+  return out;
 }
 
 /** The short name of what a flow carries (`of Common::X` → `X`), if any. */

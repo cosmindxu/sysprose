@@ -163,8 +163,11 @@ export function serializeElement(model: Model, id: ElementId, indent = 0): strin
   // (e.g. `flow f : T;`, `connection c : C;`) are plain features — they fall
   // through to the generic path (keyword `flow`/`connection`); routing them to
   // the connect/from…to statement forms would emit `connect  to ;` / `from  to`.
-  if ((el.eClass === 'ConnectionUsage' || el.eClass === 'Connector') && hasEndpoints(el))
-    return connectionLine(model, el, pad);
+  if (
+    (el.eClass === 'ConnectionUsage' || el.eClass === 'InterfaceUsage' || el.eClass === 'Connector') &&
+    hasEndpoints(el)
+  )
+    return connectionLine(model, el, indent);
   if (el.eClass === 'Satisfy') return satisfyLine(model, el, pad);
   if (el.eClass === 'Verify') return verifyLine(model, el, pad);
   if (el.eClass === 'Refine') return refineLine(model, el, pad);
@@ -842,12 +845,22 @@ function hasEndpoints(el: ElementRecord): boolean {
   );
 }
 
-function connectionLine(model: Model, el: ElementRecord, pad: string): string {
-  const src = endpoint(model, el, 'source');
-  const tgt = endpoint(model, el, 'target');
-  const prefix =
-    el.declaredName !== undefined ? `connection ${quoteName(el.declaredName)} ` : '';
-  return `${pad}${prefix}connect ${src} to ${tgt};`;
+/**
+ * `connection c : T connect a.p to b.q { … }` — and the same for `interface`.
+ *
+ * The declaration head is the generic one, so the type, multiplicity and body
+ * (its doc, its own members) are kept. This used to write `connection <name>
+ * connect a to b;` from scratch, which dropped a connection's type and body —
+ * and an `interface` never came here at all: it took the generic path, kept
+ * its type and lost its ends, so `interface peerLink : MeshInterface connect
+ * memberA.meshOut to memberB.meshIn` was exported as `interface peerLink :
+ * MeshInterface;`. A bare anonymous connection keeps the short `connect a to b`.
+ */
+function connectionLine(model: Model, el: ElementRecord, indent: number): string {
+  const connect = `connect ${endpoint(model, el, 'source')} to ${endpoint(model, el, 'target')}`;
+  const bare =
+    el.declaredName === undefined && el.eClass !== 'InterfaceUsage' && specializationFragments(model, el).length === 0;
+  return renderWithBody(model, el, indent, bare ? connect : `${header(model, el)} ${connect}`);
 }
 
 /** All endpoint texts on one side (resolved paths, or a single textual-ref fallback). */
@@ -1161,12 +1174,21 @@ function refTo(
   return qualifiedRef(model, targetId);
 }
 
+/**
+ * The path from `scope` down to `targetId`, each step written the way the
+ * notation writes it: `::` into a package or a definition (a membership, as
+ * in `Hazards::LostLinkHazard`), `.` into a usage (a feature chain, as in
+ * `vehicle.engine`). Joining every step with `.` wrote `Hazards.LostLinkHazard`
+ * for a package member, which reads as a feature of a feature; the resolver
+ * accepts both separators, so this changes the text and not what it binds.
+ */
 function relativePath(
   model: Model,
   targetId: ElementId,
   scope: ElementId | null,
 ): string | undefined {
   const names: string[] = [];
+  const owners: ElementRecord[] = [];
   let cur: ElementRecord | undefined = model.get(targetId);
   const guard = new Set<ElementId>();
   while (cur && !guard.has(cur.id)) {
@@ -1174,7 +1196,10 @@ function relativePath(
     const nm = nameOf(cur);
     if (!nm) return undefined; // anonymous ancestor — cannot path through it
     names.unshift(nm);
-    if (cur.ownerId === scope) return names.join('.');
+    owners.unshift(cur);
+    if (cur.ownerId === scope) {
+      return names.reduce((path, name, i) => `${path}${owners[i - 1]!.eClass.endsWith('Usage') ? '.' : '::'}${name}`);
+    }
     if (cur.ownerId === null) break;
     cur = model.get(cur.ownerId);
   }

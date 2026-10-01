@@ -825,3 +825,80 @@ describe('useAppStore — typing by name, and who owns a drawn typing', () => {
     expect(typings(e)).toEqual([]);
   });
 });
+
+describe('useAppStore — interfaces drawn port to port, tags and subjects', () => {
+  function load(text: string): void {
+    useAppStore.setState({ model: parseModel(text).model, undoStack: [], redoStack: [], selectionId: null, selectionIds: [] });
+  }
+  const byQn = (qn: string) => st().model.all().find((e) => st().model.qualifiedName(e.id) === qn)!;
+  const text = () => serializeModel(st().model);
+
+  const WIRING = `package R {
+    port def P;
+    interface def I { end a : P; end b : ~P; }
+    part def M { out port o : P; in port i : ~P; port own : P; }
+    part m1 : M;
+    part m2 : M;
+    part m3 { out port q : P; }
+  }`;
+
+  it('connectPorts ends an interface on the ports a part has through its type — `m1.o`, not `m1`', () => {
+    load(WIRING);
+    const id = st().connectPorts(
+      'InterfaceUsage',
+      { owner: byQn('R::m1').id, port: byQn('R::M::o').id },
+      { owner: byQn('R::m2').id, port: byQn('R::M::i').id },
+    );
+    const iface = st().model.get(id)!;
+    expect(iface.eClass).toBe('InterfaceUsage');
+    expect(iface.ownerId).toBe(byQn('R').id);
+    expect(text()).toContain('interface connect m1.o to m2.i;');
+    // It re-parses to the same wiring.
+    const again = parseModel(text()).model;
+    const reparsed = again.all().find((e) => e.eClass === 'InterfaceUsage')!;
+    expect(again.qualifiedName(reparsed.source![0]!)).toBe('R::m1::o');
+    expect(again.qualifiedName(reparsed.target![0]!)).toBe('R::m2::i');
+    st().undo();
+    expect(st().model.all().some((e) => e.eClass === 'InterfaceUsage')).toBe(false);
+  });
+
+  it('connectPorts ends on a part\'s own port directly', () => {
+    load(WIRING);
+    st().connectPorts('ConnectionUsage', { port: byQn('R::m3::q').id }, { owner: byQn('R::m1').id, port: byQn('R::M::i').id });
+    expect(text()).toContain('connect m3.q to m1.i;');
+  });
+
+  it('setTags writes the #Tag keywords, keeps a statement kind, and refuses a name that is not one', () => {
+    load('package R { metadata def Hazard; metadata def Accepted; #prose part note; requirement H; }');
+    const h = byQn('R::H').id;
+    st().setTags(h, '#Hazard, Accepted');
+    expect(st().model.get(h)!.attrs.metadata).toEqual(['Hazard', 'Accepted']);
+    expect(text()).toContain('#Hazard #Accepted requirement H;');
+    const depth = st().undoStack.length;
+    st().setTags(h, 'not a-tag!');
+    expect(st().model.get(h)!.attrs.metadata).toEqual(['Hazard', 'Accepted']);
+    expect(st().undoStack.length).toBe(depth);
+    const note = byQn('R::note').id;
+    st().setTags(note, 'Hazard');
+    expect(st().model.get(note)!.attrs.metadata).toEqual(['prose', 'Hazard']);
+    st().setTags(h, '');
+    expect(st().model.get(h)!.attrs.metadata).toBeUndefined();
+  });
+
+  it('setSubject writes `subject name : Type`, retypes it, and an empty text removes it', () => {
+    load('package R { part def D; part def E; requirement H { doc /* t */ } }');
+    const h = byQn('R::H').id;
+    st().setSubject(h, 'holder : D');
+    expect(text()).toContain('subject holder : D;');
+    st().setSubject(h, 'holder : E');
+    expect(text()).toContain('subject holder : E;');
+    expect(text()).not.toContain(': D;');
+    const depth = st().undoStack.length;
+    st().setSubject(h, 'holder : NoSuchType');
+    expect(st().undoStack.length).toBe(depth);
+    st().setSubject(h, '');
+    expect(text()).not.toContain('subject');
+    expect(st().model.children(h).some((c) => c.attrs.requirementRole === 'subject')).toBe(false);
+  });
+});
+

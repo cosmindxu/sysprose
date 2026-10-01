@@ -1512,6 +1512,10 @@
 }
 
 /* ── Contracts view (read-only assume/guarantee inventory) ────────────────── */
+/* Whatever still does not fit scrolls sideways rather than being cut off. */
+.contracts-table {
+  overflow-x: auto;
+}
 .contracts-table table {
   border-collapse: collapse;
   width: 100%;
@@ -1545,6 +1549,10 @@
 }
 .contract-clause code {
   font-size: 11px;
+  /* A clause is one long expression of dotted names with few spaces
+     (`payload.footprintSquareKilometres >= 3.0 and …`); unbroken, it set the
+     table's minimum width past the panel and pushed Guarantees out of view. */
+  overflow-wrap: anywhere;
 }
 /* A refused relation is the number that decides how much of a row an engine
    ever sees, so it is coloured as a warning rather than hidden in a tooltip. */

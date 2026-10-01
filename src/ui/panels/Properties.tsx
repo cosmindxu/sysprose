@@ -37,8 +37,10 @@ import {
   carriesItsOwnText,
   getRequirementAttrs,
   isWritableNoteBody,
+  keywordsOnRecord,
   requirementShortId,
   statementKindOf,
+  statementKindOfKeyword,
   untaggedStatementKindLabel,
   writtenStatementKind,
   type RmAttrKey,
@@ -110,6 +112,38 @@ function keywordReading(use: KeywordUse): string {
 /** Cap the descendants walk so selecting a huge subtree stays responsive. */
 const MAX_DESCENDANTS = 2000;
 
+/**
+ * A one-line field that applies on Enter or on leaving it, not per keystroke:
+ * for values that only mean something whole (`holder : SwarmMember`,
+ * `#Hazard #Accepted`). Escape puts back what the model has.
+ */
+function CommitField(props: {
+  value: string;
+  testid: string;
+  placeholder: string;
+  title: string;
+  onCommit: (v: string) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState(props.value);
+  useEffect(() => setDraft(props.value), [props.value]);
+  return (
+    <input
+      data-testid={props.testid}
+      value={draft}
+      placeholder={props.placeholder}
+      title={props.title}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== props.value) props.onCommit(draft);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') props.onCommit(draft);
+        else if (e.key === 'Escape') setDraft(props.value);
+      }}
+    />
+  );
+}
+
 export function Properties(): JSX.Element {
   const rev = useAppStore((s) => s.rev);
   const model = useAppStore((s) => s.model);
@@ -118,6 +152,8 @@ export function Properties(): JSX.Element {
   const updateElement = useAppStore((s) => s.updateElement);
   const setAttr = useAppStore((s) => s.setAttr);
   const bindType = useAppStore((s) => s.bindType);
+  const setTags = useAppStore((s) => s.setTags);
+  const setSubject = useAppStore((s) => s.setSubject);
   const setRequirementShortId = useAppStore((s) => s.setRequirementShortId);
   const createElement = useAppStore((s) => s.createElement);
   const select = useAppStore((s) => s.select);
@@ -128,6 +164,24 @@ export function Properties(): JSX.Element {
   void rev;
 
   const el = selectionId ? model.get(selectionId) : undefined;
+  /** The #Tag keywords written here, statement kinds aside (the Kind control has those). */
+  const tagsText = el
+    ? keywordsOnRecord(el)
+        .map((k) => k.written)
+        .filter((w) => statementKindOfKeyword(w) === undefined)
+        .map((w) => `#${w}`)
+        .join(' ')
+    : '';
+  /** A requirement's subject as `name : Type`. */
+  const subjectEl = el ? model.children(el.id).find((c) => c.attrs.requirementRole === 'subject') : undefined;
+  const subjectType = subjectEl
+    ? model
+        .relationshipsFrom(subjectEl.id)
+        .filter((r) => r.eClass === 'FeatureTyping')
+        .map((r) => model.get(r.target?.[0] ?? '')?.declaredName ?? '')
+        .find(Boolean) ?? ''
+    : '';
+  const subjectText = subjectEl ? `${subjectEl.declaredName ?? ''}${subjectType ? ` : ${subjectType}` : ''}` : '';
   /** The name of the definition the selection is typed by, when it is typed. */
   const typedName = el
     ? (model.relationshipsFrom(el.id)
@@ -526,6 +580,20 @@ export function Properties(): JSX.Element {
           </div>
         )}
 
+        {isRequirement(eClass) && (
+          <div className="field">
+            <label>Subject</label>
+            <CommitField
+              key={`subject-${id}`}
+              testid="prop-subject"
+              value={subjectText}
+              placeholder="name : Type"
+              title="What the requirement is about, as name : Type — Enter applies; empty removes it"
+              onCommit={(v) => setSubject(id, v)}
+            />
+          </div>
+        )}
+
         {canCarryKind && (
           <div className="field">
             <label>Kind</label>
@@ -552,6 +620,21 @@ export function Properties(): JSX.Element {
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        {canCarryKind && (
+          <div className="field">
+            <label>Tags</label>
+            <CommitField
+              key={`tags-${id}`}
+              testid="prop-tags"
+              value={tagsText}
+              // Says the field is empty: an example alone, greyed, read as this element's tags.
+              placeholder="none — e.g. #Hazard"
+              title="The #Tag keywords written on this element — Enter applies"
+              onCommit={(v) => setTags(id, v)}
+            />
           </div>
         )}
 

@@ -175,6 +175,10 @@ import {
   setRequirementShortId as semSetRequirementShortId,
   setStatementKind as semSetStatementKind,
   statementKindOf,
+  statementKindOfKeyword,
+  canCarryStatementKind,
+  reachesTheFile,
+  keywordsOnRecord,
   type RmAttrKey,
   type StatementKind,
   type SimSample,
@@ -214,6 +218,13 @@ export interface CollabState {
 }
 
 /* ─────────────────────────────── State shape ────────────────────────────── */
+
+/** One end of a port-to-port connection — see {@link AppState.connectPorts}. */
+export interface PortEnd {
+  /** The part whose port it is, when the port is the part's through its type. */
+  owner?: ElementId;
+  port: ElementId;
+}
 
 export interface AppState {
   // Data + SDK surfaces.
@@ -483,6 +494,19 @@ export interface AppState {
    * expected to prevent by not offering the control at all.
    */
   setStatementKind(id: ElementId, kind: StatementKind | null): void;
+  /**
+   * Replace the `#Tag` keywords written on an element with the ones in `text`
+   * (`Hazard, Accepted` or `#Hazard #Accepted`). A statement-kind keyword
+   * (`#prose`, `#prompt`, …) is the Kind control's and is kept. Refused — no
+   * change — for a name that is not one, or where the notation has no place
+   * to write a keyword.
+   */
+  setTags(id: ElementId, text: string): void;
+  /**
+   * Set a requirement's subject from `name : Type` (`holder : SwarmMember`);
+   * an empty text removes it. The type binds as the Type field's does.
+   */
+  setSubject(id: ElementId, text: string): void;
   deleteElement(id: ElementId): void;
   /** Deep-clone an element + its subtree as a sibling; returns the new root id. */
   duplicateElement(id: ElementId): ElementId | null;
@@ -494,6 +518,13 @@ export interface AppState {
    */
   reparentMany(ids: ElementId[], ownerId: ElementId | null): void;
   connect(sourceId: ElementId, targetId: ElementId, kind: string): ElementId;
+  /**
+   * A connection or interface (`kind`) between two PORTS, drawn handle to
+   * handle. An end is a port of the part's own (`{ port }`) or a port the part
+   * has through its type (`{ owner, port }`), which becomes the feature chain
+   * `memberA.meshOut` — exactly what `connect memberA.meshOut to …` parses to.
+   */
+  connectPorts(kind: string, from: PortEnd, to: PortEnd): ElementId;
 
   runValidation(): void;
   runConstraintCheck(): void;
@@ -1964,6 +1995,63 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    setTags(id, text) {
+      const { model } = get();
+      const el = model.get(id);
+      if (!el || el.attrs.isLibrary === true) return;
+      if (!reachesTheFile(model, id) || !canCarryStatementKind(model, id)) return;
+      const tags = text
+        .split(/[\s,]+/)
+        .map((t) => t.replace(/^#/, ''))
+        .filter(Boolean);
+      if (tags.some((t) => !/^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*$/.test(t))) return;
+      const written = keywordsOnRecord(el).map((k) => k.written);
+      const kept = written.filter((w) => statementKindOfKeyword(w) !== undefined);
+      const next = [...kept, ...tags.filter((t, i) => !kept.includes(t) && tags.indexOf(t) === i)];
+      if (next.length === written.length && next.every((t, i) => t === written[i])) return;
+      pushUndo();
+      if (next.length > 0) model.setAttrs(id, { metadata: next });
+      else {
+        delete el.attrs.metadata;
+        model.setAttrs(id, {});
+      }
+      afterMutation();
+    },
+
+    setSubject(id, text) {
+      const { model } = get();
+      const el = model.get(id);
+      if (!el || el.attrs.isLibrary === true || !isRequirement(el.eClass)) return;
+      const current = model.children(id).find((c) => c.attrs.requirementRole === 'subject');
+      const [rawName = '', rawType = ''] = text.includes(':') ? text.split(':') : [text, ''];
+      const name = rawName.trim();
+      const typeName = rawType.trim();
+      if (name === '' && typeName === '') {
+        if (!current) return;
+        pushUndo();
+        withCommandMutation(() => model.remove(current.id));
+        afterMutation();
+        return;
+      }
+      if (name !== '' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return;
+      const type = typeName ? resolveDeclaredTypeName(model, typeName, id, current?.id ?? id) : undefined;
+      if (typeName && !type) return; // a type that names nothing is not bound — and not half-written
+      pushUndo();
+      withCommandMutation(() =>
+        model.transaction(() => {
+          const subject =
+            current ??
+            model.create('ReferenceUsage', { ownerId: id, attrs: { requirementRole: 'subject' } });
+          if (name) model.update(subject.id, { declaredName: name });
+          for (const t of model.relationshipsFrom(subject.id).filter((r) => r.eClass === 'FeatureTyping')) {
+            model.remove(t.id);
+          }
+          if (type) model.create('FeatureTyping', { ownerId: subject.id, source: [subject.id], target: [type.id] });
+        }),
+      );
+      afterMutation();
+    },
+
     setStatementKind(id, kind) {
       const { model } = get();
       const el = model.get(id);
@@ -2116,6 +2204,56 @@ export const useAppStore = create<AppState>((set, get) => {
       set(singleSel(edge.id));
       afterMutation();
       return edge.id;
+    },
+
+    connectPorts(kind, from, to) {
+      const { model } = get();
+      const partOf = (e: PortEnd): ElementRecord | undefined => model.get(e.owner ?? model.get(e.port)?.ownerId ?? '');
+      const a = partOf(from);
+      const b = partOf(to);
+      if (!a || !b || !model.has(from.port) || !model.has(to.port)) {
+        throw new Error('connectPorts: a part or port does not exist');
+      }
+      // Beside the parts, as `connect a.p to b.q` is written: in the source
+      // part's owner, from where both parts are reached by name.
+      const ownerId = a.ownerId ?? null;
+      // An end the part has through its type is a chain from the owner down to
+      // the part, then the port: `memberA.meshOut`.
+      const chain = (e: PortEnd): string | undefined => {
+        if (!e.owner) return undefined;
+        const names: string[] = [];
+        for (let cur = model.get(e.owner); cur && cur.id !== ownerId; cur = cur.ownerId ? model.get(cur.ownerId) : undefined) {
+          names.unshift(cur.declaredName ?? '');
+          if (!cur.ownerId) break;
+        }
+        return [...names, model.get(e.port)?.declaredName ?? ''].join('.');
+      };
+      pushUndo();
+      let edgeId = '';
+      withCommandMutation(() =>
+        model.transaction(() => {
+          const sourceRef = chain(from);
+          const targetRef = chain(to);
+          const created = model.create(kind, {
+            ownerId,
+            source: sourceRef === undefined ? [from.port] : [],
+            target: targetRef === undefined ? [to.port] : [],
+          });
+          if (sourceRef !== undefined || targetRef !== undefined) {
+            model.setAttrs(created.id, {
+              ...(sourceRef !== undefined ? { sourceRef } : {}),
+              ...(targetRef !== undefined ? { targetRef } : {}),
+            });
+            // The same binding a parse does: the chain's part feature is made
+            // (or found) and the end points at it.
+            resolveConnectorFeatureChains(model);
+          }
+          edgeId = created.id;
+        }),
+      );
+      set(singleSel(edgeId));
+      afterMutation();
+      return edgeId;
     },
 
     /* ─────────────────────────── Validation / text ────────────────────── */
