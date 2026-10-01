@@ -2287,7 +2287,12 @@ export const useAppStore = create<AppState>((set, get) => {
         severity: c.result === 'violated' ? 'warning' : 'info',
         message:
           c.result === 'satisfied'
-            ? `Constraint satisfied: ${c.expression}`
+            ? // An equation that defines a valueless feature (CV-17) says what it
+              // defines and the value it fixes; the bare expression would hide
+              // the one number the user is looking for.
+              c.message.startsWith('Constraint satisfied: defines')
+              ? `${c.message} (${c.expression})`
+              : `Constraint satisfied: ${c.expression}`
             : c.result === 'violated'
               ? c.message
               : `Constraint could not be evaluated ("${c.expression}"): ${c.message}.`,

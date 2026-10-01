@@ -55,6 +55,14 @@ async function authorBehaviors(page: import('@playwright/test').Page): Promise<v
       declaredName: 'massWithinLimit',
       attrs: { expression: 'mass < 2000' },
     });
+    // An equation that defines a valueless feature (CV-17): Check says what it
+    // fixes, not only that it holds.
+    api.create('AttributeUsage', { ownerId: vehicle!.id, declaredName: 'payloadE2E' });
+    api.create('ConstraintUsage', {
+      ownerId: vehicle!.id,
+      declaredName: 'payloadDefinition',
+      attrs: { expression: 'payloadE2E == mass / 3' },
+    });
   });
 }
 
@@ -100,6 +108,9 @@ test('Simulate lists action-flow and state-machine traces; Check lists constrain
   await expect(checkRow).toBeVisible();
   await expect(
     page.getByTestId('problem-row').filter({ hasText: 'Constraint satisfied' }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId('problem-row').filter({ hasText: 'Constraint satisfied: defines payloadE2E = 500' }).first(),
   ).toBeVisible();
   await shot(page, 'simcheck-check');
 
