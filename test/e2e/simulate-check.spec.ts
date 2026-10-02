@@ -145,7 +145,7 @@ test('Simulate lists action-flow and state-machine traces; Check lists constrain
       .filter({
         hasText:
           'Constraint could not be evaluated ("cargoE2E == mass / 3"): ' +
-          'Could not evaluate: cargoE2E has no value anywhere and nothing specialises it.',
+          'Could not evaluate: cargoE2E has no value anywhere, no asserted equation, and nothing specialises it.',
       })
       .first(),
   ).toBeVisible();

@@ -1257,16 +1257,21 @@ function judgeDerivation(model: Model, id: ElementId, q: Quantity): FeatureDeriv
  * that needs the feature as a QUANTITY asks here, never labels the scalar
  * with the kind's dimension. `equation` is the defining constraint's body;
  * a body that is not `name == <expr>` (either way round) answers `unresolved`.
+ * `contextId` is where the equation is written, when that is not the
+ * feature's owner: a feature a definition inherits, fixed by an equation in
+ * the definition that inherits it, is derived from the names THERE.
  */
 export function equationDerivation(
   model: Model,
   featureId: ElementId,
   equation: string,
   memo: DerivationMemo = new Map(),
+  contextId?: ElementId,
 ): FeatureDerivation {
   const feat = model.get(featureId);
   const name = feat?.declaredName;
-  if (!feat || !name || feat.ownerId == null) return claimOnly('unknown', 'unresolved');
+  const context = contextId ?? feat?.ownerId;
+  if (!feat || !name || context == null) return claimOnly('unknown', 'unresolved');
   let node: QNode;
   try {
     node = new QParser(lexQ(equation)).parse();
@@ -1278,7 +1283,7 @@ export function equationDerivation(
   const side = isName(node.left) ? node.right : isName(node.right) ? node.left : undefined;
   if (!side) return claimOnly('unknown', 'unresolved');
   const inFlight = new Set<ElementId>([featureId]);
-  const r = evalQ(side, quantityScopeFor(model, feat.ownerId, inFlight, memo), 0);
+  const r = evalQ(side, quantityScopeFor(model, context, inFlight, memo), 0);
   if (isQUnknown(r)) return claimOnly('unknown', r.reason, r.detail);
   if (!('q' in r)) return { claim: 'unknown', b: r.b };
   return judgeDerivation(model, featureId, r.q);

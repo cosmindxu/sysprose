@@ -189,7 +189,11 @@ describe('semantics — a valueless feature fixed by an equation beside it (CV-1
     expect((evaluateFeatureValue(m, watched.id) as { unknown?: boolean }).unknown).toBe(true);
     const check = checkConstraints(m).find((c) => c.expression === 'watched == fleet * share')!;
     expect(check.result).toBe('unknown');
-    expect(check.message).toBe('Could not evaluate: watched has no value anywhere and nothing specialises it');
+    // The message names the missing assert: the equation an author reads as
+    // the definition is right there, and it is a check.
+    expect(check.message).toBe(
+      'Could not evaluate: watched has no value anywhere, no asserted equation, and nothing specialises it',
+    );
   });
 
   it('does not read a requirement’s assume or require as a definition', () => {
@@ -360,9 +364,50 @@ describe('checkConstraints — a target read through the features that specialis
       expect(read(keyword), keyword).toEqual([
         'unknown',
         undefined,
-        'Common::t (m >= 0.9) could not be evaluated for LA: LA::m has no value and no defining equation',
+        'Common::t (m >= 0.9) could not be evaluated for LA: LA::m has no value and no asserted equation',
       ]);
     }
+  });
+
+  it('says a measure whose only equation is required has no asserted one, and still reads it per specialisation', () => {
+    const m = model(`package Common {
+        attribute m : Real;
+        require constraint condition { m == 0.5 }
+        require constraint t { m >= 0.9 }
+      }
+      package LA { attribute m :> Common::m = 0.95; }`);
+    expect(checkOf(m, 'Common::t').message).toBe(
+      'Could not evaluate: m has no value here and no asserted equation; evaluated per specialisation: LA::m',
+    );
+    expect(verdicts(checkOf(m, 'Common::t'))).toEqual([['LA', 'satisfied']]);
+    // With nothing specialising it either, the test condition itself names all three.
+    const alone = model('package Common { attribute m : Real; require constraint condition { m == 0.5 } }');
+    expect(checkOf(alone, 'Common::condition').message).toBe(
+      'Could not evaluate: m has no value anywhere, no asserted equation, and nothing specialises it',
+    );
+  });
+
+  it('does not say "no asserted equation" beside an asserted one that yields no value', () => {
+    // `fix` IS the asserted equation; it yields nothing only because `k` has no value.
+    const body = `attribute k : Real;
+        attribute m : Real;
+        assert constraint fix { m == k * 2 }
+        require constraint condition { m == 0.5 }
+        require constraint t { m >= 0.9 }`;
+    const alone = model(`package Common { ${body} }`);
+    expect(checkOf(alone, 'Common::fix').message).toBe(
+      'Could not evaluate: m has no value anywhere and nothing specialises it; ' +
+        'k has no value anywhere and nothing specialises it',
+    );
+    for (const name of ['Common::condition', 'Common::t']) {
+      expect(checkOf(alone, name).message, name).toBe(
+        'Could not evaluate: m has no value anywhere and nothing specialises it',
+      );
+    }
+    const layered = model(`package Common { ${body} } package LA { attribute m :> Common::m = 0.95; }`);
+    expect(checkOf(layered, 'Common::t').message).toBe(
+      'Could not evaluate: m has no value here; evaluated per specialisation: LA::m',
+    );
   });
 
   it('gives an unknown instance, not a skipped one, for a specialiser with no value', () => {
@@ -371,7 +416,7 @@ describe('checkConstraints — a target read through the features that specialis
     const [la] = checkOf(m, 'Common::t').instances!;
     expect(la.result).toBe('unknown');
     expect(la.value).toBeUndefined();
-    expect(la.message).toBe('Common::t (m >= 0.9) could not be evaluated for LA: LA::m has no value and no defining equation');
+    expect(la.message).toBe('Common::t (m >= 0.9) could not be evaluated for LA: LA::m has no value and no asserted equation');
   });
 
   it('reads a body over two measures only in a context that specialises both', () => {
@@ -395,7 +440,7 @@ describe('checkConstraints — a target read through the features that specialis
     );
   });
 
-  it('leaves a dotted subject reference alone (the EPBS contract shape)', () => {
+  it('does not read a dotted subject reference per specialisation, and says what it reads (the EPBS contract shape)', () => {
     const src = `package E {
       part def Software { attribute areaFraction : Real; }
       part software : Software;
@@ -408,8 +453,106 @@ describe('checkConstraints — a target read through the features that specialis
     const m = model(src);
     const c = checkConstraints(m).find((x) => x.expression === 'coordination.areaFraction >= 0.9')!;
     expect(c.result).toBe('unknown');
-    expect(c.message).toBe('Could not evaluate: a referenced value is unknown');
+    expect(c.message).toBe(
+      'Could not evaluate: coordination.areaFraction has no value: Software::areaFraction is declared without one ' +
+        'and what specialises it (LA::areaFraction) is not read through a feature chain',
+    );
     expect(c.instances).toBeUndefined();
+  });
+});
+
+/*
+ * A requirement on a configuration item reads its subject's features through
+ * a dotted chain (`coordination.areaUnderWatchFraction >= 0.9` over `subject
+ * coordination : MemberCoordinationSoftware`). When the chain ends at a
+ * feature declared without a value, the check answered "a referenced value is
+ * unknown" — naming neither the value nor where it is missing. The outcome
+ * stays unknown; the message now follows the chain through each feature's
+ * type to the feature it ends at and says why that has no value.
+ */
+describe('checkConstraints — why a feature chain has no value', () => {
+  const contract = (defBody: string, body: string) =>
+    model(`package E {
+      part def Software { ${defBody} }
+      requirement def SoftwareContract {
+        subject coordination : Software;
+        require constraint { ${body} }
+      }
+    }`);
+  const only = (m: Model) => checkConstraints(m).find((c) => m.qualifiedName(c.id).startsWith('E::SoftwareContract'))!;
+
+  it('names the feature the chain ends at, declared without a value, that nothing specialises', () => {
+    const c = only(contract('attribute areaFraction : Real; attribute authenticated : Boolean = true;',
+      'coordination.areaFraction >= 0.9 and coordination.authenticated == true'));
+    expect(c.result).toBe('unknown');
+    expect(c.message).toBe(
+      'Could not evaluate: coordination.areaFraction has no value: ' +
+        'Software::areaFraction is declared without one and nothing specialises it',
+    );
+    expect(c.instances).toBeUndefined();
+  });
+
+  it('names every chain the body lacks, once each, and none it has a value for', () => {
+    const c = only(contract('attribute a : Real; attribute b : Real; attribute k : Real = 30;',
+      'coordination.a <= 20 and coordination.a * coordination.k <= 3600 and coordination.b >= 1'));
+    expect(c.message).toBe(
+      'Could not evaluate: coordination.a has no value: Software::a is declared without one and nothing specialises it; ' +
+        'coordination.b has no value: Software::b is declared without one and nothing specialises it',
+    );
+  });
+
+  it('follows the chain through more than one type, and through an inherited feature', () => {
+    const m = model(`package E {
+      part def Base { attribute rate : Real; }
+      part def Radio :> Base { attribute on : Boolean = true; }
+      part def Drone { part radio : Radio; }
+      requirement def R { subject d : Drone; require constraint { d.radio.rate >= 2 } }
+    }`);
+    const c = checkConstraints(m).find((x) => x.expression === 'd.radio.rate >= 2')!;
+    expect(c.message).toBe(
+      'Could not evaluate: d.radio.rate has no value: Base::rate is declared without one and nothing specialises it',
+    );
+  });
+
+  it('says an equation beside the feature that is only required is not an asserted one', () => {
+    const c = only(contract('attribute a : Real; require constraint { a == 0.5 }', 'coordination.a >= 0.9'));
+    expect(c.message).toBe(
+      'Could not evaluate: coordination.a has no value: ' +
+        'Software::a is declared without one, has no asserted equation, and nothing specialises it',
+    );
+  });
+
+  it('says an asserted equation beside the feature is not read through a feature chain', () => {
+    const c = only(contract('attribute a : Real; assert constraint { a == 0.95 }', 'coordination.a >= 0.9'));
+    expect(c.result).toBe('unknown');
+    expect(c.message).toBe(
+      'Could not evaluate: coordination.a has no value: Software::a is declared without one, ' +
+        'its asserted equation is not read through a feature chain, and nothing specialises it',
+    );
+  });
+
+  it('keeps the generic sentence for a chain that does not resolve, or ends at a value it could not evaluate', () => {
+    for (const [defBody, body] of [
+      ['attribute a : Real;', 'coordination.missing >= 0.9'],
+      ['attribute a : Real = b * 2;', 'coordination.a >= 0.9'],
+      ['attribute a : Real; attribute b : Real = 1;', 'coordination.a >= 0.9 and other >= 1'],
+    ]) {
+      const c = only(contract(defBody, body));
+      expect(c.result, body).toBe('unknown');
+      expect(c.message, body).toBe('Could not evaluate: a referenced value is unknown');
+    }
+  });
+
+  it('keeps a chain’s cause beside the reason a bare measure has no value', () => {
+    const m = model(`package E {
+      part def Software { attribute a : Real; }
+      requirement def R { subject s : Software; attribute m : Real; require constraint t { m >= 0.9 and s.a >= 1 } }
+    }`);
+    const c = checkConstraints(m).find((x) => x.expression === 'm >= 0.9 and s.a >= 1')!;
+    expect(c.message).toBe(
+      'Could not evaluate: m has no value anywhere and nothing specialises it; ' +
+        's.a has no value: Software::a is declared without one and nothing specialises it',
+    );
   });
 
   it('terminates on a subsetting cycle and on an equation that reads the measure back', () => {
@@ -497,8 +640,6 @@ describe('checkConstraints — a specialiser is judged by the same unit rules as
 
   it('reads an estimate fixed by an equation as the quantity the equation derives, never its raw scalar', async () => {
     const { model: m } = await loadModelText(BY_EQUATION);
-    // Written in LA, the unit-aware pass does not read the equation: unknown, not a miss.
-    expect(checkOf(m!, 'U::LA::localWithUnit').result).not.toBe('violated');
     const [withUnit] = checkOf(m!, 'U::Common::withUnit').instances!;
     expect(withUnit.result).toBe('satisfied');
     expect(withUnit.message).toBe('LA::endurance = 3544.62 [s] meets Common::withUnit (endurance >= 45.0 [min])');
@@ -527,6 +668,150 @@ describe('checkConstraints — a specialiser is judged by the same unit rules as
         /LA::endurance \(ISQ::DurationValue\) has no value that could be read as a quantity: .*its raw number is not compared$/,
       );
     }
+    // Beside the equation, the same: the raw 640 / 650 is not compared there either.
+    for (const local of ['U::LA::localBare', 'U::LA::localWithUnit']) {
+      const c = checkOf(m!, local);
+      expect(c.result, local).toBe('unknown');
+      expect(c.message, local).toMatch(
+        /^Could not evaluate: endurance \(ISQ::DurationValue\) has no value that could be read as a quantity: .*its raw number is not compared$/,
+      );
+    }
+  });
+
+  /*
+   * The SAME estimate read where its equation is written. The unit-aware
+   * scope does not read a feature fixed by an equation and the scalar scope
+   * reads it unit-blind, so `localBare` was violated by 0.98 < 45,
+   * `localWithUnit` was unknown, and the equation reported "defines endurance
+   * = 0.984615" — while the target in Common, read through the same feature,
+   * was refused and judged. The constraint beside the equation now reads the
+   * feature exactly as the specialiser path does.
+   */
+  it('judges a constraint beside the equation exactly as the target read through the specialiser', async () => {
+    const { model: m } = await loadModelText(BY_EQUATION);
+    // Against a bare literal: refused, with the reason the specialiser reading gives.
+    const localBare = checkOf(m!, 'U::LA::localBare');
+    const [bare] = checkOf(m!, 'U::Common::bare').instances!;
+    expect(localBare.result).toBe('unknown');
+    expect(localBare.message).toBe(
+      'Could not evaluate: "endurance" is derived from dimensioned quantities (T) and cannot be compared as a bare ' +
+        'number; compare against a unit literal of dimension T, e.g. `45.0 [s]` or `45.0 [min]` or `45.0 [h]`',
+    );
+    expect(bare.message).toBe(
+      `Common::bare (endurance >= 45.0) could not be evaluated for LA: ${localBare.message.replace(/^Could not evaluate: /, '')}`,
+    );
+    // Against a unit literal: judged, converting — 59 min meets 45 min.
+    const localWithUnit = checkOf(m!, 'U::LA::localWithUnit');
+    expect(localWithUnit.result).toBe('satisfied');
+    expect(checkOf(m!, 'U::Common::withUnit').instances![0].result).toBe(localWithUnit.result);
+  });
+
+  it('says what a dimensioned equation defines with its unit', async () => {
+    const { model: m } = await loadModelText(BY_EQUATION);
+    const equation = checkConstraints(m!).find((c) => c.expression === 'endurance == capacity / power')!;
+    expect(equation.result).toBe('satisfied');
+    expect(equation.message).toBe('Constraint satisfied: defines endurance = 3544.62 [s]');
+  });
+
+  /*
+   * A kind on the feature relabels a dimensionless derivation: `endurance :
+   * DurationValue` over unitless Real inputs is 3544.62 s. Judged against
+   * that binding, the equation it came from compared seconds with its own
+   * dimensionless side and reported the definition violated — a warning in
+   * Problems on an equation that holds, while the target read through the
+   * same feature in another package met its limit.
+   */
+  it('keeps satisfied the equation a kinded feature is fixed by over unitless inputs, and gives its unit', async () => {
+    const { model: m } = await loadModelText(`package K {
+      attribute capacityWh : Real = 640.0;
+      attribute powerW : Real = 650.0;
+      attribute endurance : ISQ::DurationValue;
+      assert constraint fix { endurance == capacityWh / powerW * 3600.0 }
+      constraint withUnit { endurance >= 45.0 [min] }
+      attribute limit : ISQ::MassValue;
+      assert constraint cap { limit == 25.0 }
+    }`);
+    const judged = (name: string) => [checkOf(m!, name).result, checkOf(m!, name).message];
+    expect(judged('K::fix')).toEqual(['satisfied', 'Constraint satisfied: defines endurance = 3544.62 [s]']);
+    expect(judged('K::cap')).toEqual(['satisfied', 'Constraint satisfied: defines limit = 25 [kg]']);
+    expect(judged('K::withUnit')).toEqual(['satisfied', 'Constraint satisfied']);
+
+    // The same equation in a layer, under a target in Common read through it.
+    const { model: layered } = await loadModelText(`package U {
+      package Common { attribute endurance : ISQ::DurationValue; constraint withUnit { endurance >= 45.0 [min] } }
+      package LA {
+        attribute capacityWh : Real = 640.0;
+        attribute powerW : Real = 650.0;
+        attribute endurance : ISQ::DurationValue :> Common::endurance;
+        assert constraint fix { endurance == capacityWh / powerW * 3600.0 }
+      }
+    }`);
+    expect([checkOf(layered!, 'U::LA::fix').result, checkOf(layered!, 'U::LA::fix').message]).toEqual([
+      'satisfied',
+      'Constraint satisfied: defines endurance = 3544.62 [s]',
+    ]);
+    expect(checkOf(layered!, 'U::Common::withUnit').instances!.map((i) => [i.result, i.message])).toEqual([
+      ['satisfied', 'LA::endurance = 3544.62 [s] meets Common::withUnit (endurance >= 45.0 [min])'],
+    ]);
+  });
+
+  it('refuses, and defines nothing, when the equation derives a dimension its feature’s type does not have', async () => {
+    const { model: m } = await loadModelText(`package Q {
+      attribute len : ISQ::LengthValue = 5.0 [m];
+      attribute e : ISQ::DurationValue;
+      assert constraint { e == len }
+      constraint bare { e >= 1.0 }
+      constraint withUnit { e >= 1.0 [s] }
+    }`);
+    const refusal = 'Could not evaluate: "e" derives to a dimension that disagrees with its declared type, so it is excluded from unit-aware evaluation';
+    for (const c of checkConstraints(m!)) {
+      expect(c.result, c.expression).toBe('unknown');
+      expect(c.message, c.expression).toBe(refusal);
+    }
+  });
+
+  it('refuses an untyped dimensioned derivation against a bare literal, naming the pure-ratio repair', async () => {
+    const { model: m } = await loadModelText(`package Q {
+      attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+      attribute power : ISQ::PowerValue = 650.0 [W];
+      attribute e;
+      assert constraint { e == capacity / power }
+      constraint bare { e >= 45.0 }
+      constraint withUnit { e >= 45.0 [min] }
+    }`);
+    expect(checkOf(m!, 'Q::bare').message).toMatch(
+      /^Could not evaluate: "e" is derived from dimensioned quantities \(T\) and cannot be compared as a bare number; if it is meant as a pure ratio/,
+    );
+    expect(checkOf(m!, 'Q::withUnit').result).toBe('satisfied');
+  });
+
+  it('leaves a dimensionless derivation as it was: the scalar value, the same verdicts, the same message', () => {
+    // v9's shape: every estimate a unitless Real, fixed by an asserted equation.
+    const checks = checkConstraints(parseModel(`package LA {
+      attribute fleet : Real = 12; attribute share : Real = 0.05; attribute loss : Real = 0.12;
+      attribute watched : Real;
+      attribute lost : Real;
+      assert constraint { watched == fleet * share }
+      assert constraint { lost == loss / watched }
+      require constraint high { watched >= 0.9 }
+      require constraint low { lost <= 0.25 }
+    }`).model);
+    const by = (e: string) => checks.find((c) => c.expression === e)!;
+    expect([by('watched == fleet * share').result, by('watched == fleet * share').message]).toEqual([
+      'satisfied',
+      'Constraint satisfied: defines watched = 0.6',
+    ]);
+    // `lost` is fixed through another fixed value, which the quantity scope
+    // does not read: its scalar stands in, as it does for a specialiser.
+    expect([by('lost == loss / watched').result, by('lost == loss / watched').message]).toEqual([
+      'satisfied',
+      'Constraint satisfied: defines lost = 0.2',
+    ]);
+    expect([by('watched >= 0.9').result, by('watched >= 0.9').message]).toEqual([
+      'violated',
+      'Constraint violated: watched >= 0.9',
+    ]);
+    expect(by('lost <= 0.25').result).toBe('satisfied');
   });
 
   it('keeps a specialiser whose derivation disagrees with its type a refusal, not a raw magnitude', async () => {

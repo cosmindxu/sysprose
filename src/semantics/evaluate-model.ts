@@ -445,8 +445,44 @@ interface Judgement {
  * read in another context is judged by exactly the rules its own context
  * would be: a second, scalar-only evaluator here would hand a dimensioned
  * specialiser the raw-magnitude verdict the refusals exist to prevent.
+ *
+ * The same holds for a feature fixed by an asserted equation in the
+ * constraint's OWN context: it is bound exactly as a specialiser is (see
+ * {@link equationBindings}), so `e >= 45.0` beside `assert constraint { e ==
+ * capacity / power }` is not the unit-blind 0.98 < 45 the scalar scope alone
+ * answered, while the same estimate read from another package was refused.
  */
 function judgeConstraint(
+  model: Model,
+  el: ElementRecord,
+  expr: string,
+  memo: DerivationMemo,
+  bindings?: ReadonlyMap<string, Bound>,
+): Judgement {
+  const local = equationBindings(model, el, expr, memo, bindings);
+  if ('reason' in local) return { result: 'unknown', message: `Could not evaluate: ${local.reason}`, gap: false };
+  // The equation a feature is bound FROM is not judged against that binding:
+  // a kind relabels a dimensionless derivation (`endurance : DurationValue`
+  // over unitless Real inputs is 3544.62 s), and the unit-aware `==` of that
+  // with the dimensionless side it came from is a definite false — the
+  // definition reported violated by its own reading. It is judged as it
+  // always was; the binding only says, below, what it defines.
+  const judgeWith = new Map([...(bindings ?? []), ...local.bindings]);
+  if (local.self !== undefined) judgeWith.delete(local.self);
+  const all = judgeWith.size === 0 ? bindings : judgeWith;
+  const judged = judgeBound(model, el, expr, memo, all);
+  // An equation that fixes a valueless feature is not a check that passed
+  // but a definition that was read: say what it fixed the feature to — as
+  // the quantity the equation derives, so `640 [Wh] / 650 [W]` reads 3544.62 s,
+  // not the 0.984615 that is hours to no one. A reading through a specialiser
+  // is a check of the target, never a definition.
+  if (judged.result !== 'satisfied' || bindings) return judged;
+  const defines = definitionMessage(model, el, local.bindings);
+  return defines ? { ...judged, message: defines } : judged;
+}
+
+/** The pipeline of {@link judgeConstraint} over one set of bindings. */
+function judgeBound(
   model: Model,
   el: ElementRecord,
   expr: string,
@@ -529,24 +565,198 @@ function judgeConstraint(
     : own;
   const r = evaluate(node, scope);
   if ('unknown' in r) {
-    return { result: 'unknown', message: 'Could not evaluate: a referenced value is unknown', gap: true };
+    return { result: 'unknown', message: `Could not evaluate: ${unknownCause(model, el, node, scope)}`, gap: true };
   }
-  if (r.value === true) {
-    // An equation that fixes a valueless feature is not a check that passed
-    // but a definition that was read: say what it fixed the feature to.
-    const defined = bindings ? undefined : definedFeatureOf(model, el);
-    const value = defined ? scope(defined.declaredName!) : undefined;
-    return {
-      result: 'satisfied',
-      message:
-        defined && typeof value === 'number'
-          ? `Constraint satisfied: defines ${defined.declaredName} = ${Number(value.toPrecision(6))}`
-          : 'Constraint satisfied',
-      gap: false,
-    };
-  }
+  if (r.value === true) return { result: 'satisfied', message: 'Constraint satisfied', gap: false };
   if (r.value === false) return { result: 'violated', message: `Constraint violated: ${expr}`, gap: false };
   return { result: 'unknown', message: 'Expression did not evaluate to a boolean', gap: false };
+}
+
+/**
+ * "Constraint satisfied: defines e = 3544.62 [s]" for an asserted equation
+ * that fixes a valueless feature of its owner, or `undefined` for any other
+ * constraint. The value is the feature's binding — the quantity the equation
+ * derives, shown as {@link displayOf} shows an estimate. Where a stated value
+ * of the same name answers the scope first, so nothing was bound, it prints
+ * what the scope answers, as it always did.
+ */
+function definitionMessage(model: Model, el: ElementRecord, local: ReadonlyMap<string, Bound>): string | undefined {
+  const defined = definedFeatureOf(model, el);
+  const name = defined?.declaredName;
+  if (!name) return undefined;
+  const bound = local.get(name);
+  if (bound) {
+    const shown = displayOf(bound);
+    if (typeof shown.value !== 'number') return undefined;
+    return `Constraint satisfied: defines ${name} = ${shown.value}${shown.unit ? ` [${shown.unit}]` : ''}`;
+  }
+  const value = combinedScope(model, el)(name);
+  return typeof value === 'number' ? `Constraint satisfied: defines ${name} = ${Number(value.toPrecision(6))}` : undefined;
+}
+
+/* ─────────────── A feature fixed by an asserted equation in the constraint's own context ─────────────── */
+
+/** An asserted equation that fixes a valueless feature, and where it is written. */
+interface EquationSite {
+  contextId: ElementId;
+  feature: ElementRecord;
+  equation: { constraint: ElementRecord; definition: ExprNode };
+}
+
+/**
+ * The bindings for the bare names a body reads that the scalar scope answers
+ * through {@link valueDefinedByEquation} — a feature that states no value but
+ * is fixed by an asserted equation in the constraint's own context — each read
+ * by {@link readSpecialiser}, the reading a specialiser fixed the same way gets
+ * when the target is in another package. Names `taken` by a specialiser are
+ * left to it.
+ *
+ * The scalar scope reads such a feature unit-blind (`e == capacity / power`
+ * over 640 Wh and 650 W is 0.9846) and the unit-aware scope does not read it at
+ * all, so before this a constraint beside the equation compared the raw
+ * magnitude — `e >= 45.0` violated, `e >= 45.0 [min]` unknown — where the same
+ * estimate read through a specialiser was refused and judged respectively.
+ *
+ * A refusal, and a dimensioned value with no quantity, are the answer (the
+ * `reason`); a feature whose equation yields no value at all is left unbound,
+ * so the body stays the gap it was and a target is still read through the
+ * features that specialise its measure. `self` is the name bound from `el`
+ * itself — the feature `el` is the defining equation of.
+ */
+function equationBindings(
+  model: Model,
+  el: ElementRecord,
+  expr: string,
+  memo: DerivationMemo,
+  taken?: ReadonlyMap<string, Bound>,
+): { bindings: Map<string, Bound>; self?: string } | { reason: string } {
+  const bindings = new Map<string, Bound>();
+  let self: string | undefined;
+  for (const name of bareNamesIn(expr)) {
+    if (taken?.has(name)) continue;
+    const site = equationSiteOf(model, el, name);
+    if (!site) continue;
+    const read = readSpecialiser(model, site.feature, name, memo, site);
+    if ('bound' in read) {
+      bindings.set(name, read.bound);
+      if (site.equation.constraint.id === el.id) self = name;
+    } else if (!read.valueless) return { reason: read.reason };
+  }
+  return { bindings, self };
+}
+
+/**
+ * The equation the scalar scope would read `name` through, mirroring
+ * {@link combinedScope}: the owner's scope first, then the constraint's own,
+ * and in each a stated value of that name (anywhere {@link featureIdsFor}
+ * reaches) before an equation — `undefined` when one answers it first.
+ */
+function equationSiteOf(model: Model, el: ElementRecord, name: string): EquationSite | undefined {
+  const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
+  for (let i = 0; i < contexts.length; i++) {
+    const contextId = contexts[i]!;
+    const feature = effectiveFeatures(model, contextId).find((f) => f.declaredName === name && !hasValue(f));
+    const equation = feature ? definingEquationFor(model, contextId, name) : undefined;
+    if (!feature || !equation) continue;
+    // The scope-building walk runs only for a name an equation could answer.
+    const shadowed = contexts.slice(0, i + 1).some((c) => featureIdsFor(model, c).has(name));
+    return shadowed ? undefined : { contextId, feature, equation };
+  }
+  return undefined;
+}
+
+/* ─────────────── Why a feature chain a body reads has no value ─────────────── */
+
+/**
+ * The reason a body the scalar scope could not evaluate is unknown: when
+ * every name it lacks is a dotted feature chain that ends at a feature
+ * declared without a value, one {@link chainCause} per chain; otherwise the
+ * generic sentence. A requirement on a configuration item reads its subject's
+ * features (`coordination.areaUnderWatchFraction >= 0.9` over `subject
+ * coordination : MemberCoordinationSoftware`), and "a referenced value is
+ * unknown" named neither the value nor where it is missing.
+ */
+function unknownCause(model: Model, el: ElementRecord, node: ExprNode, scope: Scope): string {
+  const lacking = [...new Set(referencedNames(node))].filter((n) => scope(n) === undefined);
+  const causes = lacking.map((n) => (n.includes('.') ? chainCause(model, el, n) : undefined));
+  return causes.length > 0 && causes.every((c) => c !== undefined)
+    ? causes.join('; ')
+    : 'a referenced value is unknown';
+}
+
+/**
+ * `coordination.areaUnderWatchFraction has no value:
+ * MemberCoordinationSoftware::areaUnderWatchFraction is declared without one
+ * and nothing specialises it` — the chain resolved through each feature's
+ * declared type, as the scope walks it, to the feature it ends at; or
+ * `undefined` when the chain does not resolve or ends at a feature that states
+ * a value (a value that could not be evaluated is another fault).
+ *
+ * What it adds, as applies: an equation of the defining shape beside the
+ * feature that is not asserted (it checks, it does not define); an asserted
+ * one, and the features that specialise it, which a chain does not read — it
+ * reads the feature its subject's type declares.
+ */
+function chainCause(model: Model, el: ElementRecord, chain: string): string | undefined {
+  const [head, ...rest] = chain.split('.');
+  let feature: ElementRecord | undefined;
+  for (const contextId of [el.ownerId, el.id]) {
+    if (contextId == null) continue;
+    feature = effectiveFeatures(model, contextId).find((f) => f.declaredName === head);
+    if (feature) break;
+  }
+  let via: ElementId | undefined;
+  for (const segment of rest) {
+    if (!feature) return undefined;
+    let next: ElementRecord | undefined;
+    for (const type of model.typesOf(feature.id)) {
+      next = effectiveFeatures(model, type.id).find((f) => f.declaredName === segment);
+      if (next) {
+        via = type.id;
+        break;
+      }
+    }
+    feature = next;
+  }
+  const name = feature?.declaredName;
+  if (!feature || !name || rest.length === 0 || hasValue(feature)) return undefined;
+  const sites = [...new Set([via, feature.ownerId].filter((c): c is ElementId => c != null))];
+  const asserted = sites.some((c) => definingEquationFor(model, c, name) !== undefined);
+  const checked = !asserted && sites.some((c) => hasUnassertedEquation(model, c, name));
+  const specialisers = [...specialisersOf(model, feature).byContext.values()].flat();
+  const clauses = [
+    `${shortName(model, feature)} is declared without one`,
+    ...(checked ? ['has no asserted equation'] : []),
+    ...(asserted ? ['its asserted equation is not read through a feature chain'] : []),
+    specialisers.length === 0
+      ? 'nothing specialises it'
+      : `what specialises it (${specialisers.map((f) => shortName(model, f, name)).join(', ')}) is not read through a feature chain`,
+  ];
+  return `${chain} has no value: ${listed(clauses)}`;
+}
+
+/** `a and b`, `a, b, and c`. */
+function listed(items: string[]): string {
+  if (items.length <= 2) return items.join(' and ');
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+/**
+ * Is `name` the defined side of an equation among the constraints `ownerId`
+ * owns that is NOT asserted — a `require`d, assumed or plain `x == <expr>`?
+ * That is a check of a value given elsewhere, not a definition (see
+ * {@link isAsserted}); a message that says the feature has no value names it,
+ * so an author who meant the equation as the definition sees why it is not one.
+ */
+function hasUnassertedEquation(model: Model, ownerId: ElementId, name: string): boolean {
+  return model
+    .children(ownerId)
+    .some(
+      (c) =>
+        (c.eClass === 'ConstraintUsage' || c.eClass === 'RequirementUsage') &&
+        !isAsserted(c) &&
+        definedSide(c, name) !== undefined,
+    );
 }
 
 /**
@@ -636,18 +846,32 @@ function readThroughSpecialisers(
     for (const ctx of walks.get(m.name)!.byContext.keys()) if (!contexts.includes(ctx)) contexts.push(ctx);
   }
 
-  // The constraint's own message says WHY it is unknown, and where it was read instead.
+  // The constraint's own message says WHY it is unknown, and where it was read
+  // instead. A measure whose only equation beside it is `require`d (or plain)
+  // says it has no asserted one: that is the equation an author reads as the
+  // definition, and only an assert is one. Beside an asserted equation that
+  // yields no value (its inputs have none) the clause would be false.
   const target = targetName(model, el);
   const why = missing.map((m) => {
     const walk = walks.get(m.name)!;
-    if (walk.byContext.size === 0) return `${m.name} has no value anywhere and nothing specialises it`;
+    const checked =
+      definingEquationFor(model, el.ownerId!, m.name) === undefined &&
+      hasUnassertedEquation(model, el.ownerId!, m.name);
+    if (walk.byContext.size === 0) {
+      return checked
+        ? `${m.name} has no value anywhere, no asserted equation, and nothing specialises it`
+        : `${m.name} has no value anywhere and nothing specialises it`;
+    }
     const shown: string[] = [];
     for (const cands of walk.byContext.values()) {
       const pick = chooseSpecialiser(model, cands, walk);
       for (const f of 'ambiguous' in pick ? pick.ambiguous : [pick.feature]) shown.push(shortName(model, f, m.name));
     }
-    return `${m.name} has no value here; evaluated per specialisation: ${shown.join(', ')}`;
+    const here = checked ? 'has no value here and no asserted equation' : 'has no value here';
+    return `${m.name} ${here}; evaluated per specialisation: ${shown.join(', ')}`;
   });
+  // A feature chain the body also lacks keeps its own cause beside them.
+  why.push(...chainCausesIn(model, el, expr, scope));
   check.message = `Could not evaluate: ${why.join('; ')}`;
   if (contexts.length === 0) return;
 
@@ -826,40 +1050,60 @@ function specialises(specific: ElementId, general: ElementId, parents: Map<Eleme
  * refuses (a dimension that disagrees with the declared type, an offset
  * scale) is refused here too, and a dimensioned feature with no quantity is
  * not compared — neither is ever read as a raw magnitude.
+ *
+ * `local` reads a feature fixed by an asserted equation in a constraint's own
+ * context ({@link equationBindings}) by the same rules: the equation is the one
+ * the scalar scope reads there, and the messages name the feature as the body
+ * does, as they name a value-expression feature in that context.
+ * `valueless` marks the one outcome that is not a reason to refuse: there is
+ * no value to read at all.
  */
 function readSpecialiser(
   model: Model,
   feature: ElementRecord,
   measure: string,
   memo: DerivationMemo,
-): { bound: Bound } | { reason: string; refused: boolean } {
-  const name = shortName(model, feature, measure);
+  local?: EquationSite,
+): { bound: Bound } | { reason: string; refused: boolean; valueless: boolean } {
+  const name = local ? measure : shortName(model, feature, measure);
   // A feature fixed by an equation beside it states no value to derive: its
   // quantity is the equation's defining side, read by the unit-aware evaluator.
   const equation =
-    !hasValue(feature) && feature.ownerId != null && feature.declaredName
+    local?.equation ??
+    (!hasValue(feature) && feature.ownerId != null && feature.declaredName
       ? definingEquationFor(model, feature.ownerId, feature.declaredName)
-      : undefined;
+      : undefined);
   const expression = equation?.constraint.attrs.expression;
   const byEquation =
-    typeof expression === 'string' ? equationDerivation(model, feature.id, expression, memo) : undefined;
+    typeof expression === 'string'
+      ? equationDerivation(model, feature.id, expression, memo, local?.contextId)
+      : undefined;
   const d = byEquation ?? dimensionClaimDetail(model, feature.id, memo);
   if (isRefusalReason(d.reason)) {
     const detail =
       d.reason === 'mismatch' || d.reason === 'offset'
         ? describeReason(d.reason, name)
         : `"${name}" cannot be derived: ${describeReason(d.reason!, d.detail)}`;
-    return { reason: detail, refused: true };
+    return { reason: detail, refused: true, valueless: false };
   }
-  const ev = evaluateFeatureValue(model, feature.id);
-  const value = 'value' in ev ? ev.value : undefined;
+  let value: unknown;
+  if (local) {
+    value = valueDefinedByEquation(model, local.contextId, measure, new Set());
+  } else {
+    const ev = evaluateFeatureValue(model, feature.id);
+    value = 'value' in ev ? ev.value : undefined;
+  }
   if (value === undefined || value === null) {
+    // Only an ASSERTED equation defines (see `isAsserted`), so that is what
+    // the message says is missing: "no defining equation", beside a
+    // `require`d `x == …`, read as if the tool had not seen the equation.
     return {
       reason:
-        hasValue(feature) || hasDefiningEquation(model, feature)
+        hasValue(feature) || equation !== undefined
           ? `${name} has no value that could be evaluated`
-          : `${name} has no value and no defining equation`,
+          : `${name} has no value and no asserted equation`,
       refused: false,
+      valueless: true,
     };
   }
   // Without a quantity the scalar stands in for one only when it IS one: a
@@ -878,6 +1122,7 @@ function readSpecialiser(
           `${name} (${kind.name ?? dimToString(kind.dimension)}) has no value that could be read as a ` +
           `quantity${why}, and its raw number is not compared`,
         refused: false,
+        valueless: false,
       };
     }
     quantity = { magnitude: value, dimension: DIMENSIONLESS };
@@ -902,13 +1147,26 @@ function hasDefiningEquation(model: Model, f: ElementRecord): boolean {
 
 /** The bare (undotted) names a body reads, once each, in source order. */
 function bareNamesIn(expr: string): string[] {
+  return namesIn(expr).filter((n) => !n.includes('.'));
+}
+
+/** Every name a body reads, once each, in source order — through either grammar. */
+function namesIn(expr: string): string[] {
   let refs: string[] | undefined;
   try {
     refs = referencedNames(parseExpr(expr));
   } catch {
     refs = quantityRefsIn(expr);
   }
-  return [...new Set((refs ?? []).filter((n) => !n.includes('.')))];
+  return [...new Set(refs ?? [])];
+}
+
+/** The {@link chainCause} of each feature chain a body reads that `scope` has no value for, where one can be named. */
+function chainCausesIn(model: Model, el: ElementRecord, expr: string, scope: Scope): string[] {
+  return namesIn(expr)
+    .filter((n) => n.includes('.') && scope(n) === undefined)
+    .map((n) => chainCause(model, el, n))
+    .filter((c): c is string => c !== undefined);
 }
 
 /** `Common::t`, or "a constraint in Common" for an unnamed one. */

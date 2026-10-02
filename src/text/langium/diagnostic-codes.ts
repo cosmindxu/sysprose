@@ -432,7 +432,7 @@ const CODES = [
     source: 'validation',
     severity: 'warning',
     when: 'A target written over a measure that has no value where it is stated (`Common::m >= 0.9`) is read through a feature that subsets or redefines the measure in another context (`LA::m :> Common::m`): one finding per context, at that feature — a warning when its value misses the target, info when it meets it or cannot be read.',
-    hint: 'A miss is a fact about the estimate, not a fault in the model: change the design if the target must be met, not the number to meet it. An info that could not be read names why — a context with two features that specialise the measure, a body that names a measure the context does not specialise, or a specialiser with no value and no defining equation.',
+    hint: 'A miss is a fact about the estimate, not a fault in the model: change the design if the target must be met, not the number to meet it. An info that could not be read names why — a context with two features that specialise the measure, a body that names a measure the context does not specialise, or a specialiser with no value and no asserted equation (the same equation `require`d, or as a plain `constraint`, is a check of a value given elsewhere, not a definition).',
   },
   {
     code: 'validation/dimensional-consistency',
