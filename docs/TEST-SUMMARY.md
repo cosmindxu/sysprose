@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 156
-- **Tests:** 3445 total — 3445 passed, 0 failed, 0 skipped
+- **Tests:** 3514 total — 3514 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -35,7 +35,7 @@
 | test/integration/pipeline.validate.test.ts | 6 | 0 | 0 |
 | test/integration/semantics-exec.integration.test.ts | 9 | 0 | 0 |
 | test/integration/semantics.pipeline.test.ts | 9 | 0 | 0 |
-| test/integration/smt-z3.integration.test.ts | 28 | 0 | 0 |
+| test/integration/smt-z3.integration.test.ts | 29 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
 | test/integration/verification.differential.test.ts | 13 | 0 | 0 |
@@ -47,7 +47,7 @@
 | test/server/index-browser-guard.test.ts | 3 | 0 | 0 |
 | test/server/oslc-rdf.test.ts | 11 | 0 | 0 |
 | test/server/oslc-shapes.test.ts | 11 | 0 | 0 |
-| test/unit/api.analytics.test.ts | 65 | 0 | 0 |
+| test/unit/api.analytics.test.ts | 67 | 0 | 0 |
 | test/unit/api.evidence.test.ts | 39 | 0 | 0 |
 | test/unit/api.oslc.test.ts | 10 | 0 | 0 |
 | test/unit/api.prompts.test.ts | 14 | 0 | 0 |
@@ -111,7 +111,7 @@
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 13 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 52 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
@@ -141,9 +141,9 @@
 | test/unit/semantics.units-eval.test.ts | 30 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
-| test/unit/smt-z3-bridge-death.test.ts | 24 | 0 | 0 |
+| test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 55 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 57 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 10 | 0 | 0 |
@@ -164,4 +164,4 @@
 | test/unit/ui.text-editor.test.ts | 4 | 0 | 0 |
 | test/unit/user-guide.test.ts | 30 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
-| test/unit/validation.rules.test.ts | 78 | 0 | 0 |
+| test/unit/validation.rules.test.ts | 83 | 0 | 0 |
