@@ -31,19 +31,32 @@
  *     contract: `range = 5.0 [km]` against `<= 10.0` is read in kilometres on
  *     both surfaces) the caller passes factor 1 / offset 0 and the read is the
  *     bare symbol — the same verbatim reading the numeric surface gives it.
- *  3. **Exact rationals, never a re-parsed decimal.** Every numeral a BODY
- *     contains is the binary64 the rest of this tool holds, written exactly:
- *     `18.5` is `(/ 37.0 2.0)` and `0.1` is `3602879701896397 / 2⁵⁵`, via the
- *     double's own significand and exponent, so the number the solver sees is
- *     precisely the number `checkConstraints` evaluates. Nothing is rounded on
- *     the way in, and nothing is re-parsed from a decimal. The one reading that
- *     is NOT the double is a feature VALUE the author wrote — `0.1` in a file is
- *     one tenth — and {@link valueTextNumeral} is the affordance for it; it is
- *     deliberately not applied to body literals, because an axiom set and a goal
- *     that disagreed about a boundary number would decide the boundary case by
- *     which side of the proof the number arrived on. The engine that builds
- *     feature-value axioms from `attrs.valueText` is commit 5, and it is the
- *     only caller that function is for.
+ *  3. **Exact rationals — of the number each surface holds.** Numbers over
+ *     PLAIN features are read in binary64, written exactly: `18.5` is `(/ 37.0
+ *     2.0)` and `0.1` is `3602879701896397 / 2⁵⁵`, via the double's own
+ *     significand and exponent, so the number the solver sees is precisely the
+ *     double `checkConstraints` holds.
+ *     Numbers that meet a DIMENSIONED feature or a `[unit]` literal are read in
+ *     the decimals the author wrote (`numeral`): the validation surface
+ *     compares quantities within a relative tolerance, and the decimal is the
+ *     number that tolerance stands for, so `0.1 [g] + 0.2 [g]` is `0.3 [g]` on
+ *     both. A unit's factor and origin are the numbers the registry wrote
+ *     (`scaleRational`: a gram is one thousandth, km/h is 5/18), a COMPOSED
+ *     unit's factor is the exact product of its parts' (`ft^3` is 0.3048 cubed,
+ *     not the double that product rounds to), and a `[unit]` literal is the
+ *     author's magnitude times that same factor — ONE reading of a unit for a
+ *     stored magnitude and a literal alike, so neither side of a proof gets a
+ *     number the other does not.
+ *     WHICH reading is decided per PROOF CONTEXT, not per relation: a proof
+ *     mixes relations — a plain `f = 0.1` value axiom, an `assume`, a goal
+ *     `f * mass != 0.1 [kg]` — and an axiom read in binary64 beside a goal read
+ *     in decimals decided the tie by which side of the proof the number arrived
+ *     on (it PROVED that 0.1 × 1 kg is not 0.1 kg). The caller passes the
+ *     symbols whose numerals are decimals (`EncodeVariable.decimal`, from
+ *     `decimalSymbols` of ./decimal-reading): every symbol connected, through
+ *     any relation the caller encodes, to a dimensioned feature or a `[unit]`
+ *     literal. Every relation over such a symbol is then read one way.
+ *     {@link valueTextNumeral} reads an author's decimal text.
  *  4. **Symbols are qualified names.** Element ids are fresh UUIDs on every load
  *     (§6, "element ids are not stable"), so a script keyed on them would differ
  *     between two loads of one file and no digest over it would mean anything.
@@ -59,6 +72,7 @@
 import type { ExprNode } from '../expr';
 import type { ContractVariable, Fragment, Refusal, VarSort } from '../contracts';
 import type { ScaleMap } from '../relations';
+import { resolveUnit, type FactorTerm } from '../units';
 
 /* ────────────────────────────── variables ───────────────────────────────── */
 
@@ -80,8 +94,24 @@ export interface EncodeVariable {
   /** `si = value·factor + offset`. 1 / 0 when the gates granted no scaling. */
   factor: number;
   offset: number;
+  /**
+   * What `factor` is the product of, when it is a COMPOSED unit's
+   * (`Unit.factorTerms` of ../units) — the exact number the read multiplies
+   * by, where `factor` is only the double that product rounds to. Absent for
+   * a registry unit's factor and for the identity.
+   */
+  factorTerms?: ReadonlyArray<FactorTerm>;
   /** Has the caller released this feature's value? */
   free: boolean;
+  /**
+   * Are this symbol's numerals the decimals they are written as? True when the
+   * caller's proof context connects the symbol to a DIMENSIONED feature or a
+   * `[unit]` literal (`decimalSymbols` of ./decimal-reading). A relation that
+   * reads one reads every numeral as a decimal (see {@link numeral}); a
+   * relation over plain numbers only reads them as the binary64 the
+   * validation surface holds. Absent is `false`.
+   */
+  decimal?: boolean;
 }
 
 /**
@@ -98,17 +128,34 @@ export interface EncodeVariable {
 export function encodeVariables(
   variables: readonly ContractVariable[],
   sortPerVar: Readonly<Record<string, VarSort>>,
-  opts: { scaled: boolean; free?: ReadonlySet<string> },
+  opts: { scaled: boolean; free?: ReadonlySet<string>; decimal?: ReadonlySet<string> },
 ): EncodeVariable[] {
   const free = opts.free ?? new Set<string>();
+  // Keyed on the SYMBOL the variable is encoded by — the set is a property of
+  // the proof context's symbols (`decimalSymbols`), not of the features.
+  const decimal = opts.decimal ?? new Set<string>();
   return variables.map((v) => ({
     path: v.path,
-    qualifiedName: v.qualifiedName,
+    qualifiedName: v.symbol ?? v.qualifiedName,
     sort: sortPerVar[v.path] ?? 'Real',
     factor: opts.scaled ? v.siFactor : 1,
     offset: opts.scaled ? v.siOffset : 0,
+    ...(opts.scaled ? declaredTerms(v, v.siFactor) : {}),
     free: free.has(v.path) || free.has(v.qualifiedName),
+    ...(decimal.has(v.symbol ?? v.qualifiedName) ? { decimal: true } : {}),
   }));
+}
+
+/**
+ * The terms a scaled variable's factor is composed of: its DECLARED unit's
+ * `factorTerms`, when `factor` is that unit's own factor — which a storage
+ * scale always is (`storageScaleOf` of ../relations reads the declared unit,
+ * and a feature that declares none is read at 1). Nothing otherwise, and the
+ * factor is read as the number it is ({@link scaleRational}).
+ */
+function declaredTerms(v: ContractVariable, factor: number): Pick<EncodeVariable, 'factorTerms'> {
+  const u = v.unit === null ? undefined : resolveUnit(v.unit);
+  return u?.factorTerms !== undefined && u.factorToSI === factor ? { factorTerms: u.factorTerms } : {};
 }
 
 /**
@@ -143,10 +190,11 @@ export function encodeVariablesOf(
     const s = reading.scale?.get(v.featureId);
     return {
       path: v.path,
-      qualifiedName: v.qualifiedName,
+      qualifiedName: v.symbol ?? v.qualifiedName,
       sort: reading.sortPerVar[v.path] ?? 'Real',
       factor: s?.factor ?? 1,
       offset: s?.offset ?? 0,
+      ...(s ? declaredTerms(v, s.factor) : {}),
       free: free.has(v.path) || free.has(v.qualifiedName),
     };
   });
@@ -228,6 +276,8 @@ interface Walk {
   /** Set wherever the emitted BYTES are nonlinear — see `EncodedRelation`. */
   syntacticNonlinear: boolean;
   sideConditions: SideCondition[];
+  /** Read numerals as the decimals they are written as — see {@link numeral}. */
+  decimal: boolean;
 }
 
 /**
@@ -249,7 +299,13 @@ export function encodeRelation(
     nonlinear: false,
     syntacticNonlinear: false,
     sideConditions: [],
+    decimal: false,
   };
+  // A `[unit]` literal is always read as the author's decimal times the
+  // unit's factor, so a relation that holds one reads all its numerals that
+  // way — a caller with no proof context to consult (`property-check`) still
+  // reads one relation one way.
+  walk.decimal = hasUnitLiteral(node) || varsOf(node, walk).some((name) => walk.vars.get(name)?.decimal === true);
   const encoded = term(node, walk);
   if (!encoded.ok) return encoded;
   if (encoded.sort !== 'Bool') {
@@ -272,6 +328,27 @@ export function encodeRelation(
   };
 }
 
+/**
+ * Does a (lowered) relation body carry a `[unit]` literal — a numeral that
+ * {@link numeral} reads as the author's decimal whatever else it reads?
+ * Exported for `decimalSymbols` (./decimal-reading), which makes the whole
+ * proof context such a literal meets read the same way.
+ */
+export function hasUnitLiteral(node: ExprNode): boolean {
+  switch (node.kind) {
+    case 'num':
+      return node.literal !== undefined;
+    case 'unary':
+      return hasUnitLiteral(node.operand);
+    case 'binary':
+      return hasUnitLiteral(node.left) || hasUnitLiteral(node.right);
+    case 'if':
+      return hasUnitLiteral(node.cond) || hasUnitLiteral(node.then) || hasUnitLiteral(node.else);
+    default:
+      return false;
+  }
+}
+
 /** Both spellings a body may use for a variable: its path and its qualified name. */
 function indexBy(variables: readonly EncodeVariable[]): Map<string, EncodeVariable> {
   const map = new Map<string, EncodeVariable>();
@@ -291,7 +368,7 @@ function refuse(reason: Refusal['reason'], detail: string): RefusedRelation {
 function term(node: ExprNode, walk: Walk): Encoded {
   switch (node.kind) {
     case 'num':
-      return numeral(node.value);
+      return numeral(node, walk);
     case 'bool':
       return { ok: true, text: node.value ? 'true' : 'false', sort: 'Bool' };
     case 'str':
@@ -367,13 +444,94 @@ function readOf(path: string, walk: Walk): Encoded {
     );
   }
   const base = v.sort === 'Int' ? `(to_real ${symbol})` : symbol;
-  return { ok: true, text: affine(base, v.factor, v.offset), sort: 'Real' };
+  return { ok: true, text: affine(base, v), sort: 'Real' };
 }
 
 /** `factor·x + offset`, with the identity map written as the bare symbol. */
-function affine(base: string, factor: number, offset: number): string {
-  const scaled = factor === 1 ? base : `(* ${exactNumeral(factor)} ${base})`;
-  return offset === 0 ? scaled : `(+ ${scaled} ${exactNumeral(offset)})`;
+function affine(base: string, v: EncodeVariable): string {
+  const factor = scaleRational(v.factor, v.factorTerms);
+  const scaled = factor.num === factor.den ? base : `(* ${renderRational(factor)} ${base})`;
+  return v.offset === 0 ? scaled : `(+ ${scaled} ${renderRational(scaleRational(v.offset))})`;
+}
+
+/**
+ * A unit's FACTOR or ORIGIN as the exact number it denotes — `0.001` for a
+ * gram is one thousandth, `273.15` for °C is 27315/100, and `1/3.6` for km/h
+ * is 5/18 — and the ONE reading of it this encoder has: a stored magnitude
+ * read into SI and a `[unit]` literal ({@link numeral}) go through the same
+ * number, so `m = 1.0 [g]` against `m != 1.0 [g]` is refuted rather than
+ * proved.
+ *
+ * The registry holds the double. Its shortest decimal is what the registry
+ * wrote wherever that has at most 15 significant digits (every SI prefix, the
+ * foot, the pound, the hour); a factor that is a ratio (`1/3.6`, `5/9`) prints
+ * as 16 or 17 digits of a repeating decimal, and is read as the simplest
+ * fraction with a denominator up to a million that rounds to the same double.
+ * Anything else — π/180 — is the double's own rational.
+ *
+ * Not the double's own rational everywhere: `0.001` is `1152921504606847 /
+ * 2^60`, a little more than a thousandth, so 500 g read through it was a little
+ * more than the `0.5 [kg]` the validation surface rounds it to. And not the
+ * decimal of a ratio: 36 km/h through `0.2777777777777778` is 10.0000000000000008
+ * m/s, which is not the `10.0 [m/s]` every other surface finds it equal to.
+ *
+ * A COMPOSED unit's factor is read from what it is composed of, never from
+ * its double: `terms` (`Unit.factorTerms` of ../units) is every registry and
+ * prefix factor in it with its power, and the factor is the exact product of
+ * their readings. Its double is a product taken in binary64 and rounds — `ft^3`
+ * is 0.028316846592000004, `g/cm^3` is 999.9999999999999, a nanogram is
+ * 1.0000000000000002e-12 kg — and read as itself it PROVED `1 [ft^3] >
+ * 0.028316846592 [m^3]`, `1 [g/cm^3] < 1000 [kg/m^3]` and `1 [ng] > 1000 [pg]`.
+ */
+export function scaleRational(x: number, terms?: ReadonlyArray<FactorTerm>): Rational {
+  if (terms !== undefined) {
+    return terms.reduce<Rational>((acc, t) => multiply(acc, raise(scaleRational(t.factor), t.power)), {
+      num: 1n,
+      den: 1n,
+    });
+  }
+  const shortest = String(x);
+  if (significantDigits(shortest) <= 15) {
+    const decimal = decimalRational(shortest);
+    if (decimal) return decimal;
+  }
+  return simpleFraction(x, 1_000_000) ?? exactRationalOfDouble(x);
+}
+
+/** `r` to an integer power; a negative power inverts it, keeping `den > 0`. */
+function raise(r: Rational, power: number): Rational {
+  const n = BigInt(Math.abs(power));
+  const [num, den] = power < 0 ? (r.num < 0n ? [-r.den, -r.num] : [r.den, r.num]) : [r.num, r.den];
+  return { num: num ** n, den: den ** n };
+}
+
+/** The significant digits of a number as `String` prints it. */
+function significantDigits(text: string): number {
+  const mantissa = text.replace(/^[-+]/, '').split(/[eE]/)[0] ?? '';
+  return mantissa.replace('.', '').replace(/^0+/, '').length;
+}
+
+/**
+ * The simplest fraction `p/q`, `q <= maxDen`, whose double IS `x` — read off
+ * the continued fraction of `x` — or `undefined` when there is none.
+ */
+function simpleFraction(x: number, maxDen: number): Rational | undefined {
+  if (!Number.isFinite(x)) return undefined;
+  const negative = x < 0;
+  let rest = Math.abs(x);
+  let [p0, q0, p1, q1] = [0n, 1n, 1n, 0n];
+  for (let i = 0; i < 40; i++) {
+    const a = Math.floor(rest);
+    const p2 = BigInt(a) * p1 + p0;
+    const q2 = BigInt(a) * q1 + q0;
+    if (q2 > BigInt(maxDen)) return undefined;
+    if (Number(p2) / Number(q2) === Math.abs(x)) return { num: negative ? -p2 : p2, den: q2 };
+    const frac = rest - a;
+    if (frac === 0) return undefined;
+    rest = 1 / frac;
+    [p0, q0, p1, q1] = [p1, q1, p2, q2];
+  }
+  return undefined;
 }
 
 /** `-x`, `+x`, `not x`. */
@@ -698,15 +856,78 @@ function readsFree(node: ExprNode, walk: Walk): boolean {
 
 /* ─────────────────────────────── numerals ───────────────────────────────── */
 
-/** A numeral, or the refusal a non-finite number earns. */
-function numeral(value: number): Encoded {
+/**
+ * A numeral, or the refusal a non-finite number earns.
+ *
+ * WHICH NUMBER A NUMERAL IS depends on the world the relation lives in. A
+ * relation over plain numbers is read in binary64, the doubles the validation
+ * surface holds — in `0.1 + 0.2 == 0.3` the sum is not three tenths. A relation
+ * over a symbol the caller's proof context reads in decimals (one connected to
+ * a dimensioned feature or a `[unit]` literal — `EncodeVariable.decimal`), or
+ * one holding a `[unit]` literal itself, is read in the decimals the author
+ * wrote: the validation surface compares quantities within a relative
+ * tolerance, and the decimal is the number that tolerance stands for — `0.1
+ * [g] + 0.2 [g]` is `0.3 [g]` there, and here — so a feature value, a
+ * multiplier and a bare literal are each their shortest decimal. A lowered
+ * `[unit]` literal is the author's magnitude times the unit's factor ({@link
+ * scaleRational}), and so is always in that world.
+ */
+function numeral(node: Extract<ExprNode, { kind: 'num' }>, walk: Walk): Encoded {
+  const value = node.value;
   if (!Number.isFinite(value)) {
     return refuse(
       'non-numeric-operand',
       `the body reads \`${String(value)}\`, which is not a rational and has no SMT-LIB numeral`,
     );
   }
+  if (node.literal) {
+    const magnitude = decimalRational(node.literal.magnitude);
+    if (magnitude) {
+      const factor = scaleRational(node.literal.factor, node.literal.factorTerms);
+      return { ok: true, text: renderRational(multiply(magnitude, factor)), sort: 'Real' };
+    }
+  }
+  if (walk.decimal) {
+    const decimal = decimalRational(String(value));
+    if (decimal) return { ok: true, text: renderRational(decimal), sort: 'Real' };
+  }
   return { ok: true, text: exactNumeral(value), sort: 'Real' };
+}
+
+/** An exact rational, `den > 0`. */
+export interface Rational {
+  num: bigint;
+  den: bigint;
+}
+
+/** A decimal literal (`18.5`, `1e-3`) as an exact rational, or `undefined`. */
+function decimalRational(text: string): Rational | undefined {
+  const m = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(text.trim());
+  if (!m) return undefined;
+  const [, sign, whole, frac = '', exp = '0'] = m;
+  let num = BigInt(whole + frac);
+  let den = 10n ** BigInt(frac.length);
+  const e = Number(exp);
+  if (e > 0) num *= 10n ** BigInt(e);
+  else if (e < 0) den *= 10n ** BigInt(-e);
+  return { num: sign === '-' ? -num : num, den };
+}
+
+function multiply(a: Rational, b: Rational): Rational {
+  return { num: a.num * b.num, den: a.den * b.den };
+}
+
+/** A rational as an SMT-LIB Real term, in lowest terms. */
+function renderRational(r: Rational): string {
+  const negative = r.num < 0n;
+  let num = negative ? -r.num : r.num;
+  let den = r.den;
+  const g = gcd(num, den);
+  if (g > 1n) {
+    num /= g;
+    den /= g;
+  }
+  return render(num, den, negative && num !== 0n);
 }
 
 /**

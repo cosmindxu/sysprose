@@ -28,7 +28,7 @@
       "forgiven": false,
       "tautology": false,
       "witnessSymbols": [],
-      "detail": "not evaluable at the model's values: Could not evaluate: \"motor.torque\" has no value in scope",
+      "detail": "not evaluable at the model's values: Could not evaluate: motor.torque has no value: Motor::torque is declared without one and nothing specialises it",
       "premises": []
     }
   ]

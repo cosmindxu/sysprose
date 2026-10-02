@@ -604,6 +604,95 @@ describe('the gates that refuse a relation, each listed with its reason', () => 
     expect(r.detail).toContain('xs');
   }, 60_000);
 
+  it('refuses a bare number against a value derived from dimensioned quantities — kinded or not, and only there', async () => {
+    // Gate (e). `e` is 3544.6 s with no unit declared to read `45.0` in; the
+    // validation surface refuses it, so the gates refuse it too, with the
+    // same sentence — and the same for `kd`, derived and typed by a kind. A
+    // unit literal is judged, a kinded LITERAL keeps the declared-unit
+    // contract, and the feature VALUE `e = capacity / power` states a value
+    // rather than comparing one, so it stays an axiom; `m = e + 5.0`, which
+    // adds a bare number to that duration, does not.
+    const model = await load(`package P {
+  part def Sys {
+    attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+    attribute power : ISQ::PowerValue = 650.0 [W];
+    attribute e = capacity / power;
+    attribute kd : ISQ::DurationValue = capacity / power;
+    attribute k : ISQ::DurationValue = 45.0;
+    attribute m = e + 5.0;
+  }
+  part s : Sys;
+  requirement def Bare { subject u : Sys; require constraint { u.e >= 45.0 } }
+  requirement def WithUnit { subject u : Sys; require constraint { u.e >= 45.0 [min] } }
+  requirement def KindedDerived { subject u : Sys; require constraint { u.kd >= 45.0 } }
+  requirement def Kinded { subject u : Sys; require constraint { u.k >= 45.0 } }
+}`);
+    const guarantee = (req: string) =>
+      contractsOf(model).find((c) => c.qualifiedName === `P::${req}`)!.guarantees[0];
+    const bare = guarantee('Bare').encodable as { reason: string; detail: string };
+    expect(bare.reason).toBe('derived-bare-literal');
+    expect(bare.detail).toMatch(
+      /^"u\.e" is derived from dimensioned quantities \(T\) and cannot be compared as a bare number; if it is meant as a pure ratio/,
+    );
+    const kinded = guarantee('KindedDerived').encodable as { reason: string; detail: string };
+    expect(kinded.reason).toBe('derived-bare-literal');
+    expect(kinded.detail).toMatch(
+      /^"u\.kd" is derived from dimensioned quantities \(T\) and cannot be compared as a bare number; compare against a unit literal of dimension T/,
+    );
+    expect(guarantee('WithUnit').encodable).toBe(true);
+    expect(guarantee('Kinded').encodable).toBe(true);
+    const axiom = (expression: string) => obligationsOf(model).find((o) => o.expression === expression);
+    expect(axiom('e == capacity / power')?.encodable).toBe(true);
+    expect(axiom('m == e + 5.0')?.encodable).toMatchObject({ reason: 'derived-bare-literal' });
+  }, 60_000);
+
+  it('refuses what the validation surface refuses an operand for, and reads a chain it reads no definition through as nothing', async () => {
+    const model = await load(`package P {
+  part def Sys {
+    attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+    attribute power : ISQ::PowerValue = 650.0 [W];
+    attribute r : ScalarValues::Real = capacity / power;
+    attribute e;
+    assert constraint fixE { e == capacity / power }
+  }
+  part def Big :> Sys { attribute :>> capacity = 1300.0 [Wh]; }
+  part s : Sys;
+  requirement def Mismatch { subject u : Sys; require constraint { u.r <= 60.0 } }
+  requirement def Chain { subject u : Big; require constraint { u.e >= 45.0 [min] } }
+  requirement def Read { subject u : Sys; require constraint { u.e >= 50.0 [min] } }
+}`);
+    const guarantee = (req: string) =>
+      contractsOf(model).find((c) => c.qualifiedName === `P::${req}`)!.guarantees[0]!.encodable as {
+        reason: string;
+        detail: string;
+      };
+    expect(guarantee('Mismatch')).toEqual({
+      reason: 'refused-derivation',
+      detail: '"u.r" derives to a dimension that disagrees with its declared type, so it is excluded from unit-aware evaluation',
+    });
+    // `u.e` is `Sys::e`, which `fixE` pins to 3544.6 s — over `Sys`'s own
+    // inputs, where `Big` redefines `capacity`. The validation surface reads
+    // no definition through a chain that changes what it reads, so neither
+    // does an engine: the relation is encodable, and the chain is a symbol of
+    // its own that no axiom pins.
+    const chain = contractsOf(model).find((c) => c.qualifiedName === 'P::Chain')!.guarantees[0]!;
+    expect(chain.encodable).toBe(true);
+    const read = chain.variables.find((v) => v.path === 'u.e')!;
+    expect(read.qualifiedName).toBe('P::Sys::e');
+    expect(read.symbol).toBe('P::Chain::u.e (not read here)');
+    const row = obligationsOf(model).find((o) => o.expression === 'u.e >= 45.0 [min]')!;
+    expect(row.unread).toEqual(['u.e']);
+    // Through a subject that changes nothing it reads, the chain IS the
+    // feature: read by its own symbol, which `fixE` pins.
+    const plain = contractsOf(model).find((c) => c.qualifiedName === 'P::Read')!.guarantees[0]!;
+    expect(plain.variables.find((v) => v.path === 'u.e')!.symbol).toBeUndefined();
+    expect(obligationsOf(model).find((o) => o.expression === 'u.e >= 50.0 [min]')!.unread).toBeUndefined();
+    // A relation that reads it through no chain is the feature itself.
+    const axiom = obligationsOf(model).find((o) => o.expression === 'e == capacity / power')!;
+    expect(axiom.unread).toBeUndefined();
+    expect(axiom.vars.every((v) => v.symbol === undefined)).toBe(true);
+  }, 60_000);
+
   it('orders °C rather than refusing it — the affine map is monotone', async () => {
     const model = await load(`package P {
   ${SYS}

@@ -90,6 +90,7 @@ import {
   dimensionClaimDetail,
   evaluateConstraintQuantity,
   evaluateConstraintQuantityDetailed,
+  isRefusalReason,
   resolveUnitRef,
   siValue,
   unitRefsIn,
@@ -322,6 +323,24 @@ describe('comparison tolerance and offset units', () => {
       ['dT', T(10, 'K')],
     ]);
     expect(evaluateConstraintQuantity(k.m, k.c)).toBe('satisfied');
+  });
+
+  it('`==` and `!=` leave a dimensionless side to the caller, exactly as an ordering does', () => {
+    // The bare-literal contract: `limit == 25.0` on a 25 kg mass is the same
+    // question as `limit >= 25.0`, which the caller's scalar path reads in the
+    // declared kilograms. Equality used to answer it here — `false`, the
+    // dimensions differ — so the value was violated against the number it states.
+    const limit: [string, Record<string, string | number>] = ['limit', { type: 'ISQ::MassValue', value: 25 }];
+    for (const body of ['limit == 25.0', 'limit != 25.0', 'limit >= 25.0']) {
+      const { m, c } = constraintModel(body, [limit]);
+      const r = evaluateConstraintQuantityDetailed(m, c);
+      expect([body, r.verdict, r.reason, isRefusalReason(r.reason)]).toEqual([body, 'unknown', 'dimension', false]);
+    }
+    // Two real dimensions stay refused, for equality as for an ordering.
+    for (const body of ['limit == 25.0 [m]', 'limit >= 25.0 [m]']) {
+      const { m, c } = constraintModel(body, [limit]);
+      expect([body, evaluateConstraintQuantityDetailed(m, c).reason]).toEqual([body, 'dimension-clash']);
+    }
   });
 
   it('two absolute temperatures may still be ordered: `t2 >= 300 [K]` on a °C value', () => {

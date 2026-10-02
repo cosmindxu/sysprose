@@ -361,16 +361,25 @@ describe('two different physical dimensions are refused, not judged by raw magni
     expect(checkConstraintsNumeric(ne).map((r) => r.result)).toEqual(['unknown']);
   });
 
-  it('but a DIMENSIONLESS side keeps its definite equality verdict', async () => {
-    // `n : Real = 5.0` is not `5.0 [km]`, and both surfaces have always said so.
+  it('but a DIMENSIONLESS side is the bare-literal contract, for `==` exactly as for `<=` and `>=`', async () => {
+    // `n == km` used to answer `violated` from "dimensions differ ⇒ values
+    // differ", while `n <= km` and `n >= km` — the same pair, read in the
+    // kilometres `km` declares — were both satisfied, the solver solved a
+    // valueless `n` from `n == km` to 5, and SMT proved it. Both surfaces now
+    // read the equality the way they read the orderings.
     const m = await bound(`package P {
     attribute km : ISQ::LengthValue = 5.0 [km];
     attribute n : Real = 5.0;
     constraint c { n == km }
+    constraint le { n <= km }
+    constraint ge { n >= km }
+    constraint ne { n != km }
 }
 `);
-    expect(checkConstraints(m).map((c) => c.result)).toEqual(['violated']);
-    expect(checkConstraintsNumeric(m).map((r) => r.result)).toEqual(['violated']);
+    expect(checkConstraints(m).map((c) => c.result)).toEqual(['satisfied', 'satisfied', 'satisfied', 'violated']);
+    // `!=` has no residual on the numeric surface, so only the first three
+    // rows are read there (as an `and` body is not).
+    expect(checkConstraintsNumeric(m).map((r) => r.result).slice(0, 3)).toEqual(['satisfied', 'satisfied', 'satisfied']);
   });
 
   it('a refusal inside a CONJUNCTION wins from either side', async () => {

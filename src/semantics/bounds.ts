@@ -84,7 +84,7 @@ import {
 } from './contracts';
 import { isLiteralValueAxiom } from './consistency';
 import { evaluate, type EvalResult, type ExprNode } from './expr';
-import { isFreedValueAxiom, obligationsOf, type Obligation } from './obligations';
+import { isFreedValueAxiom, obligationsOf, unreadRowRefusal, type Obligation } from './obligations';
 import {
   encodeRelation,
   encodeScript,
@@ -94,6 +94,7 @@ import {
   type EncodedRelation,
   type ScriptAssertion,
 } from './smt/encode';
+import { decimalSymbols } from './smt/decimal-reading';
 import {
   type ObjectiveBound,
   type OptimizeSense,
@@ -290,10 +291,14 @@ interface EncodedRow {
  * report `5000 <= 10`. `row.scaled` is the gates' own answer and it is what is
  * passed; nothing here re-derives it.
  */
-function encodeRow(row: Obligation, free: ReadonlySet<string>): EncodedRow {
+function encodeRow(row: Obligation, free: ReadonlySet<string>, decimal: ReadonlySet<string>): EncodedRow {
   const spellings = new Set<string>(free);
   for (const v of row.vars) if (free.has(v.qualifiedName)) spellings.add(v.path);
-  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: spellings });
+  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: spellings, decimal });
+  // A row over a name this tool reads no value for here is not asserted
+  // (see `unreadRowRefusal`).
+  const unread = unreadRowRefusal(row);
+  if (unread) return { row, vars, refusal: unread };
   if (row.node === null || row.encodable !== true) {
     return {
       row,
@@ -489,7 +494,9 @@ export function prepareBounds(
   }
   const released = [...free].sort();
 
-  const encoded = rows.map((row) => encodeRow(row, free));
+  // One reading of every numeral the run puts side by side (../smt/decimal-reading).
+  const decimal = decimalSymbols(model, rows);
+  const encoded = rows.map((row) => encodeRow(row, free, decimal));
 
   // The measure's own facets are read off ANY row that names it — including one
   // this run does not assert. A feature released by `--free all` is still the
@@ -512,15 +519,26 @@ export function prepareBounds(
 
   const assertions: Assertion[] = [];
   const refused: RefusedAxiom[] = [];
-  /** Every refusal beside the variables it would have read, for the reach test. */
-  const refusedReach: Array<{ axiom: RefusedAxiom; vars: EncodeVariable[] }> = [];
+  /**
+   * Every refusal beside the symbols it would have read, for the reach test:
+   * the encoder's, and the FEATURE's own. A row over a value this tool does
+   * not read here (`unread-definition`) reads it by a symbol of its own, which
+   * no asserted relation shares — so a reach taken over that symbol alone
+   * never met it, and `p.e <= 1.0` (refused) beside P's `e == x * 2.0` left
+   * the maximum of `x` at 100 "exactly" where the requirement makes it 0.5.
+   */
+  const refusedReach: Array<{ axiom: RefusedAxiom; symbols: string[] }> = [];
+  const symbolsOf = (row: EncodedRow): string[] => [
+    ...row.vars.map((v) => v.qualifiedName),
+    ...row.row.vars.map((v) => v.qualifiedName),
+  ];
   for (const row of encoded) {
     if (row.row.role !== 'axiom') continue;
     if (row.row.source === 'feature-value' && isFreedValueAxiom(row.row, free)) continue;
     if (!row.encoded) {
       const axiom = refusalOf(row);
       refused.push(axiom);
-      refusedReach.push({ axiom, vars: row.vars });
+      refusedReach.push({ axiom, symbols: symbolsOf(row) });
       continue;
     }
     row.rereadable = row.row.source !== 'feature-value' || isLiteralValueAxiom(model, row.row);
@@ -551,7 +569,7 @@ export function prepareBounds(
           if (c.encoded) continue;
           const axiom = refusalOf(c);
           refused.push(axiom);
-          refusedReach.push({ axiom, vars: c.vars });
+          refusedReach.push({ axiom, symbols: symbolsOf(c) });
         }
         continue;
       }
@@ -562,7 +580,7 @@ export function prepareBounds(
 
   const { kept, reached } = reachable(assertions, [measureName]);
   const relevantRefusals = refusedReach
-    .filter((r) => r.vars.length === 0 || r.vars.some((v) => reached.has(v.qualifiedName)))
+    .filter((r) => r.symbols.length === 0 || r.symbols.some((v) => reached.has(v)))
     .map((r) => r.axiom);
   const variables: EncodeVariable[] = [];
   const seen = new Set<string>();

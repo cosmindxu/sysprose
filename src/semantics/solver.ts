@@ -59,12 +59,14 @@
 import { type ElementId, type ElementRecord, type Model, isUsage } from '@core/index';
 import { parseExpr, evaluate, type ExprNode } from './expr';
 import { isBindingEdge, propagateValues } from './connectors';
-import { evaluateFeatureValue } from './evaluate-model';
+import { checkConstraints, evaluateFeatureValue, readRefusalOf, unreadValuesOf } from './evaluate-model';
+import { hasStatedValue, isParameterisedCalculation } from './defining-equation';
 import { isNonNormativeStatement } from './statement-kind';
 import {
   NO_MARKERS,
   idScopeFor,
   mergeMaps,
+  namesReadIn,
   parseRelationBody,
   relationRefused,
   relationScope,
@@ -76,6 +78,9 @@ import {
   type ScaleMap,
 } from './relations';
 import {
+  definitionDerivation,
+  definitionsOf,
+  featuresDefinedBy,
   derivedDimensionOf,
   dimensionalFacets,
   evaluateConstraintQuantityDetailed,
@@ -138,6 +143,21 @@ export interface Equation {
    * converted back to its storage unit.
    */
   scale?: ScaleMap;
+  /**
+   * The features this relation is the DEFINITION of: an asserted equation the
+   * shared rule ({@link definitionsOf}) picks for a feature that states no
+   * value. Such a feature is solved from its definition and from no other
+   * equality, so the value the solver finds is the one the validation surface
+   * says the equation defines.
+   */
+  defines?: ElementId[];
+  /**
+   * The feature whose STATED value this relation is — a feature value
+   * expression (`c3 = c2 / 4.0`) or a calculation's value body. Such a
+   * feature is no design freedom: a definition that reads it is determined
+   * through it ({@link closedByDefinitions}).
+   */
+  states?: ElementId;
 }
 
 /** Options for {@link solve}. */
@@ -296,7 +316,9 @@ export interface NumericConstraintResult {
    * The shape of the relation: an equality (`==`, a calculation body), an
    * ordering `inequality`, or `boolean` for a body that is neither — a logical
    * connective such as `a > 1.0 and b > 2.0`, which the unit-aware evaluator
-   * judges but the scalar residual path has no slack for.
+   * judges but the scalar residual path has no slack for, or a `!=`, which
+   * the scalar path judges as the negation of its equality and reports no
+   * slack for either.
    */
   kind: 'equality' | 'inequality' | 'boolean';
   /** The comparison operator (inequalities only). */
@@ -362,8 +384,41 @@ const RELATION_KINDS = new Set(['ConstraintUsage', 'CalculationUsage']);
  * only relations at or under that element are gathered.
  */
 export function gatherConstraints(model: Model, scopeId?: ElementId): Equation[] {
+  return gatherSystem(model, scopeId).eqs;
+}
+
+/** The equations of a model, and the features whose own value cannot be read. */
+interface GatheredSystem {
+  eqs: Equation[];
+  unreadable: Set<ElementId>;
+}
+
+/**
+ * {@link gatherConstraints}, and the features whose OWN value the solver lane
+ * cannot read: a feature value (or a calculation's value body) a gate refuses
+ * — for its shape, or for what it reads ({@link readRefusalOf}, {@link
+ * unreadValuesOf}): `total = p.e * 2.0` over a chain the validation surface
+ * reads no value through, `m = e + 5.0` with a bare number against a derived
+ * duration inside it.
+ *
+ * Such a feature states a value; it is no design freedom. Left a plain unknown
+ * it was one anyway: `solveFeasible` drove `total` to −1 to satisfy `total <=
+ * 2.5` and reported the model feasible, and a check that equates it with a
+ * number fixed it by propagation. It is solved from nothing, freed by nothing,
+ * and every relation over it is left without a residual.
+ *
+ * So is a valueless feature whose ASSERTED definition a gate refuses (`assert
+ * constraint dm { margin == endurance - 0.5 }` in a usage, over an inherited
+ * `endurance` only the definition's own equation defines): the model says what
+ * it is, and nothing here reads it. Left out of this set, `solveFeasible` moved
+ * `margin` to 1.0 to meet `margin >= 1.0` and called the model feasible, and a
+ * plain `constraint { f == 100.0 }` fixed `f` — the check then satisfied and
+ * `f <= 10.0` violated, the reverse of what the definition says.
+ */
+function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
   const inScope = scopeFilter(model, scopeId);
   const eqs: Equation[] = [];
+  const unreadable = new Set<ElementId>();
   const memo: DerivationMemo = new Map();
 
   for (const el of model.all()) {
@@ -376,14 +431,22 @@ export function gatherConstraints(model: Model, scopeId?: ElementId): Equation[]
     // statement in the model asked for.
     if (RELATION_KINDS.has(el.eClass)) {
       if (isNonNormativeStatement(model, el.id)) continue;
-      const eq = relationEquation(model, el, memo);
-      if (eq) eqs.push(eq);
+      // A calculation's value body refused is a value nothing reads; so is
+      // what a refused asserted equation is the definition of.
+      const eq = relationEquation(model, el, memo, false, () => {
+        if (hasStatedValue(model, el) || isParameterisedCalculation(model, el)) unreadable.add(el.id);
+        for (const { id } of featuresDefinedBy(model, el, memo)) unreadable.add(id);
+      });
+      if (!eq) continue;
+      const defines = definitionsOf(model, el, memo);
+      if (defines.length > 0) eq.defines = defines;
+      eqs.push(eq);
       continue;
     }
 
     // (2) Feature-value expression assignments (only genuine expressions).
     if (isUsage(el.eClass)) {
-      const eq = assignmentEquation(model, el, memo);
+      const eq = assignmentEquation(model, el, memo, () => unreadable.add(el.id));
       if (eq) eqs.push(eq);
     }
   }
@@ -399,7 +462,7 @@ export function gatherConstraints(model: Model, scopeId?: ElementId): Equation[]
     eqs.push(bindingEquation(model, el.id, s, t, memo));
   }
 
-  return eqs;
+  return { eqs, unreadable };
 }
 
 /** A predicate selecting elements at/under `scopeId` (or everything when none). */
@@ -410,11 +473,20 @@ function scopeFilter(model: Model, scopeId?: ElementId): (el: ElementRecord) => 
   return (el) => ids.has(el.id) || (el.ownerId != null && ids.has(el.ownerId));
 }
 
-/** Build an {@link Equation} from a ConstraintUsage / CalculationUsage body. */
+/**
+ * Build an {@link Equation} from a ConstraintUsage / CalculationUsage body.
+ *
+ * `negation` reads a `!=` body as the `==` it negates, over the same operands
+ * and through the same gates and scale, for {@link checkConstraintsNumeric} to
+ * judge at the solved values. It is never gathered: a `!=` states no value to
+ * solve for.
+ */
 function relationEquation(
   model: Model,
   el: ElementRecord,
   memo: DerivationMemo = new Map(),
+  negation = false,
+  onRefused?: () => void,
 ): Equation | undefined {
   const raw = el.attrs.expression;
   if (typeof raw !== 'string' || raw.trim() === '') return undefined;
@@ -431,18 +503,30 @@ function relationEquation(
 
   // `lhs = rhs` / `lhs == rhs`. A lone `=` is now a distinct operator (finding
   // L3); accept it here as an equation separator alongside `==`.
-  if (node.kind === 'binary' && (node.op === '==' || node.op === '=')) {
-    return makeEquation(model, node.left, node.right, raw, nameToId, body, memo);
+  if (node.kind === 'binary' && (node.op === '==' || node.op === '=' || (negation && node.op === '!='))) {
+    return makeEquation(model, node.left, node.right, raw, nameToId, body, memo, false, el, true, onRefused);
   }
 
   // Any other boolean comparison (<, <=, …) is an inequality, not an equation.
   if (node.kind === 'binary' && isComparison(node.op)) return undefined;
 
-  // A CalculationUsage whose body is a bare value expression: `self = expr`.
+  // A CalculationUsage whose body is a bare value expression: `self = expr` —
+  // a value like a feature's, asked what it reads as a feature value is. Not
+  // one with a parameter, owned or from the `calc def` that types it: its
+  // body is the value of a call, and read here it took the part's `x` for the
+  // `in x` (`calc t : Scale { x * 5.0 }`, 15 where it is 500), as the
+  // validation surface and the SMT engine no longer do
+  // ({@link isParameterisedCalculation}).
   if (el.eClass === 'CalculationUsage' && el.declaredName) {
+    if (isParameterisedCalculation(model, el)) {
+      onRefused?.();
+      return undefined;
+    }
     const lhs: ExprNode = { kind: 'ref', path: [el.declaredName] };
     nameToId.set(el.declaredName, el.id);
-    return makeEquation(model, lhs, node, raw, nameToId, body, memo);
+    const eq = makeEquation(model, lhs, node, raw, nameToId, body, memo, false, el, false, onRefused);
+    if (eq && hasStatedValue(model, el)) eq.states = el.id;
+    return eq;
   }
 
   return undefined;
@@ -461,16 +545,22 @@ function assignmentEquation(
   model: Model,
   el: ElementRecord,
   memo: DerivationMemo = new Map(),
+  onRefused?: () => void,
 ): Equation | undefined {
   const raw = el.attrs.value;
   if (typeof raw !== 'string') return undefined;
   const s = raw.trim();
   if (s === '') return undefined;
-  // Quoted string literal — not a numeric expression.
+  // Quoted string literal — not a numeric expression. It is a value the model
+  // STATES, though, and no design freedom: left a plain unknown, the solver
+  // solved `a = "abc"` from `e == a * 2.0` (4.5 beside a check `e == 9.0`, or
+  // whatever a least-squares step picked once the check no longer stood in for
+  // the definition). Nothing reads it, so nothing is solved from it.
   if (
     s.length >= 2 &&
     ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
   ) {
+    onRefused?.();
     return undefined;
   }
 
@@ -494,7 +584,9 @@ function assignmentEquation(
   nameToId.set(name, el.id); // the assignment target resolves to this feature
   const lhs: ExprNode = { kind: 'ref', path: [name] };
   const identity = node.kind === 'ref' && !body.hadUnit;
-  return makeEquation(model, lhs, node, s, nameToId, body, memo, identity);
+  const eq = makeEquation(model, lhs, node, s, nameToId, body, memo, identity, el, false, onRefused);
+  if (eq) eq.states = el.id;
+  return eq;
 }
 
 /**
@@ -535,7 +627,19 @@ function bindingEquation(
   return eq;
 }
 
-/** Assemble an {@link Equation} record, extracting its variable ids. */
+/**
+ * Assemble an {@link Equation} record, extracting its variable ids.
+ *
+ * `readBy` is the element an author's relation body, a feature's value or a
+ * calculation's value body belongs to: such an equation is also asked what
+ * the validation surface refuses in what it READS ({@link readRefusalOf}) — a
+ * bare number against a derived dimension, a point on an offset scale in
+ * arithmetic, and, for a relation body (`operands`), an operand whose
+ * derivation is refused — and whether it reads a name that surface reads no
+ * value for here ({@link unreadValuesOf}); it is never solved from when it
+ * would be refused. A binding is asked none of it. `onRefused` hears of a
+ * refusal of any gate, for {@link gatherSystem}.
+ */
 function makeEquation(
   model: Model,
   lhs: ExprNode,
@@ -545,6 +649,9 @@ function makeEquation(
   body: LoweredBody | undefined,
   memo: DerivationMemo,
   identity = false,
+  readBy?: ElementRecord,
+  operands = false,
+  onRefused?: () => void,
 ): Equation | undefined {
   const markers: MarkerDimensions = body ? body.literals : NO_MARKERS;
   // The gates are judged on the node WITH its markers, so a lowered `[unit]`
@@ -558,10 +665,22 @@ function makeEquation(
   // {@link relationVarsOf}, which both surfaces share for exactly that reason.
   const varIds = relationVarsOf(joined, nameToId);
   // Not a numeric equation at all — see {@link relationRefused}.
-  if (relationRefused(model, joined, varIds, nameToId, markers, memo, identity)) return undefined;
+  if (relationRefused(model, joined, varIds, nameToId, markers, memo, identity)) {
+    onRefused?.();
+    return undefined;
+  }
+  // Refused for what it reads, as the validation surface refuses it — or
+  // reading a name that surface reads no value for here: never solved from.
+  if (readBy && readsRefused(model, readBy, joined, nameToId, markers, memo, operands, identity)) {
+    onRefused?.();
+    return undefined;
+  }
   const scale = scaleOfRelation(model, varIds, [joined], nameToId, body?.hadUnit ?? false, markers, memo);
   // A body whose literals are already in SI cannot be judged in raw magnitudes.
-  if (body?.hadUnit && !scale) return undefined;
+  if (body?.hadUnit && !scale) {
+    onRefused?.();
+    return undefined;
+  }
   const left = body ? substituteLiterals(lhs, body.literals) : lhs;
   const right = body ? substituteLiterals(rhs, body.literals) : rhs;
   const eq: Equation = {
@@ -574,6 +693,28 @@ function makeEquation(
   };
   if (scale) eq.scale = scale;
   return eq;
+}
+
+/**
+ * Is a relation refused for what it reads ({@link readRefusalOf}), or does it
+ * read a name the validation surface reads no value for in its context
+ * ({@link unreadValuesOf})? Either way the solver lane takes nothing from it:
+ * the value such a name has here is one nothing in the model states.
+ */
+function readsRefused(
+  model: Model,
+  el: ElementRecord,
+  node: ExprNode,
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+  memo: DerivationMemo,
+  operands = true,
+  identity = false,
+): boolean {
+  const unread = unreadValuesOf(model, el, namesReadIn(node).filter((n) => !markers.has(n)), memo);
+  return (
+    unread.length > 0 || readRefusalOf(model, el, node, nameToId, markers, memo, { operands, identity, unread }) !== undefined
+  );
 }
 
 /** A comparison operator produces a boolean, not a residual. */
@@ -639,8 +780,10 @@ function relationInequality(
 
   const varIds = relationVarsOf(node, nameToId);
   const markers: MarkerDimensions = body.literals;
-  // Not a numeric inequality at all — see {@link relationRefused}.
+  // Not a numeric inequality at all — see {@link relationRefused} — nor one
+  // the validation surface refuses for what it reads ({@link readRefusalOf}).
   if (relationRefused(model, node, varIds, nameToId, markers, memo)) return undefined;
+  if (readsRefused(model, el, node, nameToId, markers, memo)) return undefined;
   const scale = scaleOfRelation(model, varIds, [node], nameToId, body.hadUnit, markers, memo);
   if (body.hadUnit && !scale) return undefined;
 
@@ -723,7 +866,16 @@ export function solve(model: Model, opts: SolveOptions = {}): SolveResult {
     if (v !== undefined) values.set(el.id, v);
   }
 
-  const eqs = gatherConstraints(model, opts.scopeId);
+  const { eqs, unreadable } = gatherSystem(model, opts.scopeId);
+  const defined = definedFeatures(eqs, unreadable);
+  // The definitions that BIND — those that alone determine what they define
+  // ({@link closedByDefinitions}), over the values the model states: no check
+  // orients what they define. One that leaves a design freedom binds nothing,
+  // and a check fixes the freedom by propagation, as it always did.
+  const binding = new Set<ElementId>([
+    ...unreadable,
+    ...closedByDefinitions(eqs, defined, (v) => values.has(v), values, unreadable),
+  ]);
   // Numeric binding-propagated values (seed additional equalities).
   const propagated = numericPropagation(model);
 
@@ -750,7 +902,7 @@ export function solve(model: Model, opts: SolveOptions = {}): SolveResult {
         const unknowns = eq.vars.filter((v) => !values.has(v));
         if (unknowns.length !== 1) continue;
         const u = unknowns[0];
-        if (fixedIds.has(u)) continue;
+        if (fixedIds.has(u) || !mayOrient(eq, u, binding)) continue;
         const val = solveForSingle(eq, u, values, tol);
         if (val !== undefined && Number.isFinite(val)) {
           values.set(u, val);
@@ -760,11 +912,12 @@ export function solve(model: Model, opts: SolveOptions = {}): SolveResult {
       if (changed) progressing = true;
     }
 
-    // Remaining coupled unknowns → one bounded Newton solve.
-    const unknowns = remainingUnknowns(eqs, values, fixedIds);
+    // Remaining coupled unknowns → one bounded Newton solve. A feature whose
+    // own value cannot be read is no unknown to solve for.
+    const unknowns = remainingUnknowns(eqs, values, fixedIds).filter((v) => !unreadable.has(v));
     if (unknowns.length === 0) break;
     iterations++;
-    const moved = newtonSolve(eqs, unknowns, values, fixedIds, tol, maxIter);
+    const moved = newtonSolve(eqs, unknowns, values, fixedIds, tol, maxIter, defined, unreadable);
     if (moved) progressing = true;
     else break;
   }
@@ -772,6 +925,30 @@ export function solve(model: Model, opts: SolveOptions = {}): SolveResult {
   const { residual, determined, withinTol } = residualSummary(eqs, values, tol);
   const converged = determined && withinTol;
   return { values, converged, iterations, residual };
+}
+
+/**
+ * The features some gathered equation is the definition of ({@link
+ * Equation.defines}), and those whose own value the solver lane cannot read
+ * ({@link gatherSystem}), which nothing defines.
+ */
+function definedFeatures(eqs: readonly Equation[], unreadable: ReadonlySet<ElementId> = new Set()): Set<ElementId> {
+  const out = new Set<ElementId>(unreadable);
+  for (const eq of eqs) for (const id of eq.defines ?? []) out.add(id);
+  return out;
+}
+
+/**
+ * May `eq` fix `u` by propagation? Not when `u` has a definition among the
+ * gathered equations that binds it (`defined`: one the definitions alone
+ * determine, {@link closedByDefinitions}) and `eq` is not it: the propagation
+ * sweep orients each equation in MODEL order, and a check written above the
+ * definition (`e == 1.0 [h]`) otherwise fixed the feature the definition says
+ * is 3544.62 s. Nor when `u` states a value the solver lane cannot read: a
+ * check never stands in for a definition that is refused.
+ */
+function mayOrient(eq: Equation, u: ElementId, defined: ReadonlySet<ElementId>): boolean {
+  return !defined.has(u) || (eq.defines?.includes(u) ?? false);
 }
 
 /** Distinct still-unknown, non-fixed feature ids appearing in the equations. */
@@ -1161,10 +1338,26 @@ function newtonSolve(
   fixedIds: Set<ElementId>,
   tol: number,
   maxIter: number,
+  defined: ReadonlySet<ElementId> = new Set(),
+  unreadable: ReadonlySet<ElementId> = new Set(),
 ): boolean {
   const unknownSet = new Set(unknowns);
-  // Equations whose every variable is either known or one of our unknowns.
-  const active = eqs.filter((eq) => eq.vars.every((v) => values.has(v) || unknownSet.has(v)));
+  // Equations whose every variable is either known or one of our unknowns —
+  // but not an equation that is no definition and reads an unknown the
+  // definitions alone determine ({@link closedByDefinitions}): a plain
+  // `constraint { mass == 130.0 }` beside the asserted loop `mass == dry +
+  // fuel`, `fuel == mass * 0.2` (with `dry` stated) pulled the least-squares
+  // step to mass 128.8, where every relation read violated. The definitions
+  // solve the loop; the check is then judged against what they give. Where
+  // they do NOT determine it — the loop reads a design freedom (`dry` with no
+  // value), a chain from a free root, a redundant pair — the check is what
+  // fixes it, and left out it was solved at an arbitrary least-squares point.
+  const closed = closedByDefinitions(eqs, defined, (v) => values.has(v) && !unknownSet.has(v), values, unreadable);
+  const active = eqs.filter(
+    (eq) =>
+      eq.vars.every((v) => values.has(v) || unknownSet.has(v)) &&
+      ((eq.defines?.length ?? 0) > 0 || !eq.vars.some((v) => unknownSet.has(v) && closed.has(v))),
+  );
   if (active.length === 0) return false;
 
   const n = unknowns.length;
@@ -1290,6 +1483,166 @@ function newtonSolve(
     values.set(id, x[i]);
   });
   return moved || converged;
+}
+
+/**
+ * The defined features (`defined`, {@link definedFeatures}) the DEFINITIONS
+ * ALONE determine: those of a component of the definition equations — linked
+ * by the variables they share that are not `given` — every variable of which
+ * is defined, and whose definitions have a full-rank Jacobian in those
+ * variables at `values` (1 where a variable has none). Those, and only those,
+ * a plain check may not move: it is judged against what the definitions give.
+ * A feature whose own value the solver lane cannot read (`unreadable`) is no
+ * variable of a component: the model states it, so it is fixed there — read
+ * or not — and a definition over it determines what it defines, valueless.
+ *
+ * A definition that stops on its own is no answer to which features it fixes.
+ * Stopped for a free input — `dry` in `mass == fuel + dry` with no value, a
+ * free capacity read through `battery.capacity`, an input a binding holds, a
+ * chain past the nest cap from a free root — or redundant (`power == voltage *
+ * current` beside `current == power / voltage`), the definitions leave a
+ * design freedom, and a check (`mass == 130.0`) is what fixes it. Treated as
+ * binding, the check was left out of the solve, the solve stopped at an
+ * arbitrary least-squares point (mass 1.19, a 1.005 J battery), and a
+ * satisfiable check was reported violated and a feasible design infeasible —
+ * where the validation surface and the SMT engine claimed nothing.
+ */
+function closedByDefinitions(
+  eqs: readonly Equation[],
+  defined: ReadonlySet<ElementId>,
+  given: (v: ElementId) => boolean,
+  values: ReadonlyMap<ElementId, number>,
+  unreadable: ReadonlySet<ElementId> = new Set(),
+): Set<ElementId> {
+  const fixed = (v: ElementId): boolean => given(v) || unreadable.has(v);
+  const parent = new Map<ElementId, ElementId>();
+  const find = (a: ElementId): ElementId => {
+    let root = a;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    while (a !== root) {
+      const next = parent.get(a)!;
+      parent.set(a, root);
+      a = next;
+    }
+    return root;
+  };
+  // A feature's stated value determines it as a definition does, so its
+  // equation joins the component, and the feature is no freedom in it — but
+  // only the definitions' features are returned: a stated value binds
+  // nothing a check could not fix before.
+  const definitions = eqs.filter((eq) => (eq.defines?.length ?? 0) > 0 || eq.states !== undefined);
+  const stated = new Set<ElementId>();
+  for (const eq of definitions) if (eq.states !== undefined) stated.add(eq.states);
+  const determined = (v: ElementId): boolean => defined.has(v) || stated.has(v);
+  for (const eq of definitions) {
+    const vs = eq.vars.filter((v) => !fixed(v));
+    for (const v of vs) if (!parent.has(v)) parent.set(v, v);
+    for (let i = 1; i < vs.length; i++) {
+      const a = find(vs[0]!);
+      const b = find(vs[i]!);
+      if (a !== b) parent.set(a, b);
+    }
+  }
+  const members = new Map<ElementId, ElementId[]>();
+  for (const v of parent.keys()) {
+    const root = find(v);
+    const list = members.get(root);
+    if (list) list.push(v);
+    else members.set(root, [v]);
+  }
+  const out = new Set<ElementId>();
+  for (const [root, vars] of members) {
+    if (!vars.every(determined)) continue;
+    const own = definitions.filter((eq) => eq.vars.some((v) => !fixed(v) && find(v) === root));
+    if (determines(own, vars, values)) for (const v of vars) if (defined.has(v)) out.add(v);
+  }
+  return out;
+}
+
+/**
+ * Do `eqs` determine `vars` — is their Jacobian in `vars` of full column rank
+ * at `values` (1 for a variable with none)? A variable only one remaining
+ * equation reads is solved by that equation last — its column has one entry —
+ * so the pair is peeled off first, where that entry is not zero; a chain of
+ * definitions peels away whole, and only a LOOP is left to measure. That core
+ * is measured by central differences, each row scaled to its own largest
+ * entry; a pivot below 1e-7 of that is no pivot. An equation that cannot be
+ * evaluated there leaves the question undecided, and the definitions are then
+ * taken to determine what they define, as before.
+ */
+function determines(eqs: readonly Equation[], vars: readonly ElementId[], values: ReadonlyMap<ElementId, number>): boolean {
+  if (eqs.length < vars.length) return false;
+  const point = new Map(values);
+  for (const v of vars) if (!point.has(v)) point.set(v, 1);
+  /** ∂eq/∂v at the point, by central differences; `undefined` where it cannot be read. */
+  const partial = (eq: Equation, v: ElementId): number | undefined => {
+    const x = point.get(v)!;
+    const h = 1e-6 * (Math.abs(x) + 1);
+    point.set(v, x + h);
+    const a = residualOf(eq, point);
+    point.set(v, x - h);
+    const b = residualOf(eq, point);
+    point.set(v, x);
+    if (a === undefined || b === undefined || !Number.isFinite(a) || !Number.isFinite(b)) return undefined;
+    return (a - b) / (2 * h);
+  };
+
+  // Peel: a variable one remaining equation reads, with that equation.
+  const rows = new Set<Equation>(eqs);
+  const cols = new Set<ElementId>(vars);
+  const readers = new Map<ElementId, Set<Equation>>();
+  for (const v of vars) readers.set(v, new Set());
+  for (const eq of eqs) for (const v of eq.vars) readers.get(v)?.add(eq);
+  const queue = vars.filter((v) => readers.get(v)!.size === 1);
+  while (queue.length > 0) {
+    const v = queue.pop()!;
+    if (!cols.has(v)) continue;
+    const only = [...readers.get(v)!];
+    if (only.length !== 1) continue;
+    const eq = only[0]!;
+    const d = partial(eq, v);
+    if (d === undefined) return true;
+    const scale = Math.max(...eq.vars.filter((u) => cols.has(u)).map((u) => Math.abs(partial(eq, u) ?? 0)));
+    if (!(Math.abs(d) > 1e-7 * scale)) return false;
+    rows.delete(eq);
+    cols.delete(v);
+    for (const u of eq.vars) {
+      const r = readers.get(u);
+      if (!r || !cols.has(u)) continue;
+      r.delete(eq);
+      if (r.size === 1) queue.push(u);
+    }
+  }
+  if (cols.size === 0) return true;
+  const core = [...cols];
+  const left = [...rows];
+  if (left.length < core.length) return false;
+
+  // The loop left over: its Jacobian, row-scaled, and its rank.
+  const J: number[][] = [];
+  for (const eq of left) {
+    const row: number[] = [];
+    for (const v of core) {
+      const d = partial(eq, v);
+      if (d === undefined) return true;
+      row.push(d);
+    }
+    const mx = Math.max(...row.map(Math.abs));
+    J.push(mx > 0 ? row.map((x) => x / mx) : row);
+  }
+  let rank = 0;
+  for (let col = 0; col < core.length && rank < J.length; col++) {
+    let pivot = rank;
+    for (let r = rank + 1; r < J.length; r++) if (Math.abs(J[r]![col]!) > Math.abs(J[pivot]![col]!)) pivot = r;
+    if (Math.abs(J[pivot]![col]!) <= 1e-7) continue;
+    [J[rank], J[pivot]] = [J[pivot]!, J[rank]!];
+    for (let r = rank + 1; r < J.length; r++) {
+      const f = J[r]![col]! / J[rank]![col]!;
+      for (let c = col; c < core.length; c++) J[r]![c]! -= f * J[rank]![c]!;
+    }
+    rank++;
+  }
+  return rank === core.length;
 }
 
 /** Dense linear solve `A x = b` by Gaussian elimination with partial pivoting. */
@@ -1656,7 +2009,7 @@ function normalizeBounds(
 export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): FeasibilityResult {
   const tol = opts.tol ?? 1e-9;
   const feasTol = Math.max(tol, 1e-6);
-  const eqs = gatherConstraints(model, opts.scopeId);
+  const { eqs, unreadable } = gatherSystem(model, opts.scopeId);
   const ineqs = gatherInequalities(model, opts.scopeId);
 
   const base = solve(model, opts);
@@ -1680,12 +2033,25 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
     if (el.attrs.isLibrary === true) continue;
     if (numericSeedOf(model, el) !== undefined) seededIds.add(el.id);
   }
-  const pinned = pinnedVariables(eqs, seededIds, fixedIds);
+  // The features the definitions alone determine, at the plain solve's values
+  // ({@link closedByDefinitions}): held there. A defined feature they leave
+  // open is a design freedom like any other.
+  const designInput = (v: ElementId): boolean => seededIds.has(v) || fixedIds.has(v);
+  const closed = closedByDefinitions(eqs, definedFeatures(eqs, unreadable), designInput, values, unreadable);
+  const pinned = pinnedVariables(eqs, seededIds, fixedIds, unreadable, values, closed);
 
-  // Free variables: everything in an equality/inequality the equalities don't pin.
+  // Free variables: everything in an equality/inequality the equalities don't
+  // pin — but never a feature whose stated value the solver lane cannot read
+  // ({@link gatherSystem}), nor one an asserted equation DEFINES that the
+  // plain solve could not give a value (its definition loops through, or reads,
+  // something nothing fixes): the model says what it is, it has no value to
+  // move, and the relations over it have no residual. Freed, `e == a * 2.0`
+  // over a string-valued `a` was moved to 7 to split `e == 9.0` and `e <= 5.0`.
+  // One the definitions leave open (a loop over a design freedom) is free.
+  const defined = new Set<ElementId>([...unreadable, ...closed]);
   const freeSet = new Set<ElementId>();
-  for (const iq of ineqs) for (const v of iq.vars) if (!pinned.has(v)) freeSet.add(v);
-  for (const eq of eqs) for (const v of eq.vars) if (!pinned.has(v)) freeSet.add(v);
+  for (const iq of ineqs) for (const v of iq.vars) if (!pinned.has(v) && !defined.has(v)) freeSet.add(v);
+  for (const eq of eqs) for (const v of eq.vars) if (!pinned.has(v) && !defined.has(v)) freeSet.add(v);
   const freeVars = [...freeSet];
   for (const id of freeVars) if (!values.has(id)) values.set(id, 0);
 
@@ -1720,22 +2086,37 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
 }
 
 /**
- * The variables the equalities uniquely determine: seeds/fixed to start, then any
- * equality with exactly one still-undetermined variable pins that variable
- * (mirroring {@link solve}'s single-unknown propagation) to a fixpoint.
+ * The variables the equalities uniquely determine: seeds/fixed to start, every
+ * feature an asserted definition defines that the plain solve gave a value
+ * (`values`), then any equality with exactly one still-undetermined variable
+ * pins that variable (mirroring {@link solve}'s single-unknown propagation, a
+ * feature's definition included) to a fixpoint.
  */
 function pinnedVariables(
   eqs: Equation[],
   seededIds: Set<ElementId>,
   fixedIds: Set<ElementId>,
+  unreadable: ReadonlySet<ElementId> = new Set(),
+  values: ReadonlyMap<ElementId, number> = new Map(),
+  closed: ReadonlySet<ElementId> = new Set(),
 ): Set<ElementId> {
   const pinned = new Set<ElementId>([...seededIds, ...fixedIds]);
+  // Only a binding definition keeps a check from pinning what it defines.
+  const defined = new Set<ElementId>([...unreadable, ...closed]);
+  // A feature an asserted definition DEFINES is determined by the equalities
+  // even where no single one of them orients it — a loop the plain solve
+  // closed as a system (`mass == dry + fuel`, `fuel == mass * 0.2`): held at
+  // that value, so an infeasible bound reports its true violation rather than
+  // a compromise with a plain check (`mass == 130.0`) that bent the definitions.
+  // Only where the definitions alone determine it (`closed`): a loop over a
+  // design freedom holds nothing at the point the plain solve stopped at.
+  for (const eq of eqs) for (const id of eq.defines ?? []) if (values.has(id) && closed.has(id)) pinned.add(id);
   let changed = true;
   while (changed) {
     changed = false;
     for (const eq of eqs) {
       const free = eq.vars.filter((v) => !pinned.has(v));
-      if (free.length === 1) {
+      if (free.length === 1 && mayOrient(eq, free[0], defined)) {
         pinned.add(free[0]);
         changed = true;
       }
@@ -1860,6 +2241,15 @@ export function checkConstraintsNumeric(
   const tol = Math.max(opts.tol ?? 1e-9, 1e-6);
   const memo: DerivationMemo = new Map();
   const out: NumericConstraintResult[] = [];
+  // The validation surface's own sentence for a relation, read once and only
+  // when a row needs it: a relation over a name that surface reads no value
+  // for is undecided here exactly where it is undecided there, and says why
+  // in the same words.
+  let checks: Map<ElementId, string> | undefined;
+  const checkSentence = (id: ElementId): string | undefined => {
+    checks ??= new Map(checkConstraints(model).map((c) => [c.id, c.message.replace(/^Could not evaluate: /, '')]));
+    return checks.get(id);
+  };
 
   for (const el of model.all()) {
     if (el.attrs.isLibrary === true) continue;
@@ -1883,26 +2273,59 @@ export function checkConstraintsNumeric(
     const node = body?.node;
     const isIneq = node?.kind === 'binary' && isInequalityOp(node.op);
     const isEq = node?.kind === 'binary' && (node.op === '==' || node.op === '=');
+    // `a != b` is judged as the NEGATION of `a == b` over the same operands:
+    // the same gates, the same scale, the same residual and tolerance, so it
+    // is violated exactly where that equality would hold. Without it a bare
+    // literal the unit-aware evaluator leaves to the fallback (`limit :
+    // MassValue = 25.0` against `limit != 25.0`) had no residual and was
+    // `unknown` here, while the validation surface read it violated and the
+    // SMT engine refuted it. It is checked at the solved values, never solved
+    // for, and a calculation whose body is a `!=` stays out of the equation
+    // set as it always was.
+    const isNe = node?.kind === 'binary' && node.op === '!=';
     const isCalcBody =
-      body !== undefined &&
-      el.eClass === 'CalculationUsage' &&
-      !!el.declaredName &&
-      !(node?.kind === 'binary' && node.op === '!=');
+      body !== undefined && el.eClass === 'CalculationUsage' && !!el.declaredName && !isNe;
     const scalar = isIneq || isEq || isCalcBody;
 
     const iq = isIneq ? relationInequality(model, el, memo) : undefined;
-    const eq = scalar && !isIneq ? relationEquation(model, el, memo) : undefined;
+    const eq = isNe
+      ? relationEquation(model, el, memo, true)
+      : scalar && !isIneq
+        ? relationEquation(model, el, memo)
+        : undefined;
     const scale = iq?.scale ?? eq?.scale;
+
+    // What the validation surface refuses in what the relation READS — an
+    // operand whose derivation it refuses, a point on an offset scale in
+    // arithmetic, a bare number against a derived dimension (gate (e)) — and
+    // the names it reads no value for in this context. An author's relation is
+    // asked all of it; a calculation's value body is asked what a feature's
+    // value is, as `self = expr`. The gatherers left every refused relation
+    // out, so it has no residual here.
+    const calcValue = isCalcBody && !isEq && !isIneq;
+    const scope = relationScope(model, el);
+    const unread =
+      body !== undefined ? unreadValuesOf(model, el, namesReadIn(body.node).filter((n) => !body.literals.has(n)), memo) : [];
+    let read: ReturnType<typeof readRefusalOf>;
+    if (body !== undefined && calcValue && el.declaredName) {
+      const joined: ExprNode = { kind: 'binary', op: '==', left: { kind: 'ref', path: [el.declaredName] }, right: body.node };
+      const own = new Map(scope).set(el.declaredName, el.id);
+      const identity = body.node.kind === 'ref' && !body.hadUnit;
+      read = readRefusalOf(model, el, joined, own, body.literals, memo, { operands: false, identity, unread });
+    } else if (body !== undefined) {
+      read = readRefusalOf(model, el, body.node, scope, body.literals, memo, { unread });
+    }
 
     // The unit-aware evaluator judges FIRST, exactly as `checkConstraints`
     // does, with the solved values as a last-resort scope so a name only the
-    // solver determined (an unknown driven by an equality) still resolves.
+    // solver determined (an unknown driven by an equality) still resolves —
+    // except a name the validation surface reads no value for here.
     // Its absolute tolerance is the caller's only where that number is
     // meaningful — raw magnitudes. In SI, "1e-6" is a metre-or-second-sized
     // constant with no relation to the model's scale, so a dimensional
     // comparison is left to the evaluator's own relative tolerance.
     const detailed = evaluateConstraintQuantityDetailed(model, el, {
-      fallback: solvedQuantityScope(model, el, values, memo),
+      fallback: solvedQuantityScope(model, el, values, memo, unread),
       absTol: scale ? 0 : tol,
       memo,
     });
@@ -1926,17 +2349,57 @@ export function checkConstraintsNumeric(
     };
     if (iq) row.op = iq.op;
 
-    if (residual !== undefined) {
+    // A `!=` reads its equality's residual for the verdict alone: the margin
+    // by which two values differ is no slack a reader could act on.
+    if (residual !== undefined && !isNe) {
       row.slack = isIneq ? -residual : residual;
       row.amount = isIneq ? Math.max(0, residual) : Math.abs(residual);
       const unit = scale ? slackUnitOf(model, detailed.dimension, iq ?? eq, memo) : undefined;
       if (unit) row.slackUnit = unit;
     }
 
-    if (detailed.verdict !== 'unknown') {
+    // A relation the validation surface refuses for what it reads is refused
+    // here whatever the unit-aware evaluator made of it — that evaluator may
+    // have decided an `and`/`or` without reading the refused operand, and
+    // the validation surface refuses such a body whole, as the verification
+    // engines must. A name it reads NO value for is different: the evaluator
+    // here does not read it either (`solvedQuantityScope` leaves it out), so a
+    // verdict it reached stands.
+    // A connective (`and`, `or`, `not`, …) has no residual. Where the
+    // unit-aware evaluator leaves it to the bare-literal contract — `not
+    // (limit == 25.0)` over a kinded `limit = 25.0` — the validation surface
+    // reads the whole body by its scalar fallback, in raw magnitudes, and so
+    // does this one, over the solved values: it was `unknown` here while
+    // that surface found it violated and both verification engines refuted
+    // it. Only there: a body with a `[unit]` literal has no scalar reading on
+    // either surface, and every other unknown stays the reason it is.
+    // The validation surface's scalar path reads exactly what the MODEL states;
+    // a value only this solver determined it does not read at all. So the
+    // exact readings below are its readings only where every operand is one
+    // the model states — a value, or an asserted definition — and a relation
+    // over a solved unknown keeps the solver's own tolerance: `x * 3.0 ==
+    // 0.3`, which fixed `x` at 0.09999999999999999, was read exactly and
+    // reported violated by the very equation it was solved from.
+    const stated = body !== undefined && relationVarsOf(body.node, scope).every((id) => statedByModel(model, id, memo));
+    const connective =
+      stated &&
+      !read &&
+      body !== undefined &&
+      !body.hadUnit &&
+      !isIneq &&
+      !scalar &&
+      !isNe &&
+      detailed.reason === 'dimension';
+    const solvedNames = namesScope(scope, values);
+    const contract = connective
+      ? evaluate(body.node, (name) => (unread.includes(name) ? undefined : solvedNames(name)))
+      : undefined;
+    if (detailed.verdict !== 'unknown' && !read) {
       row.result = detailed.verdict;
       if (row.result === 'satisfied') row.amount = 0;
-    } else if (residual === undefined || isRefusalReason(detailed.reason)) {
+    } else if (contract && 'value' in contract && typeof contract.value === 'boolean') {
+      row.result = contract.value ? 'satisfied' : 'violated';
+    } else if (residual === undefined || read || isRefusalReason(detailed.reason)) {
       // A refusal (an offset scale, a dimension-mismatched derivation, a
       // clash of two different dimensions) is a REASONED unknown: falling back
       // to the raw magnitudes here would answer the very question the
@@ -1946,12 +2409,28 @@ export function checkConstraintsNumeric(
       // of unrelated magnitudes. Everything not in the refusal set (a name out
       // of scope, an unparseable body, a bare literal beside a dimensioned
       // value — the `dimension` reason) is ignorance the scalar path may still
-      // answer, which is what keeps the declared-unit contract intact.
+      // answer, which is what keeps the declared-unit contract intact — unless
+      // the validation surface refuses what the relation reads, which the row
+      // then says in that surface's own sentence, asked after the unit-aware
+      // refusals, as it is asked there.
       row.result = 'unknown';
       row.slack = null;
       row.amount = 0;
       delete row.slackUnit;
-      if (detailed.detail) row.reason = detailed.detail;
+      // An operand refused where the validation surface BINDS it — a feature
+      // an asserted equation defines — is refused there before the unit-aware
+      // evaluator runs; every other refusal of what the relation reads is met
+      // after the unit-aware refusals. A verdict that turned on a name that
+      // surface reads no value for is undecided in its words.
+      const own = read?.byDefinition || !isRefusalReason(detailed.reason);
+      // A calculation with a parameter states no value to judge its body against.
+      const reason =
+        calcValue && isParameterisedCalculation(model, el)
+          ? `${el.declaredName} has a parameter, so its body is the value of a call over arguments and no value of its own`
+          : own
+            ? (read?.detail ?? (unread.length > 0 ? (checkSentence(el.id) ?? detailed.detail) : detailed.detail))
+            : detailed.detail;
+      if (reason) row.reason = reason;
     } else {
       // The scalar fallback must read the OPERATOR exactly as the validation
       // surface's scalar fallback does (`evaluate` in ./expr), because this is
@@ -1959,19 +2438,43 @@ export function checkConstraintsNumeric(
       // magnitudes. {@link inequalityViolated} owns that rule for every surface
       // that publishes an inequality verdict; this branch IS its `exact` case,
       // reached only when the unit-aware evaluator returned ignorance rather
-      // than an answer or a refusal. Equalities keep the plain tolerance.
+      // than an answer or a refusal. An author's `==` is read exactly too —
+      // `limit == 25.0000001` over a kinded `limit = 25.0` is false there, and
+      // an absolute 1e-6 called it satisfied — and a `!=` is violated exactly
+      // where its equality holds. A calculation's value body keeps the plain
+      // tolerance: its residual is the solver's own round trip, not a question
+      // the validation surface asks.
       const violated =
         isIneq && iq !== undefined
           ? inequalityViolated(iq.op, residual, tol, true)
           : isIneq
             ? residual > tol
-            : Math.abs(residual) > tol;
+            : isNe
+              ? stated
+                ? residual === 0
+                : Math.abs(residual) <= tol
+              : isEq && stated
+                ? residual !== 0
+                : Math.abs(residual) > tol;
       row.result = violated ? 'violated' : 'satisfied';
       if (!violated) row.amount = 0;
     }
     out.push(row);
   }
   return out;
+}
+
+/**
+ * Does the model STATE this feature's value — as a value of its own, or
+ * through an asserted equation that defines it — rather than leave it to the
+ * solver? The validation surface reads the first two and not the third.
+ */
+function statedByModel(model: Model, id: ElementId, memo: DerivationMemo): boolean {
+  const el = model.get(id);
+  if (!el) return false;
+  if (hasStatedValue(model, el)) return true;
+  const d = definitionDerivation(model, id, memo);
+  return d !== undefined && (d.q !== undefined || d.b !== undefined);
 }
 
 /**
@@ -2000,16 +2503,20 @@ function slackUnitOf(
  * determined, read in the feature's storage unit (its declared unit, else the
  * coherent SI unit of its kind). It answers only the names the model's own
  * quantity scopes cannot — a feature with no value of its own that an equality
- * pins down — so a reasoned refusal is never overridden by it.
+ * pins down — so a reasoned refusal is never overridden by it. `unread` are
+ * feature chains the validation surface reads no value through, which it does
+ * not answer either.
  */
 function solvedQuantityScope(
   model: Model,
   el: ElementRecord,
   values: Map<ElementId, number>,
   memo: DerivationMemo,
+  unread: readonly string[] = [],
 ): (name: string) => Quantity | undefined {
   const nameToId = relationScope(model, el);
   return (name: string) => {
+    if (unread.includes(name)) return undefined;
     const id = nameToId.get(name);
     if (id === undefined) return undefined;
     const v = values.get(id);

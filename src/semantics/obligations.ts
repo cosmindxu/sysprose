@@ -79,8 +79,10 @@ import {
   type ContractSubject,
   type ContractVariable,
   type Encodable,
+  type Refusal,
   type VarSort,
 } from './contracts';
+import { isParameterisedCalculation } from './defining-equation';
 import { type ExprNode } from './expr';
 import { foreignKeyword, keywordsOnRecord, resolveKeyword } from './keywords';
 import { NO_MARKERS, idScopeFor, parseRelationBody } from './relations';
@@ -190,6 +192,86 @@ export interface Obligation {
   claimedVerdict?: string;
   /** Set only for a row a foreign keyword contributed (`--from-keywords`, commit 2d). */
   provenance?: { keyword: string; note: string };
+  /**
+   * The paths the relation reads that the validation surface reads no value
+   * for in its context — `RelationReading.unread` of ./contracts. Absent when
+   * there are none. An AXIOM that reads one is refused (see
+   * {@link unreadAxiom}); a goal or a premise is encoded over a symbol of its
+   * own for each.
+   */
+  unread?: string[];
+}
+
+/**
+ * The encodability of an AXIOM row that reads a name the validation surface
+ * reads no value for in its context — refused, whatever the gates said.
+ *
+ * Such a name is encoded as a symbol of its own (`ContractVariable.symbol`),
+ * shared by every relation of one context that reads it. An axiom over it
+ * pins nothing in the model, but it pins what a goal or premise of the same
+ * context reads: `assert constraint big { e >= 10.0 }` in `S :> P`, over P's
+ * `e == x * 2.0` (6), made `constraint goal { e >= 9.0 }` PROVED — false at
+ * the model's own value — where the model is in fact contradictory. And an
+ * axiom that pins the symbol cannot be checked against the definition it
+ * stands for: the contradiction vanished. Refused, the axiom is listed with
+ * its reason, a proof cannot rest on it, and a refutation over what it reads
+ * is not claimed under a partial context.
+ */
+function unreadAxiom(role: ObligationRole, encodable: Encodable, unread: readonly string[] | undefined): Encodable {
+  if (role !== 'axiom' || encodable !== true || !unread || unread.length === 0) return encodable;
+  return {
+    reason: 'unread-definition',
+    detail:
+      `the axiom reads ${unread.map((n) => `\`${n}\``).join(', ')}, a value whose definition is written in another ` +
+      'context, which this tool does not read here; asserted over a symbol of its own it would constrain ' +
+      'nothing in the model and still pin what a goal of the same context reads, so it is not carried',
+  };
+}
+
+/**
+ * The encodability of a calculation's AXIOM when the calculation has a
+ * parameter ({@link isParameterisedCalculation}) — refused, whatever the gates
+ * said. Its body is the value of a call over arguments, read in the owner's
+ * scope: `calc g { in y = 100.0; y }` beside `attribute y = 4.0` asserted `g ==
+ * y`, so `g <= 10.0` was PROVED with g 100 — and `calc t : Scale { x * 5.0 }`
+ * read the part's `x` for the `in x` Scale declares. The validation surface
+ * reads no value for such a calculation, and the verification lane asserts
+ * none: a proof cannot rest on it, and a refutation over it is not claimed
+ * under a partial context.
+ */
+function parameterisedCalculation(encodable: Encodable): Encodable {
+  if (encodable !== true) return encodable;
+  return {
+    reason: 'unread-definition',
+    detail:
+      'the calculation has a parameter, so its body is the value of a call over arguments, which this tool does ' +
+      'not read as the calculation’s own value; asserted in its owner’s scope it would read the owner’s features ' +
+      'for the parameters, so it is not carried',
+  };
+}
+
+/**
+ * The refusal a command that ASSERTS relations as facts — `consistency`,
+ * `bounds`, `refine` — gives a row that reads a name the validation surface
+ * reads no value for in its context (`Obligation.unread`), or `undefined`.
+ *
+ * Only `verify` may encode such a row, over a symbol of its own: it confirms
+ * every counterexample at the model's values and blocks a proof that rests on
+ * one, so the symbol can decide nothing the model contradicts. A command that
+ * asserts the row has no such check, and the symbol is a free value the model
+ * does not leave free — `p.e <= 1.0` over P's `e == x * 2.0` (6) was reported
+ * CONSISTENT at the model's values. Refused, the row is listed with its reason
+ * and the answer is undecided, as the chain it replaced was.
+ */
+export function unreadRowRefusal(row: Pick<Obligation, 'unread' | 'encodable'>): Refusal | undefined {
+  if (row.encodable !== true || !row.unread || row.unread.length === 0) return undefined;
+  return {
+    reason: 'unread-definition',
+    detail:
+      `the relation reads ${row.unread.map((n) => `\`${n}\``).join(', ')}, a value whose definition is written in ` +
+      'another context, which this tool does not read here; asserted over a symbol of its own it would be a ' +
+      'free value the model does not leave free, so it is not asserted',
+  };
 }
 
 /** How the worklist may be narrowed. */
@@ -445,6 +527,10 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
     );
     const contract = owningContract(model, el, byId);
     if (contract) withClause.add(contract.id);
+    const encodable =
+      filed.source === 'calculation' && isParameterisedCalculation(model, el)
+        ? parameterisedCalculation(reading.encodable)
+        : unreadAxiom(filed.role, reading.encodable, reading.unread);
     out.push({
       requirement: contract ? contractRef(contract) : null,
       shortId: contract?.shortId ?? '',
@@ -459,14 +545,15 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
       vars: reading.variables,
       sortPerVar: reading.sortPerVar,
       scaled: reading.scale !== undefined,
-      encodable: reading.encodable,
+      encodable,
       nonlinear: reading.nonlinear,
       verifiedBy: contract?.verifiedBy ?? [],
       method: contract ? methodOf(model, contract.id) : null,
       evidence: [],
-      status: statusOf(reading.encodable),
+      status: statusOf(encodable),
       ...claimed(model, contract),
       ...(filed.provenance ? { provenance: filed.provenance } : {}),
+      ...(reading.unread ? { unread: reading.unread } : {}),
     });
   }
 
@@ -600,12 +687,13 @@ function featureValueAxiom(
     vars: reading.variables,
     sortPerVar: reading.sortPerVar,
     scaled: reading.scale !== undefined,
-    encodable: reading.encodable,
+    encodable: unreadAxiom('axiom', reading.encodable, reading.unread),
     nonlinear: reading.nonlinear,
     verifiedBy: [],
     method: null,
     evidence: [],
-    status: statusOf(reading.encodable),
+    status: statusOf(unreadAxiom('axiom', reading.encodable, reading.unread)),
+    ...(reading.unread ? { unread: reading.unread } : {}),
   };
 }
 
@@ -831,10 +919,13 @@ function readsOf(row: Obligation): Set<string> | undefined {
         const v = bySpelling.get(n.path.join('.'));
         // `unresolved-name`: the body names nothing the encoder has a symbol for.
         if (v === undefined) return undefined;
+        // The SYMBOL the encoder writes — a name read where the validation
+        // surface reads no value for it has one of its own (`v.symbol`).
+        const symbol = v.symbol ?? v.qualifiedName;
         // `unparseable`: a qualified name carrying `|` or `\` cannot be quoted
         // as an SMT symbol.
-        if (v.qualifiedName.includes('|') || v.qualifiedName.includes('\\')) return undefined;
-        reads.add(v.qualifiedName);
+        if (symbol.includes('|') || symbol.includes('\\')) return undefined;
+        reads.add(symbol);
         const { factor, offset } = scaleOf(v);
         if (sortOf(v) === 'Bool') {
           // A boolean carrying a unit scale is not a reading this lane has.

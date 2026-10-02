@@ -39,10 +39,14 @@ import {
   encodeVariablesOf,
   exactNumeral,
   notTerm,
+  scaleRational,
   symbolOf,
   valueTextNumeral,
   type EncodeVariable,
 } from '@semantics/smt/encode';
+import { decimalSymbols } from '@semantics/smt/decimal-reading';
+import { obligationsOf } from '@semantics/obligations';
+import { BINARY_PREFIXES, SI_PREFIXES, UNIT_REGISTRY, resolveUnit } from '@semantics/units';
 import { loadModelText } from '@text/load';
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
@@ -413,9 +417,11 @@ describe('SI scaling is the gates’ decision, and the encoder follows it', () =
     const r = encodeRelation(reading.node!, vars);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.term).toBe(`(<= (+ |P::Oven::temp| ${exactNumeral(273.15)}) 300.0)`);
-    // Exact, not `273.15`: the offset is a double like any other number here.
-    expect(r.term).toContain('(/ 2402652809016115.0 8796093022208.0)');
+    // Exact, and the number the registry WROTE: 273.15 is 5463/20 — not the
+    // double, a little less — so a stored `20.0 [°C]` read through it is the
+    // `293.15 [K]` a `[K]` literal is read as (`scaleRational` in the encoder).
+    expect(r.term).toBe('(<= (+ |P::Oven::temp| (/ 5463.0 20.0)) 300.0)');
+    expect(r.term).not.toContain(exactNumeral(273.15));
   });
 
   it('adds no offset where the feature is already stored in kelvin', async () => {
@@ -607,5 +613,219 @@ describe('the script is byte-stable, and carries no element id', () => {
     expect(script.text).toContain('(set-option :produce-unsat-cores true)');
     expect(script.text.startsWith('; sysprose')).toBe(true);
     expect(script.text.endsWith('\n')).toBe(true);
+  });
+});
+
+/*
+ * A stored magnitude read into SI and a `[unit]` literal go through ONE
+ * reading of the unit's factor. The variable side read `1.0 [g]` through the
+ * decimal thousandth and the literal side was the double 0.001 rounded from
+ * the product, so `m != 1.0 [g]` over `m = 1.0 [g]` was PROVED — a false
+ * requirement passed — and `m == 1.0 [g]` could not be.
+ */
+describe('a `[unit]` literal and a stored magnitude are one number', () => {
+  it('reads both through the same factor, as the decimal the registry writes', async () => {
+    const model = await load(`package G {
+  attribute m : ISQ::MassValue = 1.0 [g];
+  attribute v : ISQ::SpeedValue = 36.0 [km/h];
+  constraint c { m != 1.0 [g] }
+  constraint k { v == 10.0 [m/s] }
+}`);
+    const gram = relationWith(model, 'm != 1.0 [g]');
+    const r = encodeRelation(gram.node!, encodeVariablesOf(gram));
+    expect(r.ok && r.term).toBe('(distinct (* (/ 1.0 1000.0) |G::m|) (/ 1.0 1000.0))');
+    // A ratio's factor is the fraction that rounds to its double: km/h is 5/18.
+    const speed = relationWith(model, 'v == 10.0 [m/s]');
+    const s = encodeRelation(speed.node!, encodeVariablesOf(speed));
+    expect(s.ok && s.term).toBe('(= (* (/ 5.0 18.0) |G::v|) 10.0)');
+  });
+
+  it('reads a composed unit as the product of its parts, on a stored magnitude and a literal alike', async () => {
+    const model = await load(`package C {
+  attribute v : ISQ::VolumeValue = 1.0 [ft^3];
+  attribute rho : ISQ::MassDensityValue = 1.0 [g/cm^3];
+  attribute w : ISQ::VolumeValue = 0.028316846592 [m^3];
+  constraint a { v > 0.028316846592 [m^3] }
+  constraint b { rho < 1000.0 [kg/m^3] }
+  constraint c { w < 1.0 [ft^3] }
+}`);
+    const termOf = (needle: string): string => {
+      const reading = relationWith(model, needle);
+      const r = encodeRelation(reading.node!, encodeVariablesOf(reading));
+      return r.ok ? r.term : `refused: ${r.refusal.reason}`;
+    };
+    // 0.3048³ = 0.028316846592 exactly, where the double is 0.028316846592000004:
+    // read as that double, `1 [ft^3] > 0.028316846592 [m^3]` was PROVED.
+    const ft3 = '(/ 55306341.0 1953125000.0)';
+    expect(termOf('v > 0.028316846592 [m^3]')).toBe(`(> (* ${ft3} |C::v|) ${ft3})`);
+    // 10⁻³ / (10⁻²)³ = 1000, where the double is 999.9999999999999.
+    expect(termOf('rho < 1000.0 [kg/m^3]')).toBe('(< (* 1000.0 |C::rho|) 1000.0)');
+    expect(termOf('w < 1.0 [ft^3]')).toBe(`(< |C::w| ${ft3})`);
+  });
+
+  it('reads the numerals of a dimensioned relation as the decimals written, of a plain one as the doubles held', () => {
+    const node = parseExpr('x == 0.1');
+    const plain = encodeRelation(node, [v('x')]);
+    expect(plain.ok && plain.term).toBe(`(= |P::x| ${exactNumeral(0.1)})`);
+    const dimensioned = encodeRelation(node, [v('x', { decimal: true })]);
+    expect(dimensioned.ok && dimensioned.term).toBe('(= |P::x| (/ 1.0 10.0))');
+  });
+});
+
+/*
+ * The registry's factors and origins are the numbers they DEFINE, read back
+ * exactly. A factor computed in doubles (`231 * 0.0254 ** 3` for the gallon,
+ * `273.15 - 32 * (5 / 9)` for the °F origin) rounds twice and lands an ulp
+ * off; the encoder then reads the double's own rational, and every exact tie
+ * across units broke one way — `32 °F < 273.15 K` was PROVED.
+ */
+describe('every unit of the registry is read as the number it defines', () => {
+  /** Units defined by a ratio, or written as a computation, with their defining rational. */
+  const DEFINED: Record<string, { factor?: [bigint, bigint]; offset?: [bigint, bigint] }> = {
+    '°C': { offset: [27315n, 100n] },
+    '°F': { factor: [5n, 9n], offset: [45967n, 180n] },
+    // 1 oz ≡ 1/16 lb.
+    oz: { factor: [45359237n, 1600000000n] },
+    // 231 in³.
+    gal: { factor: [3785411784n, 1000000000000n] },
+  };
+  /** Irrational by definition (log₂10, 1/ln 2): no rational to read back. */
+  const IRRATIONAL = new Set(['Hart', 'nat']);
+  const lowest = ([n, d]: [bigint, bigint]): string => {
+    let [a, b] = [n < 0n ? -n : n, d];
+    while (b !== 0n) [a, b] = [b, a % b];
+    return `${n / a}/${d / a}`;
+  };
+  const read = (x: number): string => {
+    const r = scaleRational(x);
+    return lowest([r.num, r.den]);
+  };
+  /** The decimal the registry writes, as a rational — and that it IS a short decimal, not a computed double. */
+  const written = (x: number): string => {
+    const text = String(x);
+    const digits = text.replace(/^-/, '').split(/e/i)[0]!.replace('.', '').replace(/^0+/, '').length;
+    expect(digits, `${text} is a computed double, not a decimal the registry writes`).toBeLessThanOrEqual(15);
+    const [whole, frac = ''] = text.split('.');
+    return lowest([BigInt(whole! + frac), 10n ** BigInt(frac.length)]);
+  };
+
+  it('reads each factor and origin back to its defining rational', () => {
+    for (const u of UNIT_REGISTRY) {
+      if (IRRATIONAL.has(u.symbol)) continue;
+      const defined = DEFINED[u.symbol];
+      expect(read(u.factorToSI), `${u.symbol} factor`).toBe(
+        defined?.factor ? lowest(defined.factor) : written(u.factorToSI),
+      );
+      if (u.offsetSI !== undefined && u.offsetSI !== 0) {
+        expect(defined?.offset, `${u.symbol} has an origin with no defining rational here`).toBeDefined();
+        expect(read(u.offsetSI), `${u.symbol} origin`).toBe(lowest(defined!.offset!));
+      }
+    }
+  });
+
+  /** Composed units with the rational their parts define. */
+  const COMPOSED: Record<string, [bigint, bigint]> = {
+    // 0.3048³ m³.
+    'ft^3': [28316846592n, 10n ** 12n],
+    // 10⁻³ kg / (10⁻² m)³.
+    'g/cm^3': [1000n, 1n],
+    // 10³ m / 3600 s.
+    'km/h': [1000n, 3600n],
+    // 10³ · 3600 J.
+    kWh: [3600000n, 1n],
+    // 10⁻³ A · 3600 s.
+    'mA*h': [3600n, 1000n],
+    'N*m': [1n, 1n],
+    // 10⁻³ m³ / 60 s.
+    'L/min': [1n, 60000n],
+    // 231 in³ / 60 s.
+    'gal/min': [3785411784n, 60n * 10n ** 12n],
+    'm/s^2': [1n, 1n],
+    'kg*m^2/s^2': [1n, 1n],
+    // 3600 J / 10³ m.
+    'W*h/km': [3600n, 1000n],
+  };
+  /** A unit's factor as the encoder reads it: from its parts when it is composed. */
+  const readUnit = (ref: string): string => {
+    const u = resolveUnit(ref);
+    expect(u, `${ref} resolves`).toBeDefined();
+    const r = scaleRational(u!.factorToSI, u!.factorTerms);
+    return lowest([r.num, r.den]);
+  };
+
+  it('reads each composed unit back to the rational its parts define', () => {
+    for (const [ref, defined] of Object.entries(COMPOSED)) {
+      expect(readUnit(ref), ref).toBe(lowest(defined));
+    }
+    // The doubles stay what every numeric surface reads; only the exact reader
+    // goes through the parts.
+    expect(resolveUnit('ft^3')!.factorToSI).toBe(0.028316846592000004);
+    expect(resolveUnit('g/cm^3')!.factorToSI).toBe(999.9999999999999);
+  });
+
+  it('reads every prefixed symbol as its row’s rational times its prefix’s', () => {
+    let checked = 0;
+    for (const u of UNIT_REGISTRY) {
+      const prefixes = [...(u.prefixable ? SI_PREFIXES : []), ...(u.binaryPrefixable ? BINARY_PREFIXES : [])];
+      for (const p of prefixes) {
+        if (resolveUnit(`${p.symbol}${u.symbol}`)?.name !== `${p.name}${u.name}`) continue;
+        const [row, prefix] = [scaleRational(u.factorToSI), scaleRational(p.factor)];
+        expect(readUnit(`${p.symbol}${u.symbol}`), `${p.symbol}${u.symbol}`).toBe(
+          lowest([row.num * prefix.num, row.den * prefix.den]),
+        );
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(500);
+    // A nanogram's double is 1.0000000000000002e-12 kg; it is read as 10⁻¹².
+    expect(readUnit('ng')).toBe('1/1000000000000');
+  });
+
+  it('holds the °F origin and the gallon at their correctly rounded doubles (guard)', () => {
+    const f = UNIT_REGISTRY.find((u) => u.symbol === '°F')!;
+    expect(f.offsetSI).toBe(255.37222222222223);
+    expect(UNIT_REGISTRY.find((u) => u.symbol === 'gal')!.factorToSI).toBe(0.003785411784);
+  });
+});
+
+/*
+ * The DECIMAL reading belongs to a proof context, not to one relation: a plain
+ * feature's value axiom and a goal that compares it with a quantity are read
+ * the same way, or the tie is decided by which side of the proof each number
+ * arrived on. A context of plain numbers only keeps binary64.
+ */
+describe('numerals are read one way per proof context', () => {
+  it('reads a plain value in decimals where a quantity or a `[unit]` literal meets it, and only there', async () => {
+    const model = await load(`package D {
+  attribute f : ScalarValues::Real = 0.1;
+  attribute mass : ISQ::MassValue = 1.0 [kg];
+  attribute load : ScalarValues::Real = 0.1;
+  attribute a : ScalarValues::Real = 0.1;
+  attribute b : ScalarValues::Real = 0.2;
+  constraint m { f * mass != 0.1 [kg] }
+  constraint u { load != 0.1 [E] }
+  constraint p { a + b == 0.3 }
+}`);
+    const rows = obligationsOf(model);
+    const decimal = decimalSymbols(model, rows);
+    expect([...decimal].sort()).toEqual(['D::f', 'D::load', 'D::mass']);
+    const termOf = (qualifiedName: string): string => {
+      const row = rows.find((r) => r.role === 'axiom' && r.element.qualifiedName === qualifiedName)!;
+      const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, decimal });
+      const r = encodeRelation(row.node!, vars);
+      return r.ok ? r.term : `refused: ${r.refusal.reason}`;
+    };
+    // The value axiom of the plain `f` is one tenth, as the goal beside it reads 0.1 kg.
+    expect(termOf('D::f')).toBe('(= |D::f| (/ 1.0 10.0))');
+    expect(termOf('D::load')).toBe('(= |D::load| (/ 1.0 10.0))');
+    // Nothing dimensioned meets `a`: the double it is.
+    expect(termOf('D::a')).toBe(`(= |D::a| ${exactNumeral(0.1)})`);
+  });
+
+  it('reads a relation that carries a `[unit]` literal in decimals even with no context given', () => {
+    const node = parseExpr('x == 0.1');
+    const lowered = { ...node, right: { kind: 'num' as const, value: 0.1, literal: { magnitude: '0.1', factor: 1 } } };
+    const r = encodeRelation({ kind: 'binary', op: 'and', left: lowered, right: parseExpr('x <= 0.2') }, [v('x')]);
+    expect(r.ok && r.term).toBe('(and (= |P::x| (/ 1.0 10.0)) (<= |P::x| (/ 1.0 5.0)))');
   });
 });

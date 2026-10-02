@@ -20,10 +20,24 @@
  * rather than throwing).
  */
 
+import type { FactorTerm } from './units';
+
 /* ─────────────────────────────── AST ─────────────────────────────────── */
 
 export type ExprNode =
-  | { kind: 'num'; value: number }
+  | {
+      kind: 'num';
+      value: number;
+      /**
+       * Set on a lowered `[unit]` literal only (`substituteLiterals` of
+       * ./unit-literals): the magnitude as the author wrote it and the unit's
+       * factor to SI, of which `value` is the rounded product — with the terms
+       * a composed unit's factor is the product of (`Unit.factorTerms`). Every
+       * evaluator reads `value`; the SMT encoder reads this, so `1.0 [g]` is
+       * exactly the thousandth a stored `1.0` in grams is read as.
+       */
+      literal?: { magnitude: string; factor: number; factorTerms?: ReadonlyArray<FactorTerm> };
+    }
   | { kind: 'str'; value: string }
   | { kind: 'bool'; value: boolean }
   | { kind: 'null' }

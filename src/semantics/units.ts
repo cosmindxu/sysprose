@@ -173,6 +173,22 @@ export interface Unit {
   dimension: Dimension;
   /** Multiplier taking a magnitude in this unit to the coherent SI unit. */
   factorToSI: number;
+  /**
+   * What `factorToSI` is the product of, on a COMPOSED unit — a prefixed symbol
+   * (`ng`, `kWh`) or a unit expression (`ft^3`, `g/cm^3`): the factor of every
+   * registry row and prefix it names, each with the power it enters with (a
+   * coherent row's 1 multiplies nothing and is left out, so `N*m` has none).
+   * Absent on a registry row, whose factor is the number its definition writes.
+   *
+   * `factorToSI` is that product taken in doubles, and every numeric surface
+   * reads it. An EXACT reader must not: `ft^3` is 0.028316846592000004 and
+   * `g/cm^3` is 999.9999999999999, and the SMT encoder, reading those as the
+   * rationals they are, PROVED `1 [ft^3] > 0.028316846592 [m^3]` and
+   * `1 [g/cm^3] < 1000 [kg/m^3]`. It multiplies the terms' own defining
+   * rationals instead (`scaleRational` of ./smt/encode), so a composed unit is
+   * exactly the number its parts define.
+   */
+  factorTerms?: ReadonlyArray<FactorTerm>;
   /** Additive offset (SI units) for affine scales; omitted ⇒ 0. */
   offsetSI?: number;
   /** Qualified name of the corresponding bundled-library unit, if any. */
@@ -194,6 +210,26 @@ export interface Unit {
    * 16 byte-equivalents instead of the honest `unknown-unit`.
    */
   magnifyingPrefixesOnly?: boolean;
+}
+
+/**
+ * One factor of a composed unit ({@link Unit.factorTerms}): a registry row's
+ * `factorToSI` or a prefix's `factor`, never a product of two, and the integer
+ * power it enters the composition with (`cm^3` is `0.01` to the 3rd, a
+ * quotient's divisor enters with a negative power).
+ */
+export interface FactorTerm {
+  factor: number;
+  power: number;
+}
+
+/**
+ * A unit's {@link FactorTerm}s: its own, or a registry row's factor to the first
+ * power — none for a coherent row, whose factor of 1 multiplies nothing.
+ */
+function termsOf(u: Unit): ReadonlyArray<FactorTerm> {
+  if (u.factorTerms !== undefined) return u.factorTerms;
+  return u.factorToSI === 1 ? [] : [{ factor: u.factorToSI, power: 1 }];
 }
 
 /** An SI decimal prefix: a name, symbol and power-of-ten multiplier. */
@@ -351,14 +387,24 @@ const REGISTRY: Unit[] = [
   { name: 'poundMass', symbol: 'lb', dimension: D_MASS, factorToSI: 0.45359237, libraryName: 'USCustomaryUnits::pound' },
   // 1 oz ≡ 1/16 lb.
   { name: 'ounce', symbol: 'oz', dimension: D_MASS, factorToSI: 0.45359237 / 16, libraryName: 'USCustomaryUnits::ounce' },
-  // US liquid gallon ≡ 231 in³ = 231 · 0.0254³ m³.
-  { name: 'gallon', symbol: 'gal', dimension: dim({ L: 3 }), factorToSI: 231 * 0.0254 ** 3, libraryName: 'USCustomaryUnits::gallon' },
+  // US liquid gallon ≡ 231 in³ = 231 · 0.0254³ m³ = 0.003785411784 m³ exactly.
+  // Written as that decimal, not computed: `231 * 0.0254 ** 3` rounds twice
+  // and lands one ulp below it (0.0037854117839999997), and every reader that
+  // holds exact numbers reads the double's own rational — a gallon a little
+  // short of 3.785411784 L.
+  { name: 'gallon', symbol: 'gal', dimension: dim({ L: 3 }), factorToSI: 0.003785411784, libraryName: 'USCustomaryUnits::gallon' },
   {
     name: 'fahrenheit',
     symbol: '°F',
     dimension: D_TEMP,
     factorToSI: 5 / 9,
-    offsetSI: 273.15 - 32 * (5 / 9),
+    // 0 °F ≡ 273.15 − 32·5/9 K = 45967/180 K, written as that ratio so the
+    // double is the correctly rounded one (255.37222222222223). Computed as
+    // `273.15 - 32 * (5 / 9)` it rounds twice and lands one ulp low, and an
+    // exact reader (the SMT encoder) then put the origin 1.6e-14 K below the
+    // true one: every exact °F tie broke as "colder", so `32 °F < 273.15 K`
+    // was proved.
+    offsetSI: 45967 / 180,
     libraryName: 'USCustomaryUnits::degree fahrenheit (absolute temperature scale)',
   },
 ];
@@ -388,6 +434,8 @@ function applyPrefix(prefix: Prefix, base: Unit): Unit {
     symbol: `${prefix.symbol}${base.symbol}`,
     dimension: base.dimension,
     factorToSI: base.factorToSI * prefix.factor,
+    // The product above rounds: a nanogram is 1.0000000000000002e-12 kg.
+    factorTerms: [...termsOf(base), { factor: prefix.factor, power: 1 }],
     // A prefixed unit never carries an offset (prefixing °C is meaningless).
     prefixable: false,
   };
@@ -639,10 +687,20 @@ function lexUnit(src: string): UTok[] {
   return toks;
 }
 
-/** A parsed unit expression: its dimension and its multiplier to coherent SI. */
+/**
+ * A parsed unit expression: its dimension, its multiplier to coherent SI, and
+ * the registry and prefix factors that multiplier is composed of
+ * ({@link Unit.factorTerms}) — carried beside the double, never derived from it.
+ */
 interface UnitValue {
   dimension: Dimension;
   factorToSI: number;
+  terms: ReadonlyArray<FactorTerm>;
+}
+
+/** Every term of `terms`, its power multiplied by `by` (a power, or −1 for a divisor). */
+function raiseTerms(terms: ReadonlyArray<FactorTerm>, by: number): FactorTerm[] {
+  return terms.map((t) => ({ factor: t.factor, power: t.power * by }));
 }
 
 /** Precedence-climbing parser, in the shape of the constraint parser next door. */
@@ -675,10 +733,12 @@ class UnitParser {
           ? {
               dimension: multiplyDim(left.dimension, right.dimension),
               factorToSI: left.factorToSI * right.factorToSI,
+              terms: [...left.terms, ...right.terms],
             }
           : {
               dimension: divideDim(left.dimension, right.dimension),
               factorToSI: left.factorToSI / right.factorToSI,
+              terms: [...left.terms, ...raiseTerms(right.terms, -1)],
             };
     }
     return left;
@@ -690,7 +750,11 @@ class UnitParser {
       const tk = this.peek();
       if (tk.t === 'sup') {
         this.pos++;
-        base = { dimension: powDim(base.dimension, tk.v), factorToSI: base.factorToSI ** tk.v };
+        base = {
+          dimension: powDim(base.dimension, tk.v),
+          factorToSI: base.factorToSI ** tk.v,
+          terms: raiseTerms(base.terms, tk.v),
+        };
         continue;
       }
       if (tk.t === 'caret') {
@@ -698,7 +762,11 @@ class UnitParser {
         const e = this.peek();
         if (e.t !== 'int') throw new SyntaxError('A unit exponent must be an integer');
         this.pos++;
-        base = { dimension: powDim(base.dimension, e.v), factorToSI: base.factorToSI ** e.v };
+        base = {
+          dimension: powDim(base.dimension, e.v),
+          factorToSI: base.factorToSI ** e.v,
+          terms: raiseTerms(base.terms, e.v),
+        };
         continue;
       }
       break;
@@ -722,7 +790,7 @@ class UnitParser {
       // named no unit at all, so `[2]` and `[1]` stay unknown units.
       if (tk.v !== 1) throw new SyntaxError('A bare number is not a unit');
       this.pos++;
-      return { dimension: DIMENSIONLESS, factorToSI: 1 };
+      return { dimension: DIMENSIONLESS, factorToSI: 1, terms: [] };
     }
     if (tk.t !== 'atom') {
       throw new SyntaxError('Expected a unit symbol');
@@ -735,7 +803,7 @@ class UnitParser {
     // need an origin, so the whole expression is refused rather than silently
     // read as if °C were kelvin.
     if (u.offsetSI) throw new SyntaxError(`Unit '${tk.v}' is an offset scale`);
-    return { dimension: u.dimension, factorToSI: u.factorToSI };
+    return { dimension: u.dimension, factorToSI: u.factorToSI, terms: termsOf(u) };
   }
 }
 
@@ -788,6 +856,7 @@ function resolveUnitString(ref: string): Unit | undefined {
     symbol: normalized,
     dimension: parsed.dimension,
     factorToSI: parsed.factorToSI,
+    factorTerms: parsed.terms,
     prefixable: false,
   };
 }

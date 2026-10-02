@@ -61,12 +61,13 @@
 
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, type ConstraintCheck } from '../evaluate-model';
-import { evaluate } from '../expr';
+import { evaluate, type ExprNode } from '../expr';
 import { axiomsOf, type Obligation } from '../obligations';
 import { type ContractVariable, type Refusal } from '../contracts';
 import { idScopeFor } from '../relations';
 import { dimToString } from '../units';
-import { evaluateConstraintQuantityDetailed } from '../units-eval';
+import { evaluateConstraintQuantityDetailed, type DerivationMemo } from '../units-eval';
+import { decimalSymbols } from '../smt/decimal-reading';
 import {
   encodeRelation,
   encodeScript,
@@ -84,6 +85,7 @@ import {
   isOutsideTheFragment,
   modelBindings,
   readPremise,
+  unreadOutcome,
   type PremiseReading,
   type ValueBinding,
 } from './literal';
@@ -445,7 +447,9 @@ export async function judgeBySmt(
   const checks = new Map<ElementId, ConstraintCheck>();
   for (const c of checkConstraints(model)) checks.set(c.id, c);
 
-  const encodedRows = rows.map((row) => encodeRow(row, free));
+  // ONE reading of every numeral per proof context — see ../smt/decimal-reading.
+  const decimal = decimalSymbols(model, rows);
+  const encodedRows = rows.map((row) => encodeRow(row, free, decimal));
   const byId = new Map<ElementId, EncodedRow>(encodedRows.map((e) => [e.row.element.id, e]));
 
   // A feature-value axiom that PINS a freed feature is dropped: that is what
@@ -475,6 +479,7 @@ export async function judgeBySmt(
     { timeoutMs },
   );
 
+  const memo: DerivationMemo = new Map();
   const out: SmtResult[] = [];
   for (const row of rows) {
     if (row.role !== 'obligation') continue;
@@ -483,7 +488,7 @@ export async function judgeBySmt(
     out.push({
       row,
       judgement: await judgeOne(model, {
-        row: byId.get(row.element.id) ?? encodeRow(row, free),
+        row: byId.get(row.element.id) ?? encodeRow(row, free, decimal),
         readings,
         axioms,
         axiomsRefused,
@@ -493,6 +498,7 @@ export async function judgeBySmt(
         free,
         timeoutMs,
         checks,
+        memo,
       }),
     });
   }
@@ -540,10 +546,15 @@ export function encodedFootprint(
 }
 
 /** Encode one row's body under its OWN scale decision and the caller's free set. */
-function encodeRow(row: Obligation, free: ReadonlySet<string>): EncodedRow {
+function encodeRow(
+  row: Obligation,
+  free: ReadonlySet<string>,
+  decimal: ReadonlySet<string> = new Set(),
+): EncodedRow {
   const vars = encodeVariables(row.vars, row.sortPerVar, {
     scaled: row.scaled,
     free: freeSpellings(row.vars, free),
+    decimal,
   });
   if (row.node === null || row.encodable !== true) {
     return {
@@ -635,6 +646,8 @@ interface JudgeInput {
   free: ReadonlySet<string>;
   timeoutMs: number | undefined;
   checks: ReadonlyMap<ElementId, ConstraintCheck>;
+  /** One derivation memo for the run's SI readings (the literal engine's reason). */
+  memo: DerivationMemo;
 }
 
 /**
@@ -679,7 +692,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     // it is one on its own variables — which is what `rowFreed` answers.
     // The unit-aware pair, on the same precondition the literal engine reads it
     // under: a row with no readable body has no comparison to print.
-    const refusedSI = row.row.node !== null ? quantities(model, row.row) : {};
+    const refusedSI = row.row.node !== null ? quantities(model, row.row, input.memo) : {};
     const refusedPoint = rowFreed ? {} : { bindings: modelBindings(model, row.row), ...refusedSI };
     if (row.row.status === 'no-formal-clause') {
       return {
@@ -793,7 +806,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   // reporting that it fails. Where the context released anything, there is no
   // single point to name and none is offered.
   const si: { lhsSI?: number; rhsSI?: number; dimension?: string } =
-    countFree(variables) === 0 ? quantities(model, row.row) : {};
+    countFree(variables) === 0 ? quantities(model, row.row, input.memo) : {};
   const point = countFree(variables) === 0 ? { bindings: modelBindings(model, row.row), ...si } : {};
   const axiomAssertions = assertionsOf(axioms, 'axiom');
   const premiseAssertions = assertionsOf(input.premises, 'premise');
@@ -969,6 +982,32 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       };
     }
 
+    // AN ASSUMPTION OVER A VALUE THIS TOOL DOES NOT READ HERE cannot be read
+    // at the model either. Its name is a symbol of its own, shared with the
+    // goal of the same requirement, so `assume p.e >= 10.0` / `require p.e >=
+    // 9.0` was PROVED although P's equation makes `p.e` 6 — the assumption is
+    // false at the model, and the pass vacuous. Whether it is cannot be
+    // decided here, so no pass is printed: undecided, as the literal engine
+    // files an assumption that does not evaluate.
+    const unreadPremise = input.premises.find((p) => (p.row.unread?.length ?? 0) > 0);
+    if (unreadPremise) {
+      return {
+        ...base,
+        ...point,
+        outcome: 'not-evaluable',
+        axiomCensus: census(),
+        checks,
+        logic,
+        detail:
+          `proof not claimed: A ∧ P ∧ ¬G is unsat, but the assumption \`${unreadPremise.row.expression}\` reads ` +
+          `${(unreadPremise.row.unread ?? []).map((n) => `\`${n}\``).join(', ')} — a value whose definition is ` +
+          'written in another context, which this tool does not read here — so whether it holds at the model, and so whether ' +
+          'this pass is vacuous, is undecided. That value exists in the model, and `--allow-inconclusive` does not ' +
+          'forgive it',
+        ...bound('none', 'an assumption turns on a value this tool does not read here, so nothing is claimed'),
+      };
+    }
+
     // STEP 3: is the goal true of every model, whatever the context says?
     const alone = await input.backend.check(
       scriptOf(row.vars, [{ kind: 'goal', name: nameOf(row.row), term: notTerm(goal.term) }], [row]).text,
@@ -977,6 +1016,47 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     checks += 1;
     const tautology = alone.status === 'unsat';
     const core = sortedCore(negation.core);
+    // A PROOF AT THE MODEL'S OWN VALUES IS CONFIRMED, as a refutation is.
+    // With nothing in this proof released, every symbol is pinned to the
+    // value the model states, and the numeric surface reads the same relation
+    // at those values: where it reads it VIOLATED, exact arithmetic has
+    // decided a tie the evaluators read within their tolerance — `e !=
+    // 3544.6153846 [s]` over 640 Wh / 650 W, or a factor the registry holds as
+    // a double — and printing `proved` beside a violation would be a pass the
+    // tool's own other reading contradicts. It is reported undecided, with
+    // both readings.
+    //
+    // A RELEASE DOES NOT TAKE THE MODEL'S OWN POINT OUT OF THE CLAIM. With
+    // `--free`, `proved` says the goal holds for EVERY value of the freed
+    // features the assumptions admit — the model's own values among them,
+    // whenever every assumption holds there. If the numeric surface reads the
+    // goal violated at that point, the universal claim is contradicted by the
+    // tool's own reading of one of its instances, however the release was
+    // chosen (an unrelated feature freed was enough to step around the guard
+    // above).
+    const pointCheck = input.checks.get(row.row.element.id);
+    const freed = countFree(variables) > 0;
+    const atModelPoint = !freed || input.readings.every((p) => p.holds === 'holds');
+    if (pointCheck?.result === 'violated' && atModelPoint) {
+      return {
+        ...base,
+        ...point,
+        outcome: 'witness-unconfirmed',
+        axiomCensus: census(),
+        checks,
+        logic,
+        detail:
+          `proof not confirmed: A ∧ P ∧ ¬G is unsat in exact arithmetic, but ` +
+          (freed
+            ? `the model's own values — where every assumption holds — are a point the proof covers over its ` +
+              `${countFree(variables)} freed feature(s), and the numeric surface reads this relation as ` +
+              `\`violated\` there (${pointCheck.message}). `
+            : `with nothing freed the numeric surface reads this relation as \`violated\` at the model's values ` +
+              `(${pointCheck.message}). `) +
+          'A pass the tool’s own evaluator contradicts is not a pass',
+        ...bound('none', 'the proof and the point evaluation disagree, so nothing is claimed'),
+      };
+    }
     return {
       ...base,
       ...point,
@@ -1011,6 +1091,25 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   // until the tool's own evaluator agrees with it.
   const witness = negation.witness;
   const confirmation = confirm(model, row, witness, input, countFree(variables) > 0);
+  // A witness over a name the numeric surface reads no value for here, where
+  // that surface is undecided: the answer depends on a value this tool does
+  // not read — filed as the literal engine files it, as a limit of the tool.
+  const unread =
+    !confirmation.ok && countFree(variables) === 0
+      ? unreadOutcome(model, row.row, input.checks.get(row.row.element.id))
+      : undefined;
+  if (unread) {
+    return {
+      ...base,
+      ...point,
+      outcome: 'not-evaluable',
+      axiomCensus: census(),
+      checks,
+      logic,
+      detail: unread.detail,
+      ...bound('none', 'the relation turns on a value this tool does not read here, so nothing is claimed'),
+    };
+  }
   if (!confirmation.ok) {
     return {
       ...base,
@@ -1023,6 +1122,38 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       detail: `witness not confirmed: ${confirmation.why}. A counterexample this tool cannot reproduce is not a violation`,
       ...bound('none', 'a witness was found and not confirmed, so nothing is claimed'),
     };
+  }
+  // A REFUTATION AT THE MODEL'S VALUES NEEDS EVERY ASSUMPTION TO HOLD THERE.
+  // With nothing released the witness is the model's own point only for the
+  // symbols the model pins, and `confirm` re-reads the GOAL alone. An
+  // assumption over a symbol nothing pins — a value this tool does not read
+  // here, a feature with no value, a calculation over a parameter — is met by
+  // the solver's choice of it: `assume p.e >= 10.0`, over P's `e == x * 2.0`
+  // (6), was satisfied by e = 10 and the requirement printed refuted, exit 1,
+  // where at the model's values the assumption is false and `assume ⇒
+  // require` holds. The numeric surface reads each assumption at those values
+  // (`readings`, the literal engine's reading); a refutation is published only
+  // where every one of them holds, and otherwise nothing is claimed.
+  if (countFree(variables) === 0) {
+    const open = input.readings.find((p) => p.holds !== 'holds');
+    if (open) {
+      return {
+        ...base,
+        ...point,
+        outcome: 'not-evaluable',
+        axiomCensus: census(),
+        checks,
+        logic,
+        witness,
+        detail:
+          `refutation not claimed: a counterexample was found with nothing freed, but the assumption ` +
+          `\`${open.expression}\` reads \`${open.holds}\` on the numeric surface at the model's values ` +
+          `(${open.detail}) — so the witness met it by a value the model does not state, and whether the ` +
+          'requirement applies at the model, and so whether it is violated there, is undecided. ' +
+          '`--allow-inconclusive` does not forgive it',
+        ...bound('none', 'an assumption does not hold at the model’s values as read, so the counterexample is not claimed'),
+      };
+    }
   }
   // A REFUTATION NEEDS THE WHOLE CONTEXT — the whole context OF THIS
   // OBLIGATION, which is not the whole model.
@@ -1304,7 +1435,14 @@ function confirm(
   if (!('value' in reread)) {
     return { ok: false, why: 'the tool’s own evaluator could not read the relation at the witness' };
   }
-  if (reread.value !== false) {
+  // With nothing released the witness IS the model's values, and the solver
+  // read them in the decimals the author wrote (`numeral` in ../smt/encode):
+  // `3.0 [ft]` is exactly `0.9144 [m]` there and 0.9144000000000001 in
+  // binary64. The arithmetic is then re-read as the validation surface reads
+  // a comparison of quantities — within its relative tolerance — and the
+  // second gate below still has to find the relation violated.
+  const reading = reread.value === false || anyFreed ? reread : evaluateWithin(node, scope);
+  if (!('value' in reading) || reading.value !== false) {
     return {
       ok: false,
       why: `the tool’s own evaluator makes the relation ${String(reread.value)} at the witness, not false`,
@@ -1331,14 +1469,66 @@ function confirm(
   return { ok: true };
 }
 
+/** The relative tolerance the unit-aware evaluator compares quantities within (`REL_TOL` of ../units-eval). */
+const WITHIN = 1e-9;
+
+/**
+ * {@link evaluate}, with every comparison of two numbers read within
+ * {@link WITHIN} of the larger — a tie is a tie — and everything else as it
+ * reads it.
+ */
+function evaluateWithin(node: ExprNode, scope: (name: string) => unknown): ReturnType<typeof evaluate> {
+  const truth = (n: ExprNode): unknown => {
+    const r = evaluateWithin(n, scope);
+    return 'value' in r ? r.value : undefined;
+  };
+  if (node.kind === 'unary' && node.op === 'not') {
+    const v = truth(node.operand);
+    return typeof v === 'boolean' ? { value: !v } : { unknown: true };
+  }
+  if (node.kind === 'binary') {
+    const op = node.op;
+    if (op === 'and' || op === 'or' || op === 'xor' || op === 'implies') {
+      const a = truth(node.left);
+      const b = truth(node.right);
+      if (typeof a !== 'boolean' || typeof b !== 'boolean') return evaluate(node, scope);
+      const value = op === 'and' ? a && b : op === 'or' ? a || b : op === 'xor' ? a !== b : !a || b;
+      return { value };
+    }
+    if (['==', '=', '!=', '<', '<=', '>', '>='].includes(op)) {
+      const l = evaluate(node.left, scope);
+      const r = evaluate(node.right, scope);
+      if ('value' in l && 'value' in r && typeof l.value === 'number' && typeof r.value === 'number') {
+        const x = l.value;
+        const y = r.value;
+        const tie = Math.abs(x - y) <= WITHIN * Math.max(Math.abs(x), Math.abs(y));
+        switch (op) {
+          case '==':
+          case '=':
+            return { value: tie };
+          case '!=':
+            return { value: !tie };
+          case '<':
+          case '<=':
+            return { value: tie || x < y };
+          default:
+            return { value: tie || x > y };
+        }
+      }
+    }
+  }
+  return evaluate(node, scope);
+}
+
 /** The two SI magnitudes and the dimension, when the unit-aware evaluator has them. */
 function quantities(
   model: Model,
   row: Obligation,
+  memo: DerivationMemo = new Map(),
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
   const el = model.get(row.element.id);
   if (!el) return {};
-  const q = evaluateConstraintQuantityDetailed(model, el);
+  const q = evaluateConstraintQuantityDetailed(model, el, { memo });
   return {
     ...(q.lhsSI !== undefined ? { lhsSI: q.lhsSI } : {}),
     ...(q.rhsSI !== undefined ? { rhsSI: q.rhsSI } : {}),

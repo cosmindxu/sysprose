@@ -171,6 +171,7 @@ export {
   quantityKindDimension,
   type Dimension,
   type Unit,
+  type FactorTerm,
   type Prefix,
 } from './units';
 export {

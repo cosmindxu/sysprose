@@ -92,7 +92,7 @@ import {
   type RefusalReason,
 } from './contracts';
 import { evaluate } from './expr';
-import { obligationsOf, type Obligation } from './obligations';
+import { obligationsOf, unreadRowRefusal, type Obligation } from './obligations';
 import {
   encodeRelation,
   encodeScript,
@@ -101,6 +101,7 @@ import {
   type EncodedRelation,
   type ScriptAssertion,
 } from './smt/encode';
+import { decimalSymbols } from './smt/decimal-reading';
 import { type CheckOutcome, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
 
 /**
@@ -356,10 +357,14 @@ interface EncodedRow {
  * it because it COULD would report `5000 <= 10`. `row.scaled` is the gates' own
  * answer and it is what is passed; nothing here re-derives it.
  */
-function encodeRow(row: Obligation, free: ReadonlySet<string>): EncodedRow {
+function encodeRow(row: Obligation, free: ReadonlySet<string>, decimal: ReadonlySet<string>): EncodedRow {
   const spellings = new Set<string>(free);
   for (const v of row.vars) if (free.has(v.qualifiedName)) spellings.add(v.path);
-  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: spellings });
+  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: spellings, decimal });
+  // A row over a name this tool reads no value for here is not asserted
+  // (see `unreadRowRefusal`).
+  const unread = unreadRowRefusal(row);
+  if (unread) return { row, vars, refusal: unread };
   if (row.node === null || row.encodable !== true) {
     return {
       row,
@@ -653,6 +658,12 @@ interface Prepared {
   axiomUnits: Unit[];
   /** Structural axioms nothing could encode. */
   axiomsRefused: RefusedRelation[];
+  /**
+   * The refused axioms that read a value this tool does not read here
+   * (`unread-definition`), each with the features it reads — the real ones,
+   * by id, never the symbol a refused row was given ({@link unreadReach}).
+   */
+  axiomsUnread: Array<{ relation: RefusedRelation; features: ElementId[] }>;
   /** Each requirement's own relations, by requirement id. */
   clausesOf: Map<ElementId, EncodedRow[]>;
   contracts: Contract[];
@@ -681,19 +692,28 @@ function prepare(model: Model, withValues: boolean): Prepared {
   const free = new Set(released);
   const releasedIds = new Set(withValues ? [] : literalRows.map((r) => r.element.id));
 
+  // One reading of every numeral the run puts side by side: a mass's own `=
+  // 0.1 [kg]` axiom and `mass <= 0.1 [kg]` are both one tenth of a kilogram
+  // (../smt/decimal-reading), or the simplest model was "inconsistent".
+  const decimal = decimalSymbols(model, rows);
   const encoded = new Map<ElementId, EncodedRow>();
-  for (const row of rows) encoded.set(row.element.id, encodeRow(row, free));
+  for (const row of rows) encoded.set(row.element.id, encodeRow(row, free, decimal));
 
   // The structural axioms: every axiom row that survived the release.
   const axiomUnits: Unit[] = [];
   const axiomsRefused: RefusedRelation[] = [];
+  const axiomsUnread: Prepared['axiomsUnread'] = [];
   for (const row of rows) {
     if (row.role !== 'axiom') continue;
     if (releasedIds.has(row.element.id)) continue;
     const e = encoded.get(row.element.id);
     if (!e) continue;
     if (!e.encoded) {
-      axiomsRefused.push(refusalOf(e, null));
+      const relation = refusalOf(e, null);
+      axiomsRefused.push(relation);
+      if (relation.reason === 'unread-definition') {
+        axiomsUnread.push({ relation, features: e.row.vars.map((v) => v.featureId) });
+      }
       continue;
     }
     axiomUnits.push(unitOf(e, 'axiom', null));
@@ -718,7 +738,7 @@ function prepare(model: Model, withValues: boolean): Prepared {
     else clausesOf.set(id, [e]);
   }
 
-  return { released, axiomUnits, axiomsRefused, clausesOf, contracts: contractsOf(model) };
+  return { released, axiomUnits, axiomsRefused, axiomsUnread, clausesOf, contracts: contractsOf(model) };
 }
 
 /**
@@ -891,7 +911,7 @@ export async function checkConsistency(
   const minimize = opts.minimize === true;
   const maxCore = opts.maxCore ?? DEFAULT_MAX_CORE;
   const timeoutMs = opts.timeoutMs;
-  const { released, axiomUnits, axiomsRefused, clausesOf, contracts } = prepare(model, withValues);
+  const { released, axiomUnits, axiomsRefused, axiomsUnread, clausesOf, contracts } = prepare(model, withValues);
   const groups = groupBySubject(model, contracts, opts.subjectId);
 
   // STEP 0, once per run: is the model's own axiom set satisfiable at all? A
@@ -919,6 +939,7 @@ export async function checkConsistency(
       clausesOf,
       axiomUnits,
       axiomsRefused,
+      axiomsUnread,
       axiomOutcome,
       axiomCore,
       backend: opts.backend,
@@ -1067,6 +1088,7 @@ interface JudgeInput {
   clausesOf: ReadonlyMap<ElementId, EncodedRow[]>;
   axiomUnits: readonly Unit[];
   axiomsRefused: readonly RefusedRelation[];
+  axiomsUnread: Prepared['axiomsUnread'];
   axiomOutcome: CheckOutcome | null;
   axiomCore: readonly CoreMember[];
   backend: Z3Backend;
@@ -1133,7 +1155,12 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
     return {
       ...base,
       outcome: 'inconclusive',
-      code: 'verification/unsupported-construct',
+      // A requirement stood down for a value this tool does not read here is
+      // not a shape outside the fragment: the value exists in the model, and
+      // no flag forgives the set it leaves undecided.
+      code: refused.some((r) => r.reason === 'unread-definition')
+        ? 'verification/not-evaluable'
+        : 'verification/unsupported-construct',
       detail:
         `no requirement on this subject states a relation this lane encodes, so there is nothing ` +
         `to check: an empty requirement set is satisfiable and says nothing about the model. ` +
@@ -1311,6 +1338,36 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
     };
   }
 
+  // A SATISFYING POINT FOUND WITHOUT A RELATION THE SET REACHES IS NOT ONE.
+  // UNSAT survives a dropped relation; SAT does not (module header), and the
+  // refused count beside "consistent" is how that is normally paid. A relation
+  // refused because it reads a value whose definition is written in another
+  // context (`unread-definition`) is not a shape outside the fragment: the
+  // value exists, and the relation may exclude the very point found — `p.e <=
+  // 1.0` over P's `e == x * 2.0` (6) is no point at all, and a requirement
+  // set that carried it beside `p.k <= 9.0` was called consistent at the
+  // model's values. So where such a relation is one of this set's clauses, or
+  // an axiom that reads a feature the set reaches — by the FEATURE, since the
+  // refused row read it by a symbol of its own — the set is undecided, and no
+  // flag forgives it. `inconsistent` found without it stands.
+  const unread = unreadReach(input, units, refused);
+  if (unread.length > 0) {
+    return {
+      ...shape,
+      outcome: 'inconclusive',
+      checks,
+      code: 'verification/not-evaluable',
+      unengageable: engagement.unengageable,
+      witness: outcome.witness,
+      detail:
+        `these ${requirements.length} requirement(s) are satisfiable ${mode(input.withValues)} — but only ` +
+        `without ${unread.length} relation(s) they reach that read a value whose definition is written in another ` +
+        `context, which this tool does not read here (${unread.map((r) => r.qualifiedName).join('; ')}) — and ` +
+        `such a relation may exclude that very point, so the set has not been shown consistent. The value ` +
+        `exists in the model, so \`--allow-inconclusive\` does not forgive it. ${refusedSentence(refused)}`,
+    };
+  }
+
   return {
     ...shape,
     outcome: 'consistent',
@@ -1335,6 +1392,25 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
       `quantity kind, so the point is one the model’s own axioms admit and not necessarily one a ` +
       `physical design could take`,
   };
+}
+
+/**
+ * The relations refused for reading a value this tool does not read here
+ * (`unread-definition`) that a requirement set reaches: its own clauses so
+ * refused, and the refused axioms that read a feature the set's assertions
+ * read — the set's own and the axioms it reaches. Compared by FEATURE id: a
+ * refused row reads such a value by a symbol of its own, which no asserted
+ * relation shares, so a reach taken over symbols never met it.
+ */
+function unreadReach(input: JudgeInput, units: readonly Unit[], refused: readonly RefusedRelation[]): RefusedRelation[] {
+  const out = refused.filter((r) => r.reason === 'unread-definition');
+  if (input.axiomsUnread.length === 0) return out;
+  const reached = new Set<ElementId>();
+  for (const u of units) for (const r of rowsOf(u)) for (const v of r.row.vars) reached.add(v.featureId);
+  for (const a of input.axiomsUnread) {
+    if (a.features.length === 0 || a.features.some((f) => reached.has(f))) out.push(a.relation);
+  }
+  return out;
 }
 
 /**

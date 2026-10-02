@@ -10,6 +10,9 @@ import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
 import { scopeFor, evaluateFeatureValue, checkConstraints } from '../../src/semantics/index';
 import { featureIdsFor } from '../../src/semantics/evaluate-model';
+import { checkConstraintsNumeric } from '../../src/semantics/solver';
+import { DIMENSIONLESS } from '../../src/semantics/units';
+import { equationDerivation } from '../../src/semantics/units-eval';
 import { parseModel } from '../../src/text/index';
 import { validate } from '../../src/validation/index';
 import { loadModelText } from '@text/load';
@@ -522,12 +525,27 @@ describe('checkConstraints — why a feature chain has no value', () => {
     );
   });
 
-  it('says an asserted equation beside the feature is not read through a feature chain', () => {
+  it('reads an asserted equation beside the feature through a feature chain that changes nothing it reads', () => {
     const c = only(contract('attribute a : Real; assert constraint { a == 0.95 }', 'coordination.a >= 0.9'));
+    expect([c.result, c.message]).toEqual(['satisfied', 'Constraint satisfied']);
+  });
+
+  it('says an asserted equation is not read through a feature chain that redefines what it reads', () => {
+    const c = only(
+      model(`package E {
+      part def Software { attribute k : Real = 1.0; attribute a : Real; assert constraint { a == k * 0.95 } }
+      part def Tuned :> Software { attribute :>> k = 2.0; }
+      requirement def SoftwareContract {
+        subject coordination : Tuned;
+        require constraint { coordination.a >= 0.9 }
+      }
+    }`),
+    );
     expect(c.result).toBe('unknown');
     expect(c.message).toBe(
       'Could not evaluate: coordination.a has no value: Software::a is declared without one, ' +
-        'its asserted equation is not read through a feature chain, and nothing specialises it',
+        'its asserted equation is not read through a feature chain that redefines what it reads, and nothing ' +
+        'specialises it',
     );
   });
 
@@ -649,32 +667,61 @@ describe('checkConstraints — a specialiser is judged by the same unit rules as
     expect(bare.message).toMatch(/"endurance" is derived from dimensioned quantities \(T\) and cannot be compared as a bare number/);
   });
 
-  it('does not compare a dimensioned estimate whose equation cannot be read as a quantity', async () => {
-    // `capacity2` is itself fixed by an equation, which the unit-aware scope
-    // does not read; the scalar 640 / 650 is all that is left, and it is no
-    // duration — the instance says so instead of comparing it.
+  /*
+   * An estimate fixed by an equation whose input is ITSELF fixed by one (the
+   * `capacity2` shape). The scalar scope always read the chain; the quantity
+   * scope did not, so `endurance` had no quantity and was refused — through
+   * the specialiser and beside the equation alike, the equation included —
+   * where the one-step estimate was judged. The chain is now derived with its
+   * units, link by link.
+   */
+  const BY_CHAIN = BY_EQUATION.replace(
+    'assert constraint { endurance == capacity / power }',
+    'attribute capacity2 : ISQ::EnergyValue; assert constraint { capacity2 == capacity * 2.0 } ' +
+      'assert constraint { endurance == capacity2 / power }',
+  );
+
+  it('reads an estimate fixed through a chain of equations as the quantity the chain derives', async () => {
+    const { model: m } = await loadModelText(BY_CHAIN);
+    // 1280 Wh / 650 W is 7089.23 s, 118 min.
+    const [withUnit] = checkOf(m!, 'U::Common::withUnit').instances!;
+    expect([withUnit.result, withUnit.message]).toEqual([
+      'satisfied',
+      'LA::endurance = 7089.23 [s] meets Common::withUnit (endurance >= 45.0 [min])',
+    ]);
+    expect(checkOf(m!, 'U::LA::localWithUnit').result).toBe('satisfied');
+    const equation = checkConstraints(m!).find((c) => c.expression === 'endurance == capacity2 / power')!;
+    expect([equation.result, equation.message]).toEqual(['satisfied', 'Constraint satisfied: defines endurance = 7089.23 [s]']);
+    // Against a bare literal: refused, with exactly the reason the one-step estimate gets.
+    const { model: oneStep } = await loadModelText(BY_EQUATION);
+    expect(checkOf(m!, 'U::LA::localBare').message).toBe(checkOf(oneStep!, 'U::LA::localBare').message);
+    expect(checkOf(m!, 'U::Common::bare').instances![0].message).toBe(
+      checkOf(oneStep!, 'U::Common::bare').instances![0].message,
+    );
+  });
+
+  it('still does not compare a dimensioned estimate whose chain cannot be read as a quantity', async () => {
+    // The guard on the rule above: a link the unit-aware evaluator cannot
+    // read (a string literal is scalar-only) leaves the scalar 1280 / 650,
+    // which is no duration — the reading says so, naming the link, instead of
+    // comparing it.
     const { model: m } = await loadModelText(
-      BY_EQUATION.replace(
-        'assert constraint { endurance == capacity / power }',
-        'attribute capacity2 : ISQ::EnergyValue; assert constraint { capacity2 == capacity } ' +
-          'assert constraint { endurance == capacity2 / power }',
+      BY_CHAIN.replace(
+        'capacity2 == capacity * 2.0',
+        'capacity2 == if "on" == "on" then capacity * 2.0 else capacity',
       ),
     );
+    const why =
+      'endurance (ISQ::DurationValue) has no value that could be read as a quantity: "capacity2" cannot be ' +
+      'derived: the expression is not a unit-aware expression, and its raw number is not compared';
     for (const target of ['U::Common::bare', 'U::Common::withUnit']) {
       const [la] = checkOf(m!, target).instances!;
       expect(la.result, target).toBe('unknown');
       expect(la.value, target).toBeUndefined();
-      expect(la.message, target).toMatch(
-        /LA::endurance \(ISQ::DurationValue\) has no value that could be read as a quantity: .*its raw number is not compared$/,
-      );
+      expect(la.message.endsWith(`could not be evaluated for LA: LA::${why}`), la.message).toBe(true);
     }
-    // Beside the equation, the same: the raw 640 / 650 is not compared there either.
     for (const local of ['U::LA::localBare', 'U::LA::localWithUnit']) {
-      const c = checkOf(m!, local);
-      expect(c.result, local).toBe('unknown');
-      expect(c.message, local).toMatch(
-        /^Could not evaluate: endurance \(ISQ::DurationValue\) has no value that could be read as a quantity: .*its raw number is not compared$/,
-      );
+      expect([checkOf(m!, local).result, checkOf(m!, local).message], local).toEqual(['unknown', `Could not evaluate: ${why}`]);
     }
   });
 
@@ -801,8 +848,8 @@ describe('checkConstraints — a specialiser is judged by the same unit rules as
       'satisfied',
       'Constraint satisfied: defines watched = 0.6',
     ]);
-    // `lost` is fixed through another fixed value, which the quantity scope
-    // does not read: its scalar stands in, as it does for a specialiser.
+    // `lost` is fixed through another fixed value: the same number either way
+    // (see the unitless chain below).
     expect([by('lost == loss / watched').result, by('lost == loss / watched').message]).toEqual([
       'satisfied',
       'Constraint satisfied: defines lost = 0.2',
@@ -827,6 +874,685 @@ describe('checkConstraints — a specialiser is judged by the same unit rules as
     expect(la.result).toBe('unknown');
     expect(la.message).toMatch(/derives to a dimension that disagrees with its declared type/);
   });
+});
+
+/*
+ * `==` and `!=` beside a bare literal. The ordering comparisons read a bare
+ * literal against a kinded feature in the feature's declared unit (the
+ * bare-literal contract), and refuse it against a derived dimensioned one;
+ * equality answered the question itself instead — "dimensions differ, so the
+ * values differ" — and `limit : MassValue = 25.0` was VIOLATED against
+ * `limit == 25.0` while `limit >= 25.0` and `limit <= 25.0` both held.
+ */
+describe('checkConstraints — `==` and `!=` read a bare literal exactly as the orderings do', () => {
+  const LIMIT = `package L {
+    attribute limit : ISQ::MassValue = 25.0;
+    constraint eq { limit == 25.0 }
+    constraint ne { limit != 25.0 }
+    constraint eqOther { limit == 26.0 }
+    constraint ge { limit >= 25.0 }
+    constraint le { limit <= 25.0 }
+    constraint eqKg { limit == 25 [kg] }
+    constraint eqG { limit == 25 [g] }
+  }`;
+
+  it('judges a literal-valued kinded feature against a bare literal in its declared unit', async () => {
+    const { model: m } = await loadModelText(LIMIT);
+    const result = (name: string) => checkOf(m!, `L::${name}`).result;
+    expect(['eq', 'ne', 'eqOther', 'ge', 'le'].map(result)).toEqual([
+      'satisfied',
+      'violated',
+      'violated',
+      'satisfied',
+      'satisfied',
+    ]);
+    // Against a unit literal it was, and is, a conversion: 25 kg is not 25 g.
+    expect(['eqKg', 'eqG'].map(result)).toEqual(['satisfied', 'violated']);
+    // The numeric surface reads the equality from the same contract, and a
+    // `!=` as the negation of its equality.
+    const numeric = new Map(checkConstraintsNumeric(m!).map((r) => [r.raw, r.result]));
+    expect(['limit == 25.0', 'limit != 25.0', 'limit == 26.0', 'limit >= 25.0'].map((r) => numeric.get(r))).toEqual([
+      'satisfied',
+      'violated',
+      'violated',
+      'satisfied',
+    ]);
+  });
+
+  it('refuses `==` and `!=` exactly where an ordering is refused, with the same reason', async () => {
+    const { model: m } = await loadModelText(`package D {
+      attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+      attribute power : ISQ::PowerValue = 650.0 [W];
+      attribute e : ISQ::DurationValue = capacity / power;
+      constraint ge { e >= 45.0 }
+      constraint eq { e == 45.0 }
+      constraint ne { e != 45.0 }
+      attribute d : ISQ::LengthValue = 5.0 [m];
+      attribute t : ISQ::DurationValue = 5.0 [s];
+      constraint geClash { d >= t }
+      constraint eqClash { d == t }
+      constraint neClash { d != t }
+    }`);
+    const judged = (name: string) => [checkOf(m!, `D::${name}`).result, checkOf(m!, `D::${name}`).message];
+    // A DERIVED dimensioned feature is never compared as a bare number:
+    // `e == 45.0` was a confident violation, `e != 45.0` a confident pass.
+    expect(judged('ge')[1]).toMatch(/^Could not evaluate: "e" is derived from dimensioned quantities \(T\)/);
+    expect(judged('eq')).toEqual(judged('ge'));
+    expect(judged('ne')).toEqual(judged('ge'));
+    // Two real dimensions: refused for every operator, as they were.
+    expect(judged('geClash')[0]).toBe('unknown');
+    expect(judged('eqClash')).toEqual(judged('geClash'));
+    expect(judged('neClash')).toEqual(judged('geClash'));
+  });
+
+  it('still refuses an equality on an offset scale, whatever the other side', async () => {
+    // The guard on the rule above: `t == 20.0` on a °C value is the offset
+    // refusal it always was (the solver lane's gate reads it as offset
+    // arithmetic too), not the bare-literal contract an ordering reads it by.
+    const { model: m } = await loadModelText(`package T {
+      attribute t : ISQ::TemperatureValue = 20.0 [°C];
+      constraint eq { t == 20.0 }
+      constraint ge { t >= 20.0 }
+    }`);
+    expect(checkOf(m!, 'T::eq').result).toBe('unknown');
+    expect(checkOf(m!, 'T::eq').message).toMatch(/is on an offset temperature scale/);
+    expect(checkOf(m!, 'T::ge').result).toBe('satisfied');
+  });
+});
+
+/*
+ * A feature fixed by an asserted equation whose inputs are fixed by asserted
+ * equations too: the unit-aware derivation follows them, link by link, as the
+ * scalar scope always did — with a guard on a loop, a cap on the depth, and a
+ * refusal anywhere in the chain kept as the refusal it is.
+ */
+describe('checkConstraints — a chain of asserted equations is derived with its units', () => {
+  it('derives a three-step chain, and judges it against a unit literal', async () => {
+    const { model: m } = await loadModelText(`package Q {
+      attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+      attribute power : ISQ::PowerValue = 650.0 [W];
+      attribute c2 : ISQ::EnergyValue;
+      attribute c3 : ISQ::EnergyValue;
+      attribute e : ISQ::DurationValue;
+      assert constraint { c2 == capacity * 2.0 }
+      assert constraint { c3 == c2 + capacity }
+      assert constraint { e == c3 / power }
+      constraint meets { e >= 177.0 [min] }
+      constraint misses { e >= 178.0 [min] }
+    }`);
+    const by = (expr: string) => checkConstraints(m!).find((c) => c.expression === expr)!;
+    // 1920 Wh / 650 W is 10633.8 s, 177.2 min.
+    expect([by('c3 == c2 + capacity').result, by('c3 == c2 + capacity').message]).toEqual([
+      'satisfied',
+      'Constraint satisfied: defines c3 = 6912000 [J]',
+    ]);
+    expect([by('e == c3 / power').result, by('e == c3 / power').message]).toEqual([
+      'satisfied',
+      'Constraint satisfied: defines e = 10633.8 [s]',
+    ]);
+    expect([checkOf(m!, 'Q::meets').result, checkOf(m!, 'Q::misses').result]).toEqual(['satisfied', 'violated']);
+  });
+
+  it('refuses a loop of equations, naming every link of it, on both paths', async () => {
+    const { model: m } = await loadModelText(`package C {
+      package Common { attribute a : ISQ::LengthValue; constraint t { a >= 1.0 [m] } }
+      package LA {
+        attribute a : ISQ::LengthValue :> Common::a;
+        attribute b : ISQ::LengthValue;
+        assert constraint { a == b * 2.0 }
+        assert constraint { b == a / 2.0 }
+        constraint local { a >= 1.0 [m] }
+      }
+    }`);
+    expect([checkOf(m!, 'C::LA::local').result, checkOf(m!, 'C::LA::local').message]).toEqual([
+      'unknown',
+      'Could not evaluate: "a" cannot be derived: "a" is defined through itself: a → b → a',
+    ]);
+    const [la] = checkOf(m!, 'C::Common::t').instances!;
+    expect([la.result, la.message]).toEqual([
+      'unknown',
+      'Common::t (a >= 1.0 [m]) could not be evaluated for LA: "LA::a" cannot be derived: "a" is defined through itself: a → b → a',
+    ]);
+    // A unitless loop is named the same way; neither path has a value for it.
+    const unitless = model('package P { attribute x; attribute y; assert constraint { x == y + 1 } assert constraint { y == x - 1 } }');
+    expect(checkConstraints(unitless).map((c) => c.message)).toEqual([
+      'Could not evaluate: "x" cannot be derived: "x" is defined through itself: x → y → x',
+      'Could not evaluate: "y" cannot be derived: "y" is defined through itself: y → x → y',
+    ]);
+  });
+
+  it('refuses a chain with a refused link, with the link’s own reason, on both paths', async () => {
+    // `c2 == len` gives an energy a length: refused. Before, the chain above
+    // it lost the reason — `e` read as a feature with no value at all.
+    const { model: m } = await loadModelText(`package R {
+      package Common { attribute e : ISQ::DurationValue; constraint t { e >= 45.0 [min] } }
+      package LA {
+        attribute len : ISQ::LengthValue = 5.0 [m];
+        attribute power : ISQ::PowerValue = 650.0 [W];
+        attribute c2 : ISQ::EnergyValue;
+        assert constraint { c2 == len }
+        attribute e : ISQ::DurationValue :> Common::e;
+        assert constraint { e == c2 / power }
+        constraint local { e >= 45.0 [min] }
+      }
+    }`);
+    const why = '"c2" derives to a dimension that disagrees with its declared type, so it is excluded from unit-aware evaluation';
+    expect([checkOf(m!, 'R::LA::local').result, checkOf(m!, 'R::LA::local').message]).toEqual([
+      'unknown',
+      `Could not evaluate: "e" cannot be derived: ${why}`,
+    ]);
+    const [la] = checkOf(m!, 'R::Common::t').instances!;
+    expect([la.result, la.message]).toEqual([
+      'unknown',
+      `Common::t (e >= 45.0 [min]) could not be evaluated for LA: "LA::e" cannot be derived: ${why}`,
+    ]);
+  });
+
+  it('names offset arithmetic in a link as the link’s, not the feature’s the chain fixes, on both paths', async () => {
+    // `x == t0 * 2.0` scales a °C value: refused, and `x` is named for it as
+    // it always was. Through the chain the refusal kept its verdict and lost
+    // its subject — `e`, a duration, read "is on an offset temperature scale".
+    const { model: m } = await loadModelText(`package O {
+      package Common { attribute e : ISQ::DurationValue; constraint t { e >= 45.0 [min] } }
+      package LA {
+        attribute power : ISQ::PowerValue = 650.0 [W];
+        attribute t0 : ISQ::TemperatureValue = 20.0 [°C];
+        attribute x : ISQ::EnergyValue;
+        assert constraint { x == t0 * 2.0 }
+        attribute e : ISQ::DurationValue :> Common::e;
+        assert constraint { e == x / power }
+        constraint local { e >= 45.0 [min] }
+        constraint bare { e >= 45.0 }
+      }
+    }`);
+    const scale =
+      'is on an offset temperature scale (°C/°F); differences and sums on it are not supported — use K (or °C ' +
+      'values may only be ordered)';
+    const inX = `"x" cannot be derived: "°C" ${scale}`;
+    const why = `"e" cannot be derived: ${inX}`;
+    const by = (expr: string) => checkConstraints(m!).find((c) => c.expression === expr)!;
+    expect([by('x == t0 * 2.0').result, by('x == t0 * 2.0').message]).toEqual([
+      'unknown',
+      `Could not evaluate: "x" ${scale}`,
+    ]);
+    expect([by('e == x / power').result, by('e == x / power').message]).toEqual(['unknown', `Could not evaluate: ${why}`]);
+    for (const local of ['O::LA::local', 'O::LA::bare']) {
+      expect([checkOf(m!, local).result, checkOf(m!, local).message], local).toEqual(['unknown', `Could not evaluate: ${why}`]);
+    }
+    const [la] = checkOf(m!, 'O::Common::t').instances!;
+    expect([la.result, la.message]).toEqual([
+      'unknown',
+      `Common::t (e >= 45.0 [min]) could not be evaluated for LA: "LA::e" cannot be derived: ${inX}`,
+    ]);
+    // A link that states its value as an expression is named the same way.
+    const { model: byValue } = await loadModelText(
+      `package V {
+        attribute power : ISQ::PowerValue = 650.0 [W];
+        attribute t0 : ISQ::TemperatureValue = 20.0 [°C];
+        attribute x : ISQ::EnergyValue = t0 * 2.0;
+        attribute e : ISQ::DurationValue;
+        assert constraint { e == x / power }
+        constraint local { e >= 45.0 [min] }
+      }`,
+    );
+    expect(checkOf(byValue!, 'V::local').message).toBe(`Could not evaluate: ${why}`);
+  });
+
+  it('reads a unitless chain to the same numbers on both paths', async () => {
+    // v9's shape. The scalar values are the ones the chain always had; the
+    // quantity the unit-aware path now derives is that same number, exactly.
+    const m = model(`package LA {
+      attribute fleet : Real = 12; attribute share : Real = 0.05; attribute loss : Real = 0.12;
+      attribute watched : Real;
+      attribute lost : Real;
+      attribute third : Real;
+      assert constraint { watched == fleet * share }
+      assert constraint { lost == loss / watched }
+      assert constraint { third == lost * watched + 1 }
+    }`);
+    const la = named(m, 'LA');
+    const scalar = scopeFor(m, la.id);
+    const watched = 12 * 0.05;
+    const lost = 0.12 / watched;
+    expect(['watched', 'lost', 'third'].map((n) => scalar(n))).toEqual([watched, lost, lost * watched + 1]);
+    for (const [name, expr] of [
+      ['lost', 'lost == loss / watched'],
+      ['third', 'third == lost * watched + 1'],
+    ]) {
+      expect(equationDerivation(m, named(m, `LA::${name}`).id, expr).q, name).toEqual({
+        magnitude: scalar(name),
+        dimension: DIMENSIONLESS,
+      });
+    }
+    expect(checkConstraints(m).map((c) => c.message)).toEqual([
+      'Constraint satisfied: defines watched = 0.6',
+      'Constraint satisfied: defines lost = 0.2',
+      'Constraint satisfied: defines third = 1.12',
+    ]);
+  });
+
+  it('caps the depth of a chain, whatever order its links are declared in', async () => {
+    // Past the cap the answer is `depth`, not a stack overflow; and it is a
+    // fact about the chain, so a link judged after the links below it were
+    // (and cached) answers what it answers alone.
+    const links: string[] = [];
+    for (let i = 1; i <= 66; i++) {
+      links.push(`attribute x${i} : ISQ::LengthValue; assert constraint { x${i} == x${i - 1} + x0 }`);
+    }
+    const targets = 'constraint t64 { x64 >= 0.5 [m] } constraint t65 { x65 >= 0.5 [m] } constraint t66 { x66 >= 0.5 [m] }';
+    for (const order of [links, [...links].reverse()]) {
+      const { model: m } = await loadModelText(
+        `package P { attribute x0 : ISQ::LengthValue = 1.0 [m]; ${order.join(' ')} ${targets} }`,
+      );
+      expect(['P::t64', 'P::t65', 'P::t66'].map((t) => checkOf(m!, t).result)).toEqual(['satisfied', 'unknown', 'unknown']);
+      expect(checkOf(m!, 'P::t65').message).toBe(
+        'Could not evaluate: "x65" cannot be derived: its defining equations nest more than 64 deep',
+      );
+    }
+  });
+});
+
+/*
+ * Which of several asserted equations defines a name. The first in which the
+ * name stood alone on EITHER side used to: `b == a` written above `a == x0 *
+ * 2.0` read the alias as `a`'s definition, so `a` was derived from `b`, `b`
+ * from `a`, and both were refused as the loop "a → b → a" — swap the two lines
+ * and a = b = 2 m. The rule both paths share now takes the first equation
+ * that gives the name a value, the `x == <expr>` form first: one that would
+ * read a feature back into its own derivation, or whose input nothing fixes,
+ * is passed over.
+ */
+describe('checkConstraints — the defining equation does not depend on the order equations are written in', () => {
+  const judged = (m: Model) => checkConstraints(m).map((c) => [c.expression, c.result, c.message]);
+  const swapped = (order: string[]) => [...order].reverse();
+
+  it('reads an alias and the definition it aliases alike in either order, on every path', async () => {
+    const pair = ['assert constraint { b == a }', 'assert constraint { a == x0 * 2.0 }'];
+    for (const order of [pair, swapped(pair)]) {
+      const { model: m } = await loadModelText(`package A {
+        attribute x0 : ISQ::LengthValue = 1.0 [m];
+        attribute a : ISQ::LengthValue;
+        attribute b : ISQ::LengthValue;
+        ${order.join(' ')}
+        constraint ta { a >= 1.5 [m] }
+        constraint tb { b >= 1.5 [m] }
+      }`);
+      expect(judged(m!).sort(), order[0]).toEqual([
+        ['a == x0 * 2.0', 'satisfied', 'Constraint satisfied: defines a = 2 [m]'],
+        ['a >= 1.5 [m]', 'satisfied', 'Constraint satisfied'],
+        ['b == a', 'satisfied', 'Constraint satisfied: defines b = 2 [m]'],
+        ['b >= 1.5 [m]', 'satisfied', 'Constraint satisfied'],
+      ]);
+      // The scalar scope reads the same equations: a unitless twin.
+      const u = model(`package U { attribute x0 : Real = 1.0; attribute a : Real; attribute b : Real; ${order.join(' ')} }`);
+      const scalar = scopeFor(u, named(u, 'U').id);
+      expect([scalar('a'), scalar('b')], order[0]).toEqual([2, 2]);
+      // And a target read through the specialiser an alias fixes.
+      const { model: layered } = await loadModelText(`package Y {
+        package Common { attribute e : ISQ::LengthValue; constraint t { e >= 1.5 [m] } }
+        package LA {
+          attribute x0 : ISQ::LengthValue = 1.0 [m];
+          attribute e : ISQ::LengthValue :> Common::e;
+          attribute est : ISQ::LengthValue;
+          ${order.map((e) => e.replace('b == a', 'e == est').replace('a == x0', 'est == x0')).join(' ')}
+        }
+      }`);
+      const [la] = checkOf(layered!, 'Y::Common::t').instances!;
+      expect([la.result, la.message], order[0]).toEqual(['satisfied', 'LA::e = 2 [m] meets Common::t (e >= 1.5 [m])']);
+    }
+  });
+
+  it('reads one equation between two features as no loop, in either order, when nothing else defines them', async () => {
+    // `e2 == e` read as `e`'s definition and then as `e2`'s named the loop
+    // "e → e2 → e", which no one wrote. One equation read back is no loop.
+    // `e == capacity / 650.0 [W]` holds a unit literal, and is the definition
+    // of `e` as every relation body is read (the shared reader parses `[unit]`
+    // literals): `e` is 3544.62 s, and `e2` is `e`, in either order.
+    const pair = ['assert constraint { e2 == e }', 'assert constraint { e == capacity / 650.0 [W] }'];
+    const seen: unknown[] = [];
+    for (const order of [pair, swapped(pair)]) {
+      const { model: m } = await loadModelText(`package E {
+        attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+        attribute e : ISQ::DurationValue;
+        attribute e2 : ISQ::DurationValue;
+        ${order.join(' ')}
+        constraint te { e >= 45.0 [min] }
+        constraint te2 { e2 >= 45.0 [min] }
+      }`);
+      expect([checkOf(m!, 'E::te').message, checkOf(m!, 'E::te2').message], order[0]).toEqual([
+        'Constraint satisfied',
+        'Constraint satisfied',
+      ]);
+      seen.push(judged(m!).sort());
+    }
+    expect(seen[1]).toEqual(seen[0]);
+    // An alias alone is the same: no value, not "a → b → a".
+    const { model: alone } = await loadModelText(
+      'package L { attribute a : ISQ::LengthValue; attribute b : ISQ::LengthValue; assert constraint { a == b } ' +
+        'constraint ta { a >= 1.0 [m] } }',
+    );
+    expect(checkOf(alone!, 'L::ta').message).toBe('Could not evaluate: a has no value anywhere and nothing specialises it');
+  });
+
+  it('resolves a ring of three aliases through its one real definition, wherever that is written', async () => {
+    const ring = ['assert constraint { a == b }', 'assert constraint { b == c }', 'assert constraint { c == a }'];
+    const real = 'assert constraint { c == x0 * 2.0 }';
+    const ringModel = (order: string[]) => `package R {
+      attribute x0 : ISQ::LengthValue = 1.0 [m];
+      attribute a : ISQ::LengthValue;
+      attribute b : ISQ::LengthValue;
+      attribute c : ISQ::LengthValue;
+      ${order.join(' ')}
+      constraint ta { a >= 1.5 [m] }
+      constraint tb { b >= 1.5 [m] }
+      constraint tc { c >= 1.5 [m] }
+    }`;
+    for (const order of [[...ring, real], [real, ...ring], [ring[2]!, real, ring[0]!, ring[1]!]]) {
+      const { model: m } = await loadModelText(ringModel(order));
+      const checks = checkConstraints(m!);
+      expect(checks.map((c) => c.result), order.join(' ')).toEqual(checks.map(() => 'satisfied'));
+      expect(checks.filter((c) => c.expression.includes('==')).map((c) => c.message.replace(/defines \w/, 'defines ·'))).toEqual(
+        Array(4).fill('Constraint satisfied: defines · = 2 [m]'),
+      );
+    }
+    // With no real definition the ring is a loop the author did write: it is
+    // still refused, naming every link of it.
+    const { model: loop } = await loadModelText(ringModel(ring));
+    expect(checkOf(loop!, 'R::ta').message).toBe(
+      'Could not evaluate: "a" cannot be derived: "a" is defined through itself: a → b → c → a',
+    );
+  });
+
+  it('takes `x == <expr>` over `<expr> == x` when two equations fix a name to different values, in either order', () => {
+    // A model at odds with itself: which equation defines decided by
+    // declaration order alone before, so swapping the lines swapped the value
+    // and which of the two read as violated.
+    const pair = ['assert constraint { 2.0 == x }', 'assert constraint { x == 1.0 }'];
+    for (const order of [pair, swapped(pair)]) {
+      const m = model(`package C { attribute x : Real; ${order.join(' ')} constraint t { x >= 1.5 } }`);
+      expect(scopeFor(m, named(m, 'C').id)('x'), order[0]).toBe(1);
+      const by = (e: string) => checkConstraints(m).find((c) => c.expression === e)!;
+      expect([by('x == 1.0').message, by('2.0 == x').result, by('x >= 1.5').result], order[0]).toEqual([
+        'Constraint satisfied: defines x = 1',
+        'violated',
+        'violated',
+      ]);
+    }
+  });
+
+  it('gives a feature the value it has alone, whichever check reads it first', () => {
+    // `a`'s first definition reads `b`, whose only one reads `a` back: passed
+    // over, `a` is 2, and `b` with it. Read from `b`'s side first, `a` is
+    // derived while `b` is in flight — an answer that depends on the stack,
+    // and kept for a later check it read `a` through `b` as 4.
+    const eqs = ['assert constraint { a == b * 2.0 }', 'assert constraint { a == 2.0 }', 'assert constraint { b == a }'];
+    for (const order of [eqs, [eqs[2]!, eqs[0]!, eqs[1]!]]) {
+      const m = model(`package I { attribute a : Real; attribute b : Real; ${order.join(' ')} }`);
+      for (const first of ['a', 'b'] as const) {
+        const scope = scopeFor(m, named(m, 'I').id);
+        const asked = { [first]: scope(first) } as Record<'a' | 'b', unknown>;
+        const then = first === 'a' ? 'b' : 'a';
+        asked[then] = scope(then);
+        expect([asked.a, asked.b], `${order[0]}, ${first} first`).toEqual([2, 2]);
+      }
+      const by = (e: string) => checkConstraints(m).find((c) => c.expression === e)!;
+      expect([by('a == 2.0').message, by('b == a').message, by('a == b * 2.0').result], order[0]).toEqual([
+        'Constraint satisfied: defines a = 2',
+        'Constraint satisfied: defines b = 2',
+        'violated',
+      ]);
+    }
+  });
+
+  it('passes over an equation that reads the feature back through a unit literal, in either order, on every path', async () => {
+    // `v = a + 0.0 [m]` is no scalar expression. The scalar scope read `a ==
+    // v` as an equation whose input has no value, and took it; the unit-aware
+    // derivation saw the loop in it and took `a == x0 * 2.0`. Paired, the two
+    // left `a` with no value anywhere when `a == v` was written first, and
+    // a = 2 m when it was written second.
+    const variants = [
+      ['a + 0.0 [m]', 'a == v'],
+      ['a + 0.5 [m]', 'a == v - x0 * 0.5'],
+    ];
+    for (const [v, back] of variants) {
+      const pair = [`assert constraint { ${back} }`, 'assert constraint { a == x0 * 2.0 }'];
+      for (const order of [pair, swapped(pair)]) {
+        const { model: m } = await loadModelText(`package A {
+          attribute x0 : ISQ::LengthValue = 1.0 [m];
+          attribute a : ISQ::LengthValue;
+          attribute v : ISQ::LengthValue = ${v};
+          ${order.join(' ')}
+          constraint ta { a >= 1.5 [m] }
+          constraint tv { v >= 1.5 [m] }
+        }`);
+        expect(judged(m!).sort(), order[0]).toEqual([
+          [back, 'satisfied', 'Constraint satisfied: defines a = 2 [m]'],
+          ['a == x0 * 2.0', 'satisfied', 'Constraint satisfied: defines a = 2 [m]'],
+          ['a >= 1.5 [m]', 'satisfied', 'Constraint satisfied'],
+          ['v >= 1.5 [m]', 'satisfied', 'Constraint satisfied'],
+        ]);
+        // And a target read through the specialiser the same two equations fix.
+        const { model: layered } = await loadModelText(`package Y {
+          package Common { attribute e : ISQ::LengthValue; constraint t { e >= 1.5 [m] } }
+          package LA {
+            attribute x0 : ISQ::LengthValue = 1.0 [m];
+            attribute e : ISQ::LengthValue :> Common::e;
+            attribute v : ISQ::LengthValue = ${v.replace('a', 'e')};
+            ${order.map((eq) => eq.replace('{ a ==', '{ e ==')).join(' ')}
+          }
+        }`);
+        const [la] = checkOf(layered!, 'Y::Common::t').instances!;
+        expect([la.result, la.message], order[0]).toEqual(['satisfied', 'LA::e = 2 [m] meets Common::t (e >= 1.5 [m])']);
+      }
+    }
+  });
+
+  it('passes over an equation whose input nothing fixes, whichever equation is written first', async () => {
+    // Stopping at the first equation that failed for a reason of its own made
+    // the value turn on declaration order. `b == c + 0.0`, with `c` fixed by
+    // nothing, written above `b == x0 * 2.0` left `b` with no value. And `a ==
+    // d + e`, with `e` fixed by nothing, was passed over as "a loop" or taken
+    // according to how `d` got its value — directly, or after passing over
+    // `d == a`, which reads `a` back — so swapping `d`'s two equations, neither
+    // of them `a`'s, decided whether `a` had one.
+    const unfixed = ['assert constraint { b == c + 0.0 }', 'assert constraint { b == x0 * 2.0 }'];
+    const incidental = [
+      'assert constraint { d == x0 * 2.0 }',
+      'assert constraint { d == a }',
+      'assert constraint { a == d + e }',
+    ];
+    for (const order of [unfixed, swapped(unfixed), incidental, [incidental[1]!, incidental[0]!, incidental[2]!]]) {
+      const u = model(
+        `package U { attribute x0 : Real = 1.0; ${['a', 'b', 'c', 'd', 'e'].map((n) => `attribute ${n} : Real;`).join(' ')} ` +
+          `${order.join(' ')} }`,
+      );
+      const scalar = scopeFor(u, named(u, 'U').id);
+      const name = order.length === 2 ? 'b' : 'a';
+      expect(scalar(name), order.join(' ')).toBe(2);
+      const { model: m } = await loadModelText(`package D {
+        attribute x0 : ISQ::LengthValue = 1.0 [m];
+        ${['a', 'b', 'c', 'd', 'e'].map((n) => `attribute ${n} : ISQ::LengthValue;`).join(' ')}
+        ${order.join(' ')}
+        constraint t { ${name} >= 1.5 [m] }
+      }`);
+      expect([checkOf(m!, 'D::t').result, checkOf(m!, 'D::t').message], order.join(' ')).toEqual([
+        'satisfied',
+        'Constraint satisfied',
+      ]);
+    }
+  });
+});
+
+/*
+ * Past the cap on nested definitions neither path has a value. The unit-aware
+ * derivation answered `depth` there, but only a kinded feature read through
+ * its equation was refused for it: a value expression over the chain, an
+ * untyped feature fixed by one, and the scalar path itself read on to the raw
+ * number — `u == x70 * 1.0` then `u >= 1.0` was satisfied, `u >= 1.0 [m]`
+ * refused for "1 and L are different physical dimensions".
+ */
+describe('checkConstraints — a chain nested past the cap is refused on every path', () => {
+  const chain = (n: number, kind: string, unit: string) => {
+    const links = [`attribute x0 : ${kind} = 1.0${unit};`];
+    for (let i = 1; i <= n; i++) links.push(`attribute x${i} : ${kind}; assert constraint { x${i} == x${i - 1} + x0 }`);
+    return links.join(' ');
+  };
+  const depth = (name: string) => `Could not evaluate: "${name}" cannot be derived: its defining equations nest more than 64 deep`;
+
+  it('never compares a dimensioned chain past the cap as a raw number', async () => {
+    const shapes = (n: number) => `
+      attribute v : ISQ::LengthValue = x${n} * 1.0;
+      attribute u;
+      assert constraint du { u == x${n} * 1.0 }
+      constraint vBare { v >= 1.0 }
+      constraint vUnit { v >= 1.0 [m] }
+      constraint uBare { u >= 1.0 }
+      constraint uEq { u == ${n + 1}.0 }
+      constraint uUnit { u >= 1.0 [m] }
+      constraint xBare { x${n} >= 1.0 }`;
+    const { model: m } = await loadModelText(`package P { ${chain(70, 'ISQ::LengthValue', ' [m]')} ${shapes(70)} }`);
+    const read = (t: string) => [checkOf(m!, `P::${t}`).result, checkOf(m!, `P::${t}`).message];
+    const through = `Could not evaluate: "v" cannot be derived: "x70" cannot be derived: its defining equations nest more than 64 deep`;
+    expect(['vBare', 'vUnit'].map(read)).toEqual([['unknown', through], ['unknown', through]]);
+    expect(['du', 'uBare', 'uEq', 'uUnit'].map(read)).toEqual(Array(4).fill(['unknown', depth('u')]));
+    expect(read('xBare')).toEqual(['unknown', depth('x70')]);
+    // Within the cap the same readings are judged, against a unit literal.
+    const { model: short } = await loadModelText(`package P { ${chain(10, 'ISQ::LengthValue', ' [m]')} ${shapes(10)} }`);
+    expect(['P::vUnit', 'P::uUnit', 'P::du'].map((t) => checkOf(short!, t).result)).toEqual(['satisfied', 'satisfied', 'satisfied']);
+  });
+
+  it('caps the scalar path where the unit-aware one is capped', async () => {
+    const shapes = (n: number) => `
+      attribute v : Real = x${n} * 1.0;
+      attribute w = if "on" == "on" then x${n} else 0.0;
+      constraint vBare { v >= 1.0 }
+      constraint wBare { w >= 1.0 }
+      constraint xEq { x${n} == ${n + 1}.0 }`;
+    const { model: m } = await loadModelText(`package Q { ${chain(70, 'Real', '')} ${shapes(70)} }`);
+    const q = named(m!, 'Q').id;
+    // The scalar scope: a value up to the cap, none past it — not the 66 and
+    // 71 it read on to.
+    expect([scopeFor(m!, q)('x64'), scopeFor(m!, q)('x65'), scopeFor(m!, q)('x70')]).toEqual([65, undefined, undefined]);
+    expect(evaluateFeatureValue(m!, named(m!, 'Q::x70').id)).toEqual({ unknown: true });
+    expect(evaluateFeatureValue(m!, named(m!, 'Q::v').id)).toEqual({ unknown: true });
+    // `w` is scalar-only (a string literal), so only the scalar fallback
+    // reads it: it says why it has no value, as the unit-aware path says it
+    // of `v`.
+    expect(checkOf(m!, 'Q::wBare').message).toBe(depth('w'));
+    expect(checkOf(m!, 'Q::vBare').message).toBe(
+      'Could not evaluate: "v" cannot be derived: "x70" cannot be derived: its defining equations nest more than 64 deep',
+    );
+    expect(checkOf(m!, 'Q::xEq').message).toBe(depth('x70'));
+    const { model: short } = await loadModelText(`package Q { ${chain(10, 'Real', '')} ${shapes(10)} }`);
+    expect(['Q::vBare', 'Q::wBare', 'Q::xEq'].map((t) => checkOf(short!, t).result)).toEqual(['satisfied', 'satisfied', 'satisfied']);
+  });
+
+  it('reads a chain past the cap through a unit-literal value expression on the scalar path too', async () => {
+    // `v = x70 + 0.0 [m]` is no scalar expression, so the scalar scope read
+    // nothing of it: `a == v` failed there as an equation whose input has no
+    // value, while the unit-aware derivation refused `a` for the depth. The
+    // scalar-only `w` read "a referenced value is unknown" beside it.
+    const { model: m } = await loadModelText(`package D { ${chain(70, 'ISQ::LengthValue', ' [m]')}
+      attribute a : ISQ::LengthValue; attribute b : ISQ::LengthValue;
+      attribute v : ISQ::LengthValue = x70 + 0.0 [m];
+      assert constraint { a == v } assert constraint { a == b }
+      attribute w = if "on" == "on" then a else 0.0;
+      constraint ta { a >= 1.0 [m] } constraint tw { w >= 1.0 }
+    }`);
+    expect([checkOf(m!, 'D::ta').message, checkOf(m!, 'D::tw').message]).toEqual([depth('a'), depth('w')]);
+  });
+
+  it('takes a definition nested past the cap as the answer, whichever check reads the chain first', () => {
+    // A guard on the one failure that ends the search for a definition. `f`'s
+    // first definition reads a 30-link chain, and through it the 46 links
+    // above `f` nest 77 deep. The cap is met on a count of definitions in
+    // flight: derived from `w45` down, `f`'s first definition meets it, and
+    // passing it over for the second gave w45 = 48 — but once a lookup had
+    // settled `y30` or `f`, the first read whole, and w45 had no value.
+    const links = ['attribute x0 : Real = 1.0; attribute y0 : Real = 1.0;'];
+    for (let i = 1; i <= 30; i++) links.push(`attribute y${i} : Real; assert constraint { y${i} == y${i - 1} + x0 }`);
+    links.push('attribute f : Real; assert constraint { f == y30 + x0 } assert constraint { f == x0 * 2.0 }');
+    links.push('attribute w0 : Real; assert constraint { w0 == f + x0 }');
+    for (let i = 1; i <= 45; i++) links.push(`attribute w${i} : Real; assert constraint { w${i} == w${i - 1} + x0 }`);
+    const m = model(`package P { ${links.join(' ')} constraint t { w45 >= 1.0 } }`);
+    const p = named(m, 'P').id;
+    for (const first of ['', 'y30', 'f', 'w20']) {
+      const scope = scopeFor(m, p);
+      if (first) scope(first);
+      expect(scope('w45'), first || 'fresh').toBeUndefined();
+    }
+    expect(scopeFor(m, p)('f')).toBe(32);
+    expect(checkOf(m, 'P::t').message).toBe(depth('w45'));
+  });
+});
+
+/*
+ * One pass settles each derivation once. Without a memo the scalar scope
+ * re-derived every input along every reference PATH: a fan-out of equations
+ * took 47 s at 22 links, and a 200-link loop 105 s, in one checkConstraints.
+ * The time bounds are generous — each sweep takes milliseconds — and are here
+ * only so a lost memo fails the test instead of hanging it.
+ */
+describe('checkConstraints — a pass settles each derivation once', () => {
+  it('reads a fan-out of asserted equations in linear time', async () => {
+    const fib = (n: number) => {
+      const links = ['attribute f0 : Real = 1.0; attribute f1 : Real = 1.0;'];
+      for (let i = 2; i <= n; i++) links.push(`attribute f${i} : Real; assert constraint { f${i} == f${i - 1} + f${i - 2} }`);
+      return `package P { ${links.join(' ')} constraint t { f${n} >= 1.0 } }`;
+    };
+    const { model: m } = await loadModelText(fib(22));
+    let t0 = performance.now();
+    const checks = checkConstraints(m!);
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(checks.every((c) => c.result === 'satisfied')).toBe(true);
+    expect(checks.find((c) => c.expression === 'f22 == f21 + f20')!.message).toBe('Constraint satisfied: defines f22 = 28657');
+    // One scalar scope is one pass: f40 = fib(41).
+    const { model: long } = await loadModelText(fib(40));
+    t0 = performance.now();
+    expect(scopeFor(long!, named(long!, 'P').id)('f40')).toBe(165580141);
+    expect(performance.now() - t0).toBeLessThan(2000);
+  }, 30_000);
+
+  it('checks a 200-link loop of equations in well under its old 105 s', async () => {
+    // No link of a loop is ever settled — each answer depends on what is in
+    // flight — so every one is derived again where it is read; each is read
+    // only as deep as the cap, from settled defining equations.
+    const links = ['attribute k : ISQ::LengthValue = 1.0 [m];'];
+    for (let i = 1; i <= 200; i++) {
+      links.push(`attribute x${i} : ISQ::LengthValue; assert constraint { x${i} == x${i === 1 ? 200 : i - 1} + k }`);
+    }
+    const { model: m } = await loadModelText(`package P { ${links.join(' ')} constraint t { x200 >= 1.0 [m] } }`);
+    const t0 = performance.now();
+    const checks = checkConstraints(m!);
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(checks.find((c) => c.expression === 'x200 >= 1.0 [m]')!.message).toBe(
+      'Could not evaluate: "x200" cannot be derived: its defining equations nest more than 64 deep',
+    );
+  }, 30_000);
+
+  it('checks a chain past the cap whose links each have several definitions in well under a second', async () => {
+    // A guard. A link past the cap is refused and never settled, so a link
+    // that searched on past the refusal of its first definition re-derived
+    // the link below once for each of its own, and climbed back up through
+    // `x_{i-1} == x_i - k` each time: a 150-link chain did not finish in five
+    // minutes. The bound is generous; the sweep takes tens of milliseconds.
+    const links = ['attribute k : ISQ::LengthValue = 1.0 [m]; attribute x0 : ISQ::LengthValue = 1.0 [m];'];
+    for (let i = 1; i <= 150; i++) {
+      links.push(
+        `attribute x${i} : ISQ::LengthValue; attribute u${i} : ISQ::LengthValue;`,
+        `assert constraint { x${i} == x${i - 1} + u${i} } assert constraint { x${i} == x${i - 1} + k }`,
+      );
+      if (i > 1) links.push(`assert constraint { x${i - 1} == x${i} - k }`);
+    }
+    const { model: m } = await loadModelText(`package P { ${links.join(' ')} constraint t { x150 >= 1.0 [m] } }`);
+    const t0 = performance.now();
+    const checks = checkConstraints(m!);
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(checks.find((c) => c.expression === 'x150 >= 1.0 [m]')!.message).toBe(
+      'Could not evaluate: "x150" cannot be derived: its defining equations nest more than 64 deep',
+    );
+    expect(checks.find((c) => c.expression === 'x64 == x63 + k')!.message).toBe('Constraint satisfied: defines x64 = 65 [m]');
+  }, 30_000);
 });
 
 /**

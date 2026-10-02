@@ -39,6 +39,25 @@
  */
 
 import { isSpecialization, type AttrValue, type ElementId, type ElementRecord, type Model } from '@core/index';
+import {
+  DefiningEquations,
+  GUARD_CONTACT,
+  MAX_DERIVATION_DEPTH,
+  chooseDefinition,
+  definitionKey,
+  definitionsInFlight,
+  isAsserted,
+  hasStatedValue,
+  mergeContact,
+  readsStatedValueIn,
+  namesDefinedBy,
+  returnTo,
+  statedValueOf,
+  type Contact,
+  type DefiningEquation,
+  type InFlight,
+} from './defining-equation';
+import { isBindingEdge } from './connectors';
 import { effectiveFeatures } from './inheritance';
 import { resolveQualifiedNameFull } from './resolve-names';
 import {
@@ -329,12 +348,13 @@ type QNode =
   | { kind: 'ref'; path: string }
   | { kind: 'bool'; value: boolean }
   | { kind: 'unary'; op: '-' | '+' | 'not'; operand: QNode }
-  | { kind: 'binary'; op: QBinOp; left: QNode; right: QNode };
+  | { kind: 'binary'; op: QBinOp; left: QNode; right: QNode }
+  | { kind: 'if'; cond: QNode; then: QNode; else: QNode };
 
 type QBinOp =
   | '+' | '-' | '*' | '/' | '%' | '^'
   | '<' | '<=' | '>' | '>=' | '==' | '!=' | '='
-  | 'and' | 'or';
+  | 'and' | 'or' | 'xor' | 'implies';
 
 type QTok =
   | { t: 'num'; v: number }
@@ -347,7 +367,14 @@ type QTok =
   | { t: 'rparen' }
   | { t: 'eof' };
 
-const Q_KEYWORDS = new Set(['true', 'false', 'and', 'or', 'not']);
+/**
+ * The scalar grammar's keywords ({@link ./expr}): a body with `implies`, `xor`
+ * or `if … then … else` is read here as it is read there. Without them this
+ * parser stopped at the keyword ("Trailing tokens", "Expected )"), so a
+ * derived value against a unit literal inside one was unknown to the
+ * validation surface and proved by the SMT engine, which reads all three.
+ */
+const Q_KEYWORDS = new Set(['true', 'false', 'and', 'or', 'not', 'xor', 'implies', 'if', 'then', 'else']);
 const Q_MULTI_OPS = ['<=', '>=', '==', '!='];
 const Q_SINGLE_OPS = new Set(['+', '-', '*', '/', '%', '^', '<', '>']);
 
@@ -499,6 +526,10 @@ export function quantityRefsIn(text: string): string[] | undefined {
     else if (n.kind === 'binary') {
       walk(n.left);
       walk(n.right);
+    } else if (n.kind === 'if') {
+      walk(n.cond);
+      walk(n.then);
+      walk(n.else);
     }
   };
   walk(node);
@@ -506,7 +537,9 @@ export function quantityRefsIn(text: string): string[] | undefined {
 }
 
 const Q_PRECEDENCE: Record<string, number> = {
+  implies: 1,
   or: 2,
+  xor: 2,
   and: 3,
   '==': 4,
   '=': 4,
@@ -522,7 +555,7 @@ const Q_PRECEDENCE: Record<string, number> = {
   '%': 7,
   '^': 8,
 };
-const Q_RIGHT_ASSOC = new Set(['^']);
+const Q_RIGHT_ASSOC = new Set(['^', 'implies']);
 
 class QParser {
   private pos = 0;
@@ -544,7 +577,7 @@ class QParser {
   private binaryOpHere(): string | undefined {
     const tk = this.peek();
     if (tk.t === 'op') return tk.v;
-    if (tk.t === 'kw' && (tk.v === 'and' || tk.v === 'or')) return tk.v;
+    if (tk.t === 'kw' && (tk.v === 'and' || tk.v === 'or' || tk.v === 'xor' || tk.v === 'implies')) return tk.v;
     return undefined;
   }
 
@@ -596,6 +629,13 @@ class QParser {
       case 'kw':
         if (tk.v === 'true') return { kind: 'bool', value: true };
         if (tk.v === 'false') return { kind: 'bool', value: false };
+        if (tk.v === 'if') {
+          const cond = this.parseBinary(0);
+          this.expectKw('then');
+          const then = this.parseBinary(0);
+          this.expectKw('else');
+          return { kind: 'if', cond, then, else: this.parseBinary(0) };
+        }
         throw new SyntaxError(`Unexpected keyword '${tk.v}'`);
       case 'lparen': {
         const inner = this.parseBinary(0);
@@ -607,6 +647,11 @@ class QParser {
       default:
         throw new SyntaxError('Unexpected token');
     }
+  }
+
+  private expectKw(kw: string): void {
+    const tk = this.next();
+    if (tk.t !== 'kw' || tk.v !== kw) throw new SyntaxError(`Expected '${kw}'`);
   }
 }
 
@@ -635,6 +680,10 @@ class QParser {
  *  - `mismatch` — a referenced derived feature's dimension disagrees with its
  *    declared type (see {@link dimensionClaim});
  *  - `cycle` — a derivation cycle;
+ *  - `depth` — defining equations nested deeper than {@link MAX_DERIVATION_DEPTH}.
+ *    A REFUSAL: past the cap neither the scalar path nor this one has a
+ *    value, and the raw number a scalar scope would read on to is exactly the
+ *    unit-blind answer the cap must not let through;
  *  - `parse` — the expression is not a unit-aware expression;
  *  - `not-boolean` / `not-quantity` — the wrong value kind where the other
  *    was needed;
@@ -649,6 +698,7 @@ export type QReason =
   | 'offset'
   | 'mismatch'
   | 'cycle'
+  | 'depth'
   | 'parse'
   | 'not-boolean'
   | 'not-quantity'
@@ -676,6 +726,8 @@ export function describeReason(reason: QReason, detail?: string): string {
       return `"${detail ?? '?'}" derives to a dimension that disagrees with its declared type, so it is excluded from unit-aware evaluation`;
     case 'cycle':
       return `"${detail ?? '?'}" is defined through itself`;
+    case 'depth':
+      return `its defining equations nest more than ${MAX_DERIVATION_DEPTH} deep`;
     case 'parse':
       return 'the expression is not a unit-aware expression';
     case 'not-boolean':
@@ -701,14 +753,17 @@ export function describeReason(reason: QReason, detail?: string): string {
  *
  * `dimension` is deliberately absent: it is the bare-literal contract
  * (`mtow [kg] <= 25.0`), where reading the literal in the feature's declared
- * unit is exactly what the author meant.
+ * unit is exactly what the author meant. `depth` is present: past the cap a
+ * dimensioned chain was compared as a raw number wherever its end was a value
+ * expression or untyped (`u == x70 * 1.0` then `u >= 1.0`, satisfied).
  */
 export function isRefusalReason(reason: QReason | undefined): boolean {
   return (
     reason === 'offset' ||
     reason === 'mismatch' ||
     reason === 'dimension-clash' ||
-    reason === 'dimension-fault'
+    reason === 'dimension-fault' ||
+    reason === 'depth'
   );
 }
 
@@ -769,6 +824,14 @@ function evalQ(node: QNode, scope: QScope, absTol: number): QEval {
     }
     case 'binary':
       return evalQBinary(node, scope, absTol);
+    case 'if': {
+      // Only the branch the condition takes is read, as the scalar evaluator
+      // reads it.
+      const c = evalQ(node.cond, scope, absTol);
+      if (isQUnknown(c)) return c;
+      if (!('b' in c)) return unknownQ('not-boolean');
+      return evalQ(c.b ? node.then : node.else, scope, absTol);
+    }
   }
 }
 
@@ -816,16 +879,29 @@ function applyUnit(inner: QEval, unit: string): QEval {
 function evalQBinary(node: Extract<QNode, { kind: 'binary' }>, scope: QScope, absTol: number): QEval {
   const op = node.op;
 
-  if (op === 'and' || op === 'or') {
+  if (op === 'and' || op === 'or' || op === 'xor' || op === 'implies') {
+    // The scalar evaluator's short-circuits ({@link ./expr}): `false and x`,
+    // `true or x`, `false implies x` and `x implies true` decide without x.
     const l = evalQ(node.left, scope, absTol);
     if (!isQUnknown(l) && 'b' in l) {
       if (op === 'and' && l.b === false) return { b: false };
       if (op === 'or' && l.b === true) return { b: true };
+      if (op === 'implies' && l.b === false) return { b: true };
     }
     const r = evalQ(node.right, scope, absTol);
+    if (op === 'implies' && !isQUnknown(r) && 'b' in r && r.b === true) return { b: true };
     if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
     if (!('b' in l) || !('b' in r)) return unknownQ('not-boolean');
-    return { b: op === 'and' ? l.b && r.b : l.b || r.b };
+    switch (op) {
+      case 'and':
+        return { b: l.b && r.b };
+      case 'or':
+        return { b: l.b || r.b };
+      case 'xor':
+        return { b: l.b !== r.b };
+      case 'implies':
+        return { b: !l.b || r.b };
+    }
   }
 
   const l = evalQ(node.left, scope, absTol);
@@ -905,19 +981,18 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
     case '!=': {
       const eq = op === '==' || op === '=';
       // Equality on an offset scale is an arithmetic question (a difference of
-      // zero), and the scale's zero is not the dimension's zero: answer unknown.
+      // zero), and the scale's zero is not the dimension's zero: answer unknown
+      // — whatever the other side is, as the solver lane's gate reads it.
       if (a.absolute || b.absolute) return unknownQ('offset', a.absolute ? a.unit : b.unit);
-      // Two DIFFERENT dimensions are refused here exactly as an ordered
-      // comparison is: `d == t` answering a confident `violated` (and `d != t`
-      // a confident `satisfied`) judges a question the author has to repair,
-      // and published a zero-amount "violation" on the analysis report while
-      // the validation surface said unknown. A DIMENSIONLESS side keeps the
-      // definite answer: `n : Real = 5.0` is not `5.0 [km]`, and that verdict
-      // is pinned on both surfaces.
-      if (!dimEqual(a.dimension, b.dimension)) {
-        const refusal = dimensionRefusal(a, b);
-        return isQUnknown(refusal) && refusal.reason === 'dimension-clash' ? refusal : { b: !eq };
-      }
+      // Two different dimensions are decided exactly as an ordered comparison
+      // decides them ({@link compareQ}): a clash of two real dimensions is
+      // refused, and a DIMENSIONLESS side is the bare-literal contract, which
+      // the caller's scalar path fills. Equality used to answer that side
+      // itself — `dimensions differ ⇒ values differ` — so `limit : MassValue =
+      // 25.0` was VIOLATED against `limit == 25.0` (and `n : Real = 5.0`
+      // against `n == km` at 5 km) on every surface but SMT, while `>=` and `<=`
+      // on the same pair were both satisfied.
+      if (!dimEqual(a.dimension, b.dimension)) return dimensionRefusal(a, b);
       const sa = siValue(a);
       const sb = siValue(b);
       if (sa === undefined) return unknownQ('unit', a.unit);
@@ -1022,39 +1097,115 @@ function compareQ(op: '<' | '<=' | '>' | '>=', a: Quantity, b: Quantity, absTol:
  * Build a LAZY name → quantity resolver rooted at `contextId`: names map to
  * feature ids, and a feature's quantity is computed on lookup — an expression
  * through its OWN owner scope, with `inFlight` guarding a derivation cycle.
- * Mirrors `scopeWith` in {@link ./evaluate-model}.
+ * Mirrors `scopeWith` in {@link ./evaluate-model}. Given `reads` it is a
+ * derivation's scope, and mirrors that one further: a bare name no stated
+ * value answers is read through the asserted equation that fixes it
+ * ({@link definedQuantity}), and `reads` records how deep the defining
+ * equations under each answer nest.
+ *
+ * A DERIVATION's scope follows definitions; a constraint body's own scope
+ * does not ({@link evaluateConstraintQuantityDetailed}): the names a body
+ * reads that an equation fixes are its caller's to bind — the validation
+ * surface binds them with the quantity the equation derives, the numeric
+ * surface with the value the solver found.
  */
 function quantityScopeFor(
   model: Model,
   contextId: ElementId,
-  inFlight: Set<ElementId>,
+  inFlight: InFlight,
   memo: DerivationMemo,
+  reads?: Reads,
 ): QScope {
-  const ids = new Map<string, ElementId>();
-  collectQuantityIds(model, contextId, '', ids, new Set(), new Set());
+  const ids = quantityIdsOf(model, contextId, memo);
   return (name: string) => {
     const id = ids.get(name);
-    if (id === undefined) return undefined;
-    return derivationEval(deriveFeature(model, id, inFlight, memo), name);
+    if (id === undefined) return reads ? definedQuantity(model, contextId, name, inFlight, memo, reads) : undefined;
+    const d = deriveFeature(model, id, inFlight, memo);
+    if (reads) note(reads, d);
+    return derivationEval(d, name);
   };
+}
+
+/** The name → feature-id map of `contextId`'s quantity scope, built once per pass. */
+function quantityIdsOf(model: Model, contextId: ElementId, memo: DerivationMemo): Map<string, ElementId> {
+  const pass = passOf(model, memo);
+  let ids = pass.ids.get(contextId);
+  if (!ids) {
+    ids = new Map();
+    collectQuantityIds(model, contextId, '', ids, new Set(), new Set(), pass.definitions);
+    pass.ids.set(contextId, ids);
+  }
+  return ids;
+}
+
+/**
+ * What a derivation's scope met: the deepest nest of defining equations under
+ * an operand it read, how the operands met the derivation stack, and how
+ * those with no value did (the `cause` {@link chooseDefinition} reads).
+ */
+interface Reads {
+  depth: number;
+  contact?: Contact;
+  cause?: Contact;
+}
+
+function note(reads: Reads, d: FeatureDerivation): void {
+  reads.depth = Math.max(reads.depth, d.depth ?? 0);
+  reads.contact = mergeContact(reads.contact, d.contact);
+  if (!answered(d)) reads.cause = mergeContact(reads.cause, d.cause);
+}
+
+/** The depth and contact a derivation over `reads` carries. */
+function measured(reads: Reads): Pick<FeatureDerivation, 'depth' | 'contact'> {
+  return { ...(reads.depth > 0 ? { depth: reads.depth } : {}), ...(reads.contact ? { contact: reads.contact } : {}) };
+}
+
+/** The cause a derivation over `reads` that has no value carries. */
+function causedBy(reads: Reads): Pick<FeatureDerivation, 'cause'> {
+  return reads.cause ? { cause: reads.cause } : {};
+}
+
+/** Does the derivation give the feature a value — a quantity or a boolean? */
+function answered(d: FeatureDerivation): boolean {
+  return d.q !== undefined || d.b !== undefined;
 }
 
 /**
  * The scope's answer for one feature: its quantity (or boolean), or the reason
- * it has none. The unit and the offset scale are about the unit and the
- * mismatch is about the feature itself; every other reason arose INSIDE the
- * derivation, so the message names both — `"uav.total" cannot be derived: M
- * and 1 are different physical dimensions` — rather than collapsing to the
- * bare feature name.
+ * it has none. The unit is about the unit and the feature's OWN mismatch is
+ * about the feature itself; every other reason arose INSIDE the derivation,
+ * so the message names both — `"uav.total" cannot be derived: M and 1 are
+ * different physical dimensions` — rather than collapsing to the bare feature
+ * name. Through a chain each link names itself, keeping the sentence the link
+ * below composed (`"e" cannot be derived: "c2" derives to a dimension that
+ * disagrees …`): with only the tag and its detail, the mismatch of an input
+ * read as one of `e`'s own. A loop is already a whole sentence about the
+ * whole chain, and passes through as written; the depth cap names the link
+ * whose definitions nest past it (a definition past the cap carries no
+ * sentence of its own, so each one the chain passes through does not stack
+ * another "cannot be derived" on it).
+ *
+ * Offset arithmetic is one of those inner reasons: a derivation that answers
+ * `offset` did it in its own expression or read it from a link below. It
+ * keeps the unit as its detail, and the sentence names the feature too (so
+ * does a body that reads it: `"d" cannot be derived: "°C" is on …`). With
+ * the unit alone, the feature a chain fixes read the fault as its own:
+ * `e == x / power`, over `x == t0 * 2.0` with `t0` in °C, said `"e" is on an
+ * offset temperature scale`, of a duration.
  */
 function derivationEval(d: FeatureDerivation, name: string): QEval {
   if (d.q) return { q: d.q };
   if (d.b !== undefined) return { b: d.b };
   const reason = d.reason ?? 'unresolved';
-  if (reason === 'unit' || reason === 'offset') return unknownQ(reason, d.detail ?? name);
-  if (reason === 'mismatch') return unknownQ(reason, name);
+  if (reason === 'unit') return unknownQ(reason, d.detail ?? name);
+  if (reason === 'offset') {
+    const unit = d.detail ?? name;
+    return unknownQ(reason, unit, `"${name}" cannot be derived: ${d.message ?? describeReason(reason, unit)}`);
+  }
+  if (reason === 'mismatch' && d.claim === 'mismatch') return unknownQ(reason, name);
   if (d.detail === undefined && reason === 'unresolved') return unknownQ(reason, name);
-  return unknownQ(reason, name, `"${name}" cannot be derived: ${describeReason(reason, d.detail)}`);
+  if (reason === 'cycle' && d.message) return unknownQ(reason, d.detail, d.message);
+  return unknownQ(reason, name, `"${name}" cannot be derived: ${d.message ?? describeReason(reason, d.detail)}`);
 }
 
 /**
@@ -1062,10 +1213,31 @@ function derivationEval(d: FeatureDerivation, name: string): QEval {
  * its operands through their own owner scopes, so without one the cost grows
  * with the number of reference PATHS — exponential on a chain of shared
  * derivations (`f_i = f_{i-1} + f_{i-2}`), and the UI validates on every
- * edit. Entries are model facts, safe to share across one run; a `cycle`
- * answer depends on the evaluation stack and is never stored.
+ * edit. Entries are model facts, safe to share across one run; an answer
+ * that met the derivation stack — a loop, an equation read back, the depth
+ * guard: its {@link FeatureDerivation.contact} — depends on what else was
+ * being derived at the time and is never stored. A feature's value is keyed
+ * by its id; the derivation the equations in a context give it, by
+ * {@link definitionKey}.
+ *
+ * A caller makes one as a plain `new Map()`; what the pass reads of the model
+ * once rather than at every link (its {@link DerivationPass}) is attached on
+ * first use, and lives as long as the memo does.
  */
-export type DerivationMemo = Map<ElementId, FeatureDerivation>;
+export type DerivationMemo = Map<ElementId, FeatureDerivation> & { pass?: DerivationPass };
+
+/** What one pass reads of the model once: the defining equations of each context, and its scope's names. */
+export interface DerivationPass {
+  definitions: DefiningEquations;
+  ids: Map<ElementId, Map<string, ElementId>>;
+  /** Feature id → the other features a binding connector holds to its value, built on first use. */
+  bound?: Map<ElementId, ElementId[]>;
+}
+
+function passOf(model: Model, memo: DerivationMemo): DerivationPass {
+  if (memo.pass?.definitions.model !== model) memo.pass = { definitions: new DefiningEquations(model), ids: new Map() };
+  return memo.pass;
+}
 
 function collectQuantityIds(
   model: Model,
@@ -1074,6 +1246,8 @@ function collectQuantityIds(
   ids: Map<string, ElementId>,
   visited: Set<string>,
   onPath: Set<ElementId>,
+  definitions: DefiningEquations,
+  link?: { usage: ElementRecord; clean: boolean },
 ): void {
   // TWO guards, because they answer different questions. `onPath` is the CYCLE
   // guard and must be keyed on the owner ALONE: a feature whose type is one of
@@ -1094,12 +1268,14 @@ function collectQuantityIds(
     const name = feat.declaredName;
     if (!name) continue;
     const full = prefix ? `${prefix}.${name}` : name;
-    if (feat.attrs.value !== undefined && feat.attrs.value !== null) {
+    if (readsStatedValueIn(model, feat, ownerId, prefix, definitions, link)) {
       if (!ids.has(full)) ids.set(full, feat.id);
       if (!ids.has(name)) ids.set(name, feat.id); // bare-name convenience
     }
+    // Through `feat`, as the scalar scope walks it (`collectIds` of ./evaluate-model).
+    const clean = link === undefined || (link.clean && definitions.linkReads(link.usage, feat));
     for (const type of model.typesOf(feat.id)) {
-      collectQuantityIds(model, type.id, full, ids, visited, onPath);
+      collectQuantityIds(model, type.id, full, ids, visited, onPath, definitions, { usage: feat, clean });
     }
   }
 
@@ -1134,12 +1310,38 @@ export interface FeatureDerivation {
   /** Why the derivation has no quantity, when it has none. */
   reason?: QReason;
   detail?: string;
+  /**
+   * The finished sentence for `reason`, when it was composed inside the
+   * derivation — an input that could not be derived names itself.
+   */
+  message?: string;
+  /**
+   * How many defining equations the derivation reads through, nested — itself
+   * included when it is one. Absent where it read through none.
+   */
+  depth?: number;
+  /**
+   * How the derivation met the derivation stack, when it did: a loop, an
+   * equation read back, the depth guard ({@link Contact}). It then depends on
+   * what else was being derived, and is never memoised.
+   */
+  contact?: Contact;
+  /** With no value: how its lack of one met the stack (the `cause` {@link chooseDefinition} reads). */
+  cause?: Contact;
+  /**
+   * The asserted equation the derivation of a feature that states no value
+   * was read through: the one {@link chooseDefinition} picked. The solver lane
+   * orients the feature from this equation and no other, so it solves the
+   * value the validation surface says the equation defines.
+   */
+  definedBy?: ElementId;
 }
 
-const claimOnly = (claim: DimensionClaim, reason?: QReason, detail?: string): FeatureDerivation => ({
+const claimOnly =(claim: DimensionClaim, reason?: QReason, detail?: string, message?: string): FeatureDerivation => ({
   claim,
   ...(reason ? { reason } : {}),
   ...(detail !== undefined ? { detail } : {}),
+  ...(message !== undefined ? { message } : {}),
 });
 
 /**
@@ -1151,20 +1353,20 @@ const claimOnly = (claim: DimensionClaim, reason?: QReason, detail?: string): Fe
 function deriveFeature(
   model: Model,
   id: ElementId,
-  inFlight: Set<ElementId>,
+  inFlight: InFlight,
   memo: DerivationMemo,
 ): FeatureDerivation {
   const hit = memo.get(id);
   if (hit) return hit;
   const d = deriveFeatureUncached(model, id, inFlight, memo);
-  if (d.reason !== 'cycle') memo.set(id, d);
+  if (!d.contact) memo.set(id, d);
   return d;
 }
 
 function deriveFeatureUncached(
   model: Model,
   id: ElementId,
-  inFlight: Set<ElementId>,
+  inFlight: InFlight,
   memo: DerivationMemo,
 ): FeatureDerivation {
   const feat = model.get(id);
@@ -1173,7 +1375,7 @@ function deriveFeatureUncached(
   const literal = evaluateQuantity(model, id);
   if (literal) return { claim: 'literal', q: literal };
 
-  const raw = feat.attrs.value;
+  const raw = statedValueOf(model, feat);
   // A boolean feature is a legitimate operand of `and`/`or`/`not` in a body
   // (`armed and mtow <= 25.0 [kg]`); it is not a quantity, but it is a value.
   if (typeof raw === 'boolean') return { claim: 'unknown', b: raw };
@@ -1182,7 +1384,7 @@ function deriveFeatureUncached(
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
     return claimOnly('unknown', 'not-quantity');
   }
-  if (inFlight.has(id)) return claimOnly('unknown', 'cycle');
+  if (inFlight.has(id)) return backTo(model, id, inFlight);
 
   let node: QNode;
   try {
@@ -1191,17 +1393,19 @@ function deriveFeatureUncached(
     return claimOnly('unknown', 'parse');
   }
 
-  inFlight.add(id);
+  inFlight.set(id, undefined);
+  const reads: Reads = { depth: 0 };
   let r: QEval;
   try {
     const owner: QScope =
-      feat.ownerId != null ? quantityScopeFor(model, feat.ownerId, inFlight, memo) : () => undefined;
+      feat.ownerId != null ? quantityScopeFor(model, feat.ownerId, inFlight, memo, reads) : () => undefined;
     r = evalQ(node, owner, 0);
   } finally {
     inFlight.delete(id);
   }
-  if (isQUnknown(r)) return claimOnly('unknown', r.reason, r.detail);
-  if (!('q' in r)) return { claim: 'unknown', b: r.b };
+  const nested = measured(reads);
+  if (isQUnknown(r)) return { ...claimOnly('unknown', r.reason, r.detail, r.message), ...nested, ...causedBy(reads) };
+  if (!('q' in r)) return { claim: 'unknown', b: r.b, ...nested };
 
   // A unit beside an expression value (`= (1 + 2) [m]`) is the spec's `'['`
   // applied to the whole derivation: legal on a dimensionless result only.
@@ -1209,14 +1413,14 @@ function deriveFeatureUncached(
   const unit = unitOfFeature(feat);
   if (unit) {
     const withUnit = applyUnit({ q }, unit);
-    if (isQUnknown(withUnit)) return claimOnly('unknown', withUnit.reason, withUnit.detail);
+    if (isQUnknown(withUnit)) return { ...claimOnly('unknown', withUnit.reason, withUnit.detail), ...nested };
     q = (withUnit as { q: Quantity }).q;
   }
   // An offset-scale value can only reach here through a plain reference
   // (`t3 : TemperatureValue = t1`, arithmetic on one already answered
   // `offset`), and a reference IS the same point on the scale: it keeps its
   // `absolute` flag, so it may still be ordered and still refuses arithmetic.
-  return judgeDerivation(model, id, q);
+  return { ...judgeDerivation(model, id, q), ...nested };
 }
 
 /**
@@ -1260,6 +1464,15 @@ function judgeDerivation(model: Model, id: ElementId, q: Quantity): FeatureDeriv
  * `contextId` is where the equation is written, when that is not the
  * feature's owner: a feature a definition inherits, fixed by an equation in
  * the definition that inherits it, is derived from the names THERE.
+ *
+ * An input the defining side reads that is itself fixed by an asserted
+ * equation is derived the same way, transitively ({@link definedQuantity}):
+ * `e == capacity2 / power` beside `capacity2 == capacity * 2.0` is 7089.23 s.
+ * The scalar scope always read such a chain, and the quantity scope did not,
+ * so the dimensioned feature had no quantity at all and was refused — on the
+ * same-package path and the per-layer one alike — while a unitless chain was
+ * read by its scalar. A link that is refused refuses the whole chain, with its
+ * own reason; a loop is refused naming every link of it.
  */
 export function equationDerivation(
   model: Model,
@@ -1272,6 +1485,194 @@ export function equationDerivation(
   const name = feat?.declaredName;
   const context = contextId ?? feat?.ownerId;
   if (!feat || !name || context == null) return claimOnly('unknown', 'unresolved');
+  // Through the asserted equation of that body, when it is one: reading it
+  // back from an input is then an echo of it, as on any other path.
+  const via = passOf(model, memo)
+    .definitions.of(context, name)
+    .find((c) => c.constraint.attrs.expression === equation)?.constraint.id;
+  return deriveByEquation(model, featureId, name, equation, memo, context, new Map([[featureId, via]]));
+}
+
+/**
+ * The derivation the asserted equations in `contextId` — the feature's owner
+ * unless given — give a feature that states no value: through the one the
+ * rule both evaluators share picks ({@link chooseDefinition}), so the scalar
+ * scope and this one read the same equation as the definition. `undefined`
+ * when no asserted equation there may define it.
+ */
+export function definitionDerivation(
+  model: Model,
+  featureId: ElementId,
+  memo: DerivationMemo = new Map(),
+  contextId?: ElementId,
+): FeatureDerivation | undefined {
+  const feat = model.get(featureId);
+  const name = feat?.declaredName;
+  const context = contextId ?? feat?.ownerId;
+  if (!feat || !name || context == null) return undefined;
+  const candidates = passOf(model, memo).definitions.of(context, name);
+  if (candidates.length === 0) return undefined;
+  return definitionOf(model, featureId, name, candidates, memo, context, new Map());
+}
+
+/**
+ * The features `constraint` DEFINES: of the valueless features of its owner
+ * that it may define (an asserted `name == <expr>`, either way round), those
+ * whose derivation the shared rule ({@link chooseDefinition}) reads through
+ * this equation rather than another beside it. Empty for any other
+ * constraint.
+ *
+ * The solver lane orients such a feature from this equation only. It used to
+ * orient a feature from whichever equality reached it first in model order,
+ * so a check written above the definition — `constraint { e == 1.0 [h] }`
+ * before `assert constraint { e == capacity / power }` — fixed `e` at 3600 s:
+ * the check was then satisfied and the definition violated on the numeric
+ * surface, while the validation surface said the definition defines
+ * `e = 3544.62 [s]` and the check is violated.
+ */
+export function definitionsOf(model: Model, constraint: ElementRecord, memo: DerivationMemo = new Map()): ElementId[] {
+  // Every definition but one whose input is a DESIGN FREEDOM: one with an
+  // input nothing fixes (`x == 2.0 ^ y`, `y` declared with no value, no
+  // equation and no binding) defines no value yet, and the solver lane solves
+  // such a system as a whole — a check beside it (`x == 1024.0`) fixes `x`,
+  // and the equation then `y`. Recording it froze `x` for every other
+  // equality, and the system did not solve at all.
+  //
+  // A definition that stopped for ANY OTHER reason is still the definition:
+  // a loop (`mass == dry + fuel` beside `fuel == mass * 0.2`), a nest past the
+  // cap, a refused input, a name this context reads no value for. Left
+  // unrecorded, a plain check fixed the feature instead — `mass == 130.0`
+  // made `mass` 130, so the asserted loop read VIOLATED and the check
+  // SATISFIED, and `fuel <= 25.5` was violated on the numeric surface while
+  // the SMT engine, solving the loop, proved it.
+  return featuresDefinedBy(model, constraint, memo).filter(
+    ({ derivation }) => answered(derivation) || !stoppedOnFreeInput(model, derivation, constraint.ownerId!, memo),
+  ).map(({ id }) => id);
+}
+
+/**
+ * The valueless features of its owner that `constraint` (an asserted
+ * equation) is THE definition of — the one {@link chooseDefinition} reads them
+ * through — each with its derivation, whatever that derivation answered.
+ * Empty for any other constraint.
+ */
+export function featuresDefinedBy(
+  model: Model,
+  constraint: ElementRecord,
+  memo: DerivationMemo = new Map(),
+): Array<{ id: ElementId; derivation: FeatureDerivation }> {
+  if (constraint.ownerId == null || !isAsserted(constraint)) return [];
+  const { definitions } = passOf(model, memo);
+  const out: Array<{ id: ElementId; derivation: FeatureDerivation }> = [];
+  for (const name of namesDefinedBy(constraint)) {
+    const feature = definitions.feature(constraint.ownerId, name);
+    const candidates = definitions.of(constraint.ownerId, name);
+    if (!feature || candidates.length === 0 || out.some((f) => f.id === feature.id)) continue;
+    const d = definitionOf(model, feature.id, name, candidates, memo, constraint.ownerId, new Map());
+    if (d.definedBy === constraint.id) out.push({ id: feature.id, derivation: d });
+  }
+  return out;
+}
+
+/**
+ * Did a definition's derivation stop for want of a FREE INPUT — a valueless
+ * feature of `context` with no value, no defining equation and no binding of
+ * its own — directly, or through definitions each stopped by one (`w == v *
+ * 2.0` over `v == d / t`, `t` free)? That is the one input a check may stand
+ * in for ({@link definitionsOf}). An input defined where it is declared and
+ * not read here, held by a binding, or not a valueless feature at all, is no
+ * design freedom.
+ */
+function stoppedOnFreeInput(
+  model: Model,
+  d: FeatureDerivation,
+  context: ElementId,
+  memo: DerivationMemo,
+  seen: Set<ElementId> = new Set(),
+): boolean {
+  if (d.reason !== 'unresolved' || d.detail === undefined || d.detail.includes('.')) return false;
+  const { definitions } = passOf(model, memo);
+  const name = d.detail;
+  const feature = definitions.feature(context, name);
+  if (!feature || seen.has(feature.id)) return false;
+  seen.add(feature.id);
+  const here = definitions.of(context, name);
+  if (here.length > 0) {
+    const inner = definitionOf(model, feature.id, name, here, memo, context, new Map());
+    return !answered(inner) && stoppedOnFreeInput(model, inner, context, memo, seen);
+  }
+  if (feature.ownerId != null && feature.ownerId !== context && definitions.of(feature.ownerId, name).length > 0) {
+    return false;
+  }
+  return boundTo(model, feature.id, memo).length === 0;
+}
+
+/**
+ * {@link definitionDerivation} inside a derivation already in progress
+ * (`inFlight` is its stack), memoised when the answer is a fact about the
+ * model.
+ */
+function definitionOf(
+  model: Model,
+  featureId: ElementId,
+  name: string,
+  candidates: readonly DefiningEquation[],
+  memo: DerivationMemo,
+  context: ElementId,
+  inFlight: InFlight,
+): FeatureDerivation {
+  if (inFlight.has(featureId)) return backTo(model, featureId, inFlight);
+  const key = definitionKey(featureId, context);
+  const hit = memo.get(key);
+  if (hit) return hit;
+  const d = defineUncached(model, featureId, name, candidates, memo, context, inFlight);
+  if (!d.contact) memo.set(key, d);
+  return d;
+}
+
+function defineUncached(
+  model: Model,
+  featureId: ElementId,
+  name: string,
+  candidates: readonly DefiningEquation[],
+  memo: DerivationMemo,
+  context: ElementId,
+  inFlight: InFlight,
+): FeatureDerivation {
+  // The guard that keeps a long chain off the end of the stack. It answers
+  // past the cap at once, before the nest below is measured — every
+  // definition above it is then past the cap too, and answers as a measured
+  // one would — and its contact keeps all of them out of the memo.
+  if (definitionsInFlight(inFlight) >= MAX_DERIVATION_DEPTH) {
+    return { ...claimOnly('unknown', 'depth'), depth: MAX_DERIVATION_DEPTH + 1, contact: GUARD_CONTACT };
+  }
+  const { chosen, contact, cause } = chooseDefinition(
+    inFlight,
+    featureId,
+    candidates,
+    (c): FeatureDerivation => ({
+      ...deriveByEquation(model, featureId, name, c.constraint.attrs.expression as string, memo, context, inFlight),
+      definedBy: c.constraint.id,
+    }),
+    (d) => ({ answered: answered(d), deep: d.reason === 'depth', contact: d.contact, cause: d.cause }),
+  );
+  // What every candidate tried met, the chosen one's included.
+  const met = { ...(contact ? { contact } : {}), ...(cause ? { cause } : {}) };
+  // Every candidate only read an equation back: no definition here.
+  if (!chosen) return { ...claimOnly('unknown', 'unresolved'), ...met };
+  return { ...chosen, ...met };
+}
+
+/** The derivation one equation gives `featureId`, which is in flight through it. */
+function deriveByEquation(
+  model: Model,
+  featureId: ElementId,
+  name: string,
+  equation: string,
+  memo: DerivationMemo,
+  context: ElementId,
+  inFlight: InFlight,
+): FeatureDerivation {
   let node: QNode;
   try {
     node = new QParser(lexQ(equation)).parse();
@@ -1282,16 +1683,92 @@ export function equationDerivation(
   const isName = (n: QNode): boolean => n.kind === 'ref' && n.path === name;
   const side = isName(node.left) ? node.right : isName(node.right) ? node.left : undefined;
   if (!side) return claimOnly('unknown', 'unresolved');
-  const inFlight = new Set<ElementId>([featureId]);
-  const r = evalQ(side, quantityScopeFor(model, context, inFlight, memo), 0);
-  if (isQUnknown(r)) return claimOnly('unknown', r.reason, r.detail);
-  if (!('q' in r)) return { claim: 'unknown', b: r.b };
-  return judgeDerivation(model, featureId, r.q);
+  const reads: Reads = { depth: 0 };
+  const r = evalQ(side, quantityScopeFor(model, context, inFlight, memo, reads), 0);
+  const depth = reads.depth + 1;
+  const met = reads.contact ? { contact: reads.contact } : {};
+  if (depth > MAX_DERIVATION_DEPTH) return { ...claimOnly('unknown', 'depth'), depth, ...met };
+  if (isQUnknown(r)) return { ...claimOnly('unknown', r.reason, r.detail, r.message), depth, ...met, ...causedBy(reads) };
+  if (!('q' in r)) return { claim: 'unknown', b: r.b, depth, ...met };
+  // An EQUATION whose defining side is a point on an offset scale (`t2 == t1`,
+  // `t1` in °C) is an equality on that scale, which every surface refuses:
+  // the validation surface's scalar reading of the same definition answers
+  // `offset` (the equation judged as quantities), and the solver lane refuses
+  // to solve it. Read as a definition here, `t2` was a °C point to the gates —
+  // refused as derived from a dimension — and valueless to the validation
+  // surface. A VALUE that is such a reference is an identity, and keeps the
+  // point ({@link deriveFeatureUncached}).
+  if (r.q.absolute) return { ...claimOnly('unknown', 'offset', r.q.unit), depth, ...met };
+  return { ...judgeDerivation(model, featureId, r.q), depth, ...met };
+}
+
+/**
+ * The quantity of a name a derivation reads that no stated value answers in
+ * `contextId`'s scope, when an asserted equation fixes it — the unit-aware
+ * twin of `valueDefinedByEquation` and `valueThroughChain` in {@link
+ * ./evaluate-model}, under the one rule both read ({@link chooseDefinition})
+ * and for the same names: a valueless feature of the context, defined there
+ * or — where the context changes nothing it reads — where it inherits the
+ * definition from ({@link DefiningEquations.inheritedSite}), and a dotted
+ * chain to one the chain reads ({@link DefiningEquations.chainSite}). So the
+ * two scopes chain through the same equations, and a unitless chain reads the
+ * same numbers on both; this one carries the units.
+ */
+function definedQuantity(
+  model: Model,
+  contextId: ElementId,
+  name: string,
+  inFlight: InFlight,
+  memo: DerivationMemo,
+  reads: Reads,
+): QEval | undefined {
+  const { definitions } = passOf(model, memo);
+  const read = (featureId: ElementId, own: string, site: ElementId): QEval => {
+    const d = definitionOf(model, featureId, own, definitions.of(site, own), memo, site, inFlight);
+    note(reads, d);
+    return derivationEval(d, name);
+  };
+  if (name.includes('.')) {
+    const end = definitions.chainSite([contextId], name);
+    return end ? read(end.feature.id, end.feature.declaredName!, end.site) : undefined;
+  }
+  const feature = definitions.feature(contextId, name);
+  if (!feature) return undefined;
+  const candidates = definitions.of(contextId, name);
+  if (candidates.length === 0) {
+    const site = definitions.inheritedSite(contextId, name);
+    if (site !== undefined) return read(feature.id, name, site);
+    // No equation: a binding may hold it to a derived value ({@link boundDerivation}).
+    const bound = boundDerivation(model, feature.id, memo);
+    if (!bound) return undefined;
+    note(reads, bound);
+    return derivationEval(bound, name);
+  }
+  const d = definitionOf(model, feature.id, name, candidates, memo, contextId, inFlight);
+  note(reads, d);
+  return derivationEval(d, name);
+}
+
+/**
+ * The unknown for a derivation that reached `id` again while deriving it. On
+ * a LOOP, the features in flight from `id` on, in the order they were
+ * entered, ARE the loop — `a → b → a` names every link the author has to
+ * break, where the reason alone named one of them. An ECHO — one equation
+ * read back ({@link returnTo}) — is no loop the author wrote, and reads as
+ * the value it does not have.
+ */
+function backTo(model: Model, id: ElementId, inFlight: InFlight): FeatureDerivation {
+  const contact = returnTo(inFlight, id);
+  if (contact.loops.size === 0) return { ...claimOnly('unknown', 'unresolved'), contact, cause: contact };
+  const stack = [...inFlight.keys()];
+  const loop = [...stack.slice(stack.indexOf(id)), id].map((x) => model.get(x)?.declaredName ?? '?');
+  const message = `${describeReason('cycle', loop[0])}: ${loop.join(' → ')}`;
+  return { ...claimOnly('unknown', 'cycle', loop[0], message), contact, cause: contact };
 }
 
 /** The {@link DimensionClaim} of a feature's value. */
 export function dimensionClaim(model: Model, featureId: ElementId, memo: DerivationMemo = new Map()): DimensionClaim {
-  return deriveFeature(model, featureId, new Set(), memo).claim;
+  return deriveFeature(model, featureId, new Map(), memo).claim;
 }
 
 /**
@@ -1304,20 +1781,188 @@ export function dimensionClaimDetail(
   featureId: ElementId,
   memo: DerivationMemo = new Map(),
 ): FeatureDerivation {
-  return deriveFeature(model, featureId, new Set(), memo);
+  return deriveFeature(model, featureId, new Map(), memo);
 }
 
 /**
  * The dimension an expression-valued feature derives to, whatever its claim
- * (`undefined` for a literal or an unevaluable derivation). A constraint that
- * would compare such a feature as a raw magnitude must not.
+ * (`undefined` for a literal or an unevaluable derivation) — or, for a feature
+ * that states no value, the one the asserted equation defining it derives to
+ * ({@link derivationOf}). A constraint that would compare such a feature as a
+ * raw magnitude must not.
  */
 export function derivedDimensionOf(
   model: Model,
   featureId: ElementId,
   memo: DerivationMemo = new Map(),
 ): Dimension | undefined {
-  return deriveFeature(model, featureId, new Set(), memo).derived;
+  return derivationOf(model, featureId, memo)?.derived;
+}
+
+/**
+ * The derivation a feature's magnitude comes from: its value expression's
+ * (a calculation's value body is one), whatever its claim, or — for a feature
+ * that states no value — the one the asserted equation defining it in its
+ * owner gives it ({@link definitionDerivation}), else the one a binding holds
+ * it to ({@link boundDerivation}), when that agrees with its type. `undefined`
+ * for a literal, an unevaluable derivation, or a feature with none.
+ *
+ * The equation half is what lets the solver lane see the dimension the
+ * validation surface derives: `attribute e; assert constraint { e == capacity
+ * / power }` is 3544.62 s there, and was a plain number to the gates, so its
+ * defining equation was solved in raw magnitudes (0.98 — hours to no one) and
+ * a bare `e >= 45.0` was judged against that. A chain of such equations is
+ * followed exactly as the validation surface follows it. A definition that
+ * disagrees with the feature's type is left out: it has no quantity on any
+ * surface, and the feature stays the plain number it always was here.
+ */
+export function derivationOf(
+  model: Model,
+  featureId: ElementId,
+  memo: DerivationMemo = new Map(),
+): FeatureDerivation | undefined {
+  const own = deriveFeature(model, featureId, new Map(), memo);
+  if (own.derived) return own;
+  const feat = model.get(featureId);
+  if (!feat || hasStatedValue(model, feat)) return undefined;
+  const byEquation = definitionDerivation(model, featureId, memo);
+  if (byEquation) return byEquation.derived && byEquation.claim !== 'mismatch' ? byEquation : undefined;
+  const bound = boundDerivation(model, featureId, memo);
+  return bound?.derived && bound.claim !== 'mismatch' ? bound : undefined;
+}
+
+/**
+ * How the validation surface reads one operand's magnitude: through its value
+ * expression when it states a value, else through the asserted equation that
+ * defines it in its owner (`byDefinition`) — whatever the derivation's claim,
+ * a refusal included. `undefined` for a feature that states no value and has
+ * no defining equation.
+ *
+ * {@link derivationOf} answers a narrower question (the dimension a storage
+ * scale may use, which a refused definition must not supply); this is the
+ * record a gate refuses an operand by.
+ */
+export function operandDerivation(
+  model: Model,
+  featureId: ElementId,
+  memo: DerivationMemo = new Map(),
+): { derivation: FeatureDerivation; byDefinition: boolean } | undefined {
+  const feat = model.get(featureId);
+  if (!feat) return undefined;
+  if (hasStatedValue(model, feat)) {
+    return { derivation: deriveFeature(model, featureId, new Map(), memo), byDefinition: false };
+  }
+  const byEquation = definitionDerivation(model, featureId, memo);
+  if (byEquation) return { derivation: byEquation, byDefinition: true };
+  const bound = boundDerivation(model, featureId, memo);
+  return bound ? { derivation: bound, byDefinition: false } : undefined;
+}
+
+/**
+ * The derivation a feature that states no value and has no defining equation
+ * takes from what a BINDING holds it to (`attribute x; bind x = e;`): the first
+ * feature of its binding class whose value is a DERIVATION — a value
+ * expression or a defining equation — judged against this feature's own type,
+ * as a value expression would be. `undefined` when no member's is.
+ *
+ * The solver lane always solved such an `x`: the binding is the equation `x ==
+ * e`. But `x` was a plain number there, so `e`'s 3544.6 s (640 Wh / 650 W)
+ * reached it raw, and `x >= 45.0` was judged — and PROVED — against a bare
+ * number gate (e) refuses for `e` itself, while the validation surface said
+ * `x` has no value at all. With the derivation it carries, `x` is stored in SI
+ * on the solver lane, refused against a bare literal on every surface, and
+ * judged against a unit literal on every surface (the validation surface binds
+ * it the same way).
+ *
+ * A member whose value is a LITERAL gives none: a binding to `m : MassValue =
+ * 5.0 [kg]` copies a stated value, and a plain `x` keeps reading it by the
+ * declared-unit contract, as it always has.
+ */
+export function boundDerivation(
+  model: Model,
+  featureId: ElementId,
+  memo: DerivationMemo = new Map(),
+): FeatureDerivation | undefined {
+  const feat = model.get(featureId);
+  if (!feat || hasStatedValue(model, feat)) return undefined;
+  for (const partner of boundTo(model, featureId, memo)) {
+    const p = model.get(partner);
+    if (!p) continue;
+    const d = hasStatedValue(model, p) ? deriveFeature(model, partner, new Map(), memo) : definitionDerivation(model, partner, memo);
+    if (!d || d.claim === 'literal') continue;
+    if (d.q && d.derived) return { ...judgeDerivation(model, featureId, d.q), ...(d.depth ? { depth: d.depth } : {}) };
+    if (d.q || d.b !== undefined) continue;
+    // A partner whose own derivation is refused: so is this reading of it.
+    if (isRefusalReason(d.reason)) return { ...claimOnly('unknown', d.reason, d.detail, d.message) };
+  }
+  return undefined;
+}
+
+/** The other members of `featureId`'s binding class, in the order the model states them. */
+function boundTo(model: Model, featureId: ElementId, memo: DerivationMemo): ElementId[] {
+  const pass = passOf(model, memo);
+  if (!pass.bound) {
+    const bound = new Map<ElementId, ElementId[]>();
+    const join = (a: ElementId, b: ElementId) => {
+      const list = bound.get(a);
+      if (list) {
+        if (!list.includes(b)) list.push(b);
+      } else bound.set(a, [b]);
+    };
+    for (const el of model.all()) {
+      if (!isBindingEdge(el)) continue;
+      const s = el.source?.[0];
+      const t = el.target?.[0];
+      if (s === undefined || t === undefined || s === t) continue;
+      join(s, t);
+      join(t, s);
+    }
+    // The class, not only the direct partners: `x = y`, `y = e` holds `x` to `e`.
+    for (const [id, direct] of bound) {
+      const seen = new Set<ElementId>([id]);
+      const queue = [...direct];
+      const all: ElementId[] = [];
+      while (queue.length > 0) {
+        const next = queue.shift()!;
+        if (seen.has(next)) continue;
+        seen.add(next);
+        all.push(next);
+        queue.push(...(bound.get(next) ?? []));
+      }
+      bound.set(id, all);
+    }
+    pass.bound = bound;
+  }
+  return pass.bound.get(featureId) ?? [];
+}
+
+/**
+ * The sentence an operand whose derivation is REFUSED makes a relation that
+ * reads it unknown with, naming the operand as the relation writes it — or
+ * `undefined` when the derivation is no refusal.
+ *
+ * Two readings, one place. A value expression is read by the quantity scope,
+ * whose answer {@link derivationEval} words; a feature an asserted equation
+ * defines is bound by the validation surface (`readSpecialiser` in
+ * {@link ./evaluate-model}), which also refuses a loop, and names the feature
+ * itself when the fault is its own. The solver lane and the verification
+ * engines refuse the same operands with the same sentence, rather than reading
+ * the raw magnitude the validation surface declines to read: `e : Real =
+ * capacity / power` against `<= 60.0` was refused there and PROVED by the SMT
+ * engine from 0.98.
+ */
+export function refusalSentence(d: FeatureDerivation, name: string, byDefinition: boolean): string | undefined {
+  if (byDefinition) {
+    if (!isRefusalReason(d.reason) && d.reason !== 'cycle') return undefined;
+    const own =
+      (d.reason === 'offset' && d.message === undefined) || (d.reason === 'mismatch' && d.claim === 'mismatch');
+    return own
+      ? describeReason(d.reason!, name)
+      : `"${name}" cannot be derived: ${d.message ?? describeReason(d.reason!, d.detail)}`;
+  }
+  if (!isRefusalReason(d.reason)) return undefined;
+  const r = derivationEval(d, name);
+  return isQUnknown(r) ? messageOf(r) : undefined;
 }
 
 /* ────────────────────────── Constraint evaluation ───────────────────────── */
@@ -1383,7 +2028,7 @@ export function evaluateConstraintQuantityDetailed(
     return { verdict: 'unknown', reason: 'parse', detail: (e as Error).message };
   }
 
-  const inFlight = new Set<ElementId>();
+  const inFlight: InFlight = new Map();
   const memo = opts.memo ?? new Map();
   const ownerScope = el.ownerId != null ? quantityScopeFor(model, el.ownerId, inFlight, memo) : undefined;
   const selfScope = quantityScopeFor(model, el.id, inFlight, memo);

@@ -26,9 +26,11 @@
  * functions: {@link parseRelationBody}, {@link relationScope},
  * {@link relationVarsOf}, {@link relationRefused}, {@link scaleOfRelation},
  * {@link storageScaleOf} and {@link substituteLiterals}, all lifted into
- * `./relations` for exactly this reason. A second reader with its own idea of
- * when a relation is refused would let two engines answer one model
- * differently — the failure the units work closed earlier this year.
+ * `./relations` for exactly this reason — and {@link readRefusalOf}, the
+ * refusals of what a relation reads that the validation surface makes, which
+ * the numeric surface asks too. A second reader with its own idea of when a
+ * relation is refused would let two engines answer one model differently —
+ * the failure the units work closed earlier this year.
  *
  * WHAT IT ADDS ON TOP OF THOSE GATES, and why the addition is a REFUSAL rather
  * than a silence: a collection-valued feature, a remainder and a variable
@@ -48,6 +50,7 @@ import {
   type ElementRecord,
   type Model,
 } from '@core/index';
+import { readRefusalOf, unreadValuesOf, type ReadRefusal } from './evaluate-model';
 import { evaluate, type ExprNode } from './expr';
 import { effectiveFeatures, generalizationsOf } from './inheritance';
 import {
@@ -151,6 +154,9 @@ export type RefusalReason =
   | 'unit-unresolved'
   | 'dimension-clash'
   | 'offset-arithmetic'
+  | 'derived-bare-literal'
+  | 'refused-derivation'
+  | 'unread-definition'
   | 'unscalable'
   | 'collection-valued'
   | 'unsupported-operator'
@@ -193,6 +199,21 @@ export interface ContractVariable {
   siFactor: number;
   /** The origin offset of the stored scale — non-zero only on °C / °F. */
   siOffset: number;
+  /**
+   * The symbol an engine reads this path by, when it is NOT the feature's own:
+   * a name the validation surface reads no value for in this relation's
+   * context (`unreadValuesOf` in ./evaluate-model — a feature chain to, or an
+   * inherited, value only an asserted equation defines; a calculation's body
+   * read outside the context that owns it). The feature is one element, and
+   * its equation pins its symbol to the value it has where that equation is
+   * written; read here, it stands for a value nothing in the model states, so
+   * it is a symbol of its own. It is shared by the relations of one context,
+   * so nothing may PIN it: an axiom that reads one is refused (`unreadAxiom`
+   * in ./obligations), a proof whose assumption reads one is not claimed, and
+   * the commands that assert relations as facts refuse every row that reads
+   * one (`unreadRowRefusal`). Absent everywhere else.
+   */
+  symbol?: string;
 }
 
 /** One `assume` or `require` clause, read but never judged. */
@@ -534,6 +555,15 @@ export interface RelationReading {
   encodable: Encodable;
   nonlinear: boolean;
   fragment: Fragment;
+  /**
+   * The paths the relation reads that the validation surface reads no value
+   * for here (see {@link ContractVariable.symbol}). They refuse no goal on
+   * their own — `flag > 0.0 or p.e <= 1.0` is decided without one — and a
+   * verdict that does depend on one is undecided (`unread-definition`, which
+   * no flag forgives: the value exists in the model). Absent when there are
+   * none.
+   */
+  unread?: string[];
 }
 
 /** A reading that failed at `refusal`, carrying whatever was learned first. */
@@ -566,6 +596,14 @@ function refused(
  * the dimension-sensitive set and an equality is precisely where a plain `Real`
  * meets a dimensioned value. Gating the right-hand side on its own would let
  * `attribute n : Real = km;` through a gate the numeric surface applies.
+ *
+ * What the relation READS is asked of an author's body and of a feature value
+ * ({@link readRefusalOf}) exactly as the numeric surface asks it: a feature
+ * value — and a calculation's value body, which the solver reads as `self =
+ * expr` and every surface now reads as the value it states — is asked
+ * everything but the refusal of an operand's derivation (the solver keeps
+ * solving a value whose derivation is refused, and refuses every relation
+ * that reads it).
  */
 export function readRelation(
   model: Model,
@@ -607,7 +645,9 @@ export function readRelation(
     // same exemption `assignmentEquation` makes for `attribute t3 = t1;`.
     identity = body.node.kind === 'ref' && !body.hadUnit;
   }
-  return gateRelation(model, node, nameToId, body.literals, body.hadUnit, memo, identity, shown);
+  // A calculation's value body is a value, read as a feature's value is.
+  const readBy = { el, operands: assignTo === undefined };
+  return gateRelation(model, node, nameToId, body.literals, body.hadUnit, memo, identity, shown, readBy);
 }
 
 /**
@@ -626,7 +666,12 @@ export function readRelation(
  * body whose literals are already in SI cannot be judged in raw magnitudes.
  * The two halves are separated by asking {@link relationRefused} twice — once
  * with `identity`, which exempts the offset half — so the reason printed is the
- * gate that actually refused rather than a guess between them.
+ * gate that actually refused rather than a guess between them. The refusals
+ * of what the relation READS ({@link readRefusalOf}: an operand whose
+ * derivation the validation surface refuses, gate (e), a feature chain it
+ * reads no value through) come next, for the relation `readBy` names, in the
+ * numeric surface's order — and not for a binding, a connector or a literal
+ * value, which name no relation of an author's to read them by.
  */
 export function gateRelation(
   model: Model,
@@ -637,9 +682,17 @@ export function gateRelation(
   memo: DerivationMemo,
   identity: boolean,
   expression: string,
+  readBy?: { el: ElementRecord; operands: boolean },
 ): RelationReading {
   const varIds = relationVarsOf(node, nameToId);
+  const unread = readBy ? unreadValuesOf(model, readBy.el, pathsOf(node).filter((p) => !markers.has(p)), memo) : [];
   const variables = variablesOf(model, node, nameToId, markers, memo);
+  if (unread.length > 0) {
+    const context = readBy?.el.ownerId != null ? model.qualifiedName(readBy.el.ownerId) : '';
+    for (const v of variables) {
+      if (unread.includes(v.path)) v.symbol = `${context}::${v.path} (not read here)`;
+    }
+  }
   const sortPerVar: Record<string, VarSort> = {};
   for (const v of variables) sortPerVar[v.path] = sortOf(model, v.featureId);
 
@@ -692,6 +745,12 @@ export function gateRelation(
       sortPerVar,
     );
   }
+  const read = readBy
+    ? readRefusalOf(model, readBy.el, node, nameToId, markers, memo, { operands: readBy.operands, identity, unread })
+    : undefined;
+  if (read) {
+    return refused(expression, { reason: READ_REFUSALS[read.reason], detail: read.detail }, null, variables, sortPerVar);
+  }
 
   const collection = varIds.find((id) => admitsMany(model.get(id)?.attrs.multiplicity));
   if (collection !== undefined) {
@@ -740,8 +799,20 @@ export function gateRelation(
     encodable: true,
     nonlinear,
     fragment: nonlinear ? 'qf-nra' : 'qf-lra',
+    ...(unread.length > 0 ? { unread } : {}),
   };
 }
+
+/**
+ * The branchable reason for each refusal of what a relation reads. An
+ * operand's derivation that does arithmetic on an offset scale is the same
+ * refusal as that arithmetic written in the body, and as forgivable.
+ */
+const READ_REFUSALS: Record<ReadRefusal['reason'], RefusalReason> = {
+  offset: 'offset-arithmetic',
+  derivation: 'refused-derivation',
+  'derived-bare-literal': 'derived-bare-literal',
+};
 
 /** {@link substituteLiterals} takes a mutable map; the gates take a read-only one. */
 function asLiteralMap(markers: MarkerDimensions): Map<string, LoweredLiteral> {

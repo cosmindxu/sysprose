@@ -2793,14 +2793,101 @@ answers `satisfied` in kilometres — the reading the author wrote. A relation
 whose body mixes a `[unit]` literal with an unscalable variable is reported
 `unknown` rather than guessed.
 
-**An EQUALITY between a bare number and a dimensioned value is `violated`, not
-`satisfied`.** The declared-unit contract holds for ORDERING comparisons, where
-the unit-aware evaluator answers `unknown` on a dimension clash and the residual
-reads the literal in the feature's own unit. For `==` it has always answered
-`false` instead — a dimensionless number is not a duration — so `target == 90.0`
-on a `DurationValue` reads `violated` on the validation surface, and now reads
-the same on the numeric one (it used to answer `satisfied` from the residual).
-The two surfaces agree; the model should say `== 90.0 [s]`.
+**An EQUALITY between a bare number and a dimensioned value reads the literal
+in the feature's own unit, as an ordering does.** The unit-aware evaluator
+answers `unknown` (`dimension`) on a dimensionless side for `==` and `!=`
+exactly as for `<`, `<=`, `>`, `>=`, and the residual — on the validation
+surface, the scalar path — reads the literal in the declared unit, so
+`target == 90.0` on a `DurationValue` of 90 s is `satisfied`. For `==` it used
+to answer `false` itself — "a dimensionless number is not a duration" — which
+made the equality `violated` on both surfaces while both orderings of the same
+pair held and the SMT lane proved it. On the numeric surface a `!=` is judged
+as the negation of its equality — the same gates, scale and residual — and
+where both surfaces read the residual (the bare-literal contract) an author's
+`==` and `!=` are read EXACTLY there, as the validation surface's scalar path
+reads them: `limit == 25.0000001` is violated on every surface, where an
+absolute 1e-6 called it satisfied on this one; a connective (`not (limit ==
+25.0)`) is read by that scalar path too, where it used to be `unknown`. A
+value DERIVED from dimensioned quantities — a value expression, a
+calculation's value body (`calc endurance { capacity / power }`), the
+asserted equations that fix it (a `[unit]` literal in one included: `e ==
+640.0 [Wh] / power` is a definition on every surface), or a binding to such a
+value (`bind x = e`), kinded or not (`e : DurationValue = capacity / power`
+exactly as `e = capacity / power`) — is read in SI on the solver lane and
+refused against a bare literal for every operator alike, and on every
+surface: the validation surface, the numeric one and both verification
+engines (`derived-bare-literal`), in one sentence; a literal, kinded or not,
+and a dimensionless derivation keep the declared-unit contract, and a unit
+literal (`e >= 45 [min]`, inside `implies`, `xor` and `if … then … else` too)
+is judged everywhere. A value that is an IDENTITY of a °C value (`t2 = t1`)
+is that point: `t2 == 20.0` is offset arithmetic, refused as such on every
+surface before gate (e) is asked, and an asserted `t2 == t1` is an equality on
+that scale, no definition. A value with such a comparison INSIDE
+it — `m = e + 5.0`, which was 5.98 on the scalar path and 3549.6 on the solver
+— has no magnitude at all: it is neither solved nor axiomatised, and every
+relation that reads it is refused (`"m" cannot be derived: "e" is derived
+from …`). So is a relation reading an operand whose own derivation the
+validation surface refuses — a `Real` derived from a duration, a `[min]` on a
+value that already derives one, an offset-scale difference — where the SMT
+engine used to prove it from the raw quotient (`refused-derivation`, or
+`offset-arithmetic`); and a body that reads any of these is refused whole,
+even where an `and` or an `or` would have decided it from its other operand.
+A loop of definitions, and a chain nested past the cap, are no such refusal:
+the validation surface reads one definition at a time, and the solver lane
+solves the system as a whole, as it always has. A value only an asserted
+equation defines, read in a context other than the one that declares it — a
+feature chain (`p.e`), or a feature a definition inherits (`e` in `S :> P`)
+— is read on every surface as the value that equation gives it where it is
+written, wherever the reading context changes nothing the equation reads:
+`p.e` over `part p : P` and P's `e == a * b` is P's e, solved, judged and
+proved alike. Where the context REDEFINES what it reads — by name or by an
+unnamed `:>>`, transitively through the values and definitions those names
+have — the equation pins the one element over the declaring context's inputs,
+the wrong value there, and it is a value this tool does not read THERE. A
+calculation's body read outside the context that owns it (inherited, or
+through a chain) is the same case, and a calculation with a parameter —
+owned, or inherited from the `calc def` that types it — states no value at
+all, and no axiom is asserted from it. Every surface reads an unread name as
+nothing — the SMT engine as a symbol of its own — so a verdict decided
+without it stands (`flag > 0.0 or p.e <= 1.0`), and one that turns on it is
+undecided on every surface in the validation surface's sentence, under
+`unread-definition`, which `--allow-inconclusive` does NOT forgive: the value
+exists in the model, and a requirement it violates must not exit 0. A
+relation that also reads a value the model never states is filed under that
+defect instead. No AXIOM over such a name is asserted (it would pin what a
+goal reads), a proof whose assumption reads one is not claimed (its vacuity
+cannot be decided), nor a refutation whose assumptions do not all hold at the
+model's values as the numeric surface reads them; `consistency` and `bounds`
+refuse every relation that reads one and answer undecided — never
+`consistent`, never a decided bound — wherever such a refusal reaches what
+they were asked about, by the feature it reads; `refine`, which asserts no
+value and no definition, reads it as the feature it names. A value built on it
+is neither solved nor a free variable of `solveFeasible`.
+A feature an asserted equation defines is solved from that equation — the one
+the validation surface says it defines — and from no other equality where the
+definitions alone determine it, whatever stopped the definition one at a time
+(a loop, a nest past the cap, a refused input): a check written above it (`e
+== 1.0 [h]`, `mass == 130.0` beside a loop over a stated `dry`) used to fix it
+in model order, and `solveFeasible` held it at no value or moved it to meet a
+bound. Where they do not — the definitions reach a design freedom (`dry` with
+no value, a free capacity read through `battery.capacity`, an input a binding
+holds, a chain from a free root) or are redundant (`power == voltage *
+current` beside `current == power / voltage`) — they hold nothing, and the
+system is solved as a whole with the check that fixes the freedom. The SMT
+engine reads numerals in the decimals the author wrote wherever the proof
+context connects them to a dimensioned feature or a
+`[unit]` literal — a plain `f = 0.1` beside `f * mass != 0.1 [kg]` is one
+tenth on both sides of the proof, in `verify`, `consistency`, `bounds` and
+`refine` alike — and a unit's factor and origin as the number the registry
+defines, a composed unit's (`ng`, `ft^3`, `g/cm^3`) as the exact product of
+its parts rather than the double that product rounds to, one reading for a
+stored magnitude and a `[unit]` literal alike (`1.0 [g]` is exactly
+`0.001 [kg]`, `32 °F` exactly `273.15 K`, `1.0 [ft^3]` exactly
+`0.028316846592 [m^3]`); a proof
+that the validation surface reads as violated at the model's own values — a
+tie inside the evaluators' relative tolerance, decided exactly — is reported
+undecided with both readings, with or without `--free`, as an unconfirmed
+counterexample is.
 
 **`AnalysisReport.feasible` means "no KNOWN violated inequality".** A relation
 neither engine could judge is reported in `unknowns`, not folded into the flag —

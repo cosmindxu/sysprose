@@ -103,6 +103,7 @@ import {
   type EncodedRelation,
   type ScriptAssertion,
 } from './smt/encode';
+import { decimalSymbols } from './smt/decimal-reading';
 import { type CheckOutcome, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
 import { type DerivationMemo } from './units-eval';
 
@@ -447,9 +448,22 @@ function rowOf(o: Obligation): RelationRow {
  * values are not axioms of it — Cimatti's (3) and (4) quantify over the
  * component behaviours, not over one design point. That is why no free set is
  * threaded through here and why `--free` has no meaning for this command.
+ *
+ * NOR IS A VALUE READ, so a name this tool reads no value for in a clause's
+ * context (`Obligation.unread`) is read here as the FEATURE it names. The
+ * symbol of its own the other commands give it (`ContractVariable.symbol`)
+ * keeps a value the model never states from being pinned or asserted — and
+ * this command asserts no value and no definition, only γ and the contracts.
+ * Read by a symbol of its own on each side, `sys.cell.e <= 10.0` over `c.e <=
+ * 1.0` was two unrelated symbols and a false refutation; refused, it was
+ * undecided where the refinement holds.
  */
-function encodeRow(row: RelationRow): EncodedRow {
-  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled });
+function encodeRow(row: RelationRow, decimal: ReadonlySet<string>): EncodedRow {
+  const vars = encodeVariables(
+    row.vars.map(({ symbol: _symbol, ...v }) => v),
+    row.sortPerVar,
+    { scaled: row.scaled, decimal },
+  );
   if (row.node === null || row.encodable !== true) {
     return {
       row,
@@ -756,6 +770,7 @@ function buildGamma(
   model: Model,
   worklist: readonly Obligation[],
   connectionsAsEqualities: boolean,
+  decimal: ReadonlySet<string>,
 ): Gamma {
   const memo: DerivationMemo = new Map();
   const encoded: EncodedGamma[] = [];
@@ -782,7 +797,7 @@ function buildGamma(
     bindEdges.add(o.element.id);
     const el = model.get(o.element.id);
     const ends = el ? connectorEndsOf(model, el.id) : [];
-    const row = encodeRow(rowOf(o));
+    const row = encodeRow(rowOf(o), decimal);
     take(
       {
         kind: 'bind',
@@ -821,7 +836,7 @@ function buildGamma(
         left: built.left,
         right: built.right,
       },
-      encodeRow(built.row),
+      encodeRow(built.row, decimal),
     );
   }
 
@@ -872,7 +887,7 @@ function buildGamma(
           left: built.left,
           right: built.right,
         },
-        encodeRow(built.row),
+        encodeRow(built.row, decimal),
       );
     }
     if (!any) {
@@ -1573,6 +1588,23 @@ interface Prepared {
  */
 function prepare(model: Model, connectionsAsEqualities: boolean): Prepared {
   const worklist = obligationsOf(model);
+  // One reading of every numeral a group may put side by side
+  // (./smt/decimal-reading): the clauses, and the equalities γ adds between
+  // features — every flow's and connector's ends, whether or not the opt-in
+  // reads a connection as one, since joining two groups only ever makes them
+  // agree.
+  const links: string[][] = [];
+  for (const flow of itemFlowsOf(model)) {
+    if (flow.source !== undefined && flow.target !== undefined && model.has(flow.source) && model.has(flow.target)) {
+      links.push([model.qualifiedName(flow.source), model.qualifiedName(flow.target)]);
+    }
+  }
+  for (const el of model.all()) {
+    if (!isConnector(el)) continue;
+    const ends = connectorEndsOf(model, el.id).filter((e) => model.has(e));
+    if (ends.length > 1) links.push(ends.map((e) => model.qualifiedName(e)));
+  }
+  const decimal = decimalSymbols(model, worklist, links);
   const rows = new Map<ElementId, EncodedRow[]>();
   for (const o of worklist) {
     const id = o.requirement?.id;
@@ -1581,7 +1613,7 @@ function prepare(model: Model, connectionsAsEqualities: boolean): Prepared {
     // relation at all: neither is part of what a contract ASSUMES or PROMISES,
     // which is all normal form is built from.
     if (id === undefined || o.role === 'axiom' || o.source === 'none') continue;
-    const encoded = encodeRow(rowOf(o));
+    const encoded = encodeRow(rowOf(o), decimal);
     const list = rows.get(id);
     if (list) list.push(encoded);
     else rows.set(id, [encoded]);
@@ -1589,7 +1621,7 @@ function prepare(model: Model, connectionsAsEqualities: boolean): Prepared {
   return {
     contracts: contractsOf(model),
     rows,
-    gamma: buildGamma(model, worklist, connectionsAsEqualities),
+    gamma: buildGamma(model, worklist, connectionsAsEqualities, decimal),
     worklist,
     byType: usagesByType(model),
   };

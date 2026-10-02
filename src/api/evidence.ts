@@ -509,6 +509,10 @@ function canonicalNode(node: ExprNode, vars: readonly ContractVariable[]): unkno
         return { kind: 'binary', op: n.op, left: walk(n.left), right: walk(n.right) };
       case 'if':
         return { kind: 'if', cond: walk(n.cond), then: walk(n.then), else: walk(n.else) };
+      case 'num':
+        // A lowered `[unit]` literal also carries the author's magnitude for
+        // the SMT encoder; the relation it states is its value, as before.
+        return { kind: 'num', value: n.value };
       default:
         return n;
     }

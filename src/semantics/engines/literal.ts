@@ -41,11 +41,11 @@
 
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, type ConstraintCheck } from '../evaluate-model';
-import { evaluateFeatureValue } from '../evaluate-model';
+import { evaluateFeatureValue, featuresWithoutValue } from '../evaluate-model';
 import { type Obligation } from '../obligations';
 import { type ContractRef, type Refusal, type RefusalReason, type VariableRole } from '../contracts';
 import { dimToString } from '../units';
-import { evaluateConstraintQuantityDetailed } from '../units-eval';
+import { evaluateConstraintQuantityDetailed, type DerivationMemo } from '../units-eval';
 
 /**
  * What the literal engine concluded about one obligation.
@@ -85,9 +85,23 @@ export type LiteralOutcome =
  * arithmetic, which is refused BY DESIGN and equally by the numeric surface.
  * The relation is well-formed; this lane just does not encode its shape.
  *
+ * `unread-definition` is NOT here, although it is no defect in the relation
+ * either: a relation that turns on a value only an asserted equation defines,
+ * read where the validation surface reads no definition (a feature chain
+ * `p.e`, a feature a definition inherits). Its answer EXISTS in the model —
+ * `p.e <= 1.0` over P's `e == x * 2.0` (6) is false there — so forgiving it
+ * let a requirement the model violates exit 0 under `--allow-inconclusive`.
+ * It is undecided, and `not-evaluable`, as the chain it replaced was.
+ *
  * Everything else — `unresolved-name`, `unparseable`, `dimension-clash`,
- * `unit-unresolved`, `unscalable` — is a relation nobody can read AT ALL, and
- * it maps to `not-evaluable`, which nothing forgives.
+ * `unit-unresolved`, `unscalable`, `derived-bare-literal` (a bare number
+ * compared with a value derived from dimensioned quantities, which has no unit
+ * to read it in), `refused-derivation` (an operand whose own derivation the
+ * validation surface refuses) and `unread-definition` — is a relation this
+ * tool cannot read, and it maps to `not-evaluable`, which nothing forgives.
+ * An operand that is a point on an offset scale in arithmetic, or whose
+ * derivation does arithmetic on one, is refused as `offset-arithmetic`, the
+ * same refusal as that arithmetic in the body.
  */
 const OUTSIDE_THE_FRAGMENT: ReadonlySet<RefusalReason> = new Set<RefusalReason>([
   'no-formal-clause',
@@ -96,6 +110,37 @@ const OUTSIDE_THE_FRAGMENT: ReadonlySet<RefusalReason> = new Set<RefusalReason>(
   'unsupported-operator',
   'non-numeric-operand',
 ]);
+
+/**
+ * The `not-evaluable` reading of a relation whose verdict the numeric surface
+ * left undecided ONLY because it reads a name that surface reads no value for
+ * in its context (`Obligation.unread`) — or `undefined`. Shared with the SMT
+ * engine, which reaches the same row through an unconfirmed witness: the two
+ * must file it under one code and one sentence.
+ *
+ * Only: a relation that ALSO reads a value the model never states (`p.e <=
+ * x`, `x` declared without one) is undecided for that defect too, and is
+ * left to the plain `not-evaluable` sentence that names it — never filed as
+ * a limit of the tool ({@link featuresWithoutValue}). Neither is forgiven
+ * (see {@link OUTSIDE_THE_FRAGMENT}).
+ */
+export function unreadOutcome(
+  model: Model,
+  row: Obligation,
+  check: ConstraintCheck | undefined,
+): { reason: RefusalReason; detail: string } | undefined {
+  if (!row.unread || row.unread.length === 0 || check?.result !== 'unknown') return undefined;
+  const unread = new Set(row.unread);
+  const others = row.vars.filter((v) => !unread.has(v.path)).map((v) => v.featureId);
+  if (featuresWithoutValue(model, others).length > 0) return undefined;
+  return {
+    reason: 'unread-definition',
+    detail:
+      `not evaluable at the model's values (unread-definition): ${check.message.replace(/^Could not evaluate: /, '')}. ` +
+      'The relation reads a value whose definition is written in another context, where this tool does not read it. ' +
+      'That value exists in the model, so the relation is undecided here and `--allow-inconclusive` does not forgive it',
+  };
+}
 
 /**
  * Is this refusal a SHAPE this lane declines to encode, rather than a relation
@@ -192,10 +237,13 @@ export function judgeLiterally(model: Model, rows: readonly Obligation[]): Liter
     else premises.set(row.requirement.id, [row]);
   }
 
+  // One derivation memo for the run's SI readings, as the sweep above shares
+  // one: built per row, it re-read every scope of the model once per row.
+  const memo: DerivationMemo = new Map();
   const out: LiteralResult[] = [];
   for (const row of rows) {
     if (row.role !== 'obligation') continue;
-    out.push({ row, judgement: judgeOne(model, row, checks, premises) });
+    out.push({ row, judgement: judgeOne(model, row, checks, premises, memo) });
   }
   return out;
 }
@@ -237,6 +285,7 @@ function judgeOne(
   row: Obligation,
   checks: ReadonlyMap<ElementId, ConstraintCheck>,
   premisesByRequirement: ReadonlyMap<ElementId, Obligation[]>,
+  memo: DerivationMemo = new Map(),
 ): LiteralJudgement {
   const premises = (row.requirement ? premisesByRequirement.get(row.requirement.id) : undefined) ?? [];
   const readings = premises.map((p) => readPremise(p, checks));
@@ -279,7 +328,7 @@ function judgeOne(
 
   const check = checks.get(row.element.id);
   const detailed =
-    row.node !== null ? quantities(model, row) : {};
+    row.node !== null ? quantities(model, row, memo) : {};
 
   // A relation the SMT gates refused may still evaluate perfectly well HERE —
   // `%` is the plain case: the numeric surface computes `12 % 2 == 0` and the
@@ -330,6 +379,8 @@ function judgeOne(
   // for why the two are told apart by the refusal's reason and not by the mere
   // fact that a gate spoke.
   const why = check?.message ?? 'the numeric surface never gathered this relation';
+  const unread = row.encodable === true ? unreadOutcome(model, row, check) : undefined;
+  if (unread) return { ...base, outcome: 'not-evaluable', detail: unread.detail };
   if (row.encodable !== true) {
     const refusal = row.encodable;
     if (OUTSIDE_THE_FRAGMENT.has(refusal.reason)) {
@@ -355,10 +406,11 @@ function judgeOne(
 function quantities(
   model: Model,
   row: Obligation,
+  memo: DerivationMemo = new Map(),
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
   const el = model.get(row.element.id);
   if (!el) return {};
-  const q = evaluateConstraintQuantityDetailed(model, el);
+  const q = evaluateConstraintQuantityDetailed(model, el, { memo });
   return {
     ...(q.lhsSI !== undefined ? { lhsSI: q.lhsSI } : {}),
     ...(q.rhsSI !== undefined ? { rhsSI: q.rhsSI } : {}),

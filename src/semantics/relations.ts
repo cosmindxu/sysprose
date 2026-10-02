@@ -29,23 +29,32 @@
  */
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
-import { parseExpr, type ExprNode } from './expr';
+import { definedSideOf, hasStatedValue, statedValueOf } from './defining-equation';
+import { type ExprNode } from './expr';
 import { effectiveFeatures } from './inheritance';
 import {
+  derivationOf,
   derivedDimensionOf,
   dimensionClaim,
   dimensionalFacets,
+  operandDerivation,
+  refusalSentence,
   type DerivationMemo,
+  type FeatureDerivation,
+  type QReason,
 } from './units-eval';
 import {
   DIMENSIONLESS,
+  UNIT_REGISTRY,
   dimEqual,
+  dimToString,
   divideDim,
   multiplyDim,
   powDim,
   resolveUnit,
   type Dimension,
 } from './units';
+import { parseRelationBody, type MarkerDimensions } from './unit-literals';
 
 /** Re-exported so a caller can name the two halves of an {@link OperandDimension}. */
 export type { Dimension };
@@ -107,8 +116,11 @@ function isAbsoluteScale(s: UnitScale | undefined): boolean {
  *
  * The storage unit is the feature's DECLARED unit; failing that, the coherent
  * SI unit of its declared ISQ kind (or of the dimension its value expression
- * derives to) — "SI by convention", the same reading the unit-aware evaluator
- * gives a unit-less kinded feature; failing that, the value is a plain number.
+ * — a calculation's value body included — the asserted equation that defines
+ * it, or the derived value a binding holds it to, derives to — {@link
+ * derivedDimensionOf}) — "SI by convention", the same reading the unit-aware
+ * evaluator gives a unit-less kinded feature; failing that, the value is a
+ * plain number.
  * An unresolvable unit is a refusal, never a silent factor of 1 (the
  * `unknown-unit` rule warns about exactly that spelling).
  */
@@ -154,7 +166,10 @@ const DIMENSION_SENSITIVE = new Set(['==', '=', '!=', '<', '<=', '>', '>=', '+',
  *      answer — the unit-aware evaluator refuses it, so scaling it here would
  *      publish a confident SI verdict against a refusal. Operands under `*` and
  *      `/` combine dimensions instead of having to match, so a bare literal
- *      there is a multiplier and never blocks scaling;
+ *      there is a multiplier and never blocks scaling. The contract needs a
+ *      DECLARED unit to read the literal in, and a dimension that comes only
+ *      from a derivation has none: that relation is refused outright, by gate
+ *      (e) ({@link derivedBareLiteral});
  *  (d) no variable's value expression `dimensionClaim`s a `mismatch` — a `Real`
  *      hand-converted with `* 60.0` derives to a duration while claiming to be
  *      a number, and scaling it would report 170 141 s (the factor-60 hazard
@@ -191,8 +206,7 @@ export function scaleOfRelation(
   return scale;
 }
 
-/** Marker name → the `[unit]` literal it stands for (magnitude and dimension). */
-export type MarkerDimensions = ReadonlyMap<string, LoweredLiteral>;
+export type { MarkerDimensions };
 
 /**
  * Does this relation body contain a dimensional fault the unit-aware evaluator
@@ -254,25 +268,21 @@ const ORDERING_OPS = new Set(['<', '<=', '>', '>=']);
 /** The operators that combine two BOOLEANS, under which an ordering may sit. */
 const BOOLEAN_OPS = new Set(['and', 'or', 'xor', 'implies']);
 
-/** Does this expression read any variable stored on an offset scale? */
-function readsAbsolute(node: ExprNode, scale: ScaleMap, nameToId: Map<string, ElementId>): boolean {
+/** The first name an expression reads that `isPoint` says is a point on an offset scale. */
+function firstPointIn(node: ExprNode, isPoint: (path: string) => boolean): string | undefined {
   switch (node.kind) {
-    case 'ref':
-      return isAbsoluteScale(scale.get(nameToId.get(node.path.join('.')) ?? ''));
+    case 'ref': {
+      const path = node.path.join('.');
+      return isPoint(path) ? path : undefined;
+    }
     case 'unary':
-      return readsAbsolute(node.operand, scale, nameToId);
+      return firstPointIn(node.operand, isPoint);
     case 'binary':
-      return (
-        readsAbsolute(node.left, scale, nameToId) || readsAbsolute(node.right, scale, nameToId)
-      );
+      return firstPointIn(node.left, isPoint) ?? firstPointIn(node.right, isPoint);
     case 'if':
-      return (
-        readsAbsolute(node.cond, scale, nameToId) ||
-        readsAbsolute(node.then, scale, nameToId) ||
-        readsAbsolute(node.else, scale, nameToId)
-      );
+      return firstPointIn(node.cond, isPoint) ?? firstPointIn(node.then, isPoint) ?? firstPointIn(node.else, isPoint);
     default:
-      return false;
+      return undefined;
   }
 }
 
@@ -305,34 +315,64 @@ function hasOffsetFault(
   scale: ScaleMap,
   nameToId: Map<string, ElementId>,
 ): boolean {
+  return offsetFaultIn(node, (path) => isAbsoluteScale(scale.get(nameToId.get(path) ?? ''))) !== undefined;
+}
+
+/**
+ * The first name read where an offset scale's origin does not cancel —
+ * {@link hasOffsetFault}'s rule over any reading of which names are POINTS on
+ * such a scale — or `undefined`.
+ */
+export function offsetFaultIn(node: ExprNode, isPoint: (path: string) => boolean): string | undefined {
   switch (node.kind) {
     case 'binary': {
       if (ORDERING_OPS.has(node.op)) {
-        const side = (n: ExprNode): boolean =>
-          n.kind === 'ref' ? false : readsAbsolute(n, scale, nameToId);
-        return side(node.left) || side(node.right);
+        const side = (n: ExprNode): string | undefined => (n.kind === 'ref' ? undefined : firstPointIn(n, isPoint));
+        return side(node.left) ?? side(node.right);
       }
-      if (BOOLEAN_OPS.has(node.op)) {
-        return (
-          hasOffsetFault(node.left, scale, nameToId) ||
-          hasOffsetFault(node.right, scale, nameToId)
-        );
-      }
-      return readsAbsolute(node, scale, nameToId);
+      if (BOOLEAN_OPS.has(node.op)) return offsetFaultIn(node.left, isPoint) ?? offsetFaultIn(node.right, isPoint);
+      return firstPointIn(node, isPoint);
     }
     case 'unary':
-      return node.op === 'not'
-        ? hasOffsetFault(node.operand, scale, nameToId)
-        : readsAbsolute(node, scale, nameToId);
+      return node.op === 'not' ? offsetFaultIn(node.operand, isPoint) : firstPointIn(node, isPoint);
     case 'if':
       return (
-        hasOffsetFault(node.cond, scale, nameToId) ||
-        readsAbsolute(node.then, scale, nameToId) ||
-        readsAbsolute(node.else, scale, nameToId)
+        offsetFaultIn(node.cond, isPoint) ?? firstPointIn(node.then, isPoint) ?? firstPointIn(node.else, isPoint)
       );
     default:
-      return readsAbsolute(node, scale, nameToId);
+      return firstPointIn(node, isPoint);
   }
+}
+
+/**
+ * The unit of the first operand that is a POINT on an offset scale read where
+ * its origin does not cancel, though the scale map does not say so — or
+ * `undefined`. That operand is a value that is an IDENTITY of a °C feature
+ * (`t2 = t1`): the solver lane stores it in kelvin, so gate (b) reads it as an
+ * amount, while the unit-aware evaluator reads the point it is and refuses
+ * `t2 == 20.0` as offset arithmetic before it asks gate (e). The validation
+ * surface named the offset, the verification engines `derived-bare-literal`;
+ * both now name the offset, in the unit-aware evaluator's sentence. Names in
+ * `skip` are read as nothing ({@link operandRefusal}).
+ */
+export function absoluteOperandFault(
+  model: Model,
+  node: ExprNode,
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+  memo: DerivationMemo,
+  skip: ReadonlySet<string> = NO_NAMES,
+): string | undefined {
+  const units = new Map<string, string>();
+  const path = offsetFaultIn(node, (p) => {
+    if (markers.has(p) || skip.has(p)) return false;
+    const id = nameToId.get(p);
+    const q = id !== undefined ? operandDerivation(model, id, memo)?.derivation.q : undefined;
+    if (!q?.absolute) return false;
+    units.set(p, q.unit ?? p);
+    return true;
+  });
+  return path === undefined ? undefined : units.get(path);
 }
 
 /**
@@ -346,6 +386,11 @@ function hasOffsetFault(
  * relation publishes no verdict anywhere, so there is no question to decline;
  * refusing it instead made the feature vanish from `SolveResult.values` with
  * nothing saying why, while the same identity written `bind` converted.
+ *
+ * Gate (e) is asked on its own ({@link derivedBareLiteral}), with the other
+ * refusals of what a relation READS: each is a refusal with its own reason,
+ * and the validation surface's sentence for it (`readRefusalOf` in
+ * ./evaluate-model).
  */
 export function relationRefused(
   model: Model,
@@ -363,6 +408,447 @@ export function relationRefused(
   }
   if (hasDimensionalFault(node, scale, nameToId, markers)) return true;
   return !identity && hasOffsetFault(node, scale, nameToId);
+}
+
+/* ──────────── gate (e): a bare number against a derived dimension ──────────── */
+
+/**
+ * What gate (e) knows of an operand whose dimension comes ONLY from a
+ * derivation — a value expression, or the asserted equations that define it,
+ * with no declared unit and no declared ISQ kind.
+ */
+export interface DerivedOperand {
+  /** The dimension the derivation gives it. */
+  dimension: Dimension;
+  /**
+   * The type it is declared with, when it has one: the repair the refusal
+   * names differs, because an UNTYPED operand is usually a ratio whose inlined
+   * constant lost its unit.
+   */
+  typeName?: string;
+}
+
+/** Gate (e)'s finding: the operand a bare number met, as the body names it. */
+export interface DerivedBareLiteral extends DerivedOperand {
+  /** The name as the body writes it (`e`, `uav.endurance`). */
+  name: string;
+  /** The body's first numeric literal, for the repair's example (`45.0`). */
+  literal: string;
+}
+
+/**
+ * THE rule of what gate (e) calls a derived operand, on every surface: the
+ * {@link DerivedOperand} a feature is, given its declared unit and the
+ * derivation its magnitude comes from — or `undefined` when a unit is
+ * declared (the bare literal is read in it), when there is no derivation (a
+ * literal, kinded or not, keeps the declared-unit contract), when the
+ * derivation is dimensionless (a kind over unitless inputs relabels it, as it
+ * does a literal), or when it disagrees with the feature's type (that is the
+ * `mismatch` refusal's, which every surface asks first).
+ *
+ * What decides is whether the VALUE is derived from dimensioned quantities, not
+ * whether the feature declares a kind: `e : DurationValue = capacity / power`
+ * is as much a derivation as `e = capacity / power`, and the scalar fallback of
+ * the validation surface reads it unit-blind (0.98) either way, so the solver
+ * lane — which read the literal in the kind's SI unit — compared 3544.6 s with
+ * 45 and proved what the validation surface refused. The validation surface
+ * passes the derivation it binds a name to; the solver lane, its own
+ * ({@link derivedOperandOf}).
+ */
+export function derivedOperand(unit: string | undefined, d: FeatureDerivation | undefined): DerivedOperand | undefined {
+  if (unit !== undefined) return undefined;
+  if (!d?.derived || dimEqual(d.derived, DIMENSIONLESS) || d.claim === 'mismatch') return undefined;
+  return { dimension: d.derived, ...(d.typeName !== undefined ? { typeName: d.typeName } : {}) };
+}
+
+/** {@link derivedOperand} of a feature as the solver lane reads it. */
+function derivedOperandOf(model: Model, id: ElementId, memo: DerivationMemo): DerivedOperand | undefined {
+  return derivedOperand(dimensionalFacets(model, id).unit, derivationOf(model, id, memo));
+}
+
+/** What gate (e) knows of one name a body reads, on whichever surface reads it. */
+export interface OperandFacts {
+  /** Its dimension comes only from a derivation: a bare number may not meet it. */
+  derived?: DerivedOperand;
+  /**
+   * Why its own value has no magnitude any surface reads — a bare number
+   * against a derived dimension where that value is written ({@link valueFaultOf}).
+   */
+  valueFault?: string;
+}
+
+/**
+ * GATE (e): does this relation body compare a BARE number with an operand
+ * whose dimension comes only from a derivation — or read an operand whose own
+ * value does? The sentence it is refused with, or `undefined`.
+ *
+ * Gate (c) reads a dimensionless operand meeting a dimensioned one as the
+ * declared-unit contract: the literal is in the feature's declared (or
+ * storage) unit. A dimension that comes only from a derivation has no
+ * declared unit to read it in. `attribute e = capacity / power` over 640 Wh
+ * and 650 W is 3544.6 s on the solver lane, and `e >= 45.0` compared that with
+ * 45 — proved — where an author who meant minutes would have `e <= 60.0`
+ * refuted; fixed by an asserted equation instead, `e` was the raw quotient
+ * 0.98 (hours) there, and `e <= 60.0` was proved. The validation surface
+ * refused all of them. One rule now, here: the relation is REFUSED, with the
+ * sentence {@link bareLiteralRefusal} composes, by `checkConstraints`, the
+ * literal engine, the numeric surface and the SMT engine alike.
+ *
+ * Asked at every operator of the gate-(c) set — `==`, `!=`, the orderings,
+ * `+` and `-`: one side dimensionless, the other dimensioned and reading a
+ * derived operand ({@link derivedOperand}, kinded or not; a chain of
+ * definitions is one). A `[unit]` literal is dimensioned, so `e >= 45.0 [min]`
+ * is judged; a literal, kinded or not, keeps the contract.
+ *
+ * A feature chain that ends at a feature stating no value is read as nothing
+ * here: the validation surface reads no such chain (its scope holds valued
+ * features only), so it can meet no bare number there either — nor can a name
+ * in `unreadNames`, which that surface reads no value for in the relation's
+ * context (`unreadValuesOf` in ./evaluate-model). A chain in `chains` is the
+ * exception: that surface reads the definition of the feature it ends at
+ * there (`chainSite` of ./defining-equation), and judges it as it judges the
+ * feature's own name.
+ *
+ * An author's relation body asks it, and so does a value — a feature's, or a
+ * calculation's body: `m = e + 5.0` is 5.98 to the scalar scope and 3549.6 to
+ * the solver, so it is neither solved nor axiomatised from. A binding states
+ * that two values are one, and does not.
+ */
+export function derivedBareLiteral(
+  model: Model,
+  node: ExprNode,
+  vars: ElementId[],
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+  memo: DerivationMemo,
+  unreadNames: ReadonlySet<string> = NO_NAMES,
+  chains: ReadonlySet<string> = NO_NAMES,
+): string | undefined {
+  const scale: ScaleMap = new Map();
+  const facts = new Map<ElementId, OperandFacts>();
+  for (const id of vars) {
+    const s = storageScaleOf(model, id, memo);
+    if (s) scale.set(id, s);
+    const derived = derivedOperandOf(model, id, memo);
+    const valueFault = valueFaultOf(model, id, memo);
+    if (derived || valueFault) {
+      facts.set(id, { ...(derived ? { derived } : {}), ...(valueFault ? { valueFault } : {}) });
+    }
+  }
+  if (facts.size === 0) return undefined;
+  const unread = (path: string): boolean => {
+    if (unreadNames.has(path)) return true;
+    if (!path.includes('.') || chains.has(path)) return false;
+    const id = nameToId.get(path);
+    const f = id !== undefined ? model.get(id) : undefined;
+    return f !== undefined && !hasStatedValue(model, f);
+  };
+  const dimensionOf = refDimensionIn(scale, nameToId, markers);
+  return bareLiteralRefusal(
+    node,
+    (path) => (unread(path) ? DIMENSIONLESS : dimensionOf(path)),
+    (path) => {
+      if (markers.has(path) || unread(path)) return undefined;
+      const id = nameToId.get(path);
+      return id === undefined ? undefined : facts.get(id);
+    },
+  );
+}
+
+/**
+ * Gate (e) over any reading of the names a body reads: `refDimension` is the
+ * dimension a name carries, `operandOf` its {@link OperandFacts}. The solver
+ * lane reads the names through a relation's scale map ({@link
+ * derivedBareLiteral}); the validation surface through the features it binds
+ * them to, which may be a specialiser standing for a measure — one rule over
+ * one dimensional arithmetic either way.
+ *
+ * A bare number meeting a derived operand in the body is named first (the
+ * first such operand, in source order); failing that, the first operand whose
+ * own value has no magnitude, as `"m" cannot be derived: …` — the shape the
+ * unit-aware evaluator gives a link of a chain that fails.
+ */
+export function bareLiteralRefusal(
+  node: ExprNode,
+  refDimension: (path: string) => Dimension,
+  operandOf: (path: string) => OperandFacts | undefined,
+): string | undefined {
+  const found = faultIn(node, refDimension, (path) => operandOf(path)?.derived);
+  if (found) {
+    return derivedBareLiteralReason({
+      ...found.operand,
+      name: found.name,
+      literal: firstNumericLiteral(node) ?? '45.0',
+    });
+  }
+  for (const path of new Set(namesReadIn(node))) {
+    const inner = operandOf(path)?.valueFault;
+    if (inner) return `"${path}" cannot be derived: ${inner}`;
+  }
+  return undefined;
+}
+
+/**
+ * Why a feature's own value has no magnitude any surface reads: its value
+ * expression — or, for a feature that states none, the defining side of the
+ * asserted equation that defines it — compares or adds a bare number with an
+ * operand whose dimension only a derivation gives (gate (e) where the value
+ * is written), or reads a feature whose value does. The sentence, or
+ * `undefined`.
+ *
+ * `attribute m = e + 5.0` over a derived `e` (3544.6 s) is 5.98 to the scalar
+ * scope, which reads `e` unit-blind as 0.98, and 3549.6 to the solver, which
+ * reads it in SI: two magnitudes, and `m <= 10.0` was satisfied on the one
+ * surface and violated on the other. Neither is the author's; a relation that
+ * reads `m` is refused instead, on every surface, naming the operand inside.
+ *
+ * Only a derivation the unit-aware evaluator could not read for a bare number
+ * meeting a dimension (`dimension`) is looked into, so a unitless model asks
+ * nothing here. Settled once per {@link DerivationMemo}.
+ */
+export function valueFaultOf(model: Model, id: ElementId, memo: DerivationMemo): string | undefined {
+  let settled = VALUE_FAULTS.get(memo);
+  if (!settled) {
+    settled = new Map();
+    VALUE_FAULTS.set(memo, settled);
+  }
+  if (settled.has(id)) return settled.get(id) ?? undefined;
+  // In flight: a value read back into itself is a loop, refused as one.
+  settled.set(id, null);
+  const found = valueFaultUncached(model, id, memo);
+  settled.set(id, found ?? null);
+  return found;
+}
+
+const VALUE_FAULTS = new WeakMap<DerivationMemo, Map<ElementId, string | null>>();
+
+function valueFaultUncached(model: Model, id: ElementId, memo: DerivationMemo): string | undefined {
+  const reading = operandDerivation(model, id, memo);
+  if (reading?.derivation.reason !== 'dimension') return undefined;
+  const value = valueBodyOf(model, id, reading.derivation);
+  if (!value) return undefined;
+  const vars = relationVarsOf(value.node, value.nameToId);
+  return derivedBareLiteral(model, value.node, vars, value.nameToId, value.markers, memo);
+}
+
+/**
+ * The expression a feature's magnitude is derived from, with the names it
+ * reads: its value expression in its owner's scope, or the defining side of
+ * the asserted equation the derivation was read through, in the scope that
+ * equation is written in.
+ */
+function valueBodyOf(
+  model: Model,
+  id: ElementId,
+  derivation: FeatureDerivation,
+): { node: ExprNode; nameToId: Map<string, ElementId>; markers: MarkerDimensions } | undefined {
+  const el = model.get(id);
+  if (!el) return undefined;
+  const raw = statedValueOf(model, el);
+  if (typeof raw === 'string') {
+    const body = parseRelationBody(raw.trim());
+    if (!body || (body.hadUnit && !body.resolved)) return undefined;
+    const nameToId = mergeMaps(
+      el.ownerId != null ? idScopeFor(model, el.ownerId) : new Map<string, ElementId>(),
+      idScopeFor(model, el.id),
+    );
+    return { node: body.node, nameToId, markers: body.literals };
+  }
+  const constraint = derivation.definedBy !== undefined ? model.get(derivation.definedBy) : undefined;
+  const side = constraint && el.declaredName ? definedSideOf(constraint, el.declaredName) : undefined;
+  if (!constraint || !side) return undefined;
+  return { node: side.node, nameToId: relationScope(model, constraint), markers: side.literals };
+}
+
+/**
+ * The sentence a relation is refused with because an operand it reads has a
+ * derivation the validation surface REFUSES — a dimension that disagrees with
+ * the feature's type, a `[unit]` applied to a value that already carries a
+ * dimension, offset arithmetic, definitions nested past the cap, or (for a
+ * feature an equation defines) a loop — or `undefined`. The first such
+ * operand, in source order, as the body names it.
+ *
+ * The validation surface refuses such a relation where it reads the operand:
+ * the unit-aware evaluator answers the refusal for a value expression, and the
+ * binding of a feature an equation defines carries it. The solver lane only
+ * withheld SI scaling (gate (d)) and kept the relation in raw magnitudes, so
+ * `e : Real = capacity / power` against `<= 60.0` was PROVED by the SMT
+ * engine from 0.98 — and `e : DurationValue [min] = capacity / power`, whose
+ * `[min]` meets a duration, was proved in minutes. It is refused there now,
+ * with {@link refusalSentence}. A feature chain to a feature that states no
+ * value, and a name in `unread`, are left alone: the validation surface reads
+ * no definition there at all — except a chain in `chains`, whose definition
+ * it reads where the chain ends (`chainSite` of ./defining-equation).
+ *
+ * A LOOP and a nest past the cap are no such refusal. They are limits of how
+ * the validation surface reads one definition at a time, not faults in the
+ * value, and the solver lane solves the system as a whole.
+ */
+export function operandRefusal(
+  model: Model,
+  node: ExprNode,
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+  memo: DerivationMemo,
+  unread: ReadonlySet<string> = NO_NAMES,
+  chains: ReadonlySet<string> = NO_NAMES,
+): { reason: QReason; detail: string; byDefinition: boolean } | undefined {
+  for (const path of new Set(namesReadIn(node))) {
+    if (markers.has(path) || unread.has(path)) continue;
+    const id = nameToId.get(path);
+    if (id === undefined) continue;
+    const reading = operandDerivation(model, id, memo);
+    if (!reading || (reading.byDefinition && path.includes('.') && !chains.has(path))) continue;
+    // A loop, and definitions nested past the cap, are limits of how the
+    // validation surface reads ONE definition at a time — not a fault in the
+    // value. The solver lane solves such a system as a whole (`mass == dry +
+    // fuel` beside `fuel == mass * 0.2` is 125 and 25), and refusing every
+    // relation over it left a unitless coupled system with no values at all.
+    if (reading.derivation.reason === 'cycle' || reading.derivation.reason === 'depth') continue;
+    const detail = refusalSentence(reading.derivation, path, reading.byDefinition);
+    if (detail) return { reason: reading.derivation.reason!, detail, byDefinition: reading.byDefinition };
+  }
+  return undefined;
+}
+
+const NO_NAMES: ReadonlySet<string> = new Set();
+
+/** Every name an expression reads, in source order (repeats included). */
+export function namesReadIn(node: ExprNode): string[] {
+  switch (node.kind) {
+    case 'ref':
+      return [node.path.join('.')];
+    case 'unary':
+      return namesReadIn(node.operand);
+    case 'binary':
+      return [...namesReadIn(node.left), ...namesReadIn(node.right)];
+    case 'if':
+      return [...namesReadIn(node.cond), ...namesReadIn(node.then), ...namesReadIn(node.else)];
+    default:
+      return [];
+  }
+}
+
+/** A derived operand, and the name the body reads it by. */
+interface DerivedRead {
+  name: string;
+  operand: DerivedOperand;
+}
+
+function faultIn(
+  node: ExprNode,
+  refDimension: (path: string) => Dimension,
+  derivedOf: (path: string) => DerivedOperand | undefined,
+): DerivedRead | undefined {
+  switch (node.kind) {
+    case 'unary':
+      return faultIn(node.operand, refDimension, derivedOf);
+    case 'if':
+      return (
+        faultIn(node.cond, refDimension, derivedOf) ??
+        faultIn(node.then, refDimension, derivedOf) ??
+        faultIn(node.else, refDimension, derivedOf)
+      );
+    case 'binary': {
+      if (DIMENSION_SENSITIVE.has(node.op)) {
+        const l = dimensionUnder(node.left, refDimension);
+        const r = dimensionUnder(node.right, refDimension);
+        if (l !== INDETERMINATE && r !== INDETERMINATE) {
+          const bareLeft = dimEqual(l, DIMENSIONLESS);
+          if (bareLeft !== dimEqual(r, DIMENSIONLESS)) {
+            const found = derivedReadIn(bareLeft ? node.right : node.left, derivedOf);
+            if (found) return found;
+          }
+        }
+      }
+      return faultIn(node.left, refDimension, derivedOf) ?? faultIn(node.right, refDimension, derivedOf);
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** The first derived operand an expression reads, in source order. */
+function derivedReadIn(
+  node: ExprNode,
+  derivedOf: (path: string) => DerivedOperand | undefined,
+): DerivedRead | undefined {
+  switch (node.kind) {
+    case 'ref': {
+      const name = node.path.join('.');
+      const operand = derivedOf(name);
+      return operand ? { name, operand } : undefined;
+    }
+    case 'unary':
+      return derivedReadIn(node.operand, derivedOf);
+    case 'binary':
+      return derivedReadIn(node.left, derivedOf) ?? derivedReadIn(node.right, derivedOf);
+    case 'if':
+      return (
+        derivedReadIn(node.cond, derivedOf) ??
+        derivedReadIn(node.then, derivedOf) ??
+        derivedReadIn(node.else, derivedOf)
+      );
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The sentence gate (e) refuses with, without the "Could not evaluate: " the
+ * validation surface puts before it. The repair depends on what the operand
+ * claims: a TYPED one is compared against a unit literal of its dimension
+ * (the example uses the body's own literal with the registry's units of the
+ * dimension, `45.0 [s]` or `45.0 [min]`); an UNTYPED one (`r2 = mtow / 25.0`)
+ * is usually meant as a ratio whose inlined constant lost its unit, so the
+ * honest repair is `mtow / 25.0 [kg]`, not a mass literal on the other side.
+ */
+export function derivedBareLiteralReason(f: DerivedBareLiteral): string {
+  const d = f.dimension;
+  const units = unitsOfDimension(d);
+  const examples = units.map((u) => `\`${f.literal} [${u}]\``).join(' or ');
+  const head =
+    `"${f.name}" is derived from dimensioned quantities (${dimToString(d)}) and cannot be ` +
+    'compared as a bare number; ';
+  if (f.typeName === undefined) {
+    return (
+      head +
+      'if it is meant as a pure ratio, give the inlined constant its unit so the dimensions cancel ' +
+      `(\`… / 25.0 [${units[0]}]\`); otherwise type it by the ISQ kind of dimension ${dimToString(d)} ` +
+      `and compare against a unit literal, e.g. ${examples}`
+    );
+  }
+  return head + `compare against a unit literal of dimension ${dimToString(d)}, e.g. ${examples}`;
+}
+
+/** The first numeric literal in an expression tree, rendered as written-ish. */
+function firstNumericLiteral(node: ExprNode): string | undefined {
+  switch (node.kind) {
+    case 'num':
+      return Number.isInteger(node.value) ? `${node.value}.0` : String(node.value);
+    case 'unary':
+      return firstNumericLiteral(node.operand);
+    case 'binary':
+      return firstNumericLiteral(node.left) ?? firstNumericLiteral(node.right);
+    case 'if':
+      return firstNumericLiteral(node.cond) ?? firstNumericLiteral(node.then) ?? firstNumericLiteral(node.else);
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Up to three registry unit symbols of a dimension, the coherent SI one first
+ * (`s`, `min`, `h` for T; `kg`, `g`, `lb` for M), offset scales excluded; `unit`
+ * when the registry has none.
+ */
+export function unitsOfDimension(d: Dimension): string[] {
+  const all = UNIT_REGISTRY.filter((x) => !x.offsetSI && dimEqual(x.dimension, d));
+  const coherent = all.filter((x) => x.factorToSI === 1);
+  const others = all.filter((x) => x.factorToSI !== 1);
+  const symbols = [...coherent, ...others].map((x) => x.symbol);
+  const unique = symbols.filter((s, i) => symbols.indexOf(s) === i).slice(0, 3);
+  return unique.length > 0 ? unique : ['unit'];
 }
 
 /**
@@ -390,25 +876,48 @@ export function nodeDimension(
   nameToId: Map<string, ElementId>,
   markers: MarkerDimensions,
 ): OperandDimension {
+  return dimensionUnder(node, refDimensionIn(scale, nameToId, markers));
+}
+
+/** The dimension each name of a relation reads carries under its scale map: {@link nodeDimension}'s reading of a `ref`. */
+function refDimensionIn(
+  scale: ScaleMap,
+  nameToId: Map<string, ElementId>,
+  markers: MarkerDimensions,
+): (path: string) => Dimension {
+  return (path) => {
+    const lowered = markers.get(path);
+    if (lowered) return lowered.dimension; // a lowered `[unit]` literal
+    const id = nameToId.get(path);
+    if (id === undefined) return DIMENSIONLESS;
+    return scale.get(id)?.dimension ?? DIMENSIONLESS;
+  };
+}
+
+/**
+ * {@link nodeDimension} over any reading of the names an expression reads —
+ * so gate (e) asks one dimensional arithmetic whichever surface supplies the
+ * names ({@link bareLiteralRefusal}).
+ */
+function dimensionUnder(node: ExprNode, refDimension: (path: string) => Dimension): OperandDimension {
   switch (node.kind) {
-    case 'ref': {
-      const path = node.path.join('.');
-      const lowered = markers.get(path);
-      if (lowered) return lowered.dimension; // a lowered `[unit]` literal
-      const id = nameToId.get(path);
-      if (id === undefined) return DIMENSIONLESS;
-      return scale.get(id)?.dimension ?? DIMENSIONLESS;
+    case 'ref':
+      return refDimension(node.path.join('.'));
+    case 'unary': {
+      const inner = dimensionUnder(node.operand, refDimension);
+      // `not` yields a truth value — but of an operand that may itself be
+      // the mismatch: `not (limit == 500.0)` over `limit [g] = 500.0` is the
+      // declared-unit contract inside, and scaling it read 0.5 kg against 500
+      // and PROVED what the validation surface finds violated.
+      if (node.op === 'not') return inner === INDETERMINATE ? INDETERMINATE : DIMENSIONLESS;
+      return inner;
     }
-    case 'unary':
-      return node.op === 'not'
-        ? DIMENSIONLESS
-        : nodeDimension(node.operand, scale, nameToId, markers);
     case 'binary':
-      return binaryDimension(node, scale, nameToId, markers);
+      return binaryDimension(node, refDimension);
     case 'if': {
-      const c = nodeDimension(node.cond, scale, nameToId, markers);
-      const t = nodeDimension(node.then, scale, nameToId, markers);
-      const e = nodeDimension(node.else, scale, nameToId, markers);
+      const c = dimensionUnder(node.cond, refDimension);
+      const t = dimensionUnder(node.then, refDimension);
+      const e = dimensionUnder(node.else, refDimension);
       if (c === INDETERMINATE || t === INDETERMINATE || e === INDETERMINATE) return INDETERMINATE;
       return dimEqual(t, e) ? t : INDETERMINATE;
     }
@@ -420,12 +929,10 @@ export function nodeDimension(
 /** {@link nodeDimension} for a binary node — where the gate-(c) set is applied. */
 function binaryDimension(
   node: Extract<ExprNode, { kind: 'binary' }>,
-  scale: ScaleMap,
-  nameToId: Map<string, ElementId>,
-  markers: MarkerDimensions,
+  refDimension: (path: string) => Dimension,
 ): OperandDimension {
-  const l = nodeDimension(node.left, scale, nameToId, markers);
-  const r = nodeDimension(node.right, scale, nameToId, markers);
+  const l = dimensionUnder(node.left, refDimension);
+  const r = dimensionUnder(node.right, refDimension);
   if (l === INDETERMINATE || r === INDETERMINATE) return INDETERMINATE;
   switch (node.op) {
     case '*':
@@ -457,144 +964,17 @@ function binaryDimension(
 
 /* ───────────────────── `[unit]` literals in a body ───────────────────── */
 
-/**
- * A relation body with every `N [unit]` literal replaced by a marker name, plus
- * the SI magnitude each marker stands for.
- *
- * WHY a rewrite: {@link parseExpr} rejects `[` (deliberately — the GUI stores a
- * raw `1500 [kg]` string in a feature value and the solver seeds it through the
- * quantity engine), so a body like `mass <= 2000 [kg]` used to throw and
- * VANISH from the numeric surface. Folding the literal to its SI magnitude
- * before parsing keeps the body judged; the marker (rather than the number
- * itself) is what lets gate (c) still tell a dimensioned literal from a bare
- * one.
- */
-/** The SI magnitude and dimension a lowering marker stands for. */
-export interface LoweredLiteral {
-  si: number;
-  dimension: Dimension;
-  /**
-   * The magnitude and the unit exactly as the AUTHOR wrote them (`45.0`, `min`).
-   *
-   * Carried because one consumer has to print the body back to a PERSON rather
-   * than hand it to a solver: `property-check`'s back-translation (§3.3). It
-   * renders the lowered tree, where this marker stands for its SI magnitude, and
-   * a rendering that printed `2700` for `45.0 [min]` would show a number that is
-   * in neither the file nor the author's head. Two fields rather than one
-   * pre-joined string, so a renderer chooses its own spelling — `45.0 [min]` in
-   * a clause, `45.0 min` in a sentence — without taking a substring apart.
-   * Nothing that JUDGES a relation reads either: they are display text, never an
-   * input to a gate.
-   */
-  magnitude: string;
-  unit: string;
-}
-
-export interface LoweredBody {
-  /** The body text, parseable by {@link parseExpr}. */
-  text: string;
-  /**
-   * Marker name → the SI magnitude of the literal it replaced AND the dimension
-   * that literal carried. The dimension is what lets gate (c) refuse
-   * `v.mass <= 2000.0 [s]`: without it a lowered literal is just "dimensioned",
-   * and a mass compared with a duration folds to a bare SI number and is judged
-   * confidently — where the unit-aware evaluator answers `unknown`.
-   */
-  literals: Map<string, LoweredLiteral>;
-  /** The body carried at least one `[unit]` literal. */
-  hadUnit: boolean;
-  /** Every `[unit]` literal was folded (false ⇒ the body cannot be judged). */
-  resolved: boolean;
-}
-
-/**
- * A numeric literal followed by a `[unit]`, with the character before it
- * captured so a digit inside a NAME is not mistaken for a literal. (A
- * lookbehind would read better and is not used: the browser bundle targets
- * engines that predate it.)
- */
-const UNIT_LITERAL_RE =
-  /(^|[^A-Za-z0-9_.])((?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*\[([^\]]*)\]/g;
-/** Any bracket group (used to spot a unit on a non-literal operand). */
-const ANY_BRACKET_RE = /\[[^\]]*\]/;
-
-export function lowerUnitLiterals(raw: string): LoweredBody {
-  const literals = new Map<string, LoweredLiteral>();
-  let hadUnit = false;
-  let resolved = true;
-  let n = 0;
-  // A prefix the source cannot contain, so a marker can never shadow a real
-  // feature name (`__uq0` is a legal SysML name, however unlikely).
-  let prefix = '__uq';
-  while (raw.includes(prefix)) prefix += 'q';
-  let text = raw.replace(UNIT_LITERAL_RE, (_m, before: string, magnitude: string, unit: string) => {
-    hadUnit = true;
-    const u = resolveUnit(unit.trim());
-    // An offset scale cannot be folded to a magnitude (10 °C is not 10 K), and
-    // an unknown unit must not silently become a bare number.
-    if (!u || u.offsetSI) {
-      resolved = false;
-      return `${before}${magnitude}`;
-    }
-    const name = `${prefix}${n++}`;
-    literals.set(name, {
-      si: Number(magnitude) * u.factorToSI,
-      dimension: u.dimension,
-      magnitude,
-      unit: unit.trim(),
-    });
-    return `${before}${name}`;
-  });
-  if (ANY_BRACKET_RE.test(text)) {
-    // A `[unit]` on something other than a literal — `(a + b) [m]`. The shape
-    // is kept parseable so the relation can still be REPORTED, but nothing
-    // about it may be judged.
-    hadUnit = true;
-    resolved = false;
-    text = text.replace(new RegExp(ANY_BRACKET_RE.source, 'g'), ' ');
-  }
-  return { text, literals, hadUnit, resolved };
-}
-
-/** Replace the lowering markers with the SI magnitudes they stand for. */
-export function substituteLiterals(node: ExprNode, literals: Map<string, LoweredLiteral>): ExprNode {
-  switch (node.kind) {
-    case 'ref': {
-      const v = literals.get(node.path.join('.'));
-      return v === undefined ? node : { kind: 'num', value: v.si };
-    }
-    case 'unary':
-      return { ...node, operand: substituteLiterals(node.operand, literals) };
-    case 'binary':
-      return {
-        ...node,
-        left: substituteLiterals(node.left, literals),
-        right: substituteLiterals(node.right, literals),
-      };
-    case 'if':
-      return {
-        ...node,
-        cond: substituteLiterals(node.cond, literals),
-        then: substituteLiterals(node.then, literals),
-        else: substituteLiterals(node.else, literals),
-      };
-    default:
-      return node;
-  }
-}
-
-/** Parse a relation body, folding any `[unit]` literal into SI. */
-export function parseRelationBody(raw: string): (LoweredBody & { node: ExprNode }) | undefined {
-  const lowered = lowerUnitLiterals(raw);
-  try {
-    return { ...lowered, node: parseExpr(lowered.text) };
-  } catch {
-    return undefined;
-  }
-}
-
-/** No `[unit]` literals were lowered in this relation. */
-export const NO_MARKERS: MarkerDimensions = new Map<string, LoweredLiteral>();
+// The lowering lives in ./unit-literals, which imports nothing of this module,
+// so the defining-equation reader can parse a body the way every relation is
+// parsed without an import cycle. Re-exported here, where its callers find it.
+export {
+  NO_MARKERS,
+  lowerUnitLiterals,
+  parseRelationBody,
+  substituteLiterals,
+  type LoweredBody,
+  type LoweredLiteral,
+} from './unit-literals';
 
 /**
  * The variables of one relation body: the feature ids its expression actually
