@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 156
-- **Tests:** 3514 total — 3514 passed, 0 failed, 0 skipped
+- **Tests:** 3654 total — 3654 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -38,7 +38,7 @@
 | test/integration/smt-z3.integration.test.ts | 29 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
-| test/integration/verification.differential.test.ts | 13 | 0 | 0 |
+| test/integration/verification.differential.test.ts | 80 | 0 | 0 |
 | test/interop/self-roundtrip.test.ts | 8 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
@@ -57,7 +57,7 @@
 | test/unit/api.rest.test.ts | 7 | 0 | 0 |
 | test/unit/api.rest2.test.ts | 9 | 0 | 0 |
 | test/unit/api.sdk.test.ts | 11 | 0 | 0 |
-| test/unit/api.verification.test.ts | 75 | 0 | 0 |
+| test/unit/api.verification.test.ts | 77 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 10 | 0 | 0 |
 | test/unit/branding.test.ts | 7 | 0 | 0 |
 | test/unit/centrality.test.ts | 7 | 0 | 0 |
@@ -111,7 +111,7 @@
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 52 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 77 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
@@ -133,12 +133,12 @@
 | test/unit/semantics.relations.test.ts | 16 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
-| test/unit/semantics.smt-encode.test.ts | 38 | 0 | 0 |
+| test/unit/semantics.smt-encode.test.ts | 47 | 0 | 0 |
 | test/unit/semantics.solver-ineq.test.ts | 11 | 0 | 0 |
-| test/unit/semantics.solver-units.test.ts | 61 | 0 | 0 |
+| test/unit/semantics.solver-units.test.ts | 97 | 0 | 0 |
 | test/unit/semantics.solver.test.ts | 17 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
-| test/unit/semantics.units-eval.test.ts | 30 | 0 | 0 |
+| test/unit/semantics.units-eval.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
