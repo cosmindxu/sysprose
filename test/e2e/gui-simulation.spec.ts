@@ -98,7 +98,7 @@ const PARAMETRIC = `package Demo {
   part def Rig {
     attribute throttle = 3;
     attribute power;
-    constraint law { power = throttle * 10 }
+    constraint law { power == throttle * 10 }
     state def Ctl {
       state a;
       state b;
