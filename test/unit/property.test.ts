@@ -238,6 +238,24 @@ describe('propertyCheck — gate 0, then the four judging gates', () => {
     }
   }, 60_000);
 
+  it('reads a plain clause’s numerals as the decimals written', async () => {
+    // Read as the doubles they parse to, `p.f + 0.1 + 0.2 > p.f + 0.3` was
+    // VALID on its own — true of every `f` — and the `<=` form unsatisfiable:
+    // both backwards, since 0.1 + 0.2 is 0.3.
+    const { model } = await fromText(`package T20 {
+    part def P { attribute f : ScalarValues::Real = 0.1; }
+    part p : P;
+    requirement def R { subject p : P; require constraint { p.f >= 0.0 } }
+    satisfy R by p; }`);
+    const id = idOf(model, 'R');
+    const gt = await propertyCheck(model, id, 'p.f + 0.1 + 0.2 > p.f + 0.3');
+    expect([gt.refusedAt, gt.code]).toEqual([4, 'verification/trivial-property']);
+    expect(gt.detail).toContain('the clause is unsatisfiable on its own');
+    const le = await propertyCheck(model, id, 'p.f + 0.1 + 0.2 <= p.f + 0.3');
+    expect([le.refusedAt, le.code]).toEqual([4, 'verification/trivial-property']);
+    expect(le.detail).toContain('the clause is valid on its own');
+  }, 60_000);
+
   it('passes a clause the model’s own literals already satisfy — gate 4 is syntactic only', async () => {
     const { model } = await uav();
     // `uav.mtow = 18.5 [kg]` is a literal in the file, so this clause is true

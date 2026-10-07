@@ -10,6 +10,8 @@ import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
 import { scopeFor, evaluateFeatureValue, checkConstraints } from '../../src/semantics/index';
 import { featureIdsFor } from '../../src/semantics/evaluate-model';
+import { idScopeFor } from '../../src/semantics/relations';
+import { shadowedNamesOf } from '../../src/semantics/defining-equation';
 import { checkConstraintsNumeric } from '../../src/semantics/solver';
 import { DIMENSIONLESS } from '../../src/semantics/units';
 import { equationDerivation } from '../../src/semantics/units-eval';
@@ -39,6 +41,271 @@ describe('semantics — scopeFor edge cases', () => {
     m.setAttrs(attr.id, { value: '5' });
     const scope = scopeFor(m, p.id);
     expect(scope('width')).toBe(5);
+  });
+});
+
+/*
+ * THE ONE WALK every scope reads names through — the scalar scope, the quantity
+ * scope and the variable scope the gates, the solver and the verification lane
+ * read (`DefiningEquations.scope`). The three were three copies of one
+ * collector, and the bare-name convenience they offered answered a name with
+ * whatever feature the depth-first walk met first.
+ */
+describe('semantics — the one walk, and the bare-name rule', () => {
+  const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+
+  it('lets a direct feature claim its bare name though it states no value (xr3)', () => {
+    const m = parseModel(`package XR3 {
+      part def Q { attribute x = 7.0; }
+      part def P { attribute x : Real; part q : Q; constraint lo { x >= 5.0 } constraint hi { x <= 5.0 } }
+    }`).model;
+    const p = named(m, 'XR3::P');
+    // The scalar scope has no value for P's own x — and never Q's 7.
+    expect(scopeFor(m, p.id)('x')).toBeUndefined();
+    expect(scopeFor(m, p.id)('q.x')).toBe(7);
+    expect(idScopeFor(m, p.id).get('x')).toBe(named(m, 'XR3::P::x').id);
+    for (const c of checkConstraints(m)) expect(c.result, c.expression).toBe('unknown');
+  });
+
+  it('offers a nested bare name only when exactly one feature below has it (xb1)', () => {
+    const m = parseModel(`package XB1 {
+      part def P { attribute y = 4.0; }
+      part def Q { attribute y = 100.0; attribute z = 3.0; }
+      part def Sys { part a : P; part b : Q; constraint c { y <= 10.0 } constraint d { z <= 10.0 } }
+    }`).model;
+    const sys = named(m, 'XB1::Sys');
+    const ids = idScopeFor(m, sys.id);
+    expect(ids.has('y')).toBe(false);
+    expect(ids.get('a.y')).toBe(named(m, 'XB1::P::y').id);
+    expect(ids.get('b.y')).toBe(named(m, 'XB1::Q::y').id);
+    // One `z` below: the convenience stands, on every scope alike.
+    expect(scopeFor(m, sys.id)('z')).toBe(3);
+    const checks = new Map(checkConstraints(m).map((c) => [c.expression, c.result]));
+    expect([checks.get('y <= 10.0'), checks.get('z <= 10.0')]).toEqual(['unknown', 'satisfied']);
+  });
+
+  it('never offers a constraint’s or a calculation’s own features as bare names around it (xr1)', () => {
+    const m = parseModel(`package XR1 {
+      part def P {
+        attribute x : Real;
+        constraint c { in x = 1.0; x >= 0.0 }
+        calc g { in w = 2.0; w * 2.0 }
+        constraint lo { x >= 5.0 }
+        constraint uses { w >= 1.0 }
+      }
+    }`).model;
+    const p = named(m, 'XR1::P');
+    expect(idScopeFor(m, p.id).get('x')).toBe(named(m, 'XR1::P::x').id);
+    expect(idScopeFor(m, p.id).has('w')).toBe(false);
+    expect(idScopeFor(m, p.id).get('c.x')).toBe(named(m, 'XR1::P::c::x').id);
+    const checks = new Map(checkConstraints(m).map((c) => [c.expression, c.result]));
+    expect([checks.get('x >= 5.0'), checks.get('w >= 1.0')]).toEqual(['unknown', 'unknown']);
+  });
+
+  it('denotes the same feature by every name on the value and the variable scopes', () => {
+    const m = parseModel(`package W {
+      part def Cell { attribute v = 2.0; attribute w; }
+      part def Pack { part a : Cell; part b : Cell; attribute total = a.v + b.v; attribute v = 9.0; }
+      part pack : Pack;
+    }`).model;
+    for (const ctx of ['W', 'W::Pack', 'W::pack']) {
+      const id = named(m, ctx).id;
+      const ids = idScopeFor(m, id);
+      for (const [name, featureId] of featureIdsFor(m, id)) expect(ids.get(name), `${ctx} ${name}`).toBe(featureId);
+    }
+  });
+
+  it('reads a chain through the USAGE: its own redefinition, then what its type declares', () => {
+    const m = parseModel(`package R6 {
+      part def P { attribute load default = 1.0; attribute k = 3.0; }
+      part def Q { part p : P; }
+      part q : Q { part :>> p { attribute :>> load = 50.0; } }
+    }`).model;
+    const root = named(m, 'R6');
+    expect(scopeFor(m, root.id)('q.p.load')).toBe(50);
+    expect(scopeFor(m, root.id)('q.p.k')).toBe(3);
+  });
+
+  it('answers a renamed redefinition under the name it redefines too (r15)', () => {
+    const m = parseModel(`package R15 {
+      part def P { attribute load default = 1.0; }
+      part p : P { attribute heavy redefines load = 50.0; }
+    }`).model;
+    const root = named(m, 'R15');
+    expect(scopeFor(m, root.id)('p.heavy')).toBe(50);
+    expect(scopeFor(m, root.id)('p.load')).toBe(50);
+  });
+});
+
+/*
+ * A value written with `=` is a BINDING (KerML): every instance of its owner
+ * has it, so a usage that redefines it with another value contradicts the
+ * model, and only a `default` is overridable. Every surface used to read a
+ * redefinition as an override where it read it at all — and mostly did not:
+ * an unnamed `:>> load = 50.0` claimed no name, so `p.load` was P's 1.
+ */
+describe('checkConstraints — a redefinition is the feature in its context, and `=` binds', () => {
+  const R1 = (op: string) => `package R1 {
+    part def P {
+      attribute load : Real ${op} 1.0;
+      attribute m2 : Real = 10.0 - load;
+    }
+    part p : P { attribute :>> load = 50.0; }
+    constraint hi { p.load >= 10.0 }
+    constraint lo { p.load <= 10.0 }
+    constraint m2 { p.m2 >= 0.0 }
+  }`;
+  const by = (m: Model) => new Map(checkConstraints(m).map((c) => [c.expression, c]));
+
+  it('reads a usage’s redefinition of a default in its place, on both pipelines', () => {
+    const m = parseModel(R1('default =')).model;
+    const checks = by(m);
+    expect([checks.get('p.load >= 10.0')!.result, checks.get('p.load <= 10.0')!.result]).toEqual([
+      'satisfied',
+      'violated',
+    ]);
+    const rows = new Map(checkConstraintsNumeric(m).map((r) => [r.raw, r.result]));
+    expect([rows.get('p.load >= 10.0'), rows.get('p.load <= 10.0')]).toEqual(['satisfied', 'violated']);
+  });
+
+  it('reads a derived value whose input the usage changed in the usage, as its own value (Stage 2)', () => {
+    // P's `m2 = 10.0 - load` read as `p.m2` is p's: 10 − 50 = −40 — not P's 9
+    // (a false proof), and not "no value" (Stage 1's refusal).
+    const m = parseModel(R1('default =')).model;
+    const m2 = by(m).get('p.m2 >= 0.0')!;
+    expect([m2.result, m2.message]).toEqual(['violated', 'Constraint violated: p.m2 >= 0.0']);
+    const row = checkConstraintsNumeric(m).find((r) => r.raw === 'p.m2 >= 0.0')!;
+    expect([row.result, row.slack]).toEqual(['violated', -40]);
+    const root = named(m, 'R1');
+    expect(scopeFor(m, root.id)('p.m2')).toBe(-40);
+  });
+
+  it('reads every derived value in the usage that changes its input — a value, a definition, a calculation, a copy, a binding', () => {
+    const m = parseModel(`package R3 {
+      part def P {
+        attribute load : Real default = 1.0;
+        attribute m2 : Real = 10.0 - load;
+        attribute e : Real;
+        assert constraint de { e == 10.0 - load }
+        calc margin { 10.0 - load }
+      }
+      part p : P {
+        attribute :>> load = 50.0;
+        constraint own { m2 <= -40.0 and e <= -40.0 and margin <= -40.0 }
+      }
+      part q : P { attribute :>> load = 50.0; attribute :>> m2; }
+      attribute w2 : Real;
+      bind w2 = p.m2;
+      constraint viaCopy { q.m2 >= 0.0 }
+      constraint viaBind { w2 >= 0.0 }
+      constraint viaChain { p.e >= 0.0 }
+    }`).model;
+    const checks = by(m);
+    // Inside p, by bare names; through q's `:>> m2;`, which states nothing and
+    // reads P's value in q; through the binding to the copy of p's m2; and
+    // through a chain to P's asserted definition, read over p's load.
+    expect(checks.get('m2 <= -40.0 and e <= -40.0 and margin <= -40.0')!.result).toBe('satisfied');
+    for (const e of ['q.m2 >= 0.0', 'w2 >= 0.0', 'p.e >= 0.0']) expect(checks.get(e)!.result, e).toBe('violated');
+    const rows = new Map(checkConstraintsNumeric(m).map((r) => [r.raw, r]));
+    for (const e of ['q.m2 >= 0.0', 'w2 >= 0.0', 'p.e >= 0.0']) {
+      expect([rows.get(e)!.result, rows.get(e)!.slack], e).toEqual(['violated', -40]);
+    }
+    // P's own values stand beside them.
+    const root = named(m, 'R3');
+    expect([scopeFor(m, root.id)('p.m2'), evaluateFeatureValue(m, m.all().find((e) => e.declaredName === 'm2')!.id)]).toEqual([
+      -40,
+      { value: 9 },
+    ]);
+  });
+
+  it('calls a redefinition that changes a BINDING a contradiction, and reads neither value', () => {
+    const m = parseModel(R1('=')).model;
+    const checks = by(m);
+    for (const e of ['p.load >= 10.0', 'p.load <= 10.0']) {
+      expect(checks.get(e)!.result, e).toBe('unknown');
+      expect(checks.get(e)!.message, e).toContain(
+        'p::load = 50.0 contradicts P::load = 1.0, a binding every P holds (a value written with `=`)',
+      );
+    }
+    // The contradiction itself is a violation, anchored at the redefinition.
+    const contradiction = checks.get('load == 1.0')!;
+    expect(contradiction.result).toBe('violated');
+    const redef = m.all().find((e) => e.eClass === 'AttributeUsage' && e.declaredName === undefined)!;
+    expect(contradiction.id).toBe(redef.id);
+    const rows = new Map(checkConstraintsNumeric(m).map((r) => [r.raw, r.result]));
+    expect([rows.get('p.load >= 10.0'), rows.get('p.load <= 10.0')]).toEqual(['unknown', 'unknown']);
+  });
+
+  it('finds no contradiction in a redefinition that restates the binding, or states nothing', () => {
+    for (const redef of ['attribute :>> load = 1.0;', 'attribute :>> load;']) {
+      const checks = by(parseModel(R1('=').replace('attribute :>> load = 50.0;', redef)).model);
+      expect([...checks.values()].some((c) => c.message.includes('contradicts')), redef).toBe(false);
+      expect(checks.get('p.load <= 10.0')!.result, redef).toBe('satisfied');
+      // Neither changes what P's derived value reads: it is read, in its context.
+      expect(checks.get('p.m2 >= 0.0')!.result, redef).toBe('satisfied');
+    }
+  });
+
+  it('reads a definition’s constraint in every context that specialises it and changes what it reads (r19, r20)', () => {
+    const m = parseModel(`package R20 {
+      part def D {
+        attribute mass : Real;
+        attribute k : Real default = 2.0;
+        attribute lim : Real = 10.0 * k;
+        constraint c { mass <= lim }
+        constraint cap { k <= 1.0 }
+      }
+      part light : D { attribute :>> mass = 5.0; attribute :>> k = 0.1; }
+      part heavy : D { attribute :>> mass = 50.0; }
+      part plain : D;
+    }`).model;
+    const checks = by(m);
+    const c = checks.get('mass <= lim')!;
+    expect(c.result).toBe('unknown');
+    // `lim` reads `k`, which light changes: light's lim is light's own, 10 ×
+    // 0.1 = 1 — never D's 20. heavy changes only `mass`. `plain` changes nothing.
+    expect(verdicts(c)).toEqual([
+      ['light', 'violated'],
+      ['heavy', 'violated'],
+    ]);
+    expect(c.instances![0].message).toBe('light::mass = 5, light::lim = 1 misses D::c (mass <= lim)');
+    expect(c.instances![1].message).toBe('heavy::mass = 50 misses D::c (mass <= lim)');
+    // D's own verdict at D's values stands beside the readings in its contexts.
+    const cap = checks.get('k <= 1.0')!;
+    expect(cap.result).toBe('violated');
+    expect(verdicts(cap)).toEqual([['light', 'satisfied']]);
+  });
+});
+
+/*
+ * A body that reads a name its own element declares is read by NO surface: an
+ * evaluator reads a body in its owner's scope first, where that name is
+ * another feature (D6). The test keys on the element's EFFECTIVE names, so an
+ * unnamed `in :>> y = 100.0` is `y` too (xs1).
+ */
+describe('semantics — a name a body declares itself is no owner feature', () => {
+  it('finds the shadowed names, an unnamed redefined parameter included', () => {
+    const m = parseModel(`package XS1 {
+      constraint def Lim { in y : Real; }
+      part def P {
+        attribute y = 4.0;
+        attribute z = 1.0;
+        constraint c : Lim { in :>> y = 100.0; y <= 10.0 }
+        constraint own { in y = 100.0; y <= 10.0 }
+        constraint free { in q = 2.0; q <= 10.0 and z <= 2.0 }
+      }
+    }`).model;
+    const el = (n: string) => m.all().find((e) => e.declaredName === n)!;
+    expect(shadowedNamesOf(m, el('c'), ['y'])).toEqual(['y']);
+    expect(shadowedNamesOf(m, el('own'), ['y'])).toEqual(['y']);
+    // A parameter the owner has no feature for, and an owner feature the body
+    // does not declare, shadow nothing.
+    expect(shadowedNamesOf(m, el('free'), ['q', 'z'])).toEqual([]);
+    const checks = new Map(checkConstraints(m).map((c) => [c.id, c]));
+    expect(checks.get(el('c').id)!.result).toBe('unknown');
+    expect(checks.get(el('c').id)!.message).toMatch(/^Could not evaluate: `y` in c is XS1::P::c::y, its own in parameter/);
+    expect(checks.get(el('own').id)!.result).toBe('unknown');
+    expect(checks.get(el('free').id)!.result).toBe('satisfied');
   });
 });
 
@@ -309,7 +576,7 @@ describe('checkConstraints — a target read through the features that specialis
 
   it('walks a chain once per context: PA::m :>> LA::m :> Common::m', () => {
     const m = model(`package Common { attribute m : Real; constraint t { m >= 0.9 } }
-      package LA { attribute m :> Common::m = 0.5; }
+      package LA { attribute m :> Common::m default = 0.5; }
       package PA { attribute m :>> LA::m = 0.95; }`);
     const t = checkOf(m, 'Common::t');
     expect(verdicts(t)).toEqual([
@@ -530,23 +797,19 @@ describe('checkConstraints — why a feature chain has no value', () => {
     expect([c.result, c.message]).toEqual(['satisfied', 'Constraint satisfied']);
   });
 
-  it('says an asserted equation is not read through a feature chain that redefines what it reads', () => {
-    const c = only(
-      model(`package E {
-      part def Software { attribute k : Real = 1.0; attribute a : Real; assert constraint { a == k * 0.95 } }
+  it('reads an asserted equation through a feature chain that redefines what it reads, over the chain’s names', () => {
+    // The equation holds of every Software; read for a Tuned, it reads Tuned's
+    // k: a = 2 × 0.95 = 1.9.
+    const text = (bound: string) => `package E {
+      part def Software { attribute k : Real default = 1.0; attribute a : Real; assert constraint { a == k * 0.95 } }
       part def Tuned :> Software { attribute :>> k = 2.0; }
       requirement def SoftwareContract {
         subject coordination : Tuned;
-        require constraint { coordination.a >= 0.9 }
+        require constraint { coordination.a >= ${bound} }
       }
-    }`),
-    );
-    expect(c.result).toBe('unknown');
-    expect(c.message).toBe(
-      'Could not evaluate: coordination.a has no value: Software::a is declared without one, ' +
-        'its asserted equation is not read through a feature chain that redefines what it reads, and nothing ' +
-        'specialises it',
-    );
+    }`;
+    expect(only(model(text('1.8'))).result).toBe('satisfied');
+    expect(only(model(text('1.95'))).result).toBe('violated');
   });
 
   it('keeps the generic sentence for a chain that does not resolve, or ends at a value it could not evaluate', () => {
@@ -583,7 +846,7 @@ describe('checkConstraints — why a feature chain has no value', () => {
 
   it('reads a usage’s redefinition of its definition’s default, not the default', () => {
     const m = model(`package P {
-      part def D { attribute mass : Real; attribute maxMass : Real = 10; constraint c { mass <= maxMass } }
+      part def D { attribute mass : Real; attribute maxMass : Real default = 10; constraint c { mass <= maxMass } }
       part light : D { attribute :>> mass = 5; attribute :>> maxMass = 3; }
       part heavy : D { attribute :>> mass = 5; }
     }`);
@@ -1115,13 +1378,16 @@ describe('checkConstraints — a chain of asserted equations is derived with its
     const watched = 12 * 0.05;
     const lost = 0.12 / watched;
     expect(['watched', 'lost', 'third'].map((n) => scalar(n))).toEqual([watched, lost, lost * watched + 1]);
-    for (const [name, expr] of [
-      ['lost', 'lost == loss / watched'],
-      ['third', 'third == lost * watched + 1'],
-    ]) {
+    // And each carries the exact decimals it is derived from — one fifth, and
+    // twenty-eight twenty-fifths — which a tie over it is decided by.
+    for (const [name, expr, exact] of [
+      ['lost', 'lost == loss / watched', { num: 1n, den: 5n }],
+      ['third', 'third == lost * watched + 1', { num: 28n, den: 25n }],
+    ] as const) {
       expect(equationDerivation(m, named(m, `LA::${name}`).id, expr).q, name).toEqual({
         magnitude: scalar(name),
         dimension: DIMENSIONLESS,
+        exact,
       });
     }
     expect(checkConstraints(m).map((c) => c.message)).toEqual([

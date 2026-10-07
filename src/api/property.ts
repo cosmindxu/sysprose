@@ -1205,7 +1205,9 @@ export async function propertyCheck(
     attrs: { expression: parsed.body },
   });
   const quantity = evaluateConstraintQuantityDetailed(scratch, transient);
-  if (quantity.verdict === 'unknown' && isRefusalReason(quantity.reason)) {
+  // A tie at the model's values that no exact reading decides is a fact about
+  // one point, not about the units: the clause still reads.
+  if (quantity.verdict === 'unknown' && isRefusalReason(quantity.reason) && quantity.reason !== 'tie') {
     const clash = quantity.reason === 'dimension-clash' || quantity.reason === 'dimension-fault';
     return refuse(
       [...gates, blank(3)],

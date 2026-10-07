@@ -34,10 +34,15 @@
  *    model's — and "looser than the model's" is not a bound this command may
  *    publish as one: a file whose only ceiling on a quantity is a relation the
  *    encoder refused would otherwise read "unbounded above". So a refusal that
- *    shares a symbol with what the objective can REACH stands the row down
- *    ({@link relevantRefusals}), exactly as a refused axiom in reach of a goal
- *    stands a refutation down in {@link ./engines/smt}. A refusal in an
- *    unrelated corner of the file factorises and is only listed.
+ *    shares a feature or a symbol with what the objective can REACH stands
+ *    the row down ({@link relevantRefusals}, through the one reach test every
+ *    command shares, `refusalReaches`), exactly as a refused axiom in reach
+ *    of a goal stands a refutation down in {@link ./engines/smt}. A refusal in
+ *    an unrelated corner of the file factorises and is only listed.
+ *  - **Two instances are two unknowns.** A feature with no value read through
+ *    an instance has that instance's own symbol (`ContractVariable.instance`),
+ *    so `d = a.v - b.v` ranges over two values, never the one an identification
+ *    of the two would leave.
  *  - **The point z3 stopped at is re-read before the number is published.**
  *    §5's witness gate, which every other SAT-returning surface of this lane
  *    applies: the design point comes back through {@link ./expr}'s own
@@ -83,8 +88,17 @@ import {
   type RefusalReason,
 } from './contracts';
 import { isLiteralValueAxiom } from './consistency';
-import { evaluate, type EvalResult, type ExprNode } from './expr';
-import { isFreedValueAxiom, obligationsOf, unreadRowRefusal, type Obligation } from './obligations';
+import { rereadRelation, tieSentence, type PointValues } from './exact';
+import {
+  isFreedValueAxiom,
+  obligationsOf,
+  reachOfRow,
+  reachedBy,
+  refusalReaches,
+  unreadRowRefusal,
+  type Obligation,
+  type RefusalReach,
+} from './obligations';
 import {
   encodeRelation,
   encodeScript,
@@ -94,8 +108,8 @@ import {
   type EncodedRelation,
   type ScriptAssertion,
 } from './smt/encode';
-import { decimalSymbols } from './smt/decimal-reading';
 import {
+  rereadPoint,
   type ObjectiveBound,
   type OptimizeSense,
   type WitnessValue,
@@ -155,6 +169,12 @@ export interface BoundsOptions {
   backend: Z3Backend;
   /** The feature whose tightest value is asked for. */
   measureId: ElementId;
+  /**
+   * The symbol it is read by, where that is an INSTANCE's own (`R::p1::m2`,
+   * for `p1.m2`: `ContractVariable.instance` of ./contracts) rather than the
+   * feature's qualified name.
+   */
+  measureSymbol?: string;
   /** `min`, `max`, or both. Two senses are two scripts — see {@link Z3Backend.optimize}. */
   sense?: BoundsSense;
   /** Feature values released, already resolved to qualified names by the caller. */
@@ -271,12 +291,13 @@ interface EncodedRow {
    *
    * False for the DEFINING EQUATION of a derived feature, and for the reason
    * {@link ./consistency}'s own gate gives for skipping the structural axioms:
-   * z3 reasons over exact rationals and {@link ./expr} over binary64, so
-   * `endurance == capacity * 0.8 / cruisePower` re-read at an exact rational
-   * point can differ in the last bit — and reporting an encoder defect for a
-   * rounding difference would make the gate a nuisance rather than a check. A
-   * feature value the file states as a LITERAL is re-read: it is exact on both
-   * sides, and it is where a wrong unit factor would show.
+   * the re-read follows z3's exact rationals only where exact arithmetic
+   * follows the expression (`rereadRelation` of ./exact), so a definition
+   * through an operation it does not (a fractional power) would meet a tie
+   * nothing decides — and reporting an encoder defect for a rounding
+   * difference would make the gate a nuisance rather than a check. A feature
+   * value the file states as a LITERAL is re-read: it is exact on both sides,
+   * and it is where a wrong unit factor would show.
    */
   rereadable?: boolean;
 }
@@ -291,10 +312,10 @@ interface EncodedRow {
  * report `5000 <= 10`. `row.scaled` is the gates' own answer and it is what is
  * passed; nothing here re-derives it.
  */
-function encodeRow(row: Obligation, free: ReadonlySet<string>, decimal: ReadonlySet<string>): EncodedRow {
+function encodeRow(row: Obligation, free: ReadonlySet<string>): EncodedRow {
   const spellings = new Set<string>(free);
   for (const v of row.vars) if (free.has(v.qualifiedName)) spellings.add(v.path);
-  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: spellings, decimal });
+  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: spellings });
   // A row over a name this tool reads no value for here is not asserted
   // (see `unreadRowRefusal`).
   const unread = unreadRowRefusal(row);
@@ -421,15 +442,17 @@ function requirementAssertion(
 ): Assertion | undefined {
   if (clauses.length === 0 || clauses.some((c) => !c.encoded)) return undefined;
   const assumptionIds = new Set(contract.assumptions.map((a) => a.id));
-  const premises = clauses.filter((c) => assumptionIds.has(c.row.element.id));
-  const goals = clauses.filter((c) => !assumptionIds.has(c.row.element.id));
+  const clauseId = (c: EncodedRow): ElementId => c.row.instance?.baseId ?? c.row.element.id;
+  const premises = clauses.filter((c) => assumptionIds.has(clauseId(c)));
+  const goals = clauses.filter((c) => !assumptionIds.has(clauseId(c)));
   const consequent = conjunction(goals.flatMap(termsOf));
   if (consequent === null) return undefined;
   const antecedent = conjunction(premises.flatMap(termsOf));
   return {
     assertion: {
       kind: 'premise',
-      name: contract.qualifiedName,
+      // A requirement read where a `satisfy` binds its subject is named so.
+      name: clauses[0]?.row.requirement?.qualifiedName ?? contract.qualifiedName,
       term: antecedent === null ? consequent : `(=> ${antecedent} ${consequent})`,
     },
     rows: [...clauses],
@@ -449,7 +472,8 @@ interface Prepared {
    *
    * A refused relation sharing a symbol with what the objective reaches, or one
    * with no readable variable at all (its reach is unknown, and the
-   * conservative reading of unknown is that it might matter). The rest
+   * conservative reading of unknown is that it might matter — a feature value
+   * excepted, which reaches its own feature: {@link reachOfRow}). The rest
    * factorise: an assignment satisfying them can always be pasted onto one
    * satisfying the objective's own closure, so they can move neither the bound
    * nor whether one exists, and listing them is all this run owes them.
@@ -472,10 +496,16 @@ interface Prepared {
  */
 export function prepareBounds(
   model: Model,
-  opts: { measureId: ElementId; free?: ReadonlySet<string>; freeAll?: boolean; withRequirements?: boolean },
+  opts: {
+    measureId: ElementId;
+    measureSymbol?: string;
+    free?: ReadonlySet<string>;
+    freeAll?: boolean;
+    withRequirements?: boolean;
+  },
 ): Prepared {
   const rows = obligationsOf(model);
-  const measureName = model.qualifiedName(opts.measureId);
+  const measureName = opts.measureSymbol ?? model.qualifiedName(opts.measureId);
 
   // THE RELEASE. `--free F` drops the axiom that PINS F, exactly as it does in
   // `verify`; `--free all` drops every feature value the file states, which is
@@ -494,16 +524,16 @@ export function prepareBounds(
   }
   const released = [...free].sort();
 
-  // One reading of every numeral the run puts side by side (../smt/decimal-reading).
-  const decimal = decimalSymbols(model, rows);
-  const encoded = rows.map((row) => encodeRow(row, free, decimal));
+  const encoded = rows.map((row) => encodeRow(row, free));
 
   // The measure's own facets are read off ANY row that names it — including one
   // this run does not assert. A feature released by `--free all` is still the
   // feature the file declares, with the unit the file declares.
   let measure: MeasureRef | null = null;
   for (const row of encoded) {
-    const v = row.row.vars.find((x) => x.featureId === opts.measureId);
+    const v = row.row.vars.find(
+      (x) => x.featureId === opts.measureId && (opts.measureSymbol === undefined || x.qualifiedName === opts.measureSymbol),
+    );
     if (!v) continue;
     const el = model.get(opts.measureId);
     measure = {
@@ -520,25 +550,30 @@ export function prepareBounds(
   const assertions: Assertion[] = [];
   const refused: RefusedAxiom[] = [];
   /**
-   * Every refusal beside the symbols it would have read, for the reach test:
-   * the encoder's, and the FEATURE's own. A row over a value this tool does
+   * Every refusal beside what it would have read, for the reach test
+   * ({@link refusalReaches}): the features by id, and the encoder's symbols
+   * and the features' own names beside them. A row over a value this tool does
    * not read here (`unread-definition`) reads it by a symbol of its own, which
    * no asserted relation shares — so a reach taken over that symbol alone
    * never met it, and `p.e <= 1.0` (refused) beside P's `e == x * 2.0` left
    * the maximum of `x` at 100 "exactly" where the requirement makes it 0.5.
    */
-  const refusedReach: Array<{ axiom: RefusedAxiom; symbols: string[] }> = [];
-  const symbolsOf = (row: EncodedRow): string[] => [
-    ...row.vars.map((v) => v.qualifiedName),
-    ...row.row.vars.map((v) => v.qualifiedName),
-  ];
+  const refusedReach: Array<{ axiom: RefusedAxiom; reach: RefusalReach }> = [];
+  const reachOfRows = (rows: readonly EncodedRow[]): RefusalReach => {
+    const r = rows.map((row) => reachOfRow(row.row, row.vars.map((v) => v.qualifiedName)));
+    return {
+      features: r.flatMap((x) => x.features),
+      symbols: r.flatMap((x) => x.symbols),
+      extraDeps: r.flatMap((x) => x.extraDeps ?? []),
+    };
+  };
   for (const row of encoded) {
     if (row.row.role !== 'axiom') continue;
     if (row.row.source === 'feature-value' && isFreedValueAxiom(row.row, free)) continue;
     if (!row.encoded) {
       const axiom = refusalOf(row);
       refused.push(axiom);
-      refusedReach.push({ axiom, symbols: symbolsOf(row) });
+      refusedReach.push({ axiom, reach: reachOfRows([row]) });
       continue;
     }
     row.rereadable = row.row.source !== 'feature-value' || isLiteralValueAxiom(model, row.row);
@@ -560,27 +595,52 @@ export function prepareBounds(
       if (list) list.push(row);
       else byRequirement.set(id, [row]);
     }
+    // Each requirement's own reading, and its reading in every context that
+    // binds its subject and reads it differently (`satisfy R by p`): one
+    // implication each, every goal under the assumptions of its own reading.
+    const readingsOf = new Map<ElementId, ElementId[]>();
+    for (const row of encoded) {
+      const base = row.row.instance?.requirementId;
+      const id = row.row.requirement?.id;
+      if (base === undefined || id === undefined) continue;
+      const list = readingsOf.get(base) ?? [];
+      if (!list.includes(id)) list.push(id);
+      readingsOf.set(base, list);
+    }
     for (const contract of contractsOf(model)) {
-      const clauses = byRequirement.get(contract.id);
-      if (!clauses) continue;
-      const built = requirementAssertion(contract, clauses);
-      if (!built) {
-        for (const c of clauses) {
-          if (c.encoded) continue;
-          const axiom = refusalOf(c);
-          refused.push(axiom);
-          refusedReach.push({ axiom, symbols: symbolsOf(c) });
+      for (const key of [contract.id, ...(readingsOf.get(contract.id) ?? [])]) {
+        const clauses = byRequirement.get(key);
+        if (!clauses) continue;
+        const built = requirementAssertion(contract, clauses);
+        if (!built) {
+          // The WHOLE implication was withheld, so what it would have read is
+          // every clause of it, the encoded ones included: `p.x <= 5.0` beside a
+          // refused `p.z % 2.0 == 0.0` was withheld with it, and a reach taken
+          // over the refused clause alone left `max x` "unbounded above", exit 0.
+          const reach = reachOfRows(clauses);
+          for (const c of clauses) {
+            if (c.encoded) continue;
+            const axiom = refusalOf(c);
+            refused.push(axiom);
+            refusedReach.push({ axiom, reach });
+          }
+          continue;
         }
-        continue;
+        assertions.push(built);
+        requirements.push(built.assertion.name);
       }
-      assertions.push(built);
-      requirements.push(contract.qualifiedName);
     }
   }
 
   const { kept, reached } = reachable(assertions, [measureName]);
+  const reachedSet = reachedBy([
+    ...kept.flatMap((a) => a.rows.map((r) => ({ vars: r.row.vars, symbols: r.vars.map((v) => v.qualifiedName) }))),
+    { vars: [], symbols: reached },
+  ]);
+  const features = new Set(reachedSet.features);
+  features.add(opts.measureId);
   const relevantRefusals = refusedReach
-    .filter((r) => r.symbols.length === 0 || r.symbols.some((v) => reached.has(v)))
+    .filter((r) => refusalReaches(r.reach, { features, symbols: reachedSet.symbols }))
     .map((r) => r.axiom);
   const variables: EncodeVariable[] = [];
   const seen = new Set<string>();
@@ -642,33 +702,32 @@ function axiomSentence(prepared: Prepared, withRequirements: boolean): string {
  * `--with-requirements` is re-read as the IMPLICATION it was asserted as, never
  * as a bare guarantee at a point its own assumption excludes.
  *
- * A symbol the solver did not assign is an unread relation, and an unread
- * relation is NOT a confirmation: it comes back as a failure, because "the
- * point could not be checked" and "the point checks out" must not be the same
- * answer. See {@link EncodedRow.rereadable} for the one class of row this gate
- * deliberately does not read, and why.
+ * The point is the optimiser's model COMPLETED ({@link rereadPoint}), not the
+ * witness a row prints. A symbol it still has no value for is an unread
+ * relation, and an unread relation is NOT a confirmation: it comes back as a
+ * failure, because "the point could not be checked" and "the point checks
+ * out" must not be the same answer. See {@link EncodedRow.rereadable} for the
+ * one class of row this gate deliberately does not read, and why.
  */
 function confirmBoundWitness(
   assertions: readonly Assertion[],
-  witness: readonly WitnessValue[],
+  values: PointValues,
 ): { ok: true } | { ok: false; why: string } {
-  const values = new Map<string, number | boolean>();
-  for (const w of witness) if (w.value !== null) values.set(w.symbol, w.value);
   /** One row re-read at the point, or the reason it could not be. */
   const reread = (row: EncodedRow): boolean | string => {
     const node = row.row.node;
     if (node === null) return `\`${row.row.expression}\` has no readable body`;
-    const scope = (name: string): unknown => {
-      const v = row.vars.find((x) => x.path === name || x.qualifiedName === name);
-      if (!v) return undefined;
-      const raw = values.get(v.qualifiedName);
-      if (raw === undefined) return undefined;
-      if (typeof raw === 'boolean') return raw;
-      return raw * v.factor + v.offset;
-    };
-    const out = rereadEquality(node, scope) ?? evaluate(node, scope);
+    // Over z3's exact rationals and the decimals written (`rereadRelation` of
+    // ./exact). z3 computes `12 × (40 − 7.41) / 60 × 0.12` as the rational
+    // 0.78216 and assigns the defined feature exactly that, where binary64
+    // makes 0.7821600000000001 of it; and `a + b <= 0.3` at a = 1/10, b = 2/10
+    // is true of the decimals and false of their doubles, so a bound over
+    // either was "not confirmed" by arithmetic that in fact confirmed it.
+    const out = rereadRelation(node, row.vars, values);
     if (!('value' in out)) {
-      return `\`${row.row.expression}\` could not be re-read at the point the solver chose`;
+      return out.tie
+        ? `\`${row.row.expression}\` cannot be decided at the point the solver chose: ${tieSentence(out.tie)}`
+        : `\`${row.row.expression}\` could not be re-read at the point the solver chose`;
     }
     if (typeof out.value !== 'boolean') {
       return (
@@ -710,28 +769,6 @@ function confirmBoundWitness(
 }
 
 /**
- * An equation re-read as arithmetic, not as bit-identity.
- *
- * z3 computes `12 × (40 − 7.41) / 60 × 0.12` as the rational 0.78216 and
- * assigns the defined feature exactly that; this evaluator computes the same
- * expression in floating point and gets 0.7821600000000001, and `===` between
- * the two is false — so every bound that passed through an equation was
- * "not confirmed" by the tool's own arithmetic, which was in fact confirming
- * it. A relative tolerance of 1e-9 is far below anything a quantity in a
- * model states, and far above floating-point noise. Only a top-level `==` or
- * `!=` whose sides are both numbers is read this way; everything else goes
- * through `evaluate` unchanged.
- */
-function rereadEquality(node: ExprNode, scope: (name: string) => unknown): EvalResult | undefined {
-  if (node.kind !== 'binary' || (node.op !== '==' && node.op !== '=' && node.op !== '!=')) return undefined;
-  const l = evaluate(node.left, scope);
-  const r = evaluate(node.right, scope);
-  if (!('value' in l) || !('value' in r) || typeof l.value !== 'number' || typeof r.value !== 'number') return undefined;
-  const close = Math.abs(l.value - r.value) <= 1e-9 * Math.max(1, Math.abs(l.value), Math.abs(r.value));
-  return { value: node.op === '!=' ? !close : close };
-}
-
-/**
  * The tightest value a measure can take, in each direction that was asked for.
  *
  * Asynchronous only because the solver is. Everything else is a pure function
@@ -741,6 +778,7 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
   const withRequirements = opts.withRequirements === true;
   const prepared = prepareBounds(model, {
     measureId: opts.measureId,
+    ...(opts.measureSymbol !== undefined ? { measureSymbol: opts.measureSymbol } : {}),
     ...(opts.free !== undefined ? { free: opts.free } : {}),
     ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
     withRequirements,
@@ -869,6 +907,7 @@ function boundRow(
     timeoutMs: number;
     bound: ObjectiveBound | null;
     witness: WitnessValue[];
+    completion: WitnessValue[];
   },
   prepared: Prepared,
   census: string,
@@ -934,7 +973,7 @@ function boundRow(
   // witness: what the gate checks is the ENCODING, and an encoding this tool
   // cannot reproduce is one no answer of this run may stand on — the `oo` and
   // the supremum included, whose rows publish no point at all.
-  const confirmation = confirmBoundWitness(prepared.assertions, outcome.witness);
+  const confirmation = confirmBoundWitness(prepared.assertions, rereadPoint(outcome));
   if (!confirmation.ok) {
     return {
       ...empty,

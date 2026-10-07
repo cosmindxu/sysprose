@@ -16,12 +16,36 @@
  *    ({@link chooseDefinition}): the first that gives the name a value — one
  *    that would lead back to a feature already being derived never does;
  *  - how deep definitions may nest ({@link MAX_DERIVATION_DEPTH}).
+ *
+ * It is also where every scope reads NAMES ({@link DefiningEquations.scope}):
+ * the one walk the scalar, the quantity and the variable scope share, which
+ * ./relations cannot host (it reads the unit-aware evaluator, which reads this
+ * module) — and with it what a name's VALUE is in a context: what each name
+ * denotes ({@link DefiningEquations.denote}), the feature a redefinition that
+ * states nothing reads ({@link DefiningEquations.carrier}), whether a value
+ * written elsewhere is the same there ({@link DefiningEquations.sameIn}), the
+ * binding a redefinition contradicts ({@link contradictedBindingOf}), two
+ * values a context inherits under one name ({@link DefiningEquations.clash}),
+ * the contexts a requirement's subject is bound in ({@link
+ * DefiningEquations.satisfaction}), and the names a body declares itself
+ * ({@link shadowedNamesOf}).
  */
 
-import { type AttrValue, type ElementId, type ElementRecord, type Model } from '@core/index';
-import { effectiveFeatures } from './inheritance';
+import { type AttrValue, type ElementId, type ElementRecord, type Model, isDefinition, isUsage } from '@core/index';
+import {
+  effectiveFeatures,
+  effectiveNameOf,
+  effectiveQualifiedName,
+  generalizationsOf,
+  inheritedNameClashes,
+  maskedByName,
+  redefinedClosure,
+} from './inheritance';
 import { type ExprNode } from './expr';
+import { isKindOf } from './metaclasses';
+import { decimalRational, scaleRational, type Rational } from './smt/encode';
 import { NO_MARKERS, parseRelationBody, type MarkerDimensions } from './unit-literals';
+import { DIMENSIONLESS, dimEqual, divideDim, multiplyDim, resolveUnit, type Dimension } from './units';
 
 /** An asserted equation that may define a name: `name == <expr>`, or `<expr> == name`. */
 export interface DefiningEquation {
@@ -35,6 +59,26 @@ export interface DefiningEquation {
    * marker name for each ({@link ./unit-literals}). Empty for a body without.
    */
   literals: MarkerDimensions;
+}
+
+const SHADOWED = new WeakMap<DefiningEquation, readonly string[]>();
+
+/**
+ * The names an equation reads that its constraint declares itself while its
+ * owner's scope resolves them to another feature ({@link shadowedNamesOf}) —
+ * `[]` for nearly every one. Such an equation is a REFUSED definition: the
+ * feature it defines reads no value on any surface, and is no design freedom
+ * either. Asked where a definition is READ, never while the equations are
+ * gathered: the test reads the owner's scope, whose walk reads the equations.
+ */
+export function shadowedEquation(model: Model, eq: DefiningEquation): readonly string[] {
+  let hit = SHADOWED.get(eq);
+  if (!hit) {
+    const whole = equationOf(eq.constraint);
+    hit = whole ? shadowedNamesOf(model, eq.constraint, refsIn(whole.node, whole.literals)) : [];
+    SHADOWED.set(eq, hit);
+  }
+  return hit;
 }
 
 /**
@@ -90,22 +134,158 @@ function equationsByName(model: Model, ownerId: ElementId): Map<string, Defining
 }
 
 /**
+ * How a scope admits a name: `value` — the scopes that read VALUES (the
+ * scalar scope of ./evaluate-model, the quantity scope of ./units-eval) map a
+ * name to the feature whose value it reads, read where the context the name
+ * is read in needs it read ({@link DefiningEquations.valueRef}), and a name
+ * with no value to read to nothing; `all` — the scope that names VARIABLES
+ * (`idScopeFor` of ./relations: the gates, the solver's names, the
+ * verification lane's symbols) maps every named feature. Which feature a name
+ * DENOTES is the same in both: one walk ({@link DefiningEquations.scope}).
+ */
+export type ScopeAdmission = 'value' | 'all';
+
+const BEHAVIOUR = new Map<string, boolean>();
+
+/**
+ * Is `f` a feature whose own features are a BODY's — a behaviour's — and never
+ * a bare name of the scope that encloses it ({@link DefiningEquations.scope})?
+ * Every kind of action usage: a constraint's or a requirement's parameters and
+ * locals, a calculation's or a case's, and an action's, a state's, a
+ * transition's, a performed action's — `perform action deliver : Deliver { in
+ * payload = 5.0; }` answered the bare `payload` of the part around it, so
+ * `payload <= maxPayload` was refuted at a parameter's 5.
+ */
+function ownsBody(f: ElementRecord): boolean {
+  let hit = BEHAVIOUR.get(f.eClass);
+  if (hit === undefined) {
+    hit = isKindOf(f.eClass, 'ActionUsage');
+    BEHAVIOUR.set(f.eClass, hit);
+  }
+  return hit;
+}
+
+/**
+ * Is `f` a DIRECTED feature — a parameter, `in`, `out` or `inout`? Its value is
+ * what a call, a port's connection or a flow puts there, never a bare name of
+ * the scope around its owner: `port pwr { in attribute voltage = 12.0; }` made
+ * `voltage <= 5.0` of the part refuted at 12.
+ */
+function isDirected(f: ElementRecord): boolean {
+  const direction = f.attrs.direction;
+  return direction === 'in' || direction === 'out' || direction === 'inout';
+}
+
+/**
+ * What a name denotes in a scope ({@link DefiningEquations.denote}): the
+ * feature, the context it is read in — the scope's root for a direct name,
+ * else the usage on the chain whose effective feature it is — and whether it
+ * lies below a calculation with a parameter.
+ *
+ * `instance` is WHICH instance of the reader the name is read in: the path of
+ * usages from the scope's root, spelled as a qualified name (`R::q1::p` for
+ * `q1.p.load` read in R, where `p` is Q's part and the reader `Q::p` itself).
+ * Two usages of one type are two instances, whose features are each their own
+ * value ({@link DefiningEquations.symbolOf}). A requirement's subject that
+ * nothing binds, read where the requirement is the scope's root, is the
+ * GENERIC instance of its type — the requirement is about any one — and a
+ * subject something binds is the instance it is bound to, `satisfy R by
+ * q1.p` q1's p.
+ *
+ * `enclosing` is every instance the walk passed through on the way to
+ * `instance`, outermost first — the scope's root included — each with the
+ * context its features are read in: `R` (read in R) and `R::s` (read in `s`)
+ * for `s.q.load` read in R over `part s : Sys`. Each is an instance of its
+ * own types, whose asserts and bindings constrain what lies below it (Sys's
+ * `bind p.load = q.load` is a fact of `R::s::q`'s load as much as P's own
+ * asserts are).
+ */
+export interface Denotation {
+  feature: ElementRecord;
+  reader: ElementId;
+  inCall: boolean;
+  instance: string;
+  enclosing: readonly InstanceFrame[];
+}
+
+/** One instance a walk is in ({@link Denotation}): its path, and the context its features are read in. */
+export interface InstanceFrame {
+  instance: string;
+  reader: ElementId;
+}
+
+/**
+ * Where a name's VALUE is read ({@link DefiningEquations.valueRef}): the
+ * feature whose value it is, and — when that value reads something the
+ * reading context changes — the context it is read IN, rather than where it
+ * is written.
+ */
+export interface ValueRef {
+  target: ElementRecord;
+  at?: ElementId;
+}
+
+/**
+ * A name read through an instance of its own ({@link
+ * DefiningEquations.instanceReadings}): its symbol, the instance (`R::p`),
+ * the context the walk read it in, the feature whose value it reads, and
+ * where that value is read when not where it is written.
+ */
+export interface InstanceReading {
+  symbol: string;
+  instance: string;
+  reader: ElementId;
+  /** The instances that enclose `instance` on the walk ({@link Denotation}), re-rooted as `instance` is. */
+  enclosing: readonly InstanceFrame[];
+  /** The feature the variable scope maps the path to ({@link DefiningEquations.carrier}). */
+  feature: ElementRecord;
+  target: ElementRecord;
+  at?: ElementId;
+}
+
+/**
  * The defining equations one evaluation pass reads, gathered once per context
  * — with the valueless feature of each name an equation there may define — so
  * a long chain does not re-parse every constraint of its context at every
- * link. It reads the model as it is when the pass starts, and lives exactly as
- * long as the pass that made it.
+ * link; and the NAMES every scope reads, walked once per context
+ * ({@link scope}). It reads the model as it is at one revision: a pass takes
+ * it from {@link sharedDefinitions}, which hands out a fresh one whenever the
+ * model has moved on.
  */
 export class DefiningEquations {
+  /** The model revision this reading is of. */
+  readonly rev: number;
   private readonly equations = new Map<ElementId, Map<string, DefiningEquation[]>>();
   private readonly valueless = new Map<ElementId, Map<string, ElementRecord>>();
   private readonly named = new Map<ElementId, Map<string, ElementRecord>>();
-  private readonly redefined = new Map<ElementId, ReadonlySet<ElementId>>();
   private readonly same = new Map<string, boolean>();
   private readonly stated = new Map<ElementId, { value: AttrValue | undefined; names?: string[] }>();
+  private readonly effective = new Map<ElementId, ElementRecord[]>();
+  private readonly names = new Map<ElementId, string | undefined>();
+  private readonly aliases = new Map<ElementId, string[]>();
+  private readonly scopes = new Map<string, Map<string, ElementId>>();
+  private readonly readers = new Map<ElementId, Map<string, ElementId>>();
+  private readonly qualified = new Map<ElementId, string>();
+  private redefining?: ReadonlySet<ElementId>;
+  private readonly pinned = new Map<string, boolean>();
+  private readonly pinning = new Set<string>();
+  private readonly denoted = new Map<ElementId, Map<string, Denotation>>();
+  private readonly carrying = new Map<string, ElementRecord>();
+  private readonly carried = new Map<string, ElementRecord>();
+  private readonly contradicted = new Map<ElementId, BindingConflict | null>();
+  private readonly clashes = new Map<ElementId, Map<string, NameClash>>();
+  private reportedClashes?: ReadonlyArray<{ context: ElementRecord; name: string; clash: NameClash }>;
+  /** The {@link sameIn} questions being asked, and whether one was answered by a guess meanwhile. */
+  private readonly asking = new Set<string>();
+  private guessed = false;
   private bound?: ReadonlySet<ElementId>;
+  private specialised?: Map<ElementId, ElementRecord[]>;
+  private satisfying?: Map<ElementId, { requirement: ElementRecord; satisfier: ElementRecord }>;
+  private readonly clauseContexts = new Map<ElementId, ElementRecord[]>();
 
-  constructor(readonly model: Model) {}
+  constructor(readonly model: Model) {
+    this.rev = model.rev;
+  }
 
   /** {@link definingEquationsFor}. */
   of(contextId: ElementId, name: string): readonly DefiningEquation[] {
@@ -117,26 +297,161 @@ export class DefiningEquations {
     return byName.get(name) ?? [];
   }
 
+  /** {@link effectiveFeatures}, once per context. */
+  features(contextId: ElementId): readonly ElementRecord[] {
+    let hit = this.effective.get(contextId);
+    if (!hit) {
+      // A `satisfy R by x` is a context with R's features ({@link satisfaction}).
+      const satisfied = this.satisfaction(contextId);
+      hit = effectiveFeatures(this.model, satisfied ? satisfied.requirement.id : contextId);
+      this.effective.set(contextId, hit);
+    }
+    return hit;
+  }
+
+  /**
+   * What a `satisfy R by x` relationship states, read as a CONTEXT: a usage of
+   * R whose subject is x — KerML's SatisfyRequirementUsage. `undefined` for
+   * any other element, and for a satisfier that does not conform to the type
+   * of R's subject (it is no instance of what R constrains). R's clauses are
+   * read there with the subject standing for x ({@link subjectOf}), so `s.load
+   * <= 10.0` in `requirement def R { subject s : P; }` is read at `p`'s load,
+   * not P's: proved at P's values while p — `:>> load = 50.0` over a
+   * `default` — breaks it was a false proof.
+   */
+  satisfaction(contextId: ElementId): { requirement: ElementRecord; satisfier: ElementRecord } | undefined {
+    if (!this.satisfying) {
+      const out = new Map<ElementId, { requirement: ElementRecord; satisfier: ElementRecord }>();
+      for (const rel of this.model.ofKind('Satisfy')) {
+        if (rel.attrs.isLibrary === true) continue;
+        const requirement = rel.target?.[0] !== undefined ? this.model.get(rel.target[0]) : undefined;
+        const satisfier = rel.source?.[0] !== undefined ? this.model.get(rel.source[0]) : undefined;
+        if (!requirement || !satisfier) continue;
+        const subject = effectiveFeatures(this.model, requirement.id).find((f) => f.attrs.requirementRole === 'subject');
+        const type = subject ? this.model.typesOf(subject.id)[0] : undefined;
+        if (!type) continue;
+        const conforms =
+          satisfier.id === type.id || generalizationsOf(this.model, satisfier.id).some((g) => g.id === type.id);
+        if (conforms) out.set(rel.id, { requirement, satisfier });
+      }
+      this.satisfying = out;
+    }
+    return this.satisfying.get(contextId);
+  }
+
+  /**
+   * The feature a SUBJECT stands for, where something binds it: in a
+   * `satisfy R by x` context ({@link satisfaction}), x; and where the subject
+   * is bound by value — `requirement r : R { subject s = p; }`, `subject s : P
+   * = p` — the feature `p` names, resolved outward from where the subject is
+   * written. A chain through the subject reads through that feature, as SysML
+   * reads it: `s.m2` IS `p.m2`, never P's own. `undefined` for any other
+   * feature, and for a subject bound to nothing this walk resolves.
+   */
+  subjectOf(contextId: ElementId, f: ElementRecord): ElementRecord | undefined {
+    if (f.attrs.requirementRole !== 'subject') return undefined;
+    const satisfied = this.satisfaction(contextId);
+    if (satisfied) return satisfied.satisfier;
+    const v = f.attrs.value;
+    if (typeof v !== 'string') return undefined;
+    const path = v.trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(path)) return undefined;
+    const seen = new Set<ElementId>();
+    for (let cur = f.ownerId; cur != null && !seen.has(cur); cur = this.model.get(cur)?.ownerId ?? null) {
+      seen.add(cur);
+      const end = this.chain([cur], path)?.feature;
+      if (end && end !== f) return end;
+    }
+    return undefined;
+  }
+
+  /**
+   * The name every scope reads `f` by — {@link effectiveNameOf}: its declared
+   * name, else the name of what an unnamed redefinition (`attribute :>> load
+   * = 50.0`) redefines. The one name hook of the walk, of the shadowing test
+   * ({@link shadowedNamesOf}) and of every value path.
+   */
+  nameOf(f: ElementRecord): string | undefined {
+    if (f.declaredName !== undefined) return f.declaredName;
+    if (!this.names.has(f.id)) this.names.set(f.id, effectiveNameOf(this.model, f));
+    return this.names.get(f.id);
+  }
+
+  /** {@link effectiveQualifiedName}, once per element. */
+  qualifiedNameOf(id: ElementId): string {
+    let hit = this.qualified.get(id);
+    if (hit === undefined) {
+      hit = effectiveQualifiedName(this.model, id);
+      this.qualified.set(id, hit);
+    }
+    return hit;
+  }
+
+  /**
+   * The instance a scope rooted at `contextId` reads its own features in
+   * ({@link Denotation}): the context's effective qualified name — and for a
+   * `satisfy R by x` ({@link satisfaction}), the usage of R it is, named for
+   * its satisfier: `P::p1::«satisfy R»`. Every Satisfy is named `«Satisfy»`
+   * in its package, so two of them read R's own features — a constraint's
+   * local `attribute k` — as ONE symbol, and two satisfiers each pinned to
+   * its own k made the model's values "inconsistent".
+   */
+  instanceNameOf(contextId: ElementId): string {
+    const satisfied = this.satisfaction(contextId);
+    if (!satisfied) return this.qualifiedNameOf(contextId);
+    const requirement = this.nameOf(satisfied.requirement) ?? this.qualifiedNameOf(satisfied.requirement.id);
+    return `${this.qualifiedNameOf(satisfied.satisfier.id)}::«satisfy ${requirement}»`;
+  }
+
+  /**
+   * The other names a RENAMED redefinition answers to — `attribute heavy
+   * redefines load` is `load` too, as the feature it redefines is not
+   * inherited beside it — or `[]`.
+   */
+  aliasesOf(f: ElementRecord): readonly string[] {
+    let hit = this.aliases.get(f.id);
+    if (!hit) {
+      const own = this.nameOf(f);
+      hit = [];
+      for (const g of redefinedClosure(this.model, f)) {
+        const n = this.nameOf(g);
+        if (n !== undefined && n !== own && !hit.includes(n)) hit.push(n);
+      }
+      this.aliases.set(f.id, hit);
+    }
+    return hit;
+  }
+
   /** The first of `contextId`'s effective features named `name` that states no value. */
   feature(contextId: ElementId, name: string): ElementRecord | undefined {
     let byName = this.valueless.get(contextId);
     if (!byName) {
       byName = new Map();
-      for (const f of effectiveFeatures(this.model, contextId)) {
-        if (f.declaredName && !hasStatedValue(this.model, f) && !byName.has(f.declaredName)) byName.set(f.declaredName, f);
+      for (const f of this.features(contextId)) {
+        const n = this.nameOf(f);
+        if (n && !hasStatedValue(this.model, f) && !byName.has(n)) byName.set(n, f);
       }
       this.valueless.set(contextId, byName);
     }
     return byName.get(name);
   }
 
-  /** `contextId`'s effective features by declared name, first occurrence: the feature a bare name denotes there. */
+  /**
+   * `contextId`'s effective features by effective name, first occurrence: the
+   * feature a bare name denotes there — a renamed redefinition under the names
+   * it redefines too, where nothing else claims them.
+   */
   byName(contextId: ElementId): ReadonlyMap<string, ElementRecord> {
     let byName = this.named.get(contextId);
     if (!byName) {
       byName = new Map();
-      for (const f of effectiveFeatures(this.model, contextId)) {
-        if (f.declaredName && !byName.has(f.declaredName)) byName.set(f.declaredName, f);
+      const features = this.features(contextId);
+      for (const f of features) {
+        const n = this.nameOf(f);
+        if (n && !byName.has(n)) byName.set(n, f);
+      }
+      for (const f of features) {
+        for (const n of this.aliasesOf(f)) if (!byName.has(n)) byName.set(n, f);
       }
       this.named.set(contextId, byName);
     }
@@ -144,41 +459,553 @@ export class DefiningEquations {
   }
 
   /**
-   * Every feature a feature of `contextId` redefines, through any number of
-   * redefinitions. An unnamed redefinition (`attribute :>> load = 50.0`)
-   * claims no name, so a scope still answers `load` with the feature it
-   * redefines; this is where it is seen.
+   * The name → feature-id map of a scope rooted at `contextId` — THE walk
+   * every scope reads names through, the scalar, the quantity and the
+   * variable scope alike: every effective feature of the context under its
+   * name, and every feature below it under its dotted chain, the chain
+   * descending through each USAGE on the way — its own (re)definitions first,
+   * then what its types declare (`q.p.load` in `part q : Q { part :>> p {
+   * attribute :>> load = 50.0; } }` is q's p's load, never Q's or P's). A name
+   * maps to the feature whose value it reads ({@link carrier}): a redefinition
+   * that states nothing reads the one it redefines.
+   *
+   * THE BARE-NAME RULE. A body reads its context's own features by their bare
+   * names, and the walk offers a NESTED feature's bare name as a convenience
+   * (`mass` for the subject's `s.mass`). Three rules keep the convenience from
+   * ever answering a name with the wrong feature:
+   *  - every DIRECT feature of the context claims its bare name, valued or not
+   *    — a nested `q.x = 7.0` used to answer `x` where the context's own `x`
+   *    states no value, so `x >= 5.0` was refuted at a value of q's;
+   *  - a nested bare name is offered only when exactly ONE feature below the
+   *    context has it — of `a.y` and `b.y`, `y` named whichever came first;
+   *  - the features of a behaviour — a constraint, a requirement, a
+   *    calculation, an action, a state ({@link ownsBody}) — and a directed
+   *    feature, with everything below either, are never a bare name of the
+   *    scope around them — `in x = 1.0` of one constraint answered the bare
+   *    `x` of its siblings.
+   *
+   * `admission` decides only whether a name the walk resolves is MAPPED
+   * ({@link ScopeAdmission}); which feature it denotes, and which names are
+   * claimed, do not depend on it ({@link denote}). The map is shared: a caller
+   * copies it before changing it.
+   *
+   * A value scope maps a name to the feature whose value it reads
+   * ({@link valueRef}) — and where that value reads something the context
+   * changes, it is read IN the context ({@link readAt}): P's `attribute m2 =
+   * 10.0 - load` read as `p.m2`, in a `p` whose `:>> load = 50.0` overrides a
+   * `default`, is p's −40, where it was read as P's 9 (a false proof) and then
+   * as no value at all.
    */
-  redefinedIn(contextId: ElementId): ReadonlySet<ElementId> {
-    let out = this.redefined.get(contextId);
-    if (!out) {
-      const set = new Set<ElementId>();
-      const queue = effectiveFeatures(this.model, contextId).map((f) => f.id);
-      while (queue.length > 0) {
-        const id = queue.shift()!;
-        for (const r of this.model.relationshipsFrom(id)) {
-          if (r.eClass !== 'Redefinition') continue;
-          for (const t of r.target ?? []) {
-            if (set.has(t)) continue;
-            set.add(t);
-            queue.push(t);
+  scope(contextId: ElementId, admission: ScopeAdmission): ReadonlyMap<string, ElementId> {
+    const key = `${admission} ${contextId}`;
+    let hit = this.scopes.get(key);
+    if (!hit) {
+      hit = new Map();
+      const readers = new Map<string, ElementId>();
+      for (const [name, d] of this.denote(contextId)) {
+        if (admission === 'all') {
+          hit.set(name, this.carrier(d.reader, d.feature).id);
+          continue;
+        }
+        if (d.inCall || this.clash(d.reader, d.feature)) continue;
+        const ref = this.valueRef(d);
+        if (!ref) continue;
+        hit.set(name, ref.target.id);
+        if (ref.at !== undefined) readers.set(name, ref.at);
+      }
+      this.scopes.set(key, hit);
+      if (admission === 'value') this.readers.set(contextId, readers);
+    }
+    return hit;
+  }
+
+  /**
+   * The context a name of the value scope rooted at `contextId` is read IN,
+   * where that is not where the value it reads is written ({@link valueRef}):
+   * the usage on the chain, or the context, that changes what the value
+   * reads. `undefined` for a name read where its value is written.
+   */
+  readAt(contextId: ElementId, name: string): ElementId | undefined {
+    if (!this.readers.has(contextId)) this.scope(contextId, 'value');
+    return this.readers.get(contextId)?.get(name);
+  }
+
+  /**
+   * Where the value a name that denotes `d` reads is read: the feature whose
+   * value it is ({@link carrier}: a redefinition that states nothing reads the
+   * value it redefines), and the context to read it in when that is not where
+   * it is written. A value written in P and read in a context that changes
+   * nothing it reads is P's own ({@link sameIn}), read once for every such
+   * context; one read in a context that changes an input is that context's
+   * — the expression evaluated over the context's names (KerML: a feature's
+   * value is per instance). `undefined` for a feature with no value to read:
+   * none stated, none it redefines, or one an asserted equation defines.
+   */
+  valueRef(d: Denotation): ValueRef | undefined {
+    const target = this.carrier(d.reader, d.feature);
+    if (target !== d.feature) return { target };
+    if (this.statedValue(target) !== undefined) {
+      return target.ownerId === d.reader || this.sameIn(d.reader, target) ? { target } : { target, at: d.reader };
+    }
+    // An asserted equation that defines it answers it, not a value it redefines.
+    if (this.statesOrDefines(d.reader, target)) return undefined;
+    for (const g of redefinedClosure(this.model, target)) {
+      // Nor a default a binding of it overrides: the binding gives its value.
+      if (this.statedValue(g) !== undefined) {
+        return boundOverDefault(this.model, target, g) ? undefined : { target: g, at: d.reader };
+      }
+      const n = this.nameOf(g);
+      if (n !== undefined && g.ownerId != null && this.of(g.ownerId, n).length > 0) return undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * What every name of the scope rooted at `contextId` DENOTES — the walk
+   * {@link scope} admits from, before any value is asked of it: the feature,
+   * and the context it is read in. Two readings of a value are compared name
+   * by name through it ({@link sameIn}): `e.load` and a nested bare `load`
+   * denote `E::load` read through P's `e` in P, and p's own `load` in `part p
+   * : P { part :>> e { attribute :>> load = 50.0; } }`.
+   */
+  denote(contextId: ElementId): ReadonlyMap<string, Denotation> {
+    let hit = this.denoted.get(contextId);
+    if (!hit) {
+      hit = this.walk(contextId);
+      this.denoted.set(contextId, hit);
+    }
+    return hit;
+  }
+
+  private walk(contextId: ElementId): Map<string, Denotation> {
+    const ids = new Map<string, Denotation>();
+    const direct = new Set<string>();
+    // Each nested bare name: how many features below the context have it, and
+    // what the first of them denotes.
+    const nested = new Map<string, { denoted: Denotation; count: number }>();
+    // TWO guards, because they answer different questions. `onPath` is the
+    // CYCLE guard and must be keyed on the owner ALONE: a feature whose type is
+    // one of its own owners (`item def Person { timeslice asPresident : Person;
+    // }`, the L4-self-typed-feature fixture) generates an unbounded name tower
+    // `asPresident.asPresident…`, and a key that carries the prefix never
+    // repeats, so it cannot see the cycle — it recursed until the stack died.
+    // `visited` is only a WORK BOUND for a diamond reached twice at the SAME
+    // prefix, so it keeps the prefix: two sibling features of one type (`part
+    // a : T; part b : T;`) are different scopes and both must be walked.
+    const visited = new Set<string>();
+    const onPath = new Set<ElementId>();
+    // `inCall`: below a calculation with a parameter, whose features are the
+    // values of a CALL — its `in y = 100.0` a default nothing invokes, its
+    // `return r = y` the result of one — so a value scope reads none of them.
+    // `instance`: the instance of `ownerId` the walk is in, and `enclosing`
+    // the ones it passed through to get there ({@link Denotation}).
+    const visit = (
+      ownerId: ElementId,
+      prefix: string,
+      inBody: boolean,
+      inCall: boolean,
+      instance: string,
+      enclosing: readonly InstanceFrame[],
+    ): void => {
+      if (onPath.has(ownerId)) return;
+      const guardKey = `${prefix} ${ownerId}`;
+      if (visited.has(guardKey)) return;
+      visited.add(guardKey);
+      onPath.add(ownerId);
+      for (const feat of this.features(ownerId)) {
+        const name = this.nameOf(feat);
+        if (!name) continue;
+        const denoted: Denotation = { feature: feat, reader: ownerId, inCall, instance, enclosing };
+        // A directed feature is its owner's parameter: never a nested bare name.
+        const own = inBody || isDirected(feat);
+        for (const n of [name, ...this.aliasesOf(feat)]) {
+          const full = prefix ? `${prefix}.${n}` : n;
+          if (!ids.has(full)) ids.set(full, denoted);
+          if (prefix === '') direct.add(n);
+          else if (!own) {
+            const seen = nested.get(n);
+            if (seen) seen.count++;
+            else nested.set(n, { denoted, count: 1 });
           }
         }
+        // A subject something binds is read through what it stands for, in
+        // the instance it stands for.
+        const into = this.subjectOf(ownerId, feat) ?? feat;
+        const bound = into !== feat ? this.boundInstance(ownerId, feat, into) : undefined;
+        visit(
+          into.id,
+          prefix ? `${prefix}.${name}` : name,
+          own || ownsBody(feat),
+          inCall || isCall(this.model, feat),
+          bound?.instance ?? this.instanceBelow(instance, feat, name, prefix === ''),
+          bound?.enclosing ?? [...enclosing, { instance, reader: ownerId }],
+        );
       }
-      out = set;
-      this.redefined.set(contextId, out);
+      onPath.delete(ownerId);
+    };
+    visit(contextId, '', false, false, this.instanceNameOf(contextId), []);
+    for (const [n, seen] of nested) {
+      if (direct.has(n) || ids.has(n) || seen.count !== 1) continue;
+      ids.set(n, seen.denoted);
+    }
+    return ids;
+  }
+
+  /**
+   * The instance the walk is in below `feat`, read in `instance` — the one its
+   * features are read in ({@link Denotation}): `instance::name`; the instance
+   * a subject is bound to (`into`); and for a subject nothing binds, read
+   * where its requirement is the scope's root (`atRoot`), the generic instance
+   * of its type — the requirement is about any one.
+   *
+   * Nowhere else is a subject generic. Reached through a usage on the chain —
+   * `r1.s` beside `r2.s` for two usages of one requirement, a nested
+   * requirement's `r2.t`, `sys.ra.s` — it is that usage's subject: one
+   * symbol for every such reading made `r2.s.load >= 5.0` PROVED from
+   * `assert r1.s.load >= 5.0`. And a subject that says something of its own
+   * below it — a value or a redefinition (`subject s : P { attribute :>> load
+   * = 50.0; }`), an assert, a constraint or a binding — is an instance of its
+   * own: generic, its own assert was filed as a fact of EVERY P, and another
+   * requirement's `t.load <= 3.0` was proved from it.
+   */
+  private instanceBelow(instance: string, feat: ElementRecord, name: string, atRoot: boolean): string {
+    if (atRoot && feat.attrs.requirementRole === 'subject') {
+      const type = this.model.typesOf(feat.id)[0];
+      if (type && !this.saysOwn(feat)) return this.qualifiedNameOf(type.id);
+    }
+    return `${instance}::${name}`;
+  }
+
+  /**
+   * The instance a subject bound to `into` stands for, in `contextId` — and
+   * the instances that enclose it: the satisfier of a `satisfy R by x`
+   * ({@link satisfaction}) read where the relationship is written, and the
+   * feature a subject's value names (`subject s = q1.p`) read where it
+   * resolves. `satisfy R by q1.p` is q1's p — Q's `assert constraint { p.x
+   * >= 1.0 }` holds of it — and not the p of every Q, nor P's own. A name
+   * that does not resolve so is the bound feature's own instance.
+   *
+   * The chain is walked link by link ({@link chainInstance}), never through
+   * the {@link denote} walk of a scope it starts in: that walk may be the one
+   * running — the requirement's own, or its package's, which visits the
+   * requirement — and answered then, the subject was the bound feature's own
+   * instance, cached for good. `subject s = q1.p` in r1 and `subject s =
+   * q2.p` in r2 were then ONE symbol, Q's p's x: `s.x >= 5.0` beside `s.x <=
+   * 3.0` "inconsistent", and the x of every Q bounded to [5, 7] "exactly".
+   */
+  private boundInstance(
+    contextId: ElementId,
+    f: ElementRecord,
+    into: ElementRecord,
+  ): { instance: string; enclosing: readonly InstanceFrame[] } {
+    const fallback = { instance: this.qualifiedNameOf(into.id), enclosing: [] };
+    const satisfied = this.satisfaction(contextId);
+    const written = satisfied ? this.model.get(contextId) : undefined;
+    const ref = satisfied ? (written?.attrs.sourceChain ?? written?.attrs.sourceRef) : f.attrs.value;
+    if (typeof ref !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(ref.trim())) {
+      return fallback;
+    }
+    const path = ref.trim();
+    const seen = new Set<ElementId>();
+    for (
+      let cur = satisfied ? (written?.ownerId ?? null) : f.ownerId;
+      cur != null && !seen.has(cur);
+      cur = satisfied ? null : (this.model.get(cur)?.ownerId ?? null)
+    ) {
+      seen.add(cur);
+      const end = this.chainInstance(cur, path);
+      if (!end) continue;
+      return end.feature.id === into.id ? { instance: end.instance, enclosing: end.enclosing } : fallback;
+    }
+    return fallback;
+  }
+
+  /**
+   * The instance a dotted `path`, read in `contextId`, ends at — as the
+   * {@link denote} walk names it — with the instances that enclose it,
+   * outermost first, and the feature it is: each link among the effective
+   * features of the one before ({@link byName}), and each instance below a
+   * link named as the walk names it ({@link instanceBelow}). `undefined` when
+   * the path does not resolve, or passes through a subject something binds
+   * (the walk re-roots there).
+   */
+  private chainInstance(
+    contextId: ElementId,
+    path: string,
+  ): { feature: ElementRecord; instance: string; enclosing: InstanceFrame[] } | undefined {
+    const segments = path.split('.');
+    let owner = contextId;
+    let instance = this.instanceNameOf(contextId);
+    const enclosing: InstanceFrame[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const feature = this.byName(owner).get(segments[i]!);
+      const name = feature ? this.nameOf(feature) : undefined;
+      if (!feature || name === undefined) return undefined;
+      enclosing.push({ instance, reader: owner });
+      if (i === segments.length - 1) return { feature, instance: `${instance}::${name}`, enclosing };
+      if (this.subjectOf(owner, feature)) return undefined;
+      instance = this.instanceBelow(instance, feature, name, i === 0);
+      owner = feature.id;
+    }
+    return undefined;
+  }
+
+  /**
+   * What a requirement context binds its subject to: a `satisfy R by x`
+   * ({@link satisfaction}), or a usage of R whose subject is bound by value
+   * (`requirement r1 : R { subject s = q1; }`) — R, the feature the subject
+   * stands for, and the instance it reads it as ({@link boundInstance}), with
+   * the instances enclosing it. `undefined` for any other element.
+   */
+  subjectInstance(contextId: ElementId):
+    | { requirement: ElementRecord; bound: ElementRecord; instance: string; enclosing: readonly InstanceFrame[] }
+    | undefined {
+    const satisfied = this.satisfaction(contextId);
+    const requirement = satisfied ? satisfied.requirement : this.model.typesOf(contextId)[0];
+    if (!requirement) return undefined;
+    const subject = this.features(contextId).find((f) => f.attrs.requirementRole === 'subject');
+    const bound = subject ? this.subjectOf(contextId, subject) : undefined;
+    if (!subject || !bound) return undefined;
+    return { requirement, bound, ...this.boundInstance(contextId, subject, bound) };
+  }
+
+  /** The type of the subject of the requirement `requirementId`, if it has one. */
+  subjectTypeOf(requirementId: ElementId): ElementRecord | undefined {
+    const subject = effectiveFeatures(this.model, requirementId).find((f) => f.attrs.requirementRole === 'subject');
+    return subject ? this.model.typesOf(subject.id)[0] : undefined;
+  }
+
+  /**
+   * Does a usage say something of its own below it — a feature with a value
+   * or a redefinition, a constraint (asserted or not), a calculation, or a
+   * binding ({@link instanceBelow})?
+   */
+  saysOwn(f: ElementRecord): boolean {
+    return this.model.children(f.id).some(
+      (c) =>
+        c.eClass === 'ConstraintUsage' ||
+        c.eClass === 'CalculationUsage' ||
+        isBindingConnector(c) ||
+        (isUsage(c.eClass) && (hasStatedValue(this.model, c) || redefinedClosure(this.model, c).length > 0)),
+    );
+  }
+
+  /**
+   * The value a feature that states NONE reads as a redefinition — an implicit
+   * connector-end copy included — where its own context changes what that
+   * value reads, so it is read there ({@link valueRef} with `at`): p's copy of
+   * P's `m2 = 10.0 - load` (`bind w2 = p.m2`) in a `p` whose `:>> load =
+   * 50.0` overrides a `default` is −40. `undefined` for every other feature —
+   * where the context changes nothing, the copy reads the value it redefines
+   * by that feature's own name ({@link carrier}).
+   */
+  redefinedValueOf(f: ElementRecord): (ValueRef & { at: ElementId }) | undefined {
+    if (f.ownerId == null || this.statedValue(f) !== undefined) return undefined;
+    // Most features redefine nothing, or nothing that states a value: answered
+    // before any walk.
+    this.redefining ??= new Set(this.model.ofKind('Redefinition').flatMap((r) => r.source ?? []));
+    if (!this.redefining.has(f.id)) return undefined;
+    if (!redefinedClosure(this.model, f).some((g) => this.statedValue(g) !== undefined)) return undefined;
+    const name = this.nameOf(f);
+    if (name === undefined) return undefined;
+    const d = this.denote(f.ownerId).get(name);
+    if (!d || d.feature !== f) return undefined;
+    const ref = this.valueRef(d);
+    return ref && ref.at !== undefined && ref.target !== f ? { target: ref.target, at: ref.at } : undefined;
+  }
+
+  /**
+   * The symbol the verification lane reads a name that denotes `d` by — one
+   * per INSTANCE of the feature whose value it reads: `R::g1::g` and
+   * `R::g2::g` for `g1.g` and `g2.g` over `part def G { attribute g; }`, where
+   * one symbol `R::G::g` made `g1.g == g2.g` PROVED of two values nothing
+   * relates; `R::p::m2` for `p.m2`, whose value is p's own. The feature's own
+   * qualified name where the instance is its generic one (the name read where
+   * it is declared, or through a subject nothing binds), and where its value
+   * is the same in every instance — a literal, or a value over literals that
+   * the instance changes nothing of ({@link pinnedIn}): an instance symbol
+   * there would be one more name for one number.
+   */
+  symbolOf(d: Denotation): string {
+    const target = this.carrier(d.reader, d.feature);
+    const own = this.qualifiedNameOf(target.id);
+    const name = this.nameOf(d.feature);
+    if (name === undefined) return own;
+    const symbol = `${d.instance}::${name}`;
+    // The generic reading needs no more asking; another one is its own unless pinned.
+    return symbol === own || this.pinnedIn(d.reader, target) ? own : symbol;
+  }
+
+  /**
+   * The symbol of each of `paths` read by `el` — its owner's scope first,
+   * then its own ({@link symbolOf}) — for the paths read through an instance
+   * of their own, with the instance it is read in, the reader, and the feature
+   * whose value it is ({@link valueRef}): what an engine that gives the
+   * instance its own symbol must read there too — that value, and every
+   * relation the reader's types hold of each of their instances. `instance`
+   * re-roots the reading where `el` is a relation of its owner read for one of
+   * the owner's INSTANCES (`load` in P's assert read for `R::p` is
+   * `R::p::load`). A path whose symbol is its feature's own qualified name is
+   * left out.
+   */
+  instanceReadings(el: ElementRecord, paths: readonly string[], instance?: string): Map<string, InstanceReading> {
+    const out = new Map<string, InstanceReading>();
+    const roots = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
+    const rebase = (symbol: string, root: ElementId): string => {
+      if (instance === undefined) return symbol;
+      const own = root === el.ownerId;
+      const from = this.instanceNameOf(own ? root : el.id);
+      const to = own ? instance : `${instance}::${effectiveNameOf(this.model, el) ?? el.declaredShortName ?? `«${el.eClass}»`}`;
+      if (symbol === from) return to;
+      return symbol.startsWith(`${from}::`) ? `${to}${symbol.slice(from.length)}` : symbol;
+    };
+    for (const path of paths) {
+      for (const root of roots) {
+        const d = this.denote(root).get(path);
+        if (!d) continue;
+        const target = this.carrier(d.reader, d.feature);
+        // A value the same in every instance keeps its own symbol, however read.
+        const own = this.symbolOf(d);
+        const symbol =
+          instance === undefined || (own === this.qualifiedNameOf(target.id) && this.pinnedIn(d.reader, target))
+            ? own
+            : rebase(own, root);
+        if (symbol !== this.qualifiedNameOf(target.id)) {
+          const ref = this.valueRef(d);
+          out.set(path, {
+            symbol,
+            instance: rebase(d.instance, root),
+            reader: d.reader,
+            enclosing: d.enclosing.map((e) => ({ instance: rebase(e.instance, root), reader: e.reader })),
+            feature: target,
+            target: ref?.target ?? target,
+            ...(ref?.at !== undefined ? { at: ref.at } : {}),
+          });
+        }
+        break;
+      }
     }
     return out;
   }
 
   /**
+   * Is `f`'s value, read in `contextId`, the same in EVERY instance — a
+   * literal; a value over names that are all such values where it is written,
+   * which `contextId` changes nothing of ({@link sameIn}); a redefinition that
+   * states nothing of a value that is ({@link carrier}); a feature an asserted
+   * equation defines over such values? A feature with no value, a value a
+   * binding holds, and one whose inputs the context changes are not: each
+   * instance has its own ({@link symbolOf}).
+   */
+  pinnedIn(contextId: ElementId, f: ElementRecord): boolean {
+    const key = `${contextId} ${f.id}`;
+    const hit = this.pinned.get(key);
+    if (hit !== undefined) return hit;
+    if (this.pinning.has(key)) return false;
+    this.pinning.add(key);
+    let answer: boolean;
+    try {
+      answer = this.pinnedUncached(contextId, f);
+    } finally {
+      this.pinning.delete(key);
+    }
+    this.pinned.set(key, answer);
+    return answer;
+  }
+
+  private pinnedUncached(contextId: ElementId, f: ElementRecord): boolean {
+    // A literal is the one value in every instance — one a binding it
+    // contradicts contradicts in every instance too.
+    const v = this.statedValue(f);
+    if (typeof v === 'number' || typeof v === 'boolean') return true;
+    if (typeof v === 'string' && isQuoted(v.trim())) return true;
+    if (this.contradiction(f) || this.clash(contextId, f)) return false;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (f.ownerId == null || (f.ownerId !== contextId && !this.sameIn(contextId, f))) return false;
+      return this.namesPinnedIn(f.ownerId, namesOfValue(s));
+    }
+    const g = this.carrier(contextId, f);
+    if (g !== f) return this.pinnedIn(contextId, g);
+    const name = this.nameOf(f);
+    if (name === undefined || f.ownerId == null) return false;
+    const site = this.of(contextId, name).length > 0 ? contextId : this.of(f.ownerId, name).length > 0 ? f.ownerId : undefined;
+    if (site === undefined || (site !== contextId && !this.sameIn(contextId, f, site))) return false;
+    return this.of(site, name).every((eq) => this.namesPinnedIn(site, refsIn(eq.definition, eq.literals)));
+  }
+
+  /** Is every one of `names`, read in `contextId`, a value the same in every instance ({@link pinnedIn})? */
+  private namesPinnedIn(contextId: ElementId, names: readonly string[]): boolean {
+    const here = this.denote(contextId);
+    for (const n of names) {
+      const d = here.get(n);
+      if (!d || !this.pinnedIn(d.reader, this.carrier(d.reader, d.feature))) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Where the asserted equations that define the valueless feature a bare
+   * `name` denotes in `contextId` are written, and the context they are read
+   * IN, when none in `contextId` may: the feature's owner — or the nearest
+   * feature it redefines with one — read there when `contextId` changes
+   * nothing they read ({@link inheritedSite}), and in `contextId` where it
+   * does (the definition is a fact of every instance, over that instance's
+   * names). `undefined` when none defines it.
+   */
+  definitionReadIn(contextId: ElementId, name: string): { site: ElementId; at: ElementId } | undefined {
+    if (this.of(contextId, name).length > 0) return undefined;
+    const feature = this.feature(contextId, name);
+    if (!feature) return undefined;
+    const site = this.definitionOwner(feature);
+    if (site === undefined || site === contextId) return undefined;
+    return { site, at: this.sameIn(contextId, feature, site) ? site : contextId };
+  }
+
+  /** Where `f`'s asserted definitions are written: its owner, else the owner of the nearest feature it redefines that has one. */
+  private definitionOwner(f: ElementRecord): ElementId | undefined {
+    for (const g of [f, ...redefinedClosure(this.model, f)]) {
+      const n = this.nameOf(g);
+      if (n === undefined || g.ownerId == null) continue;
+      if (this.of(g.ownerId, n).length > 0) return g.ownerId;
+      if (hasStatedValue(this.model, g)) return undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * {@link chainSite}, read in the instance the chain names: the valueless
+   * feature a dotted chain ends at, where its asserted definition is written,
+   * and the context it is read IN — where it is written when the usage the
+   * chain reads it through changes nothing it reads, else that usage. `p.e`,
+   * over P's `e == load * 2.0` and a `p` whose `:>> load = 50.0` overrides a
+   * `default`, is 100. `undefined` when the chain ends at no such feature.
+   */
+  chainDefinition(
+    contexts: readonly ElementId[],
+    path: string,
+  ): { feature: ElementRecord; site: ElementId; at: ElementId } | undefined {
+    if (!path.includes('.')) return undefined;
+    const end = this.chain(contexts, path);
+    if (!end || !end.clean || !end.usage) return undefined;
+    const { feature } = end;
+    const name = this.nameOf(feature);
+    if (!name || hasStatedValue(this.model, feature)) return undefined;
+    const site =
+      end.via !== undefined && this.of(end.via, name).length > 0 ? end.via : this.definitionOwner(feature);
+    if (site === undefined) return undefined;
+    const same = site === end.usage.id || this.sameIn(end.usage.id, feature, site);
+    return { feature, site, at: same ? site : end.usage.id };
+  }
+
+  /**
    * The feature a dotted chain ends at, walked as every scope walks it — its
    * head among the first of `contexts` that has it, each later link among the
-   * features of the declared type of the one before — with the usage whose
-   * type held the last link and that type. `clean` is false when a usage on
-   * the way has a feature that stands for the next link (`q : Q { :>> p {…} }`
-   * read as `q.p…`): the walk reads the type's link, which is then not the
-   * one the usage has. `undefined` when the chain does not resolve.
+   * effective features of the USAGE before it (its own (re)definitions first,
+   * then what its types declare) — with the usage the last link was read
+   * through, as `via`. `clean` is kept for the callers: a chain through the
+   * usage always reads the feature the usage has. `undefined` when the chain
+   * does not resolve.
    */
   chain(
     contexts: readonly ElementId[],
@@ -186,40 +1013,55 @@ export class DefiningEquations {
   ): { feature: ElementRecord; usage?: ElementRecord; via?: ElementId; clean: boolean } | undefined {
     const [head, ...rest] = path.split('.');
     let feature: ElementRecord | undefined;
+    let owner: ElementId | undefined;
     for (const c of contexts) {
       feature = this.byName(c).get(head!);
+      owner = c;
       if (feature) break;
     }
     let usage: ElementRecord | undefined;
     let via: ElementId | undefined;
-    let clean = true;
     for (const segment of rest) {
-      if (!feature) return undefined;
-      let next: ElementRecord | undefined;
-      for (const type of this.model.typesOf(feature.id)) {
-        next = this.byName(type.id).get(segment);
-        if (next) {
-          via = type.id;
-          break;
-        }
-      }
+      if (!feature || owner === undefined) return undefined;
+      // A subject something binds is read through what it stands for, as the walk reads it.
+      const into = this.subjectOf(owner, feature) ?? feature;
+      const next = this.byName(into.id).get(segment);
       if (!next) return undefined;
-      if (!this.linkReads(feature, next)) clean = false;
-      usage = feature;
+      via = into.id;
+      usage = into;
+      owner = into.id;
       feature = next;
     }
-    return feature ? { feature, ...(usage ? { usage } : {}), ...(via !== undefined ? { via } : {}), clean } : undefined;
+    return feature ? { feature, ...(usage ? { usage } : {}), ...(via !== undefined ? { via } : {}), clean: true } : undefined;
   }
 
   /**
-   * Does `usage` read, under `feature`'s name, the feature its type declares —
-   * no feature of its own standing for it, by name or by an unnamed `:>>`? A
-   * chain through it then reads what the type says; where not, the type's
-   * feature is not the one the usage has.
+   * Does a name that denotes `mine` in `contextId` read the value `g` gives —
+   * `g` itself, the feature whose value `mine` reads ({@link carrier}), or,
+   * where neither states nor defines anything, the valueless feature `mine`
+   * redefines (an implicit connector-end copy of a port, `attribute :>> x;`
+   * of an `x` with no value: both are the one unknown) — or the same literal,
+   * restated?
+   *
+   * Not a redefinition that states nothing of its own but CHANGES what lies
+   * below it — `part :>> e { attribute :>> load = 50.0; }`, `part :>> e : E2`:
+   * a chain through it reads another feature than one through `g`.
    */
-  linkReads(usage: ElementRecord, feature: ElementRecord): boolean {
-    const name = feature.declaredName;
-    return name !== undefined && this.byName(usage.id).get(name) === feature && !this.redefinedIn(usage.id).has(feature.id);
+  readsAs(contextId: ElementId, mine: ElementRecord, g: ElementRecord): boolean {
+    if (mine === g || this.carrier(contextId, mine) === g) return true;
+    // A redefinition that restates the literal it redefines reads that value.
+    if (isLiteralRestatement(mine, g)) return true;
+    if (this.statesOrDefines(contextId, mine) || this.statesOrDefines(contextId, g)) return false;
+    if (changesBelow(this.model, mine)) return false;
+    return redefinedClosure(this.model, mine).some((h) => h.id === g.id);
+  }
+
+  /** Does `f` state a value, or have an asserted definition where it is written or in `contextId`? */
+  private statesOrDefines(contextId: ElementId, f: ElementRecord): boolean {
+    if (hasStatedValue(this.model, f)) return true;
+    const name = this.nameOf(f);
+    if (name === undefined) return false;
+    return (f.ownerId != null && this.of(f.ownerId, name).length > 0) || this.of(contextId, name).length > 0;
   }
 
   /**
@@ -232,41 +1074,271 @@ export class DefiningEquations {
    * `load`. Read in a context that inherits it (`part p : P`, `part def S :>
    * P`), or through a chain (`p.margin`), that is the value the context has
    * exactly when the context changes nothing it reads — no feature of the
-   * context redefines one, by name or by an unnamed `:>>`, transitively
-   * through the values and definitions those names have. Where one does
-   * (`:>> load = 50.0` makes margin −40, read as 5), the value is not read
-   * there: no surface reads it, as no surface reads a value nothing states.
-   * A name the body reads that is no feature of where it is written, and a
-   * valueless input a binding holds, are not followed: answered as changed.
+   * context redefines one with a value of its own, by name or by an unnamed
+   * `:>>`, transitively through the values and definitions those names have.
+   * Each name is compared WHOLE, as the walk resolves it in both places
+   * ({@link denote}) — `e.load` and a nested bare `load` reach p's own `load`
+   * through `part :>> e { … }` — and one feature read through two usages is
+   * the same only where its value is the same in both (`p.m2` through Q's `p`
+   * and through q's `:>> p`).
+   * Where one does (`:>> load = 50.0` over a `default`, making margin −40),
+   * the value is the context's own: read IN the context, over its names
+   * ({@link valueRef}), and by a symbol of its own ({@link symbolOf}) — it
+   * was read as P's (a false proof), then as no value at all (a refusal).
+   * Where none does, every such context reads the one value written, once.
+   * A redefinition that states nothing reads what it
+   * redefines ({@link readsAs}) and changes nothing. A name the body reads
+   * that is no feature of where it is written, and a valueless input a
+   * binding holds, are not followed: answered as changed — but a name that
+   * resolves neither where the value is written nor in the context reads the
+   * same nothing in both, and leaves the value its own fault. `valueOnly` asks of
+   * the value alone, for a feature the context's name does not denote itself
+   * (the one a redefinition that states nothing reads: {@link carrier}).
    */
-  sameIn(contextId: ElementId, feature: ElementRecord, site?: ElementId): boolean {
-    const key = `${contextId} ${feature.id} ${site ?? ''}`;
+  sameIn(contextId: ElementId, feature: ElementRecord, site?: ElementId, valueOnly = false): boolean {
+    const key = `${contextId} ${feature.id} ${site ?? ''} ${valueOnly}`;
     const hit = this.same.get(key);
     if (hit !== undefined) return hit;
-    const here = this.byName(contextId);
-    const redefined = this.redefinedIn(contextId);
-    const seen = new Set<ElementId>();
-    const stable = (f: ElementRecord, sites: readonly ElementId[]): boolean => {
-      if (seen.has(f.id)) return true;
-      seen.add(f.id);
-      if (redefined.has(f.id)) return false;
-      const reads = this.readsOf(f, sites);
-      if (reads === undefined) return false;
-      for (const { owner, names } of reads) {
-        const there = this.byName(owner);
+    // A question that comes back to itself while it is asked (through a
+    // redefinition that reads what it redefines: {@link carrier}) answers
+    // "same" — it adds no change of its own — and nothing answered on the
+    // strength of that guess is kept but the outermost answer.
+    if (this.asking.has(key)) {
+      this.guessed = true;
+      return true;
+    }
+    const outermost = this.asking.size === 0;
+    this.asking.add(key);
+    try {
+      const answer = this.sameUncached(contextId, feature, site, valueOnly);
+      if (outermost || !this.guessed) this.same.set(key, answer);
+      return answer;
+    } finally {
+      this.asking.delete(key);
+      if (outermost) this.guessed = false;
+    }
+  }
+
+  private sameUncached(contextId: ElementId, feature: ElementRecord, site: ElementId | undefined, valueOnly: boolean): boolean {
+    const own = this.nameOf(feature);
+    if (!valueOnly && own !== undefined && this.denote(contextId).get(own)?.feature !== feature) return false;
+    const reads = this.readsOf(feature, site !== undefined ? [site] : []);
+    if (reads === undefined) return false;
+    const here = this.denote(contextId);
+    for (const { owner, names } of reads) {
+      const there = this.denote(owner);
+      for (const name of names) {
+        // Each name WHOLE — `e.load`, a nested bare `load` — as the walk
+        // resolves it in both places: the head alone named P's `e` and p's `:>>
+        // e` "the same", and missed the `load = 50.0` p's `e` holds.
+        const g = there.get(name);
+        const mine = here.get(name);
+        // A name nothing resolves where the value is written, nor here, reads
+        // nothing either place: unchanged, and the value keeps its own fault.
+        if (g === undefined && mine === undefined) continue;
+        if (g === undefined || mine === undefined || !this.sameReading(mine, g, name)) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Does a name that denotes `mine` here read the value it reads where `g` is
+   * what it denotes? The same feature read in the same context, or in another
+   * that reads its value the same ({@link sameIn}: `p.m2` through Q's `p` and
+   * through q's `:>> p`, whose `load` differs, is not); else `mine` reading
+   * `g`'s value ({@link readsAs}) where that value is the same.
+   */
+  private sameReading(mine: Denotation, g: Denotation, name: string): boolean {
+    const leaf = this.nameOf(g.feature) ?? name.slice(name.lastIndexOf('.') + 1);
+    const site = g.reader !== g.feature.ownerId && this.of(g.reader, leaf).length > 0 ? g.reader : undefined;
+    if (mine.feature === g.feature) {
+      return mine.reader === g.reader || this.sameIn(mine.reader, g.feature, site);
+    }
+    return this.readsAs(mine.reader, mine.feature, g.feature) && this.sameIn(mine.reader, g.feature, site, true);
+  }
+
+  /**
+   * The features `feature`'s value reads, transitively — through its stated
+   * value, the asserted equations that define it (in `contextId` and where it
+   * is written), and, for a redefinition that states nothing, the value it
+   * redefines — each as resolved where the value is written AND in
+   * `contextId` (a chain in the usage it is read through). The inputs a
+   * context may change: for a value read where it is not ({@link sameIn}
+   * false), the features whose change made it so.
+   */
+  dependencies(contextId: ElementId, feature: ElementRecord): ElementId[] {
+    const out = new Set<ElementId>();
+    const seen = new Set<string>();
+    const visit = (f: ElementRecord, sites: readonly ElementId[], context: ElementId): void => {
+      const key = `${f.id} ${context}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (!hasStatedValue(this.model, f)) for (const g of redefinedClosure(this.model, f)) visit(g, sites, context);
+      const here = this.denote(context);
+      for (const { owner, names } of this.readsOf(f, sites) ?? []) {
+        const there = this.denote(owner);
         for (const name of names) {
-          const head = name.split('.')[0]!;
-          const g = there.get(head);
-          if (g === undefined || here.get(head) !== g || !stable(g, [owner])) return false;
+          const mine = here.get(name);
+          if (mine) {
+            out.add(mine.feature.id);
+            out.add(this.carrier(mine.reader, mine.feature).id);
+          }
+          const g = there.get(name);
+          if (g) {
+            out.add(g.feature.id);
+            visit(g.feature, [owner], mine?.reader ?? context);
+          }
         }
       }
-      return true;
     };
-    const answer =
-      (feature.declaredName === undefined || here.get(feature.declaredName) === feature) &&
-      stable(feature, site !== undefined ? [site] : []);
-    this.same.set(key, answer);
+    visit(feature, [contextId], contextId);
+    return [...out];
+  }
+
+  /**
+   * The feature whose value a name read in `contextId` reads, where the
+   * feature it denotes there, `f` (the most specific), states none and
+   * nothing defines it where it is written or in `contextId`: the nearest
+   * feature it redefines that states a value or has an asserted definition
+   * where it is written — when that value is the same read in `contextId`
+   * ({@link sameIn}, the value alone). `attribute :>> load;` in `part p : P`
+   * reads P's `load = 1.0`. Else `f` itself: a redefinition of a valueless
+   * feature (an implicit connector-end copy) is the feature the chain names.
+   */
+  carrier(contextId: ElementId, f: ElementRecord): ElementRecord {
+    const key = `${contextId} ${f.id}`;
+    const hit = this.carried.get(key);
+    if (hit) return hit;
+    const asked = this.carrying.get(key);
+    if (asked) {
+      this.guessed = true;
+      return asked;
+    }
+    const answer = this.carrierUncached(contextId, f, key);
+    if (this.asking.size === 0 || !this.guessed) this.carried.set(key, answer);
     return answer;
+  }
+
+  private carrierUncached(contextId: ElementId, f: ElementRecord, key: string): ElementRecord {
+    if (hasStatedValue(this.model, f)) return f;
+    const name = this.nameOf(f);
+    if (name === undefined) return f;
+    if (f.ownerId != null && this.of(f.ownerId, name).length > 0) return f;
+    if (this.of(contextId, name).length > 0) return f;
+    for (const g of redefinedClosure(this.model, f)) {
+      const gName = this.nameOf(g);
+      const defined = gName !== undefined && g.ownerId != null && this.of(g.ownerId, gName).length > 0;
+      if (!hasStatedValue(this.model, g) && !defined) continue;
+      // A default the binding of `f` overrides is no value `f` reads.
+      if (!defined && boundOverDefault(this.model, f, g)) return f;
+      // While asked, `f` reads `g` (what `sameIn` meets of `f` again).
+      this.carrying.set(key, g);
+      try {
+        return this.sameIn(contextId, g, defined ? g.ownerId! : undefined, true) ? g : f;
+      } finally {
+        this.carrying.delete(key);
+      }
+    }
+    return f;
+  }
+
+  /**
+   * The other value `contextId` inherits under `f`'s name where `f` is the
+   * feature its name keeps there ({@link inheritedNameClashes}), or
+   * `undefined` — `part def C :> A, B` over A's `:>> load = 5.0` and B's `:>>
+   * load = 7.0`, both of P's `load`. Every C is an A and a B, so its load is
+   * 5 AND 7; reading A's 5 dropped B's binding silently, and `c.load <= 6.0`
+   * was PROVED. The name reads no value there on any surface. `contradiction`
+   * when both values are bindings (`=`, not `default`) that neither overrides
+   * — the model states both — and `decided` when both are literals that
+   * differ ({@link compareWrittenValues}).
+   */
+  clash(contextId: ElementId, f: ElementRecord): NameClash | undefined {
+    const name = this.nameOf(f);
+    if (name === undefined) return undefined;
+    const hit = this.clashesIn(contextId).get(name);
+    return hit && hit.kept === f ? hit : undefined;
+  }
+
+  /** Every {@link clash} of `contextId`, by name, once per context. */
+  clashesIn(contextId: ElementId): ReadonlyMap<string, NameClash> {
+    let out = this.clashes.get(contextId);
+    if (!out) {
+      out = new Map();
+      for (const [name, [kept, ...others]] of inheritedNameClashes(this.model, contextId)) {
+        const rk = valueSourceOf(this.model, kept!);
+        if (!rk) continue;
+        const keptOwner = kept!.ownerId;
+        for (const other of others) {
+          // The kept feature's owner specialises the other's: it masks it, as
+          // a feature masks one by name ({@link contradictedBindingOf}).
+          if (
+            keptOwner != null &&
+            other.ownerId != null &&
+            generalizationsOf(this.model, keptOwner).some((g) => g.id === other.ownerId)
+          ) {
+            continue;
+          }
+          const ro = valueSourceOf(this.model, other);
+          if (!ro || ro === rk || redefinedClosure(this.model, rk).includes(ro)) continue;
+          const compared = compareWrittenValues(rk, ro);
+          if (compared === 'same') continue;
+          const independent = !redefinedClosure(this.model, ro).includes(rk);
+          const contradiction = independent && rk.attrs.defaultValue !== true && ro.attrs.defaultValue !== true;
+          out.set(name, {
+            kept: kept!,
+            other,
+            keptValue: rk,
+            otherValue: ro,
+            contradiction,
+            decided: contradiction && compared === 'differs',
+          });
+          break;
+        }
+      }
+      this.clashes.set(contextId, out);
+    }
+    return out;
+  }
+
+  /**
+   * Every {@link clash} that is a contradiction, once — at the most general
+   * user context it arises in (`part def C :> A, B`, not every `part c : C`
+   * too), in model order.
+   */
+  contradictoryClashes(): ReadonlyArray<{ context: ElementRecord; name: string; clash: NameClash }> {
+    if (!this.reportedClashes) {
+      const out: Array<{ context: ElementRecord; name: string; clash: NameClash }> = [];
+      for (const x of this.model.all()) {
+        if (x.attrs.isLibrary === true || x.attrs.implicit === true) continue;
+        if (!isUsage(x.eClass) && !isDefinition(x.eClass)) continue;
+        for (const [name, clash] of this.clashesIn(x.id)) {
+          if (!clash.contradiction) continue;
+          const inherited = generalizationsOf(this.model, x.id).some((g) => {
+            if (g.attrs.isLibrary === true) return false;
+            const there = this.clashesIn(g.id).get(name);
+            return there !== undefined && there.keptValue === clash.keptValue && there.otherValue === clash.otherValue;
+          });
+          if (!inherited) out.push({ context: x, name, clash });
+        }
+      }
+      this.reportedClashes = out;
+    }
+    return this.reportedClashes;
+  }
+
+  /**
+   * The BINDING `f`'s stated value contradicts, or `undefined`
+   * ({@link contradictedBindingOf}), once per feature.
+   */
+  contradiction(f: ElementRecord): BindingConflict | undefined {
+    let hit = this.contradicted.get(f.id);
+    if (hit === undefined) {
+      hit = contradictedBindingOf(this.model, f) ?? null;
+      this.contradicted.set(f.id, hit);
+    }
+    return hit ?? undefined;
   }
 
   /**
@@ -275,7 +1347,9 @@ export class DefiningEquations {
    * feature's owner, when `contextId` INHERITS the feature and its definition
    * (`part def S :> P`, over P's `assert constraint { e == a * b }`) and
    * changes nothing the definition reads ({@link sameIn}). `undefined`
-   * otherwise — and then no surface reads a value for the name there.
+   * otherwise — and then the definition is read in `contextId` itself
+   * ({@link definitionReadIn}), or nowhere: what a context comparing its
+   * reading with its owner's asks ({@link changingContexts}).
    */
   inheritedSite(contextId: ElementId, name: string): ElementId | undefined {
     if (this.of(contextId, name).length > 0) return undefined;
@@ -287,22 +1361,213 @@ export class DefiningEquations {
 
   /**
    * The valueless feature a dotted chain read in `contexts` ends at, and where
-   * the asserted equations that define it are read — the type the chain found
-   * it in, else its owner — when the chain reads it as its type declares it
-   * ({@link chain}) and the usage it is read through changes nothing the
+   * the asserted equations that define it are read — the usage the chain
+   * reads it through, else its owner — when the usage changes nothing the
    * definition reads ({@link sameIn}): `p.e`, over `part p : P` and P's `e ==
-   * a * b`, is P's e. `undefined` otherwise.
+   * a * b`, is P's e. `undefined` otherwise — where the usage changes what it
+   * reads, it reads the definition itself ({@link chainDefinition}).
    */
   chainSite(contexts: readonly ElementId[], path: string): { feature: ElementRecord; site: ElementId } | undefined {
     if (!path.includes('.')) return undefined;
     const end = this.chain(contexts, path);
     if (!end || !end.clean || !end.usage) return undefined;
     const { feature } = end;
-    const name = feature.declaredName;
+    const name = this.nameOf(feature);
     if (!name || hasStatedValue(this.model, feature)) return undefined;
     const site = [end.via, feature.ownerId].find((c): c is ElementId => c != null && this.of(c, name).length > 0);
     if (site === undefined) return undefined;
-    return this.sameIn(end.usage.id, feature, site) ? { feature, site } : undefined;
+    return site === end.usage.id || this.sameIn(end.usage.id, feature, site) ? { feature, site } : undefined;
+  }
+
+  /**
+   * The user contexts that SPECIALISE `typeId` — every usage typed by it and
+   * every definition or usage that specialises it, transitively — in model
+   * order. Implicit connector-end copies are no context of their own.
+   */
+  specialisersOf(typeId: ElementId): readonly ElementRecord[] {
+    if (!this.specialised) {
+      const out = new Map<ElementId, ElementRecord[]>();
+      const add = (g: ElementRecord, x: ElementRecord): void => {
+        if (g.attrs.isLibrary === true) return;
+        const list = out.get(g.id);
+        if (list) list.push(x);
+        else out.set(g.id, [x]);
+      };
+      for (const x of this.model.all()) {
+        if (x.attrs.isLibrary === true || x.attrs.implicit === true) continue;
+        // A `satisfy R by x` specialises R, and what R specialises.
+        const satisfied = this.satisfaction(x.id);
+        if (satisfied) {
+          for (const g of [satisfied.requirement, ...generalizationsOf(this.model, satisfied.requirement.id)]) add(g, x);
+          continue;
+        }
+        if (!isUsage(x.eClass) && !isDefinition(x.eClass)) continue;
+        for (const g of generalizationsOf(this.model, x.id)) add(g, x);
+      }
+      this.specialised = out;
+    }
+    return this.specialised.get(typeId) ?? [];
+  }
+
+  /**
+   * The name a context is shown by: a `satisfy R by x`'s satisfier's
+   * ({@link satisfaction}) — the instance it names, `q1.p`'s `R::q1::p` —
+   * else the context's own effective qualified name.
+   */
+  contextName(contextId: ElementId): string {
+    const satisfied = this.satisfaction(contextId);
+    if (!satisfied) return this.qualifiedNameOf(contextId);
+    return this.subjectInstance(contextId)?.instance ?? this.qualifiedNameOf(satisfied.satisfier.id);
+  }
+
+  /**
+   * The contexts a relation `el` holds in that read it DIFFERENTLY from where
+   * it is written: of the user contexts that specialise `el`'s owner ({@link
+   * specialisersOf}), those where a name the body reads (`names`, as written)
+   * denotes another feature — a redefinition with a value of its own, never a
+   * redefinition that states nothing ({@link readsAs}) — or a value read
+   * there and not in the owner, or the other way round (a derived value whose
+   * inputs the context changes), or one defined by an asserted equation in
+   * one and not in the other. A definition's constraints and asserts hold in
+   * every context that specialises it, so each such context reads them anew;
+   * one that reads every name exactly as an earlier one does adds nothing
+   * (`part s : S` beside `part def S :> P { :>> load … }`).
+   */
+  changingContexts(el: ElementRecord, names: readonly string[]): ElementRecord[] {
+    const owner = el.ownerId;
+    if (owner == null || names.length === 0) return [];
+    const contexts = this.specialisersOf(owner);
+    if (contexts.length === 0) return [];
+    const ownAll = this.scope(owner, 'all');
+    const ownValue = this.scope(owner, 'value');
+    const reads = this.boundReads(owner, names);
+    const ownBound = reads.size > 0 ? bindingReadingIn(this.model, owner, owner, reads) : undefined;
+    const out: ElementRecord[] = [];
+    const readings = new Set<string>();
+    for (const x of contexts) {
+      if (x.id === owner || x.id === el.id) continue;
+      const all = this.scope(x.id, 'all');
+      const value = this.scope(x.id, 'value');
+      let changed = false;
+      const reading: string[] = [];
+      for (const n of names) {
+        const idT = ownAll.get(n);
+        if (idT === undefined) continue;
+        const idX = all.get(n);
+        const valued = value.has(n);
+        // A value read IN the context, over its own names (`readAt`), is the
+        // context's own: one its inputs make other than where it is written.
+        const at = valued ? this.readAt(x.id, n) : undefined;
+        const site = valued ? undefined : this.definitionSite(x.id, n);
+        reading.push(`${n}=${idX ?? ''}:${valued}:${site ?? ''}:${at ?? ''}`);
+        if (idX === undefined) {
+          changed = true;
+          continue;
+        }
+        if (idX !== idT) {
+          const fT = this.model.get(idT);
+          const fX = this.model.get(idX);
+          if (!fT || !fX || !this.readsAs(x.id, fX, fT)) changed = true;
+        }
+        if (valued !== ownValue.has(n)) changed = true;
+        else if (valued && (at === undefined) !== (this.readAt(owner, n) === undefined)) changed = true;
+        else if (!valued && (site === undefined) !== (this.definitionSite(owner, n) === undefined)) changed = true;
+      }
+      // A value read through a binding the context joins otherwise: its own.
+      if (ownBound !== undefined) {
+        const bound = bindingReadingIn(this.model, owner, x.id, reads);
+        reading.push(bound ?? '');
+        if (bound !== ownBound) changed = true;
+      }
+      if (!changed) continue;
+      const key = reading.join(' ');
+      if (readings.has(key)) continue;
+      readings.add(key);
+      out.push(x);
+    }
+    return out;
+  }
+
+  /**
+   * The contexts a relation is read in besides where it is written: for a
+   * clause of a requirement — an `assume` or a `require` — every context ANY
+   * clause of that requirement is read differently in, so the requirement is
+   * read there whole, each goal under its own assumptions (`assume A; require
+   * G` where only G changes in `satisfy R by p` still reads A in p); for any
+   * other relation, its own {@link changingContexts}.
+   */
+  readingContexts(el: ElementRecord, names: readonly string[]): ElementRecord[] {
+    const role = el.attrs.requirementRole;
+    if ((role !== 'require' && role !== 'assume') || el.ownerId == null) return this.changingContexts(el, names);
+    let hit = this.clauseContexts.get(el.ownerId);
+    if (!hit) {
+      const out: ElementRecord[] = [];
+      for (const c of this.model.children(el.ownerId)) {
+        const r = c.attrs.requirementRole;
+        if ((r !== 'require' && r !== 'assume') || typeof c.attrs.expression !== 'string') continue;
+        const body = parseRelationBody(c.attrs.expression);
+        if (!body) continue;
+        for (const x of this.changingContexts(c, refsIn(body.node, body.literals))) {
+          if (!out.includes(x)) out.push(x);
+        }
+      }
+      hit = out;
+      this.clauseContexts.set(el.ownerId, hit);
+    }
+    return hit;
+  }
+
+  /**
+   * A context ABOVE the usage `contextId` that reads what `names` read there
+   * through a binding otherwise than the usage's owner does — `q : Q`, where
+   * Q's `bind p.load = L` joins Q's p's load to q's `L = 50.0`, for P's `load
+   * <= 10.0` read in `Q::p` — or `undefined`. A relation read in `Q::p` is read
+   * for Q's own p; q's p is an instance of P that no context names, so the
+   * reading is not every Q's p's ({@link bindingReadingIn}).
+   */
+  boundAbove(contextId: ElementId, names: readonly string[]): ElementRecord | undefined {
+    if (bindingEndsOf(this.model).size === 0) return undefined;
+    const reads = this.boundReads(contextId, names);
+    if (reads.size === 0) return undefined;
+    const seen = new Set<ElementId>();
+    for (let cur = this.model.get(contextId); cur && isUsage(cur.eClass) && cur.ownerId != null; ) {
+      if (seen.has(cur.id)) return undefined;
+      seen.add(cur.id);
+      const owner = this.model.get(cur.ownerId);
+      if (!owner) return undefined;
+      const own = bindingReadingIn(this.model, owner.id, owner.id, reads);
+      if (own !== undefined) {
+        const other = this.specialisersOf(owner.id).find((y) => bindingReadingIn(this.model, owner.id, y.id, reads) !== own);
+        if (other) return other;
+      }
+      cur = owner;
+    }
+    return undefined;
+  }
+
+  /**
+   * The features the values of `names` read in `contextId` — each feature a
+   * name denotes, what it reads ({@link carrier}), and its value's
+   * {@link dependencies} — for {@link bindingReadingIn}.
+   */
+  private boundReads(contextId: ElementId, names: readonly string[]): Set<ElementId> {
+    const out = new Set<ElementId>();
+    if (bindingEndsOf(this.model).size === 0) return out;
+    const denoted = this.denote(contextId);
+    for (const n of names) {
+      const d = denoted.get(n);
+      if (!d) continue;
+      out.add(d.feature.id);
+      out.add(this.carrier(d.reader, d.feature).id);
+      for (const id of this.dependencies(contextId, d.feature)) out.add(id);
+    }
+    return out;
+  }
+
+  /** Where the asserted equation that defines the valueless feature `name` denotes in `contextId` is read, if anywhere. */
+  private definitionSite(contextId: ElementId, name: string): ElementId | undefined {
+    if (name.includes('.')) return this.chainSite([contextId], name)?.site;
+    return this.of(contextId, name).length > 0 ? contextId : this.inheritedSite(contextId, name);
   }
 
   /** {@link statedValueOf}, once per feature — and the names a string value reads, once. */
@@ -331,7 +1596,7 @@ export class DefiningEquations {
       stated.names ??= namesOfValue(stated.value);
       return [{ owner: f.ownerId, names: stated.names }];
     }
-    const name = f.declaredName;
+    const name = this.nameOf(f);
     if (!name) return [];
     const out: Array<{ owner: ElementId; names: string[] }> = [];
     for (const site of new Set([...sites, ...(f.ownerId != null ? [f.ownerId] : [])])) {
@@ -340,30 +1605,45 @@ export class DefiningEquations {
     return out.length === 0 && this.boundFeatures().has(f.id) ? undefined : out;
   }
 
-  /**
-   * Every feature a binding connector touches — the test `isBindingEdge` of
-   * ./connectors makes, written here because that module reads the unit-aware
-   * evaluator, which reads this one.
-   */
+  /** Every feature a binding connector touches ({@link bindingEndsOf}). */
   private boundFeatures(): ReadonlySet<ElementId> {
-    if (!this.bound) {
-      const out = new Set<ElementId>();
-      for (const el of this.model.all()) {
-        const kind = el.attrs.connectorKind ?? el.attrs.kind;
-        const binding =
-          el.eClass === 'BindingConnectorAsUsage' ||
-          el.eClass === 'BindingConnector' ||
-          el.attrs.bind === true ||
-          kind === 'bind' ||
-          kind === 'equals' ||
-          kind === 'equality';
-        if (!binding) continue;
-        for (const id of [...(el.source ?? []), ...(el.target ?? [])]) out.add(id);
-      }
-      this.bound = out;
-    }
+    this.bound ??= bindingEndsOf(this.model);
     return this.bound;
   }
+}
+
+/**
+ * Is `el` a binding connector — the test `isBindingEdge` of ./connectors
+ * makes, written here because that module reads the unit-aware evaluator,
+ * which reads this one.
+ */
+export function isBindingConnector(el: ElementRecord): boolean {
+  const kind = el.attrs.connectorKind ?? el.attrs.kind;
+  return (
+    el.eClass === 'BindingConnectorAsUsage' ||
+    el.eClass === 'BindingConnector' ||
+    el.attrs.bind === true ||
+    kind === 'bind' ||
+    kind === 'equals' ||
+    kind === 'equality'
+  );
+}
+
+const SHARED = new WeakMap<Model, DefiningEquations>();
+
+/**
+ * The {@link DefiningEquations} of `model` at its current revision — one
+ * reading shared by every pass and every scope asked of the same revision,
+ * and a fresh one as soon as the model changes. A caller that holds no pass
+ * (`idScopeFor` of ./relations) asks here rather than building one per
+ * relation: the walk is the costly part of a scope, and it is the same walk.
+ */
+export function sharedDefinitions(model: Model): DefiningEquations {
+  const hit = SHARED.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  const fresh = new DefiningEquations(model);
+  SHARED.set(model, fresh);
+  return fresh;
 }
 
 /** The names a value expression reads, a `[unit]` literal's marker excluded — `[]` for one that does not parse. */
@@ -501,10 +1781,13 @@ function bareName(n: ExprNode, literals: MarkerDimensions = NO_MARKERS): string 
  * `attribute y = 4.0` read 4, so `g <= 10.0` — false, g is 100 — passed the
  * literal gate. Such a calculation states no value this tool reads, as before
  * calculation bodies were read ({@link isParameterisedCalculation}).
+ *
+ * Nor a `default` a binding holds ({@link defaultGivesWay}): the default gives
+ * way to the binding, and the feature states no value of its own.
  */
 export function statedValueOf(model: Model, el: ElementRecord): AttrValue | undefined {
   const v = el.attrs.value;
-  if (v !== undefined && v !== null) return v;
+  if (v !== undefined && v !== null) return defaultGivesWay(model, el) ? undefined : v;
   if (el.eClass !== 'CalculationUsage' || !el.declaredName) return undefined;
   const body = el.attrs.expression;
   if (typeof body !== 'string' || !isValueBody(body)) return undefined;
@@ -517,6 +1800,286 @@ export function hasStatedValue(model: Model, f: ElementRecord): boolean {
 }
 
 /**
+ * The ends of the model's binding connectors, and the features whose
+ * `default` gives way to one ({@link heldDefaults}), once per model revision.
+ */
+interface BindingEnds {
+  rev: number;
+  ends: ReadonlySet<ElementId>;
+  /**
+   * The features a binding holds over a `default` — the one they write, or the
+   * one they read through a redefinition (an implicit connector-end copy of
+   * P's `load`): no surface reads that default for them.
+   */
+  held: ReadonlySet<ElementId>;
+  /**
+   * Per context a binding holds in: each end path there, the feature at it,
+   * and the component it is in ({@link heldDefaults}).
+   */
+  readings: ReadonlyMap<ElementId, ReadonlyMap<string, { feature: ElementId; component: string }>>;
+}
+
+const BINDING_ENDS = new WeakMap<Model, BindingEnds>();
+
+/** Past this many contexts for one binding, its ends are held wherever they read a default. */
+const MAX_BINDING_FRAMES = 4096;
+
+function bindingEnds(model: Model): BindingEnds {
+  const hit = BINDING_ENDS.get(model);
+  if (hit && hit.rev === model.rev) return hit;
+  const ends = new Set<ElementId>();
+  const bindings: ElementRecord[] = [];
+  for (const el of model.all()) {
+    if (!isBindingConnector(el)) continue;
+    for (const id of [...(el.source ?? []), ...(el.target ?? [])]) ends.add(id);
+    if (el.attrs.isLibrary !== true && el.ownerId != null) bindings.push(el);
+  }
+  const read = bindings.length > 0 ? heldDefaults(model, bindings) : { held: new Set<ElementId>(), readings: new Map() };
+  const fresh: BindingEnds = { rev: model.rev, ends, ...read };
+  BINDING_ENDS.set(model, fresh);
+  return fresh;
+}
+
+/** Every feature a binding connector touches ({@link isBindingConnector}), once per model revision. */
+export function bindingEndsOf(model: Model): ReadonlySet<ElementId> {
+  return bindingEnds(model).ends;
+}
+
+/**
+ * The dotted path of feature `id` below `ownerId`, by effective names —
+ * `undefined` when it is not below it: `p.load` for the end of Q's `bind
+ * p.load = L`.
+ */
+export function bindingEndPath(model: Model, id: ElementId | undefined, ownerId: ElementId): string | undefined {
+  const segments: string[] = [];
+  const seen = new Set<ElementId>();
+  for (let cur = id !== undefined ? model.get(id) : undefined; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    if (cur.id === ownerId) return segments.length > 0 ? segments.join('.') : undefined;
+    if (seen.has(cur.id)) return undefined;
+    seen.add(cur.id);
+    const name = effectiveNameOf(model, cur);
+    if (name === undefined) return undefined;
+    segments.unshift(name);
+  }
+  return undefined;
+}
+
+/** What a feature at a binding's end states, for {@link heldDefaults}. */
+type EndValue = { kind: 'value' } | { kind: 'default'; source: ElementRecord } | { kind: 'none' };
+
+/**
+ * The features whose `default` gives way to a binding (decision 10) — read in
+ * every CONTEXT a binding holds in: where it is written, every context that
+ * specialises its owner, and every context such an instance is a feature of
+ * (Q's `bind p.load = L` holds in R at `q.p.load` and `q.L` for `part q : Q`
+ * in R, and in `part r : R` at `r.q.p.load`). In each context the bindings
+ * that hold there join their ends — each end the most specific feature at its
+ * path there — into components: `bind B = A; bind C = B;` is one, and so is
+ * Q's binding beside R's `bind q.L = M`. Where a component has a value of its
+ * own — written with `=`, or defined by an asserted equation — every
+ * `default` in it gives way: the one a member writes (q's `:>> load default =
+ * 30.0` in a `p` Q binds to its `L = 50.0`) and the one a member reads
+ * through a redefinition (the copy `bind p.load = L` makes of P's `load`).
+ * Where it has none, the defaults stand when they state one value — a binding
+ * to a feature nothing gives a value (`attribute w; bind w = p.load;`)
+ * carries the default INTO it, as it always did — and give way when they
+ * differ: two defaults bound to each other are no value the model states,
+ * and reading both made it contradict itself.
+ *
+ * Read per context, a context's own value is no reason for a default where
+ * the binding does not reach: Q's `L default = 1.0` stands in Q, though `q :
+ * Q` sets L to 50 (q's L masks it there). The answer is per FEATURE: a
+ * default that gives way in one context gives way in every one — a context
+ * where it would have stood reads it through the binding, or not at all.
+ */
+function heldDefaults(model: Model, bindings: readonly ElementRecord[]): Pick<BindingEnds, 'held' | 'readings'> {
+  const definitions = sharedDefinitions(model);
+  // Per context: the paths its bindings join, and the feature at each.
+  const contexts = new Map<ElementId, { parent: Map<string, string>; at: Map<string, ElementRecord> }>();
+  const held = new Set<ElementId>();
+  const resolve = (root: ElementId, path: string): ElementRecord | undefined => {
+    let owner = root;
+    let f: ElementRecord | undefined;
+    for (const seg of path.split('.')) {
+      f = definitions.byName(owner).get(seg);
+      if (!f) return undefined;
+      owner = f.id;
+    }
+    return f;
+  };
+  const find = (parent: Map<string, string>, a: string): string => {
+    let root = a;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    while (a !== root) {
+      const next = parent.get(a)!;
+      parent.set(a, root);
+      a = next;
+    }
+    return root;
+  };
+  for (const b of bindings) {
+    const holder = model.get(b.ownerId!);
+    const left = b.source?.[0];
+    const right = b.target?.[0];
+    if (!holder || left === undefined || right === undefined || left === right) continue;
+    const ends = [bindingEndPath(model, left, holder.id), bindingEndPath(model, right, holder.id)];
+    // The contexts it holds in, each with the path its ends are read at.
+    const frames: Array<{ root: ElementRecord; prefix: string }> = [{ root: holder, prefix: '' }];
+    const seen = new Set<string>([`${holder.id} `]);
+    for (let i = 0; i < frames.length && frames.length <= MAX_BINDING_FRAMES; i++) {
+      const { root, prefix } = frames[i]!;
+      const next: Array<{ root: ElementRecord; prefix: string }> = definitions
+        .specialisersOf(root.id)
+        .map((z) => ({ root: z, prefix }));
+      const name = isUsage(root.eClass) ? definitions.nameOf(root) : undefined;
+      const owner = root.ownerId != null ? model.get(root.ownerId) : undefined;
+      if (name !== undefined && owner && owner.attrs.isLibrary !== true) {
+        next.push({ root: owner, prefix: prefix === '' ? name : `${name}.${prefix}` });
+      }
+      for (const f of next) {
+        const key = `${f.root.id} ${f.prefix}`;
+        if (seen.has(key) || f.prefix.split('.').length > 32) continue;
+        seen.add(key);
+        frames.push(f);
+      }
+    }
+    if (frames.length > MAX_BINDING_FRAMES) {
+      // Read nowhere in particular: held wherever an end reads a default.
+      for (const id of [left, right]) {
+        const f = model.get(id);
+        if (f && endValue(model, f, holder, '').kind === 'default') held.add(f.id);
+      }
+      continue;
+    }
+    for (const { root, prefix } of frames) {
+      const at = (end: ElementId, path: string | undefined): [string, ElementRecord] | undefined => {
+        if (prefix === '' && root.id === holder.id) {
+          const f = model.get(end);
+          return f ? [path ?? `#${end}`, f] : undefined;
+        }
+        if (path === undefined) return undefined;
+        const full = prefix === '' ? path : `${prefix}.${path}`;
+        const f = resolve(root.id, full);
+        return f ? [full, f] : undefined;
+      };
+      const l = at(left, ends[0]);
+      const r = at(right, ends[1]);
+      if (!l || !r) continue;
+      let ctx = contexts.get(root.id);
+      if (!ctx) {
+        ctx = { parent: new Map(), at: new Map() };
+        contexts.set(root.id, ctx);
+      }
+      for (const [path, f] of [l, r]) {
+        if (!ctx.parent.has(path)) ctx.parent.set(path, path);
+        ctx.at.set(path, f);
+      }
+      const a = find(ctx.parent, l[0]);
+      const c = find(ctx.parent, r[0]);
+      if (a !== c) ctx.parent.set(a, c);
+    }
+  }
+  const readings = new Map<ElementId, Map<string, { feature: ElementId; component: string }>>();
+  for (const [rootId, ctx] of contexts) {
+    const root = model.get(rootId)!;
+    const components = new Map<string, Array<{ f: ElementRecord; value: EndValue }>>();
+    const reading = new Map<string, { feature: ElementId; component: string }>();
+    for (const [path, f] of ctx.at) {
+      const key = find(ctx.parent, path);
+      const list = components.get(key) ?? [];
+      list.push({ f, value: endValue(model, f, root, path) });
+      components.set(key, list);
+      reading.set(path, { feature: f.id, component: key });
+    }
+    readings.set(rootId, reading);
+    for (const members of components.values()) {
+      const sources = new Map<ElementId, ElementRecord>();
+      for (const m of members) if (m.value.kind === 'default') sources.set(m.value.source.id, m.value.source);
+      if (sources.size === 0) continue;
+      const stated = members.some((m) => m.value.kind === 'value');
+      const first = [...sources.values()][0]!;
+      const agree = [...sources.values()].every((g) => compareWrittenValues(first, g) === 'same');
+      if (stated || !agree) for (const m of members) if (m.value.kind === 'default') held.add(m.f.id);
+    }
+  }
+  return { held, readings };
+}
+
+/**
+ * How a binding reads what `features` are among, in `contextId` where it
+ * holds — the features of the binding component each is in there, one
+ * signature per component ({@link heldDefaults}) — or `undefined` where no
+ * binding joins any of them in `ownerId`. Q's `bind p.load = L` joins p's load
+ * to Q's `L` in Q and to q's `:>> L = 50.0` in `q : Q`: a value Q reads
+ * through p's load (`m2 = 10.0 - load`) is another in q, though no name of it
+ * is redefined there.
+ */
+export function bindingReadingIn(
+  model: Model,
+  ownerId: ElementId,
+  contextId: ElementId,
+  features: ReadonlySet<ElementId>,
+): string | undefined {
+  const { readings } = bindingEnds(model);
+  const own = readings.get(ownerId);
+  if (!own) return undefined;
+  const there = readings.get(contextId);
+  const out: string[] = [];
+  for (const [path, r] of own) {
+    if (!features.has(r.feature)) continue;
+    const x = there?.get(path);
+    const members = x
+      ? [...there!.values()].filter((m) => m.component === x.component).map((m) => m.feature)
+      : [...own.values()].filter((m) => m.component === r.component).map((m) => m.feature);
+    out.push(`${path}=${[...new Set(members)].sort().join(',')}`);
+  }
+  return out.length > 0 ? out.sort().join(' ') : undefined;
+}
+
+/**
+ * What the feature `f` at `path` in the context `root` states, for a binding
+ * end ({@link heldDefaults}): a value of its own — the nearest value it or a
+ * feature it redefines writes, with `=`; or an asserted equation of its owner,
+ * or of the context, that defines it — a `default`, with the feature that
+ * writes it, or nothing.
+ */
+function endValue(model: Model, f: ElementRecord, root: ElementRecord, path: string): EndValue {
+  for (const g of [f, ...redefinedClosure(model, f)]) {
+    if (g.attrs.value === undefined || g.attrs.value === null) continue;
+    return g.attrs.defaultValue === true ? { kind: 'default', source: g } : { kind: 'value' };
+  }
+  const name = effectiveNameOf(model, f);
+  const defines = (ownerId: ElementId | null, n: string | undefined): boolean =>
+    n !== undefined && ownerId != null && model.children(ownerId).some((c) => isAsserted(c) && namesDefinedBy(c).includes(n));
+  return defines(f.ownerId, name) || defines(root.id, path) ? { kind: 'value' } : { kind: 'none' };
+}
+
+/**
+ * Does a binding override `f`'s `default` — is `f` written `attribute load
+ * default = 1.0`, and held by a binding ({@link heldDefaults})? The default
+ * gives way to the binding exactly as to a redefinition: the feature reads the
+ * value the binding gives it — on every surface — and no surface reads the
+ * default (`bind load = L` with `L` set to 50 in `q` is q's load of 50, never
+ * the 1.0 that, read beside the binding, made the model contradict itself in
+ * q). A value written with `=` is a binding of its own and gives way to
+ * nothing: against another binding it is a contradiction (strict KerML). A
+ * redefinition that states nothing over a default — the implicit
+ * connector-end copy `bind p.load = L` creates of P's `load` — reads no
+ * default either ({@link DefiningEquations.carrier}).
+ */
+export function defaultGivesWay(model: Model, f: ElementRecord): boolean {
+  return f.attrs.defaultValue === true && bindingEnds(model).held.has(f.id);
+}
+
+/**
+ * Does a feature `f` read nothing of `g`, the feature it redefines that states
+ * a value — a `default` a binding holding `f` overrides ({@link heldDefaults})?
+ */
+function boundOverDefault(model: Model, f: ElementRecord, g: ElementRecord): boolean {
+  return g.attrs.defaultValue === true && bindingEnds(model).held.has(f.id);
+}
+
+/**
  * Is `f` a calculation whose stated value is its BODY ({@link statedValueOf})?
  *
  * Such a body is read in the calculation's owner, over the owner's names. It
@@ -526,7 +2089,7 @@ export function hasStatedValue(model: Model, f: ElementRecord): boolean {
  * context has when that context changes nothing it reads, and the wrong one
  * wherever it redefines one (`:>> load = 50.0` makes margin −40, read as 5).
  * Every surface reads it there as it reads an inherited asserted definition:
- * the value it has, or none ({@link readsStatedValueIn}).
+ * over the context's own names ({@link DefiningEquations.valueRef}).
  */
 export function isCalculationValue(model: Model, f: ElementRecord): boolean {
   if (f.eClass !== 'CalculationUsage') return false;
@@ -535,27 +2098,392 @@ export function isCalculationValue(model: Model, f: ElementRecord): boolean {
 }
 
 /**
- * Does a scope rooted at `contextId` read `f`'s stated value under a name
- * reached through `prefix` (`''` for a bare name of the context itself)? A
- * stated value, read everywhere — but a calculation's body ({@link
- * isCalculationValue}) by a bare name in the context that owns it, and
- * elsewhere only where the reading context changes nothing the body reads
- * ({@link DefiningEquations.sameIn}): the context itself for a bare name, and
- * for a chain the usage whose type holds the calculation, every link on the
- * way read as the type says (`link.clean`).
+ * Does `f` state a value that READS something — an expression over names, or a
+ * calculation's body — rather than a literal? Such a value is read where it is
+ * written, and in a context that changes what it reads, over that context's
+ * names ({@link DefiningEquations.valueRef}).
  */
-export function readsStatedValueIn(
-  model: Model,
-  f: ElementRecord,
-  contextId: ElementId,
-  prefix: string,
-  definitions: DefiningEquations,
-  link?: { usage: ElementRecord; clean: boolean },
-): boolean {
-  if (f.attrs.value !== undefined && f.attrs.value !== null) return true;
-  if (f.eClass !== 'CalculationUsage' || definitions.statedValue(f) === undefined) return false;
-  if (prefix === '') return f.ownerId === contextId || definitions.sameIn(contextId, f);
-  return link !== undefined && link.clean && definitions.sameIn(link.usage.id, f);
+export function isDerivedValue(model: Model, f: ElementRecord): boolean {
+  if (isCalculationValue(model, f)) return true;
+  const v = f.attrs.value;
+  return typeof v === 'string' && namesOfValue(v).length > 0;
+}
+
+/* ─────────────────────── A value written with `=` is a binding ─────────────────────── */
+
+/**
+ * How two written values compare ({@link compareWrittenValues}): the same
+ * value, two different values, or a pair only an evaluation could compare.
+ */
+export type WrittenComparison = 'same' | 'differs' | 'undecided';
+
+/**
+ * Two values a context inherits under one name ({@link DefiningEquations.clash}):
+ * the feature the name keeps and the other one, the features whose written
+ * values each reads ({@link valueSourceOf}), and whether the two are bindings
+ * that contradict each other — `decided` where two literals differ.
+ */
+export interface NameClash {
+  kept: ElementRecord;
+  other: ElementRecord;
+  keptValue: ElementRecord;
+  otherValue: ElementRecord;
+  contradiction: boolean;
+  decided: boolean;
+}
+
+/** The feature whose written value `f` reads: `f` itself, else the nearest it redefines that states one. */
+function valueSourceOf(model: Model, f: ElementRecord): ElementRecord | undefined {
+  for (const g of [f, ...redefinedClosure(model, f)]) {
+    if (g.attrs.isLibrary === true) return undefined;
+    if (g.attrs.value !== undefined && g.attrs.value !== null) return g;
+  }
+  return undefined;
+}
+
+/**
+ * `C::load` inherits A::load = 5.0 and B::load = 7.0 … — the one sentence every
+ * surface gives a name two inherited values collide under ({@link NameClash}).
+ */
+export function clashSentence(model: Model, contextId: ElementId, clash: NameClash): string {
+  const context = effectiveQualifiedName(model, contextId);
+  const name = effectiveNameOf(model, clash.kept) ?? 'the feature';
+  const both =
+    `${context} inherits ${writtenName(model, clash.keptValue)} = ${writtenValue(clash.keptValue)} and ` +
+    `${writtenName(model, clash.otherValue)} = ${writtenValue(clash.otherValue)} under the one name \`${name}\``;
+  if (clash.decided) {
+    return `${both}, both bindings every instance holds (values written with \`=\`), so the model states both values and neither is read`;
+  }
+  return `${both}, and which one an instance has is not decided by reading them, so neither is read`;
+}
+
+/**
+ * A redefinition's value against a BINDING it redefines
+ * ({@link contradictedBindingOf}): the binding, and whether the two values are
+ * DECIDED to differ — two literal values, compared exactly. Undecided, the
+ * two may still meet (`:>> load = 50.0` over `load = 2.0 * k` where the
+ * redefinition's context makes k 25): neither is read here, and the
+ * verification lane, which carries both, decides.
+ */
+export interface BindingConflict {
+  binding: ElementRecord;
+  decided: boolean;
+}
+
+/**
+ * The BINDING `f`'s own stated value contradicts — the nearest feature `f`
+ * overrides ({@link overriddenBy}), transitively, whose value is written with
+ * `=` (not `default`) and is not the value `f` states — or `undefined`.
+ *
+ * KerML reads `attribute load = 1.0` in `part def P` as a binding: every P,
+ * in every context, has load 1.0. A usage that redefines it with another
+ * value (`part p : P { attribute :>> load = 50.0; }`) states that p's load is
+ * 50 AND 1: the model contradicts itself, and no surface may silently read
+ * either value as p's. Only `attribute load default = 1.0` is overridable —
+ * the redefinition's value replaces a DEFAULT in its own context.
+ *
+ * The values are compared as VALUES, never as spelled
+ * ({@link compareWrittenValues}): `1000.0 [g]` restates `1.0 [kg]`, `10.0-k`
+ * restates `10.0 - k`, and neither contradicts anything; `1.0 [g]` against
+ * `1.0 [kg]` does. A pair only an evaluation could compare is a conflict
+ * that is not `decided`.
+ */
+export function contradictedBindingOf(model: Model, f: ElementRecord): BindingConflict | undefined {
+  const v = f.attrs.value;
+  if (v === undefined || v === null) return undefined;
+  for (const g of overriddenBy(model, f)) {
+    const w = g.attrs.value;
+    // The standard library's own values are its modelling, not a design's
+    // bindings: a redefinition of one is read as the library means it.
+    if (w === undefined || w === null || g.attrs.defaultValue === true || g.attrs.isLibrary === true) continue;
+    const compared = compareWrittenValues(f, g);
+    if (compared !== 'same') return { binding: g, decided: compared === 'differs' };
+  }
+  return undefined;
+}
+
+/**
+ * The features `f` overrides: every feature it redefines, transitively, and
+ * every one it masks BY NAME ({@link maskedByName}) — `attribute load = 50.0`
+ * written in `part p : P` with no `:>>` over P's `load = 1.0` replaced it all
+ * the same, silently, where the strict reading makes it a contradiction.
+ */
+function overriddenBy(model: Model, f: ElementRecord): ElementRecord[] {
+  const masked = maskedByName(model, f);
+  const closure = redefinedClosure(model, f);
+  return masked.length === 0 ? closure : [...closure, ...masked.filter((g) => !closure.includes(g))];
+}
+
+/**
+ * Do `a` and `b` state the same value — compared as values, not as written?
+ *  - Two literal numbers: exactly, as the decimals written, each in SI
+ *    through the unit registry (`1000.0 [g]` is `1.0 [kg]`; a mass is never
+ *    a length) — `same` or `differs`. A unit nothing converts is compared as
+ *    spelled, and one side with a unit and the other without is `undecided`.
+ *  - Two booleans, or two quoted strings: as written.
+ *  - Two value expressions: the same parsed body — whitespace and the
+ *    spelling of a unit literal aside — is `same`; any other pair of
+ *    expressions, or an expression against a literal, only an evaluation
+ *    could compare: `undecided`.
+ */
+export function compareWrittenValues(a: ElementRecord, b: ElementRecord): WrittenComparison {
+  const x = a.attrs.value;
+  const y = b.attrs.value;
+  if (typeof x === 'number' && typeof y === 'number') return compareQuantities(a, b);
+  if (typeof x === 'boolean' && typeof y === 'boolean') return x === y ? 'same' : 'differs';
+  if (typeof x === 'string' && typeof y === 'string') {
+    const s = x.trim();
+    const t = y.trim();
+    if (isQuoted(s) && isQuoted(t)) return s === t ? 'same' : 'differs';
+    if (s === t) return 'same';
+  }
+  // A value that reads no name is a CONSTANT, compared exactly: `2.0 * 0.5`
+  // is the binding `1.0`, and `1000.0 [g]` is `1.0 [kg]`.
+  const cx = constantOf(a);
+  const cy = constantOf(b);
+  if (cx && cy) return compareConstants(cx, cy);
+  if (typeof x !== 'string' || typeof y !== 'string') return 'undecided';
+  const p = parseRelationBody(x.trim());
+  const q = parseRelationBody(y.trim());
+  if (!p || !q || (p.hadUnit && !p.resolved) || (q.hadUnit && !q.resolved)) return 'undecided';
+  return sameBody(p.node, p.literals, q.node, q.literals) ? 'same' : 'undecided';
+}
+
+/** An exact constant: its value in SI, and its dimension — `undefined` for a bare number. */
+interface Constant {
+  si: Rational;
+  dimension: Dimension | undefined;
+}
+
+/** Two constants compared exactly: a bare number against a quantity is not decided by reading them. */
+function compareConstants(a: Constant, b: Constant): WrittenComparison {
+  if (a.dimension === undefined || b.dimension === undefined) {
+    if (a.dimension !== b.dimension) return 'undecided';
+    return equalRationals(a.si, b.si) ? 'same' : 'differs';
+  }
+  if (!dimEqual(a.dimension, b.dimension)) return 'differs';
+  return equalRationals(a.si, b.si) ? 'same' : 'differs';
+}
+
+/**
+ * `f`'s value as an exact constant — a literal number with the unit beside it,
+ * or a value expression that reads no name, over `+ - * /` and `[unit]`
+ * literals — or `undefined`.
+ */
+function constantOf(f: ElementRecord): Constant | undefined {
+  const v = f.attrs.value;
+  if (typeof v === 'number') {
+    const m = magnitudeOf(f);
+    const unit = typeof f.attrs.unit === 'string' ? f.attrs.unit.trim() : '';
+    if (!m) return undefined;
+    if (unit === '') return { si: m, dimension: undefined };
+    const u = resolveUnit(unit);
+    if (!u || u.offsetSI) return undefined;
+    return { si: multiplyRationals(m, scaleRational(u.factorToSI, u.factorTerms)), dimension: u.dimension };
+  }
+  if (typeof v !== 'string' || isQuoted(v.trim())) return undefined;
+  const body = parseRelationBody(v.trim());
+  if (!body || (body.hadUnit && !body.resolved)) return undefined;
+  return exactConstant(body.node, body.literals);
+}
+
+/** A name-free expression evaluated exactly, or `undefined` where it reads a name or leaves `+ - * /`. */
+function exactConstant(n: ExprNode, literals: MarkerDimensions): Constant | undefined {
+  switch (n.kind) {
+    case 'num': {
+      const r = decimalRational(String(n.value));
+      return r ? { si: r, dimension: undefined } : undefined;
+    }
+    case 'ref': {
+      const lit = literals.get(n.path.join('.'));
+      const m = lit ? decimalRational(lit.magnitude) : undefined;
+      if (!lit || !m) return undefined;
+      return { si: multiplyRationals(m, scaleRational(lit.factor, lit.factorTerms)), dimension: lit.dimension };
+    }
+    case 'unary': {
+      if (n.op === 'not') return undefined;
+      const x = exactConstant(n.operand, literals);
+      return x && n.op === '-' ? { si: { num: -x.si.num, den: x.si.den }, dimension: x.dimension } : x;
+    }
+    case 'binary': {
+      const l = exactConstant(n.left, literals);
+      const r = exactConstant(n.right, literals);
+      if (!l || !r) return undefined;
+      const dims = (d: (x: Dimension, y: Dimension) => Dimension): Dimension | undefined =>
+        l.dimension === undefined ? r.dimension : r.dimension === undefined ? l.dimension : d(l.dimension, r.dimension);
+      switch (n.op) {
+        case '+':
+        case '-': {
+          if ((l.dimension === undefined) !== (r.dimension === undefined)) return undefined;
+          if (l.dimension && r.dimension && !dimEqual(l.dimension, r.dimension)) return undefined;
+          const sign = n.op === '-' ? -1n : 1n;
+          return {
+            si: { num: l.si.num * r.si.den + sign * r.si.num * l.si.den, den: l.si.den * r.si.den },
+            dimension: l.dimension,
+          };
+        }
+        case '*':
+          return { si: multiplyRationals(l.si, r.si), dimension: dims(multiplyDim) };
+        case '/':
+          if (r.si.num === 0n) return undefined;
+          return {
+            si: { num: r.si.num < 0n ? -l.si.num * r.si.den : l.si.num * r.si.den, den: l.si.den * (r.si.num < 0n ? -r.si.num : r.si.num) },
+            dimension: l.dimension === undefined && r.dimension !== undefined ? divideDim(DIMENSIONLESS, r.dimension) : dims(divideDim),
+          };
+        default:
+          return undefined;
+      }
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** Two literal numbers, each with the unit written beside it, compared exactly in SI. */
+function compareQuantities(a: ElementRecord, b: ElementRecord): WrittenComparison {
+  const ua = typeof a.attrs.unit === 'string' ? a.attrs.unit.trim() : '';
+  const ub = typeof b.attrs.unit === 'string' ? b.attrs.unit.trim() : '';
+  const ma = magnitudeOf(a);
+  const mb = magnitudeOf(b);
+  if (!ma || !mb) return a.attrs.value === b.attrs.value && ua === ub ? 'same' : 'undecided';
+  if (ua === '' && ub === '') return equalRationals(ma, mb) ? 'same' : 'differs';
+  if (ua === '' || ub === '') return 'undecided';
+  const fa = resolveUnit(ua);
+  const fb = resolveUnit(ub);
+  if (!fa || !fb || fa.offsetSI || fb.offsetSI) {
+    if (ua !== ub) return 'undecided';
+    return equalRationals(ma, mb) ? 'same' : 'differs';
+  }
+  if (!dimEqual(fa.dimension, fb.dimension)) return 'differs';
+  const sa = multiplyRationals(ma, scaleRational(fa.factorToSI, fa.factorTerms));
+  const sb = multiplyRationals(mb, scaleRational(fb.factorToSI, fb.factorTerms));
+  return equalRationals(sa, sb) ? 'same' : 'differs';
+}
+
+/** A literal value as the exact decimal written — its `valueText`, else the number's shortest spelling. */
+function magnitudeOf(f: ElementRecord): Rational | undefined {
+  const text = typeof f.attrs.valueText === 'string' ? f.attrs.valueText : String(f.attrs.value);
+  return decimalRational(text) ?? (typeof f.attrs.value === 'number' ? decimalRational(String(f.attrs.value)) : undefined);
+}
+
+function multiplyRationals(a: Rational, b: Rational): Rational {
+  return { num: a.num * b.num, den: a.den * b.den };
+}
+
+function equalRationals(a: Rational, b: Rational): boolean {
+  return a.num * b.den === b.num * a.den;
+}
+
+function isQuoted(s: string): boolean {
+  return s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")));
+}
+
+/**
+ * Two parsed bodies the same expression — the same tree, the same names, the
+ * same numbers, and every `[unit]` literal the same quantity exactly.
+ */
+function sameBody(a: ExprNode, la: MarkerDimensions, b: ExprNode, lb: MarkerDimensions): boolean {
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case 'num':
+      return a.value === (b as typeof a).value;
+    case 'bool':
+      return a.value === (b as typeof a).value;
+    case 'ref': {
+      const pa = a.path.join('.');
+      const pb = (b as typeof a).path.join('.');
+      const ma = la.get(pa);
+      const mb = lb.get(pb);
+      if (ma || mb) {
+        if (!ma || !mb || !dimEqual(ma.dimension, mb.dimension)) return false;
+        const ra = decimalRational(ma.magnitude);
+        const rb = decimalRational(mb.magnitude);
+        if (!ra || !rb) return ma.si === mb.si;
+        return equalRationals(
+          multiplyRationals(ra, scaleRational(ma.factor, ma.factorTerms)),
+          multiplyRationals(rb, scaleRational(mb.factor, mb.factorTerms)),
+        );
+      }
+      return pa === pb;
+    }
+    case 'unary':
+      return a.op === (b as typeof a).op && sameBody(a.operand, la, (b as typeof a).operand, lb);
+    case 'binary':
+      return (
+        a.op === (b as typeof a).op &&
+        sameBody(a.left, la, (b as typeof a).left, lb) &&
+        sameBody(a.right, la, (b as typeof a).right, lb)
+      );
+    case 'if':
+      return (
+        sameBody(a.cond, la, (b as typeof a).cond, lb) &&
+        sameBody(a.then, la, (b as typeof a).then, lb) &&
+        sameBody(a.else, la, (b as typeof a).else, lb)
+      );
+    default:
+      return JSON.stringify(a) === JSON.stringify(b);
+  }
+}
+
+/** Does `mine` restate the LITERAL value `g` states — one that reads no name — as the same value ({@link compareWrittenValues})? */
+function isLiteralRestatement(mine: ElementRecord, g: ElementRecord): boolean {
+  const v = g.attrs.value;
+  if (v === undefined || v === null || mine.attrs.value === undefined || mine.attrs.value === null) return false;
+  if (typeof v === 'string' && namesOfValue(v).length > 0) return false;
+  return compareWrittenValues(mine, g) === 'same';
+}
+
+/**
+ * Does `f` — a redefinition that states no value — change what lies below it:
+ * own a feature that states a value or redefines one, or carry a type of its
+ * own (`part :>> e : E2`)? An implicit connector-end copy changes nothing.
+ */
+function changesBelow(model: Model, f: ElementRecord): boolean {
+  if (model.relationshipsFrom(f.id).some((r) => r.eClass === 'FeatureTyping')) return true;
+  return model
+    .children(f.id)
+    .some((c) => isUsage(c.eClass) && (hasStatedValue(model, c) || redefinedClosure(model, c).length > 0));
+}
+
+/**
+ * The one sentence every surface gives a feature whose value conflicts with a
+ * binding it overrides ({@link contradictedBindingOf}): `p::load = 50.0
+ * contradicts P::load = 1.0, a binding …` where the two values are decided to
+ * differ, and where only an evaluation could compare them, that neither is
+ * read while the verification lane decides.
+ */
+export function contradictionSentence(model: Model, f: ElementRecord, conflict: BindingConflict): string {
+  const { binding } = conflict;
+  const owner = binding.ownerId != null ? model.get(binding.ownerId) : undefined;
+  const ownerName = owner?.declaredName ?? owner?.declaredShortName ?? 'its owner';
+  const overrides = redefinedClosure(model, f).includes(binding) ? 'redefines' : 'masks by name';
+  if (!conflict.decided) {
+    return (
+      `${writtenName(model, f)} = ${writtenValue(f)} ${overrides} ${writtenName(model, binding)} = ` +
+      `${writtenValue(binding)}, a binding every ${ownerName} holds (a value written with \`=\`), with a value ` +
+      'that is not the same as written; whether the two meet takes an evaluation this tool does not make here, so ' +
+      'neither is read — the verification lane carries both and decides'
+    );
+  }
+  return (
+    `${writtenName(model, f)} = ${writtenValue(f)} contradicts ${writtenName(model, binding)} = ` +
+    `${writtenValue(binding)}, a binding every ${ownerName} holds (a value written with \`=\`); a redefinition ` +
+    'may override only a `default`, so the model states both values and neither is read'
+  );
+}
+
+/** `p::load` — the owner's name and the feature's effective one. */
+function writtenName(model: Model, f: ElementRecord): string {
+  const owner = f.ownerId != null ? model.get(f.ownerId) : undefined;
+  const own = effectiveNameOf(model, f) ?? f.declaredShortName ?? `«${f.eClass}»`;
+  const ownerName = owner ? (effectiveNameOf(model, owner) ?? owner.declaredShortName) : undefined;
+  return ownerName ? `${ownerName}::${own}` : own;
+}
+
+/** A feature's value as written, its unit beside it. */
+function writtenValue(f: ElementRecord): string {
+  const text = typeof f.attrs.valueText === 'string' ? f.attrs.valueText : String(f.attrs.value);
+  return typeof f.attrs.unit === 'string' && f.attrs.unit !== '' ? `${text} [${f.attrs.unit}]` : text;
 }
 
 /**
@@ -566,6 +2494,10 @@ export function readsStatedValueIn(
  * part it is written in.
  */
 function ownsParameter(model: Model, el: ElementRecord, body: string): boolean {
+  // A calculation that specialises one with a body of its own — `calc t : Two {
+  // x * 5.0 }` over `calc def Two { 2.0 }`, `calc t :> base { … }` — has that
+  // result binding too: its own body is not its whole value.
+  if (inheritsBody(model, el)) return true;
   const features = effectiveFeatures(model, el.id);
   if (features.length === 0) return false;
   const parsed = parseRelationBody(body);
@@ -595,8 +2527,20 @@ function ownsParameter(model: Model, el: ElementRecord, body: string): boolean {
   return features.some((c) => {
     const direction = c.attrs.direction;
     if (direction === 'in' || direction === 'out' || direction === 'inout') return true;
-    return c.declaredName !== undefined && read.has(c.declaredName);
+    const name = effectiveNameOf(model, c);
+    return name !== undefined && read.has(name);
   });
+}
+
+/** Does a calculation or calc def `el` specialises (typing, subsetting, redefinition) carry a body of its own? */
+function inheritsBody(model: Model, el: ElementRecord): boolean {
+  return generalizationsOf(model, el.id).some(
+    (g) =>
+      g.attrs.isLibrary !== true &&
+      (g.eClass === 'CalculationUsage' || g.eClass === 'CalculationDefinition') &&
+      typeof g.attrs.expression === 'string' &&
+      g.attrs.expression.trim() !== '',
+  );
 }
 
 /**
@@ -611,6 +2555,93 @@ export function isParameterisedCalculation(model: Model, el: ElementRecord): boo
   if (el.attrs.value !== undefined && el.attrs.value !== null) return false;
   const body = el.attrs.expression;
   return typeof body === 'string' && isValueBody(body) && ownsParameter(model, el, body);
+}
+
+/* ─────────────────────── Names a body's own features shadow ─────────────────────── */
+
+/**
+ * The names `names` (as a body reads them, dotted or bare) whose HEAD `el`
+ * declares ITSELF — an owned or inherited feature of the constraint,
+ * calculation, requirement or feature that owns the body, by its effective
+ * name ({@link DefiningEquations.nameOf}: an unnamed `in :>> y = 100.0` is
+ * `y`): a parameter (`in y = 100.0`), a local `attribute y`, a parameter of
+ * the `constraint def` or `calc def` typing it, a feature of a feature's own
+ * — where the scope of `el`'s OWNER resolves that head to a DIFFERENT
+ * feature.
+ *
+ * Every evaluator reads a body through its owner's names first. SysML resolves
+ * a name in the innermost namespace first, so there the name is `el`'s own
+ * feature, and every surface read the owner's: `constraint c { in y = 100.0; y
+ * <= 10.0 }` beside `attribute y = 4.0` was satisfied, and PROVED, with y 100.
+ * Where the owner has no such name the merged scope already reads `el`'s own,
+ * and nothing is shadowed. A shadowed body is read by no surface: it is
+ * undecided, never judged against the owner's value — and an assumption that
+ * is one is no premise a proof may stand on.
+ */
+export function shadowedNamesOf(model: Model, el: ElementRecord, names: Iterable<string>): string[] {
+  if (el.ownerId == null) return [];
+  const definitions = sharedDefinitions(model);
+  let own: ReadonlyMap<string, ElementRecord> | undefined;
+  const out: string[] = [];
+  for (const name of new Set(names)) {
+    own ??= ownNames(definitions, el);
+    if (own.size === 0) return [];
+    const head = name.split('.')[0]!;
+    const f = own.get(head);
+    if (f === undefined) continue;
+    const outer = definitions.scope(el.ownerId, 'all').get(head);
+    if (outer !== undefined && outer !== f.id && outer !== definitions.carrier(el.id, f).id) out.push(name);
+  }
+  return out;
+}
+
+/** `el`'s own named features — owned or inherited, the user's own (a library feature is not read). */
+function ownNames(definitions: DefiningEquations, el: ElementRecord): ReadonlyMap<string, ElementRecord> {
+  const own = new Map<string, ElementRecord>();
+  for (const f of definitions.features(el.id)) {
+    if (f.attrs.isLibrary === true) continue;
+    const n = definitions.nameOf(f);
+    if (n === undefined || n === '' || own.has(n)) continue;
+    own.set(n, f);
+  }
+  return own;
+}
+
+/** The one sentence every surface gives a body {@link shadowedNamesOf} refuses. */
+export function shadowedSentence(model: Model, el: ElementRecord, shadowed: readonly string[]): string {
+  const definitions = sharedDefinitions(model);
+  const head = shadowed[0]!.split('.')[0]!;
+  const f = ownNames(definitions, el).get(head);
+  const outer = el.ownerId != null ? definitions.scope(el.ownerId, 'all').get(head) : undefined;
+  const who = effectiveNameOf(model, el) ?? effectiveQualifiedName(model, el.id);
+  const what =
+    f && typeof f.attrs.direction === 'string'
+      ? `its own ${f.attrs.direction} parameter`
+      : f && f.ownerId !== el.id
+        ? 'a feature it inherits'
+        : 'a feature of its own';
+  return (
+    `\`${head}\` in ${who} is ${f ? effectiveQualifiedName(model, f.id) : head}, ${what}; this tool reads a ` +
+    `body in its owner's scope, where \`${head}\` is ${outer !== undefined ? effectiveQualifiedName(model, outer) : 'another feature'} ` +
+    '— another feature — so the body is not read'
+  );
+}
+
+/**
+ * Is `el` a calculation whose features are the values of a CALL — one with a
+ * parameter: a calculation that states no value by its body for one
+ * ({@link isParameterisedCalculation}), or any with a directed feature, owned
+ * or from the `calc def` that types it (`calc g { in y = 100.0; return r = y;
+ * }`)? A chain into it (`g.r`) reads a default nothing invokes, and no
+ * surface reads it.
+ */
+export function isCall(model: Model, el: ElementRecord): boolean {
+  if (el.eClass !== 'CalculationUsage') return false;
+  if (isParameterisedCalculation(model, el)) return true;
+  return effectiveFeatures(model, el.id).some((c) => {
+    const direction = c.attrs.direction;
+    return direction === 'in' || direction === 'out' || direction === 'inout';
+  });
 }
 
 /** A calculation body that is a value — arithmetic or a name — rather than a relation or a test. */
@@ -791,6 +2822,21 @@ function cameBack(contact: Contact, inFlight: InFlight): 'loop' | 'echo' | undef
   for (const id of contact.loops) if (inFlight.has(id)) return 'loop';
   for (const id of contact.echoes) if (inFlight.has(id)) return 'echo';
   return undefined;
+}
+
+/**
+ * The key of a feature's value read IN a context that is not where it is
+ * written ({@link DefiningEquations.readAt}) — its memo key and its key on a
+ * derivation stack, apart from the value it has where it is written.
+ */
+export function instanceKey(featureId: ElementId, contextId: ElementId): string {
+  return `${featureId}@${contextId}`;
+}
+
+/** The feature an {@link instanceKey} (or a plain feature id) is of. */
+export function baseIdOf(key: string): ElementId {
+  const at = key.indexOf('@');
+  return at < 0 ? key : key.slice(0, at);
 }
 
 /** The memo key of the derivation an equation in `contextId` gives a feature — never a bare element id. */

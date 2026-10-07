@@ -83,6 +83,36 @@ describe('parser — specialization operators', () => {
     expect(ofClass(model, 'ReferenceSubsetting').length).toBe(1);
   });
 
+  // `= 1.0` binds every instance; `default = 1.0` is what a redefinition may
+  // override. The semantics reads the difference, so the mapper keeps it.
+  it('records a default value apart from a bound one, in every spelling', () => {
+    const { model } = parseModel(`
+      package P {
+        part def D {
+          attribute bound = 1.0;
+          attribute a default = 2.0;
+          attribute b default 3.0;
+          attribute c default := 4.0;
+          attribute d := 5.0;
+        }
+      }
+    `);
+    const attrs = (name: string) => {
+      const { defaultValue, initialValue, value } = byName(model, name)!.attrs;
+      return { defaultValue, initialValue, value };
+    };
+    expect(attrs('bound')).toEqual({ defaultValue: undefined, initialValue: undefined, value: 1 });
+    expect(attrs('a')).toEqual({ defaultValue: true, initialValue: undefined, value: 2 });
+    expect(attrs('b')).toEqual({ defaultValue: true, initialValue: undefined, value: 3 });
+    expect(attrs('c')).toEqual({ defaultValue: true, initialValue: true, value: 4 });
+    expect(attrs('d')).toEqual({ defaultValue: undefined, initialValue: true, value: 5 });
+    const text = serializeModel(model);
+    expect(text).toContain('attribute a default = 2.0;');
+    expect(text).toContain('attribute b default = 3.0;');
+    expect(text).toContain('attribute c default := 4.0;');
+    expect(text).toContain('attribute bound = 1.0;');
+  });
+
   it('keeps unresolved references textually and warns', () => {
     const { model, diagnostics } = parseModel(`package P { part v : Missing; }`);
     const v = byName(model, 'v')!;

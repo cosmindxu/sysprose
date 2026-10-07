@@ -375,13 +375,10 @@ function header(model: Model, el: ElementRecord): string {
   if (typeof el.attrs.ofPayload === 'string') parts.push('of', el.attrs.ofPayload);
   if (typeof el.attrs.sendTarget === 'string') parts.push('to', el.attrs.sendTarget);
 
-  // Feature value. `:=` marks an initial (default) value; `=` a bound one.
-  // A trailing `attrs.unit` (e.g. `[kg]`) is emitted after the value.
+  // Feature value. `:=` marks an initial value, `default` an overridable one;
+  // `=` a bound one. A trailing `attrs.unit` (e.g. `[kg]`) is emitted after the value.
   if (el.attrs.value !== undefined) {
-    const clause: string[] = [
-      el.attrs.initialValue === true ? ':=' : '=',
-      valueLexeme(el),
-    ];
+    const clause: string[] = [...valueOperator(el), valueLexeme(el)];
     if (typeof el.attrs.unit === 'string' && el.attrs.unit !== '') clause.push(`[${unitLexeme(el.attrs.unit)}]`);
     parts.push(...clause);
   }
@@ -597,10 +594,20 @@ function multiplicityLexeme(el: ElementRecord): string | undefined {
   return m;
 }
 
-/** `:=` / `=` feature-value clause, if present. */
+/**
+ * The feature-value operator as the author wrote it: `=` (a binding), `:=`
+ * (an initial value), and either after `default` — the one the semantics
+ * reads as overridable by a redefinition, which `=` alone is not.
+ */
+function valueOperator(el: ElementRecord): string[] {
+  const op = el.attrs.initialValue === true ? ':=' : '=';
+  return el.attrs.defaultValue === true ? ['default', op] : [op];
+}
+
+/** `:=` / `=` / `default =` feature-value clause, if present. */
 function valueClause(el: ElementRecord): string[] {
   if (el.attrs.value === undefined) return [];
-  const parts: string[] = [el.attrs.initialValue === true ? ':=' : '=', valueLexeme(el)];
+  const parts: string[] = [...valueOperator(el), valueLexeme(el)];
   // Value unit stored in `attrs.unit` (`= 1500 [kg]`); never conflated with
   // the multiplicity bracket (finding D1/H11).
   if (typeof el.attrs.unit === 'string' && el.attrs.unit !== '') parts.push(`[${unitLexeme(el.attrs.unit)}]`);

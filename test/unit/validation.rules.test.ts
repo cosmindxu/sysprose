@@ -478,9 +478,9 @@ describe('rule 8 — requirement-subject', () => {
   /**
    * An own feature that shares the inherited subject's NAME masks it.
    *
-   * `effectiveFeatures` resolves redefinition by name: a feature the usage
+   * `effectiveFeatures` resolves redefinition by name too: a feature the usage
    * declares itself hides the same-named feature it would otherwise inherit
-   * (`src/semantics/inheritance.ts`:71). So a usage that re-uses the subject's
+   * (`src/semantics/inheritance.ts`:149). So a usage that re-uses the subject's
    * name for something else loses the inherited subject and is reported as
    * having none. That is the inheritance semantics the whole codebase shares —
    * this case pins it so the behaviour is a recorded answer rather than a

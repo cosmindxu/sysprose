@@ -2674,6 +2674,57 @@ package P {
     }
   }, 180_000);
 
+  it('verify and refine read plain numerals as written: no exit 0 on a false tie, no exit 1 on a true sum', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      // Read as the doubles they parse to, `0.1 + 0.2 > 0.3` was PROVED, exit 0,
+      // and held at the values; it is false of the decimals, so both engines
+      // refute it, exit 1 (the tie rule).
+      const tie = join(dir, 'tie.sysml');
+      writeFileSync(
+        tie,
+        'package K2 {\n    part def P { attribute f : ScalarValues::Real = 0.1; }\n    part p : P;\n' +
+          '    requirement def R { subject p : P; require constraint { p.f + 0.2 > 0.3 } }\n' +
+          '    satisfy R by p; }\n',
+      );
+      const smt = await run(['verify', tie, '--engine', 'smt']);
+      expect(smt.code, smt.stdout).toBe(1);
+      expect(smt.stdout).toContain('0 inconclusive, 0 discharged, 1 refuted');
+      const literal = await run(['verify', tie, '--engine', 'literal']);
+      expect(literal.code, literal.stdout).toBe(1);
+      expect(literal.stdout).toContain('a tie to binary64 that the decimals written decide');
+      // `0.1 + 0.2 == 0.3` is consistent with the values that make it true:
+      // the solver's point re-read over its exact rationals, not their doubles.
+      const sumEq = join(dir, 'sum-eq.sysml');
+      writeFileSync(
+        sumEq,
+        'package K1 {\n    part def P { attribute f : ScalarValues::Real = 0.1; }\n    part p : P;\n' +
+          '    requirement def R { subject p : P; require constraint { p.f + 0.2 == 0.3 } }\n' +
+          '    satisfy R by p; }\n',
+      );
+      const consistency = await run(['consistency', sumEq, '--with-values']);
+      expect(consistency.code, consistency.stdout).toBe(0);
+      expect(consistency.stdout).toContain('0 inconsistent, 0 inconclusive, 1 consistent');
+      // And `x <= 0.1, y <= 0.2 ⇒ x + y <= 0.3` did NOT refine, exit 1, over
+      // the witness x = 0.1, y = 0.2 it "re-read and confirmed".
+      const sum = join(dir, 'sum.sysml');
+      writeFileSync(
+        sum,
+        'package T13 {\n    part def A { attribute x : ScalarValues::Real; }\n' +
+          '    part def B { attribute y : ScalarValues::Real; }\n    part def Sys { part a : A; part b : B; }\n' +
+          '    requirement def Top { subject s : Sys; require constraint { s.a.x + s.b.y <= 0.3 } }\n' +
+          '    requirement def AReq { subject a : A; require constraint { a.x <= 0.1 } }\n' +
+          '    requirement def BReq { subject b : B; require constraint { b.y <= 0.2 } }\n' +
+          '    satisfy Top by Sys; satisfy AReq by Sys::a; satisfy BReq by Sys::b; }\n',
+      );
+      const refine = await run(['refine', sum]);
+      expect(refine.code, refine.stdout).toBe(0);
+      expect(refine.stdout).toContain('0 not refined, 0 vacuous, 0 inconclusive, 1 refined');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   it('verify --record refuses a model that did not load cleanly, and writes nothing', async () => {
     // §3.10 makes the refusal explicit for the write path, and this is where it
     // has teeth: a record is the DURABLE artefact — it outlives the process
@@ -3378,8 +3429,11 @@ package P {
     // prints beside the type — both have to select the set the guide says they
     // select, and the conformance test underneath them inverts silently.
     const model = `${FIXV}/models/consistency-subtype.sysml`;
+    // Exit 2: the set it selects carries a °C rise a gate refused, so it is
+    // satisfiable only without one of its own clauses and nothing is decided.
+    // What is asserted here is WHICH set the reader's spelling selects.
     const air = await run(['consistency', model, '--subject', 'ConsistencySubtype::AirVehicle']);
-    expect(air.code).toBe(0);
+    expect(air.code).toBe(2);
     expect(air.stdout).toContain('4 requirement(s) on 1 subject(s)');
     expect(air.stdout).toContain('subject ConsistencySubtype::AirVehicle');
     expect(air.stdout, 'narrowing to a subtype pulled in its sibling set').not.toContain(
@@ -3387,7 +3441,7 @@ package P {
     );
 
     const usage = await run(['consistency', model, '--subject', 'ConsistencySubtype::uav']);
-    expect(usage.code).toBe(0);
+    expect(usage.code).toBe(2);
     expect(usage.stdout).toContain('subject ConsistencySubtype::AirVehicle');
 
     // AND A REF THAT RESOLVES AND SELECTS NOTHING IS A USAGE ERROR. The

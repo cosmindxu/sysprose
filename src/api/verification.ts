@@ -2158,7 +2158,7 @@ function consistencyFindings(
       elementId: refusal.id,
       elementName: refusal.qualifiedName,
       code: 'verification/unsupported-expression',
-      hint: `The relation is listed with its reason rather than dropped, and the count travels with every verdict: an inconsistency found without it is still an inconsistency, but a requirement set called consistent without it may be excluded by the very relation that was refused (\`${refusal.reason}\`).`,
+      hint: `The relation is listed with its reason rather than dropped, and the count travels with every verdict: an inconsistency found without it is still an inconsistency, but a requirement set that reaches it is undecided rather than consistent, since the very relation that was refused may exclude the point found (\`${refusal.reason}\`).`,
     });
   }
   return out;
@@ -2594,7 +2594,7 @@ export async function boundsReport(
   // would otherwise print a bound over a design space the reader never asked
   // for, and one that named two things would bound whichever the model walk
   // reached first.
-  const measure = resolveFreeFeatures(model, [opts.measure], rows);
+  const measure = resolveFreeFeatures(model, [opts.measure], rows, { measure: true });
   if (measure.unresolved.length > 0 || measure.ambiguous.length > 0) {
     throw new VerifyOptionError(
       measure.ambiguous.length > 0
@@ -2620,6 +2620,10 @@ export async function boundsReport(
       `--measure names nothing in this model: \`${opts.measure}\`. Readable here: ${freeableSentence(rows)}`,
     );
   }
+  // An instance's own symbol (`R::p1::m2`) where the measure is read through one.
+  const resolvedSymbol = measure.features.keys().next().value;
+  const measureSymbol =
+    resolvedSymbol !== undefined && measure.features.get(resolvedSymbol) === measureId ? resolvedSymbol : undefined;
 
   const free = [...(opts.free ?? [])];
   const freed = resolveFreeFeatures(model, free, rows);
@@ -2660,6 +2664,7 @@ export async function boundsReport(
     // as a model with nothing to bound.
     const prepared = prepareBounds(model, {
       measureId,
+      ...(measureSymbol !== undefined ? { measureSymbol } : {}),
       free: freed.qualifiedNames,
       ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
       withRequirements,
@@ -2709,6 +2714,7 @@ export async function boundsReport(
   const result = await checkBounds(model, {
     backend: load,
     measureId,
+    ...(measureSymbol !== undefined ? { measureSymbol } : {}),
     sense,
     free: freed.qualifiedNames,
     ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),

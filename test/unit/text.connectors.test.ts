@@ -13,6 +13,8 @@ import { describe, it, expect } from 'vitest';
 import { parseModel, serializeModel, resolveConnectorFeatureChains } from '@text/index';
 import { buildDiagram } from '@diagram/index';
 import { Model } from '@core/index';
+import { redefinedBy } from '@semantics/inheritance';
+import { scopeFor } from '@semantics/evaluate-model';
 
 const TYPES_FIRST = `package P {
     part def Battery { port pwrOut; }
@@ -126,6 +128,58 @@ describe('connector feature-chain endpoints (types-first models)', () => {
     const a = model.all().find((e) => e.declaredName === 'a' && e.ownerId && model.get(e.ownerId)!.declaredName === 'sys');
     expect(a).toBeDefined();
     expect(model.children(a!.id).filter((c) => c.attrs.implicit === true)).toHaveLength(1);
+  });
+
+  // `attribute :>> load = 50.0` declares no name and IS p's load (its
+  // effective name): the end lands on it. Mirroring P's load beside it made a
+  // second, valueless `p::load` the binding held while every scope read the 50.
+  it('lands an end on an explicit unnamed redefinition, never on a copy beside it', () => {
+    const { model } = parseModel(`package R14 {
+        part def P { attribute load default = 1.0; }
+        part p : P { attribute :>> load = 50.0; }
+        attribute w;
+        bind w = p.load;
+    }`);
+    const p = model.all().find((e) => e.declaredName === 'p')!;
+    const redefinition = model.children(p.id).find((c) => c.eClass === 'AttributeUsage')!;
+    expect(redefinition.attrs.value).toBe(50);
+    expect(model.children(p.id).filter((c) => c.attrs.implicit === true)).toEqual([]);
+    const bind = model.all().find((e) => e.eClass === 'BindingConnectorAsUsage' || e.attrs.bind === true)!;
+    expect([...(bind.source ?? []), ...(bind.target ?? [])]).toContain(redefinition.id);
+  });
+
+  // A renamed redefinition (`heavy redefines load`) is p's `load` too, and a
+  // type's redefinition (`part def S :> P { :>> load = 5.0; }`) is the load a
+  // `s : S` inherits: the end lands on the one, and the copy mirrors the
+  // other. A copy beside `heavy` was a second, valueless `p::load`; one that
+  // redefined P's load directly masked S's 5 in `s` itself.
+  it('lands an end on a renamed redefinition, and mirrors the most specific one a type declares', () => {
+    const renamed = parseModel(`package M2 {
+        part def P { attribute load default = 1.0; }
+        part p : P { attribute heavy redefines load = 50.0; }
+        attribute w;
+        bind w = p.load;
+    }`).model;
+    const p = renamed.all().find((e) => e.declaredName === 'p')!;
+    const heavy = renamed.all().find((e) => e.declaredName === 'heavy')!;
+    expect(renamed.children(p.id).filter((c) => c.attrs.implicit === true)).toEqual([]);
+    const bind = renamed.all().find((e) => e.eClass === 'BindingConnectorAsUsage' || e.attrs.bind === true)!;
+    expect([...(bind.source ?? []), ...(bind.target ?? [])]).toContain(heavy.id);
+
+    const specialised = parseModel(`package M6 {
+        part def P { attribute load default = 1.0; }
+        part def S :> P { attribute :>> load = 5.0; }
+        part s : S;
+        attribute w;
+        bind w = s.load;
+    }`).model;
+    const s = specialised.all().find((e) => e.declaredName === 'S')!;
+    const sLoad = specialised.children(s.id).find((c) => c.eClass === 'AttributeUsage')!;
+    const copy = specialised
+      .children(specialised.all().find((e) => e.declaredName === 's')!.id)
+      .find((c) => c.eClass === 'AttributeUsage')!;
+    expect([copy.attrs.implicit, redefinedBy(specialised, copy).map((g) => g.id)]).toEqual([true, [sLoad.id]]);
+    expect(scopeFor(specialised, specialised.all().find((e) => e.declaredName === 'M6')!.id)('s.load')).toBe(5);
   });
 
   it('produces ZERO false connection-end warnings when chains resolve', () => {

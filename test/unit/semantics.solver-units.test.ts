@@ -861,6 +861,181 @@ describe('a dimension-one unit with a factor is still converted', () => {
 `);
     expect(solvedOf(m, 'need')).toBeCloseTo(16, 9);
   });
+
+  /*
+   * A `[unit]` beside an EXPRESSION value is part of the value: `(k * 2.0)
+   * [GiB]` is the number `k * 2.0` in GiB, as the validation surface applies
+   * it. Joined as the bare `total == k * 2.0`, the gates scaled the
+   * dimension-one feature and read `k * 2.0` as SI: `total` solved to 6 bits
+   * (6.98e-10 GiB), `solveFeasible` called `total >= 5.0 [GiB]` infeasible by
+   * 4.29e10, and the measure was published as 6.98e-10 GiB beside a check that
+   * read 6 GiB.
+   */
+  it('a value written `(k * 2.0) [GiB]` is 6 GiB to the solve, the measure and feasibility', () => {
+    const m = parse(`package P {
+    part def Mem {
+        attribute k : ScalarValues::Real = 3.0;
+        attribute capacityMeasure : ISQ::StorageCapacityValue = (k * 2.0) [GiB];
+        constraint floor { capacityMeasure >= 5.0 [GiB] }
+    }
+    part m : Mem;
+}
+`);
+    expect(solvedOf(m, 'capacityMeasure')).toBeCloseTo(6, 9);
+    expect(unitAware(m)).toEqual(['satisfied']);
+    expect(numeric(m)).toEqual(['satisfied']);
+    const moe = evaluateMoEs(m).find((x) => x.name === 'capacityMeasure');
+    expect(moe?.value).toBeCloseTo(6, 9);
+    expect(moe?.unit).toBe('GiB');
+    expect(solveFeasible(m).feasible).toBe(true);
+  });
+
+  it('and a dimensioned `(d1 / d2) [km]` is the ratio in km, not `d1` read in its stored km', () => {
+    const m = parse(
+      req(
+        `        attribute d1 : ISQ::LengthValue = 2.0 [km];
+        attribute d2 : ISQ::LengthValue = 1.0 [m];
+        attribute lenMeasure : ISQ::LengthValue = (d1 / d2) [km];`,
+        'v.lenMeasure == 2000.0 [km]',
+      ),
+    );
+    expect(solvedOf(m, 'lenMeasure')).toBeCloseTo(2000, 6);
+    expect(unitAware(m)).toEqual(['satisfied']);
+    expect(numeric(m)).toEqual(['satisfied']);
+  });
+
+  it('a self-contained `(6.0 [GiB] / 2.0 [GiB]) [GiB]` seeds 3 GiB, not 3 bits', () => {
+    // The seed read the body as SI and converted it into the storage unit:
+    // 3 / 2^33 GiB, and `(6.0 [km] / 2.0 [m]) [km]` as 3 km for a value of 3000.
+    const m = parse(
+      req(
+        `        attribute r : ISQ::StorageCapacityValue = (6.0 [GiB] / 2.0 [GiB]) [GiB];
+        attribute len : ISQ::LengthValue = (6.0 [km] / 2.0 [m]) [km];`,
+        'v.r == 3.0 [GiB] and v.len == 3000.0 [km]',
+      ),
+    );
+    expect(solvedOf(m, 'r')).toBeCloseTo(3, 9);
+    expect(solvedOf(m, 'len')).toBeCloseTo(3000, 6);
+    expect(solve(m).converged).toBe(true);
+    expect(numeric(m)).toEqual(['satisfied']);
+  });
+
+  it('a value that puts a unit on bits is solved from nothing and judged by nothing', () => {
+    // `(cap * 2.0) [GiB]` relabels 2^35 bit as GiB: the validation surface
+    // refuses it, so the solver lane neither solves nor seeds it.
+    for (const value of ['(cap * 2.0) [GiB]', '(2.0 * 1.0 [GiB]) [GiB]']) {
+      const m = parse(
+        req(
+          `        attribute cap : ISQ::StorageCapacityValue = 2.0 [GiB];
+        attribute dbl : ISQ::StorageCapacityValue = ${value};`,
+          'v.dbl > 1000.0 [GiB]',
+        ),
+      );
+      expect(solvedOf(m, 'dbl'), value).toBeUndefined();
+      expect(unitAware(m), value).toEqual(['unknown']);
+      expect(numeric(m), value).toEqual(['unknown']);
+    }
+  });
+
+  it('nor is a value the solver found for a defined feature given the unit the check refuses', () => {
+    // `x` is defined as `cap * 2.0`, bits: the validation surface refuses
+    // `(v.x) [GiB]`, and the solved 2^35 must not be relabelled here either.
+    const m = parse(
+      req(
+        `        attribute cap : ISQ::StorageCapacityValue = 2.0 [GiB];
+        attribute x : ISQ::StorageCapacityValue;
+        assert constraint def1 { x == cap * 2.0 }`,
+        '(v.x) [GiB] > 1000.0 [GiB]',
+      ),
+    );
+    expect(solvedOf(m, 'x')).toBeCloseTo(2 ** 35, 0);
+    const row = checkConstraintsNumeric(m).find((r) => r.raw.includes('1000.0'));
+    expect(row?.result).toBe('unknown');
+    expect(checkConstraints(m).find((c) => c.expression.includes('1000.0'))?.result).toBe('unknown');
+  });
+
+  /*
+   * A relabel the MODEL'S POINT does not show: with an input the model gives
+   * no value, the validation surface merely has no value for the feature, and
+   * the solver joined `x == expr * 1.0 [GiB]` — solving `tot = (cap + k) [GiB]`
+   * to 17179869185 (2^34 bit + 1, read as GiB) and `dbl = (cap * k) [GiB]` with
+   * `k` pinned at 3 to 51539607552 GiB. Whatever `k` is, the unit lands on
+   * bits, so neither is solved; a value that is a number for every `k` is.
+   */
+  it('nor is a value that puts a unit on bits for EVERY value of an input the model leaves free', () => {
+    const cap = '        attribute cap : ISQ::StorageCapacityValue = 2.0 [GiB];';
+    const shapes: Array<[string, string]> = [
+      ['attribute k : ScalarValues::Real; assert constraint kpos { k >= 1.0 }', '(cap * k) [GiB]'],
+      ['attribute k : ScalarValues::Real; assert constraint kpos { k >= 0.0 }', '(cap + k) [GiB]'],
+      ['attribute k : ScalarValues::Real; constraint pin { k == 3.0 }', '(cap * k) [GiB]'],
+      ['attribute big : ScalarValues::Boolean;', '(if big then cap * 1.0 else cap * 2.0) [GiB]'],
+      ['attribute y : ISQ::StorageCapacityValue; assert constraint ylo { y >= cap }', '(y) [GiB]'],
+      ['attribute mirror; bind mirror = cap;', '(mirror * 2.0) [GiB]'],
+    ];
+    for (const [inputs, value] of shapes) {
+      const m = parse(
+        req(`${cap}\n        ${inputs}\n        attribute dbl : ISQ::StorageCapacityValue = ${value};`, 'v.dbl >= 1000.0 [GiB]'),
+      );
+      expect(solvedOf(m, 'dbl'), value).toBeUndefined();
+      expect(checkConstraintsNumeric(m).find((r) => r.raw.includes('v.dbl'))?.result, value).toBe('unknown');
+    }
+    // A number for every value of the free input is joined, and solved.
+    const m = parse(
+      req(
+        `${cap}
+        attribute k : ScalarValues::Real; constraint pin { k == 3.0 }
+        attribute total : ISQ::StorageCapacityValue = (k * 2.0) [GiB];
+        attribute y : ISQ::StorageCapacityValue; bind y = cap;
+        attribute back : ISQ::StorageCapacityValue = (y / 1.0 [MiB]) [MiB];`,
+        'v.back == 2048.0 [MiB]',
+      ),
+    );
+    expect(solvedOf(m, 'total')).toBeCloseTo(6, 9);
+    expect(solvedOf(m, 'back')).toBeCloseTo(2048, 6);
+    expect(numeric(m)).toEqual(['satisfied', 'satisfied']);
+  });
+
+  it('nor one over a ratio of another kind of dimension one: GiB over mm/m is still bits', () => {
+    // One power of GiB over one of mm/m summed to zero: 2^34 / 0.002 bit was
+    // read as 8.6e12 GiB, where the quantity is 1000 GiB.
+    const m = parse(
+      req(
+        `        attribute cap : ISQ::StorageCapacityValue = 2.0 [GiB];
+        attribute strain : ScalarValues::Real = 2.0 [mm/m];
+        attribute x : ISQ::StorageCapacityValue = (cap / strain) [GiB];
+        attribute r : ScalarValues::Real = (strain / 1.0 [km/m]) [mm/m];`,
+        'v.x > 1.0E12 [GiB]',
+      ),
+    );
+    expect(solvedOf(m, 'x')).toBeUndefined();
+    expect(unitAware(m)).toEqual(['unknown']);
+    expect(numeric(m)).toEqual(['unknown']);
+    // A ratio over a ratio of the same kind is a number: 0.002 / 1000.
+    expect(solvedOf(m, 'r')).toBeCloseTo(2e-6, 15);
+  });
+
+  it('seeds a self-contained lifted value over one derivation pass, not one per feature', () => {
+    // Each seed made its own memo, and every memo walked the owner's whole
+    // scope again: (n + 1)² reads of the model for n such values, and 2 400 of
+    // them took 22 times as long to solve as plain literals. One pass reads
+    // each feature's types twice.
+    const n = 200;
+    const attrs = Array.from(
+      { length: n },
+      (_, i) => `        attribute x${i} : ISQ::StorageCapacityValue = (1.0 + 1.0) [GiB];`,
+    ).join('\n');
+    const m = parse(`package P {\n    part def V {\n${attrs}\n    }\n    part v : V;\n}\n`);
+    const typesOf = m.typesOf.bind(m);
+    let reads = 0;
+    m.typesOf = (id) => {
+      reads++;
+      return typesOf(id);
+    };
+    const solved = solve(m);
+    const last = m.all().find((e) => e.declaredName === `x${n - 1}`)!;
+    expect(solved.values.get(last.id)).toBeCloseTo(2, 9);
+    expect(reads).toBeLessThan(10 * n);
+  });
 });
 
 /**
@@ -1049,26 +1224,226 @@ describe('the second site of each fix agrees with the first', () => {
     expect(solveFeasible(m).feasible).toBe(false);
   });
 
-  it('but a tie the unit-aware evaluator JUDGES is feasible on every surface', () => {
-    // `compareQ` counts operands within its tolerance as equal for every
-    // operator, so this tie is satisfied — and feasibility must not overrule a
-    // verdict the check surface publishes.
+  it('and a tie the unit-aware evaluator judges is a tie too, on every surface (the tie rule)', () => {
+    // `compareQ` read operands within its tolerance as equal for every
+    // operator, the strict ones SATISFIED — `mass < 25.0 [kg]` at 25 kg held
+    // where the scalar path and the SMT engine read it violated. It decides a
+    // tie by the decimals written now, as every surface does.
     const scaled = parse(`package P {
     attribute mass : ISQ::MassValue = 25.0 [kg];
     constraint c { mass < 25.0 [kg] }
 }
 `);
-    expect(unitAware(scaled)).toEqual(['satisfied']);
-    expect(numeric(scaled)).toEqual(['satisfied']);
-    expect(solveFeasible(scaled).feasible).toBe(true);
+    expect(unitAware(scaled)).toEqual(['violated']);
+    expect(numeric(scaled)).toEqual(['violated']);
+    expect(solveFeasible(scaled).feasible).toBe(false);
+    expect(solveFeasible(scaled).decided).toBe(true);
     const plain = parse(`package P {
     attribute x = 25.0;
     constraint c { x < 25.0 }
 }
 `);
-    expect(unitAware(plain)).toEqual(['satisfied']);
-    expect(numeric(plain)).toEqual(['satisfied']);
-    expect(solveFeasible(plain).feasible).toBe(true);
+    expect(unitAware(plain)).toEqual(['violated']);
+    expect(numeric(plain)).toEqual(['violated']);
+    expect(solveFeasible(plain).feasible).toBe(false);
+    const x = plain.all().find((e) => e.declaredName === 'x' && e.attrs.isLibrary !== true);
+    expect(optimize(plain, x!.id, [], { constraints: true }).feasible).toBe(false);
+    // A near miss is no tie: 0.9999999999 < 1.0 is true of the decimals.
+    const near = parse(`package P {
+    attribute x = 0.9999999999;
+    constraint c { x < 1.0 }
+}
+`);
+    expect(unitAware(near)).toEqual(['satisfied']);
+    expect(numeric(near)).toEqual(['satisfied']);
+    expect(solveFeasible(near).feasible).toBe(true);
+  });
+
+  it('feasibility takes the validation surface’s verdict on an inequality over stated values (R3b)', () => {
+    // `x <= 0.2999999` at 0.3 misses by 1e-7: inside the absolute 1e-6 the
+    // numeric surface and the feasibility gate read raw magnitudes by, and
+    // both called it satisfied — feasible — beside a check that reads it
+    // violated and an SMT engine that refutes it.
+    const over = parse(`package P {
+    attribute x = 0.3;
+    constraint c { x <= 0.2999999 }
+}
+`);
+    expect(unitAware(over)).toEqual(['violated']);
+    expect(numeric(over)).toEqual(['violated']);
+    const f = solveFeasible(over);
+    expect([f.feasible, f.decided, f.violations.length]).toEqual([false, true, 1]);
+    const under = parse(`package P {
+    attribute x = 0.3;
+    constraint c { x > 0.2999999 }
+}
+`);
+    expect(unitAware(under)).toEqual(['satisfied']);
+    expect(numeric(under)).toEqual(['satisfied']);
+    expect(solveFeasible(under).feasible).toBe(true);
+    // On the bare-literal path too: a kinded `limit` read in its declared unit.
+    const literal = parse(`package P {
+    attribute limit : ISQ::MassValue = 25.0000005;
+    constraint c { limit <= 25.0 }
+}
+`);
+    expect(unitAware(literal)).toEqual(['violated']);
+    expect(numeric(literal)).toEqual(['violated']);
+    expect(solveFeasible(literal).feasible).toBe(false);
+    // `0.1 + 0.2 > 0.3` is false of the decimals, on every surface.
+    const sum = parse(`package P {
+    attribute f = 0.1;
+    constraint c { f + 0.2 > 0.3 }
+}
+`);
+    expect(unitAware(sum)).toEqual(['violated']);
+    expect(numeric(sum)).toEqual(['violated']);
+    expect(solveFeasible(sum).feasible).toBe(false);
+  });
+
+  it('but only at the model’s own point: a value stated over a fixed or optimised one is read where it stands', () => {
+    // `y` is stated, as an expression over `x`: at the model's `x = 9.0` it is
+    // 18, past `y <= 5.0`. With `x` fixed to 1 it is 2, and the validation
+    // surface's verdict at 18 made that point infeasible — `c` violated by 0.
+    const m = parse(`package P {
+    attribute x = 9.0;
+    attribute y = x * 2.0;
+    constraint c { y <= 5.0 }
+}
+`);
+    const id = (name: string) => m.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+    expect(solveFeasible(m).feasible).toBe(false);
+    const fixed = solveFeasible(m, { fixed: new Map([[id('x'), 1.0]]) });
+    expect([fixed.feasible, fixed.decided, fixed.violations, fixed.values.get(id('y'))]).toEqual([true, true, [], 2]);
+    // So does the optimum: `y` maximised over `x` meets its bound at 5.
+    const bounds = new Map<string, [number, number]>([[id('x'), [0, 10]]]);
+    const best = optimize(m, id('y'), [id('x')], { sense: 'max', constraints: true, bounds });
+    expect(best.value).toBeCloseTo(5, 5);
+    expect(best.feasible).toBe(true);
+  });
+
+  it('and every relation is read there, every feature at the fixed point — a `!=`, a connective, an equality (f1d)', () => {
+    // `y != 18.0` was judged by the unit-aware evaluator at the model's own y
+    // of 18: violated at x fixed to 1, where y is 2, and that point decided
+    // infeasible. Every name now reads the value the point gives it.
+    const m = parse(`package F1d {
+    attribute x = 9.0;
+    attribute y = x * 2.0;
+    constraint ne { y != 18.0 }
+    constraint conn { y > 1.0 and y < 5.0 }
+    constraint eq { y == 2.0 }
+    constraint le { y <= 5.0 }
+}
+`);
+    const id = (name: string) => m.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+    expect(numeric(m)).toEqual(['violated', 'violated', 'violated', 'violated']);
+    const fixed = { fixed: new Map([[id('x'), 1.0]]) };
+    expect(checkConstraintsNumeric(m, fixed).map((r) => r.result)).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied']);
+    const f = solveFeasible(m, fixed);
+    expect([f.feasible, f.decided, f.violations]).toEqual([true, true, []]);
+    // A definition's relation read in a context is the validation surface's
+    // verdict at the values the model STATES: at a point holding one fixed to
+    // another it is not this point's, and is not judged here.
+    const ctx = parse(`package F1f {
+    part def P { attribute load : Real default = 1.0; constraint c { load <= 10.0 } }
+    part p : P { attribute heavy :>> load = 50.0; }
+}
+`);
+    const inP = (rows: ReturnType<typeof checkConstraintsNumeric>) => rows.find((r) => r.context !== undefined)!;
+    expect(inP(checkConstraintsNumeric(ctx)).result).toBe('violated');
+    const heavy = ctx.all().find((e) => e.declaredName === 'heavy')!.id;
+    const held = inP(checkConstraintsNumeric(ctx, { fixed: new Map([[heavy, 5.0]]) }));
+    expect([held.result, held.reason]).toEqual(['unknown', expect.stringMatching(/not this point's/)]);
+    // A value the caller FIXED is the decimal it gave, read exactly, as a
+    // value the model states is — never a value the solve produced, known
+    // only to its tolerance (decision 11): read so, `x <= 0.99999999999` and
+    // `x == 1.00000000001` held at x fixed to 1 (t3), and so did `x + c <=
+    // 25.99999999999` beside a stated c of 25 (t1).
+    const t3 = parse(`package T3 {
+    attribute x = 3.0;
+    attribute c = 25.0;
+    constraint kx { x <= 0.99999999999 }
+    constraint kxe { x == 1.00000000001 }
+    constraint kc { x + c <= 25.99999999999 }
+}
+`);
+    const at1 = { fixed: new Map([[t3.all().find((e) => e.declaredName === 'x')!.id, 1.0]]) };
+    expect(checkConstraintsNumeric(t3, at1).map((r) => r.result)).toEqual(['violated', 'violated', 'violated']);
+    const f3 = solveFeasible(t3, at1);
+    expect([f3.feasible, f3.decided, f3.violations.map((v) => v.name)]).toEqual([false, true, ['kx', 'kc']]);
+    // A name the point gives no value, whose value the model states over what
+    // the point moved, is no value of that point: `ok = x > 5.0`, read at the
+    // model's x of 9, held at x fixed to 1 and decided the point feasible (t4).
+    const t4 = parse(`package T4 {
+    attribute x = 9.0;
+    attribute ok : Boolean = x > 5.0;
+    constraint c { ok }
+    constraint c2 { ok and x > 0.0 }
+}
+`);
+    expect(numeric(t4)).toEqual(['satisfied', 'satisfied']);
+    const at4 = { fixed: new Map([[t4.all().find((e) => e.declaredName === 'x')!.id, 1.0]]) };
+    const rows4 = checkConstraintsNumeric(t4, at4);
+    expect(rows4.map((r) => [r.result, r.reason])).toEqual([
+      ['unknown', expect.stringMatching(/^ok has no value at this point/)],
+      ['unknown', expect.stringMatching(/^ok has no value at this point/)],
+    ]);
+    const f4 = solveFeasible(t4, at4);
+    expect([f4.violations, f4.decided]).toEqual([[], false]);
+  });
+
+  it('a strict ordering within the tolerance of a solved value is undecided, never read as a tie', () => {
+    // x is solved from `x * 3.0 == 0.29999999`: 0.0999999966…, so `x < 0.1`
+    // is TRUE. Read as a tie inside the solve's tolerance, it was violated on
+    // the numeric surface and decided infeasible.
+    const below = parse(`package P {
+    attribute x : Real;
+    constraint d { x * 3.0 == 0.29999999 }
+    constraint lt { x < 0.1 }
+    constraint le { x <= 0.1 }
+}
+`);
+    expect(numeric(below)).toEqual(['satisfied', 'unknown', 'satisfied']);
+    expect(checkConstraintsNumeric(below)[1].reason).toMatch(/known only to that tolerance/);
+    const f = solveFeasible(below);
+    expect([f.feasible, f.decided, f.violations]).toEqual([true, false, []]);
+    // In kilograms the evaluator's own relative tolerance decides it — 3.3e-9
+    // short of a bound of 0.1 — and feasibility, whose gate is wider, leaves
+    // it open rather than contradict it: the row was satisfied and the same
+    // row a violation of the same point.
+    const kg = parse(`package P {
+    attribute x : ISQ::MassValue;
+    constraint d { x * 3.0 == 0.29999999 [kg] }
+    constraint lt { x < 0.1 [kg] }
+}
+`);
+    expect(numeric(kg)).toEqual(['satisfied', 'satisfied']);
+    const k = solveFeasible(kg);
+    expect([k.feasible, k.violations]).toEqual([true, []]);
+    // And at 0.1 exactly (`x * 3.0 == 0.3`; the solve stops a few ulps away)
+    // the strict bound is false: undecided too, never satisfied.
+    const at = parse(`package P {
+    attribute x : Real;
+    constraint d { x * 3.0 == 0.3 }
+    constraint lt { x < 0.1 }
+}
+`);
+    expect(numeric(at)).toEqual(['satisfied', 'unknown']);
+    expect(solveFeasible(at).decided).toBe(false);
+    // A bound an optimum is driven against is met just inside it: `y = 2 * x`
+    // maximised under `y < 5.0` is a feasible optimum, not a tie.
+    const opt = parse(`package P {
+    attribute x : Real;
+    attribute y : Real;
+    constraint d { y == 2.0 * x }
+    constraint c { y < 5.0 }
+}
+`);
+    const id = (name: string) => opt.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+    const bounds = new Map<string, [number, number]>([[id('x'), [0, 10]]]);
+    const best = optimize(opt, id('y'), [id('x')], { sense: 'max', constraints: true, bounds });
+    expect(best.value).toBeCloseTo(5, 5);
+    expect(best.feasible).toBe(true);
   });
 });
 
@@ -1374,6 +1749,294 @@ describe('a feature an asserted equation defines is solved from that equation', 
 });
 
 /*
+ * Every instance is a variable of its own (D1 Stage 2). One per feature made
+ * two parts of one type one value: `g1.g == 3.0` fixed `g2.g` too, and
+ * `g2.g <= 1.0` was violated and the model infeasible; a derived value read in
+ * a usage that changes its input was the definition's.
+ */
+describe('every instance is a variable of its own on the solver lane', () => {
+  it('solves each instance from its own equations, and fixes no other instance from one', () => {
+    const m = parse(`package SI {
+    part def P { attribute load : Real default = 1.0; attribute m2 : Real = 10.0 - load; }
+    part p1 : P;
+    part p2 : P { attribute :>> load = 50.0; }
+    constraint diff { p1.m2 - p2.m2 >= 40.0 }
+    part def G { attribute g : Real; }
+    part g1 : G;
+    part g2 : G;
+    constraint pin { g1.g == 3.0 }
+    constraint other { g2.g <= 1.0 }
+}
+`);
+    const solved = solve(m);
+    const instance = (symbol: string) => [...solved.values].find(([k]) => k.endsWith(`@${symbol}`))?.[1];
+    // p1 changes nothing m2 reads: P's own 9. p2's is its own.
+    expect([solvedOf(m, 'm2'), instance('SI::p2::m2'), instance('SI::p1::m2')]).toEqual([9, -40, undefined]);
+    expect([instance('SI::g1::g'), instance('SI::g2::g')]).toEqual([3, undefined]);
+    const rows = new Map(checkConstraintsNumeric(m).map((r) => [r.name, r]));
+    expect([rows.get('diff')!.result, rows.get('diff')!.slack]).toEqual(['satisfied', 9]);
+    expect(rows.get('other')!.result).toBe('unknown');
+    expect(solveFeasible(m).feasible).toBe(true);
+    // The Solve panel lists an instance's value under the instance's name.
+    expect(analysisReport(m).values.map((v) => v.element.qualifiedName)).toContain('SI::p2::m2');
+  });
+
+  it('solves a copy a binding materialises as the value it reads — the feature’s, or the instance’s own', () => {
+    // `bind w = p.load` binds p's copy of P's load: 5, never a value the solve
+    // picks for the copy (it read `w >= 2.0` violated at 1). Through `s : S`,
+    // the copy is of S's `:>> load = 5.0`; through p2, whose load P's `m2`
+    // reads, the copy of m2 is p2's −40.
+    const m = parse(`package BC {
+    part def P { attribute load : Real default = 5.0; attribute m2 : Real = 10.0 - load; }
+    part def S :> P { attribute :>> load = 7.0; }
+    part p : P;
+    part s : S;
+    part p2 : P { attribute :>> load = 50.0; }
+    attribute w : Real;
+    attribute ws : Real;
+    attribute w2 : Real;
+    bind w = p.load;
+    bind ws = s.load;
+    bind w2 = p2.m2;
+}
+`);
+    expect([solvedOf(m, 'w'), solvedOf(m, 'ws'), solvedOf(m, 'w2')]).toEqual([5, 7, -40]);
+
+    // A copy declares no unit: bound through the feature whose value it reads,
+    // P's `len default = 2.0 [km]` is 2000 m in `wr`, never the stored 2, and
+    // the model is feasible (u4).
+    const u4 = parse(`package U4 {
+    part def P { attribute len : ISQ::LengthValue default = 2.0 [km]; }
+    part q : P { attribute :>> len = 6.0 [km]; }
+    part r : P;
+    attribute w : ISQ::LengthValue;
+    attribute wr : ISQ::LengthValue;
+    bind w = q.len;
+    bind wr = r.len;
+    constraint cqT { w >= 5999.0 [m] }
+    constraint crT { wr >= 1999.0 [m] }
+}
+`);
+    expect([solvedOf(u4, 'w'), solvedOf(u4, 'wr')]).toEqual([6000, 2000]);
+    expect(numeric(u4)).toEqual(['satisfied', 'satisfied']);
+    expect(solveFeasible(u4).feasible).toBe(true);
+    // A copy's value written `(expr) [unit]` is `expr` IN that unit, read in
+    // the copy's own context: q's `len` is (3 * 2.0) km, 6000 m in `w` (u5).
+    const u5 = parse(`package U5 {
+    part def P {
+        attribute k : Real default = 1.0;
+        attribute len : ISQ::LengthValue = (k * 2.0) [km];
+    }
+    part q : P { attribute :>> k = 3.0; }
+    attribute w : ISQ::LengthValue;
+    bind w = q.len;
+    constraint cqT { w >= 5999.0 [m] }
+}
+`);
+    expect(solvedOf(u5, 'w')).toBe(6000);
+    expect(numeric(u5)).toEqual(['satisfied']);
+    // One the gates cannot scale (an offset unit) is unreadable, and so is
+    // what it binds: `w` is unknown, never 1 at the solve's starting point.
+    const u5c = parse(`package U5C {
+    part def P {
+        attribute k : Real default = 1.0;
+        attribute t : ISQ::TemperatureValue = (k * 2.0) ['°C'];
+    }
+    part q : P { attribute :>> k = 3.0; }
+    attribute w : ISQ::TemperatureValue;
+    bind w = q.t;
+    constraint cqT { w >= 5.0 ['°C'] }
+}
+`);
+    expect(solvedOf(u5c, 'w')).toBeUndefined();
+    expect(numeric(u5c)).toEqual(['unknown']);
+  });
+
+  it('holds an instance to the asserts of the instance enclosing it, which no check orients (d2)', () => {
+    // P's assert is a fact of p's sub: p.sub.x is 10, whatever a check
+    // written beside it says — read for the instance alone, the check fixed
+    // it at 1, and `p.sub.x >= 4.0` was violated.
+    const m = parse(`package D2 {
+    part def Sub { attribute x : Real; }
+    part def P { part sub : Sub; assert constraint lim { sub.x == 10.0 } }
+    part p : P;
+    constraint xeq { p.sub.x == 1.0 }
+    constraint xT { p.sub.x >= 4.0 }
+}
+`);
+    const rows = new Map(checkConstraintsNumeric(m).map((r) => [r.name, r]));
+    expect([rows.get('xeq')!.result, rows.get('xT')!.result, rows.get('xT')!.slack]).toEqual([
+      'violated',
+      'satisfied',
+      6,
+    ]);
+  });
+
+  it('computes every instance a definition determines from that definition, not as a Newton unknown', () => {
+    // A depth-8 tree of instances over 256 free leaves: every instance's sum
+    // is its own variable. One dense Newton step over every instance value
+    // took a minute on a depth-9 tree; substituted in dependency order, each
+    // is its definition's value at whatever its free leaves are.
+    const defs = [
+      'part def N0 { attribute x : Real; attribute s : Real = x; }',
+      ...Array.from(
+        { length: 8 },
+        (_, i) => `part def N${i + 1} { part a : N${i}; part b : N${i}; attribute s : Real = a.s + b.s; }`,
+      ),
+    ];
+    const m = parse(`package T8 {
+    ${defs.join('\n    ')}
+    part top : N8;
+    constraint sum { top.s == top.a.s + top.b.s }
+}
+`);
+    const solved = solve(m);
+    expect(solved.converged).toBe(true);
+    // The leaves are design freedoms, and so is every sum over them: each an
+    // instance's own variable, solved along the freedom and never published
+    // as a value; the check holds at every point of it.
+    const free = (symbol: string) => solved.free.some((k) => k.endsWith(`@${symbol}`));
+    expect(['T8::top::s', 'T8::top::a::s', 'T8::top::b::s'].map(free)).toEqual([true, true, true]);
+    expect([...solved.values.keys()].some((k) => k.includes('@'))).toBe(false);
+    // …and the Solve panel lists each as a freedom, under the instance's name.
+    expect(analysisReport(m).free.map((f) => f.qualifiedName)).toEqual(
+      expect.arrayContaining(['T8::top::s', 'T8::top::a::s', 'T8::top::b::s']),
+    );
+    expect(numeric(m)).toEqual(['satisfied']);
+  });
+
+  it('holds a binding and an asserted equation as facts no check orients, at the top and in an instance (c3, c7, b3, d1)', () => {
+    // Bindings are gathered last: `w == 18.0` was oriented first, w was 18
+    // beside the −40 (9) it is bound to, and the check "satisfied — imposed
+    // by the solve" where every other surface reads it violated.
+    const bound = (copy: string) => `package C3 {
+    part def P { attribute load : Real default = 1.0; attribute m2 : Real = 10.0 - load; }
+    part p : P { attribute :>> load = 50.0; }
+    attribute load : Real = 1.0;
+    attribute m2 : Real = 10.0 - load;
+    attribute w : Real;
+    bind w = ${copy};
+    constraint wF { w == 18.0 }
+}
+`;
+    for (const [copy, value] of [
+      ['p.m2', -40],
+      ['m2', 9],
+    ] as const) {
+      const m = parse(bound(copy));
+      expect([solvedOf(m, 'w'), only(m).result, only(m).imposed], copy).toEqual([value, 'violated', undefined]);
+    }
+    // An asserted `p.x == 3.0` defines p's x, so its `y = x * 2.0` is 6, never the 7 a check asks for.
+    const b3 = parse(`package B3 {
+    part def P { attribute x : Real; attribute y : Real = x * 2.0; }
+    part p : P;
+    assert constraint px { p.x == 3.0 }
+    constraint gF { p.y == 7.0 }
+}
+`);
+    const r3 = new Map(checkConstraintsNumeric(b3).map((r) => [r.name, r]));
+    expect([r3.get('gF')!.result, r3.get('gF')!.imposed]).toEqual(['violated', undefined]);
+    // Sys's binding carries the asserted 5 to s.q.load: `== 1.0` is violated, `>= 4.0` holds.
+    const d1 = parse(`package D1 {
+    part def P { attribute load : Real; }
+    part def Sys { part p : P; part q : P; bind p.load = q.load; }
+    part s : Sys;
+    assert constraint pFix { s.p.load == 5.0 }
+    constraint qeq { s.q.load == 1.0 }
+    constraint qT { s.q.load >= 4.0 }
+}
+`);
+    const r1 = new Map(checkConstraintsNumeric(d1).map((r) => [r.name, r]));
+    expect([r1.get('qeq')!.result, r1.get('qT')!.result, r1.get('qT')!.slack]).toEqual(['violated', 'satisfied', 1]);
+    expect(solveFeasible(d1).violations).toEqual([]);
+  });
+
+  it('holds a stated value expression as a fact no check orients either, wherever the check is written (b4)', () => {
+    // x is asserted 3, so the stated `y = x * 2.0` is 6. A plain `y == 7.0`
+    // was oriented to fix y at 7 beside it: the solver published 7, and
+    // `w == y + 1.0` imposed w = 8, so `w <= 7.5` was violated where w = 7
+    // meets it.
+    const b4 = (checkFirst: boolean) => {
+      const check = 'constraint gF { y == 7.0 }';
+      return `package B4 {
+    ${checkFirst ? check : ''}
+    attribute x : Real;
+    attribute y : Real = x * 2.0;
+    attribute w : Real;
+    assert constraint px { x == 3.0 }
+    ${checkFirst ? '' : check}
+    constraint wd { w == y + 1.0 }
+    constraint wl { w <= 7.5 }
+}
+`;
+    };
+    for (const checkFirst of [false, true]) {
+      const m = parse(b4(checkFirst));
+      const tag = checkFirst ? 'check written first' : 'check written after';
+      expect([solvedOf(m, 'y'), solvedOf(m, 'w')], tag).toEqual([6, 7]);
+      const r = new Map(checkConstraintsNumeric(m).map((row) => [row.name, row]));
+      expect([r.get('gF')!.result, r.get('gF')!.amount, r.get('gF')!.imposed], tag).toEqual(['violated', 1, undefined]);
+      expect([r.get('wd')!.result, r.get('wd')!.imposed, r.get('wl')!.result], tag).toEqual(['satisfied', true, 'satisfied']);
+      // The imposed equation fixed w alone: y is the model's own.
+      expect(r.get('wd')!.reason, tag).toMatch(/fixes w, so/);
+      const f = solveFeasible(m);
+      expect([f.feasible, f.decided, f.violations], tag).toEqual([true, true, []]);
+      expect(analysisReport(m).violations.map((v) => [v.expression, v.amount]), tag).toEqual([['y == 7.0', 1]]);
+    }
+  });
+
+  it('judges a definition’s constraint in a context at the values the model states, and not at a caller’s (sf1, sf2)', () => {
+    const ctx = (x: number) => `package SF {
+    part def P {
+        attribute k : Real default = 1.0;
+        attribute x : Real default = 10.0;
+        attribute y : Real = x * k;
+        constraint c { y >= 10.0 }
+    }
+    part p : P { attribute :>> k = 2.0; attribute :>> x = ${x}; }
+}
+`;
+    const xOf = (m: Model) => m.all().find((e) => e.ownerId != null && m.qualifiedName(e.ownerId) === 'SF::p' && typeof e.attrs.value === 'number' && e.attrs.value !== 2)!.id;
+    // Stated 3: violated in p, and decided so.
+    const broken = parse(ctx(3));
+    expect([solveFeasible(broken).feasible, solveFeasible(broken).decided]).toEqual([false, true]);
+    // Fixed to another value, the stated values' verdict is of another point:
+    // p.x = 10 meets c, and p.x = 1 breaks it where the stated 30 met it.
+    for (const [stated, fixed] of [
+      [3, 10],
+      [30, 1],
+    ] as const) {
+      const m = parse(ctx(stated));
+      const r = solveFeasible(m, { fixed: new Map([[xOf(m), fixed]]) });
+      expect([r.violations, r.decided], `stated ${stated}, fixed ${fixed}`).toEqual([[], false]);
+    }
+  });
+
+  it('joins a unit beside a value where an instance reads it, never at the definition alone (iu1)', () => {
+    // P's k is a number, p's GiB: p's copy of `(k * 2.0) [GiB]` puts GiB on
+    // bits, and was solved as 2^35 GiB — `p.total <= 5.0 [GiB]` decided
+    // infeasible where every other surface cannot derive p's total.
+    const m = parse(`package IU {
+    part def P {
+        attribute cap : ISQ::StorageCapacityValue default = 2.0 [GiB];
+        attribute k : Real default = 1.0;
+        attribute total : ISQ::StorageCapacityValue = (k * 2.0) [GiB];
+    }
+    part p : P { attribute :>> k = cap; }
+    part r : P { attribute :>> k = cap / 1.0 [GiB]; }
+    constraint pSmall { p.total <= 5.0 [GiB] }
+    constraint rT { r.total == 4.0 [GiB] }
+}
+`);
+    const solved = solve(m);
+    const instance = (symbol: string) => [...solved.values].find(([k]) => k.endsWith(`@${symbol}`))?.[1];
+    expect([instance('IU::p::total'), instance('IU::r::total')]).toEqual([undefined, 4]);
+    expect(numeric(m)).toEqual(['unknown', 'satisfied']);
+    expect(solveFeasible(m).violations).toEqual([]);
+  });
+});
+
+/*
  * A feature chain to a value only an asserted equation defines: the
  * validation surface does not read a definition through a chain, and says
  * so; the solver lane did, and judged `p.e >= 45.0 [min]` from it.
@@ -1381,7 +2044,7 @@ describe('a feature an asserted equation defines is solved from that equation', 
 describe('a feature chain is read no further on the solver lane than the check reads it', () => {
   const chain = (usage: string) => `package S {
     part def P {
-      attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+      attribute capacity : ISQ::EnergyValue default = 640.0 [Wh];
       attribute power : ISQ::PowerValue = 650.0 [W];
       attribute e;
       assert constraint fixE { e == capacity / power }
@@ -1392,16 +2055,22 @@ describe('a feature chain is read no further on the solver lane than the check r
 }
 `;
 
-  it('refuses a chain to a defined value through a usage that redefines its input, in the check’s sentence, with or without a unit', () => {
+  it('reads a chain to a defined value through a usage that redefines its input in that usage, as the check reads it (Stage 2)', () => {
+    // P's definition holds of p, over p's names: 1300 Wh / 650 W = 2 h.
     const m = parse(chain('part p : P { attribute :>> capacity = 1300.0 [Wh]; }'));
     const checks = new Map(checkConstraints(m).map((c) => [c.expression, c]));
-    const rows = checkConstraintsNumeric(m).filter((r) => r.raw.startsWith('p.'));
-    expect(rows.map((r) => r.result)).toEqual(['unknown', 'unknown']);
-    for (const r of rows) {
-      expect(r.reason, r.raw).toMatch(/^p\.e has no value: P::e is declared without one, its asserted equation is not read/);
-      expect(`Could not evaluate: ${r.reason}`, r.raw).toBe(checks.get(r.raw)!.message);
-    }
-    expect(gatherInequalities(m)).toEqual([]);
+    const rows = new Map(checkConstraintsNumeric(m).map((r) => [r.raw, r]));
+    expect([rows.get('p.e >= 45.0 [min]')!.result, checks.get('p.e >= 45.0 [min]')!.result]).toEqual([
+      'satisfied',
+      'satisfied',
+    ]);
+    expect(rows.get('p.e >= 45.0 [min]')!.slack).toBeCloseTo(7200 - 2700, 6);
+    const bare = rows.get('p.e >= 45.0')!;
+    expect(bare.result).toBe('unknown');
+    expect(`Could not evaluate: ${bare.reason}`).toBe(checks.get('p.e >= 45.0')!.message);
+    // p's e is a variable of its own, apart from P's 3544.6 s.
+    const values = [...solve(m).values].filter(([k]) => k.includes('@')).map(([, v]) => v);
+    expect(values.some((v) => Math.abs(v - 7200) < 1e-6)).toBe(true);
   });
 
   it('reads it where the usage changes nothing it reads, as the check reads it (P’s e, 59.1 min)', () => {
@@ -1503,19 +2172,22 @@ describe('a definition that answers nothing yet holds nothing', () => {
  */
 describe('a value over a chain the check does not read is no free variable', () => {
   const battery = (usage: string) => `package VC {
-    part def Battery { attribute capacity = 640.0; attribute power = 650.0; attribute e; assert constraint d { e == capacity / power } }
+    part def Battery { attribute capacity default = 640.0; attribute power = 650.0; attribute e; assert constraint d { e == capacity / power } }
     ${usage}
     attribute total = p.e * 2.0;
     constraint chk { total <= 2.5 }
 }
 `;
 
-  it('leaves the feature out of the solve and out of feasibility', () => {
+  it('solves it where the chain reads the definition in the usage that changes its input, and does not move it (Stage 2)', () => {
+    // Battery's definition holds of p, over p's capacity: e = 2, total = 4.
     const m = parse(battery('part p : Battery { attribute :>> capacity = 1300.0; }'));
     const total = m.all().find((e) => e.declaredName === 'total')!.id;
-    expect(solve(m).values.has(total)).toBe(false);
-    expect(solveFeasible(m).values.has(total)).toBe(false);
-    expect(checkConstraintsNumeric(m).find((r) => r.name === 'chk')!.result).toBe('unknown');
+    expect(solve(m).values.get(total)).toBeCloseTo(4, 9);
+    const f = solveFeasible(m);
+    expect([f.feasible, f.values.get(total)]).toEqual([false, solve(m).values.get(total)]);
+    expect(checkConstraintsNumeric(m).find((r) => r.name === 'chk')!.result).toBe('violated');
+    expect(checkConstraints(m).find((c) => c.expression === 'total <= 2.5')!.result).toBe('violated');
   });
 
   it('solves it where the chain reads the definition, and judges the check on both surfaces', () => {
@@ -1604,9 +2276,9 @@ describe('a check never stands in for an asserted definition', () => {
   const feature = (m: Model, name: string) => m.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!;
   const rows = (m: Model) => new Map(checkConstraintsNumeric(m).map((r) => [r.name, r.result]));
 
-  it('leaves a feature whose refused definition reads an inherited value unknown, oriented by nothing (C2)', () => {
+  it('solves a feature whose definition reads an inherited value its context changes from that definition, read there (C2)', () => {
     const m = parse(`package C2 {
-    part def P { attribute a = 2.0; attribute b = 3.0; attribute e; assert constraint d { e == a * b } }
+    part def P { attribute a default = 2.0; attribute b = 3.0; attribute e; assert constraint d { e == a * b } }
     part def S :> P {
       attribute :>> a = 5.0;
       attribute f;
@@ -1616,16 +2288,24 @@ describe('a check never stands in for an asserted definition', () => {
     }
 }
 `);
+    // P's `d` holds of every S, over S's `a`: e is 15 in S (P's own is 6), so
+    // f is 16 — from its definition, never from the check `f == 100.0`.
     const f = feature(m, 'f').id;
-    expect(solve(m).values.has(f)).toBe(false);
+    expect(solve(m).values.get(f)).toBe(16);
     const r = rows(m);
-    expect([r.get('c'), r.get('u')]).toEqual(['unknown', 'unknown']);
+    expect([r.get('g'), r.get('c'), r.get('u')]).toEqual(['satisfied', 'violated', 'violated']);
+    const checks = new Map(checkConstraints(m).map((c) => [c.expression, c.result]));
+    expect([checks.get('f == 100.0'), checks.get('f <= 10.0')]).toEqual(['violated', 'violated']);
     const feas = solveFeasible(m);
-    expect([feas.values.has(f), feas.violations.map((v) => v.name)]).toEqual([false, []]);
-    // The Solve panel lists them as unknowns, never as a violation of `u`.
+    expect([feas.values.get(f), feas.violations.map((v) => v.name)]).toEqual([16, ['u']]);
     const report = analysisReport(m);
-    expect(report.violations.map((v) => v.expression)).toEqual([]);
-    expect(report.unknowns.map((u) => u.expression).sort()).toEqual(['f == 100.0', 'f <= 10.0', 'f == e + 1.0'].sort());
+    expect(report.violations.map((v) => v.expression)).toEqual(['f == 100.0', 'f <= 10.0']);
+    expect(report.unknowns).toEqual([]);
+    // S's own e is listed under its own name, beside P's.
+    expect(report.values.filter((v) => v.element.qualifiedName.endsWith('::e')).map((v) => [v.element.qualifiedName, v.value])).toEqual([
+      ['C2::P::e', 6],
+      ['C2::S::e', 15],
+    ]);
   });
 
   it('reads the inherited definition where the specialisation changes nothing it reads (C2, unredefined)', () => {
@@ -1647,10 +2327,10 @@ describe('a check never stands in for an asserted definition', () => {
     expect(solveFeasible(m).violations.map((v) => v.name)).toEqual([]);
   });
 
-  it('does not move such a feature to meet a bound, in a usage or a specialisation (U5, U6)', () => {
+  it('does not move such a feature to meet a bound, in a usage or a specialisation, and reads it there (U5, U6)', () => {
     const usage = parse(`package U5 {
     part def Drone {
-      attribute capacity = 640.0;
+      attribute capacity default = 640.0;
       attribute power = 650.0;
       attribute endurance;
       assert constraint d { endurance == capacity / power }
@@ -1664,17 +2344,19 @@ describe('a check never stands in for an asserted definition', () => {
 }
 `);
     const special = parse(`package U6 {
-    part def P { attribute a = 2.0; attribute b = 3.0; attribute e; assert constraint d { e == a * b } }
+    part def P { attribute a default = 2.0; attribute b = 3.0; attribute e; assert constraint d { e == a * b } }
     part def S :> P { attribute :>> a = 5.0; attribute f; assert constraint g { f == e + 1.0 } constraint u { f >= 10.0 } }
 }
 `);
-    for (const [m, name, bound] of [
-      [usage, 'margin', 'req'],
-      [special, 'f', 'u'],
+    // The definitions hold of the usage and the specialisation, over their own
+    // inputs: drone's endurance is 2 (margin 1.5), S's e is 15 (f 16).
+    for (const [m, name, bound, value] of [
+      [usage, 'margin', 'req', 1.5],
+      [special, 'f', 'u', 16],
     ] as const) {
       const feas = solveFeasible(m);
-      expect(feas.values.has(feature(m, name).id), name).toBe(false);
-      expect(rows(m).get(bound), name).toBe('unknown');
+      expect([feas.feasible, feas.values.get(feature(m, name).id)], name).toEqual([true, value]);
+      expect(rows(m).get(bound), name).toBe('satisfied');
     }
   });
 
@@ -1752,7 +2434,11 @@ describe('a definition that leaves a design freedom holds nothing a check fixes'
     const solved = solve(m);
     expect(solved.converged).toBe(true);
     expect(solvedOf(m, 'enduranceMeasure')).toBeCloseTo(7200, 6);
-    expect(solvedOf(m, 'capacity')).toBeCloseTo(1.44e6, 3);
+    // The capacity solved is Drone's battery's — an instance of Battery, its own
+    // variable — not Battery's own (one for every battery).
+    expect(solved.values.has(m.all().find((e) => e.declaredName === 'capacity')!.id)).toBe(false);
+    const own = [...solved.values].find(([k]) => k.endsWith('@D10::Drone::battery::capacity'));
+    expect(own?.[1]).toBeCloseTo(1.44e6, 3);
     expect([...byName(m).values()]).toEqual(['satisfied', 'satisfied', 'satisfied']);
     expect(solveFeasible(m).feasible).toBe(true);
     expect(evaluateMoEs(m).find((x) => x.name === 'enduranceMeasure')?.value).toBeCloseTo(7200, 6);
@@ -1799,5 +2485,404 @@ describe('a definition that leaves a design freedom holds nothing a check fixes'
     expect([solvedOf(m, 'power'), solvedOf(m, 'current')]).toEqual([120, 10]);
     expect([...byName(m).values()]).toEqual(['satisfied', 'satisfied', 'satisfied', 'satisfied']);
     expect(solveFeasible(m).feasible).toBe(true);
+  });
+});
+
+describe('a design freedom no relation fixes is never judged at the solver’s point (D5)', () => {
+  const rows = (m: Model) => new Map(checkConstraintsNumeric(m).map((r) => [r.name, r]));
+  const byName = (m: Model) => new Map([...rows(m)].map(([n, r]) => [n, r.result]));
+  const idOf = (m: Model, name: string) => m.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+  const freeNames = (m: Model) => solve(m).free.map((id) => m.get(id)?.declaredName).sort();
+  /** The asserted loop `mass == dry + fuel`, `fuel == mass * 0.2`, then `extra`. */
+  const loop = (extra: string, dry = '') => `package D2 {
+    attribute dry${dry};
+    attribute mass;
+    attribute fuel;
+    assert constraint dm { mass == dry + fuel }
+    assert constraint df { fuel == mass * 0.2 }
+    ${extra}
+}
+`;
+
+  it('withholds a loop over a free input and judges nothing over it (p01)', () => {
+    const m = parse(loop('constraint need { mass >= 130.0 }\n    constraint cap { dry <= 110.0 }'));
+    const solved = solve(m);
+    expect(freeNames(m)).toEqual(['dry', 'fuel', 'mass']);
+    for (const name of ['dry', 'fuel', 'mass']) expect(solved.values.has(idOf(m, name)), name).toBe(false);
+    const r = rows(m);
+    // The asserted equations hold at every point of the freedom.
+    expect([r.get('dm')!.result, r.get('df')!.result]).toEqual(['satisfied', 'satisfied']);
+    expect(r.get('dm')!.imposed).toBeUndefined();
+    for (const name of ['need', 'cap']) {
+      expect(r.get(name)!.result, name).toBe('unknown');
+      expect(r.get(name)!.slack, name).toBeNull();
+      expect(r.get(name)!.reason, name).toMatch(/left free by the equations/);
+    }
+    const report = analysisReport(m);
+    expect(report.violations).toEqual([]);
+    expect(report.feasible).toBe(true);
+    expect(report.unknowns.map((u) => u.element.declaredName)).toEqual(['need', 'cap']);
+    expect(report.free.map((f) => f.declaredName).sort()).toEqual(['dry', 'fuel', 'mass']);
+    expect(report.values).toEqual([]);
+    const feasible = solveFeasible(m);
+    expect([feasible.feasible, feasible.decided]).toEqual([true, true]);
+  });
+
+  it('a value derived from a freedom is free with it (p06)', () => {
+    const m = parse(loop('assert constraint dc { cost == mass * 3.0 }\n    attribute cost;\n    constraint budget { cost >= 300.0 }'));
+    expect(solve(m).values.has(idOf(m, 'cost'))).toBe(false);
+    expect(byName(m).get('budget')).toBe('unknown');
+    expect(rows(m).get('budget')!.reason).toMatch(/^cost is left free by the equations/);
+  });
+
+  it('still judges what the equations determine beside a freedom (p04)', () => {
+    const m = parse(`package P4 {
+    attribute x = 3.0;
+    attribute y;
+    attribute a;
+    attribute b;
+    assert constraint dy { y == x * 2.0 }
+    constraint total { a + b == 10.0 }
+    constraint ylim { y <= 5.0 }
+    constraint alim { a <= 100.0 }
+    constraint blim { b >= 8.0 }
+}
+`);
+    const r = byName(m);
+    expect([r.get('ylim'), r.get('alim'), r.get('blim')]).toEqual(['violated', 'unknown', 'unknown']);
+    expect(analysisReport(m).violations.map((v) => v.expression)).toEqual(['y <= 5.0']);
+    const feasible = solveFeasible(m);
+    expect(feasible.decided).toBe(true);
+    expect(feasible.violations.map((v) => v.name)).toEqual(['ylim']);
+    expect(feasible.unresolved.map((v) => v.name)).toEqual(['blim']);
+  });
+
+  it('leaves determined systems as they were (p03, p05)', () => {
+    const p3 = parse(`package P3 {
+    attribute a;
+    attribute b;
+    constraint total { a + b == 10.0 }
+    constraint diff { a - b == 2.0 }
+    constraint lim { a >= 8.0 }
+}
+`);
+    expect([solvedOf(p3, 'a'), solvedOf(p3, 'b')]).toEqual([6, 4]);
+    expect(byName(p3).get('lim')).toBe('violated');
+    expect(solve(p3).free).toEqual([]);
+    const feasible = solveFeasible(p3);
+    expect(feasible.violations.map((v) => [v.name, v.amount])).toEqual([['lim', 2]]);
+    expect([feasible.values.get(idOf(p3, 'a')), feasible.values.get(idOf(p3, 'b'))]).toEqual([6, 4]);
+    // A plain check that fixes the freedom still fixes it.
+    const p5 = parse(`package P5 {
+    attribute a;
+    attribute b;
+    constraint total { a + b == 10.0 }
+    constraint pick { a == 3.0 }
+    constraint lim { b >= 8.0 }
+}
+`);
+    expect(byName(p5).get('lim')).toBe('violated');
+  });
+
+  it('labels a PLAIN constraint the solve took as a design equation imposed by the solve', () => {
+    const p5 = parse(`package P5 {
+    attribute a;
+    attribute b;
+    constraint total { a + b == 10.0 }
+    constraint pick { a == 3.0 }
+    constraint lim { b >= 8.0 }
+}
+`);
+    const r = rows(p5);
+    for (const name of ['total', 'pick']) {
+      expect(r.get(name)!.result, name).toBe('satisfied');
+      expect(r.get(name)!.imposed, name).toBe(true);
+      expect(r.get(name)!.reason, name).toMatch(/^imposed by the solve: no value the model states fixes a/);
+    }
+    // A bound judged at what they fix is a verdict, not an imposition.
+    expect(r.get('lim')!.imposed).toBeUndefined();
+    // One over a freedom holds along it, and is imposed all the same (p02).
+    const p2 = parse(`package P2 {
+    attribute a;
+    attribute b;
+    constraint total { a + b == 10.0 }
+    constraint lim { a >= 8.0 }
+}
+`);
+    const r2 = rows(p2);
+    expect([r2.get('total')!.result, r2.get('total')!.imposed]).toEqual(['satisfied', true]);
+    expect(r2.get('lim')!.result).toBe('unknown');
+    // A plain constraint over values the model states is a check, and an
+    // asserted equation holds by assertion: neither is labelled.
+    const stated = parse(`package S {
+    attribute a = 3.0;
+    attribute b;
+    constraint c { a == 3.0 }
+    assert constraint d { b == a * 2.0 }
+}
+`);
+    const rs = rows(stated);
+    expect([rs.get('c')!.result, rs.get('c')!.imposed, rs.get('c')!.reason]).toEqual(['satisfied', undefined, undefined]);
+    expect([rs.get('d')!.result, rs.get('d')!.imposed]).toEqual(['satisfied', undefined]);
+  });
+
+  it('known is what is stated, fixed or bound — never a value oriented from a freedom (xs5)', () => {
+    // `cost` is oriented from `mass` once Newton has put a number on the free
+    // loop: a value the solve reached, not one the model states.
+    const xs5 = parse(loop('attribute cost;\n    assert constraint dc { cost == 3.0 / (mass - 1.0) }\n    constraint need { mass >= 130.0 }'));
+    expect(freeNames(xs5)).toEqual(['cost', 'dry', 'fuel', 'mass']);
+    expect(solve(xs5).values.size).toBe(0);
+    expect(byName(xs5).get('need')).toBe('unknown');
+    // A value the caller fixes, and one a binding carries from a stated value,
+    // are given: the loop is determined from either.
+    const fixed = parse(loop('constraint need { mass >= 130.0 }'));
+    const held = solve(fixed, { fixed: { [idOf(fixed, 'dry')]: 100 } });
+    expect(held.free).toEqual([]);
+    expect(held.values.get(idOf(fixed, 'mass'))).toBeCloseTo(125, 9);
+    const bound = parse(loop('attribute dryStated = 100.0;\n    bind dry = dryStated;\n    constraint need { mass >= 130.0 }'));
+    expect(solve(bound).free).toEqual([]);
+    expect(solvedOf(bound, 'mass')).toBeCloseTo(125, 9);
+    expect(byName(bound).get('need')).toBe('violated');
+  });
+
+  it('a relation whose residual jumps inside the probe fixes nothing (`if`, `%`)', () => {
+    // Each relation is solved at x = 1 exactly, on its step, where the central
+    // difference reads the step's height over the probe's width: a pivot that
+    // "determined" x, and `x <= 1.5` was satisfied although x = 1.9 solves the
+    // relation as well and breaks the bound.
+    for (const body of ['r == (if x >= 1.0 then 1.0 else 0.0)', 'r == x - x % 1.0']) {
+      const m = parse(`package J {
+    attribute r = 1.0;
+    attribute x;
+    constraint c { ${body} }
+    constraint lim { x <= 1.5 }
+}
+`);
+      expect(freeNames(m), body).toEqual(['x']);
+      const r = rows(m);
+      expect(r.get('lim')!.result, body).toBe('unknown');
+      expect(r.get('lim')!.reason, body).toMatch(/^x is left free by the equations/);
+      expect([r.get('c')!.result, r.get('c')!.imposed], body).toEqual(['satisfied', true]);
+    }
+    // The step is read in its own feature: a co-variable of 5e6 in the same
+    // relation, steeper than the step's slope, hid it (r6, r7).
+    for (const body of ['y == z + (if x >= 1.0 then 1.0 else 0.0)', 'y == z + x - x % 1.0']) {
+      const m = parse(`package R6 {
+    attribute q = 1.0;
+    attribute y = 5000001.0;
+    attribute z;
+    attribute x;
+    constraint dz { z == 5000000.0 * q }
+    constraint c { ${body} }
+    constraint lim { x <= 1.5 }
+}
+`);
+      expect(freeNames(m), body).toEqual(['x']);
+      expect(solvedOf(m, 'z'), body).toBe(5000000);
+      expect(byName(m).get('lim'), body).toBe('unknown');
+    }
+    // Asserted definitions stopped on a step, or where a slope cannot be read,
+    // determine nothing either: `a == b` beside either solves every a past 1
+    // (r8) — or every a up to 1 (r9) — and a = 1 was published and judged.
+    for (const [d2, lim] of [
+      ['b == (if a >= 1.0 then a else a + 1.0)', 'a <= 1.5'],
+      ['b == a + 0.0 * (1.0 - a) ^ 0.5', 'a >= 0.8'],
+    ] as const) {
+      const m = parse(`package R8 {
+    attribute a;
+    attribute b;
+    assert constraint d1 { a == b }
+    assert constraint d2 { ${d2} }
+    constraint lim { ${lim} }
+}
+`);
+      expect(freeNames(m), d2).toEqual(['a', 'b']);
+      expect(byName(m).get('lim'), d2).toBe('unknown');
+    }
+  });
+
+  it('a step a definition stops on binds nothing, and the search moves past it (j3b, j1b)', () => {
+    // Every a ≥ 1 solves both definitions; the solve stopped at a = 1, where
+    // `a >= 2.0` was VIOLATED, and the search held a there: decided infeasible.
+    const j3b = parse(`package J3B {
+    attribute a;
+    attribute b;
+    assert constraint d1 { a == b }
+    assert constraint d2 { b == a + (if a >= 1.0 then 0.0 else 1.0) }
+    constraint lim2 { a >= 2.0 }
+}
+`);
+    expect(freeNames(j3b)).toEqual(['a', 'b']);
+    expect(byName(j3b).get('lim2')).toBe('unknown');
+    const f3 = solveFeasible(j3b);
+    expect([f3.feasible, f3.decided, f3.violations]).toEqual([true, true, []]);
+    expect(f3.values.get(idOf(j3b, 'a'))).toBeGreaterThanOrEqual(2 - 1e-6);
+    // A single equation over the step pinned x where the solve stopped, though
+    // the solve itself reads x as free.
+    const j1b = parse(`package J1B {
+    attribute r = 1.0;
+    attribute x;
+    constraint c { r == (if x >= 1.0 then 1.0 else 0.0) }
+    constraint lim { x >= 2.0 }
+}
+`);
+    const f1 = solveFeasible(j1b);
+    expect([f1.feasible, f1.decided, f1.violations]).toEqual([true, true, []]);
+    expect(f1.values.get(idOf(j1b, 'x'))).toBeGreaterThanOrEqual(2 - 1e-6);
+    // Definitions read as closing what they define where a slope cannot be
+    // read (a = 1, the edge of `(1.0 - a) ^ 0.5`) were held there: `a <= 0.8`
+    // decided infeasible, although a = b = 0.5 solves both (r9b).
+    const r9b = parse(`package R9B {
+    attribute a;
+    attribute b;
+    assert constraint d1 { a == b }
+    assert constraint d2 { b == a + 0.0 * (1.0 - a) ^ 0.5 }
+    constraint lim { a <= 0.8 }
+}
+`);
+    const f9 = solveFeasible(r9b);
+    expect([f9.feasible, f9.decided, f9.violations]).toEqual([true, true, []]);
+    expect(f9.values.get(idOf(r9b, 'a'))).toBeLessThanOrEqual(0.8 + 1e-6);
+  });
+
+  it('definitions stopped on a step leave a check free to fix what they do not (j6)', () => {
+    // Read as binding at a = 1, the definitions kept `a == 3.0` out of the
+    // solve: a = 1 was published, the check read violated and `a <= 2.0`
+    // satisfied — but a = b = 3 solves everything, and breaks the bound.
+    const m = parse(`package J6 {
+    attribute a;
+    attribute b;
+    assert constraint d1 { a == b }
+    assert constraint d2 { b == a + (if a >= 1.0 then 0.0 else 1.0) }
+    constraint c { a == 3.0 }
+    constraint lim { a <= 2.0 }
+}
+`);
+    expect([solvedOf(m, 'a'), solvedOf(m, 'b')]).toEqual([3, 3]);
+    const r = rows(m);
+    expect([r.get('c')!.result, r.get('c')!.imposed, r.get('lim')!.result]).toEqual(['satisfied', true, 'violated']);
+    const feasible = solveFeasible(m);
+    expect([feasible.feasible, feasible.decided]).toEqual([false, true]);
+    expect(feasible.violations.map((v) => v.name)).toEqual(['lim']);
+  });
+
+  it('a feature that reads a freedom is free with it, however small the dependence (r2c, r2n)', () => {
+    // `offset` moves a `range` of a hundred kilometres by 1e-8 of its row in
+    // millimetres — under any pivot tolerance — and by an exact 0 in
+    // nanometres. `range` was published as determined, `range >= 100.5 [km]`
+    // refuted, and infeasibility decided, although an offset of 500 m meets it.
+    for (const unit of ['mm', 'nm']) {
+      const m = parse(`package R2 {
+    attribute base : ISQ::LengthValue = 100.0 [km];
+    attribute range : ISQ::LengthValue [km];
+    attribute offset : ISQ::LengthValue [${unit}];
+    assert constraint c { range == base + offset }
+    constraint reach { range >= 100.5 [km] }
+}
+`);
+      expect(freeNames(m), unit).toEqual(['offset', 'range']);
+      expect(byName(m).get('reach'), unit).toBe('unknown');
+      const feasible = solveFeasible(m);
+      expect([feasible.feasible, feasible.decided], unit).toEqual([true, true]);
+      expect(feasible.values.get(idOf(m, 'range')), unit).toBeCloseTo(100.5, 6);
+    }
+  });
+
+  it('an equation over a pole at the guess is taken back in once the step is off it (e2)', () => {
+    // From x = 1, `2.0 / (x - 1.0)` has no value: the equation was left out of
+    // the whole solve, the point reached without it (x = y = 2.5) published,
+    // and the ASSERTED equation judged violated although x = 3 ± √2 solve both.
+    const m = parse(`package E4 {
+    attribute x;
+    attribute y;
+    constraint e1 { x + y == 5.0 }
+    assert constraint e2 { y == 2.0 / (x - 1.0) }
+    constraint lim { x >= 5.0 }
+}
+`);
+    const solved = solve(m);
+    expect([solved.converged, solved.free]).toEqual([true, []]);
+    const x = solvedOf(m, 'x')!;
+    expect(Math.min(Math.abs(x - (3 + Math.SQRT2)), Math.abs(x - (3 - Math.SQRT2)))).toBeLessThan(1e-6);
+    expect([byName(m).get('e2'), byName(m).get('lim')]).toEqual(['satisfied', 'violated']);
+    const feasible = solveFeasible(m);
+    expect([feasible.feasible, feasible.decided]).toEqual([false, true]);
+    expect(feasible.violations.map((v) => v.name)).toEqual(['lim']);
+  });
+
+  it('Newton writes back only what it drives, and an undrivable equation no longer ends it (p16, p17, p12, p19)', () => {
+    // p16: `z` is read only by the check; it was written back at the guess 1
+    // and the check, which fixes it, then read violated by 4.
+    const p16 = parse(loop('attribute z;\n    constraint fixz { mass + z == 130.0 }', ' = 100.0'));
+    expect(solvedOf(p16, 'z')).toBeCloseTo(5, 9);
+    expect(solve(p16).converged).toBe(true);
+    expect(byName(p16).get('fixz')).toBe('satisfied');
+    // p17: two features one check reads are a freedom of it.
+    const p17 = parse(loop('attribute z;\n    attribute w;\n    constraint fixzw { mass + z + w == 130.0 }\n    constraint zlim { z >= 3.0 }', ' = 100.0'));
+    expect([byName(p17).get('fixzw'), byName(p17).get('zlim')]).toEqual(['satisfied', 'unknown']);
+    const feasible = solveFeasible(p17);
+    expect(feasible.feasible).toBe(true);
+    expect(feasible.values.get(idOf(p17, 'z'))).toBeCloseTo(3, 5);
+    expect(feasible.values.get(idOf(p17, 'w'))).toBeCloseTo(2, 5);
+    // p12: `subject c = craft` has no residual; it ended Newton on its first
+    // iteration, every unknown was written back at 1, and the asserted loop
+    // read VIOLATED by 1 and 0.8.
+    const p12 = parse(`package P12 {
+    part def Craft {
+      attribute dry;
+      attribute mass;
+      attribute fuel;
+      assert constraint dm { mass == dry + fuel }
+      assert constraint df { fuel == mass * 0.2 }
+    }
+    part craft : Craft;
+    requirement def NeedMass {
+      subject c : Craft;
+      require constraint { c.mass >= 130.0 }
+    }
+    requirement need : NeedMass { subject c = craft; }
+    satisfy need by craft;
+}
+`);
+    const r12 = checkConstraintsNumeric(p12);
+    expect(r12.filter((r) => r.name === 'dm' || r.name === 'df').map((r) => r.result)).toEqual(['satisfied', 'satisfied']);
+    expect(r12.find((r) => r.raw === 'c.mass >= 130.0')?.result).toBe('unknown');
+    expect([...solve(p12).values.keys()].map((id) => p12.get(id)?.declaredName)).not.toContain('c');
+    // p19: a Boolean read by `== false` has no numeric value, not the guess 1.
+    const p19 = parse(`package P19 {
+    part def Unit {
+      attribute withinOperatingEnvelope : Boolean = false;
+      attribute load = 3.0;
+    }
+    part u : Unit;
+    requirement def R {
+      subject s : Unit;
+      assume constraint { s.withinOperatingEnvelope == false }
+      require constraint { s.load <= 5.0 }
+    }
+    requirement r : R;
+    satisfy r by u;
+}
+`);
+    expect(solve(p19).values.has(idOf(p19, 'withinOperatingEnvelope'))).toBe(false);
+    expect(solveFeasible(p19).values.has(idOf(p19, 'withinOperatingEnvelope'))).toBe(false);
+  });
+
+  it('a measure over a freedom is unknown, and an objective over one is not optimised (p07, p08)', () => {
+    const p7 = parse(loop('attribute massMeasure;\n    assert constraint mm { massMeasure == mass }'));
+    expect(evaluateMoEs(p7).find((x) => x.name === 'massMeasure')?.value).toBeNull();
+    const p8 = parse(`package P8 {
+    attribute a;
+    attribute b;
+    attribute total;
+    assert constraint dt { total == a + b }
+    constraint blim { b >= 5.0 }
+}
+`);
+    const a = idOf(p8, 'a');
+    const res = optimize(p8, idOf(p8, 'total'), [a], { bounds: { [a]: [0, 10] }, sense: 'max', constraints: true });
+    expect(Number.isNaN(res.value)).toBe(true);
+    expect(res.feasible).toBeUndefined();
+    expect(res.free).toEqual(expect.arrayContaining([idOf(p8, 'b'), idOf(p8, 'total')]));
   });
 });

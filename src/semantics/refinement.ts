@@ -91,9 +91,29 @@ import {
   type RefusalReason,
   type VarSort,
 } from './contracts';
-import { evaluate, type ExprNode } from './expr';
-import { obligationsOf, type Obligation } from './obligations';
+import { sharedDefinitions } from './defining-equation';
+import { evaluateFeatureValue } from './evaluate-model';
+import {
+  affineRational,
+  evaluateDecided,
+  rereadRelation,
+  statedRational,
+  tieSentence,
+  type PointValues,
+  type Rational,
+} from './exact';
+import { type ExprNode } from './expr';
+import {
+  obligationsOf,
+  reachOf,
+  reachedBy,
+  refusalReaches,
+  type Obligation,
+  type ReachedSet,
+  type RefusalReach,
+} from './obligations';
 import { NO_MARKERS } from './relations';
+import { parseRelationBody } from './unit-literals';
 import {
   encodeRelation,
   encodeScript,
@@ -103,8 +123,7 @@ import {
   type EncodedRelation,
   type ScriptAssertion,
 } from './smt/encode';
-import { decimalSymbols } from './smt/decimal-reading';
-import { type CheckOutcome, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
+import { rereadPoint, type CheckOutcome, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
 import { type DerivationMemo } from './units-eval';
 
 /* ─────────────────────────────── the codes ───────────────────────────────── */
@@ -401,6 +420,8 @@ export interface RefinementResult {
  */
 interface RelationRow {
   id: ElementId;
+  /** The relation an instance row reads in a context (`Obligation.instance`); else `id`. */
+  baseId: ElementId;
   qualifiedName: string;
   expression: string;
   node: ExprNode | null;
@@ -423,6 +444,7 @@ interface EncodedRow {
 function rowOf(o: Obligation): RelationRow {
   return {
     id: o.element.id,
+    baseId: o.instance?.baseId ?? o.element.id,
     qualifiedName: o.element.qualifiedName,
     expression: o.expression,
     node: o.node,
@@ -458,11 +480,11 @@ function rowOf(o: Obligation): RelationRow {
  * 1.0` was two unrelated symbols and a false refutation; refused, it was
  * undecided where the refinement holds.
  */
-function encodeRow(row: RelationRow, decimal: ReadonlySet<string>): EncodedRow {
+function encodeRow(row: RelationRow): EncodedRow {
   const vars = encodeVariables(
     row.vars.map(({ symbol: _symbol, ...v }) => v),
     row.sortPerVar,
-    { scaled: row.scaled, decimal },
+    { scaled: row.scaled },
   );
   if (row.node === null || row.encodable !== true) {
     return {
@@ -581,10 +603,13 @@ function encodeContract(
   part: ContractRef | null,
   rows: ReadonlyMap<ElementId, EncodedRow[]>,
 ): EncodedContract {
-  const clauses = rows.get(contract.id) ?? [];
+  // A contract is read at the part that satisfies it — R's clauses with the
+  // subject standing for that part, where that reads them differently
+  // (`satisfiedBy` of {@link prepare}) — never at its subject type's values.
+  const clauses = (part ? rows.get(satisfiedBy(contract.id, part.id)) : undefined) ?? rows.get(contract.id) ?? [];
   const assumptionIds = new Set(contract.assumptions.map((a) => a.id));
-  const assumptions = clauses.filter((c) => assumptionIds.has(c.row.id));
-  const guarantees = clauses.filter((c) => !assumptionIds.has(c.row.id));
+  const assumptions = clauses.filter((c) => assumptionIds.has(c.row.baseId));
+  const guarantees = clauses.filter((c) => !assumptionIds.has(c.row.baseId));
   const refused: RefusedClause[] = [];
   for (const c of clauses) if (!c.encoded) refused.push(refusalOf(c, contract.qualifiedName));
 
@@ -667,6 +692,7 @@ function equalityRow(
   return {
     row: {
       id: el.id,
+      baseId: el.id,
       qualifiedName: model.qualifiedName(el.id),
       expression,
       node: reading.node,
@@ -742,6 +768,8 @@ interface Gamma {
   encoded: EncodedGamma[];
   notEncoded: UnencodedConnection[];
   refused: RefusedClause[];
+  /** Each refused edge beside what it would have read ({@link refusedGammaIn}). */
+  refusedReach: Array<{ clause: RefusedClause; reach: RefusalReach }>;
   /** Every feature an ENCODED γ edge touches, by qualified name. */
   connected: Set<string>;
 }
@@ -770,17 +798,19 @@ function buildGamma(
   model: Model,
   worklist: readonly Obligation[],
   connectionsAsEqualities: boolean,
-  decimal: ReadonlySet<string>,
 ): Gamma {
   const memo: DerivationMemo = new Map();
   const encoded: EncodedGamma[] = [];
   const refused: RefusedClause[] = [];
+  const refusedReach: Gamma['refusedReach'] = [];
   const notEncoded: UnencodedConnection[] = [];
   const connected = new Set<string>();
 
   const take = (edge: GammaEdge, row: EncodedRow): void => {
     if (!row.encoded) {
-      refused.push(refusalOf(row, null));
+      const clause = refusalOf(row, null);
+      refused.push(clause);
+      refusedReach.push({ clause, reach: reachOf(row.row.vars, row.vars.map((v) => v.qualifiedName)) });
       return;
     }
     encoded.push({ edge, row });
@@ -797,7 +827,7 @@ function buildGamma(
     bindEdges.add(o.element.id);
     const el = model.get(o.element.id);
     const ends = el ? connectorEndsOf(model, el.id) : [];
-    const row = encodeRow(rowOf(o), decimal);
+    const row = encodeRow(rowOf(o));
     take(
       {
         kind: 'bind',
@@ -836,7 +866,7 @@ function buildGamma(
         left: built.left,
         right: built.right,
       },
-      encodeRow(built.row, decimal),
+      encodeRow(built.row),
     );
   }
 
@@ -887,7 +917,7 @@ function buildGamma(
           left: built.left,
           right: built.right,
         },
-        encodeRow(built.row, decimal),
+        encodeRow(built.row),
       );
     }
     if (!any) {
@@ -901,7 +931,7 @@ function buildGamma(
     }
   }
 
-  return { encoded, notEncoded, refused, connected };
+  return { encoded, notEncoded, refused, refusedReach, connected };
 }
 
 /* ────────────────────────────── the grouping ─────────────────────────────── */
@@ -926,14 +956,29 @@ interface Decomposition {
  * satisfied by two parts is a contract about both, and picking one of them
  * would answer about a decomposition the file does not state — so a group is
  * formed from the first and the rest are visible in `contracts`, which is the
- * report that exists to show them.
+ * report that exists to show them. That is the SYSTEM side, and the part a
+ * contract occupies in the grouping; as a COMPONENT a contract is every one of
+ * its satisfiers ({@link satisfiersOf}).
  */
 function satisfierOf(model: Model, contract: Contract): ElementRecord | undefined {
+  return satisfiersOf(model, contract)[0];
+}
+
+/**
+ * Every part that satisfies a contract — the reader's own elements, each once,
+ * in model order. `satisfy CellReq by Pack::c1; satisfy CellReq by Pack::c2;`
+ * is two sub-contracts, one per cell, each read over its own cell's symbols:
+ * grouped with the first alone, c2 had no contract at all under per-instance
+ * symbols, and `c1.x + c2.x <= 0.2` was "not refined" by a witness with c2.x =
+ * 1.1 that breaks CellReq on c2 — and the fault tree called the top event open.
+ */
+function satisfiersOf(model: Model, contract: Contract): ElementRecord[] {
+  const out: ElementRecord[] = [];
   for (const ref of contract.satisfiedBy) {
     const el = model.get(ref.id);
-    if (el && isUserModelElement(model, el)) return el;
+    if (el && isUserModelElement(model, el) && !out.some((o) => o.id === el.id)) out.push(el);
   }
-  return undefined;
+  return out;
 }
 
 /**
@@ -1031,14 +1076,16 @@ function decompositionsOf(
     const components: Decomposition['components'] = [];
     for (const candidate of contracts) {
       if (candidate.id === system.id) continue;
-      const part = satisfiers.get(candidate.id);
-      if (!part || part.id === systemPart.id) continue;
-      // The NEAREST contract-bearing enclosing part decides which system this
-      // component belongs to; anything else flattens the tree.
-      const chain = enclosingChain(model, part.id, byType);
-      const nearest = chain.find((a) => partIds.has(a));
-      if (nearest !== systemPart.id) continue;
-      components.push({ contract: candidate, part });
+      // One component per part that satisfies it ({@link satisfiersOf}).
+      for (const part of satisfiers.has(candidate.id) ? satisfiersOf(model, candidate) : []) {
+        if (part.id === systemPart.id) continue;
+        // The NEAREST contract-bearing enclosing part decides which system this
+        // component belongs to; anything else flattens the tree.
+        const chain = enclosingChain(model, part.id, byType);
+        const nearest = chain.find((a) => partIds.has(a));
+        if (nearest !== systemPart.id) continue;
+        components.push({ contract: candidate, part });
+      }
     }
     if (components.length === 0) continue;
     if (
@@ -1280,6 +1327,16 @@ async function judgeDerivation(input: {
   const gammaAssertions: ScriptAssertion[] = groupGamma.rows.flatMap((g) =>
     termsOf(g.row).map((t) => ({ kind: 'axiom' as const, name: g.edge.qualifiedName, term: t })),
   );
+  // What every published obligation is held to ({@link guarded}). A withheld
+  // child is this function's own rule below, so only γ is passed here.
+  const guard = {
+    refusedGamma: refusedGammaIn(
+      prepared.gamma,
+      reachedOfScript([parent, ...premises.map((p) => p.contract)], groupGamma.rows),
+    ),
+    withheld: [] as EncodedContract[],
+    census,
+  };
   const parentAssume: ScriptAssertion[] =
     parent.antecedent !== null
       ? [
@@ -1362,6 +1419,12 @@ async function judgeDerivation(input: {
   }
 
   const obligations: RefinementObligation[] = [];
+  // Step (0)'s `sat`, re-read against the clauses it was answered without.
+  const doubt = zeroDoubt(
+    input.model,
+    rereadPoint(zero),
+    premises.map((p) => p.contract),
+  );
 
   // ── the assumption obligation, per derived requirement: A_R ∧ γ ⊨ A_D ──────
   for (const child of children) {
@@ -1439,6 +1502,10 @@ async function judgeDerivation(input: {
           }),
       }),
     );
+    obligations[obligations.length - 1] = guarded(obligations[obligations.length - 1], {
+      ...guard,
+      zeroDoubt: null,
+    });
   }
 
   // ── the composition obligation: A_R ∧ ⋀ nf(C_D) ∧ γ ⊨ G_R ─────────────────
@@ -1498,6 +1565,10 @@ async function judgeDerivation(input: {
           }),
       }),
     );
+    obligations[obligations.length - 1] = guarded(obligations[obligations.length - 1], {
+      ...guard,
+      zeroDoubt: doubt,
+    });
     // A REFUTATION IS NEVER PUBLISHED OVER A PREMISE SET SMALLER THAN THE
     // FILE'S. A child withheld above lost a conjunct of its `A_D`, so its real
     // normal form is one this run never asserted — and the very clause that was
@@ -1588,32 +1659,19 @@ interface Prepared {
  */
 function prepare(model: Model, connectionsAsEqualities: boolean): Prepared {
   const worklist = obligationsOf(model);
-  // One reading of every numeral a group may put side by side
-  // (./smt/decimal-reading): the clauses, and the equalities γ adds between
-  // features — every flow's and connector's ends, whether or not the opt-in
-  // reads a connection as one, since joining two groups only ever makes them
-  // agree.
-  const links: string[][] = [];
-  for (const flow of itemFlowsOf(model)) {
-    if (flow.source !== undefined && flow.target !== undefined && model.has(flow.source) && model.has(flow.target)) {
-      links.push([model.qualifiedName(flow.source), model.qualifiedName(flow.target)]);
-    }
-  }
-  for (const el of model.all()) {
-    if (!isConnector(el)) continue;
-    const ends = connectorEndsOf(model, el.id).filter((e) => model.has(e));
-    if (ends.length > 1) links.push(ends.map((e) => model.qualifiedName(e)));
-  }
-  const decimal = decimalSymbols(model, worklist, links);
   const rows = new Map<ElementId, EncodedRow[]>();
+  const definitions = sharedDefinitions(model);
   for (const o of worklist) {
-    const id = o.requirement?.id;
+    // A requirement read where a `satisfy R by x` binds its subject is filed
+    // under R and x ({@link satisfiedBy}); read elsewhere, under its own id.
+    const satisfied = o.instance?.requirementId !== undefined ? definitions.satisfaction(o.instance.contextId) : undefined;
+    const id = satisfied ? satisfiedBy(o.instance!.requirementId!, satisfied.satisfier.id) : o.requirement?.id;
     // A row whose role is `axiom` is context even inside a requirement body
     // (`assert constraint`), and the synthetic `no-formal-clause` row is not a
     // relation at all: neither is part of what a contract ASSUMES or PROMISES,
     // which is all normal form is built from.
     if (id === undefined || o.role === 'axiom' || o.source === 'none') continue;
-    const encoded = encodeRow(rowOf(o), decimal);
+    const encoded = encodeRow(rowOf(o));
     const list = rows.get(id);
     if (list) list.push(encoded);
     else rows.set(id, [encoded]);
@@ -1621,10 +1679,15 @@ function prepare(model: Model, connectionsAsEqualities: boolean): Prepared {
   return {
     contracts: contractsOf(model),
     rows,
-    gamma: buildGamma(model, worklist, connectionsAsEqualities, decimal),
+    gamma: buildGamma(model, worklist, connectionsAsEqualities),
     worklist,
     byType: usagesByType(model),
   };
+}
+
+/** The key {@link prepare} files a requirement read at the part that satisfies it under. */
+function satisfiedBy(requirementId: ElementId, partId: ElementId): string {
+  return `${requirementId} satisfied by ${partId}`;
 }
 
 /** The reference shape every row of this report names an element by. */
@@ -2031,6 +2094,12 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
         `. ${census}`,
     };
   }
+  // A SUB-CONTRACT READ OVER ANOTHER INSTANCE than the system reads is no
+  // premise about the system's ({@link misreadComponents}).
+  const misread = misreadComponents(system, components);
+  if (misread.length > 0) {
+    return { ...base, outcome: 'inconclusive', code: REFINEMENT_UNDECIDED_CODE, detail: `${misreadSentence(misread)}. ${census}` };
+  }
 
   // A COMPONENT WHOSE `A` LOST A CONJUNCT IS NOT A PREMISE. Its `nf` as built
   // is STRONGER than the normal form the file states (`¬a₁` entails
@@ -2049,6 +2118,17 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
     edge: g.edge,
     term: termsOf(g.row),
   }));
+  // What every published obligation is held to ({@link guarded}): the refused
+  // γ edges and withheld contracts that reach what this group asserts.
+  const reached = reachedOfScript([system, ...premises.map((p) => p.contract)], groupGamma.rows);
+  const guard = {
+    refusedGamma: refusedGammaIn(prepared.gamma, reached),
+    withheld: withheldIn(
+      components.filter((c) => c.hasRefusedAssumption),
+      reached,
+    ),
+    census,
+  };
 
   // AN EMPTY PREMISE SET IS NOT A REFINEMENT. `⊤ ∧ γ ⊨ nf(C)` is a claim about
   // the system contract standing alone, and calling it "refined" would say the
@@ -2088,7 +2168,7 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
   const premiseAssertions = (skip?: EncodedContract): ScriptAssertion[] =>
     premises
       .filter((p) => p.contract !== skip)
-      .map((p) => ({ kind: 'premise' as const, name: p.contract.contract.qualifiedName, term: p.term }));
+      .map((p) => ({ kind: 'premise' as const, name: premiseName(p.contract, components), term: p.term }));
 
   let checks = 0;
   let logic = '';
@@ -2147,6 +2227,12 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
   }
 
   const obligations: RefinementObligation[] = [];
+  // Step (0)'s `sat`, re-read against the clauses it was answered without.
+  const doubt = zeroDoubt(
+    model,
+    rereadPoint(zero),
+    premises.map((p) => p.contract),
+  );
 
   // ── obligation (3): ⋀ nf(C′) ∧ γ ⊨ nf(C) ─────────────────────────────────
   {
@@ -2180,6 +2266,10 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
           }),
       }),
     );
+    obligations[obligations.length - 1] = guarded(obligations[obligations.length - 1], {
+      ...guard,
+      zeroDoubt: doubt,
+    });
   }
 
   // ── obligation (4): A ∧ ⋀_{S′≠U} nf(C′) ∧ γ ⊨ A_U, per component ─────────
@@ -2270,6 +2360,10 @@ async function judgeGroup(input: JudgeInput): Promise<RefinementGroup> {
           }),
       }),
     );
+    obligations[obligations.length - 1] = guarded(obligations[obligations.length - 1], {
+      ...guard,
+      zeroDoubt: null,
+    });
   }
 
   const outcome = outcomeOf(obligations);
@@ -2394,7 +2488,7 @@ function obligationRow(input: {
   proved: string;
   refuted: string;
   code: string;
-  confirm: (values: ReadonlyMap<string, number | boolean>) => { ok: true } | { ok: false; why: string };
+  confirm: (values: PointValues) => { ok: true } | { ok: false; why: string };
 }): RefinementObligation {
   const shape = {
     kind: input.kind,
@@ -2427,9 +2521,9 @@ function obligationRow(input: {
       witnessConfirmed: false,
     };
   }
-  const values = new Map<string, number | boolean>();
-  for (const w of input.outcome.witness) if (w.value !== null) values.set(w.symbol, w.value);
-  const confirmation = input.confirm(values);
+  // Re-read at z3's model COMPLETED, not at the witness printed below (see
+  // `rereadPoint`): `¬A` settles a premise without the symbols of its `G`.
+  const confirmation = input.confirm(rereadPoint(input.outcome));
   if (!confirmation.ok) {
     return {
       ...shape,
@@ -2501,7 +2595,7 @@ interface Counterexample {
  * reject the commonest genuine counterexample this command finds.
  */
 function confirmCounterexample(
-  values: ReadonlyMap<string, number | boolean>,
+  values: PointValues,
   what: Counterexample,
 ): { ok: true } | { ok: false; why: string } {
   for (const g of what.gamma) {
@@ -2564,10 +2658,13 @@ function confirmCounterexample(
  * `verification/not-evaluable`, a code `--allow-inconclusive` does not lower.
  * A disjunct that is TRUE settles the disjunction whatever the other one is, so
  * an unreadable half is only fatal when the readable half did not settle it.
+ * The point is now z3's model COMPLETED (`rereadPoint`), so a declared symbol
+ * the model left out has a value here after all; the order still decides a
+ * half that reads a value with no number at all (an algebraic root).
  */
 function normalFormAt(
   contract: EncodedContract,
-  values: ReadonlyMap<string, number | boolean>,
+  values: PointValues,
 ): boolean | string {
   const guarantee = truthOf(contract.guarantees, values);
   if (guarantee === true) return true;
@@ -2581,23 +2678,21 @@ function normalFormAt(
 /** The conjunction of these rows at a point, or the reason one could not be read. */
 function truthOf(
   rows: readonly EncodedRow[],
-  values: ReadonlyMap<string, number | boolean>,
+  values: PointValues,
 ): boolean | string {
   let all = true;
   for (const row of rows) {
     const node = row.row.node;
     if (node === null) return `\`${row.row.expression}\` has no readable body`;
-    const scope = (name: string): unknown => {
-      const v = row.vars.find((x) => x.path === name || x.qualifiedName === name);
-      if (!v) return undefined;
-      const raw = values.get(v.qualifiedName);
-      if (raw === undefined) return undefined;
-      if (typeof raw === 'boolean') return raw;
-      return raw * v.factor + v.offset;
-    };
-    const out = evaluate(node, scope);
+    // Over z3's exact rationals and the decimals written (`rereadRelation` of
+    // ./exact): read in binary64, `x <= 0.1`, `y <= 0.2` ⇒ `x + y <= 0.3` had a
+    // "confirmed" counterexample at x = 1/10, y = 2/10, and printed `does NOT
+    // refine`, exit 1.
+    const out = rereadRelation(node, row.vars, values);
     if (!('value' in out)) {
-      return `\`${row.row.expression}\` could not be re-read at the point the solver chose`;
+      return out.tie
+        ? `\`${row.row.expression}\` cannot be decided at the point the solver chose: ${tieSentence(out.tie)}`
+        : `\`${row.row.expression}\` could not be re-read at the point the solver chose`;
     }
     if (typeof out.value !== 'boolean') {
       return `this tool’s own evaluator makes \`${row.row.expression}\` ${String(out.value)} at the point the solver chose, not a truth value`;
@@ -2605,6 +2700,257 @@ function truthOf(
     if (!out.value) all = false;
   }
   return all;
+}
+
+/* ──────────── what a verdict stood on, checked before it is published ──────────── */
+
+/** What one script's asserted relations read: the contracts' encoded clauses, and γ. */
+function reachedOfScript(contracts: readonly EncodedContract[], gamma: readonly EncodedGamma[]): ReachedSet {
+  return reachedBy([
+    ...contracts
+      .flatMap((c) => [...c.assumptions, ...c.guarantees])
+      .filter((r) => r.encoded !== undefined)
+      .map((r) => ({ vars: r.row.vars, symbols: r.encoded?.reads ?? [] })),
+    ...gamma.map((g) => ({ vars: g.row.row.vars, symbols: g.row.encoded?.reads ?? [] })),
+  ]);
+}
+
+/** The γ edges a gate refused that reach what a group asserts ({@link refusalReaches}). */
+function refusedGammaIn(gamma: Gamma, reached: ReachedSet): RefusedClause[] {
+  return gamma.refusedReach.filter((r) => refusalReaches(r.reach, reached)).map((r) => r.clause);
+}
+
+/** The withheld contracts — an `assume` refused — whose clauses reach what a group asserts. */
+function withheldIn(withheld: readonly EncodedContract[], reached: ReachedSet): EncodedContract[] {
+  return withheld.filter((c) =>
+    refusalReaches(reachOf([...c.assumptions, ...c.guarantees].flatMap((r) => r.row.vars)), reached),
+  );
+}
+
+/**
+ * The sub-contracts read over an INSTANCE outside the one the system contract
+ * reads its subject as — each named with the two — or `[]`.
+ *
+ * Each contract is read where its `satisfy` puts its subject, one symbol per
+ * instance. `satisfy CellReq by Pack::c1` reads `c.x` at Pack's generic c1,
+ * while `satisfy Top by pack` reads `sys.c1.x` at pack's own: two symbols, and
+ * nothing in the premise set says of pack's c1 what CellReq says of every
+ * Pack's — `refine` called the decomposition not refined, a witness with
+ * pack's c1.x = 2. The other way round (`satisfy Top by Pack`, `satisfy CellReq
+ * by pack.c1`) the generic c1 truly has no contract. This lane cannot read a
+ * sub-contract at the system's instance, so a decomposition with one read
+ * elsewhere — over a feature the system contract reads — is a PARTIAL premise
+ * set, and nothing is claimed about it. A sub-contract read at an instance
+ * below the system's (pack's c2, beside the c1 the system reads) is its own.
+ */
+function misreadComponents(system: EncodedContract, components: readonly EncodedContract[]): string[] {
+  const clauses = (c: EncodedContract): EncodedRow[] => [...c.assumptions, ...c.guarantees];
+  // The instances the system reads its subject as: `sys.c1.x` read at
+  // `R::pack::c1` reads its subject at `R::pack`.
+  const roots = new Set<string>();
+  const features = new Set<ElementId>();
+  for (const v of clauses(system).flatMap((r) => r.row.vars)) {
+    if (!v.instance) continue;
+    features.add(v.featureId);
+    const segments = v.path.split('.');
+    if (segments.length < 2) continue;
+    const below = segments
+      .slice(1, -1)
+      .map((n) => `::${n}`)
+      .join('');
+    if (v.instance.path.endsWith(below)) roots.add(v.instance.path.slice(0, v.instance.path.length - below.length));
+  }
+  const under = (path: string): boolean => [...roots].some((r) => path === r || path.startsWith(`${r}::`));
+  const out: string[] = [];
+  for (const c of components) {
+    const v = clauses(c)
+      .flatMap((r) => r.row.vars)
+      .find((x) => x.instance !== undefined && features.has(x.featureId) && !under(x.instance.path));
+    if (!v) continue;
+    out.push(
+      `${c.contract.qualifiedName}${c.part ? ` on \`${c.part.qualifiedName}\`` : ''} reads \`${v.path}\` at ` +
+        `\`${v.instance!.path}\`, outside ${[...roots].map((r) => `\`${r}\``).join(', ') || 'every instance'} the system contract reads`,
+    );
+  }
+  return out;
+}
+
+/** The sentence a decomposition whose sub-contracts are read elsewhere stands down with ({@link misreadComponents}). */
+function misreadSentence(misread: readonly string[]): string {
+  return (
+    `the sub-contracts are not read over the instances the system contract reads (${misread.join('; ')}): ` +
+    `a sub-contract may hold of the system's instance too, and the premise set is then PARTIAL — a ` +
+    `counterexample over it may break a contract the file states, and a proof may stand on an antecedent ` +
+    `the missing reading makes unsatisfiable — so nothing is claimed about this decomposition`
+  );
+}
+
+/** The refusals a point can be re-read through: shapes the evaluator reads as the numeric surface does. */
+const REREADABLE: ReadonlySet<RefusalReason> = new Set<RefusalReason>(['unsupported-operator', 'non-numeric-operand']);
+
+/**
+ * Why step (0)'s `sat` is not shown to hold of the contracts the FILE states,
+ * or `null` where it is.
+ *
+ * Step (0) asserts each premise's normal form WITHOUT the guarantee clauses a
+ * gate refused, and dropping a conjunct makes a set easier to satisfy: a
+ * component promising `c.x % 4.0 >= 3.5` and `5 <= c.x <= 5.5` promises
+ * nothing any design meets, and the decomposition was printed `refined`, exit
+ * 0, over that vacuity. So each refused clause of a premise is re-read at the
+ * point step (0) found — where the premise's own `assume` does not settle its
+ * normal form there — reading a feature the point does not assign at the
+ * model's own value (nothing asserted reads it, so any value is admitted, and
+ * a string compare over the model's mode is satisfiable on its own). A clause
+ * that does not hold there, or that is a refusal no point can be re-read
+ * through, leaves the vacuity undecided.
+ */
+function zeroDoubt(
+  model: Model,
+  values: PointValues,
+  premises: readonly EncodedContract[],
+): string | null {
+  for (const p of premises) {
+    const refused = p.guarantees.filter((g) => g.encoded === undefined);
+    if (refused.length === 0) continue;
+    const name = p.contract.shortId || p.contract.qualifiedName;
+    const assumed = truthOf(p.assumptions, values);
+    if (assumed === false) continue;
+    if (typeof assumed === 'string') return `${assumed} (an assumption of \`${name}\`)`;
+    for (const g of refused) {
+      const reason = g.refusal?.reason ?? 'unparseable';
+      if (!REREADABLE.has(reason)) {
+        return `\`${g.row.expression}\` of \`${name}\` was refused (${reason}) and no point can be re-read through it`;
+      }
+      const v = rereadAt(model, g, values);
+      if (v !== true) {
+        return typeof v === 'string'
+          ? v
+          : `\`${g.row.expression}\` of \`${name}\` is false at the point step (0) found`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * One refused clause at a point, reading what the point does not assign at the
+ * model's own value.
+ *
+ * A refused row carries no lowered body (the gates return none), so its text
+ * is parsed here — only where it reads PLAIN numbers, booleans and strings:
+ * with no `[unit]` literal and no declared unit on any operand, the stored
+ * magnitude the point holds is the number the numeric surface reads, and
+ * anything else has no reading at a point that this function could vouch for.
+ */
+function rereadAt(model: Model, row: EncodedRow, values: PointValues): boolean | string {
+  const body = row.row.node === null ? parseRelationBody(row.row.expression) : undefined;
+  const plain =
+    body !== undefined && !body.hadUnit && body.literals.size === 0 && row.row.vars.every((v) => v.unit === null);
+  const node = row.row.node ?? (plain ? body!.node : null);
+  if (node === null) return `\`${row.row.expression}\` has no reading at a point this tool can vouch for`;
+  const find = (name: string): EncodeVariable | undefined =>
+    row.vars.find((x) => x.path === name || x.qualifiedName === name);
+  /** The model's own feature behind a variable the point leaves out. */
+  const stated = (v: EncodeVariable): ElementRecord | undefined => {
+    const feature = row.row.vars.find((x) => x.path === v.path);
+    return feature ? model.get(feature.featureId) : undefined;
+  };
+  const scope = (name: string): unknown => {
+    const v = find(name);
+    if (!v) return undefined;
+    const raw = values.get(v.qualifiedName);
+    if (raw !== undefined) return typeof raw === 'boolean' ? raw : raw * v.factor + v.offset;
+    const el = stated(v);
+    if (!el) return undefined;
+    const value = el.attrs.value;
+    if (typeof value === 'number') return value * v.factor + v.offset;
+    if (typeof value === 'boolean') return value;
+    const r = evaluateFeatureValue(model, el.id);
+    return 'value' in r && typeof r.value === 'string' ? r.value : undefined;
+  };
+  // Each number exactly, as the point's rational or the decimal the model
+  // states, so the clause is decided as the solver reads it.
+  const exact = (name: string): Rational | undefined => {
+    const v = find(name);
+    if (!v) return undefined;
+    const point = values.exact?.get(v.qualifiedName);
+    if (point !== undefined) return affineRational(point, v);
+    if (values.has(v.qualifiedName)) return undefined;
+    const el = stated(v);
+    const value = el?.attrs.value;
+    const written = typeof value === 'number' ? statedRational(value, el!.attrs.valueText) : undefined;
+    return written && affineRational(written, v);
+  };
+  const out = evaluateDecided(node, scope, exact);
+  if (!('value' in out)) {
+    return out.tie
+      ? `\`${row.row.expression}\` cannot be decided at the point step (0) found: ${tieSentence(out.tie)}`
+      : `\`${row.row.expression}\` could not be re-read at the point step (0) found`;
+  }
+  return typeof out.value === 'boolean' ? out.value : `\`${row.row.expression}\` is not a truth value at that point`;
+}
+
+/** What a published obligation has to survive, beside the solver's own answer. */
+interface ObligationGuard {
+  /** γ edges a gate refused that reach the group: a refutation over them is not one. */
+  refusedGamma: readonly RefusedClause[];
+  /** Contracts withheld for a refused `assume` that reach the group: likewise. */
+  withheld: readonly EncodedContract[];
+  /** Step (0)'s `sat` not shown of the contracts the file states — a proof of (3) may be vacuous. */
+  zeroDoubt: string | null;
+  census: string;
+}
+
+/**
+ * One obligation row, held to what it stood on.
+ *
+ * A REFUTATION needs the whole premise set: over a γ edge or a contract a gate
+ * refused (a `kg = m` bind, an `assume` refused), the very relation that was
+ * dropped may exclude the point — `bind Alpha::m = Beta::m` refused, a
+ * counterexample at `alpha.m = 2 kg` was published as a refutation, exit 1.
+ * A PROOF survives a partial premise set, but not, for obligation (3), a step
+ * (0) that was satisfiable only without a refused clause ({@link zeroDoubt}).
+ */
+function guarded(o: RefinementObligation, g: ObligationGuard): RefinementObligation {
+  if (o.outcome === 'refuted' && g.refusedGamma.length > 0) {
+    return {
+      ...o,
+      outcome: 'undecided',
+      code: 'verification/not-evaluable',
+      witnessConfirmed: false,
+      detail:
+        `a counterexample was found over a PARTIAL connection set: ` +
+        `${g.refusedGamma.map((r) => `${r.qualifiedName}: ${r.reason}`).join('; ')} ` +
+        `${g.refusedGamma.length === 1 ? 'was' : 'were'} refused by a gate and may exclude this point. A proof under ` +
+        `a partial premise set would still be sound; a refutation is not, and \`--allow-inconclusive\` does not ` +
+        `forgive it. ${g.census}`,
+    };
+  }
+  if (o.outcome === 'refuted' && g.withheld.length > 0) {
+    return {
+      ...o,
+      outcome: 'undecided',
+      code: REFINEMENT_UNDECIDED_CODE,
+      witnessConfirmed: false,
+      detail:
+        `a counterexample was found under a PARTIAL premise set: ${g.withheld.length} sub-contract(s) ` +
+        `(${g.withheld.map((c) => c.contract.qualifiedName).join(', ')}) had an \`assume\` clause a gate refused ` +
+        `and were not asserted, and the very clause that was dropped may exclude this point. A proof under a ` +
+        `partial premise set would still be sound; a refutation is not. ${g.census}`,
+    };
+  }
+  if (o.outcome !== 'proved') return o;
+  if (g.zeroDoubt !== null) {
+    return {
+      ...o,
+      outcome: 'undecided',
+      code: REFINEMENT_UNDECIDED_CODE,
+      detail:
+        `the negation was unsat, but step (0) found the antecedent satisfiable only without the clause(s) a gate ` +
+        `refused, and ${g.zeroDoubt} — so whether this obligation holds vacuously is undecided. ${g.census}`,
+    };
+  }
+  return o;
 }
 
 /* ─────────────── the seam the fault-tree lane injects failures through ───── */
@@ -2693,16 +3039,25 @@ export interface InjectionTarget {
    */
   baseline(opts: { backend: Z3Backend; timeoutMs?: number }): Promise<CheckOutcome>;
   /**
-   * Obligation (3), with the guarantees of `dropped` removed from the premises.
+   * Why the baseline's answer is not one about the contracts the file states,
+   * or `null`: a `sat` found without a refused clause that does not re-read as
+   * holding at that point ({@link zeroDoubt}) — over which an obligation (3)
+   * that holds may hold vacuously.
+   */
+  zeroDoubt(zero: CheckOutcome): { code: string; detail: string } | null;
+  /**
+   * Obligation (3), with the guarantees of `dropped` — indexes into
+   * {@link components} — removed from the premises.
    *
    * A basic event is "sub-contract *i* not honoured", and a component that does
    * not honour its contract promises NOTHING: its normal form leaves the
    * premise set entirely rather than being replaced by something weaker. That
    * is the same injection `stewart-2021` makes into an AGREE contract and the
-   * same one `bozzano-2014` calls a basic event.
+   * same one `bozzano-2014` calls a basic event. By index, not by contract: one
+   * contract satisfied by two parts is two components, and two basic events.
    */
   obligationThree(
-    dropped: ReadonlySet<ElementId>,
+    dropped: ReadonlySet<number>,
     opts: { backend: Z3Backend; timeoutMs?: number },
   ): Promise<InjectedOutcome>;
 }
@@ -2781,10 +3136,21 @@ function injectionTarget(
   ];
   const withheld = components.filter((c) => c.hasRefusedAssumption);
   const premises = components
-    .filter((c) => !c.hasRefusedAssumption)
-    .map((c) => ({ contract: c, term: c.nf }))
-    .filter((p): p is { contract: EncodedContract; term: string } => p.term !== null);
+    .map((c, index) => ({ contract: c, term: c.nf, index }))
+    .filter((p) => !p.contract.hasRefusedAssumption)
+    .filter((p): p is { contract: EncodedContract; term: string; index: number } => p.term !== null);
+  const premiseAssertion = (p: { contract: EncodedContract; term: string }): ScriptAssertion => ({
+    kind: 'premise',
+    name: premiseName(p.contract, components),
+    term: p.term,
+  });
+  // What every answer is held to, as {@link judgeGroup} holds its rows.
+  const refusedGamma = refusedGammaIn(
+    prepared.gamma,
+    reachedOfScript([system, ...premises.map((p) => p.contract)], groupGamma.rows),
+  );
 
+  const misread = misreadComponents(system, components);
   const standDown: { code: string; detail: string } | null =
     system.hasRefusal || system.nf === null
       ? {
@@ -2815,7 +3181,9 @@ function injectionTarget(
                 'no sub-contract of this decomposition contributes a normal form this lane may assert, ' +
                 'so there is no guarantee to withdraw and every fault set would be the empty one',
             }
-          : null;
+          : misread.length > 0
+            ? { code: REFINEMENT_UNDECIDED_CODE, detail: `${misreadSentence(misread)}, and no fault was injected` }
+            : null;
 
   const variables = [
     ...system.vars,
@@ -2874,8 +3242,24 @@ function injectionTarget(
     baseline: async (opts) =>
       (await run([...systemAssume, ...premises.map(premiseAssertion), ...gammaAssertions], opts))
         .outcome,
+    zeroDoubt: (zero) => {
+      if (zero.status !== 'sat') return null;
+      const why = zeroDoubt(
+        model,
+        rereadPoint(zero),
+        premises.map((p) => p.contract),
+      );
+      return why === null
+        ? null
+        : {
+            code: REFINEMENT_UNDECIDED_CODE,
+            detail:
+              `step (0) found the contract set satisfiable only without the clause(s) a gate refused, and ${why} — ` +
+              'so whether the top event holds vacuously is undecided',
+          };
+    },
     obligationThree: async (dropped, opts) => {
-      const kept = premises.filter((p) => !dropped.has(p.contract.contract.id));
+      const kept = premises.filter((p) => !dropped.has(p.index));
       const { outcome, logic, fragment } = await run(
         [
           ...kept.map(premiseAssertion),
@@ -2888,7 +3272,7 @@ function injectionTarget(
         ],
         opts,
       );
-      return injectedOutcome(outcome, logic, fragment, (values) =>
+      const injected = injectedOutcome(outcome, logic, fragment, (values) =>
         confirmCounterexample(values, {
           assumed: [],
           premises: kept.map((p) => p.contract),
@@ -2896,13 +3280,32 @@ function injectionTarget(
           goalFalse: system,
         }),
       );
+      // The rows of {@link guarded}, for a cut set and for its absence.
+      if (injected.status === 'fails' && refusedGamma.length > 0) {
+        return {
+          ...injected,
+          status: 'undecided',
+          code: 'verification/not-evaluable',
+          witnessConfirmed: false,
+          detail:
+            `a counterexample was found over a PARTIAL connection set: ` +
+            `${refusedGamma.map((r) => `${r.qualifiedName}: ${r.reason}`).join('; ')} was refused by a gate and may ` +
+            'exclude this point',
+        };
+      }
+      return injected;
     },
   };
 }
 
-/** One contract's normal form, as a premise assertion. */
-function premiseAssertion(p: { contract: EncodedContract; term: string }): ScriptAssertion {
-  return { kind: 'premise', name: p.contract.contract.qualifiedName, term: p.term };
+/**
+ * The name a component's normal form is asserted under: its contract's, and
+ * the part's beside it where the contract is a component more than once
+ * ({@link satisfiersOf}), so an unsat core names which of them it holds.
+ */
+function premiseName(c: EncodedContract, all: readonly EncodedContract[]): string {
+  const twice = all.filter((o) => o.contract.id === c.contract.id).length > 1;
+  return twice && c.part ? `${c.contract.qualifiedName} on ${c.part.qualifiedName}` : c.contract.qualifiedName;
 }
 
 /**
@@ -2918,7 +3321,7 @@ function injectedOutcome(
   outcome: CheckOutcome,
   logic: string,
   fragment: Fragment,
-  confirm: (values: ReadonlyMap<string, number | boolean>) => { ok: true } | { ok: false; why: string },
+  confirm: (values: PointValues) => { ok: true } | { ok: false; why: string },
 ): InjectedOutcome {
   const shape = { checks: 1, logic, fragment };
   if (outcome.status === 'unsat') {
@@ -2938,9 +3341,7 @@ function injectedOutcome(
       witnessConfirmed: false,
     };
   }
-  const values = new Map<string, number | boolean>();
-  for (const w of outcome.witness) if (w.value !== null) values.set(w.symbol, w.value);
-  const confirmation = confirm(values);
+  const confirmation = confirm(rereadPoint(outcome));
   if (!confirmation.ok) {
     return {
       ...shape,

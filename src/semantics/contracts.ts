@@ -50,9 +50,10 @@ import {
   type ElementRecord,
   type Model,
 } from '@core/index';
-import { readRefusalOf, unreadValuesOf, type ReadRefusal } from './evaluate-model';
+import { readRefusalOf, unreadDependenciesOf, unreadValuesOf, type ReadRefusal } from './evaluate-model';
+import { defaultGivesWay, sharedDefinitions, shadowedNamesOf, shadowedSentence } from './defining-equation';
 import { evaluate, type ExprNode } from './expr';
-import { effectiveFeatures, generalizationsOf } from './inheritance';
+import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
 import {
   parseRelationBody,
   relationRefused,
@@ -61,6 +62,7 @@ import {
   scaleOfRelation,
   storageScaleOf,
   substituteLiterals,
+  withValueUnit,
   type LoweredLiteral,
   type MarkerDimensions,
   type ScaleMap,
@@ -68,7 +70,7 @@ import {
 import { getRequirementAttr, requirementShortId } from './requirements';
 import { keywordsOnRecord } from './keywords';
 import { isNonNormativeStatement } from './statement-kind';
-import { dimensionalFacets, type DerivationMemo } from './units-eval';
+import { dimensionalFacets, expressionValueUnitOf, valueUnitRefusal, type DerivationMemo } from './units-eval';
 
 /* ────────────────────────── who owns a contract ──────────────────────────── */
 
@@ -200,20 +202,34 @@ export interface ContractVariable {
   /** The origin offset of the stored scale — non-zero only on °C / °F. */
   siOffset: number;
   /**
-   * The symbol an engine reads this path by, when it is NOT the feature's own:
-   * a name the validation surface reads no value for in this relation's
-   * context (`unreadValuesOf` in ./evaluate-model — a feature chain to, or an
-   * inherited, value only an asserted equation defines; a calculation's body
-   * read outside the context that owns it). The feature is one element, and
-   * its equation pins its symbol to the value it has where that equation is
-   * written; read here, it stands for a value nothing in the model states, so
-   * it is a symbol of its own. It is shared by the relations of one context,
+   * The symbol an engine reads this path by, when it is NOT the feature's own
+   * nor an instance's ({@link instance}): a name the validation surface reads
+   * no value for in this relation's context (`unreadValuesOf` in
+   * ./evaluate-model — two inherited values colliding under it, a chain into
+   * a calculation with a parameter). Read here, it stands for a value nothing
+   * in the model states, so it is a symbol of its own. It is shared by the relations of one context,
    * so nothing may PIN it: an axiom that reads one is refused (`unreadAxiom`
    * in ./obligations), a proof whose assumption reads one is not claimed, and
    * the commands that assert relations as facts refuse every row that reads
    * one (`unreadRowRefusal`). Absent everywhere else.
    */
   symbol?: string;
+  /**
+   * Set where the path reads its feature through an INSTANCE of its own — a
+   * usage of the feature's owner, `g1` and `g2` of `part def G` — whose value
+   * may differ from the feature's elsewhere: `qualifiedName` is then that
+   * instance's symbol (`R::g1::g`), not the feature's own (`R::G::g`), and
+   * `path` names the instance (`R::g1`), `reader` the context the walk read
+   * the feature in. One symbol for every instance made `g1.g == g2.g`
+   * PROVED. The relations the instance holds — the feature's value read
+   * there, every assert and binding of its types, and of the types of every
+   * instance that encloses it (`enclosing`, outermost first: `R::s` read in
+   * `s` for `s.q.load`) — are filed for it beside the row
+   * (`instanceRelationRows` of ./obligations). Absent where the feature's own
+   * qualified name is the symbol: read where it is declared, or a value the
+   * same in every instance.
+   */
+  instance?: { path: string; reader: ElementId; enclosing: ReadonlyArray<{ instance: string; reader: ElementId }> };
 }
 
 /** One `assume` or `require` clause, read but never judged. */
@@ -382,7 +398,7 @@ export interface ClauseInheritanceCensus {
   /**
    * Named inherited clauses masked by a nearer feature of the same name.
    *
-   * Masking is by `declaredName` ({@link effectiveFeatures}), and the shipped
+   * Masking is by redefinition or effective name ({@link effectiveFeatures}), and the shipped
    * `require constraint { … }` idiom builds an ANONYMOUS clause, for which it
    * can never fire. This is the count that says whether redefinition of a
    * clause is expressible in a corpus at all — so it counts only a CLAUSE
@@ -474,8 +490,8 @@ function sortOf(model: Model, id: ElementId): VarSort {
  * two variables, so `battery.capacity * usableEnergyFraction / cruisePower`
  * is a constant rather than a nonlinearity.
  */
-function hasLiteralValue(el: ElementRecord | undefined): boolean {
-  if (!el) return false;
+function hasLiteralValue(model: Model, el: ElementRecord | undefined): boolean {
+  if (!el || defaultGivesWay(model, el)) return false;
   const raw = el.attrs.value;
   if (typeof raw === 'number' || typeof raw === 'boolean') return true;
   if (typeof raw !== 'string') return false;
@@ -513,7 +529,9 @@ function variableRole(
   const el = model.get(id);
   if (!el) return 'parameter';
   const raw = el.attrs.value;
-  if (typeof raw === 'string' && raw.trim() !== '' && !hasLiteralValue(el)) return 'derived';
+  if (typeof raw === 'string' && raw.trim() !== '' && !hasLiteralValue(model, el) && !defaultGivesWay(model, el)) {
+    return 'derived';
+  }
   for (let cur: ElementRecord | undefined = el; cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
     const role = directionRole(cur.attrs.direction);
     if (role) return role;
@@ -564,6 +582,23 @@ export interface RelationReading {
    * none.
    */
   unread?: string[];
+  /**
+   * The features the {@link unread} values depend on, as resolved where the
+   * relation is read — the inputs whose change made each one unread
+   * (`unreadDependenciesOf` of ./evaluate-model). A command that reaches
+   * relations by the features they read (`consistency`, `bounds`) reaches an
+   * unread value's row through them: its own symbol meets nothing. Absent
+   * when there are no unread names.
+   */
+  unreadDeps?: ElementId[];
+  /**
+   * The names the body reads that its own element declares while its owner's
+   * scope answers them with another feature (`shadowedNamesOf` of
+   * ./defining-equation). Such a relation is refused (`unread-definition`);
+   * the names are kept so an engine can tell an assumption read by no surface
+   * from one it merely could not encode. Absent when there are none.
+   */
+  shadowed?: string[];
 }
 
 /** A reading that failed at `refusal`, carrying whatever was learned first. */
@@ -604,6 +639,20 @@ function refused(
  * everything but the refusal of an operand's derivation (the solver keeps
  * solving a value whose derivation is refused, and refuses every relation
  * that reads it).
+ *
+ * `valueOf` is the feature whose value `raw` is, where the reading is of a
+ * feature value — itself, or (read in a context, {@link withInstances}) the
+ * feature whose stated value the context reads. Its `[unit]`, where that
+ * value is written `(expr) [unit]` (`expressionValueUnitOf` of ./units-eval),
+ * sits beside the expression and is part of the value — never a calculation's
+ * body. The value is then `expr` IN that unit, joined as `x == expr * 1.0
+ * [unit]` ({@link withValueUnit}), as the solver lane joins it; and where no
+ * gate refused it but the unit-aware evaluator does not put the unit on a
+ * number — at the model's point (`(cap * 2.0) [GiB]` puts a unit on bits) or
+ * for some value of an input the model leaves free (`(cap * k) [GiB]`) — so is
+ * the axiom refused, with that evaluator's sentence (`refused-derivation`,
+ * {@link valueUnitRefusal}). Asked where the value is READ: in `el`'s owner,
+ * for a copy or an instance read in a context of its own.
  */
 export function readRelation(
   model: Model,
@@ -611,15 +660,59 @@ export function readRelation(
   raw: string,
   memo: DerivationMemo,
   assignTo?: string,
+  valueOf?: ElementRecord,
+  instance?: string,
+): RelationReading {
+  return withInstances(model, el, readRelationAsWritten(model, el, raw, memo, assignTo, valueOf), instance);
+}
+
+/**
+ * A reading with the symbol of every path read through an instance of its
+ * own ({@link ContractVariable.instance}) — `instance` re-roots the reading
+ * where `el` is a relation of its owner read for one of the owner's
+ * instances (`DefiningEquations.instanceReadings`).
+ */
+export function withInstances(
+  model: Model,
+  el: ElementRecord,
+  reading: RelationReading,
+  instance?: string,
+): RelationReading {
+  if (reading.variables.length === 0) return reading;
+  const readings = sharedDefinitions(model).instanceReadings(
+    el,
+    reading.variables.map((v) => v.path),
+    instance,
+  );
+  if (readings.size === 0) return reading;
+  for (const v of reading.variables) {
+    const r = readings.get(v.path);
+    if (!r) continue;
+    v.qualifiedName = r.symbol;
+    v.instance = { path: r.instance, reader: r.reader, enclosing: r.enclosing };
+  }
+  return reading;
+}
+
+function readRelationAsWritten(
+  model: Model,
+  el: ElementRecord,
+  raw: string,
+  memo: DerivationMemo,
+  assignTo?: string,
+  valueOf?: ElementRecord,
 ): RelationReading {
   // What the RELATION is, which for a feature value is the joining equality and
   // not the right-hand side alone. `endurance = capacity * f / power` states
   // `endurance == capacity * f / power`; an axiom row that printed only the
   // quotient would show something that is not a relation and would never name
   // the feature it defines, while the sibling literal row prints `mtow == 18.5`.
-  // One field, one shape.
-  const shown = assignTo !== undefined ? `${assignTo} == ${raw}` : raw;
-  const body = parseRelationBody(raw);
+  // One field, one shape — the unit beside an expression value included.
+  const valueUnit = valueOf !== undefined ? expressionValueUnitOf(valueOf) : undefined;
+  const value = valueUnit !== undefined ? `${raw} [${valueUnit}]` : raw;
+  const shown = assignTo !== undefined ? `${assignTo} == ${value}` : raw;
+  const parsed = parseRelationBody(raw);
+  const body = parsed && valueUnit !== undefined ? withValueUnit(parsed, valueUnit) : parsed;
   if (!body) {
     return refused(shown, {
       reason: 'unparseable',
@@ -634,6 +727,7 @@ export function readRelation(
     });
   }
 
+  const shadowed = shadowedNamesOf(model, el, pathsOf(body.node).filter((p) => !body.literals.has(p)));
   const nameToId = relationScope(model, el);
   let node = body.node;
   let identity = false;
@@ -647,7 +741,28 @@ export function readRelation(
   }
   // A calculation's value body is a value, read as a feature's value is.
   const readBy = { el, operands: assignTo === undefined };
-  return gateRelation(model, node, nameToId, body.literals, body.hadUnit, memo, identity, shown, readBy);
+  const reading = gateRelation(model, node, nameToId, body.literals, body.hadUnit, memo, identity, shown, readBy);
+  // A body that reads a name its own element declares is read by no surface
+  // (shadowedNamesOf). Refused whatever the gates said, it keeps the variables
+  // its owner-scope reading resolves, so whatever counts what a refused
+  // relation reaches counts the features the misreading would have pinned.
+  if (shadowed.length > 0) {
+    const { unread: _unread, unreadDeps: _deps, ...rest } = reading;
+    return {
+      ...rest,
+      encodable: { reason: 'unread-definition', detail: shadowedSentence(model, el, shadowed) },
+      shadowed,
+    };
+  }
+  if (valueOf === undefined || valueUnit === undefined || reading.encodable !== true) return reading;
+  // The one refusal the gates cannot see: whether `expr` is a NUMBER to put
+  // the unit on — at the model's point and for every value of the inputs it
+  // leaves free, since the axiom is read for all of them ({@link valueUnitRefusal}) —
+  // and where the value is read in a context of its own (`el`'s owner: a copy,
+  // an instance), in THAT context, whose inputs may be other quantities.
+  const at = el.ownerId != null && el.ownerId !== valueOf.ownerId ? el.ownerId : undefined;
+  const sentence = valueUnitRefusal(model, valueOf.id, memo, assignTo, at);
+  return sentence === undefined ? reading : refused(shown, { reason: 'refused-derivation', detail: sentence });
 }
 
 /**
@@ -687,8 +802,9 @@ export function gateRelation(
   const varIds = relationVarsOf(node, nameToId);
   const unread = readBy ? unreadValuesOf(model, readBy.el, pathsOf(node).filter((p) => !markers.has(p)), memo) : [];
   const variables = variablesOf(model, node, nameToId, markers, memo);
+  const unreadDeps = readBy && unread.length > 0 ? unreadDependenciesOf(model, readBy.el, unread, memo) : [];
   if (unread.length > 0) {
-    const context = readBy?.el.ownerId != null ? model.qualifiedName(readBy.el.ownerId) : '';
+    const context = readBy?.el.ownerId != null ? effectiveQualifiedName(model, readBy.el.ownerId) : '';
     for (const v of variables) {
       if (unread.includes(v.path)) v.symbol = `${context}::${v.path} (not read here)`;
     }
@@ -787,7 +903,7 @@ export function gateRelation(
 
   const lowered = substituteLiterals(node, asLiteralMap(markers));
   const free = new Set(
-    variables.filter((v) => !hasLiteralValue(model.get(v.featureId))).map((v) => v.path),
+    variables.filter((v) => !hasLiteralValue(model, model.get(v.featureId))).map((v) => v.path),
   );
   const nonlinear = isNonlinear(lowered, free);
   return {
@@ -799,7 +915,7 @@ export function gateRelation(
     encodable: true,
     nonlinear,
     fragment: nonlinear ? 'qf-nra' : 'qf-lra',
-    ...(unread.length > 0 ? { unread } : {}),
+    ...(unread.length > 0 ? { unread, unreadDeps } : {}),
   };
 }
 
@@ -850,7 +966,7 @@ function variablesOf(
     out.push({
       path,
       featureId: id,
-      qualifiedName: model.qualifiedName(id),
+      qualifiedName: effectiveQualifiedName(model, id),
       role: variableRole(model, id, path, nameToId),
       unit: facets.unit ?? null,
       siFactor: scale?.factor ?? 1,
@@ -1084,6 +1200,14 @@ function subjectOfCase(model: Model, el: ElementRecord): ContractSubject {
 
 /** The relationship metaclasses each traceability orientation is written with. */
 const SATISFY_KINDS = new Set(['Satisfy', 'SatisfyRequirementUsage']);
+
+/**
+ * What `satisfy` names as satisfying a requirement: {@link Contract.satisfiedBy},
+ * for a reader that holds only the requirement's id.
+ */
+export function satisfiersOf(model: Model, id: ElementId): ContractRef[] {
+  return incoming(model, id, SATISFY_KINDS);
+}
 
 /** The sources of every relationship of `kinds` whose TARGET is `id`. */
 function incoming(model: Model, id: ElementId, kinds: ReadonlySet<string>): ContractRef[] {
@@ -1327,7 +1451,7 @@ function firstHopFamilies(model: Model, id: ElementId): Map<ElementId, string> {
  * with the clause that masks it.
  *
  * {@link effectiveFeatures} drops a feature exactly when a more specific one
- * has claimed its `declaredName`, so a named clause on a general type that is
+ * redefines it or has claimed its name, so a named clause on a general type that is
  * absent from the effective set was masked. The masker is returned with it for
  * two reasons, and both are about the number being read as a gate. It has to
  * be a clause: an `attribute massOk` claims the name just as effectively, but
@@ -1353,7 +1477,7 @@ function maskedInheritedClauses(
       if (present.has(feature.id)) continue;
       // Own features come first out of `effectiveFeatures`, then the nearer
       // general types, so the first survivor of that name is the masker.
-      const masker = effective.find((f) => f.declaredName === feature.declaredName);
+      const masker = effective.find((f) => effectiveNameOf(model, f) === feature.declaredName);
       if (!masker || clauseRole(masker) === undefined) continue;
       out.push({ masked: feature, masker });
     }
@@ -1474,7 +1598,7 @@ function assemble(
     subject: isCase ? subjectOfCase(model, el) : subjectOfRequirement(model, el),
     assumptions: clauses.filter((c) => c.role === 'assume'),
     guarantees: clauses.filter((c) => c.role === 'require'),
-    satisfiedBy: incoming(model, el.id, SATISFY_KINDS),
+    satisfiedBy: satisfiersOf(model, el.id),
     derivedFrom: incoming(model, el.id, new Set(['Derive'])),
     refinedBy: incoming(model, el.id, new Set(['Refine'])),
     verifiedBy: incoming(model, el.id, new Set(['Verify'])),

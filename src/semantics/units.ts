@@ -210,7 +210,18 @@ export interface Unit {
    * 16 byte-equivalents instead of the honest `unknown-unit`.
    */
   magnifyingPrefixesOnly?: boolean;
+  /**
+   * What a DIMENSION-ONE row is an amount of, where its coherent unit is not
+   * the number one: information (bit, B, o, Sh, Hart, nat) or traffic (E).
+   * `2.0 [GiB]` is 2^34 bit, not the number 2^34, and the unit-aware
+   * evaluator keeps the two apart by this name ({@link dimensionOneKindsOf}).
+   * A prefixed row carries its base's.
+   */
+  amountOf?: DimensionOneAmount;
 }
+
+/** What a dimension-one unit that is not a pure number counts ({@link Unit.amountOf}). */
+export type DimensionOneAmount = 'information' | 'traffic';
 
 /**
  * One factor of a composed unit ({@link Unit.factorTerms}): a registry row's
@@ -359,16 +370,16 @@ const REGISTRY: Unit[] = [
   // Only the MAGNIFYING prefixes attach (magnifyingPrefixesOnly): kbit/MB/Gbit
   // are the spellings that exist, while `d` + `B` would capture the DECIBEL —
   // a logarithmic ratio, not a linear registry unit — and silently rescale it.
-  { name: 'bit', symbol: 'bit', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::bit', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true },
-  { name: 'byte', symbol: 'B', dimension: DIMENSIONLESS, factorToSI: 8, libraryName: 'SI::byte', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true },
-  { name: 'octet', symbol: 'o', dimension: DIMENSIONLESS, factorToSI: 8, libraryName: 'SI::octet', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true },
-  { name: 'shannon', symbol: 'Sh', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::shannon', prefixable: true, magnifyingPrefixesOnly: true },
-  { name: 'hartley', symbol: 'Hart', dimension: DIMENSIONLESS, factorToSI: Math.log2(10), libraryName: 'SI::hartley', prefixable: true, magnifyingPrefixesOnly: true },
-  { name: 'nat', symbol: 'nat', dimension: DIMENSIONLESS, factorToSI: 1 / Math.LN2, libraryName: 'SI::natural unit of information', prefixable: true, magnifyingPrefixesOnly: true },
+  { name: 'bit', symbol: 'bit', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::bit', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true, amountOf: 'information' },
+  { name: 'byte', symbol: 'B', dimension: DIMENSIONLESS, factorToSI: 8, libraryName: 'SI::byte', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true, amountOf: 'information' },
+  { name: 'octet', symbol: 'o', dimension: DIMENSIONLESS, factorToSI: 8, libraryName: 'SI::octet', prefixable: true, magnifyingPrefixesOnly: true, binaryPrefixable: true, amountOf: 'information' },
+  { name: 'shannon', symbol: 'Sh', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::shannon', prefixable: true, magnifyingPrefixesOnly: true, amountOf: 'information' },
+  { name: 'hartley', symbol: 'Hart', dimension: DIMENSIONLESS, factorToSI: Math.log2(10), libraryName: 'SI::hartley', prefixable: true, magnifyingPrefixesOnly: true, amountOf: 'information' },
+  { name: 'nat', symbol: 'nat', dimension: DIMENSIONLESS, factorToSI: 1 / Math.LN2, libraryName: 'SI::natural unit of information', prefixable: true, magnifyingPrefixesOnly: true, amountOf: 'information' },
   // A signalling rate: one symbol (line digit) per second.
   { name: 'baud', symbol: 'Bd', dimension: dim({ T: -1 }), factorToSI: 1, libraryName: 'SI::baud', prefixable: true, magnifyingPrefixesOnly: true },
   // Traffic intensity — a dimensionless occupancy, one call-hour per hour.
-  { name: 'erlang', symbol: 'E', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::erlang' },
+  { name: 'erlang', symbol: 'E', dimension: DIMENSIONLESS, factorToSI: 1, libraryName: 'SI::erlang', amountOf: 'traffic' },
 
   // ── Other accepted metric units ────────────────────────────────────────
   { name: 'gram', symbol: 'g', dimension: D_MASS, factorToSI: 1e-3, libraryName: 'SI::gram', prefixable: true },
@@ -438,6 +449,8 @@ function applyPrefix(prefix: Prefix, base: Unit): Unit {
     factorTerms: [...termsOf(base), { factor: prefix.factor, power: 1 }],
     // A prefixed unit never carries an offset (prefixing °C is meaningless).
     prefixable: false,
+    // A gibibyte is still an amount of information.
+    ...(base.amountOf !== undefined ? { amountOf: base.amountOf } : {}),
   };
 }
 
@@ -690,17 +703,31 @@ function lexUnit(src: string): UTok[] {
 /**
  * A parsed unit expression: its dimension, its multiplier to coherent SI, and
  * the registry and prefix factors that multiplier is composed of
- * ({@link Unit.factorTerms}) — carried beside the double, never derived from it.
+ * ({@link Unit.factorTerms}) — carried beside the double, never derived from it
+ * — and the units it names, each with the power it enters with (what
+ * {@link dimensionOneKindsOf} reads a dimension-one compound by).
  */
 interface UnitValue {
   dimension: Dimension;
   factorToSI: number;
   terms: ReadonlyArray<FactorTerm>;
+  atoms: ReadonlyArray<UnitAtom>;
+}
+
+/** One unit a unit expression names, and the power it enters with (`mm/m` is mm¹ and m⁻¹). */
+interface UnitAtom {
+  unit: Unit;
+  power: number;
 }
 
 /** Every term of `terms`, its power multiplied by `by` (a power, or −1 for a divisor). */
 function raiseTerms(terms: ReadonlyArray<FactorTerm>, by: number): FactorTerm[] {
   return terms.map((t) => ({ factor: t.factor, power: t.power * by }));
+}
+
+/** Every atom of `atoms`, its power multiplied by `by`, as {@link raiseTerms} does. */
+function raiseAtoms(atoms: ReadonlyArray<UnitAtom>, by: number): UnitAtom[] {
+  return atoms.map((a) => ({ unit: a.unit, power: a.power * by }));
 }
 
 /** Precedence-climbing parser, in the shape of the constraint parser next door. */
@@ -734,11 +761,13 @@ class UnitParser {
               dimension: multiplyDim(left.dimension, right.dimension),
               factorToSI: left.factorToSI * right.factorToSI,
               terms: [...left.terms, ...right.terms],
+              atoms: [...left.atoms, ...right.atoms],
             }
           : {
               dimension: divideDim(left.dimension, right.dimension),
               factorToSI: left.factorToSI / right.factorToSI,
               terms: [...left.terms, ...raiseTerms(right.terms, -1)],
+              atoms: [...left.atoms, ...raiseAtoms(right.atoms, -1)],
             };
     }
     return left;
@@ -754,6 +783,7 @@ class UnitParser {
           dimension: powDim(base.dimension, tk.v),
           factorToSI: base.factorToSI ** tk.v,
           terms: raiseTerms(base.terms, tk.v),
+          atoms: raiseAtoms(base.atoms, tk.v),
         };
         continue;
       }
@@ -766,6 +796,7 @@ class UnitParser {
           dimension: powDim(base.dimension, e.v),
           factorToSI: base.factorToSI ** e.v,
           terms: raiseTerms(base.terms, e.v),
+          atoms: raiseAtoms(base.atoms, e.v),
         };
         continue;
       }
@@ -790,7 +821,7 @@ class UnitParser {
       // named no unit at all, so `[2]` and `[1]` stay unknown units.
       if (tk.v !== 1) throw new SyntaxError('A bare number is not a unit');
       this.pos++;
-      return { dimension: DIMENSIONLESS, factorToSI: 1, terms: [] };
+      return { dimension: DIMENSIONLESS, factorToSI: 1, terms: [], atoms: [] };
     }
     if (tk.t !== 'atom') {
       throw new SyntaxError('Expected a unit symbol');
@@ -803,7 +834,7 @@ class UnitParser {
     // need an origin, so the whole expression is refused rather than silently
     // read as if °C were kelvin.
     if (u.offsetSI) throw new SyntaxError(`Unit '${tk.v}' is an offset scale`);
-    return { dimension: u.dimension, factorToSI: u.factorToSI, terms: termsOf(u) };
+    return { dimension: u.dimension, factorToSI: u.factorToSI, terms: termsOf(u), atoms: [{ unit: u, power: 1 }] };
   }
 }
 
@@ -878,6 +909,74 @@ export function resolveUnit(u: Unit | string): Unit | undefined {
 /** The dimension of a unit named `name` (long name or symbol), or undefined. */
 export function dimensionOf(name: string): Dimension | undefined {
   return resolveUnit(name)?.dimension;
+}
+
+/** The units a reference names, each with its power, read by the same funnel as {@link resolveUnitString}. */
+function unitAtomsOf(ref: string): ReadonlyArray<UnitAtom> | undefined {
+  const normalized = normalizeUnitRef(ref);
+  if (normalized === '') return undefined;
+  const byLibrary = BY_LIBRARY_NAME.get(normalized);
+  if (byLibrary) return [{ unit: byLibrary, power: 1 }];
+  if (!UNIT_EXPR_SYNTAX.test(normalized)) {
+    const direct = atomUnit(normalized);
+    if (direct) return [{ unit: direct, power: 1 }];
+  }
+  return parseUnitExpr(wordFormExpr(normalized))?.atoms;
+}
+
+/** Memo for {@link dimensionOneKindsOf}, keyed like {@link RESOLVED}. */
+const KINDS = new Map<string, Readonly<Record<string, number>> | undefined>();
+
+/**
+ * What a DIMENSION-ONE unit counts, kind by kind, each with the power it
+ * enters with — `undefined` for a dimensioned, offset or unknown unit.
+ *
+ * Dimension one is not one kind of thing. An amount of information (`GiB` is
+ * 2^33 bit) or of traffic (`E`) is an amount in a unit that is not the number
+ * one ({@link Unit.amountOf}). A RATIO (`mm/m`, `kWh/J`, `B/bit`) is a number
+ * only in its own unit, and counts as one ratio of what its numerator is: `L
+ * ratio`, `L²·M·T⁻² ratio`, `information ratio`. The unit-aware evaluator
+ * cancels powers only within one kind: `cap / 1.0 [GiB]` is a number, but
+ * `cap / strain` (GiB over mm/m) is still an amount of information. Read as
+ * one power that the two summed to zero, `(cap / strain) [GiB]` relabelled
+ * 2^34 / 0.002 bit as that many GiB.
+ *
+ * Splitting a kind too finely only refuses more (`kHz*s` is a `1 ratio`, not
+ * a `T ratio` like `min/s`); merging two would cancel what does not cancel.
+ */
+export function dimensionOneKindsOf(ref: string): Readonly<Record<string, number>> | undefined {
+  const key = ref.trim();
+  if (KINDS.has(key)) return KINDS.get(key);
+  let out: Record<string, number> | undefined;
+  const u = resolveUnit(key);
+  const atoms = u !== undefined && !u.offsetSI && dimEqual(u.dimension, DIMENSIONLESS) ? unitAtomsOf(key) : undefined;
+  if (atoms !== undefined) {
+    out = {};
+    const add = (kind: string, power: number) => {
+      out![kind] = (out![kind] ?? 0) + power;
+    };
+    const signs = new Map<DimensionOneAmount, Set<number>>();
+    let numerator = DIMENSIONLESS;
+    let dimensioned = false;
+    for (const { unit, power } of atoms) {
+      if (unit.amountOf !== undefined) {
+        add(unit.amountOf, power);
+        const seen = signs.get(unit.amountOf) ?? new Set<number>();
+        seen.add(Math.sign(power));
+        signs.set(unit.amountOf, seen);
+      } else if (!dimEqual(unit.dimension, DIMENSIONLESS)) {
+        dimensioned = true;
+        if (power > 0) numerator = multiplyDim(numerator, powDim(unit.dimension, power));
+      }
+    }
+    // An amount over an amount of the same kind (`B/bit`), and dimensioned
+    // units whose dimensions cancel (`mm/m`), are ratios.
+    for (const [amount, seen] of signs) if (seen.size > 1) add(`${amount} ratio`, 1);
+    if (dimensioned) add(`${dimToString(numerator)} ratio`, 1);
+    for (const kind of Object.keys(out)) if (out[kind] === 0) delete out[kind];
+  }
+  KINDS.set(key, out);
+  return out;
 }
 
 /** True when two unit references share the same dimension. */
@@ -1131,3 +1230,51 @@ export function quantityKindDimension(
   const last = key.split('::').pop()?.trim() ?? key;
   return QUANTITY_DIMENSIONS[last] ?? QUANTITY_DIMENSIONS[key];
 }
+
+/**
+ * The dimension-one kinds of {@link QUANTITY_DIMENSIONS} whose bundle unit is an
+ * information or a traffic unit ("Content, entropy and traffic — DimensionOneUnit"
+ * there, with the aliases): what a value of each is an amount of
+ * ({@link Unit.amountOf}). The kinds the bundle gives no unit are pure numbers
+ * by choice, and are not here.
+ */
+const KIND_AMOUNTS: Record<string, DimensionOneAmount> = {
+  StorageCapacityValue: 'information',
+  EquivalentBinaryStorageCapacityValue: 'information',
+  InformationContentValue: 'information',
+  ConditionalInformationContentValue: 'information',
+  JointInformationContentValue: 'information',
+  TransinformationContentValue: 'information',
+  MeanTransinformationContentValue: 'information',
+  CharacterMeanTransinformationContentValue: 'information',
+  EntropyForInformationScienceValue: 'information',
+  ConditionalEntropyValue: 'information',
+  CharacterMeanEntropyValue: 'information',
+  MaximumEntropyValue: 'information',
+  EquivocationValue: 'information',
+  IrrelevanceValue: 'information',
+  RedundancyValue: 'information',
+  ChannelCapacityPerCharacterValue: 'information',
+  StorageSizeValue: 'information',
+  ChannelCapacityValue: 'information',
+  MeanConditionalInformationContentValue: 'information',
+  AverageConditionalInformationContentValue: 'information',
+  TrafficIntensityValue: 'traffic',
+  TrafficCarriedIntensityValue: 'traffic',
+  TrafficOfferedIntensityValue: 'traffic',
+  TrafficLoadValue: 'traffic',
+};
+
+/**
+ * What a value of the ISQ kind `kindName` (possibly qualified) is an amount of,
+ * when its unit is not the number one: `information` for a
+ * `StorageCapacityValue`, `traffic` for a `TrafficIntensityValue`, `undefined`
+ * for a pure number, a dimensioned kind or no kind.
+ */
+export function amountOfKind(kindName: string): DimensionOneAmount | undefined {
+  const last = kindName.split('::').pop()?.trim() ?? kindName;
+  return KIND_AMOUNTS[last];
+}
+
+/** The coherent unit an amount is stored in, where no unit is written: the bit, the erlang. */
+export const AMOUNT_UNIT: Readonly<Record<DimensionOneAmount, string>> = { information: 'bit', traffic: 'E' };

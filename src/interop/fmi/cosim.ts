@@ -217,8 +217,11 @@ export class CoSimMaster {
  * outputs over the block's own constraint network. The block is algebraic (no
  * internal state), so outputs are re-solved lazily whenever a held input changes
  * — every read is consistent with the current inputs, and `converged()` reports
- * whether the last solve actually satisfied the constraints. This lets a SysML
- * model co-simulate alongside external FMUs on one clock.
+ * whether the last solve actually satisfied the constraints and determined
+ * every exposed variable. An output the constraints leave free (`y + z = u`
+ * with only `u` held) reads back as NaN, never as the split the solve happened
+ * to stop at. This lets a SysML model co-simulate alongside external FMUs on
+ * one clock.
  *
  * Only numeric (Float64/Int64) ports form the co-simulation surface — Boolean and
  * String features cannot be numerically co-simulated, so they are not exposed as
@@ -257,7 +260,10 @@ export function sysmlBlockInstance(model: Model, blockId: ElementId): Fmi3Instan
     } else {
       const r = solve(model, { fixed: inputs, scopeId: blockId });
       solved = r.values;
-      solvedOk = r.converged;
+      // An output the equations leave free has no value to hand on: it is not
+      // in `r.values`, so it reads back as NaN, and the step is no evaluation.
+      const free = new Set(r.free);
+      solvedOk = r.converged && !variables.some((v) => free.has(v.featureId));
     }
     dirty = false;
   };

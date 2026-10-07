@@ -29,9 +29,8 @@
  */
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
-import { definedSideOf, hasStatedValue, statedValueOf } from './defining-equation';
+import { definedSideOf, hasStatedValue, sharedDefinitions, statedValueOf } from './defining-equation';
 import { type ExprNode } from './expr';
-import { effectiveFeatures } from './inheritance';
 import {
   derivationOf,
   derivedDimensionOf,
@@ -506,7 +505,7 @@ export interface OperandFacts {
  * in `unreadNames`, which that surface reads no value for in the relation's
  * context (`unreadValuesOf` in ./evaluate-model). A chain in `chains` is the
  * exception: that surface reads the definition of the feature it ends at
- * there (`chainSite` of ./defining-equation), and judges it as it judges the
+ * there (`chainDefinition` of ./defining-equation), and judges it as it judges the
  * feature's own name.
  *
  * An author's relation body asks it, and so does a value — a feature's, or a
@@ -678,7 +677,7 @@ function valueBodyOf(
  * with {@link refusalSentence}. A feature chain to a feature that states no
  * value, and a name in `unread`, are left alone: the validation surface reads
  * no definition there at all — except a chain in `chains`, whose definition
- * it reads where the chain ends (`chainSite` of ./defining-equation).
+ * it reads where the chain ends (`chainDefinition` of ./defining-equation).
  *
  * A LOOP and a nest past the cap are no such refusal. They are limits of how
  * the validation surface reads one definition at a time, not faults in the
@@ -972,6 +971,7 @@ export {
   lowerUnitLiterals,
   parseRelationBody,
   substituteLiterals,
+  withValueUnit,
   type LoweredBody,
   type LoweredLiteral,
 } from './unit-literals';
@@ -1035,61 +1035,14 @@ export function relationScope(model: Model, el: ElementRecord): Map<string, Elem
 
 /**
  * Build a name → feature-id resolver rooted at `contextId`, mirroring
- * {@link scopeFor} but mapping to ids: every effective feature reachable from the
- * context is exposed under both its dotted chain and its bare name.
+ * {@link scopeFor} but mapping to ids: every feature reachable from the
+ * context under its dotted chain, and under its bare name by the rule of the
+ * one walk every scope shares ({@link DefiningEquations.scope}) — the scalar
+ * and quantity scopes walk the same features and differ only in mapping a
+ * name whose value they do not read. A fresh map: the caller may change it.
  */
 export function idScopeFor(model: Model, contextId: ElementId): Map<string, ElementId> {
-  const map = new Map<string, ElementId>();
-  collectIds(model, contextId, '', map, new Set(), new Set());
-  return map;
-}
-
-function collectIds(
-  model: Model,
-  ownerId: ElementId,
-  prefix: string,
-  map: Map<string, ElementId>,
-  visited: Set<string>,
-  onPath: Set<ElementId>,
-): void {
-  // TWO guards, because they answer different questions — the same pair, for
-  // the same reason, as `featureIdsFor`'s collector in `./evaluate-model`.
-  //
-  // `onPath` is the CYCLE guard and must be keyed on the owner ALONE: a feature
-  // whose type is one of its own owners (`item def Person { timeslice
-  // asPresident : Person; }`, the L4-self-typed-feature fixture) generates an
-  // unbounded name tower `asPresident.asPresident…`, and a key that carries the
-  // prefix never repeats, so it cannot see the cycle. `visited` is only a WORK
-  // BOUND for a diamond reached twice at the same prefix, so it keeps the
-  // prefix: two sibling features of one type (`part a : T; part b : T;`) are
-  // different scopes and both must be walked.
-  //
-  // The numeric surface's collector was given both guards when that fixture was
-  // filed; this one was not, and nothing reached it until an engine read the
-  // WORKLIST — `obligationsOf` resolves every relation body through
-  // `idScopeFor`, so on that fixture the whole verification lane died with a
-  // RangeError rather than reporting anything about the model. A gatherer that
-  // throws is the loudest form of the blind spot the relation census exists to
-  // close: no relation is refused, none is encoded, and there is no report to
-  // read the absence in.
-  if (onPath.has(ownerId)) return;
-  const guardKey = `${prefix} ${ownerId}`;
-  if (visited.has(guardKey)) return;
-  visited.add(guardKey);
-  onPath.add(ownerId);
-
-  for (const feat of effectiveFeatures(model, ownerId)) {
-    const name = feat.declaredName;
-    if (!name) continue;
-    const full = prefix ? `${prefix}.${name}` : name;
-    if (!map.has(full)) map.set(full, feat.id);
-    if (!map.has(name)) map.set(name, feat.id);
-    for (const type of model.typesOf(feat.id)) {
-      collectIds(model, type.id, full, map, visited, onPath);
-    }
-  }
-
-  onPath.delete(ownerId);
+  return new Map(sharedDefinitions(model).scope(contextId, 'all'));
 }
 
 /** Merge id-scope maps; earlier maps win on key collisions. */

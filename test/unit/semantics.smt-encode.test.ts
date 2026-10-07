@@ -9,9 +9,10 @@
  *
  * What it is really guarding, case by case:
  *
- *  - **Exactness.** `18.5` is `(/ 37.0 2.0)` and `0.1` is the binary64 the tool
- *    actually holds, not the tenth an author wrote. A re-parsed decimal in a
- *    solver's mouth is a wrong verdict about a number nobody typed.
+ *  - **Exactness.** `18.5` is `(/ 37.0 2.0)` and `0.1` is the tenth the author
+ *    wrote, in every relation and every proof context — not the binary64 the
+ *    file parsed to. Two readings of one numeral decided ties by which reading
+ *    a relation fell under, and `0.1 + 0.2 > 0.3` was PROVED.
  *  - **SI, once.** The declaration is the STORED magnitude and the read is
  *    `factor·x + offset`, so `45.0 [min]` meets `2700` and a witness stays a
  *    number a reader can find in the file.
@@ -33,18 +34,34 @@ import type { Model, ElementRecord } from '@core/index';
 import { readRelation, type RelationReading } from '@semantics/index';
 import { parseExpr } from '@semantics/expr';
 import {
+  decimalRational,
   encodeRelation,
   encodeScript,
   encodeVariables,
   encodeVariablesOf,
   exactNumeral,
+  exactRationalOfDouble,
   notTerm,
+  numeralRational,
   scaleRational,
   symbolOf,
   valueTextNumeral,
   type EncodeVariable,
 } from '@semantics/smt/encode';
-import { decimalSymbols } from '@semantics/smt/decimal-reading';
+import {
+  addRationals,
+  compareRationals,
+  decideComparison,
+  divideRationals,
+  evaluateDecided,
+  multiplyRationals,
+  powerRational,
+  remainderRational,
+  rereadRelation,
+  siRational,
+  statedRational,
+  termRational,
+} from '@semantics/exact';
 import { obligationsOf } from '@semantics/obligations';
 import { BINARY_PREFIXES, SI_PREFIXES, UNIT_REGISTRY, resolveUnit } from '@semantics/units';
 import { loadModelText } from '@text/load';
@@ -99,7 +116,7 @@ function encode(body: string, vars: EncodeVariable[]) {
 
 /* ────────────────────────────── numerals ────────────────────────────────── */
 
-describe('numerals are exact rationals, never a re-parsed decimal', () => {
+describe('numerals are exact rationals: the decimal written, or a double’s own', () => {
   it('writes a double as the rational it exactly is', () => {
     expect(exactNumeral(2700)).toBe('2700.0');
     expect(exactNumeral(18.5)).toBe('(/ 37.0 2.0)');
@@ -108,10 +125,11 @@ describe('numerals are exact rationals, never a re-parsed decimal', () => {
     expect(exactNumeral(0)).toBe('0.0');
   });
 
-  it('does not pretend a binary64 is the decimal that was typed', () => {
-    // 0.1 is 3602879701896397 · 2⁻⁵⁵. Writing `0.1` into a script would hand the
-    // solver a number this tool does not hold, and the difference is exactly
-    // where a boundary verdict flips.
+  it('writes a double as its own rational, not as the decimal it prints as', () => {
+    // 0.1 is 3602879701896397 · 2⁻⁵⁵. `exactNumeral` is for a number the tool
+    // sets itself (the free-domain bound); a numeral the AUTHOR wrote is read
+    // as its decimal (below), and the difference is exactly where a boundary
+    // verdict flips.
     expect(exactNumeral(0.1)).toBe('(/ 3602879701896397.0 36028797018963968.0)');
     expect(exactNumeral(0.1 + 0.2)).not.toBe(exactNumeral(0.3));
   });
@@ -132,17 +150,64 @@ describe('numerals are exact rationals, never a re-parsed decimal', () => {
     if (!r.ok) expect(r.refusal.reason).toBe('non-numeric-operand');
   });
 
-  it('encodes a BODY literal as the double, not as the author’s text', () => {
-    // The two routes disagree, and which one a body takes is a decision, not an
-    // accident: `checkConstraints` evaluates the double, so a goal encoded from
-    // the author's text would decide a boundary case by which side of the proof
-    // the number arrived on. `valueTextNumeral` is for the feature-VALUE axioms
-    // a later commit builds, where the author's tenth is the right reading.
+  it('encodes a BODY literal as the author’s decimal, not as the double', () => {
+    // One reading for every numeral: a goal, a premise and a feature's value
+    // axiom are all the decimals the author wrote, so no boundary case is
+    // decided by which side of the proof a number arrived on.
     const r = encode('x >= 0.1', [v('x')]);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.term).toBe(`(>= |P::x| ${exactNumeral(0.1)})`);
-    expect(r.term).not.toContain('(/ 1.0 10.0)');
+    expect(r.term).toBe('(>= |P::x| (/ 1.0 10.0))');
+    expect(r.term).not.toContain(exactNumeral(0.1));
+    // Arithmetic over plain numbers is the author's: three tenths, exactly.
+    const sum = encode('x + 0.2 == 0.3', [v('x')]);
+    expect(sum.ok && sum.term).toBe('(= (+ |P::x| (/ 1.0 5.0)) (/ 3.0 10.0))');
+  });
+
+  it('reads a numeral of up to 15 significant digits as the decimal written', () => {
+    // The double determines such a decimal: it is the shortest that round-trips.
+    expect(encode('x == 0.9999999999', [v('x')])).toMatchObject({
+      ok: true,
+      term: '(= |P::x| (/ 9999999999.0 10000000000.0))',
+    });
+    expect(encode('x == 1e-17', [v('x')])).toMatchObject({
+      ok: true,
+      term: '(= |P::x| (/ 1.0 100000000000000000.0))',
+    });
+    // Zeros are not digits the double has to carry.
+    expect(encode('x == 0.30000000000000000000', [v('x')])).toMatchObject({
+      ok: true,
+      term: '(= |P::x| (/ 3.0 10.0))',
+    });
+    expect(encode('x == 0.00000000000000001', [v('x')])).toMatchObject({
+      ok: true,
+      term: '(= |P::x| (/ 1.0 100000000000000000.0))',
+    });
+  });
+
+  it('reads a numeral written past 15 significant digits as the double it parses to', () => {
+    // `0.29999999999999999` and `0.3` are one double, which prints as `0.3`.
+    // Read as that print, the numeral was three tenths beside decimals, and
+    // `0.1 + 0.2 <= 0.29999999999999999` was PROVED. It is the double: the
+    // number every binary64 surface holds, never a third number.
+    expect(parseExpr('0.29999999999999999')).toEqual({ kind: 'num', value: 0.3, text: '0.29999999999999999' });
+    expect(parseExpr('0.3')).toEqual({ kind: 'num', value: 0.3 });
+    expect(encode('x <= 0.29999999999999999', [v('x')])).toMatchObject({
+      ok: true,
+      term: `(<= |P::x| ${exactNumeral(0.3)})`,
+    });
+    expect(encode('x <= 0.3', [v('x')])).toMatchObject({ ok: true, term: '(<= |P::x| (/ 3.0 10.0))' });
+    const long = encode('x == 0.12345678901234567891', [v('x')]);
+    expect(long.ok && long.term).toBe(`(= |P::x| ${exactNumeral(0.12345678901234568)})`);
+    // A `[unit]` literal's magnitude and an author's value text, by the same rule.
+    const lowered = {
+      kind: 'binary' as const,
+      op: '<=' as const,
+      left: parseExpr('x'),
+      right: { kind: 'num' as const, value: 0.3, literal: { magnitude: '0.29999999999999999', factor: 1 } },
+    };
+    expect(encodeRelation(lowered, [v('x')])).toMatchObject({ ok: true, term: `(<= |P::x| ${exactNumeral(0.3)})` });
+    expect(valueTextNumeral('0.29999999999999999')).toEqual({ ok: true, text: exactNumeral(0.3) });
   });
 });
 
@@ -663,12 +728,12 @@ describe('a `[unit]` literal and a stored magnitude are one number', () => {
     expect(termOf('w < 1.0 [ft^3]')).toBe(`(< |C::w| ${ft3})`);
   });
 
-  it('reads the numerals of a dimensioned relation as the decimals written, of a plain one as the doubles held', () => {
+  it('reads the numerals of a plain relation and a scaled one alike, as the decimals written', () => {
     const node = parseExpr('x == 0.1');
     const plain = encodeRelation(node, [v('x')]);
-    expect(plain.ok && plain.term).toBe(`(= |P::x| ${exactNumeral(0.1)})`);
-    const dimensioned = encodeRelation(node, [v('x', { decimal: true })]);
-    expect(dimensioned.ok && dimensioned.term).toBe('(= |P::x| (/ 1.0 10.0))');
+    expect(plain.ok && plain.term).toBe('(= |P::x| (/ 1.0 10.0))');
+    const scaled = encodeRelation(node, [v('x', { factor: 0.001 })]);
+    expect(scaled.ok && scaled.term).toBe('(= (* (/ 1.0 1000.0) |P::x|) (/ 1.0 10.0))');
   });
 });
 
@@ -786,16 +851,72 @@ describe('every unit of the registry is read as the number it defines', () => {
     expect(f.offsetSI).toBe(255.37222222222223);
     expect(UNIT_REGISTRY.find((u) => u.symbol === 'gal')!.factorToSI).toBe(0.003785411784);
   });
+
+  /** Every unit a value can be written in: each row, each prefix it allows, and the dimension-one ratios. */
+  const everyUnit = (): string[] => {
+    const out: string[] = [];
+    for (const u of UNIT_REGISTRY) {
+      out.push(u.symbol);
+      const prefixes = [...(u.prefixable ? SI_PREFIXES : []), ...(u.binaryPrefixable ? BINARY_PREFIXES : [])];
+      for (const p of prefixes) {
+        if (resolveUnit(`${p.symbol}${u.symbol}`)?.name === `${p.name}${u.name}`) out.push(`${p.symbol}${u.symbol}`);
+      }
+    }
+    return [...out, 'km/m', 'mm/m', 'g/kg', 'min/s', 'L/m^3', 'B/bit', 'kWh/J', 'mi/km', 'lb/kg'];
+  };
+
+  it('states every literal value as the magnitude it stores, in every unit: the axiom takes no scale', async () => {
+    // The gates scale a relation with anything to convert, and a unit of
+    // DIMENSION ONE with a factor is no dimension against a bare literal — so
+    // the axiom of `cap = 2.0 [GiB]` was scaled, `(= (* 8589934592.0 |cap|)
+    // 2.0)`, and pinned 2 GiB to 2 bits. It states the stored magnitude.
+    const units = everyUnit();
+    expect(units.length).toBeGreaterThan(600);
+    const model = await load(`package U {\n${units.map((u, i) => `  attribute x${i} = 1.5 ['${u}'];`).join('\n')}\n}`);
+    const rows = obligationsOf(model).filter((r) => r.source === 'feature-value');
+    expect(rows).toHaveLength(units.length);
+    for (const row of rows) {
+      const i = Number(row.element.qualifiedName.slice('U::x'.length));
+      const r = encodeRelation(row.node!, encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled }));
+      expect([row.scaled, r.ok && r.term], units[i]).toEqual([false, `(= |U::x${i}| (/ 3.0 2.0))`]);
+    }
+  });
+
+  it('reads a value written `(expr) [unit]` as `expr` in that unit, and refuses one that relabels bits', async () => {
+    const model = await load(`package L {
+  attribute k : ScalarValues::Real = 0.5;
+  attribute cap : ISQ::StorageCapacityValue = 1.5 [GiB];
+  attribute t : ISQ::StorageCapacityValue = (k * 3.0) [GiB];
+  attribute len : ISQ::LengthValue = (k * 3.0) [km];
+  attribute dbl : ISQ::StorageCapacityValue = (cap * 2.0) [GiB];
+}`);
+    const rowOf = (needle: string) => obligationsOf(model).find((r) => r.element.qualifiedName === needle)!;
+    const termOf = (needle: string) => {
+      const row = rowOf(needle);
+      const r = encodeRelation(row.node!, encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled }));
+      return r.ok ? r.term : `refused: ${r.refusal.reason}`;
+    };
+    // The stored GiB on the left, `k * 3.0` GiB in bits on the right: t is 1.5.
+    expect(rowOf('L::t').expression).toBe('t == (k * 3.0) [GiB]');
+    expect(termOf('L::t')).toBe('(= (* 8589934592.0 |L::t|) (* (* |L::k| 3.0) 8589934592.0))');
+    expect(termOf('L::len')).toBe('(= (* 1000.0 |L::len|) (* (* |L::k| 3.0) 1000.0))');
+    expect(rowOf('L::dbl').encodable).toEqual({
+      reason: 'refused-derivation',
+      detail:
+        '"dbl" cannot be derived: a unit literal [GiB] was applied to an operand computed from a value in "GiB" — dimension one is not unitless',
+    });
+  });
 });
 
 /*
- * The DECIMAL reading belongs to a proof context, not to one relation: a plain
+ * ONE reading of a numeral, whatever the proof context holds: a plain
  * feature's value axiom and a goal that compares it with a quantity are read
  * the same way, or the tie is decided by which side of the proof each number
- * arrived on. A context of plain numbers only keeps binary64.
+ * arrived on — and a context of plain numbers only is read as the author
+ * wrote it too, where it once kept binary64 and PROVED `0.1 + 0.2 > 0.3`.
  */
-describe('numerals are read one way per proof context', () => {
-  it('reads a plain value in decimals where a quantity or a `[unit]` literal meets it, and only there', async () => {
+describe('every numeral is its decimal, in every proof context', () => {
+  it('reads every value axiom in decimals, whether or not a quantity or a `[unit]` literal meets it', async () => {
     const model = await load(`package D {
   attribute f : ScalarValues::Real = 0.1;
   attribute mass : ISQ::MassValue = 1.0 [kg];
@@ -807,25 +928,197 @@ describe('numerals are read one way per proof context', () => {
   constraint p { a + b == 0.3 }
 }`);
     const rows = obligationsOf(model);
-    const decimal = decimalSymbols(model, rows);
-    expect([...decimal].sort()).toEqual(['D::f', 'D::load', 'D::mass']);
-    const termOf = (qualifiedName: string): string => {
-      const row = rows.find((r) => r.role === 'axiom' && r.element.qualifiedName === qualifiedName)!;
-      const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, decimal });
+    const termOf = (needle: string): string => {
+      const row = rows.find((r) => r.element.qualifiedName === needle || r.expression.includes(needle))!;
+      const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled });
       const r = encodeRelation(row.node!, vars);
       return r.ok ? r.term : `refused: ${r.refusal.reason}`;
     };
     // The value axiom of the plain `f` is one tenth, as the goal beside it reads 0.1 kg.
     expect(termOf('D::f')).toBe('(= |D::f| (/ 1.0 10.0))');
     expect(termOf('D::load')).toBe('(= |D::load| (/ 1.0 10.0))');
-    // Nothing dimensioned meets `a`: the double it is.
-    expect(termOf('D::a')).toBe(`(= |D::a| ${exactNumeral(0.1)})`);
+    // Nothing dimensioned meets `a`, `b` or `p`: still the decimals written,
+    // and encoded one row at a time, with no context to consult.
+    expect(termOf('D::a')).toBe('(= |D::a| (/ 1.0 10.0))');
+    expect(termOf('D::b')).toBe('(= |D::b| (/ 1.0 5.0))');
+    expect(termOf('a + b == 0.3')).toBe('(= (+ |D::a| |D::b|) (/ 3.0 10.0))');
   });
 
-  it('reads a relation that carries a `[unit]` literal in decimals even with no context given', () => {
+  it('reads a relation that carries a `[unit]` literal as the one that does not', () => {
     const node = parseExpr('x == 0.1');
     const lowered = { ...node, right: { kind: 'num' as const, value: 0.1, literal: { magnitude: '0.1', factor: 1 } } };
     const r = encodeRelation({ kind: 'binary', op: 'and', left: lowered, right: parseExpr('x <= 0.2') }, [v('x')]);
     expect(r.ok && r.term).toBe('(and (= |P::x| (/ 1.0 10.0)) (<= |P::x| (/ 1.0 5.0)))');
+    expect(encode('x <= 0.2', [v('x')])).toMatchObject({ ok: true, term: '(<= |P::x| (/ 1.0 5.0))' });
+  });
+
+  it('reads a value written past 15 digits as the double, in its axiom as in a body', async () => {
+    // The axiom once read the double's print (`m == 0.3`) and the `[unit]`
+    // literal its text, so `m == 0.30000000000000001 [kg]` beside the value
+    // that states it was called INCONSISTENT.
+    const model = await load(`package L {
+  attribute m : ISQ::MassValue = 0.30000000000000001 [kg];
+  attribute f : ScalarValues::Real = 0.10000000000000001;
+  constraint e { m == 0.30000000000000001 [kg] }
+}`);
+    const rows = obligationsOf(model);
+    const rowOf = (needle: string) => rows.find((r) => r.element.qualifiedName === needle)!;
+    const termOf = (needle: string): string => {
+      const row = rowOf(needle);
+      const r = encodeRelation(row.node!, encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled }));
+      return r.ok ? r.term : `refused: ${r.refusal.reason}`;
+    };
+    expect(termOf('L::m')).toBe(`(= |L::m| ${exactNumeral(0.3)})`);
+    expect(termOf('L::e')).toBe(`(= |L::m| ${exactNumeral(0.3)})`);
+    expect(termOf('L::f')).toBe(`(= |L::f| ${exactNumeral(0.1)})`);
+    // And the axiom is labelled with what the file says, not with the print.
+    expect([rowOf('L::m').expression, rowOf('L::f').expression]).toEqual([
+      'm == 0.30000000000000001',
+      'f == 0.10000000000000001',
+    ]);
+  });
+});
+
+/* ─────────────── the point evaluators read numbers as the encoder does ─────────────── */
+
+/*
+ * THE TIE RULE (`src/semantics/exact.ts`): a point evaluator decides a
+ * comparison by the exact rationals of the decimals written, wherever both
+ * sides have one. Those rationals are only worth anything if they are the
+ * encoder's own — a numeral, a unit factor and a witness value each read ONE
+ * way — so they are pinned here, beside the encoder's reading of the same.
+ */
+describe('the point evaluators read a numeral, a unit and a witness as the encoder does', () => {
+  const r = (num: bigint, den: bigint) => ({ num, den });
+
+  it('reads a numeral as the rational `numeral` writes', () => {
+    expect(numeralRational(parseExpr('0.1') as never)).toEqual(r(1n, 10n));
+    expect(numeralRational(parseExpr('18.5') as never)).toEqual(r(185n, 10n));
+    // Past 15 significant digits, the double itself — the encoder's reading.
+    expect(numeralRational(parseExpr('0.29999999999999999') as never)).toEqual(exactRationalOfDouble(0.3));
+    // A lowered `[unit]` literal is its magnitude times the unit's factor.
+    expect(numeralRational({ kind: 'num', value: 0.001, literal: { magnitude: '1.0', factor: 0.001 } })).toEqual(
+      r(10n, 10000n),
+    );
+    expect(numeralRational({ kind: 'num', value: Number.NaN })).toBeUndefined();
+    // A stated value reads its lexeme by the same rule.
+    expect(statedRational(0.1, '0.10000000000000001')).toEqual(exactRationalOfDouble(0.1));
+    expect(statedRational(0.1, '0.1')).toEqual(r(1n, 10n));
+    expect(statedRational(0.1, undefined)).toEqual(r(1n, 10n));
+  });
+
+  it('reads a unit into SI through the factor and origin the encoder writes', () => {
+    const one = r(1n, 1n);
+    // A composed unit is the exact product of its parts, not its double.
+    expect(compareRationals(siRational(one, 'ft^3')!, decimalRational('0.028316846592')!)).toBe(0);
+    expect(compareRationals(siRational(one, 'g/cm^3')!, decimalRational('1000')!)).toBe(0);
+    expect(compareRationals(siRational(r(32n, 1n), 'fahrenheit')!, decimalRational('273.15')!)).toBe(0);
+    expect(siRational(one, 'no such unit')).toBeUndefined();
+    expect(siRational(r(7n, 2n), undefined)).toEqual(r(7n, 2n));
+  });
+
+  it('reads z3’s rendering of a real as the rational it is, and nothing else', () => {
+    expect(termRational('(/ 3.0 25.0)')).toEqual(r(3n, 25n));
+    expect(termRational('(- (/ 1.0 2.0))')).toEqual(r(-1n, 2n));
+    expect(termRational('12.0')).toEqual(r(12n, 1n));
+    expect(termRational('(- 7)')).toEqual(r(-7n, 1n));
+    expect(termRational('true')).toBeUndefined();
+    expect(termRational('(root-obj (+ (^ x 2) (- 2)) 1)')).toBeUndefined();
+  });
+
+  it('follows the operators exact arithmetic follows, and no others', () => {
+    expect(powerRational(r(1n, 10n), r(3n, 1n))).toEqual(r(1n, 1000n));
+    expect(powerRational(r(2n, 1n), r(-2n, 1n))).toEqual(r(1n, 4n));
+    expect(powerRational(r(2n, 1n), r(1n, 2n))).toBeUndefined();
+    expect(powerRational(r(0n, 1n), r(-1n, 1n))).toBeUndefined();
+    // A remainder as binary64 computes it: the sign of the dividend.
+    expect(remainderRational(r(7n, 1n), r(4n, 1n))).toEqual(r(3n, 1n));
+    expect(remainderRational(r(-7n, 1n), r(4n, 1n))).toEqual(r(-3n, 1n));
+    expect(divideRationals(r(1n, 1n), r(0n, 1n))).toBeUndefined();
+  });
+
+  it('keeps every result in lowest terms, and abandons one past 2^1024 rather than round it', () => {
+    expect(addRationals(r(1n, 6n), r(1n, 3n))).toEqual(r(1n, 2n));
+    expect(addRationals(r(1n, 10n), r(-1n, 10n))).toEqual(r(0n, 1n));
+    expect(multiplyRationals(r(2n, 3n), r(9n, 4n))).toEqual(r(3n, 2n));
+    expect(multiplyRationals(r(0n, 1n), r(9n, 4n))).toEqual(r(0n, 1n));
+    expect(divideRationals(r(3n, 4n), r(-9n, 8n))).toEqual(r(-2n, 3n));
+    // A reading the encoder supplies unreduced (`0.10` is 10/100) is reduced
+    // where it enters.
+    expect(termRational('(/ 30.0 250.0)')).toEqual(r(3n, 25n));
+    // The limit: 2^1023 is carried, 2^1024 is not — and a power past it is
+    // known to be before it is computed.
+    expect(powerRational(r(2n, 1n), r(1023n, 1n))).toEqual(r(1n << 1023n, 1n));
+    expect(powerRational(r(2n, 1n), r(1024n, 1n))).toBeUndefined();
+    expect(powerRational(r(1000001n, 1000000n), r(1000n, 1n))).toBeUndefined();
+    expect(powerRational(r(1n, 1n), r(4096n, 1n))).toEqual(r(1n, 1n));
+    // A chain of decimal arithmetic is carried exactly until it passes the
+    // limit, then abandoned — never rounded to a value that would decide a tie.
+    let x: ReturnType<typeof addRationals> = r(1n, 1n);
+    let steps = 0;
+    for (; x !== undefined && steps < 400; steps++) {
+      x = multiplyRationals(x, r(10001n, 10000n));
+      x = x && addRationals(x, r(3n, 10000n));
+    }
+    expect(x).toBeUndefined();
+    expect(steps).toBeGreaterThan(70);
+    expect(steps).toBeLessThan(80);
+  });
+
+  it('decides a comparison by the rationals, else by the doubles outside the band, else not at all', () => {
+    const tenth3 = r(3n, 10n);
+    // The doubles say `>`; the decimals say equal.
+    expect(decideComparison('>', 0.30000000000000004, 0.3, tenth3, tenth3)).toBe(false);
+    expect(decideComparison('==', 0.30000000000000004, 0.3, tenth3, tenth3)).toBe(true);
+    // The doubles say equal; the decimals say `>` (binary64 absorbed the 1e-17).
+    expect(decideComparison('>', 1, 1, r(100000000000000001n, 100000000000000000n), r(1n, 1n))).toBe(true);
+    // No exact reading: outside the band the doubles decide …
+    expect(decideComparison('<', 1, 2, undefined, undefined)).toBe(true);
+    // … inside it nothing does, unless the values are a solve's own: then the
+    // solve's claim, `==`, `<=` and `>=`, holds, and a strict ordering or a
+    // `!=`, which turns on the difference its tolerance hides, is undecided.
+    expect(decideComparison('<', 2.0000000000000004, 2, undefined, r(2n, 1n))).toBeUndefined();
+    expect(decideComparison('<=', 2.0000000000000004, 2, undefined, undefined)).toBeUndefined();
+    const solved = { searched: true };
+    expect(decideComparison('<=', 2.0000000000000004, 2, undefined, undefined, solved)).toBe(true);
+    expect(decideComparison('>=', 2, 2.0000000000000004, undefined, undefined, solved)).toBe(true);
+    expect(decideComparison('==', 2.0000000000000004, 2, undefined, undefined, solved)).toBe(true);
+    expect(decideComparison('<', 2.0000000000000004, 2, undefined, undefined, solved)).toBeUndefined();
+    expect(decideComparison('>', 2, 2.0000000000000004, undefined, undefined, solved)).toBeUndefined();
+    expect(decideComparison('!=', 2.0000000000000004, 2, undefined, undefined, solved)).toBeUndefined();
+    expect(decideComparison('<=', 1.0000004, 1, undefined, undefined, { searched: true, absTol: 1e-6 })).toBe(true);
+    expect(decideComparison('<', 1e-7, 5e-7, undefined, undefined, { searched: true, absTol: 1e-6 })).toBeUndefined();
+    // Outside it the doubles decide a solve's values as any others.
+    expect(decideComparison('<', 0.0999999966, 0.1, undefined, undefined, solved)).toBe(true);
+    // A side that is no number is read as the doubles read it.
+    expect(decideComparison('<', Number.NaN, 1, undefined, undefined)).toBe(false);
+    expect(decideComparison('!=', Number.NaN, 1, undefined, undefined)).toBe(true);
+  });
+
+  it('evaluates a relation decided, short-circuits and strings as `evaluate` reads them', () => {
+    const at = (text: string) => evaluateDecided(parseExpr(text), () => undefined);
+    expect(at('0.1 + 0.2 > 0.3')).toEqual({ value: false });
+    expect(at('0.1 + 0.2 == 0.3')).toEqual({ value: true });
+    expect(at('1.0 + 0.00000000000000001 > 1.0')).toEqual({ value: true });
+    expect(at('0.1 * 3.0')).toEqual({ value: 0.30000000000000004, exact: r(3n, 10n) });
+    // A fractional power has no exact reading: a tie over it is undecided …
+    expect(at('2.0 ^ 0.5 * 2.0 ^ 0.5 == 2.0')).toMatchObject({ unknown: true, tie: { op: '==' } });
+    // … unless a short-circuit decides without it.
+    expect(at('false and 2.0 ^ 0.5 * 2.0 ^ 0.5 == 2.0')).toEqual({ value: false });
+    expect(at('"a" < "b"')).toEqual({ value: true });
+    expect(at('1.0 / 0.0 > 1.0')).toEqual({ unknown: true });
+  });
+
+  it('re-reads a witness over z3’s rationals, through the factor the encoder read it by', () => {
+    const vars = [{ path: 'x', qualifiedName: 'P::x', factor: 0.3048, offset: 0 }];
+    const node = parseExpr('x == 0.9144');
+    // 3 ft is exactly 0.9144 m, and 0.9144000000000001 in binary64.
+    const exact = Object.assign(new Map<string, number | boolean>([['P::x', 3]]), {
+      exact: new Map([['P::x', r(3n, 1n)]]),
+    });
+    expect(rereadRelation(node, vars, exact)).toMatchObject({ value: true });
+    // With only the doubles, the tie is nobody's to decide.
+    expect(rereadRelation(node, vars, new Map([['P::x', 3]]))).toMatchObject({ unknown: true });
+    expect(rereadRelation(parseExpr('x > 0.9'), vars, new Map([['P::x', 3]]))).toMatchObject({ value: true });
   });
 });

@@ -582,9 +582,60 @@ refutation). A goal that is unsat when negated with no context at all is still
 design. Every `sat` witness is substituted back through the tool's own
 evaluator before it is printed, and with nothing freed it must also read as
 `violated` on the numeric surface; a witness that fails either gate is
-`inconclusive: witness not confirmed`, never a violation. A counterexample found
+`inconclusive: witness not confirmed`, never a violation — and with nothing
+freed the numeric surface must have read the SAME features the encoder did, so
+a `violated` over a nested part's `x = 7.0` that the surface's scope gave the
+bare `x` confirms nothing about the owner's own `x`. The same holds of a relation
+a gate refused, which is otherwise `refuted` on the numeric surface's reading
+alone: read over another feature, it is `verification/not-evaluable`, never
+forgiven. A counterexample found
 under `--free` is `design-admitted` — exit 2, never exit 1 — because a `=` value
 is a binding the model states.
+
+**A `default` a binding overrides is no axiom; the binding's equation is.**
+`attribute load default = 1.0` is filed as the axiom `load = 1.0` only where no
+binding holds the feature to another value. Held by one — `bind p.load = L` in
+any context the binding is read in, or along a chain of bindings to a value
+written with `=` or fixed by an asserted equation — the feature is read through
+the binding's equation alone: the default gives way as it gives way to a
+redefinition (USER-GUIDE, "A binding overrides a `default` as a redefinition
+does"). Two defaults bound to each other with different values are no axiom
+either. A relation read in a usage whose value a binding of the usage's owner
+joins to another value in a context of that owner (P's `load <= 10.0` read in
+`Q::p`, where q sets the L Q binds p's load to) is read for the owner's own
+instance alone, and is `verification/not-evaluable`, never proved for every
+instance. A value written with `=` gives way to nothing: a binding against one is
+two values of one feature, and the run is `verification/inconsistent-axioms`
+with both in the core. The literal engine reads each relation alone and never
+the axioms against each other, so over such a model it may say `holds at the
+model's values` where this engine names the contradiction.
+
+**"Assumptions satisfiable" is earned over the whole antecedent.** A relation a
+gate refused is not asserted, and dropping it makes `A ∧ P` easier to satisfy:
+a proof survives a partial context, and the satisfiable antecedent it stands on
+does not. So where a premise was refused, or a refused axiom reaches the proof's
+context (by feature or by symbol; a refused feature value always reaches its own
+feature and, where its body reads nothing this tool can name, that feature
+alone; any other refusal of unknown reach reaches everything), the
+claim is re-earned at the model's own point through the numeric surface — the
+refused relations, and every asserted one that reads a value the model gives
+and the encoding left free. An axiom false there is `verification/inconsistent-axioms`
+(a refused closed `assert { 7.0 % 4.0 == 0.0 }` hid one), a premise false there
+is `verification/vacuous` (as the literal engine already said), every one true
+keeps the proof, and anything else — a row the values do not decide, or a
+release, so that there is no model point — is `verification/not-evaluable`,
+never forgiven. **Every instance is an unknown of its own**: a feature with no
+value read through an instance (`p1.load`, `p2.load`, read directly or through
+`m2 = 10.0 - load`) has that instance's own symbol, and what its types — and
+the types of every instance enclosing it — state is filed again for it
+(USER-GUIDE, "Every instance has its own values"), so a proof, a vacuity or an
+axiom contradiction is one over the instances the model has. One symbol per
+feature had been an equality nobody wrote, and an interim guard withheld every
+such UNSAT that read one feature through two instance paths; the symbols of
+each instance replaced it. A subject bound to a chain (`subject s = q1.p`) is
+that chain's instance, q1's p, never the p of every Q that `subject s = q2.p`
+would share; a chain that passes through another bound subject is read as the
+bound feature's own instance.
 
 **What the two engines agreeing does and does not establish.** With `--free
 none` the SMT engine answers the question `checkConstraints` answers, and
@@ -610,7 +661,8 @@ defining equations of derived features — because a requirement set is
 inconsistent when nothing satisfies it, and answering that with the values that
 happen to be in the file is a question about one design point;
 `--with-values` re-pins them and asks the weaker question, and every verdict
-line names the mode. Each requirement is asserted as `A ⇒ G`, one
+line names the mode. A `default` a binding overrides is no value of the
+feature's in either mode, so neither releases nor re-pins it. Each requirement is asserted as `A ⇒ G`, one
 implication per guarantee under that requirement's assumptions — the reading
 `Requirements::RequirementCheck` states and the one `verify` uses on the same
 file, named on every verdict line. Read as `A ∧ G` instead, two requirements
@@ -635,8 +687,23 @@ each relation, under `verification/inconsistent-requirements` — an error, exit
 On `sat` the design point is substituted back through the tool's own evaluator
 before it is printed. A relation a gate refused is listed and not asserted,
 which is sound in one direction only — an inconsistency found without it stands,
-a set called consistent without it may not — so the refused count is printed
-beside every verdict. A subject whose requirements state no relation this lane
+a set called consistent without it may not. So a set that REACHES such a
+relation — one of its own clauses, or a refused axiom sharing a feature or a
+symbol with what it asserts — is undecided rather than consistent: under
+`verification/unsupported-construct`, which `--allow-inconclusive` may forgive,
+where every such relation is the set's own and a shape outside the fragment
+(`%`, °C arithmetic, a string compare — what `verify` files `unsupported`), and
+`verification/not-evaluable` otherwise (a relation of the context, or a defect
+such as a dimension clash, an unresolved name or a value this tool does not read
+here). A set whose ONLY relations are refused takes the same code by the same
+reasons — and under `--with-values` a clause of the set's own that the numeric
+surface reads false at the values is a violation `verify` refutes, which no flag
+forgives here either. The refused count is printed beside every verdict. Two
+instances of a feature with no value are two unknowns here too (§8.3), so `s.a.v
+>= 5.0` beside `s.b.v <= 3.0` is consistent, and an inconsistency is one the
+model states.
+A metadata value (`@VerificationMethod { kind = … }`) annotates an element and
+is no axiom of any set. A subject whose requirements state no relation this lane
 encodes is `inconclusive`, never consistent, and a run in which nothing at all
 was decided is exit 2 with `--allow-inconclusive` and without it. There is no
 point-evaluation counterpart for this question, so an absent backend decides
@@ -877,6 +944,27 @@ is `verification/refinement-undecided`, which stands the group down. Both facts
 are reported either way. `test/fixtures/verification/models/refinement-refused-clause.sysml`
 pins both directions.
 
+**A verdict is held to what it stood on.** A refutation needs the whole premise
+set: one found over a γ edge a gate refused (a `kg = m` bind), or beside a
+component withheld for a refused `assume`, may be excluded by the very relation
+that was dropped, and is undecided (`verification/not-evaluable`,
+`verification/refinement-undecided`). Step (0) asserts each premise without the
+guarantee clauses a gate refused, so its `sat` is re-read against them at the
+point it found — a feature the point does not assign read at the model's own
+value — and where one does not hold there (`c.x % 4.0 >= 3.5` beside `5 <= c.x
+<= 5.5` holds nowhere), or is a refusal no point can be re-read through, a proof
+of obligation (3) may be vacuous and is `verification/refinement-undecided`; the
+fault tree stands down the same way. Two cells under one contract are two
+instances with values of their own (§8.3): every part a contract is satisfied
+by is a sub-contract — and a basic event — of its own, read over that part's
+symbols, so `satisfy CellReq by Pack::c1; satisfy CellReq by Pack::c2` bounds
+both cells, and a bound on their difference that the contract does not imply is
+not refined. A sub-contract read over another instance than the one the system
+contract reads its feature through — every Pack's c1 beside `satisfy Top by
+pack`, or pack's c1 beside `satisfy Top by Pack` — is a PARTIAL premise set:
+the decomposition is `verification/refinement-undecided`, and the fault tree
+enumerates nothing over it.
+
 **What the delegation half costs, stated rather than hidden.** A constraint body
 reaches a nested quantity through the *type* of each part, while a connector
 endpoint written as `a.p` resolves to a usage-scoped implicit copy that keeps
@@ -971,18 +1059,44 @@ because they decide what a later verdict means:
   `factor·x + offset`** from the gates' own `ScaleMap`. When the gates granted
   no scaling — `range = 5.0 [km]` compared against a bare `10.0` is read in
   kilometres on every surface of this tool — the read is the bare symbol.
-  Scaling there would report `5000 <= 10` for a constraint that holds.
-- **Numerals are exact rationals.** Every numeral in a BODY is the binary64
-  this tool holds, converted exactly through its significand: `18.5` is
-  `(/ 37.0 2.0)` and `0.1` is `3602879701896397 / 2⁵⁵`, not the tenth that was
-  typed. Nothing is rounded on the way into a solver, and nothing is re-parsed
-  from a decimal — so the number z3 reasons about is the number
-  `checkConstraints` evaluates. The author's own `attrs.valueText` IS the right
-  reading for a feature's declared value, and `valueTextNumeral()` is the
-  affordance for it; it is deliberately not applied to body literals, because an
-  axiom and a goal that disagreed about a boundary number would decide the
-  boundary case by which side of the proof the number arrived on. The engine
-  that builds feature-value axioms is a later commit and is its only caller.
+  Scaling there would report `5000 <= 10` for a constraint that holds. A
+  literal value's own axiom is always the bare symbol: `cap = 2.0 [GiB]` states
+  `cap == 2.0` in the stored GiB. The gates scale a unit of dimension one with a
+  factor even against a bare literal, so this axiom is not left to them; scaled,
+  it pinned 2 GiB to 2 bits. A unit written beside an expression value
+  (`(k * 2.0) [GiB]`) is part of that value, `expr * 1.0 [GiB]`, as the
+  evaluators read it — joined only where the unit-aware evaluator puts the
+  unit on a number for every value of the inputs the model leaves free and on
+  both branches of a condition. Elsewhere (`(cap * k) [GiB]`, bits relabelled
+  as GiB) the axiom is `refused-derivation`. The join is decided where the
+  value is READ: a copy or an instance read in a context that changes its
+  inputs is joined, or refused, in that context — P's `k` is a number, and a
+  `p` whose `:>> k = 1.0 [GiB]` overrides its `default` puts GiB on bits.
+- **Numerals are exact rationals of the decimals written.** Every numeral — in
+  a body, a feature's value axiom, a premise — is the decimal it is written
+  as, in every relation and every proof context: `18.5` is `(/ 37.0 2.0)` and
+  `0.1` is `(/ 1.0 10.0)`, so `0.1 + 0.2 == 0.3` is true to the solver, plain
+  numbers and quantities alike. A double determines every decimal of up to 15
+  significant digits, and that is the reading. A numeral written with MORE
+  digits (`0.29999999999999999`, which parses to the double `0.3` prints as)
+  is not determined by its double, and is read as that double, exactly — the
+  number `checkConstraints` holds — in a body, a value axiom and a `[unit]`
+  literal alike; the parser keeps such a numeral's text so the encoder can
+  tell. Read as the shorter decimal its double prints as, it was three tenths
+  beside decimals and PROVED `0.1 + 0.2 <= 0.29999999999999999`. A unit's
+  factor is the number the registry defines, and a `[unit]` literal the
+  author's magnitude times it. There is one reading because an axiom and a
+  goal that disagreed about a boundary number decided the boundary case by
+  which side of the proof the number arrived on: with the double's own
+  rational for plain numbers, `0.1 + 0.2 > 0.3` was PROVED. The
+  point evaluators — the validation and numeric surfaces, the literal engine,
+  every witness re-read — compute in binary64 but decide each comparison by
+  the same decimals, exactly, wherever they can be computed, and where they
+  cannot (a fractional power) two sides within a relative 1e-9 are undecided,
+  never read either way — as is a strict ordering or a `!=` over a value a
+  numeric solve produced, within that solve's tolerance. A counterexample the
+  evaluator does not confirm, or a proof it reads as violated at the model's
+  own values, is reported undecided rather than published (§8 above).
 - **Symbols and assertion labels are qualified names, never element ids** (ids
   are fresh UUIDs per load). Two loads of one file produce byte-identical
   scripts. A consequence stated rather than hidden: two distinct PATHS that

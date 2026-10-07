@@ -467,8 +467,9 @@ const RESERVED_FORMS: Array<{
   {
     what: 'a subject of ours is consistent, without saying over what',
     // `consistency` decides satisfiability of the relations it ENCODED. A set
-    // called consistent without the ones it refused may be excluded by the very
-    // relation that was refused, so the scope travels with the word.
+    // that reaches one it refused is undecided, and one it does not reach is
+    // only listed — so "consistent" is a claim over a stated scope, and the
+    // scope travels with the word.
     pattern: new RegExp(String.raw`\b${SUBJECT}\s+${COPULA}\s+${GAP}consistent\b`, 'i'),
     allow: [/\bconsistent\s+(within scope|over the \d+ encoded)\b/i],
   },

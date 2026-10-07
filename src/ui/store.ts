@@ -859,8 +859,9 @@ function stateMachineDiagnostics(model: Model, machine: StateMachineRun): Diagno
 
 /**
  * Build navigable info rows for a numeric-analysis (Solve) run: a header with the
- * solver convergence, one row per solved feature value, and one row per evaluated
- * measure of effectiveness (each navigable to its underlying feature element).
+ * solver convergence, one row per solved feature value, one row per feature the
+ * equations leave free, and one row per evaluated measure of effectiveness (each
+ * navigable to its underlying feature element).
  */
 function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[] {
   const header: Diagnostic = {
@@ -925,8 +926,24 @@ function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[]
     message: `unjudged ${u.kind}: ${u.expression}${u.reason ? ` — ${u.reason}` : ''}`,
     elementId: u.element.id,
   }));
-  const rows = [header, feasibility, ...violations, ...unknowns, ...values, ...measures];
-  if (report.values.length === 0 && report.measures.length === 0 && report.violations.length === 0) {
+  // A design freedom has no value row: the point the solve stopped at along it
+  // is a choice, not an answer. Said once per feature, so a model whose every
+  // value is free does not read as an empty one.
+  const free: Diagnostic[] = (report.free ?? []).map((f, i) => ({
+    id: `solve#free#${i}`,
+    ruleId: 'solve',
+    severity: 'info',
+    message: `free: ${f.declaredName || f.qualifiedName || f.id} — left free by the equations (no value states it, no relation fixes it); its relations are unjudged`,
+    elementId: f.id,
+  }));
+  const rows = [header, feasibility, ...violations, ...unknowns, ...values, ...free, ...measures];
+  if (
+    report.values.length === 0 &&
+    report.measures.length === 0 &&
+    report.violations.length === 0 &&
+    free.length === 0 &&
+    unknowns.length === 0
+  ) {
     header.message = 'Solve: no parametric constraints or measures to evaluate.';
   }
   return rows;

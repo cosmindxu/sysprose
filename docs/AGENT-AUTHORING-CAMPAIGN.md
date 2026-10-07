@@ -125,7 +125,7 @@ one in this corpus was read and corrected by hand.
 | L4 | Semantic rules **authored as text** rather than built programmatically: duplicate name, blank name, port direction, requirement subject (missing, declared and inherited), specialization cycle, self-typed feature, value-type mismatch, dangling `then`, phantom port, connector with one end, unknown unit (in a value and in a constraint body), connection direction and type, signed literal, unit literal in a constraint body, derived-dimension mismatch, dimension clash, temperature difference, compound / qualified / information units | 24 |
 | L5 | Recovery and cascade: one bad declaration must not cost the other forty; a nested fault keeps the following declarations in their own bodies; an escaped relationship, an alias body and a hidden multi-line note each stay where they were written | 6 |
 | L6 | **Sufficiency invariants over the whole corpus** (see below; thirteen `it(` and one `it.each`, so the figure is the run's own row for `invariants.test.ts`, held by `docs-counts.test.ts` against `TEST-SUMMARY.md`) | 32 assertions (run-measured) |
-| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 129 tests |
+| L7 | The command-line contract: **every** exit-code contract, JSON shape, stdin, strict and `--no-library` modes, and every subcommand (`test/campaign/cli.test.ts` + `test/campaign/cli.sysprose.test.ts`) | 130 tests |
 | L8 | **The verdict corpus**: known-answer models whose golden is the VERDICT, not a diagnostic list — every exit code, and both sides of `--allow-inconclusive` (`test/campaign/verification.test.ts`). Its one member in the fixture corpus above is `L8-evidence-stale`, because a stale verdict is reported by the CHECKER and not by an engine | 37 cases |
 | L9 | **The measurement**: can a model repair the file from the report alone? | `npm run bench` |
 
@@ -542,14 +542,24 @@ the kind and drop the conversion, or give the inlined constant its unit:
 `mtow / 25.0 [kg]`). Three smaller honesty fixes came with it. The unit-aware
 engine compared SI values exactly, so `1 [ft] == 12 [in]` was violated by float
 noise in the registry factors and a Newton-solved `x * x == 2` would have
-flipped; comparisons now use `|a − b| ≤ max(absTol, 1e-9·max(|a|, |b|))` with
-the absolute part supplied by the caller — and two values within that
-tolerance are EQUAL for every relational operator, the strict ones included:
-`0.9999999999 < 1.0` holds, `a != b` at 1e-10 apart is violated. The numeric
-surface shares that reading (`violated = g > tol`) for `<=`, `>=` and the
-equalities, so the two surfaces cannot disagree on float noise; where this
-evaluator DECLINES and both fall back to raw magnitudes, a strict `<`/`>` is
-read exactly on both instead (see the known limitation on that tie below).
+flipped. A tolerance `|a − b| ≤ max(absTol, 1e-9·max(|a|, |b|))` that read two
+values within it as EQUAL for every operator, the strict ones included, came
+next — and was itself withdrawn by the soundness pass: it made `0.1 + 0.2 >
+0.3` and `x < 25.0` at 25 hold where the SMT engine refutes them, and reading
+the band strictly instead refutes `1.0 + 0.00000000000000001 > 1.0`, a
+difference binary64 absorbs. Every point evaluator now decides a comparison
+by the TIE RULE (`src/semantics/exact.ts`): each operand carries the exact
+rational of the decimals that produced it — the SMT encoder's own reading of
+a numeral and of a unit factor — and where both sides have one, the rationals
+decide, in or out of any band (`1 [ft] == 12 [in]` holds, `x < 25.0` at 25 is
+violated, `0.9999999999 < 1.0` holds because it is true of the decimals, and
+`a != b` 1e-10 apart holds too). Where a side has none, the doubles decide
+outside the tolerance, and inside it the comparison is UNDECIDED (`tie`, a
+refusal no scalar fallback fills) — except over values a numeric solve
+produced, where `==`, `<=` and `>=` hold within the solve's tolerance and a
+strict ordering or a `!=` stays undecided. The validation
+surface, its scalar fallback, the numeric surface and every witness re-read
+share the rule (see the known limitation on undecided ties below).
 °C and °F are affine scales, and the
 affine map turned a 15 °C *interval* into 288.15 K, so `t2 - t1 <= 5.0 [°C]`
 answered SATISFIED (10 K ≤ 278.15 K); any `+ − == !=` touching an offset unit,
@@ -860,6 +870,54 @@ both surfaces, and `= 16.0` satisfied). And strictness could not live on the
 check surface alone: `solveFeasible` and `optimize` read the same residuals with
 no verdict in front of them, so one predicate now owns the rule for all three,
 consulting the unit-aware evaluator to know which reading a relation is under.
+
+**Fixes (3) and (5) had third sites, which the SMT lane and the value
+expressions held.** (3) The obligation worklist states a literal value as the
+axiom `cap == 2.0`, and its comment said the gates never scale that shape
+because a dimensioned feature meets a bare literal there. A unit of dimension
+one with a factor is no dimension, so after (3) the gates DID scale it, and
+`cap = 2.0 [GiB]` was pinned to 2 bits: `verify` proved `cap < 2.0 [GiB]`,
+`consistency --with-values` called `cap >= 1.0 [GiB]` inconsistent, and
+`bounds` printed 2.3e-10 GiB — for 101 of 617 units (B, o, Hart and nat,
+every prefixed information unit, and ratios such as `mm/m`). A literal
+value's axiom is now verbatim whatever the gates would grant it: it states the
+stored magnitude and compares nothing. (5) A unit written beside an EXPRESSION
+value (`total = (k * 2.0) [GiB]`, stored by the parser as the expression and
+`attrs.unit`) is the spec's `'['` on the whole value, and the unit-aware
+evaluator reads it that way, but the solver lane's joining equation, its seed
+and the SMT axiom all dropped it: `total` solved to 6 bits, `solveFeasible`
+called a 6 GiB `total >= 5.0 [GiB]` infeasible, and `len = (d1 / d2) [km]` read
+`d1` in its stored km (2 km where every check read 2000 km). The value is now
+joined as `expr * 1.0 [unit]`, so the gates read it as the evaluator does. And
+the guard of (5) is on the operand's unit, which the first operation removes:
+`(cap * 2.0) [GiB]` relabelled 2^35 bit as GiB on every surface. A quantity
+computed from a dimension-one unit now carries that conversion, and the power
+it is still in, KIND BY KIND — information, traffic, and each ratio by what it
+is a ratio of (`mm/m` is a ratio of lengths, `B/bit` one of information) —
+through every operator of the grammar. Powers cancel only within one kind:
+`cap / 1.0 [GiB]` is a number again, `cap * cap / 1.0 [GiB]` and `cap * 1.0 [m]
+/ 1.0 [m]` are not, and neither is `cap / strain` (GiB over mm/m), which one
+power summed to zero and relabelled 2^34 / 0.002 bit as 8.6e12 GiB.
+`[unit]` on it is a `dimension-fault`. The refusal is the feature's own, so the
+solver lane neither solves nor seeds it, the SMT lane files its axiom as
+`refused-derivation`, and a solved value that a definition derives that way
+carries it too. And because a joined equation is read for EVERY value of the
+inputs the model leaves free, the join is decided on every path, not at the
+model's point alone: with `k` valueless the evaluator merely had no value for
+`(cap * k) [GiB]`, the join read it as `2^34·k` GiB, and `verify` proved `dbl >=
+1000.0 [GiB]` from `k >= 1.0`. The value is read again with each such input a
+stand-in of its kind (a valueless `StorageCapacityValue` is an amount of bits,
+one bound to a literal is that literal's kind) and both branches of every
+`if`, and joined only where that reading puts the unit on a number. Pinned by
+`semantics.units-eval.test.ts` (a property over every operator: `[unit]` is
+applied only where the number does not depend on the unit any dimension-one
+amount or ratio in it is measured in, with information and ratios of lengths
+measured independently), `semantics.solver-units.test.ts`,
+`semantics.smt-encode.test.ts` (the verbatim axiom in every unit and prefix),
+and `verification.differential.test.ts` (every command, the relabel over a free
+input, a plain constraint and a condition, and the round trip `x = 1.0 [u]`
+and `x = (k * 2.0) [u]` against `1.0 [u]` for every unit the registry names,
+prefixed every way it allows).
 
 **One resolver, and declaration order stopped deciding what a name means.**
 Two resolvers used to own different halves of reference binding. The textual
@@ -2314,13 +2372,14 @@ effective features of every usage too, and only the one tagged
 Two boundaries of the inherited path are recorded answers rather than
 invariants, and each has a case of its own so that neither is rediscovered.
 The inherited candidate set is USAGES only (`effectiveFeatures` → `ownFeatures`,
-`src/semantics/inheritance.ts`:49, which filters on `isUsage`), so a subject
+`src/semantics/inheritance.ts`:50, which filters on `isUsage`), so a subject
 expressed as a `SubjectMembership` — the programmatic shape; the textual
 `subject v : V;` clause produces a tagged `ReferenceUsage`, which does inherit —
 answers for the element that owns it and never through inheritance. And
-`effectiveFeatures` masks an inherited feature by NAME (redefinition by name,
-`src/semantics/inheritance.ts`:71): a usage that declares a feature sharing the
-inherited subject's name hides it, and is reported as having no subject. That is
+`effectiveFeatures` masks an inherited feature by REDEFINITION or by its
+effective NAME (`src/semantics/inheritance.ts`): a usage that redefines the
+inherited subject, or declares a feature sharing its name, hides it, and is
+reported as having no subject unless that feature is a subject itself. That is
 the inheritance semantics the whole codebase shares, so it is pinned where a
 reader can see it rather than special-cased for one rule. Deleting the
 own-children line of `hasSubject` now fails exactly one case of
@@ -2842,13 +2901,19 @@ written, wherever the reading context changes nothing the equation reads:
 `p.e` over `part p : P` and P's `e == a * b` is P's e, solved, judged and
 proved alike. Where the context REDEFINES what it reads — by name or by an
 unnamed `:>>`, transitively through the values and definitions those names
-have — the equation pins the one element over the declaring context's inputs,
-the wrong value there, and it is a value this tool does not read THERE. A
-calculation's body read outside the context that owns it (inherited, or
-through a chain) is the same case, and a calculation with a parameter —
-owned, or inherited from the `calc def` that types it — states no value at
-all, and no axiom is asserted from it. Every surface reads an unread name as
-nothing — the SMT engine as a symbol of its own — so a verdict decided
+have — the equation is read IN that context, over its names: the context's
+own value (the soundness pass, D1 Stage 2; Stage 1 read it as nothing, and
+before that as the declaring context's, a false proof). So is a value
+expression, and a calculation's body read outside the context that owns it
+(inherited, or through a chain). Every instance has its own values: the SMT
+engine reads each by a symbol of its own (`R::p::e`, `R::q1::p::x`) and files
+what the instance's types state — value expressions, asserts, bindings — for
+it, and the solver solves each instance as a variable of its own; a value the
+same in every instance keeps the feature's own symbol. A calculation with a
+parameter — owned, or inherited from the `calc def` that types it — states no
+value at all, and no axiom is asserted from it; it, and a name two inherited
+values collide under, are what is left unread. Every surface reads an unread
+name as nothing — the SMT engine as a symbol of its own — so a verdict decided
 without it stands (`flag > 0.0 or p.e <= 1.0`), and one that turns on it is
 undecided on every surface in the validation surface's sentence, under
 `unread-definition`, which `--allow-inconclusive` does NOT forgive: the value
@@ -2874,25 +2939,138 @@ no value, a free capacity read through `battery.capacity`, an input a binding
 holds, a chain from a free root) or are redundant (`power == voltage *
 current` beside `current == power / voltage`) — they hold nothing, and the
 system is solved as a whole with the check that fixes the freedom. The SMT
-engine reads numerals in the decimals the author wrote wherever the proof
-context connects them to a dimensioned feature or a
-`[unit]` literal — a plain `f = 0.1` beside `f * mass != 0.1 [kg]` is one
-tenth on both sides of the proof, in `verify`, `consistency`, `bounds` and
-`refine` alike — and a unit's factor and origin as the number the registry
-defines, a composed unit's (`ng`, `ft^3`, `g/cm^3`) as the exact product of
+engine reads every numeral as the decimal the author wrote, in every proof
+context — a plain `f = 0.1` beside `f * mass != 0.1 [kg]` is one tenth on both
+sides of the proof, and so is a plain `a = 0.1` beside `a + 0.2 == 0.3` with no
+quantity anywhere near it, in `verify`, `consistency`, `bounds`, `refine` and
+`property-check` alike (a reading chosen per group of connected relations kept
+the binary64 for plain groups, proved `0.1 + 0.2 > 0.3`, and let an unrelated
+dimensioned requirement flip a verdict) — and a unit's factor and origin as
+the number the registry defines, a composed unit's (`ng`, `ft^3`, `g/cm^3`) as the exact product of
 its parts rather than the double that product rounds to, one reading for a
 stored magnitude and a `[unit]` literal alike (`1.0 [g]` is exactly
 `0.001 [kg]`, `32 °F` exactly `273.15 K`, `1.0 [ft^3]` exactly
-`0.028316846592 [m^3]`); a proof
-that the validation surface reads as violated at the model's own values — a
-tie inside the evaluators' relative tolerance, decided exactly — is reported
-undecided with both readings, with or without `--free`, as an unconfirmed
-counterexample is.
+`0.028316846592 [m^3]`). The point evaluators read the same numbers: every
+comparison they publish, and every witness they re-read (over z3's exact
+rationals), is decided by those decimals wherever they can be computed — the
+tie rule above — so `0.1 + 0.2 > 0.3` and `mass < 18.5 [kg]` at 18.5 kg are
+violated on the validation and numeric surfaces, refuted by both engines and
+inconsistent under `consistency --with-values`, while `p.f + 0.2 == 0.3`
+re-reads as true at the point `f = 1/10`, so `consistency` and `bounds` confirm
+the point the solver found. `solveFeasible` and `optimize` take the validation surface's
+verdict on an inequality over values the model states, so the feasible flag
+cannot contradict it (`x = 0.3` against `x <= 0.2999999` is infeasible, where
+an absolute 1e-6 called it feasible). A proof that the validation surface
+still reads as violated at the model's own values is reported undecided with
+both readings, with or without `--free`, as an unconfirmed counterexample is;
+and under `--with-values` a conflict whose every requirement that surface
+reads as holding at those values is `inconclusive`, never `inconsistent`.
 
 **`AnalysisReport.feasible` means "no KNOWN violated inequality".** A relation
 neither engine could judge is reported in `unknowns`, not folded into the flag —
 an unjudged constraint is not a violated one. The Solve header prints both, so
 "no violated inequality constraint" is never read as "all of them hold".
+
+**A design freedom is withheld, never judged at the point the solve stopped
+at.** The solver puts a number on every feature an equation reads, so a loop
+over a valueless input (`mass == dry + fuel`, `fuel == mass * 0.2`, no `dry`)
+stopped at the least-squares point nearest its starting guess — dry 0.952,
+mass 1.19 — and the numeric surface called `mass >= 130.0` violated there,
+`analysisReport` infeasible, `optimize` scored that point and co-simulation
+handed it on as converged, while `consistency` found the same requirement
+satisfiable at mass 130. The features a null direction of the equations'
+Jacobian moves — over what the model states, the caller fixes or a binding
+carries, and NOTHING the solve reached by orienting an equation; a definition
+is a row of that analysis, not exempt from it — are now `SolveResult.free`:
+their values are left out of `values`, every relation over one is `unknown`
+with a sentence naming it, a measure over one is `null`, `optimize` refuses an
+objective or a bound over one, co-simulation reads such an output as NaN, and
+`solveFeasible` holds every value the equations determine (where the plain
+solve stopped on its equations), searches only the freedoms, and says whether
+its answer is `decided` (a violation over a freedom where a local search
+stalled is `unresolved`, never a violation). A feature whose row READS a free
+one is free with it, however small the dependence: that is read from what the
+equations read, not from the size of a pivot, so a range in kilometres moved by
+an offset in millimetres (1e-8 of the row) or nanometres (an exact 0) is free.
+A row whose two one-sided slopes disagree in some feature — an `if` or a `%`
+stopped exactly on its step, judged against that feature's own slopes, so a
+steeper co-variable cannot hide it — fixes nothing in that analysis, and
+definitions stopped on a step bind nothing, so a check may still fix what they
+leave open. An equation with no value at Newton's starting guess (a pole there)
+is taken back in once the step has moved off it. An equation the solve imposed
+holds along the freedom and stays `satisfied`; a PLAIN constraint (no `assert`)
+the solve took as a design equation to fix a value is `satisfied` with
+`imposed: true` and the reason *imposed by the solve* — it holds because the
+solve made it hold, not as a check passed.
+
+**`solveFeasible` claims a witness only where it has one.** Its point must meet
+every asserted equation, binding and feature value, and every plain equation
+the solve took as a design equation, under a gate no wider than the rounding
+the equation's own evaluation can make there: a search that drifted along a
+plateau to x = −1e22 (`x / (1.0 + x * x) == 0.6 + y`, which no point meets)
+read a miss of 0.3 as noise under a gate scaled by x · x. The constraints
+neither gatherer reads — a connective, a `!=`, a bound refused for what it
+reads — are judged at the point as the numeric surface judges them: violated
+over a stated value they make the model infeasible, and one that cannot be
+judged there (a Boolean operand the numeric surface does not read) leaves
+`decided` false, though every relation judged holds. A plain equality check the
+solve did not impose stays outside the question, as before. `optimize` leaves
+`feasible` unset for any bound it cannot read at the optimum, not only one over
+a freedom.
+
+**The freedom test is local.** It reads the rank of the equations at the point
+the solve found, so of two isolated roots (`x * x == 4.0`, `x >= 0.0`) the one
+found is the one judged, and a combination of free features the equations do
+fix (`a + b <= 11.0` beside `a + b == 10.0`) is `unknown` rather than judged.
+
+**A point the solve stopped at without converging is no solution, and what
+it withholds is coarse.** Where the solve ends off one of its own equations —
+an asserted one, a binding, a feature's or an instance's value, a plain one it
+took as a design equation — every value it PRODUCED that those equations link
+to the missed one is withheld: neither a value nor a freedom, every relation
+over it `unknown` with *the solve did not converge*, and the rank is not read
+there (a diverged Newton step had `x >= 0.0` violated at x = −106760, which x =
+2 meets with both equations). `solveFeasible` holds none of them at that
+point: it searches them as freedoms, so a violation over one is `unresolved`
+and the answer not `decided` (held at q's p's m2 of 9, where the solve read no
+L for q's p's `load = L`, `q.p.m2 <= 0.0` was decided violated). `optimize`
+scores a trial point whose objective the solve did not settle as no value,
+never the model's own. The reach is every value linked to the missed equation,
+not only those the miss moves, so a non-converged solve may withhold more than
+it had to.
+
+**A `default` a binding overrides gives way on every surface, but only two of
+them read the bound value.** The numeric surface and the solver lane read `bind
+p.load = L` over `load default = 1.0` as q's L (decision 10), along a chain of
+bindings and where a context redefines the bound end with a default of its own;
+the default is no axiom, and `--with-values` re-pins nothing of it. The check
+and the literal engine never read a value through a binding — as for any
+valueless feature a binding holds — so a relation over one is *could not be
+evaluated* there, and the SMT engine, which re-reads a witness through the
+check, cannot confirm a refutation over it (`q.p.m2 >= 0.0` at −40 stays
+`inconclusive`, never `refuted`). Reading q's p's load as q's L there needs the
+check to read a value per instance through a usage it shares (`Q::p` is every
+Q's p), which it cannot do for a redefinition's value over an outer name
+either. The same gap leaves P's own constraint (`load <= 10.0`) unasked in q's
+p, an instance no context names: its reading in `Q::p` is Q's own p's and is
+refused (`not-evaluable`) rather than proved for every Q's p, and P's own
+reading stands for P's own values. A constraint of Q itself over p's load is
+read in q, as over any value q changes. Whether a default gives way is decided per FEATURE, over every context
+a binding holds in: one that gives way in one context is read in none, so
+where `q1 : Q` sets the valueless L that P's load is bound to, a `q2 : Q` that
+leaves L unset reads no load at all rather than P's default. Two defaults
+bound to each other stand where they state one value and give way where they
+differ — the model states neither — so no surface calls that a contradiction.
+
+**A binding's contradiction is reported where the check decides the two ends
+differ.** A binding against a value written with `=` (P's `load = 1.0` beside
+`bind p.load = L` with q's L of 50) is a violated row at the binding on the
+check and the numeric surface, infeasible, and `inconsistent-axioms` on the
+SMT engine. A pair the check cannot compare is no row, left to the SMT engine.
+The literal engine reads each relation alone and never the model's facts
+against each other: over such a model it reads `q.p.m2 >= 0.0` at P's 1.0 and
+says *holds at the model's values* (exit 0), as it does beside a contradicted
+`assert`, and the readings over the contradicted feature are not withdrawn.
 
 **Feasibility REPAIR at extreme scales is still absolute.** The gate that judges
 an inequality is relative to its SI magnitude, but the penalty descent that
@@ -2924,21 +3102,46 @@ textual sometimes (an expression, an FMI `INF`) and `setAttr` has one signature
 for every attribute, so the coercion rule has to be written per field, with the
 same care the mapper's bare-number guard needed.
 
-**A strict `<` is exact on the fallback path and tolerant on the dimensional
-one.** Where both surfaces read raw magnitudes (a bare literal beside a
-dimensioned value) `mass < 25.0` at 25 kg is violated on both — the boundary is
-the boundary — and `solveFeasible`/`optimize` say infeasible, all three reading
-the one rule that owns strictness. Where the unit-aware evaluator judges,
-`compareQ` counts operands within its relative tolerance as EQUAL for every
-operator, so `mass < 25.0 [kg]` at the same 25 kg is satisfied and feasible.
-Every surface agrees with every other on each path; what differs is the two
-PATHS' readings of a tie. Closing that means giving `compareQ` a
-strictness-aware tolerance, after which the shared rule would follow it — until
-then, the same tie reads two ways depending on whether the relation carries a
-unit the evaluator can use. One consequence to know about: a strict ordering
-violated exactly at its boundary reports a violation `amount` of 0, because the
-violation is the tie itself, so a row's verdict — not its amount — is what says
-whether it holds.
+**A tie no exact reading decides is undecided, and three readings are
+binary64 by definition.** The point evaluators decide a comparison by the
+decimals written wherever exact arithmetic follows the expression (`+ − × ÷`,
+a remainder, an integer power, every unit factor); an operand computed by a
+fractional power has no exact reading, and two sides within a relative 1e-9
+of each other are then `unknown` — `not-evaluable` in `verify`, never
+forgiven — rather than read either way. A numeral written with more than 15
+significant digits is the double it parses to, and the hartley's and the
+nat's factors (logarithms) are the doubles the registry holds, on every
+surface alike, so a comparison over one is exact about that double, not
+about the real number it approximates. An exact reading whose numerator or
+denominator passes 2^1024 (a long chain of arithmetic, a large power) is
+abandoned, never rounded: the doubles decide outside the band and nothing
+inside it. Values a numeric solve or search produced have no exact reading
+either, and are known only to the solve's tolerance: within it `==`, `<=` and
+`>=` hold — the solve's own claim — and a strict ordering or a `!=` turns on
+the very difference the tolerance hides, so it is undecided (`unknown` on the
+numeric surface, unjudged in `solveFeasible` and `optimize`, which then leave
+`decided` false). Read as a tie, `x < 0.1` at a solved 0.0999999966… — true —
+was violated and infeasible, and `x < 0.1000005` at a solved 0.1 was violated
+beside an SMT proof. The non-strict operators keep the solve's leniency:
+`x <= 0.1` at a solved 0.1000000033… reads as holding. A strict bound over a
+value the feasibility SEARCH moved, or an optimum placed through the
+variables it moved, stands for the points just inside it — judged `g > gate`,
+and over a freedom only ever `unresolved`. And the validation surface's
+verdict on a bound over stated values is feasibility's only at the model's
+own point: with a value fixed (or optimised), a value stated over it is read
+where it stands. A value an API caller FIXES is no value a solve produced: it
+is the decimal it is, read exactly beside the literals the point keeps, so `x
+<= 0.99999999999` is violated with x fixed to 1 on the numeric check and in
+`solveFeasible`. What the solve derives from it is a solved value — `y = x *
+2.0` is read at 2 within the solve's tolerance — and a name the point gives no
+value whose stated value reads a moved feature (a Boolean `ok = x > 5.0`) is
+unjudged there, never read at the model's own x. A definition's constraint
+read in a context is the validation surface's verdict at the values the model
+states, so with ANY value fixed — even to its own stated value — it is
+`unknown` on the numeric check and unjudged in `solveFeasible`. One consequence to know about: a strict ordering violated
+exactly at its boundary reports a violation `amount` of 0, because the
+violation is the tie itself, so a row's verdict — not its amount — is what
+says whether it holds.
 
 **Offset-unit differences answer unknown rather than converting as intervals.**
 The difference of two absolute temperatures IS a well-defined quantity — a
@@ -3111,19 +3314,23 @@ and read as `factor·x + offset`** from the gates' own `ScaleMap` — so
 file; and where the gates granted no scale, the read is the bare symbol, because
 `range = 5.0 [km]` against a bare `10.0` is ten kilometres on every surface of
 this tool and scaling it would publish `5000 <= 10` for a constraint that holds.
-**Numerals in a body are exact rationals**: every one is the binary64 this tool
-holds, converted through its significand rather than re-printed — `18.5` is
-`(/ 37.0 2.0)` and `0.1` is `3602879701896397 / 2⁵⁵`, not the tenth that was
-typed — so the number z3 reasons about is the number `checkConstraints`
-evaluates. The author's own `valueText` is the right reading for a feature's
-declared VALUE and `valueTextNumeral()` is the affordance for it, deliberately
-not applied to body literals: an axiom and a goal that disagreed about a
-boundary number would decide the boundary case by which side of the proof the
-number arrived on. **Symbols and labels are qualified names**, never element
-ids, so two loads of one file encode to the same bytes — and a label is made
-unique AFTER the `|`-mangling a quoted symbol forces, because two names that
-differ only there become one label and z3 refuses a script that defines one
-twice. And **the fragment is checked rather than claimed**: the `set-logic` line
+**Numerals are exact rationals of the decimals written**: every one, in a body,
+a value axiom or a premise, is the decimal it is written as — `18.5` is
+`(/ 37.0 2.0)` and `0.1` is `(/ 1.0 10.0)` — in every relation and every proof
+context, so `0.1 + 0.2 == 0.3` is true to z3 over plain numbers as over
+quantities. Past 15 significant digits a double no longer determines the
+decimal written (`0.29999999999999999` parses to the double `0.3` prints as),
+and such a numeral — in a body, a value axiom or a `[unit]` literal — is read
+as that double, exactly, the number the binary64 surfaces hold; read as the
+shorter decimal it prints as, it PROVED `0.1 + 0.2 <= 0.29999999999999999`.
+One reading, because an axiom and a goal that disagreed about a boundary
+number decided the boundary case by which side of the proof the number arrived
+on — read as the double's own
+rational over plain numbers, `0.1 + 0.2 > 0.3` was PROVED. **Symbols and
+labels are qualified names**, never element ids, so two loads of one file
+encode to the same bytes — and a label is made unique AFTER the `|`-mangling a
+quoted symbol forces, because two names that differ only there become one
+label and z3 refuses a script that defines one twice. And **the fragment is checked rather than claimed**: the `set-logic` line
 is computed from the SYNTAX of the emitted terms, not from the free set, because
 that is what z3 checks it against — `a * b` with `b` pinned by an axiom is
 linear reasoning and a nonlinear script, and a `QF_LRA` header over it is
@@ -3322,8 +3529,30 @@ relation a gate refused — °C arithmetic, `%`, a collection — is listed with
 reason and not asserted, so an inconsistency found without it is still an
 inconsistency (an added assertion can only make a set harder to satisfy) while a
 set called *consistent* without it may be excluded by the very relation that was
-refused: the refused COUNT therefore travels with the word "consistent", which
-§3.5's MUST-NEVER list requires. And a requirement set that states no relation
+refused. MEASURED: `p.g <= 1.0` over `g = x % 4.0` (3 at x = 7) came back
+consistent with witness g = 0, and `p.g >= 5.0` — which no x satisfies — with
+g = 5, both exit 0. So a set that REACHES a refused relation — its own clause,
+or a refused axiom sharing a feature or a symbol with what it asserts, through
+the one reach test `verify`, `bounds` and `refine` share — is undecided, never
+consistent: `verification/unsupported-construct` (forgivable, as `verify` files
+the same relation) where every such relation is the set's own and outside the
+fragment, `verification/not-evaluable` otherwise; a set whose only relation is a
+dimension clash was forgiven here while `verify` refused to forgive it, and now
+takes the same code. The refused COUNT still travels with every verdict, which
+§3.5's MUST-NEVER list requires. The same pass made the other commands hold
+their verdicts to what they stood on: `verify`'s "assumptions satisfiable" is
+re-earned at the model's point where a premise or a reached axiom was refused (a
+refused closed `assert { 7.0 % 4.0 == 0.0 }` had hidden a contradiction, and two
+refused-out assumptions that hold nowhere printed "proved"); `bounds` reaches
+every clause of a requirement it withheld whole (`p.x <= 5.0` beside a refused
+`p.z % 2.0 == 0.0` read "unbounded above"); `refine` does not publish a
+refutation over a refused `bind`, nor `refined` over a step (0) satisfiable only
+without a refused guarantee; and an UNSAT anywhere — a proof, an inconsistency, a
+bound, a vacuity — that read a feature with no value through two instances was
+undecided, since one symbol per feature made `s.a.v >= 5.0` beside `s.b.v <=
+3.0` "inconsistent" and `p1.m2 == p2.m2` "proved". That interim guard retired
+when every instance got symbols of its own: the set is consistent, and the
+equality is not proved of two values nothing relates. And a requirement set that states no relation
 this lane encodes is `inconclusive`, never consistent — an empty conjunction is
 satisfiable and says nothing — with a run that decided nothing at all exiting 2
 under `--allow-inconclusive` and without it, the same rule that stops `verify`
@@ -5035,7 +5264,7 @@ which fakes `z3-solver` in every shape the trace showed, plus the hang under
 fake timers). The campaign file shadows `it` with a wrapper that re-runs a
 case once, only when the death counter advanced under it, after printing a
 `[D5]` line on stderr — a red for any other reason is thrown as it was, so no
-intermittent of another kind can pass behind a retry. Its **76 `withZ3`
+intermittent of another kind can pass behind a retry. Its **77 `withZ3`
 cases** and the 25 plain cases that also drive the solver used to share one
 context from the first block to the last; each of its **12 solver blocks** now
 starts on a fresh module (`beforeAll(freshModule)`), which is +14 MB RSS per

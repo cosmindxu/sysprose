@@ -2312,8 +2312,8 @@ async function reportConsistency(
     ...(r.refused > 0
       ? [
           `  ${r.refused} relation(s) refused by a gate and not asserted — an inconsistency found without ` +
-            'them is still an inconsistency, and a set called consistent without them may be excluded by ' +
-            'the very relation that was refused',
+            'them is still an inconsistency, and a set that reaches one is undecided rather than consistent, ' +
+            'since the very relation that was refused may exclude the point found',
         ]
       : []),
     ...(r.noFormalClause > 0

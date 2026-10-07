@@ -24,6 +24,7 @@
  */
 
 import { type ElementId, type ElementRecord, type Model } from '@core/index';
+import { defaultGivesWay } from './defining-equation';
 import { parseExpr, evaluate } from './expr';
 import { dimensionalFacets } from './units-eval';
 import { DIMENSIONLESS, dimEqual, resolveUnit, type Dimension } from './units';
@@ -254,10 +255,11 @@ export function itemFlowsOf(model: Model): ItemFlowInfo[] {
 export function propagateValues(model: Model): Map<ElementId, unknown> {
   const known = new Map<ElementId, unknown>();
 
-  // 1. Seed with literal feature values.
+  // 1. Seed with literal feature values — never a `default` a binding
+  //    overrides, which the binding gives its value instead.
   for (const el of model.all()) {
     const v = literalValueOf(el);
-    if (v !== undefined) known.set(el.id, v);
+    if (v !== undefined && !defaultGivesWay(model, el)) known.set(el.id, v);
   }
 
   // 2. Pre-compute the binding equivalence partition and the item flows.

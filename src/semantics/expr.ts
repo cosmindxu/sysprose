@@ -37,6 +37,16 @@ export type ExprNode =
        * exactly the thousandth a stored `1.0` in grams is read as.
        */
       literal?: { magnitude: string; factor: number; factorTerms?: ReadonlyArray<FactorTerm> };
+      /**
+       * The numeral as the author wrote it, kept only when it writes more
+       * significant digits than a double carries ({@link DOUBLE_DIGITS}) — the
+       * one case where `value` does not determine the decimal that was
+       * written: `0.29999999999999999` parses to the double `0.3` prints as.
+       * Every evaluator reads `value`; the SMT encoder reads such a numeral
+       * as that double's own rational, never as the shorter decimal it
+       * prints as. Absent, the numeral is the decimal `String(value)` prints.
+       */
+      text?: string;
     }
   | { kind: 'str'; value: string }
   | { kind: 'bool'; value: boolean }
@@ -54,10 +64,30 @@ export type BinaryOp =
 /** Result of evaluating a node: either a concrete value or "not known". */
 export type EvalResult = { value: unknown } | { unknown: true };
 
+/* ─────────────────────────────── numerals ────────────────────────────── */
+
+/**
+ * The significant digits a binary64 carries (`DBL_DIG`): every decimal with at
+ * most this many is, in value, the decimal its double prints as, so the double
+ * determines it. A numeral written with more is not determined by its double —
+ * `0.29999999999999999` and `0.3` are one double — and is read as that double.
+ */
+export const DOUBLE_DIGITS = 15;
+
+/**
+ * How many significant digits a numeral's text writes, sign, exponent and
+ * leading and trailing zeros aside: `0.30000000000000001` writes 17, `1500.0`
+ * writes 2 and `0.00000000000000001` writes 1.
+ */
+export function significantDigitsOf(text: string): number {
+  const mantissa = text.trim().replace(/^[-+]/, '').split(/[eE]/)[0] ?? '';
+  return mantissa.replace('.', '').replace(/^0+/, '').replace(/0+$/, '').length;
+}
+
 /* ─────────────────────────────── lexer ───────────────────────────────── */
 
 type Tok =
-  | { t: 'num'; v: number }
+  | { t: 'num'; v: number; text?: string }
   | { t: 'str'; v: string }
   | { t: 'name'; v: string }
   | { t: 'kw'; v: string }
@@ -131,7 +161,9 @@ function tokenize(src: string): Tok[] {
         if (src[j] === '+' || src[j] === '-') j++;
         while (j < n && isDigit(src[j])) j++;
       }
-      toks.push({ t: 'num', v: Number(src.slice(i, j)) });
+      // The text rides along only where the double does not determine it.
+      const text = src.slice(i, j);
+      toks.push({ t: 'num', v: Number(text), ...(significantDigitsOf(text) > DOUBLE_DIGITS ? { text } : {}) });
       i = j;
       continue;
     }
@@ -267,7 +299,7 @@ class Parser {
     const tk = this.next();
     switch (tk.t) {
       case 'num':
-        return { kind: 'num', value: tk.v };
+        return { kind: 'num', value: tk.v, ...(tk.text !== undefined ? { text: tk.text } : {}) };
       case 'str':
         return { kind: 'str', value: tk.v };
       case 'lparen': {

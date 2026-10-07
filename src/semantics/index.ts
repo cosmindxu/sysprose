@@ -14,7 +14,17 @@
  * from here only reads.
  */
 
-export { generalizationsOf, ownFeatures, effectiveFeatures } from './inheritance';
+export {
+  generalizationsOf,
+  ownFeatures,
+  effectiveFeatures,
+  effectiveNameOf,
+  effectiveQualifiedName,
+  inheritedNameClashes,
+  maskedByName,
+  redefinedBy,
+  redefinedClosure,
+} from './inheritance';
 export { conforms, valueConformsToType } from './conformance';
 export {
   DIRECT_SUPERTYPES,

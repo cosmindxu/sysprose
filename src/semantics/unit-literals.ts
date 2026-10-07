@@ -170,5 +170,49 @@ export function parseRelationBody(raw: string): (LoweredBody & { node: ExprNode 
   }
 }
 
+/**
+ * A feature value written `(expr) [unit]` — the parser keeps the expression and
+ * folds the unit beside it (`attrs.unit`) — joined as the spec's `'['` reads it:
+ * the number `expr` in that unit, `expr * 1.0 [unit]`. The marker carries the
+ * unit's dimension and factor exactly as an author's `1.0 [unit]` literal
+ * would, so the gates force a scale and read the feature in its storage unit
+ * and `expr` in SI — which is what the unit-aware evaluator does (`applyUnit`
+ * of ./units-eval on the derivation's SI value). Joined as the bare `x ==
+ * expr`, `total = (k * 2.0) [GiB]` with k = 3 solved to 6 bits, and `len =
+ * (d1 / d2) [km]` read `d1` in its stored km.
+ *
+ * An offset or unknown unit is no factor to multiply by, and the body is
+ * returned unchanged: the gates refuse the first, and the second is as
+ * unknown here as anywhere.
+ */
+export function withValueUnit(
+  body: LoweredBody & { node: ExprNode },
+  unit: string,
+): LoweredBody & { node: ExprNode } {
+  const written = unit.trim();
+  const u = resolveUnit(written);
+  if (!u || u.offsetSI) return body;
+  // A name neither the body nor its own markers use, as `lowerUnitLiterals` picks one.
+  let prefix = '__uv';
+  while (body.text.includes(prefix)) prefix += 'v';
+  const name = `${prefix}0`;
+  const literals = new Map(body.literals);
+  literals.set(name, {
+    si: u.factorToSI,
+    dimension: u.dimension,
+    magnitude: '1.0',
+    unit: written,
+    factor: u.factorToSI,
+    ...(u.factorTerms !== undefined ? { factorTerms: u.factorTerms } : {}),
+  });
+  return {
+    text: `(${body.text}) * ${name}`,
+    literals,
+    hadUnit: true,
+    resolved: body.resolved,
+    node: { kind: 'binary', op: '*', left: body.node, right: { kind: 'ref', path: [name] } },
+  };
+}
+
 /** No `[unit]` literals were lowered in this relation. */
 export const NO_MARKERS: MarkerDimensions = new Map<string, LoweredLiteral>();

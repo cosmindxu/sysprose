@@ -40,30 +40,58 @@
 
 import { isSpecialization, type AttrValue, type ElementId, type ElementRecord, type Model } from '@core/index';
 import {
-  DefiningEquations,
+  type DefiningEquations,
   GUARD_CONTACT,
   MAX_DERIVATION_DEPTH,
+  baseIdOf,
   chooseDefinition,
   definitionKey,
   definitionsInFlight,
+  instanceKey,
   isAsserted,
   hasStatedValue,
   mergeContact,
-  readsStatedValueIn,
+  contradictionSentence,
+  defaultGivesWay,
   namesDefinedBy,
   returnTo,
+  shadowedEquation,
+  shadowedNamesOf,
+  shadowedSentence,
+  sharedDefinitions,
   statedValueOf,
   type Contact,
   type DefiningEquation,
   type InFlight,
 } from './defining-equation';
 import { isBindingEdge } from './connectors';
-import { effectiveFeatures } from './inheritance';
+import { DOUBLE_DIGITS, significantDigitsOf } from './expr';
+import {
+  addRationals,
+  compareRationals,
+  decideComparison,
+  divideRationals,
+  multiplyRationals,
+  negateRational,
+  powerRational,
+  remainderRational,
+  siRational,
+  statedRational,
+  subtractRationals,
+  tieSentence,
+  writtenRational,
+  type ComparisonOperator,
+  type DecideOptions,
+  type Rational,
+} from './exact';
 import { resolveQualifiedNameFull } from './resolve-names';
 import {
+  AMOUNT_UNIT,
   DIMENSIONLESS,
+  amountOfKind,
   dimEqual,
   dimensionOf,
+  dimensionOneKindsOf,
   dimToString,
   divideDim,
   multiplyDim,
@@ -90,6 +118,41 @@ export interface Quantity {
    * the engine does not model yet, so arithmetic on them answers unknown.
    */
   absolute?: boolean;
+  /**
+   * A magnitude computed from a DIMENSION-ONE value that had a unit, which the
+   * arithmetic converted to SI and dropped: `cap * 2.0` with `cap = 2.0 [GiB]`
+   * is 2^35 — bits — with dimension one and no unit. It is a quantity still,
+   * not a Number, so `[unit]` may not be applied to it ({@link applyUnit}):
+   * read as a plain number, `(cap * 2.0) [GiB]` relabelled 2^35 bit as 2^35
+   * GiB, and `dbl > 1000.0 [GiB]` held at a value of 4 GiB.
+   *
+   * `unit` is the first such unit, for the sentence. `kinds` says, for each
+   * KIND of dimension one the number is still an amount of — information,
+   * traffic, a ratio of lengths ({@link dimensionOneKindsOf}) — how many times
+   * its conversion is in it: the exponent of the unit it would take to state
+   * it. Only a power of zero is a plain number again, and powers cancel only
+   * within a kind: `cap / 1.0 [GiB]` is 2 whatever bits are, but `cap * cap /
+   * 1.0 [GiB]`, `cap * 1.0 [m] / 1.0 [m]` and `cap / strain` (GiB over mm/m)
+   * are still bits. A sum of two different powers (`cap + 1.0`) has none, and
+   * is `NaN`: no unit states it. Absent where every kind's power is zero.
+   */
+  convertedFrom?: Conversion;
+  /**
+   * {@link magnitude} as the exact rational the author's decimals give it —
+   * in {@link unit} when one is set, like the magnitude — carried through
+   * exact arithmetic (`exactQ`). A comparison decides by it wherever both
+   * sides have one (`decideComparison` of ./exact), so `0.1 + 0.2 > 0.3` is
+   * false here as it is to the SMT engine, and `1.0 + 0.00000000000000001 >
+   * 1.0` true although binary64 absorbs the difference. Absent where no exact
+   * reading exists: a fractional power, a value a solver produced.
+   */
+  exact?: Rational;
+}
+
+/** {@link Quantity.convertedFrom}: the first unit converted out of, and the power left of each kind. */
+export interface Conversion {
+  unit: string;
+  kinds: Readonly<Record<string, number>>;
 }
 
 /** Read an attribute as a string, or undefined when absent/non-string. */
@@ -149,20 +212,47 @@ function unitOfFeature(el: ElementRecord): string | undefined {
   return undefined;
 }
 
-/** Extract `{ magnitude, unit? }` from a feature's LITERAL value/unit attributes. */
-function magnitudeAndUnit(el: ElementRecord): { magnitude: number; unit?: string } | undefined {
+/**
+ * The unit a feature's value is written in when that value is an EXPRESSION —
+ * `total = (k * 2.0) [GiB]`, which the parser stores as the expression `(k *
+ * 2.0)` beside `attrs.unit` — and so the `[unit]` the unit-aware evaluator
+ * applies to the whole derivation ({@link deriveFeatureUncached}). `undefined`
+ * for a literal value (`2.0 [GiB]` IS the stored magnitude) and for none.
+ *
+ * Exported for the readers that join a value to its feature as an equation —
+ * the solver lane and the obligation worklist — so that they read `x ==
+ * expr * 1.0 [unit]` as this evaluator does, never the bare `x == expr`.
+ */
+export function expressionValueUnitOf(el: ElementRecord): string | undefined {
+  const raw = el.attrs.value;
+  if (typeof raw !== 'string' || MAGNITUDE_UNIT_RE.test(raw.trim())) return undefined;
+  return unitOfFeature(el);
+}
+
+/**
+ * Extract `{ magnitude, unit? }` from a feature's LITERAL value/unit
+ * attributes, with the magnitude's exact reading: the decimal written, as the
+ * SMT encoder reads the feature's value axiom (`statedRational` of ./exact).
+ */
+function magnitudeAndUnit(el: ElementRecord): { magnitude: number; unit?: string; exact?: Rational } | undefined {
   const raw = el.attrs.value;
   let magnitude: number | undefined;
+  let lexeme: unknown;
 
   if (typeof raw === 'number') {
     magnitude = raw;
+    lexeme = el.attrs.valueText;
   } else if (typeof raw === 'string') {
     const m = raw.trim().match(MAGNITUDE_UNIT_RE);
-    if (m) magnitude = Number(m[1]);
+    if (m) {
+      magnitude = Number(m[1]);
+      lexeme = m[1];
+    }
   }
   if (magnitude === undefined || !Number.isFinite(magnitude)) return undefined;
   const unit = unitOfFeature(el);
-  return unit ? { magnitude, unit } : { magnitude };
+  const exact = statedRational(magnitude, lexeme);
+  return { magnitude, ...(unit ? { unit } : {}), ...(exact ? { exact } : {}) };
 }
 
 /**
@@ -214,14 +304,34 @@ function kindOfName(
   return el ? kindOfType(model, el.id, visited) : {};
 }
 
+/** {@link quantityKindOf}, once per feature and model revision. */
+const QUANTITY_KINDS = new WeakMap<Model, { rev: number; kinds: Map<ElementId, { dimension?: Dimension; name?: string }> }>();
+
 /**
  * The ISQ quantity-kind of a feature (via its FeatureTyping target or its
  * `attrs.type` / `attrs.typeRef` name): its {@link Dimension} and declared name.
+ * Read once per feature and model revision: every gate asks it of every
+ * variable of every relation, and a model with thousands of instance rows
+ * asked it hundreds of thousands of times.
  */
 export function quantityKindOf(
   model: Model,
   featureId: ElementId,
 ): { dimension?: Dimension; name?: string } {
+  let memo = QUANTITY_KINDS.get(model);
+  if (!memo || memo.rev !== model.rev) {
+    memo = { rev: model.rev, kinds: new Map() };
+    QUANTITY_KINDS.set(model, memo);
+  }
+  let hit = memo.kinds.get(featureId);
+  if (!hit) {
+    hit = quantityKindUncached(model, featureId);
+    memo.kinds.set(featureId, hit);
+  }
+  return { ...hit };
+}
+
+function quantityKindUncached(model: Model, featureId: ElementId): { dimension?: Dimension; name?: string } {
   const el = model.get(featureId);
   if (!el) return {};
 
@@ -302,7 +412,7 @@ export function evaluateQuantity(model: Model, featureId: ElementId): Quantity |
     dimension = qk.dimension ?? DIMENSIONLESS;
   }
 
-  const q: Quantity = { magnitude: mu.magnitude, dimension };
+  const q: Quantity = exactQ({ magnitude: mu.magnitude, dimension }, mu.exact);
   if (mu.unit) {
     q.unit = mu.unit;
     if (resolveUnit(mu.unit)?.offsetSI) q.absolute = true;
@@ -343,7 +453,7 @@ export function dimensionalFacets(
 /* ────────────────────── Unit-aware expression evaluator ──────────────────── */
 
 type QNode =
-  | { kind: 'num'; value: number }
+  | { kind: 'num'; value: number; text?: string }
   | { kind: 'unit'; operand: QNode; unit: string }
   | { kind: 'ref'; path: string }
   | { kind: 'bool'; value: boolean }
@@ -357,7 +467,7 @@ type QBinOp =
   | 'and' | 'or' | 'xor' | 'implies';
 
 type QTok =
-  | { t: 'num'; v: number }
+  | { t: 'num'; v: number; text?: string }
   | { t: 'name'; v: string }
   | { t: 'unit'; v: string }
   | { t: 'str'; v: string }
@@ -443,7 +553,10 @@ function lexQ(src: string): QTok[] {
         if (src[j] === '+' || src[j] === '-') j++;
         while (j < n && isDigit(src[j])) j++;
       }
-      toks.push({ t: 'num', v: Number(src.slice(i, j)) });
+      // The text rides along only where the double does not determine it
+      // (`text` on a `num` node of ./expr): the numeral's exact reading.
+      const text = src.slice(i, j);
+      toks.push({ t: 'num', v: Number(text), ...(significantDigitsOf(text) > DOUBLE_DIGITS ? { text } : {}) });
       i = j;
       continue;
     }
@@ -557,6 +670,18 @@ const Q_PRECEDENCE: Record<string, number> = {
 };
 const Q_RIGHT_ASSOC = new Set(['^', 'implies']);
 
+/**
+ * Every operator this grammar reads: the binary ones, which are the precedence
+ * table's, and the prefix ones {@link QParser} takes. Exported for the property
+ * test that no operator turns a dimension-one quantity into a plain number
+ * ({@link Quantity.convertedFrom}): a binary operator added to the table is in
+ * that test without anyone remembering to add it.
+ */
+export const UNIT_AWARE_OPERATORS: { readonly binary: readonly string[]; readonly prefix: readonly string[] } = {
+  binary: Object.keys(Q_PRECEDENCE),
+  prefix: ['-', '+', 'not'],
+};
+
 class QParser {
   private pos = 0;
   constructor(private readonly toks: QTok[]) {}
@@ -623,7 +748,7 @@ class QParser {
     const tk = this.next();
     switch (tk.t) {
       case 'num':
-        return { kind: 'num', value: tk.v };
+        return { kind: 'num', value: tk.v, ...(tk.text !== undefined ? { text: tk.text } : {}) };
       case 'name':
         return { kind: 'ref', path: tk.v };
       case 'kw':
@@ -687,7 +812,18 @@ class QParser {
  *  - `parse` — the expression is not a unit-aware expression;
  *  - `not-boolean` / `not-quantity` — the wrong value kind where the other
  *    was needed;
- *  - `division-by-zero`.
+ *  - `division-by-zero`;
+ *  - `contradiction` — a REFUSAL: the feature's value contradicts a binding
+ *    it redefines (`contradictedBindingOf` of ./defining-equation), so the
+ *    model states two values for it and neither is read; `detail` is the
+ *    sentence;
+ *  - `shadowed` — a REFUSAL: the value reads a name the feature declares
+ *    itself, which its owner's scope answers with another feature
+ *    (`shadowedNamesOf` of ./defining-equation); `detail` is the sentence;
+ *  - `tie` — a REFUSAL: the two sides of a comparison are equal within the
+ *    tolerance and no exact reading decides them (`decideComparison` of
+ *    ./exact); `detail` is the pair. The scalar path could only read the
+ *    same tie unit-blind, so nothing fills it.
  */
 export type QReason =
   | 'unresolved'
@@ -703,7 +839,10 @@ export type QReason =
   | 'not-boolean'
   | 'not-quantity'
   | 'division-by-zero'
-  | 'empty';
+  | 'empty'
+  | 'contradiction'
+  | 'shadowed'
+  | 'tie';
 
 /** A one-line, author-facing rendering of a {@link QReason}. */
 export function describeReason(reason: QReason, detail?: string): string {
@@ -738,6 +877,14 @@ export function describeReason(reason: QReason, detail?: string): string {
       return 'division by zero';
     case 'empty':
       return 'the expression is empty';
+    case 'contradiction':
+      return detail ?? 'its value contradicts a binding it redefines';
+    case 'shadowed':
+      return detail ?? 'the value reads a name its own element declares, which this tool does not read';
+    case 'tie': {
+      const [x, y] = (detail ?? '? vs ?').split(' vs ');
+      return tieSentence({ x: Number(x), y: Number(y) });
+    }
   }
 }
 
@@ -763,7 +910,10 @@ export function isRefusalReason(reason: QReason | undefined): boolean {
     reason === 'mismatch' ||
     reason === 'dimension-clash' ||
     reason === 'dimension-fault' ||
-    reason === 'depth'
+    reason === 'depth' ||
+    reason === 'contradiction' ||
+    reason === 'shadowed' ||
+    reason === 'tie'
   );
 }
 
@@ -786,23 +936,28 @@ const unknownQ = (reason: QReason, detail?: string, message?: string): QEval => 
 const messageOf = (r: QUnknown): string => r.message ?? describeReason(r.reason, r.detail);
 
 /**
- * Comparison tolerance: `|a − b| ≤ max(absTol, 1e-9·max(|a|, |b|))`.
- *
- * Exact `===` on SI values called `1 [ft] == 12 [in]` violated (0.3048 vs
- * 0.30479999999999996) and flipped every Newton-solved equality the numeric
- * engine accepts at 1e-6. The relative part absorbs float noise from the
- * registry's conversion factors; the absolute part is the caller's own
- * tolerance (a solver's), 0 by default.
+ * How a comparison is read: the tie rule of ./exact. Both sides with an exact
+ * reading ({@link Quantity.exact}) are compared exactly — `1 [ft] == 12 [in]`
+ * holds although the registry's doubles make 0.3048 and 0.30479999999999996
+ * of it, and `x < 25.0` at 25 is false. Otherwise the SI doubles decide
+ * outside `|a − b| ≤ max(absTol, 1e-9·max(|a|, |b|))`; inside it, over
+ * values a solver produced (`searched`), `==`, `<=` and `>=` hold — a
+ * Newton-solved equality holds at the solve's own tolerance — and everything
+ * else is undecided (`tie`): a strict ordering or a `!=` over a solved value
+ * turns on the difference that tolerance hides. The absolute part is the
+ * caller's own tolerance (a solver's), 0 by default.
  */
-const REL_TOL = 1e-9;
-function tolFor(a: number, b: number, absTol: number): number {
-  return Math.max(absTol, REL_TOL * Math.max(Math.abs(a), Math.abs(b)));
-}
+const EXACT: DecideOptions = { absTol: 0, searched: false };
 
-function evalQ(node: QNode, scope: QScope, absTol: number): QEval {
+/**
+ * Evaluate `node` in `scope`. `every` reads EVERY branch of an `if`, not the
+ * one the condition takes — the reading {@link valueUnitRefusal} decides a
+ * `[unit]` by, which must hold whatever the condition is.
+ */
+function evalQ(node: QNode, scope: QScope, tol: DecideOptions, every = false): QEval {
   switch (node.kind) {
     case 'num':
-      return { q: { magnitude: node.value, dimension: DIMENSIONLESS } };
+      return { q: exactQ({ magnitude: node.value, dimension: DIMENSIONLESS }, writtenRational(node.value, node.text)) };
     case 'bool':
       return { b: node.value };
     case 'ref': {
@@ -810,29 +965,84 @@ function evalQ(node: QNode, scope: QScope, absTol: number): QEval {
       return r === undefined ? unknownQ('unresolved', node.path) : r;
     }
     case 'unit':
-      return applyUnit(evalQ(node.operand, scope, absTol), node.unit);
+      return applyUnit(evalQ(node.operand, scope, tol, every), node.unit);
     case 'unary': {
-      const r = evalQ(node.operand, scope, absTol);
+      const r = evalQ(node.operand, scope, tol, every);
       if (isQUnknown(r)) return r;
       if (node.op === 'not') return 'b' in r ? { b: !r.b } : unknownQ('not-boolean');
       if ('q' in r) {
         if (node.op === '+') return r;
         if (r.q.absolute) return unknownQ('offset', r.q.unit);
-        return { q: { ...r.q, magnitude: -r.q.magnitude } };
+        return { q: exactQ({ ...r.q, magnitude: -r.q.magnitude }, r.q.exact && negateRational(r.q.exact)) };
       }
       return unknownQ('not-quantity');
     }
     case 'binary':
-      return evalQBinary(node, scope, absTol);
+      return evalQBinary(node, scope, tol, every);
     case 'if': {
+      const c = evalQ(node.cond, scope, tol, every);
+      if (every) {
+        // Both branches, whatever the condition says — a refusal in it aside,
+        // which is one on every path.
+        if (isQUnknown(c) && isRefusalReason(c.reason)) return c;
+        return everyBranch(evalQ(node.then, scope, tol, every), evalQ(node.else, scope, tol, every));
+      }
       // Only the branch the condition takes is read, as the scalar evaluator
       // reads it.
-      const c = evalQ(node.cond, scope, absTol);
       if (isQUnknown(c)) return c;
       if (!('b' in c)) return unknownQ('not-boolean');
-      return evalQ(c.b ? node.then : node.else, scope, absTol);
+      return evalQ(c.b ? node.then : node.else, scope, tol);
     }
   }
+}
+
+/**
+ * The two branches of an `if` read together ({@link evalQ}'s `every`): one
+ * quantity when they are the same KIND of quantity — one dimension, one
+ * conversion ({@link conversionOf}), one scale — which every operation after
+ * them then treats alike, and a refusal when they are not, since what follows
+ * may then be a number on one path and an amount on the other (`if big then
+ * cap else 3.0`, over `cap = 2.0 [GiB]`). A magnitude the two do not share is
+ * not known (`NaN`), so an exponent read from it puts no power right.
+ */
+function everyBranch(t: QEval, e: QEval): QEval {
+  if (isQUnknown(t) || isQUnknown(e)) return worseUnknown(t, e);
+  if ('b' in t && 'b' in e) return t;
+  if (!('q' in t) || !('q' in e)) return unknownQ('not-quantity');
+  const a = t.q;
+  const b = e.q;
+  const ca = conversionOf(a);
+  const cb = conversionOf(b);
+  const same =
+    dimEqual(a.dimension, b.dimension) &&
+    a.absolute === b.absolute &&
+    (ca === undefined) === (cb === undefined) &&
+    (ca === undefined || sameKinds(ca.kinds, cb!.kinds));
+  if (!same) {
+    return unknownQ(
+      'dimension-fault',
+      'the branches of a conditional are different kinds of quantity, so no one reading of it holds on both',
+    );
+  }
+  if (a.unit === b.unit) {
+    const same = a.magnitude === b.magnitude;
+    // One exact reading only where the two branches have the same one: two
+    // decimals can round to one double.
+    const exact = same && a.exact && b.exact && compareRationals(a.exact, b.exact) === 0 ? a.exact : undefined;
+    return { q: exactQ({ ...a, magnitude: same ? a.magnitude : Number.NaN }, exact) };
+  }
+  // Two units of one kind: the result in SI, whose magnitude is not known.
+  const q: Quantity = { magnitude: Number.NaN, dimension: a.dimension };
+  if (ca !== undefined) q.convertedFrom = ca;
+  if (a.absolute) q.absolute = true;
+  return { q };
+}
+
+/** Do two {@link Conversion.kinds} hold the same power of every kind? (`NaN` is no power, and never the same.) */
+function sameKinds(a: Readonly<Record<string, number>>, b: Readonly<Record<string, number>>): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) if (a[k] !== b[k]) return false;
+  return true;
 }
 
 /**
@@ -860,6 +1070,16 @@ function applyUnit(inner: QEval, unit: string): QEval {
       `a unit literal [${unit}] was applied to an operand that already has unit "${inner.q.unit}"`,
     );
   }
+  if (inner.q.convertedFrom !== undefined && dimEqual(inner.q.dimension, DIMENSIONLESS)) {
+    // The same fault one operation later: the operand HAD such a unit, and the
+    // arithmetic converted its magnitude to SI and dropped it (`cap * 2.0` is
+    // 2^35 bit for a `cap` of 2 GiB). That is a quantity, not the Number `'['`
+    // takes, and read as one it relabelled 2^35 bit as 2^35 GiB.
+    return unknownQ(
+      'dimension-fault',
+      `a unit literal [${unit}] was applied to an operand computed from a value in "${inner.q.convertedFrom.unit}" — dimension one is not unitless`,
+    );
+  }
   if (!dimEqual(inner.q.dimension, DIMENSIONLESS)) {
     // A REFUSAL, not ignorance: there is no dimensionless side here (the
     // branch is only reached when the operand already has a dimension), so no
@@ -871,24 +1091,31 @@ function applyUnit(inner: QEval, unit: string): QEval {
       `a unit literal [${unit}] was applied to an operand that already has dimension ${dimToString(inner.q.dimension)}`,
     );
   }
-  const q: Quantity = { magnitude: inner.q.magnitude, dimension: u.dimension, unit };
+  // A plain number takes the unit as it is: its exact reading is the
+  // magnitude's, now in that unit.
+  const q: Quantity = exactQ({ magnitude: inner.q.magnitude, dimension: u.dimension, unit }, inner.q.exact);
   if (u.offsetSI) q.absolute = true;
   return { q };
 }
 
-function evalQBinary(node: Extract<QNode, { kind: 'binary' }>, scope: QScope, absTol: number): QEval {
+function evalQBinary(
+  node: Extract<QNode, { kind: 'binary' }>,
+  scope: QScope,
+  tol: DecideOptions,
+  every = false,
+): QEval {
   const op = node.op;
 
   if (op === 'and' || op === 'or' || op === 'xor' || op === 'implies') {
     // The scalar evaluator's short-circuits ({@link ./expr}): `false and x`,
     // `true or x`, `false implies x` and `x implies true` decide without x.
-    const l = evalQ(node.left, scope, absTol);
+    const l = evalQ(node.left, scope, tol, every);
     if (!isQUnknown(l) && 'b' in l) {
       if (op === 'and' && l.b === false) return { b: false };
       if (op === 'or' && l.b === true) return { b: true };
       if (op === 'implies' && l.b === false) return { b: true };
     }
-    const r = evalQ(node.right, scope, absTol);
+    const r = evalQ(node.right, scope, tol, every);
     if (op === 'implies' && !isQUnknown(r) && 'b' in r && r.b === true) return { b: true };
     if (isQUnknown(l) || isQUnknown(r)) return worseUnknown(l, r);
     if (!('b' in l) || !('b' in r)) return unknownQ('not-boolean');
@@ -904,9 +1131,9 @@ function evalQBinary(node: Extract<QNode, { kind: 'binary' }>, scope: QScope, ab
     }
   }
 
-  const l = evalQ(node.left, scope, absTol);
-  const r = evalQ(node.right, scope, absTol);
-  return combineQ(op, l, r, absTol);
+  const l = evalQ(node.left, scope, tol, every);
+  const r = evalQ(node.right, scope, tol, every);
+  return combineQ(op, l, r, tol);
 }
 
 /**
@@ -931,7 +1158,7 @@ function worseUnknown(l: QEval, r: QEval): QEval {
 }
 
 /** Apply an arithmetic/comparison operator to two evaluated operands. */
-function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
+function combineQ(op: QBinOp, l: QEval, r: QEval, tol: DecideOptions): QEval {
   // A refusal on either side wins, for the same reason it does in `and`/`or`:
   // which operand happened to be written first must not decide whether the
   // caller may fall back to raw magnitudes.
@@ -955,7 +1182,12 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
       if (sa === undefined) return unknownQ('unit', a.unit);
       if (sb === undefined) return unknownQ('unit', b.unit);
       if (!dimEqual(a.dimension, b.dimension)) return dimensionRefusal(a, b);
-      return { q: { magnitude: sa % sb, dimension: a.dimension } };
+      return {
+        q: exactQ(
+          { magnitude: sa % sb, dimension: a.dimension, ...convertedOf(sumPower, a, b) },
+          both(a, b, remainderRational),
+        ),
+      };
     }
     case '^': {
       if (a.absolute || b.absolute) return unknownQ('offset', a.absolute ? a.unit : b.unit);
@@ -969,13 +1201,19 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
         // `d ^ t <= 10.0` VIOLATED on both surfaces.
         return unknownQ('dimension-fault', `an exponent must be dimensionless, not ${dimToString(b.dimension)}`);
       }
-      return { q: { magnitude: sa ** exp, dimension: powDim(a.dimension, exp) } };
+      // A power of the base's conversion, by the exponent's NUMBER — which has
+      // to be a number: `2.0 ^ cap` is 2^(2^34) in bits and 2^(2^31) in bytes.
+      const power = (pa: number, pb: number): number => (pb !== 0 ? Number.NaN : pa * exp);
+      // A dimensionless base stays dimensionless whatever the exponent — one
+      // the every-path reading does not know (NaN) included.
+      const dimension = dimEqual(a.dimension, DIMENSIONLESS) ? DIMENSIONLESS : powDim(a.dimension, exp);
+      return { q: exactQ({ magnitude: sa ** exp, dimension, ...convertedOf(power, a, b) }, both(a, b, powerRational)) };
     }
     case '<':
     case '<=':
     case '>':
     case '>=':
-      return compareQ(op, a, b, absTol);
+      return compareQ(op, a, b, tol);
     case '=':
     case '==':
     case '!=': {
@@ -997,8 +1235,7 @@ function combineQ(op: QBinOp, l: QEval, r: QEval, absTol: number): QEval {
       const sb = siValue(b);
       if (sa === undefined) return unknownQ('unit', a.unit);
       if (sb === undefined) return unknownQ('unit', b.unit);
-      const same = Math.abs(sa - sb) <= tolFor(sa, sb, absTol);
-      return { b: eq ? same : !same };
+      return decidedQ(eq ? '==' : '!=', sa, sb, a, b, tol);
     }
     default:
       return unknownQ('parse');
@@ -1035,11 +1272,54 @@ function combineProduct(a: Quantity, b: Quantity, divide: boolean): QEval {
   if (sb === undefined) return unknownQ('unit', b.unit);
   if (divide && sb === 0) return unknownQ('division-by-zero');
   return {
-    q: {
-      magnitude: divide ? sa / sb : sa * sb,
-      dimension: divide ? divideDim(a.dimension, b.dimension) : multiplyDim(a.dimension, b.dimension),
-    },
+    q: exactQ(
+      {
+        magnitude: divide ? sa / sb : sa * sb,
+        dimension: divide ? divideDim(a.dimension, b.dimension) : multiplyDim(a.dimension, b.dimension),
+        // A quotient of two conversions of one power is a plain ratio again:
+        // the factors cancel, so `cap / 1.0 [GiB]` is 2 whatever bits are.
+        ...convertedOf(divide ? (pa, pb) => pa - pb : (pa, pb) => pa + pb, a, b),
+      },
+      both(a, b, divide ? divideRationals : multiplyRationals),
+    ),
   };
+}
+
+/**
+ * The dimension-one conversion an operand carries ({@link Quantity.convertedFrom}):
+ * its own, or — for a value in a dimension-one UNIT (`2.0 [GiB]`, `3.0 [mm/m]`,
+ * `1.0 [E]`) — that unit's kinds, each to the power the unit has it
+ * ({@link dimensionOneKindsOf}), since every operation reads it in SI. A
+ * dimensioned unit is not one: its dimension already says what it is.
+ */
+function conversionOf(q: Quantity): Conversion | undefined {
+  if (q.convertedFrom !== undefined) return q.convertedFrom;
+  if (q.unit === undefined || !dimEqual(q.dimension, DIMENSIONLESS)) return undefined;
+  const kinds = dimensionOneKindsOf(q.unit);
+  return kinds === undefined || Object.keys(kinds).length === 0 ? undefined : { unit: q.unit, kinds };
+}
+
+/** A sum, a difference or a remainder keeps the power both operands have; of two different ones, none (`NaN`). */
+const sumPower = (pa: number, pb: number): number => (pa === pb ? pa : Number.NaN);
+
+/**
+ * The conversion the result of `a ∘ b` carries, whatever its dimension (a
+ * metre in between does not make `cap * 1.0 [m] / 1.0 [m]` a plain number),
+ * from the two operands' powers by the operator's rule, KIND BY KIND — and
+ * none where every kind's power is zero. Powers cancel only within one kind:
+ * `cap / strain` (GiB over mm/m) is information¹ and an `L ratio`⁻¹, not a
+ * number.
+ */
+function convertedOf(power: (pa: number, pb: number) => number, a: Quantity, b: Quantity): { convertedFrom?: Conversion } {
+  const ca = conversionOf(a);
+  const cb = conversionOf(b);
+  if (ca === undefined && cb === undefined) return {};
+  const kinds: Record<string, number> = {};
+  for (const kind of new Set([...Object.keys(ca?.kinds ?? {}), ...Object.keys(cb?.kinds ?? {})])) {
+    const p = power(ca?.kinds[kind] ?? 0, cb?.kinds[kind] ?? 0);
+    if (p !== 0) kinds[kind] = p;
+  }
+  return Object.keys(kinds).length === 0 ? {} : { convertedFrom: { unit: (ca ?? cb)!.unit, kinds } };
 }
 
 /** Add/subtract two quantities; requires equal dimensions, combined in SI. */
@@ -1050,45 +1330,75 @@ function combineAddition(op: '+' | '-', a: Quantity, b: Quantity): QEval {
   const sb = siValue(b);
   if (sa === undefined) return unknownQ('unit', a.unit);
   if (sb === undefined) return unknownQ('unit', b.unit);
-  return { q: { magnitude: op === '+' ? sa + sb : sa - sb, dimension: a.dimension } };
+  return {
+    q: exactQ(
+      { magnitude: op === '+' ? sa + sb : sa - sb, dimension: a.dimension, ...convertedOf(sumPower, a, b) },
+      both(a, b, op === '+' ? addRationals : subtractRationals),
+    ),
+  };
 }
 
 /**
- * Ordered comparison; requires equal dimensions, compared in SI within the
- * tolerance. Two absolute temperatures may be ordered (the affine map is
- * monotone), which is why `t2 >= 300 [K]` on a °C value still answers.
+ * Ordered comparison; requires equal dimensions, compared in SI by the tie
+ * rule ({@link decidedQ}). Two absolute temperatures may be ordered (the
+ * affine map is monotone), which is why `t2 >= 300 [K]` on a °C value still
+ * answers.
  *
- * Values within the tolerance count as EQUAL for every operator, the strict
- * ones included: `x < y` holds when `x − y ≤ tol`. Applying the tolerance in
- * the strict direction instead made `0.9999999999 < 1.0` a confident VIOLATED
- * here and satisfied on the numeric surface — a cross-surface disagreement on
- * float noise.
- *
- * That tolerant reading is shared with the numeric surface for `<=` and `>=`
- * (`violated = g > tol`) but NOT for `<` and `>`: where this evaluator declines
- * and both surfaces fall back to raw magnitudes, a strict ordering is read
- * EXACTLY, because the scalar `evaluate` the validation surface falls back to
- * reads it exactly (`mass < 25.0` at 25 kg is violated there). So a tie under a
- * strict ordering is satisfied wherever this function answers and violated
- * where it does not — a known asymmetry between the two PATHS, recorded in
- * docs/AGENT-AUTHORING-CAMPAIGN.md; the two SURFACES agree on each path, which
- * is the property the seam exists to hold.
+ * A tie is decided exactly wherever both sides have an exact reading, the
+ * strict operators included: `mass < 25.0 [kg]` at 25 kg is violated, as the
+ * scalar path and the SMT engine read it, and `0.9999999999 < 1.0` holds
+ * because it is true of the decimals, not because a tolerance counts the two
+ * as equal. Reading every near tie as equal for every operator made `x < y`
+ * hold whenever `x − y ≤ tol` — `x < 25.0` at 25 satisfied here and refuted
+ * by the solver — and reading the band strictly instead would refute
+ * `1.0 + 0.00000000000000001 > 1.0`, which binary64 rounds to a tie.
  */
-function compareQ(op: '<' | '<=' | '>' | '>=', a: Quantity, b: Quantity, absTol: number): QEval {
+function compareQ(op: '<' | '<=' | '>' | '>=', a: Quantity, b: Quantity, tol: DecideOptions): QEval {
   if (!dimEqual(a.dimension, b.dimension)) return dimensionRefusal(a, b);
   const x = siValue(a);
   const y = siValue(b);
   if (x === undefined) return unknownQ('unit', a.unit);
   if (y === undefined) return unknownQ('unit', b.unit);
-  const tol = tolFor(x, y, absTol);
-  switch (op) {
-    case '<':
-    case '<=':
-      return { b: x - y <= tol };
-    case '>':
-    case '>=':
-      return { b: y - x <= tol };
+  return decidedQ(op, x, y, a, b, tol);
+}
+
+/**
+ * `x op y` over the SI values of `a` and `b`, by the tie rule
+ * (`decideComparison` of ./exact): their exact readings where both have one,
+ * else the doubles outside the tolerance — and inside it, for values no exact
+ * reading decides, `tie`: a refusal, since the unit-blind scalar path could
+ * only answer it worse. Over a solve's values the sentence says so: the
+ * tolerance is the solve's, not the evaluators'.
+ */
+function decidedQ(op: ComparisonOperator, x: number, y: number, a: Quantity, b: Quantity, tol: DecideOptions): QEval {
+  const decided = decideComparison(op, x, y, siExact(a), siExact(b), tol);
+  if (decided !== undefined) return { b: decided };
+  return unknownQ('tie', `${x} vs ${y}`, tol.searched === true ? tieSentence({ x, y, solved: true }) : undefined);
+}
+
+/**
+ * A quantity's exact value in coherent SI ({@link siValue}, exactly), or
+ * `undefined` where it has no exact reading ({@link Quantity.exact}).
+ */
+export function siExact(q: Quantity): Rational | undefined {
+  return q.exact === undefined ? undefined : siRational(q.exact, q.unit);
+}
+
+/** `q` with its exact reading, when there is one — and none carried over from a quantity it was copied from. */
+function exactQ(q: Quantity, exact: Rational | undefined): Quantity {
+  if (exact === undefined) {
+    if (q.exact !== undefined) delete q.exact;
+    return q;
   }
+  q.exact = exact;
+  return q;
+}
+
+/** `f` of the two SI values exactly, when both have an exact reading and `f` follows them. */
+function both(a: Quantity, b: Quantity, f: (x: Rational, y: Rational) => Rational | undefined): Rational | undefined {
+  const x = siExact(a);
+  const y = siExact(b);
+  return x !== undefined && y !== undefined ? f(x, y) : undefined;
 }
 
 /* ─────────────────────────── Quantity scopes ────────────────────────────── */
@@ -1117,25 +1427,26 @@ function quantityScopeFor(
   reads?: Reads,
 ): QScope {
   const ids = quantityIdsOf(model, contextId, memo);
+  const { definitions } = passOf(model, memo);
   return (name: string) => {
     const id = ids.get(name);
-    if (id === undefined) return reads ? definedQuantity(model, contextId, name, inFlight, memo, reads) : undefined;
-    const d = deriveFeature(model, id, inFlight, memo);
+    if (id === undefined) {
+      if (!reads) return undefined;
+      const defined = definedQuantity(model, contextId, name, inFlight, memo, reads);
+      return defined ?? (memo.everyPath === true ? standIn(model, contextId, name, memo) : undefined);
+    }
+    const d = deriveFeature(model, id, inFlight, memo, definitions.readAt(contextId, name));
     if (reads) note(reads, d);
     return derivationEval(d, name);
   };
 }
 
-/** The name → feature-id map of `contextId`'s quantity scope, built once per pass. */
-function quantityIdsOf(model: Model, contextId: ElementId, memo: DerivationMemo): Map<string, ElementId> {
-  const pass = passOf(model, memo);
-  let ids = pass.ids.get(contextId);
-  if (!ids) {
-    ids = new Map();
-    collectQuantityIds(model, contextId, '', ids, new Set(), new Set(), pass.definitions);
-    pass.ids.set(contextId, ids);
-  }
-  return ids;
+/**
+ * The name → feature-id map of `contextId`'s quantity scope: the one walk the
+ * scalar scope reads too ({@link DefiningEquations.scope}), once per pass.
+ */
+function quantityIdsOf(model: Model, contextId: ElementId, memo: DerivationMemo): ReadonlyMap<string, ElementId> {
+  return passOf(model, memo).definitions.scope(contextId, 'value');
 }
 
 /**
@@ -1224,62 +1535,84 @@ function derivationEval(d: FeatureDerivation, name: string): QEval {
  * once rather than at every link (its {@link DerivationPass}) is attached on
  * first use, and lives as long as the memo does.
  */
-export type DerivationMemo = Map<ElementId, FeatureDerivation> & { pass?: DerivationPass };
+export type DerivationMemo = Map<ElementId, FeatureDerivation> & {
+  pass?: DerivationPass;
+  /** This memo's derivations read every path ({@link everyPathMemo}). */
+  everyPath?: true;
+  /** The every-path memo of this pass, made on first use. */
+  everyPathMemo?: DerivationMemo;
+};
 
 /** What one pass reads of the model once: the defining equations of each context, and its scope's names. */
 export interface DerivationPass {
   definitions: DefiningEquations;
-  ids: Map<ElementId, Map<string, ElementId>>;
   /** Feature id → the other features a binding connector holds to its value, built on first use. */
   bound?: Map<ElementId, ElementId[]>;
 }
 
 function passOf(model: Model, memo: DerivationMemo): DerivationPass {
-  if (memo.pass?.definitions.model !== model) memo.pass = { definitions: new DefiningEquations(model), ids: new Map() };
+  if (memo.pass?.definitions.model !== model) memo.pass = { definitions: sharedDefinitions(model) };
   return memo.pass;
 }
 
-function collectQuantityIds(
-  model: Model,
-  ownerId: ElementId,
-  prefix: string,
-  ids: Map<string, ElementId>,
-  visited: Set<string>,
-  onPath: Set<ElementId>,
-  definitions: DefiningEquations,
-  link?: { usage: ElementRecord; clean: boolean },
-): void {
-  // TWO guards, because they answer different questions. `onPath` is the CYCLE
-  // guard and must be keyed on the owner ALONE: a feature whose type is one of
-  // its own owners (`item def Person { timeslice asPresident : Person; }`)
-  // generates an unbounded name tower `asPresident.asPresident…`, and a key that
-  // carries the prefix never repeats, so it can never see the cycle — it
-  // recursed until the stack died. `visited` is only a work bound for a diamond
-  // reached twice at the SAME prefix, so it keeps the prefix in its key: two
-  // sibling features of one type (`part a : T; part b : T;`) are different
-  // scopes and both must be walked.
-  if (onPath.has(ownerId)) return;
-  const guardKey = `${prefix} ${ownerId}`;
-  if (visited.has(guardKey)) return;
-  visited.add(guardKey);
-  onPath.add(ownerId);
-
-  for (const feat of effectiveFeatures(model, ownerId)) {
-    const name = feat.declaredName;
-    if (!name) continue;
-    const full = prefix ? `${prefix}.${name}` : name;
-    if (readsStatedValueIn(model, feat, ownerId, prefix, definitions, link)) {
-      if (!ids.has(full)) ids.set(full, feat.id);
-      if (!ids.has(name)) ids.set(name, feat.id); // bare-name convenience
-    }
-    // Through `feat`, as the scalar scope walks it (`collectIds` of ./evaluate-model).
-    const clean = link === undefined || (link.clean && definitions.linkReads(link.usage, feat));
-    for (const type of model.typesOf(feat.id)) {
-      collectQuantityIds(model, type.id, full, ids, visited, onPath, definitions, { usage: feat, clean });
-    }
+/**
+ * The memo of the EVERY-PATH reading of this pass: derivations that read both
+ * branches of every `if` ({@link evalQ}'s `every`) and a stand-in for every
+ * input the model gives no value ({@link standIn}) — so what they answer holds
+ * whatever the free inputs and the conditions are. It shares the pass's
+ * reading of the model, and never its derivations, which answer only at the
+ * model's point.
+ */
+function everyPathMemo(model: Model, memo: DerivationMemo): DerivationMemo {
+  if (memo.everyPath === true) return memo;
+  const pass = passOf(model, memo);
+  if (memo.everyPathMemo?.pass !== pass) {
+    const every: DerivationMemo = new Map();
+    every.pass = pass;
+    every.everyPath = true;
+    memo.everyPathMemo = every;
   }
+  return memo.everyPathMemo;
+}
 
-  onPath.delete(ownerId);
+/**
+ * What the every-path reading ({@link everyPathMemo}) reads for a name the
+ * model gives no value: a STAND-IN for the feature it names, of the kind of
+ * quantity that feature is, with no magnitude (`NaN`):
+ *  - held by a binding to a stated literal, that literal (`bind mirror = cap`
+ *    makes `mirror` an amount of GiB, as the solver lane reads it);
+ *  - else, in its unit when it has one, of its kind's dimension when it has
+ *    one — and an AMOUNT when that kind's unit is not the number one
+ *    ({@link amountOfKind}): a valueless `StorageCapacityValue` is stored in
+ *    bits, not a number to put `[GiB]` on;
+ *  - a `Boolean` is a truth value, whichever (both branches are read).
+ * `undefined` for a name that is no feature.
+ */
+function standIn(model: Model, contextId: ElementId, name: string, memo: DerivationMemo): QEval | undefined {
+  const { definitions } = passOf(model, memo);
+  const feature = name.includes('.')
+    ? definitions.chain([contextId], name)?.feature
+    : definitions.byName(contextId).get(name);
+  if (!feature) return undefined;
+  for (const partner of boundTo(model, feature.id, memo)) {
+    const literal = evaluateQuantity(model, partner);
+    if (literal) return { q: exactQ({ ...literal, magnitude: Number.NaN }, undefined) };
+  }
+  const typeName = declaredTypeName(model, feature.id);
+  if (typeName !== undefined && typeName.split('::').pop() === 'Boolean') return { b: false };
+  const facets = dimensionalFacets(model, feature.id);
+  const q: Quantity = {
+    magnitude: Number.NaN,
+    dimension: facets.unitDimension ?? facets.kindDimension ?? DIMENSIONLESS,
+  };
+  if (facets.unit) {
+    q.unit = facets.unit;
+    if (resolveUnit(facets.unit)?.offsetSI) q.absolute = true;
+  } else if (facets.kindName !== undefined && dimEqual(q.dimension, DIMENSIONLESS)) {
+    const amount = amountOfKind(facets.kindName);
+    if (amount !== undefined) q.convertedFrom = { unit: AMOUNT_UNIT[amount], kinds: { [amount]: 1 } };
+  }
+  return { q };
 }
 
 /**
@@ -1346,20 +1679,25 @@ const claimOnly =(claim: DimensionClaim, reason?: QReason, detail?: string, mess
 
 /**
  * Evaluate one feature as a quantity — a literal directly, an expression in the
- * feature's owner scope — and judge its dimension claim. This is the single
- * place the guard lives: the scope, the `derived-dimension-mismatch` rule and
- * the scalar-fallback refusal all read the same record.
+ * feature's owner scope, or, given `at`, in the scope of the context that
+ * changes what it reads, as that context's own value
+ * ({@link DefiningEquations.readAt}) — and judge its dimension claim. This is
+ * the single place the guard lives: the scope, the
+ * `derived-dimension-mismatch` rule and the scalar-fallback refusal all read
+ * the same record.
  */
 function deriveFeature(
   model: Model,
   id: ElementId,
   inFlight: InFlight,
   memo: DerivationMemo,
+  at?: ElementId,
 ): FeatureDerivation {
-  const hit = memo.get(id);
+  const key = at !== undefined ? instanceKey(id, at) : id;
+  const hit = memo.get(key);
   if (hit) return hit;
-  const d = deriveFeatureUncached(model, id, inFlight, memo);
-  if (!d.contact) memo.set(id, d);
+  const d = deriveFeatureUncached(model, id, inFlight, memo, at);
+  if (!d.contact) memo.set(key, d);
   return d;
 }
 
@@ -1368,12 +1706,27 @@ function deriveFeatureUncached(
   id: ElementId,
   inFlight: InFlight,
   memo: DerivationMemo,
+  at?: ElementId,
 ): FeatureDerivation {
   const feat = model.get(id);
   if (!feat) return claimOnly('unknown', 'unresolved');
 
-  const literal = evaluateQuantity(model, id);
+  // A value that contradicts a BINDING it redefines is no value of the
+  // feature's: the model states both, and no surface reads either.
+  const binding = passOf(model, memo).definitions.contradiction(feat);
+  if (binding) return claimOnly('unknown', 'contradiction', contradictionSentence(model, feat, binding));
+
+  // A `default` a binding overrides is no value of the feature's: the binding
+  // gives it one (statedValueOf), and the literal written is not read.
+  const literal = defaultGivesWay(model, feat) ? undefined : evaluateQuantity(model, id);
   if (literal) return { claim: 'literal', q: literal };
+
+  // A redefinition that states nothing, in a context that changes what the
+  // value it redefines reads: that value, read there.
+  if (at === undefined) {
+    const inherited = passOf(model, memo).definitions.redefinedValueOf(feat);
+    if (inherited) return deriveFeature(model, inherited.target.id, inFlight, memo, inherited.at);
+  }
 
   const raw = statedValueOf(model, feat);
   // A boolean feature is a legitimate operand of `and`/`or`/`not` in a body
@@ -1384,7 +1737,8 @@ function deriveFeatureUncached(
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
     return claimOnly('unknown', 'not-quantity');
   }
-  if (inFlight.has(id)) return backTo(model, id, inFlight);
+  const flight = at !== undefined ? instanceKey(id, at) : id;
+  if (inFlight.has(flight)) return backTo(model, flight, inFlight);
 
   let node: QNode;
   try {
@@ -1392,16 +1746,22 @@ function deriveFeatureUncached(
   } catch {
     return claimOnly('unknown', 'parse');
   }
+  // A value that reads a name the feature declares itself, which its owner's
+  // scope — or the scope it is read in — answers with another feature, is
+  // read by no surface.
+  const reading = at !== undefined ? { ...feat, ownerId: at } : feat;
+  const shadowed = shadowedNamesOf(model, reading, quantityRefsIn(s) ?? []);
+  if (shadowed.length > 0) return claimOnly('unknown', 'shadowed', shadowedSentence(model, reading, shadowed));
 
-  inFlight.set(id, undefined);
+  inFlight.set(flight, undefined);
   const reads: Reads = { depth: 0 };
   let r: QEval;
   try {
-    const owner: QScope =
-      feat.ownerId != null ? quantityScopeFor(model, feat.ownerId, inFlight, memo, reads) : () => undefined;
-    r = evalQ(node, owner, 0);
+    const where = at ?? feat.ownerId;
+    const owner: QScope = where != null ? quantityScopeFor(model, where, inFlight, memo, reads) : () => undefined;
+    r = evalQ(node, owner, EXACT, memo.everyPath === true);
   } finally {
-    inFlight.delete(id);
+    inFlight.delete(flight);
   }
   const nested = measured(reads);
   if (isQUnknown(r)) return { ...claimOnly('unknown', r.reason, r.detail, r.message), ...nested, ...causedBy(reads) };
@@ -1482,7 +1842,7 @@ export function equationDerivation(
   contextId?: ElementId,
 ): FeatureDerivation {
   const feat = model.get(featureId);
-  const name = feat?.declaredName;
+  const name = feat ? passOf(model, memo).definitions.nameOf(feat) : undefined;
   const context = contextId ?? feat?.ownerId;
   if (!feat || !name || context == null) return claimOnly('unknown', 'unresolved');
   // Through the asserted equation of that body, when it is one: reading it
@@ -1497,20 +1857,23 @@ export function equationDerivation(
  * The derivation the asserted equations in `contextId` — the feature's owner
  * unless given — give a feature that states no value: through the one the
  * rule both evaluators share picks ({@link chooseDefinition}), so the scalar
- * scope and this one read the same equation as the definition. `undefined`
- * when no asserted equation there may define it.
+ * scope and this one read the same equation as the definition. `site` is
+ * where the equations are written, when they are read in `contextId` over its
+ * names ({@link DefiningEquations.definitionReadIn}). `undefined` when no
+ * asserted equation there may define it.
  */
 export function definitionDerivation(
   model: Model,
   featureId: ElementId,
   memo: DerivationMemo = new Map(),
   contextId?: ElementId,
+  site?: ElementId,
 ): FeatureDerivation | undefined {
   const feat = model.get(featureId);
-  const name = feat?.declaredName;
+  const name = feat ? passOf(model, memo).definitions.nameOf(feat) : undefined;
   const context = contextId ?? feat?.ownerId;
   if (!feat || !name || context == null) return undefined;
-  const candidates = passOf(model, memo).definitions.of(context, name);
+  const candidates = passOf(model, memo).definitions.of(site ?? context, name);
   if (candidates.length === 0) return undefined;
   return definitionOf(model, featureId, name, candidates, memo, context, new Map());
 }
@@ -1620,12 +1983,16 @@ function definitionOf(
   memo: DerivationMemo,
   context: ElementId,
   inFlight: InFlight,
+  instance = false,
 ): FeatureDerivation {
-  if (inFlight.has(featureId)) return backTo(model, featureId, inFlight);
+  // A definition written elsewhere and read here, for this context's own
+  // value, is in flight under a key of its own (`instanceKey`).
+  const flight = instance ? instanceKey(featureId, context) : featureId;
+  if (inFlight.has(flight)) return backTo(model, flight, inFlight);
   const key = definitionKey(featureId, context);
   const hit = memo.get(key);
   if (hit) return hit;
-  const d = defineUncached(model, featureId, name, candidates, memo, context, inFlight);
+  const d = defineUncached(model, featureId, name, candidates, memo, context, inFlight, flight);
   if (!d.contact) memo.set(key, d);
   return d;
 }
@@ -1638,6 +2005,7 @@ function defineUncached(
   memo: DerivationMemo,
   context: ElementId,
   inFlight: InFlight,
+  flight: ElementId = featureId,
 ): FeatureDerivation {
   // The guard that keeps a long chain off the end of the stack. It answers
   // past the cap at once, before the nest below is measured — every
@@ -1648,12 +2016,20 @@ function defineUncached(
   }
   const { chosen, contact, cause } = chooseDefinition(
     inFlight,
-    featureId,
+    flight,
     candidates,
-    (c): FeatureDerivation => ({
-      ...deriveByEquation(model, featureId, name, c.constraint.attrs.expression as string, memo, context, inFlight),
-      definedBy: c.constraint.id,
-    }),
+    (c): FeatureDerivation => {
+      // An equation that reads a name its constraint declares itself, which
+      // the owner's scope answers with another feature, is a REFUSED
+      // definition: the feature reads no value, and is no freedom either.
+      const shadowed = shadowedEquation(model, c);
+      return {
+        ...(shadowed.length > 0
+          ? claimOnly('unknown', 'shadowed', shadowedSentence(model, c.constraint, shadowed))
+          : deriveByEquation(model, featureId, name, c.constraint.attrs.expression as string, memo, context, inFlight)),
+        definedBy: c.constraint.id,
+      };
+    },
     (d) => ({ answered: answered(d), deep: d.reason === 'depth', contact: d.contact, cause: d.cause }),
   );
   // What every candidate tried met, the chosen one's included.
@@ -1684,7 +2060,7 @@ function deriveByEquation(
   const side = isName(node.left) ? node.right : isName(node.right) ? node.left : undefined;
   if (!side) return claimOnly('unknown', 'unresolved');
   const reads: Reads = { depth: 0 };
-  const r = evalQ(side, quantityScopeFor(model, context, inFlight, memo, reads), 0);
+  const r = evalQ(side, quantityScopeFor(model, context, inFlight, memo, reads), EXACT, memo.everyPath === true);
   const depth = reads.depth + 1;
   const met = reads.contact ? { contact: reads.contact } : {};
   if (depth > MAX_DERIVATION_DEPTH) return { ...claimOnly('unknown', 'depth'), depth, ...met };
@@ -1708,9 +2084,10 @@ function deriveByEquation(
  * twin of `valueDefinedByEquation` and `valueThroughChain` in {@link
  * ./evaluate-model}, under the one rule both read ({@link chooseDefinition})
  * and for the same names: a valueless feature of the context, defined there
- * or — where the context changes nothing it reads — where it inherits the
- * definition from ({@link DefiningEquations.inheritedSite}), and a dotted
- * chain to one the chain reads ({@link DefiningEquations.chainSite}). So the
+ * or where it inherits the definition from — read there where the context
+ * changes nothing it reads, and here, over the context's names, where it does
+ * ({@link DefiningEquations.definitionReadIn}) — and a dotted chain to one
+ * ({@link DefiningEquations.chainDefinition}). So the
  * two scopes chain through the same equations, and a unitless chain reads the
  * same numbers on both; this one carries the units.
  */
@@ -1723,21 +2100,23 @@ function definedQuantity(
   reads: Reads,
 ): QEval | undefined {
   const { definitions } = passOf(model, memo);
-  const read = (featureId: ElementId, own: string, site: ElementId): QEval => {
-    const d = definitionOf(model, featureId, own, definitions.of(site, own), memo, site, inFlight);
+  // The definitions written in `site`, read in `at` — over the names there,
+  // where that context changes what they read.
+  const read = (featureId: ElementId, own: string, site: ElementId, at: ElementId = site): QEval => {
+    const d = definitionOf(model, featureId, own, definitions.of(site, own), memo, at, inFlight, at !== site);
     note(reads, d);
     return derivationEval(d, name);
   };
   if (name.includes('.')) {
-    const end = definitions.chainSite([contextId], name);
-    return end ? read(end.feature.id, end.feature.declaredName!, end.site) : undefined;
+    const end = definitions.chainDefinition([contextId], name);
+    return end ? read(end.feature.id, definitions.nameOf(end.feature)!, end.site, end.at) : undefined;
   }
   const feature = definitions.feature(contextId, name);
   if (!feature) return undefined;
   const candidates = definitions.of(contextId, name);
   if (candidates.length === 0) {
-    const site = definitions.inheritedSite(contextId, name);
-    if (site !== undefined) return read(feature.id, name, site);
+    const inherited = definitions.definitionReadIn(contextId, name);
+    if (inherited !== undefined) return read(feature.id, name, inherited.site, inherited.at);
     // No equation: a binding may hold it to a derived value ({@link boundDerivation}).
     const bound = boundDerivation(model, feature.id, memo);
     if (!bound) return undefined;
@@ -1761,7 +2140,7 @@ function backTo(model: Model, id: ElementId, inFlight: InFlight): FeatureDerivat
   const contact = returnTo(inFlight, id);
   if (contact.loops.size === 0) return { ...claimOnly('unknown', 'unresolved'), contact, cause: contact };
   const stack = [...inFlight.keys()];
-  const loop = [...stack.slice(stack.indexOf(id)), id].map((x) => model.get(x)?.declaredName ?? '?');
+  const loop = [...stack.slice(stack.indexOf(id)), id].map((x) => model.get(baseIdOf(x))?.declaredName ?? '?');
   const message = `${describeReason('cycle', loop[0])}: ${loop.join(' → ')}`;
   return { ...claimOnly('unknown', 'cycle', loop[0], message), contact, cause: contact };
 }
@@ -1888,7 +2267,10 @@ export function boundDerivation(
   for (const partner of boundTo(model, featureId, memo)) {
     const p = model.get(partner);
     if (!p) continue;
-    const d = hasStatedValue(model, p) ? deriveFeature(model, partner, new Map(), memo) : definitionDerivation(model, partner, memo);
+    const d =
+      hasStatedValue(model, p) || passOf(model, memo).definitions.redefinedValueOf(p)
+        ? deriveFeature(model, partner, new Map(), memo)
+        : definitionDerivation(model, partner, memo);
     if (!d || d.claim === 'literal') continue;
     if (d.q && d.derived) return { ...judgeDerivation(model, featureId, d.q), ...(d.depth ? { depth: d.depth } : {}) };
     if (d.q || d.b !== undefined) continue;
@@ -1965,6 +2347,73 @@ export function refusalSentence(d: FeatureDerivation, name: string, byDefinition
   return isQUnknown(r) ? messageOf(r) : undefined;
 }
 
+/**
+ * Why the `[unit]` beside the value `(expr) [unit]` of `featureId` may NOT be
+ * joined to it as `x == expr * 1.0 [unit]` (`withValueUnit` of
+ * ./unit-literals) — the sentence a reader that joins it refuses the value
+ * with — or `undefined` when it may: when `expr` is a NUMBER on every path,
+ * whatever the inputs the model gives no value and whichever branch a
+ * condition takes. `undefined` too for a feature with no such unit.
+ *
+ * At the model's point first: a value the validation surface refuses is
+ * refused in its words (`(cap * 2.0) [GiB]` puts a unit on bits). But a joined
+ * equation is read for EVERY value of its free inputs — the SMT engine proves
+ * over all of them, the solver solves for them — and the model's point says
+ * nothing about those. With `k` valueless, `(cap * k) [GiB]` is merely
+ * unresolved there, and joined it read `2^34·k` GiB, which no value of `k`
+ * makes the evaluator say: `dbl >= 1000.0 [GiB]` was PROVED from `k >= 1.0`.
+ * So the value is also read on every path ({@link everyPathMemo}), and joined
+ * only where that reading puts the unit on a number. A refusal there is the
+ * sentence; an every-path reading with no quantity at all (a loop, a name that
+ * is no feature, a grammar this evaluator does not read) shows no number, and
+ * is refused too. `name` is how the caller writes the feature.
+ *
+ * `at` is the context the value is READ in, where that is not where it is
+ * written — a copy of P's `total = (k * 2.0) [GiB]` read for a `p` whose `:>>
+ * k = 1.0 [GiB]` overrides a `default` (`DefiningEquations.valueRef`). The
+ * join is decided for that reading, never for P's: there `k` is a number,
+ * and decided at P the copy was joined as `k * 2.0 * 1 [GiB]` over p's bits
+ * — `p.total >= 1000.0 [GiB]` PROVED, and bounded at 2^35 GiB "exactly",
+ * where the validation surface says p's total cannot be derived.
+ */
+export function valueUnitRefusal(
+  model: Model,
+  featureId: ElementId,
+  memo: DerivationMemo = new Map(),
+  name?: string,
+  at?: ElementId,
+): string | undefined {
+  const feat = model.get(featureId);
+  if (!feat) return undefined;
+  const unit = expressionValueUnitOf(feat);
+  if (unit === undefined) return undefined;
+  const shown = name ?? feat.declaredName ?? '';
+  const own =
+    at !== undefined && at !== feat.ownerId
+      ? deriveFeature(model, featureId, new Map(), memo, at)
+      : operandDerivation(model, featureId, memo)?.derivation;
+  const atPoint = own !== undefined && isRefusalReason(own.reason) ? refusalSentence(own, shown, false) : undefined;
+  if (atPoint !== undefined) return atPoint;
+  // Only a unit with a factor is joined: an offset or unknown one leaves the
+  // value as it is read bare, and as gated as it always was.
+  const u = resolveUnit(unit);
+  if (!u || u.offsetSI) return undefined;
+  const every = deriveFeature(
+    model,
+    featureId,
+    new Map(),
+    everyPathMemo(model, memo),
+    at !== undefined && at !== feat.ownerId ? at : undefined,
+  );
+  if (every.q !== undefined) return undefined;
+  const refused = isRefusalReason(every.reason) ? refusalSentence(every, shown, false) : undefined;
+  if (refused !== undefined) return refused;
+  const r = derivationEval(every, shown);
+  return `the [${unit}] beside "${shown}" is not shown to apply to a number on every path: ${
+    isQUnknown(r) ? messageOf(r) : 'its value is not a quantity'
+  }`;
+}
+
 /* ────────────────────────── Constraint evaluation ───────────────────────── */
 
 /** Options for {@link evaluateConstraintQuantityDetailed}. */
@@ -1985,6 +2434,14 @@ export interface ConstraintQuantityOptions {
   bind?: (name: string) => Quantity | undefined;
   /** Absolute tolerance for `==`/`!=`/comparisons (a solver's, typically). */
   absTol?: number;
+  /**
+   * The relation reads values a numeric solve produced (`fallback`): within
+   * the solve's own tolerance `==`, `<=` and `>=` hold, rather than being
+   * left undecided, and a strict ordering or a `!=` stays undecided
+   * (`DecideOptions.searched` of ./exact). A caller judging values the model
+   * states leaves it unset, and reads them as the validation surface does.
+   */
+  searched?: boolean;
   /** A derivation cache shared across the constraints of one sweep. */
   memo?: DerivationMemo;
 }
@@ -2042,13 +2499,13 @@ export function evaluateConstraintQuantityDetailed(
     const fb = opts.fallback?.(name);
     return fb === undefined ? undefined : { q: fb };
   };
-  const absTol = opts.absTol ?? 0;
+  const tol: DecideOptions = { absTol: opts.absTol ?? 0, searched: opts.searched === true };
 
   let r: QEval;
   const sides: Pick<ConstraintQuantityResult, 'lhsSI' | 'rhsSI' | 'dimension'> = {};
   if (node.kind === 'binary' && COMPARISONS.has(node.op)) {
-    const l = evalQ(node.left, scope, absTol);
-    const rr = evalQ(node.right, scope, absTol);
+    const l = evalQ(node.left, scope, tol);
+    const rr = evalQ(node.right, scope, tol);
     if (!isQUnknown(l) && 'q' in l && !isQUnknown(rr) && 'q' in rr) {
       const ls = siValue(l.q);
       const rs = siValue(rr.q);
@@ -2056,9 +2513,9 @@ export function evaluateConstraintQuantityDetailed(
       if (rs !== undefined) sides.rhsSI = rs;
       sides.dimension = l.q.dimension;
     }
-    r = combineQ(node.op, l, rr, absTol);
+    r = combineQ(node.op, l, rr, tol);
   } else {
-    r = evalQ(node, scope, absTol);
+    r = evalQ(node, scope, tol);
   }
 
   if (isQUnknown(r)) {

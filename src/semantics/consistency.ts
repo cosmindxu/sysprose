@@ -21,11 +21,18 @@
  *    refused is not asserted, and adding an assertion can only make a set
  *    *less* satisfiable — so an inconsistency found without it is still an
  *    inconsistency, while a satisfying point found without it may be excluded
- *    by the very relation that was dropped. That asymmetry is why the refused
- *    count travels with the word "consistent" and why the plan's MUST-NEVER
- *    list forbids printing one without the other. It is the mirror image of the
- *    rule in {@link ./engines/smt}, where a PROOF survives a partial context and
- *    a refutation does not.
+ *    by the very relation that was dropped. So "consistent" is only ever
+ *    reported over a set that REACHES no refused relation — none of its own
+ *    clauses, and no refused axiom sharing a feature or a symbol with what it
+ *    asserts — and beside the count of the refusals it does not reach; a set
+ *    that reaches one is undecided. It is the mirror image of the rule in
+ *    {@link ./engines/smt}, where a PROOF survives a partial context and a
+ *    refutation does not.
+ *  - **Two instances are two unknowns.** A feature with no value read through
+ *    an instance has that instance's own symbol (`ContractVariable.instance`),
+ *    so `s.a.v` and `s.b.v` are two unknowns, as KerML makes them, and an
+ *    inconsistency over them is one the model states — never an equality one
+ *    symbol for every instance would have added.
  *  - **A core is a "conflicting subset" and nothing stronger.** z3's unsat core
  *    is not minimal, and calling it minimal would tell a reader that removing
  *    any one member fixes the model. Only `--minimize`, having run its deletion
@@ -91,8 +98,18 @@ import {
   type Refusal,
   type RefusalReason,
 } from './contracts';
-import { evaluate } from './expr';
-import { obligationsOf, unreadRowRefusal, type Obligation } from './obligations';
+import { isOutsideTheFragment } from './engines/literal';
+import { checkConstraints, checksByRow, type ConstraintCheck } from './evaluate-model';
+import { rereadRelation, tieSentence, type PointValues } from './exact';
+import {
+  obligationsOf,
+  reachOfRow,
+  reachedBy,
+  refusalReaches,
+  unreadRowRefusal,
+  type Obligation,
+  type RefusalReach,
+} from './obligations';
 import {
   encodeRelation,
   encodeScript,
@@ -101,8 +118,7 @@ import {
   type EncodedRelation,
   type ScriptAssertion,
 } from './smt/encode';
-import { decimalSymbols } from './smt/decimal-reading';
-import { type CheckOutcome, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
+import { rereadPoint, type CheckOutcome, type WitnessValue, type Z3Backend } from './smt/z3-bridge';
 
 /**
  * The largest core `--minimize` will attempt to reduce, by default.
@@ -357,10 +373,10 @@ interface EncodedRow {
  * it because it COULD would report `5000 <= 10`. `row.scaled` is the gates' own
  * answer and it is what is passed; nothing here re-derives it.
  */
-function encodeRow(row: Obligation, free: ReadonlySet<string>, decimal: ReadonlySet<string>): EncodedRow {
+function encodeRow(row: Obligation, free: ReadonlySet<string>): EncodedRow {
   const spellings = new Set<string>(free);
   for (const v of row.vars) if (free.has(v.qualifiedName)) spellings.add(v.path);
-  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: spellings, decimal });
+  const vars = encodeVariables(row.vars, row.sortPerVar, { scaled: row.scaled, free: spellings });
   // A row over a name this tool reads no value for here is not asserted
   // (see `unreadRowRefusal`).
   const unread = unreadRowRefusal(row);
@@ -589,7 +605,8 @@ function scriptOf(units: readonly Unit[]): {
  */
 export function isLiteralValueAxiom(model: Model, row: Obligation): boolean {
   if (row.role !== 'axiom' || row.source !== 'feature-value') return false;
-  const raw = model.get(row.element.id)?.attrs.value;
+  // A binding read in a redefinition's context states the binding's value.
+  const raw = model.get(row.instance?.baseId ?? row.element.id)?.attrs.value;
   if (raw === undefined || raw === null) return false;
   if (typeof raw === 'number' || typeof raw === 'boolean') return true;
   if (typeof raw !== 'string' || raw.trim() === '') return false;
@@ -609,7 +626,9 @@ export function isLiteralValueAxiom(model: Model, row: Obligation): boolean {
  *
  * A refused axiom has no symbols to connect through and is not carried at all:
  * it is reported under `refused`, where a reader can see it, and it cannot
- * enter a core because nothing asserted it.
+ * enter a core because nothing asserted it. What it may still do is EXCLUDE a
+ * satisfying point, so the set's reach is tested against it afterwards
+ * ({@link refusedReach}), by the features and symbols it would have read.
  */
 function reachableAxioms(axioms: readonly Unit[], seeds: readonly Unit[]): Unit[] {
   const reached = new Set<string>();
@@ -659,14 +678,16 @@ interface Prepared {
   /** Structural axioms nothing could encode. */
   axiomsRefused: RefusedRelation[];
   /**
-   * The refused axioms that read a value this tool does not read here
-   * (`unread-definition`), each with the features it reads — the real ones,
-   * by id, never the symbol a refused row was given ({@link unreadReach}).
+   * EVERY refused axiom, each with what it would have read — by feature and by
+   * symbol ({@link refusalReaches}), never only by the symbol a refused row was
+   * given — for {@link refusedReach}.
    */
-  axiomsUnread: Array<{ relation: RefusedRelation; features: ElementId[] }>;
+  axiomsRefusedReach: Array<{ relation: RefusedRelation; reach: RefusalReach }>;
   /** Each requirement's own relations, by requirement id. */
   clausesOf: Map<ElementId, EncodedRow[]>;
   contracts: Contract[];
+  /** The whole worklist: the guarantees `--with-values` reads at the model's values. */
+  rows: Obligation[];
 }
 
 /**
@@ -692,17 +713,13 @@ function prepare(model: Model, withValues: boolean): Prepared {
   const free = new Set(released);
   const releasedIds = new Set(withValues ? [] : literalRows.map((r) => r.element.id));
 
-  // One reading of every numeral the run puts side by side: a mass's own `=
-  // 0.1 [kg]` axiom and `mass <= 0.1 [kg]` are both one tenth of a kilogram
-  // (../smt/decimal-reading), or the simplest model was "inconsistent".
-  const decimal = decimalSymbols(model, rows);
   const encoded = new Map<ElementId, EncodedRow>();
-  for (const row of rows) encoded.set(row.element.id, encodeRow(row, free, decimal));
+  for (const row of rows) encoded.set(row.element.id, encodeRow(row, free));
 
   // The structural axioms: every axiom row that survived the release.
   const axiomUnits: Unit[] = [];
   const axiomsRefused: RefusedRelation[] = [];
-  const axiomsUnread: Prepared['axiomsUnread'] = [];
+  const axiomsRefusedReach: Prepared['axiomsRefusedReach'] = [];
   for (const row of rows) {
     if (row.role !== 'axiom') continue;
     if (releasedIds.has(row.element.id)) continue;
@@ -711,9 +728,7 @@ function prepare(model: Model, withValues: boolean): Prepared {
     if (!e.encoded) {
       const relation = refusalOf(e, null);
       axiomsRefused.push(relation);
-      if (relation.reason === 'unread-definition') {
-        axiomsUnread.push({ relation, features: e.row.vars.map((v) => v.featureId) });
-      }
+      axiomsRefusedReach.push({ relation, reach: reachOfRow(e.row, e.vars.map((v) => v.qualifiedName)) });
       continue;
     }
     axiomUnits.push(unitOf(e, 'axiom', null));
@@ -725,7 +740,9 @@ function prepare(model: Model, withValues: boolean): Prepared {
   // for what the requirement ASKS, not for what it takes as given.
   const clausesOf = new Map<ElementId, EncodedRow[]>();
   for (const row of rows) {
-    const id = row.requirement?.id;
+    // A requirement's clause read in a context that binds its subject (`satisfy
+    // R by p`) is R's too: a set over R's subject answers for p as well.
+    const id = row.instance?.requirementId ?? row.requirement?.id;
     if (id === undefined || row.role === 'axiom') continue;
     // The synthetic `no-formal-clause` row is not a relation and no gate
     // refused it: it is a requirement with prose and no body, counted on its
@@ -738,7 +755,15 @@ function prepare(model: Model, withValues: boolean): Prepared {
     else clausesOf.set(id, [e]);
   }
 
-  return { released, axiomUnits, axiomsRefused, axiomsUnread, clausesOf, contracts: contractsOf(model) };
+  return {
+    released,
+    axiomUnits,
+    axiomsRefused,
+    axiomsRefusedReach,
+    clausesOf,
+    contracts: contractsOf(model),
+    rows,
+  };
 }
 
 /**
@@ -765,45 +790,57 @@ function censusOf(
   const conditional: Array<{ contract: Contract; premises: EncodedRow[] }> = [];
   let noFormalClause = 0;
   for (const contract of contracts) {
-    const clauses = clausesOf.get(contract.id) ?? [];
-    const premises = clauses.filter((c) => c.row.role === 'premise');
-    const goals = clauses.filter((c) => c.row.role !== 'premise');
-    // AN ANTECEDENT NOBODY ENCODED IS NOT AN ANTECEDENT THAT IS TRUE. Dropping
-    // it from the implication would leave `G` asserted where the file states
-    // `A ⇒ G` — strictly the stronger claim — and a requirement set can be
-    // called inconsistent on the strength of a demand the model never made.
-    // The whole requirement stands down instead: every relation of it is
-    // listed under `refused`, where the count travels with the verdict, and
-    // dropping conjuncts is the direction UNSAT survives.
-    const brokenPremise = premises.find((p) => !p.encoded);
+    const all = clausesOf.get(contract.id) ?? [];
     let asserted = 0;
     let turnedDown = 0;
-    for (const clause of clauses) {
-      if (clause.encoded && brokenPremise === undefined) {
-        asserted += 1;
-      } else if (clause.encoded && brokenPremise !== undefined) {
-        const why = brokenPremise.refusal?.reason ?? 'unparseable';
-        refused.push({
-          ...refusalOf(clause, contract.qualifiedName),
-          reason: why,
-          detail:
-            `nothing asserted it: the \`assume\` clause it stands under ` +
-            `(\`${brokenPremise.row.expression}\`) was refused (${why}), and a guarantee asserted ` +
-            `without the assumption it is conditioned on is a stronger claim than the model makes`,
-        });
-        turnedDown += 1;
-      } else {
-        refused.push(refusalOf(clause, contract.qualifiedName));
-        turnedDown += 1;
-      }
+    // One reading of the requirement per context it is read in — its own, and
+    // each `satisfy R by p` that reads it differently — each its assumptions
+    // over its own goals: p's assumption is no premise of R's own reading.
+    const readings = new Map<string, EncodedRow[]>();
+    for (const c of all) {
+      const key = c.row.requirement?.id ?? contract.id;
+      const list = readings.get(key);
+      if (list) list.push(c);
+      else readings.set(key, [c]);
     }
-    if (brokenPremise === undefined) {
-      for (const goal of goals) {
-        if (goal.encoded) units.push(unitOf(goal, 'guarantee', contract, premises));
+    for (const clauses of readings.values()) {
+      const premises = clauses.filter((c) => c.row.role === 'premise');
+      const goals = clauses.filter((c) => c.row.role !== 'premise');
+      // AN ANTECEDENT NOBODY ENCODED IS NOT AN ANTECEDENT THAT IS TRUE. Dropping
+      // it from the implication would leave `G` asserted where the file states
+      // `A ⇒ G` — strictly the stronger claim — and a requirement set can be
+      // called inconsistent on the strength of a demand the model never made.
+      // The whole requirement stands down instead: every relation of it is
+      // listed under `refused`, where the count travels with the verdict, and
+      // dropping conjuncts is the direction UNSAT survives.
+      const brokenPremise = premises.find((p) => !p.encoded);
+      for (const clause of clauses) {
+        if (clause.encoded && brokenPremise === undefined) {
+          asserted += 1;
+        } else if (clause.encoded && brokenPremise !== undefined) {
+          const why = brokenPremise.refusal?.reason ?? 'unparseable';
+          refused.push({
+            ...refusalOf(clause, contract.qualifiedName),
+            reason: why,
+            detail:
+              `nothing asserted it: the \`assume\` clause it stands under ` +
+              `(\`${brokenPremise.row.expression}\`) was refused (${why}), and a guarantee asserted ` +
+              `without the assumption it is conditioned on is a stronger claim than the model makes`,
+          });
+          turnedDown += 1;
+        } else {
+          refused.push(refusalOf(clause, contract.qualifiedName));
+          turnedDown += 1;
+        }
       }
-      const encodedPremises = premises.filter((p) => p.encoded !== undefined);
-      if (encodedPremises.length > 0 && goals.some((g) => g.encoded !== undefined)) {
-        conditional.push({ contract, premises: encodedPremises });
+      if (brokenPremise === undefined) {
+        for (const goal of goals) {
+          if (goal.encoded) units.push(unitOf(goal, 'guarantee', contract, premises));
+        }
+        const encodedPremises = premises.filter((p) => p.encoded !== undefined);
+        if (encodedPremises.length > 0 && goals.some((g) => g.encoded !== undefined)) {
+          conditional.push({ contract, premises: encodedPremises });
+        }
       }
     }
     if (asserted + turnedDown === 0) noFormalClause += 1;
@@ -911,7 +948,10 @@ export async function checkConsistency(
   const minimize = opts.minimize === true;
   const maxCore = opts.maxCore ?? DEFAULT_MAX_CORE;
   const timeoutMs = opts.timeoutMs;
-  const { released, axiomUnits, axiomsRefused, axiomsUnread, clausesOf, contracts } = prepare(model, withValues);
+  const { released, axiomUnits, axiomsRefused, axiomsRefusedReach, clausesOf, contracts, rows } = prepare(
+    model,
+    withValues,
+  );
   const groups = groupBySubject(model, contracts, opts.subjectId);
 
   // STEP 0, once per run: is the model's own axiom set satisfiable at all? A
@@ -931,6 +971,24 @@ export async function checkConsistency(
     }
   }
 
+  // The numeric surface's reading of every relation at the model's values,
+  // once per run and only when a set asks for it: its own refused clause, or a
+  // conflict found at those values (`--with-values`).
+  let swept: ReadonlyMap<ElementId, ConstraintCheck> | undefined;
+  const checksAtValues = (): ReadonlyMap<ElementId, ConstraintCheck> => (swept ??= checksByRow(checkConstraints(model)));
+  let violated: ReadonlySet<ElementId> | undefined;
+  const violatedAtValues = (): ReadonlySet<ElementId> => {
+    if (violated === undefined) {
+      const guarantees = new Set(rows.filter((r) => r.role === 'obligation').map((r) => r.element.id));
+      violated = new Set(
+        [...checksAtValues().values()]
+          .filter((c) => c.result === 'violated' && guarantees.has(c.id))
+          .map((c) => c.id),
+      );
+    }
+    return violated;
+  };
+
   const out: ConsistencyGroup[] = [];
   for (const group of groups) {
     const judged = await judgeGroup({
@@ -939,12 +997,15 @@ export async function checkConsistency(
       clausesOf,
       axiomUnits,
       axiomsRefused,
-      axiomsUnread,
+      axiomsRefusedReach,
       axiomOutcome,
       axiomCore,
+      model,
       backend: opts.backend,
       timeoutMs,
       withValues,
+      violatedAtValues,
+      checksAtValues,
       minimize,
       maxCore,
     });
@@ -1088,14 +1149,70 @@ interface JudgeInput {
   clausesOf: ReadonlyMap<ElementId, EncodedRow[]>;
   axiomUnits: readonly Unit[];
   axiomsRefused: readonly RefusedRelation[];
-  axiomsUnread: Prepared['axiomsUnread'];
+  axiomsRefusedReach: Prepared['axiomsRefusedReach'];
   axiomOutcome: CheckOutcome | null;
   axiomCore: readonly CoreMember[];
+  model: Model;
   backend: Z3Backend;
   timeoutMs: number | undefined;
   withValues: boolean;
+  /**
+   * The requirement clauses the numeric surface reads FALSE at the model's own
+   * values — asked once, and only where a refused clause of a set's own makes
+   * it matter ({@link violatedOwn}).
+   */
+  violatedAtValues: () => ReadonlySet<ElementId>;
+  /** The numeric surface's reading of every relation at the model's own values, by worklist row id. */
+  checksAtValues: () => ReadonlyMap<ElementId, ConstraintCheck>;
   minimize: boolean;
   maxCore: number;
+}
+
+/**
+ * A set's own refused guarantees the numeric surface reads false at the
+ * model's values, under `--with-values` — and none in the default mode, whose
+ * question is not about those values.
+ *
+ * Such a clause is no shape merely outside the fragment: `verify` refutes it
+ * ("no flag forgives a violation"), so filing it here under the forgivable
+ * code put `consistency --with-values --allow-inconclusive` at exit 0 where
+ * `verify --allow-inconclusive` exits 1 on the same file.
+ */
+function violatedOwn(input: JudgeInput, own: readonly RefusedRelation[]): RefusedRelation[] {
+  if (!input.withValues || own.length === 0) return [];
+  const violated = input.violatedAtValues();
+  return own.filter((r) => violated.has(r.id));
+}
+
+/** What a reader is told about {@link violatedOwn}. */
+function violatedSentence(violated: readonly RefusedRelation[]): string {
+  return (
+    `${violated.map((r) => `\`${r.expression}\` (${r.qualifiedName})`).join(', ')} ` +
+    `${violated.length === 1 ? 'is' : 'are'} false at the values this file states, on the numeric surface — a ` +
+    'violation `verify` refutes, and no flag forgives one. '
+  );
+}
+
+/**
+ * Does the numeric surface read every requirement an UNSAT core names as
+ * holding at the model's own values — each implication `assume ⇒ require`
+ * true there, an assumption read false or the guarantee read true? Only then
+ * do the two readings contradict one another; a core with no requirement in
+ * it, or one the numeric surface reads otherwise or not at all, is a conflict
+ * it does not dispute.
+ */
+function holdsAtValues(input: JudgeInput, labels: readonly string[], owners: ReadonlyMap<string, Unit>): boolean {
+  const checks = input.checksAtValues();
+  const reads = (row: EncodedRow): ConstraintCheck['result'] | undefined => checks.get(row.row.element.id)?.result;
+  let requirements = 0;
+  for (const label of labels) {
+    const unit = owners.get(label);
+    if (!unit || unit.kind !== 'guarantee') continue;
+    requirements += 1;
+    if (unit.premises.some((p) => reads(p) === 'violated')) continue;
+    if (unit.premises.some((p) => reads(p) !== 'satisfied') || reads(unit.row) !== 'satisfied') return false;
+  }
+  return requirements > 0;
 }
 
 /**
@@ -1152,18 +1269,28 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
   // consistent — the same rule that stops `verify` exiting 0 over a model with
   // no obligations, one level up.
   if (requirementUnits.length === 0) {
+    const violated = violatedOwn(input, refused);
     return {
       ...base,
       outcome: 'inconclusive',
-      // A requirement stood down for a value this tool does not read here is
-      // not a shape outside the fragment: the value exists in the model, and
-      // no flag forgives the set it leaves undecided.
-      code: refused.some((r) => r.reason === 'unread-definition')
-        ? 'verification/not-evaluable'
-        : 'verification/unsupported-construct',
+      // THE CODE `verify` FILES THE SAME RELATIONS UNDER, by their reason. A
+      // set whose relations are all shapes outside the fragment (`%`, °C
+      // arithmetic, a string compare) is what `verify` calls `unsupported`,
+      // and `--allow-inconclusive` may forgive it there and here alike. A
+      // relation nobody can read — kilograms against metres, a name that
+      // resolves to nothing, a value this tool does not read here — is a
+      // defect `verify` files `not-evaluable`, and a set whose only relation is
+      // one was forgiven here while `verify` refused to forgive it. And one the
+      // numeric surface reads false at the values `--with-values` pins is a
+      // violation `verify` refutes ({@link violatedOwn}).
+      code:
+        violated.length > 0 || refused.some((r) => !isOutsideTheFragment(r.reason))
+          ? 'verification/not-evaluable'
+          : 'verification/unsupported-construct',
       detail:
         `no requirement on this subject states a relation this lane encodes, so there is nothing ` +
         `to check: an empty requirement set is satisfiable and says nothing about the model. ` +
+        (violated.length > 0 ? violatedSentence(violated) : '') +
         `${requirements.length} requirement(s), ${refusedSentence(refused)}`,
     };
   }
@@ -1261,6 +1388,25 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
           `in this tool, not in the model. ${refusedSentence(refused)}`,
       };
     }
+    // A CONFLICT AT THE MODEL'S VALUES THAT THE VALIDATION SURFACE READS AS
+    // HOLDING THERE is no conflict this tool can stand behind. Both readings
+    // decide ties by the decimals written, so where they disagree one of them
+    // read something the other did not — and `inconsistent`, exit 1, beside a
+    // Problems panel where every requirement in the conflict holds would be a
+    // verdict the tool's own other reading contradicts. Undecided, with both.
+    if (input.withValues && holdsAtValues(input, outcome.core, script.owners)) {
+      return {
+        ...shape,
+        outcome: 'inconclusive',
+        checks,
+        code: 'verification/not-evaluable',
+        detail:
+          `the solver finds no point at the model's own values satisfying all ${requirements.length} ` +
+          `requirement(s) (core {${coreSentence(core)}}), but the numeric surface reads every requirement in that ` +
+          'core as holding at those very values — the two readings disagree, so neither is published. ' +
+          refusedSentence(refused),
+      };
+    }
     let minimized = false;
     if (input.minimize && core.length > 0) {
       const reduced = await minimizeCore(input, script.owners, core);
@@ -1289,7 +1435,7 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
 
   // SAT — a design point. It is re-read through this tool's own evaluator
   // before it is printed, exactly as the SMT engine re-reads a counterexample.
-  const confirmation = confirmWitness(requirementUnits, outcome.witness);
+  const confirmation = confirmWitness(requirementUnits, rereadPoint(outcome));
   if (!confirmation.ok) {
     return {
       ...shape,
@@ -1339,32 +1485,52 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
   }
 
   // A SATISFYING POINT FOUND WITHOUT A RELATION THE SET REACHES IS NOT ONE.
-  // UNSAT survives a dropped relation; SAT does not (module header), and the
-  // refused count beside "consistent" is how that is normally paid. A relation
-  // refused because it reads a value whose definition is written in another
-  // context (`unread-definition`) is not a shape outside the fragment: the
-  // value exists, and the relation may exclude the very point found — `p.e <=
-  // 1.0` over P's `e == x * 2.0` (6) is no point at all, and a requirement
-  // set that carried it beside `p.k <= 9.0` was called consistent at the
-  // model's values. So where such a relation is one of this set's clauses, or
-  // an axiom that reads a feature the set reaches — by the FEATURE, since the
-  // refused row read it by a symbol of its own — the set is undecided, and no
-  // flag forgives it. `inconsistent` found without it stands.
-  const unread = unreadReach(input, units, refused);
-  if (unread.length > 0) {
+  // UNSAT survives a dropped relation; SAT does not (module header): a
+  // relation nothing asserted may exclude the very point found. `p.g <= 1.0`
+  // over P's `g = x % 4.0` (3 at x = 7) was called consistent with witness g
+  // = 0, and `p.g >= 5.0` — which NO x satisfies — consistent with g = 5. So
+  // where such a relation is one of this set's own clauses (a clause a gate
+  // refused, or one stood down with the `assume` it was conditioned on), or an
+  // axiom that reaches what the set's assertions read ({@link refusalReaches},
+  // by feature and by symbol), the set is undecided. `inconsistent` found
+  // without it stands.
+  //
+  // WHICH CODE is `verify`'s answer for the same relations. A set whose only
+  // such relations are its OWN, and every one a shape outside the fragment
+  // this lane encodes, is what `verify` files `unsupported` and
+  // `--allow-inconclusive` may forgive. A relation of the CONTEXT it reaches
+  // is what `verify` files a counterexample `witness-unconfirmed` over, and a
+  // defect (a dimension clash, an unresolved name, a value this tool does not
+  // read here) is `not-evaluable` there: neither is forgiven here either.
+  const reach = refusedReach(input, units, refused);
+  if (reach.own.length + reach.context.length > 0) {
+    const left = [...reach.own, ...reach.context];
+    const violated = violatedOwn(input, reach.own);
+    const forgivable =
+      violated.length === 0 && reach.context.length === 0 && reach.own.every((r) => isOutsideTheFragment(r.reason));
+    const unread = left.some((r) => r.reason === 'unread-definition');
     return {
       ...shape,
       outcome: 'inconclusive',
       checks,
-      code: 'verification/not-evaluable',
+      code: forgivable ? 'verification/unsupported-construct' : 'verification/not-evaluable',
       unengageable: engagement.unengageable,
       witness: outcome.witness,
       detail:
         `these ${requirements.length} requirement(s) are satisfiable ${mode(input.withValues)} — but only ` +
-        `without ${unread.length} relation(s) they reach that read a value whose definition is written in another ` +
-        `context, which this tool does not read here (${unread.map((r) => r.qualifiedName).join('; ')}) — and ` +
-        `such a relation may exclude that very point, so the set has not been shown consistent. The value ` +
-        `exists in the model, so \`--allow-inconclusive\` does not forgive it. ${refusedSentence(refused)}`,
+        `without ${left.length} relation(s) they reach that nothing asserted (` +
+        left.map((r) => `${r.qualifiedName}: ${r.reason}`).join('; ') +
+        `), and such a relation may exclude that very point, so the set has not been shown consistent. ` +
+        (forgivable
+          ? 'Each is a relation of the set itself outside the fragment this lane encodes, which ' +
+            '`--allow-inconclusive` may forgive. '
+          : violated.length > 0
+            ? violatedSentence(violated)
+            : unread
+            ? 'The value exists in the model, so `--allow-inconclusive` does not forgive it. '
+            : '`--allow-inconclusive` does not forgive it. ') +
+        refusedSentence(refused) +
+        (noFormalClause > 0 ? `, ${noFormalClause} requirement(s) state no relation at all` : ''),
     };
   }
 
@@ -1395,22 +1561,32 @@ async function judgeGroup(input: JudgeInput): Promise<ConsistencyGroup> {
 }
 
 /**
- * The relations refused for reading a value this tool does not read here
- * (`unread-definition`) that a requirement set reaches: its own clauses so
- * refused, and the refused axioms that read a feature the set's assertions
- * read — the set's own and the axioms it reaches. Compared by FEATURE id: a
- * refused row reads such a value by a symbol of its own, which no asserted
- * relation shares, so a reach taken over symbols never met it.
+ * The relations nothing asserted that a requirement set reaches: `own`, every
+ * refusal of its clauses — a clause a gate refused, and one stood down with the
+ * `assume` it was conditioned on — and `context`, every refused axiom that
+ * reaches what the set's assertions read, its own and the axioms it reaches,
+ * premises included ({@link refusalReaches}: by feature as well as by symbol,
+ * since a refused row over a value this tool does not read here reads it by a
+ * symbol of its own, and an axiom with no readable variable at all reaches
+ * everything — a feature value's own feature excepted, {@link reachOfRow}).
  */
-function unreadReach(input: JudgeInput, units: readonly Unit[], refused: readonly RefusedRelation[]): RefusedRelation[] {
-  const out = refused.filter((r) => r.reason === 'unread-definition');
-  if (input.axiomsUnread.length === 0) return out;
-  const reached = new Set<ElementId>();
-  for (const u of units) for (const r of rowsOf(u)) for (const v of r.row.vars) reached.add(v.featureId);
-  for (const a of input.axiomsUnread) {
-    if (a.features.length === 0 || a.features.some((f) => reached.has(f))) out.push(a.relation);
-  }
-  return out;
+function refusedReach(
+  input: JudgeInput,
+  units: readonly Unit[],
+  refused: readonly RefusedRelation[],
+): { own: RefusedRelation[]; context: RefusedRelation[] } {
+  const own = [...refused];
+  if (input.axiomsRefusedReach.length === 0) return { own, context: [] };
+  const reached = reachedBy(
+    units.flatMap((u) =>
+      rowsOf(u).map((r) => ({
+        vars: r.row.vars,
+        symbols: [...r.vars.map((v) => v.qualifiedName), ...(r.encoded?.reads ?? [])],
+      })),
+    ),
+  );
+  const context = input.axiomsRefusedReach.filter((a) => refusalReaches(a.reach, reached)).map((a) => a.relation);
+  return { own, context };
 }
 
 /**
@@ -1433,8 +1609,9 @@ async function checkEngagement(
   axioms: readonly Unit[],
   requirementUnits: readonly Unit[],
   conditional: ReadonlyArray<{ contract: Contract; premises: EncodedRow[] }>,
-): Promise<{ unengageable: UnengageableRequirement[]; checks: number }> {
+): Promise<{ unengageable: UnengageableRequirement[]; engaged: Unit[]; checks: number }> {
   const unengageable: UnengageableRequirement[] = [];
+  const engagedUnits: Unit[] = [];
   let checks = 0;
   for (const { contract, premises } of conditional) {
     // The antecedent, asserted on its own as a fact of this trial: `A ∧ ⋀(A⇒G)`.
@@ -1445,6 +1622,7 @@ async function checkEngagement(
     );
     checks += 1;
     if (outcome.status !== 'unsat') continue;
+    engagedUnits.push(...engaged);
     unengageable.push({
       id: contract.id,
       qualifiedName: contract.qualifiedName,
@@ -1452,7 +1630,7 @@ async function checkEngagement(
       assumptions: premises.map((p) => p.row.expression),
     });
   }
-  return { unengageable, checks };
+  return { unengageable, engaged: engagedUnits, checks };
 }
 
 /** `a conflicting subset`, and the one phrase that may say more. */
@@ -1618,40 +1796,37 @@ async function minimizeCore(
  * set, so the requirements are what must be re-read as true at the point the
  * solver chose; that is what catches an encoding built wrong — a flipped
  * comparison, a mis-scaled factor, a numeral that is not the number this tool
- * holds. The structural axioms are NOT re-read, because z3 reasons over exact
- * rationals and this evaluator over binary64: a derived feature's defining
- * equation re-read at an exact rational witness can differ in the last bit and
- * would report an encoder defect for a rounding difference. What that costs is
+ * holds. They are re-read over z3's exact rationals and the decimals written
+ * (`rereadRelation` of ./exact): read in binary64, `p.f + 0.2 == 0.3` at the
+ * point `f = 1/10` was false, and a satisfiable set inconclusive. The
+ * structural axioms are NOT re-read: a derived feature's defining equation
+ * may involve an operation exact arithmetic does not follow, and it would
+ * report an encoder defect for a rounding difference. What that costs is
  * stated in the report — the point is one the axioms ADMIT — and the direction
  * of the remaining risk is the safe one, since an axiom this gate cannot check
  * can only make the set harder to satisfy.
  *
- * A symbol the solver did not assign is an unread relation, and an unread
- * relation is NOT a confirmation: it comes back as a failure, because "the
- * point could not be checked" and "the point checks out" must not be the same
- * answer.
+ * THE POINT IS z3's MODEL COMPLETED ({@link rereadPoint}), not the witness
+ * printed beside the verdict: a constant no assertion turns on is left out of
+ * z3's model, and which ones are depends on what else ran in the process. A
+ * symbol the point still has no value for is an unread relation, and an
+ * unread relation is NOT a confirmation: it comes back as a failure, because
+ * "the point could not be checked" and "the point checks out" must not be the
+ * same answer.
  */
 function confirmWitness(
   units: readonly Unit[],
-  witness: readonly WitnessValue[],
+  values: PointValues,
 ): { ok: true } | { ok: false; why: string } {
-  const values = new Map<string, number | boolean>();
-  for (const w of witness) if (w.value !== null) values.set(w.symbol, w.value);
   /** One row re-read at the point, or the reason it could not be. */
   const reread = (row: EncodedRow): boolean | string => {
     const node = row.row.node;
     if (node === null) return `\`${row.row.expression}\` has no readable body`;
-    const scope = (name: string): unknown => {
-      const v = row.vars.find((x) => x.path === name || x.qualifiedName === name);
-      if (!v) return undefined;
-      const raw = values.get(v.qualifiedName);
-      if (raw === undefined) return undefined;
-      if (typeof raw === 'boolean') return raw;
-      return raw * v.factor + v.offset;
-    };
-    const out = evaluate(node, scope);
+    const out = rereadRelation(node, row.vars, values);
     if (!('value' in out)) {
-      return `\`${row.row.expression}\` could not be re-read at the point the solver chose`;
+      return out.tie
+        ? `\`${row.row.expression}\` cannot be decided at the point the solver chose: ${tieSentence(out.tie)}`
+        : `\`${row.row.expression}\` could not be re-read at the point the solver chose`;
     }
     if (typeof out.value !== 'boolean') {
       return `this tool’s own evaluator makes \`${row.row.expression}\` ${String(out.value)} at the point the solver chose, not a truth value`;

@@ -484,6 +484,21 @@ describe('round-trip — hand-written snippets', () => {
       }`,
     ],
     [
+      // `default` is a different statement from `=`: overridable by a
+      // redefinition, where `=` binds every instance. The mapper used to drop it.
+      'default = and default := keep the default keyword',
+      `package Dv {
+        part def P {
+          attribute load default = 1.0;
+          attribute rate default := 2.0;
+          attribute bound = 3.0;
+        }
+        part p : P {
+          attribute :>> load = 50.0;
+        }
+      }`,
+    ],
+    [
       'value units: compound, quoted, qualified and prefixed spellings',
       `package Un {
         attribute energy : ISQ::EnergyValue = 640.0 ['W\u22c5h'];

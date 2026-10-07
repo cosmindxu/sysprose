@@ -86,6 +86,7 @@ import { FAULT_TREE_EXIT_CODES, findCommand, flagsFor } from '../../scripts/lib/
 import {
   behaviouralLaneCensus,
   checkBounds,
+  checkConstraints,
   checkConsistency,
   computeFaultTree,
   isBehaviouralElement,
@@ -1211,15 +1212,20 @@ describe('L8 — a single-field mutation moves the verdict, and moves the digest
     expect(after.modelDigest, 'the relation is part of the model').not.toBe(before.modelDigest);
   }, 120_000);
 
-  withZ3('`<=` → `<` at the exact boundary moves the verdict conservatively, never to a refutation', async () => {
+  withZ3('`<=` → `<` at the exact boundary flips proved to refuted, on both surfaces', async () => {
     const before = await judge(base);
     const after = await judge(base.replace('<= 18.5 [kg] }', '< 18.5 [kg] }'));
     expect(after.claim, 'the strict ordering did not move the verdict at all').not.toBe('proved');
-    // The direction matters and is the whole point: the two surfaces read a tie
-    // differently, so the engine declines. A refutation here would be this tool
-    // contradicting its own checker on a boundary case.
-    expect(after.claim, 'a boundary tie was printed as a violation').toBe('inconclusive');
-    expect(after.code).toBe('verification/not-evaluable');
+    // The boundary is the boundary: 18.5 kg is not under 18.5 kg. The checker
+    // once read a tie as EQUAL for every operator, the strict ones satisfied,
+    // and the engine declined rather than contradict it; every surface now
+    // decides a tie by the decimals written (the tie rule), and they agree.
+    expect(after.claim, 'a violated boundary was not refuted').toBe('refuted');
+    expect(after.code).toBe('verification/refuted');
+    const { model } = await loadModelText(base.replace('<= 18.5 [kg] }', '< 18.5 [kg] }'), {
+      fileName: 'mutation.sysml',
+    });
+    expect(checkConstraints(model!).map((c) => c.result)).toEqual(['violated']);
     expect(after.obligationDigest, 'the operator is part of the normal form').not.toBe(
       before.obligationDigest,
     );
@@ -1309,6 +1315,55 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
     const mtow = released.groups[0].witness.find((w) => w.symbol.endsWith('::mtow'));
     expect(mtow, 'the released run stopped naming the freed feature').toBeDefined();
     expect(mtow!.value, 'the released run answered at the file’s own value').not.toBeCloseTo(18.5, 9);
+  });
+
+  withZ3('answers the same question the same way however many checks ran before it', async () => {
+    // THE SHAPE OF v9's DecisionRecordSoftware, which a fresh process filed
+    // `inconclusive`. z3's model is partial, and WHICH constants it leaves out
+    // depends on the history of the context every check in a process shares.
+    // Measured on one fresh module: the first run's point assigns `inEnvelope
+    // = false`; the second leaves `inEnvelope` out, because the guarantee alone
+    // makes the implication true — and the re-read, over the bare model, found
+    // the premise unreadable and filed the set `verification/not-evaluable`
+    // (exit 0, then 2, then 0 again, one model). The re-read reads the model
+    // COMPLETED; the witness a reader is shown stays z3's own.
+    const text = [
+      'package HistoryIndependence {',
+      '  part def Record {',
+      '    attribute frames : Boolean = true;',
+      '    attribute version : Boolean = true;',
+      '    attribute inEnvelope : Boolean = true;',
+      '  }',
+      '  requirement def RecordContract {',
+      '    subject records : Record;',
+      '    assume constraint { records.inEnvelope == true }',
+      '    require constraint { records.frames == true and records.version == true }',
+      '  }',
+      '  part records : Record;',
+      '  satisfy RecordContract by records;',
+      '}',
+      '',
+    ].join('\n');
+    const { model } = await loadModelText(text, { fileName: 'history-independence.sysml' });
+    if (!model) throw new Error('the probe produced no model');
+    // One fresh module, so the history is the one measured: these runs alone.
+    freshModule();
+    const runs: Array<Awaited<ReturnType<typeof consistencyReport>>> = [];
+    for (let i = 0; i < 3; i += 1) runs.push(await consistencyReport(model, { sourceText: text }));
+    for (const [i, r] of runs.entries()) {
+      const [group] = r.groups;
+      expect(group.outcome, `run ${i + 1}: ${group.detail}`).toBe('consistent');
+      expect(group.witnessConfirmed, `run ${i + 1}: a point z3 found was not re-read`).toBe(true);
+      expect(r.exitCode, `run ${i + 1}`).toBe(0);
+    }
+    // NOT VACUOUS: some run's model really did leave the premise out, and what
+    // is printed is that model — the completion is for the re-read alone. If a
+    // z3 release stops leaving it out, this history has to be re-measured.
+    const partial = runs.filter(
+      (r) => !r.groups[0].witness.some((w) => w.symbol === 'HistoryIndependence::Record::inEnvelope'),
+    );
+    expect(partial.length, 'no run’s model left `inEnvelope` out, so nothing here was completed').toBeGreaterThan(0);
+    for (const r of partial) expect(r.groups[0].detail).not.toContain('inEnvelope');
   });
 
   withZ3('names both constraints when a mass floor contradicts a mass ceiling', async () => {
@@ -1595,9 +1650,12 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
       r.diagnostics.filter((d) => d.code === 'verification/unsupported-expression'),
       'the same refusal was filed once per group it appears in',
     ).toHaveLength(1);
+    // One per set the refused clause stands down — it is a clause of BOTH, and
+    // a set satisfiable only without it is not shown consistent — and one for
+    // the prose requirement.
     expect(
       r.diagnostics.filter((d) => d.code === 'verification/unsupported-construct'),
-    ).toHaveLength(1);
+    ).toHaveLength(3);
     // The per-group rows are unaffected: each group really does hold the
     // supertype's requirements, and that is the promise being kept.
     expect(r.groups.map((g) => g.requirements.length)).toEqual([3, 4]);
@@ -1645,14 +1703,26 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
     // travel with the verdict or neither does.
     const r = await check(SUBTYPE);
     const air = r.groups.find((g) => g.subject?.typeQualifiedName?.endsWith('AirVehicle'))!;
-    expect(air.outcome).toBe('consistent');
+    // The °C rise is one of the set's own clauses, refused: a set satisfiable
+    // only without it is undecided, under the code `verify` files it by — and
+    // the undecided verdict carries both figures too.
+    expect([air.outcome, air.code]).toEqual(['inconclusive', 'verification/unsupported-construct']);
     expect(air.noFormalClause).toBe(1);
-    expect(air.detail, 'the consistent verdict hides the prose-only count').toContain(
+    expect(air.detail, 'the stand-down hides the prose-only count').toContain(
       '1 requirement(s) state no relation at all',
     );
-    expect(air.detail, 'the consistent verdict hides the refused count').toContain(
-      '1 relation(s) refused',
+    expect(air.detail, 'the stand-down hides the refused count').toContain('1 relation(s) refused');
+    // Without the refused clause the set IS consistent, and says both beside the word.
+    const text = read(SUBTYPE).replace(/requirement def <'R-RISE'> RiseLimit \{[\s\S]*?\n {4}\}\n/, '');
+    expect(text, 'the fixture no longer states R-RISE in the shape this case removes').not.toContain('R-RISE');
+    const { model } = await loadModelText(text, { fileName: 'consistency-subtype-norise.sysml' });
+    const clean = await consistencyReport(model!, { sourceText: text });
+    const cleanAir = clean.groups.find((g) => g.subject?.typeQualifiedName?.endsWith('AirVehicle'))!;
+    expect(cleanAir.outcome).toBe('consistent');
+    expect(cleanAir.detail, 'the consistent verdict hides the prose-only count').toContain(
+      '1 requirement(s) state no relation at all',
     );
+    expect(cleanAir.detail, 'the consistent verdict hides the refused count').toContain('0 relations refused');
     // And the reader can find out WHICH one, rather than only how many.
     const info = r.diagnostics.find(
       (d) => d.code === 'verification/unsupported-construct' && d.elementName?.endsWith('ProseOnly'),
@@ -1713,6 +1783,7 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
             term: '999999.0',
             value: 999999,
           })),
+          completion: [],
           core: [],
         };
       },
@@ -1728,6 +1799,7 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
           elapsedMs: 0,
           bound: null,
           witness: [],
+          completion: [],
         };
       },
     };
@@ -1744,6 +1816,70 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
     // The point is still shown — a reader debugging an encoder defect needs it
     // — and it is shown as the thing that failed, not as evidence.
     expect(group.witness.length).toBeGreaterThan(0);
+  });
+
+  it('does not call a conflict at the values inconsistent where the checker reads it holding (R6)', async () => {
+    // The same gate from the UNSAT side. Both readings decide a tie by the
+    // decimals written, so a conflict at the model's values that the
+    // validation surface reads as HOLDING there is one of them reading
+    // something the other does not — and `inconsistent`, exit 1, beside a
+    // Problems panel where the requirement holds is the tool contradicting
+    // itself. Driven with a stub that answers every requirement set unsat,
+    // naming all it was asserted with; a correct solver cannot.
+    const text = (bound: string) => `package R6 {
+    part def P { attribute m : ScalarValues::Real = 10.0; }
+    part p : P;
+    requirement def Cap { subject p : P; require constraint { p.m <= ${bound} } }
+    satisfy Cap by p; }`;
+    const unsatAfterAxioms = (): Z3Backend => ({
+      absent: false,
+      version: '0.0.0',
+      fullVersion: 'stub',
+      seed: 0,
+      initMs: 0,
+      async check(script, opts) {
+        // The model's own axiom set is satisfiable; a script that asserts
+        // the requirement is not.
+        const labels = [...script.matchAll(/:named \|([^|]*)\|/g)].map((m) => m[1]);
+        const asked = labels.some((l) => l.includes('Cap'));
+        return {
+          status: asked ? 'unsat' : 'sat',
+          reason: '',
+          timedOut: false,
+          timeoutMs: opts?.timeoutMs ?? 0,
+          elapsedMs: 0,
+          witness: [],
+          completion: [],
+          core: asked ? labels : [],
+        };
+      },
+      async optimize(_script, _sense, opts) {
+        return {
+          status: 'error',
+          reason: 'this stub answers checks only',
+          timedOut: false,
+          timeoutMs: opts?.timeoutMs ?? 0,
+          elapsedMs: 0,
+          bound: null,
+          witness: [],
+          completion: [],
+        };
+      },
+    });
+    const holds = (await loadModelText(text('25.0'), { fileName: 'r6.sysml' })).model!;
+    expect(checkConstraints(holds).map((c) => c.result)).toEqual(['satisfied']);
+    const disputed = await checkConsistency(holds, { backend: unsatAfterAxioms(), withValues: true });
+    const [group] = disputed.groups;
+    expect([group.outcome, group.code]).toEqual(['inconclusive', 'verification/not-evaluable']);
+    expect(group.detail).toContain('reads every requirement in that core as holding at those very values');
+    // A requirement the checker reads VIOLATED at those values is the conflict
+    // the solver found, and is published as one.
+    const violated = (await loadModelText(text('5.0'), { fileName: 'r6.sysml' })).model!;
+    const conflict = await checkConsistency(violated, { backend: unsatAfterAxioms(), withValues: true });
+    expect(conflict.groups[0].outcome).toBe('inconsistent');
+    // And without `--with-values` the question is not about those values: no dispute.
+    const released = await checkConsistency(holds, { backend: unsatAfterAxioms() });
+    expect(released.groups[0].outcome).toBe('inconsistent');
   });
 
   it('never says the reserved word, in any surface this command reaches a reader through', () => {
@@ -3792,6 +3928,7 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
           timeoutMs: opts?.timeoutMs ?? 0,
           elapsedMs: 0,
           witness: [],
+          completion: [],
           core: [],
         };
       },
@@ -3804,6 +3941,7 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
           elapsedMs: 0,
           bound: null,
           witness: [],
+          completion: [],
         };
       },
     };
@@ -4390,7 +4528,7 @@ describe('L8 — fault-tree: cut sets from contract-failure injection', () => {
           !drops('BackupOutput') &&
           !drops('RadioDraw');
         return forced
-          ? { ...out, status: 'unknown' as const, reason: 'forced', witness: [], core: [] }
+          ? { ...out, status: 'unknown' as const, reason: 'forced', witness: [], completion: [], core: [] }
           : out;
       },
     };

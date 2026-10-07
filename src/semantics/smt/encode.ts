@@ -31,32 +31,37 @@
  *     contract: `range = 5.0 [km]` against `<= 10.0` is read in kilometres on
  *     both surfaces) the caller passes factor 1 / offset 0 and the read is the
  *     bare symbol — the same verbatim reading the numeric surface gives it.
- *  3. **Exact rationals — of the number each surface holds.** Numbers over
- *     PLAIN features are read in binary64, written exactly: `18.5` is `(/ 37.0
- *     2.0)` and `0.1` is `3602879701896397 / 2⁵⁵`, via the double's own
- *     significand and exponent, so the number the solver sees is precisely the
- *     double `checkConstraints` holds.
- *     Numbers that meet a DIMENSIONED feature or a `[unit]` literal are read in
- *     the decimals the author wrote (`numeral`): the validation surface
- *     compares quantities within a relative tolerance, and the decimal is the
- *     number that tolerance stands for, so `0.1 [g] + 0.2 [g]` is `0.3 [g]` on
- *     both. A unit's factor and origin are the numbers the registry wrote
+ *  3. **Exact rationals of the numbers the author wrote.** Every numeral is the
+ *     decimal it is written as (`numeral`), in every relation and every proof
+ *     context: `18.5` is `(/ 37.0 2.0)`, `0.1` is `(/ 1.0 10.0)`, and `0.1 +
+ *     0.2 == 0.3` is true here, plain numbers and quantities alike. Up to 15
+ *     significant digits that decimal is the shortest text that round-trips
+ *     the double the file parsed to. A numeral written with MORE digits is
+ *     not determined by that double (`0.29999999999999999` and `0.3` are one
+ *     double), and is read as the double itself, exactly — the number every
+ *     binary64 surface holds — in a body, a value axiom and a `[unit]`
+ *     literal alike: the parser keeps such a numeral's text so this file can
+ *     tell (`text` on a `num` node of ../expr). Read as the shorter decimal
+ *     its double prints as, `0.29999999999999999` was three tenths beside
+ *     decimals and PROVED `0.1 + 0.2 <= 0.29999999999999999`.
+ *     A unit's factor and origin are the numbers the registry wrote
  *     (`scaleRational`: a gram is one thousandth, km/h is 5/18), a COMPOSED
  *     unit's factor is the exact product of its parts' (`ft^3` is 0.3048 cubed,
  *     not the double that product rounds to), and a `[unit]` literal is the
  *     author's magnitude times that same factor — ONE reading of a unit for a
  *     stored magnitude and a literal alike, so neither side of a proof gets a
  *     number the other does not.
- *     WHICH reading is decided per PROOF CONTEXT, not per relation: a proof
- *     mixes relations — a plain `f = 0.1` value axiom, an `assume`, a goal
- *     `f * mass != 0.1 [kg]` — and an axiom read in binary64 beside a goal read
- *     in decimals decided the tie by which side of the proof the number arrived
- *     on (it PROVED that 0.1 × 1 kg is not 0.1 kg). The caller passes the
- *     symbols whose numerals are decimals (`EncodeVariable.decimal`, from
- *     `decimalSymbols` of ./decimal-reading): every symbol connected, through
- *     any relation the caller encodes, to a dimensioned feature or a `[unit]`
- *     literal. Every relation over such a symbol is then read one way.
- *     {@link valueTextNumeral} reads an author's decimal text.
+ *     There is ONE reading because a proof mixes relations — a plain `f = 0.1`
+ *     value axiom, an `assume`, a goal `f * mass != 0.1 [kg]` — and two
+ *     readings of a numeral (the double's own rational for plain numbers, the
+ *     decimal where a quantity met them) decided ties by which reading a
+ *     relation fell under: it PROVED that 0.1 × 1 kg is not 0.1 kg, it PROVED
+ *     `0.1 + 0.2 > 0.3`, and an unrelated dimensioned requirement that read
+ *     one more feature flipped a verdict. {@link exactNumeral} writes a
+ *     double's own rational: a numeral written past 15 digits, and a number
+ *     the tool sets itself rather than reads from the file (the free-domain
+ *     bound of ../engines/smt). {@link valueTextNumeral} reads an author's
+ *     decimal text by the same rule.
  *  4. **Symbols are qualified names.** Element ids are fresh UUIDs on every load
  *     (§6, "element ids are not stable"), so a script keyed on them would differ
  *     between two loads of one file and no digest over it would mean anything.
@@ -69,7 +74,7 @@
  * unique in assertion order, so the same input is the same bytes in any process.
  */
 
-import type { ExprNode } from '../expr';
+import { DOUBLE_DIGITS, significantDigitsOf, type ExprNode } from '../expr';
 import type { ContractVariable, Fragment, Refusal, VarSort } from '../contracts';
 import type { ScaleMap } from '../relations';
 import { resolveUnit, type FactorTerm } from '../units';
@@ -103,15 +108,6 @@ export interface EncodeVariable {
   factorTerms?: ReadonlyArray<FactorTerm>;
   /** Has the caller released this feature's value? */
   free: boolean;
-  /**
-   * Are this symbol's numerals the decimals they are written as? True when the
-   * caller's proof context connects the symbol to a DIMENSIONED feature or a
-   * `[unit]` literal (`decimalSymbols` of ./decimal-reading). A relation that
-   * reads one reads every numeral as a decimal (see {@link numeral}); a
-   * relation over plain numbers only reads them as the binary64 the
-   * validation surface holds. Absent is `false`.
-   */
-  decimal?: boolean;
 }
 
 /**
@@ -128,12 +124,9 @@ export interface EncodeVariable {
 export function encodeVariables(
   variables: readonly ContractVariable[],
   sortPerVar: Readonly<Record<string, VarSort>>,
-  opts: { scaled: boolean; free?: ReadonlySet<string>; decimal?: ReadonlySet<string> },
+  opts: { scaled: boolean; free?: ReadonlySet<string> },
 ): EncodeVariable[] {
   const free = opts.free ?? new Set<string>();
-  // Keyed on the SYMBOL the variable is encoded by — the set is a property of
-  // the proof context's symbols (`decimalSymbols`), not of the features.
-  const decimal = opts.decimal ?? new Set<string>();
   return variables.map((v) => ({
     path: v.path,
     qualifiedName: v.symbol ?? v.qualifiedName,
@@ -142,7 +135,6 @@ export function encodeVariables(
     offset: opts.scaled ? v.siOffset : 0,
     ...(opts.scaled ? declaredTerms(v, v.siFactor) : {}),
     free: free.has(v.path) || free.has(v.qualifiedName),
-    ...(decimal.has(v.symbol ?? v.qualifiedName) ? { decimal: true } : {}),
   }));
 }
 
@@ -276,8 +268,6 @@ interface Walk {
   /** Set wherever the emitted BYTES are nonlinear — see `EncodedRelation`. */
   syntacticNonlinear: boolean;
   sideConditions: SideCondition[];
-  /** Read numerals as the decimals they are written as — see {@link numeral}. */
-  decimal: boolean;
 }
 
 /**
@@ -299,13 +289,7 @@ export function encodeRelation(
     nonlinear: false,
     syntacticNonlinear: false,
     sideConditions: [],
-    decimal: false,
   };
-  // A `[unit]` literal is always read as the author's decimal times the
-  // unit's factor, so a relation that holds one reads all its numerals that
-  // way — a caller with no proof context to consult (`property-check`) still
-  // reads one relation one way.
-  walk.decimal = hasUnitLiteral(node) || varsOf(node, walk).some((name) => walk.vars.get(name)?.decimal === true);
   const encoded = term(node, walk);
   if (!encoded.ok) return encoded;
   if (encoded.sort !== 'Bool') {
@@ -328,27 +312,6 @@ export function encodeRelation(
   };
 }
 
-/**
- * Does a (lowered) relation body carry a `[unit]` literal — a numeral that
- * {@link numeral} reads as the author's decimal whatever else it reads?
- * Exported for `decimalSymbols` (./decimal-reading), which makes the whole
- * proof context such a literal meets read the same way.
- */
-export function hasUnitLiteral(node: ExprNode): boolean {
-  switch (node.kind) {
-    case 'num':
-      return node.literal !== undefined;
-    case 'unary':
-      return hasUnitLiteral(node.operand);
-    case 'binary':
-      return hasUnitLiteral(node.left) || hasUnitLiteral(node.right);
-    case 'if':
-      return hasUnitLiteral(node.cond) || hasUnitLiteral(node.then) || hasUnitLiteral(node.else);
-    default:
-      return false;
-  }
-}
-
 /** Both spellings a body may use for a variable: its path and its qualified name. */
 function indexBy(variables: readonly EncodeVariable[]): Map<string, EncodeVariable> {
   const map = new Map<string, EncodeVariable>();
@@ -368,7 +331,7 @@ function refuse(reason: Refusal['reason'], detail: string): RefusedRelation {
 function term(node: ExprNode, walk: Walk): Encoded {
   switch (node.kind) {
     case 'num':
-      return numeral(node, walk);
+      return numeral(node);
     case 'bool':
       return { ok: true, text: node.value ? 'true' : 'false', sort: 'Bool' };
     case 'str':
@@ -859,20 +822,23 @@ function readsFree(node: ExprNode, walk: Walk): boolean {
 /**
  * A numeral, or the refusal a non-finite number earns.
  *
- * WHICH NUMBER A NUMERAL IS depends on the world the relation lives in. A
- * relation over plain numbers is read in binary64, the doubles the validation
- * surface holds — in `0.1 + 0.2 == 0.3` the sum is not three tenths. A relation
- * over a symbol the caller's proof context reads in decimals (one connected to
- * a dimensioned feature or a `[unit]` literal — `EncodeVariable.decimal`), or
- * one holding a `[unit]` literal itself, is read in the decimals the author
- * wrote: the validation surface compares quantities within a relative
- * tolerance, and the decimal is the number that tolerance stands for — `0.1
- * [g] + 0.2 [g]` is `0.3 [g]` there, and here — so a feature value, a
- * multiplier and a bare literal are each their shortest decimal. A lowered
- * `[unit]` literal is the author's magnitude times the unit's factor ({@link
- * scaleRational}), and so is always in that world.
+ * A NUMERAL IS THE DECIMAL IT IS WRITTEN AS, in every relation: a feature
+ * value, a multiplier and a bare literal are each their shortest decimal, so
+ * `0.1 + 0.2 == 0.3` is true here, as it is of the numbers the author wrote —
+ * plain numbers and quantities alike, whatever else the proof context holds
+ * (the charter's decision 3). A lowered `[unit]` literal is the author's
+ * magnitude times the unit's factor ({@link scaleRational}).
+ *
+ * Up to {@link DOUBLE_DIGITS} significant digits the double determines that
+ * decimal, and `String` prints it. A numeral written with MORE is read as the
+ * double it parsed to, exactly ({@link exactRationalOfDouble}) — the number
+ * every binary64 surface holds — whether it is a body literal or a value axiom
+ * (`text`, which the parser keeps for exactly these) or a `[unit]` literal's
+ * magnitude. Never as the shorter decimal that double prints as:
+ * `0.29999999999999999` prints as `0.3`, and read as three tenths beside
+ * decimals it PROVED `0.1 + 0.2 <= 0.29999999999999999`.
  */
-function numeral(node: Extract<ExprNode, { kind: 'num' }>, walk: Walk): Encoded {
+function numeral(node: Extract<ExprNode, { kind: 'num' }>): Encoded {
   const value = node.value;
   if (!Number.isFinite(value)) {
     return refuse(
@@ -880,18 +846,38 @@ function numeral(node: Extract<ExprNode, { kind: 'num' }>, walk: Walk): Encoded 
       `the body reads \`${String(value)}\`, which is not a rational and has no SMT-LIB numeral`,
     );
   }
+  return { ok: true, text: renderRational(numeralRational(node)!), sort: 'Real' };
+}
+
+/**
+ * The exact number a finite numeral denotes — the ONE reading of it, which
+ * {@link numeral} writes and the point evaluators decide a tie by
+ * (`decideComparison` of ../exact), so a proof and a re-read never hold two
+ * numbers for one numeral. A lowered `[unit]` literal is the author's
+ * magnitude times the unit's factor ({@link scaleRational}); a numeral written
+ * past {@link DOUBLE_DIGITS} significant digits is the double it parsed to,
+ * exactly; any other is the decimal `String` prints, which is the decimal
+ * written. `undefined` for a value that is no number (∞, NaN), which
+ * {@link numeral} refuses.
+ */
+export function numeralRational(node: Extract<ExprNode, { kind: 'num' }>): Rational | undefined {
+  const value = node.value;
+  if (!Number.isFinite(value)) return undefined;
   if (node.literal) {
-    const magnitude = decimalRational(node.literal.magnitude);
-    if (magnitude) {
-      const factor = scaleRational(node.literal.factor, node.literal.factorTerms);
-      return { ok: true, text: renderRational(multiply(magnitude, factor)), sort: 'Real' };
-    }
+    const written = node.literal.magnitude;
+    const magnitude =
+      significantDigitsOf(written) > DOUBLE_DIGITS && Number.isFinite(Number(written))
+        ? exactRationalOfDouble(Number(written))
+        : decimalRational(written);
+    if (magnitude) return multiply(magnitude, scaleRational(node.literal.factor, node.literal.factorTerms));
   }
-  if (walk.decimal) {
-    const decimal = decimalRational(String(value));
-    if (decimal) return { ok: true, text: renderRational(decimal), sort: 'Real' };
+  if (node.text !== undefined && significantDigitsOf(node.text) > DOUBLE_DIGITS) {
+    return exactRationalOfDouble(value);
   }
-  return { ok: true, text: exactNumeral(value), sort: 'Real' };
+  // `String` prints the shortest decimal that round-trips the double, which
+  // `decimalRational` always reads; the double's own rational is the
+  // unreachable fallback, never a second reading.
+  return decimalRational(String(value)) ?? exactRationalOfDouble(value);
 }
 
 /** An exact rational, `den > 0`. */
@@ -901,7 +887,7 @@ export interface Rational {
 }
 
 /** A decimal literal (`18.5`, `1e-3`) as an exact rational, or `undefined`. */
-function decimalRational(text: string): Rational | undefined {
+export function decimalRational(text: string): Rational | undefined {
   const m = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(text.trim());
   if (!m) return undefined;
   const [, sign, whole, frac = '', exp = '0'] = m;
@@ -935,11 +921,12 @@ function renderRational(r: Rational): string {
  *
  * Every double is `m · 2^e` for integers `m` and `e`, so every double is exactly
  * a rational with a power-of-two denominator — `0.1` is
- * `3602879701896397 / 2^55`, not one tenth. Writing that rational rather than
- * the shortest decimal that round-trips means the solver reasons about the
- * number this tool actually holds. It is also why {@link valueTextNumeral}
- * exists: for a value the AUTHOR wrote, one tenth is the right reading and the
- * double is not, so the text is preferred wherever there is one.
+ * `3602879701896397 / 2^55`, not one tenth. That is the right reading of a
+ * number the TOOL sets (the free-domain bound) and the wrong one of a number
+ * the AUTHOR wrote: for those, one tenth is the reading and the double is not,
+ * which is why {@link numeral} and {@link valueTextNumeral} read the decimal —
+ * up to 15 significant digits, past which the double is all that determines
+ * the numeral and is its reading.
  */
 export function exactNumeral(value: number): string {
   if (!Number.isFinite(value)) {
@@ -976,7 +963,9 @@ export function exactRationalOfDouble(value: number): { num: bigint; den: bigint
  * `attrs.valueText` is what the file says — `18.5`, `0.1`, `1.5e3` — and it is
  * preferred over the double it parsed to wherever the tool has it. Anything
  * that is not a decimal literal is refused rather than coerced: a value this
- * function cannot read is a value the axiom set must not contain.
+ * function cannot read is a value the axiom set must not contain. A text
+ * written past 15 significant digits is the double it parses to, as
+ * {@link numeral} reads the same numeral in a body.
  */
 export function valueTextNumeral(text: string): { ok: true; text: string } | RefusedRelation {
   const t = text.trim();
@@ -986,6 +975,9 @@ export function valueTextNumeral(text: string): { ok: true; text: string } | Ref
       'non-numeric-operand',
       `\`${text}\` is not a decimal literal this encoder can read as an exact rational`,
     );
+  }
+  if (significantDigitsOf(t) > DOUBLE_DIGITS && Number.isFinite(Number(t))) {
+    return { ok: true, text: exactNumeral(Number(t)) };
   }
   const [, sign, whole, frac = '', exp = '0'] = m;
   let num = BigInt(whole + frac);
@@ -1100,14 +1092,29 @@ const HEADER = [
  */
 export function encodeScript(req: ScriptRequest): SmtScript {
   const read = new Set<string>();
+  // Every quoted symbol the assertions mention, read once per assertion — a
+  // term with a string literal, where a `|` need not delimit a symbol, is
+  // asked of each variable. Asked of every variable for every assertion, a
+  // model with thousands of instance symbols spent seconds here.
+  const quoted = new Set<string>();
+  const literal: string[] = [];
   for (const a of req.assertions) {
-    for (const v of req.variables) {
-      if (mentions(a.term, symbolOf(v.qualifiedName))) read.add(v.qualifiedName);
-    }
+    if (a.term.includes('"')) literal.push(a.term);
+    else for (const m of a.term.matchAll(/\|[^|]*\|/g)) quoted.add(m[0]);
   }
+  for (const v of req.variables) {
+    const symbol = symbolOf(v.qualifiedName);
+    if (symbol === undefined) continue;
+    if (quoted.has(symbol) || literal.some((term) => mentions(term, symbol))) read.add(v.qualifiedName);
+  }
+  const once = new Set<string>();
   const declared = req.variables
     .filter((v) => read.has(v.qualifiedName))
-    .filter((v, i, all) => all.findIndex((o) => o.qualifiedName === v.qualifiedName) === i)
+    .filter((v) => {
+      if (once.has(v.qualifiedName)) return false;
+      once.add(v.qualifiedName);
+      return true;
+    })
     .sort((a, b) => (a.qualifiedName < b.qualifiedName ? -1 : a.qualifiedName > b.qualifiedName ? 1 : 0));
 
   // The logic line is the one claim in this file z3 will CHECK, so it is

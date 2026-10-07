@@ -99,6 +99,8 @@
  * names a solver has to name the one that ran.
  */
 
+import { termRational, type Rational } from '../exact';
+
 /** The per-check budget, in milliseconds. No check is ever unbounded. */
 export const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -194,6 +196,8 @@ export interface OptimizeOutcome {
   bound: ObjectiveBound | null;
   /** The point z3 stopped at, for `sat`. Empty otherwise. */
   witness: WitnessValue[];
+  /** {@link CheckOutcome.completion}: the rest of that point, for a re-read only. */
+  completion: WitnessValue[];
 }
 
 /** What {@link loadZ3} answers: a backend, or an absence with a reason. */
@@ -252,6 +256,27 @@ export interface CheckOutcome {
   elapsedMs: number;
   /** The model, for `sat`. Empty otherwise. */
   witness: WitnessValue[];
+  /**
+   * Every constant the script declares that {@link witness} does not carry, at
+   * the value z3's model gives it COMPLETED, for `sat`. Empty otherwise.
+   *
+   * FOR A RE-READ, NEVER FOR PRINT ({@link rereadPoint}). z3's model is
+   * partial: a constant whose value no assertion turns on is left out of it —
+   * `w` in `(=> w (<= x 20.0))` once `x = 0` makes the implication true — and
+   * WHICH ones it leaves out depends on the context's history, which every
+   * check in a process shares (see {@link cached}). A re-read over the bare
+   * model found the premise `w == true` unreadable and filed a point z3 had
+   * found as not-evaluable, so a verdict turned on whatever unrelated script
+   * ran before it. Measured on v9: in a fresh process three consistency
+   * subjects were `inconclusive` for exactly that reason, and a change to
+   * OTHER subjects' scripts moved two of them to `consistent` and a third
+   * subject the other way, their own scripts byte-identical. z3 leaves a
+   * constant out only where the assertions hold whatever its value, so the
+   * completed point satisfies the script as the model does — and every
+   * re-reader still checks it for itself. The printed witness stays z3's own
+   * model, the one a reader gets back by running the script.
+   */
+  completion: WitnessValue[];
   /** The `:named` labels of an UNSAT core, for `unsat`. Empty otherwise. */
   core: string[];
 }
@@ -393,6 +418,18 @@ interface Z3Api {
 interface Z3Context {
   Solver: new () => Z3Solver;
   Optimize: new () => Z3Optimize;
+  /**
+   * The three sorts the encoder declares, for completing a model
+   * ({@link completionOf}). Optional because the death suite's fake has none;
+   * a context without them completes nothing.
+   */
+  Real?: { const(name: string): Z3Term };
+  Int?: { const(name: string): Z3Term };
+  Bool?: { const(name: string): Z3Term };
+}
+/** A term, as far as this bridge handles one: built, evaluated and printed. */
+interface Z3Term {
+  toString(): string;
 }
 /**
  * `release()` is optional on the three objects below because the death suite's
@@ -422,6 +459,8 @@ interface Z3Solver {
 }
 interface Z3Model extends Iterable<Z3Decl> {
   get(decl: Z3Decl): { toString(): string };
+  /** With `modelCompletion` true, a constant the model leaves out gets a value. Optional: the fake has none. */
+  eval?(term: Z3Term, modelCompletion: boolean): Z3Term;
   release?(): void;
 }
 interface Z3Decl {
@@ -953,7 +992,7 @@ async function checkOn(
   let settled = false;
   let made: Z3Solver | undefined;
   try {
-    const empty = { witness: [] as WitnessValue[], core: [] as string[], timeoutMs };
+    const empty = { witness: [] as WitnessValue[], completion: [] as WitnessValue[], core: [] as string[], timeoutMs };
     const solver = new entry.ctx.Solver();
     made = solver;
     solver.set('timeout', timeoutMs);
@@ -996,7 +1035,7 @@ async function checkOn(
         reason: '',
         timedOut: false,
         elapsedMs,
-        witness: witnessOf(solver, variables),
+        ...witnessOf(solver, variables, entry.ctx, script),
       };
     }
     if (status === 'unsat') {
@@ -1147,7 +1186,7 @@ async function optimizeOn(
   let settled = false;
   let made: Z3Optimize | undefined;
   try {
-    const empty = { bound: null, witness: [] as WitnessValue[], timeoutMs };
+    const empty = { bound: null, witness: [] as WitnessValue[], completion: [] as WitnessValue[], timeoutMs };
     const opt = new entry.ctx.Optimize();
     made = opt;
     opt.set('timeout', timeoutMs);
@@ -1188,7 +1227,7 @@ async function optimizeOn(
       timedOut: false,
       elapsedMs,
       bound: boundOfObjective(opt, sense),
-      witness: witnessOf(opt, variables),
+      ...witnessOf(opt, variables, entry.ctx, script),
     };
   } catch (err) {
     // As in `checkOn`: a trap out of the model's release ends the module here.
@@ -1239,7 +1278,9 @@ function boundOf(ms: number | undefined): number {
 }
 
 /**
- * The model, as `symbol → value`, in the caller's order when it named one.
+ * The model, as `symbol → value`, in the caller's order when it named one —
+ * and, apart from it, the rest of the script's declarations at the values the
+ * model completes them to ({@link CheckOutcome.completion}).
  *
  * Typed on the one method it uses rather than on `Z3Solver`, because the
  * optimiser answers with a model too and a second copy of this function is how
@@ -1248,28 +1289,118 @@ function boundOf(ms: number | undefined): number {
 function witnessOf(
   solver: { model(): Z3Model },
   wanted: readonly string[] | undefined,
-): WitnessValue[] {
+  ctx: Z3Context,
+  script: string,
+): { witness: WitnessValue[]; completion: WitnessValue[] } {
   const found = new Map<string, string>();
+  const declared = declaredConstants(script);
+  let completed = new Map<string, string>();
   // The one holder of the model: released here, once read, on every path. A
   // trap out of that release escapes, to be counted a death (`safeRelease`).
   let model: Z3Model | undefined;
   try {
-    const m = solver.model();
-    model = m;
-    for (const decl of m) found.set(decl.name().toString(), m.get(decl).toString());
-  } catch {
-    return [];
+    let m: Z3Model;
+    try {
+      m = solver.model();
+      model = m;
+      for (const decl of m) found.set(decl.name().toString(), m.get(decl).toString());
+    } catch {
+      return { witness: [], completion: [] };
+    }
+    // Read while the model is still held: `eval` is a call into it.
+    completed = completionOf(m, ctx, declared, found);
   } finally {
     safeRelease(model);
   }
   const symbols = wanted ?? [...found.keys()].sort();
-  const out: WitnessValue[] = [];
+  const witness: WitnessValue[] = [];
   for (const symbol of symbols) {
     const term = found.get(symbol);
     if (term === undefined) continue;
-    out.push({ symbol, term, value: valueOf(term) });
+    witness.push({ symbol, term, value: valueOf(term) });
+  }
+  const printed = new Set(witness.map((w) => w.symbol));
+  const completion: WitnessValue[] = [];
+  for (const { symbol } of declared) {
+    if (printed.has(symbol)) continue;
+    // A declared constant the model DOES assign and the caller's list left
+    // out is the model's own value; only the ones the model omits are completed.
+    const term = found.get(symbol) ?? completed.get(symbol);
+    if (term === undefined) continue;
+    completion.push({ symbol, term, value: valueOf(term) });
+  }
+  return { witness, completion };
+}
+
+/**
+ * The script's declarations z3's model leaves out, each at the value the model
+ * gives it with model completion on — `0` for a number, `false` for a Boolean.
+ *
+ * A constant z3 will not evaluate stays out, and its re-read fails as it did
+ * before this existed: unread, never confirmed. A TRAP is not a refusal and is
+ * rethrown, to be counted a death — `eval` is a call into the module like any
+ * other.
+ */
+function completionOf(
+  model: Z3Model,
+  ctx: Z3Context,
+  declared: ReadonlyArray<{ symbol: string; sort: 'Real' | 'Int' | 'Bool' }>,
+  assigned: ReadonlyMap<string, string>,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  if (typeof model.eval !== 'function') return out;
+  for (const { symbol, sort } of declared) {
+    if (assigned.has(symbol) || out.has(symbol)) continue;
+    const make = ctx[sort];
+    if (make === undefined) continue;
+    try {
+      out.set(symbol, model.eval(make.const(symbol), true).toString());
+    } catch (err) {
+      if (isZ3ModuleDeath(err)) throw err;
+    }
   }
   return out;
+}
+
+/**
+ * The 0-arity constants a script declares, in declaration order: the
+ * encoder's `(declare-fun |Pkg::a| () Real)`, and `declare-const` too, quoted
+ * or bare. The symbol comes back without its pipes, as z3 names it in a model.
+ */
+function declaredConstants(script: string): Array<{ symbol: string; sort: 'Real' | 'Int' | 'Bool' }> {
+  const out: Array<{ symbol: string; sort: 'Real' | 'Int' | 'Bool' }> = [];
+  const declaration =
+    /\(\s*(?:declare-fun\s+(\|[^|\\]*\||[^\s()|]+)\s+\(\s*\)|declare-const\s+(\|[^|\\]*\||[^\s()|]+))\s+(Real|Int|Bool)\s*\)/g;
+  for (const m of script.matchAll(declaration)) {
+    out.push({ symbol: stripPipes(m[1] ?? m[2]), sort: m[3] as 'Real' | 'Int' | 'Bool' });
+  }
+  return out;
+}
+
+/**
+ * The point a re-read reads: the witness and its {@link CheckOutcome.completion},
+ * as `symbol → value`, with — `exact` — the rational each number IS
+ * (`termRational` of ../exact), which a re-read decides a comparison by
+ * (`rereadRelation` of ../exact): the double is z3's answer rounded. A value
+ * with no number or truth-value reading (an algebraic root) is left out, and
+ * the row that reads it is unread.
+ *
+ * Every gate that re-reads a `sat` answer through this tool's own evaluator
+ * reads THIS, and none prints it: what a verdict line shows is the witness.
+ */
+export function rereadPoint(outcome: {
+  witness: readonly WitnessValue[];
+  completion: readonly WitnessValue[];
+}): Map<string, number | boolean> & { exact: ReadonlyMap<string, Rational> } {
+  const values = new Map<string, number | boolean>();
+  const exact = new Map<string, Rational>();
+  for (const w of [...outcome.witness, ...outcome.completion]) {
+    if (w.value === null) continue;
+    values.set(w.symbol, w.value);
+    const r = typeof w.value === 'number' ? termRational(w.term) : undefined;
+    if (r) exact.set(w.symbol, r);
+  }
+  return Object.assign(values, { exact });
 }
 
 /** The `:named` labels of the UNSAT core, in z3's order. */

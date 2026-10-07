@@ -23,6 +23,7 @@ import {
   CONNECTOR_KINDS,
   bindingEquivalenceClasses,
   connectorEndsOf,
+  effectiveQualifiedName,
   generalizationsOf,
   isConnector,
   isKindOf,
@@ -2376,7 +2377,10 @@ export interface AnalysisReport {
   converged: boolean;
   iterations: number;
   residual: number;
-  /** Solved numeric feature values (library content excluded). */
+  /**
+   * Solved numeric feature values (library content excluded): only the values
+   * the equations DETERMINE — never one along a design freedom ({@link free}).
+   */
   values: SolvedValue[];
   /** Evaluated measures of effectiveness. */
   measures: MeasureResult[];
@@ -2392,6 +2396,13 @@ export interface AnalysisReport {
   violations: AnalysisViolation[];
   /** The relations neither engine could judge (never silently dropped). */
   unknowns: AnalysisUnknown[];
+  /**
+   * The features the equations leave free — no value states them and no
+   * relation fixes them: no value is reported for them, and a relation over
+   * one is in {@link unknowns}, never judged at the point the solve happened
+   * to stop at.
+   */
+  free: ElementRef[];
 }
 
 /**
@@ -2402,19 +2413,25 @@ export interface AnalysisReport {
 export function analysisReport(model: Model): AnalysisReport {
   const solved = solve(model);
   const values: SolvedValue[] = [];
+  const instanceValues: SolvedValue[] = [];
   for (const [id, value] of solved.values) {
-    const el = model.get(id);
+    // An instance's own value (`<feature id>@<its symbol>`: `R::p1::m2` for
+    // `p1.m2`) is listed under the instance's name, navigable to the feature,
+    // after the model's own features.
+    const at = id.indexOf('@');
+    const el = model.get(at < 0 ? id : id.slice(0, at));
     if (!el || el.attrs.isLibrary === true) continue;
-    values.push({ element: ref(model, el), value });
+    if (at < 0) values.push({ element: ref(model, el), value });
+    else instanceValues.push({ element: { id: el.id, eClass: el.eClass, qualifiedName: id.slice(at + 1) }, value });
   }
+  values.push(...instanceValues);
 
   // Numeric feasibility: violated equalities/inequalities at the solved values.
   const numeric = checkConstraintsNumeric(model);
   const violations: AnalysisViolation[] = [];
   const unknowns: AnalysisUnknown[] = [];
   for (const c of numeric) {
-    const el = model.get(c.id);
-    const element = el ? ref(model, el) : { id: c.id, eClass: '«unknown»', qualifiedName: '' };
+    const element = numericRef(model, c);
     if (c.result === 'violated') {
       violations.push({
         element,
@@ -2433,9 +2450,21 @@ export function analysisReport(model: Model): AnalysisReport {
     }
   }
   // "No KNOWN violation" — see the field's doc comment. An `unknown` row is
-  // reported through `unknowns`, never folded into this flag.
-  const feasible = !numeric.some((c) => c.kind === 'inequality' && c.result === 'violated');
+  // reported through `unknowns`, never folded into this flag. A value the
+  // model states twice, decided to differ, is as infeasible as a broken bound.
+  const feasible = !numeric.some(
+    (c) => (c.kind === 'inequality' || c.conflict !== undefined) && c.result === 'violated',
+  );
 
+  // A design freedom is reported as one: its value was withheld above — an
+  // instance's own under the instance's name, as its value would be.
+  const free: ElementRef[] = [];
+  for (const id of solved.free) {
+    const at = id.indexOf('@');
+    const el = model.get(at < 0 ? id : id.slice(0, at));
+    if (!el || el.attrs.isLibrary === true) continue;
+    free.push(at < 0 ? ref(model, el) : { id: el.id, eClass: el.eClass, qualifiedName: id.slice(at + 1) });
+  }
   return {
     converged: solved.converged,
     iterations: solved.iterations,
@@ -2445,6 +2474,25 @@ export function analysisReport(model: Model): AnalysisReport {
     feasible,
     violations,
     unknowns,
+    free,
+  };
+}
+
+/**
+ * The element a numeric row is about: the relation itself; for one read in a
+ * context, the relation, named `<relation> in <context>`; for a value the model
+ * states twice, the feature, named in the context it is stated twice in.
+ */
+function numericRef(model: Model, c: { id: ElementId; context?: { baseId: ElementId; contextId: ElementId } }): ElementRef {
+  const el = model.get(c.id);
+  if (el) return ref(model, el);
+  const [baseId, contextId] = c.context ? [c.context.baseId, c.context.contextId] : c.id.split('@');
+  const base = baseId !== undefined ? model.get(baseId) : undefined;
+  if (!base || contextId === undefined) return { id: c.id, eClass: '«unknown»', qualifiedName: '' };
+  return {
+    ...ref(model, base),
+    id: c.id,
+    qualifiedName: `${effectiveQualifiedName(model, base.id)} in ${effectiveQualifiedName(model, contextId)}`,
   };
 }
 

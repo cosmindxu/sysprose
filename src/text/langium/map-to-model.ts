@@ -50,6 +50,7 @@ import {
   resolveRedefinedFeature,
 } from '@semantics/bind';
 import { generalizationsWithImplicit } from '@semantics/featuring';
+import { effectiveNameOf, redefinedClosure } from '@semantics/inheritance';
 import { resolveName } from '@semantics/resolve-names';
 import type { AstNode } from 'langium';
 import type { ParseResult, ParseDiagnostic } from '../types';
@@ -319,6 +320,35 @@ function nameMatches(e: ElementRecord, seg: string): boolean {
 }
 
 /**
+ * {@link nameMatches}, or — for a feature that declares no name — whether it is
+ * a redefinition of a feature named `seg` (KerML's effective name):
+ * `attribute :>> load = 50.0` in `part p` is p's `load`. A connector or `bind`
+ * end `p.load` then lands on that explicit redefinition, not on an implicit
+ * copy materialised beside it — a second, valueless `p::load` the binding held
+ * while every scope read the redefinition.
+ */
+function memberNamed(model: Model, e: ElementRecord, seg: string): boolean {
+  if (nameMatches(e, seg)) return true;
+  return e.declaredName === undefined && e.declaredShortName === undefined && effectiveNameOf(model, e) === seg;
+}
+
+/**
+ * The child of `ownerId` a chain segment `seg` names: one {@link memberNamed}
+ * `seg`, else one that REDEFINES a feature named `seg` under another name —
+ * `attribute heavy redefines load = 50.0` is p's `load` too, as the feature it
+ * redefines is no member of p beside it. Read as no child, `bind w = p.load`
+ * materialised an implicit, valueless `p::load` next to `heavy`, and the
+ * binding held the copy while every scope read `heavy`'s 50.
+ */
+function childNamed(model: Model, ownerId: ElementId, seg: string): ElementRecord | undefined {
+  const kids = model.children(ownerId);
+  return (
+    kids.find((e) => memberNamed(model, e, seg)) ??
+    kids.find((e) => !isRelationship(e.eClass) && redefinedClosure(model, e).some((g) => nameMatches(g, seg)))
+  );
+}
+
+/**
  * Can a usage-scoped mirror of `el` be materialised for a connector end?
  *
  * Only FEATURES are mirrored. A definition, package or relationship reached
@@ -382,13 +412,21 @@ function typeClosure(model: Model, el: ElementRecord): ElementRecord[] {
   return out;
 }
 
-/** Feature named `seg` inherited from `el`'s type closure (not a direct child). */
+/**
+ * Feature named `seg` inherited from `el`'s type closure (not a direct child)
+ * — by its effective name ({@link childNamed}), and the most specific one: a
+ * feature another type of the closure redefines is not inherited beside it.
+ * `part def S :> P { attribute :>> load = 5.0; }` gives `s : S` S's load; the
+ * walk took P's by declared name, and the implicit copy it materialised for
+ * `bind w = s.load` redefined P's `load` — masking S's 5 in `s` itself.
+ */
 function findTypeFeature(model: Model, el: ElementRecord, seg: string): ElementRecord | undefined {
+  const hits: ElementRecord[] = [];
   for (const t of typeClosure(model, el)) {
-    const hit = model.children(t.id).find((e) => nameMatches(e, seg));
-    if (hit) return hit;
+    const hit = childNamed(model, t.id, seg);
+    if (hit && !hits.includes(hit)) hits.push(hit);
   }
-  return undefined;
+  return hits.find((h) => !hits.some((o) => o !== h && redefinedClosure(model, o).includes(h))) ?? hits[0];
 }
 
 /**
@@ -404,8 +442,9 @@ function ensureImplicitFeature(
   owner: ElementRecord,
   proto: ElementRecord,
 ): ElementRecord {
-  const name = proto.declaredName ?? proto.declaredShortName ?? '';
-  const existing = model.children(owner.id).find((c) => nameMatches(c, name));
+  // An unnamed redefinition (`attribute :>> load`) is named by what it redefines.
+  const name = proto.declaredName ?? proto.declaredShortName ?? effectiveNameOf(model, proto) ?? '';
+  const existing = childNamed(model, owner.id, name);
   if (existing) return existing;
   const attrs: Record<string, AttrValue> = { implicit: true };
   if (typeof proto.attrs.direction === 'string') attrs.direction = proto.attrs.direction;
@@ -463,7 +502,7 @@ function walkChain(
 ): ElementRecord | undefined {
   let cur = anchor;
   for (const seg of segs) {
-    const direct = model.children(cur.id).find((e) => nameMatches(e, seg));
+    const direct = childNamed(model, cur.id, seg);
     if (direct) {
       cur = direct;
       continue;
@@ -1428,7 +1467,11 @@ class Mapper {
         const r = this.resolveRef(sref, scope, el.id);
         if (r && r.id !== el.id) {
           this.model.update(el.id, { source: [r.id] });
-          this.model.setAttrs(el.id, { sourceRef: undefined });
+          // A satisfier named by a feature CHAIN (`satisfy R by q1.p`) is q1's
+          // p, which the resolved feature (Q's p) no longer says: the chain is
+          // kept for the verification lane, which reads R at that instance.
+          const chain = el.eClass === 'Satisfy' && /^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+$/.test(sref.trim());
+          this.model.setAttrs(el.id, { sourceRef: undefined, ...(chain ? { sourceChain: sref.trim() } : {}) });
           sourceResolved = true;
           // A `:>`-family relationship built while its source name was still
           // unbound defaulted to Subsetting (mapRelationshipStmt). Now that the
@@ -1872,9 +1915,7 @@ class Mapper {
       this.model.setAttrs(el.id, this.splitValueUnit(node.value));
       // `:=` provenance (F-follow-up): keep return/behavior statements from
       // drifting to `=` on re-emission.
-      if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
-        this.model.setAttrs(el.id, { initialValue: true });
-      }
+      this.recordValueOperator(el, node.valueOp);
     }
   }
 
@@ -1922,9 +1963,7 @@ class Mapper {
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
       this.model.setAttrs(el.id, this.splitValueUnit(node.value));
-      if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
-        this.model.setAttrs(el.id, { initialValue: true });
-      }
+      this.recordValueOperator(el, node.valueOp);
     }
     if (node.body) for (const m of node.body.members) this.mapMember(m, el.id);
   }
@@ -2120,9 +2159,7 @@ class Mapper {
     });
     if (node.valueOp && node.value) {
       this.model.setAttrs(el.id, this.splitValueUnit(node.value));
-      if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
-        this.model.setAttrs(el.id, { initialValue: true });
-      }
+      this.recordValueOperator(el, node.valueOp);
     }
   }
 
@@ -2234,9 +2271,7 @@ class Mapper {
     if (mults.length) this.model.setAttrs(el.id, { multiplicity: mults[mults.length - 1] });
     if (node.valueOp && node.value) {
       this.model.setAttrs(el.id, this.splitValueUnit(node.value));
-      if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) {
-        this.model.setAttrs(el.id, { initialValue: true });
-      }
+      this.recordValueOperator(el, node.valueOp);
     }
     // Walked in document order, like every other body — single-pass resolution.
     for (const m of node.body ? node.body.members : node.members) this.mapMember(m, el.id);
@@ -2402,7 +2437,7 @@ class Mapper {
     // Feature value ( = / := ), with its unit split off.
     if (node.valueOp && node.value) {
       this.model.setAttrs(el.id, this.splitValueUnit(node.value));
-      if (node.valueOp === ':=' || node.valueOp.endsWith(':=')) this.model.setAttrs(el.id, { initialValue: true });
+      this.recordValueOperator(el, node.valueOp);
     }
 
     // Inline `connection c connect A to B` / `interface i connect A to B`.
@@ -2428,6 +2463,27 @@ class Mapper {
         this.noteResidueOfFault(node.body.expr, el.id);
       }
     }
+  }
+
+  /**
+   * Record HOW a value was written, beside the value itself: `:=` (an initial
+   * value) as `initialValue`, and `default` (`default = 1.0`, `default := 1.0`,
+   * `default 1.0`) as `defaultValue`.
+   *
+   * The two are different statements in KerML, and the second is the one the
+   * semantics reads. `attribute load = 1.0` BINDS load for every instance of
+   * the type that owns it — a redefinition that gives it another value is a
+   * contradiction — while `attribute load default = 1.0` is overridable: a
+   * redefinition's value replaces it in its own context. The mapper used to
+   * drop `default`, so the two spellings mapped to one element and no surface
+   * could tell an overridable default from a binding. Nothing is recorded for
+   * a plain `=`, so a model without either keeps exactly its old attributes.
+   */
+  private recordValueOperator(el: ElementRecord, op: string): void {
+    const attrs: Record<string, AttrValue> = {};
+    if (op === ':=' || op.endsWith(':=')) attrs.initialValue = true;
+    if (op.startsWith('default')) attrs.defaultValue = true;
+    if (Object.keys(attrs).length > 0) this.model.setAttrs(el.id, attrs);
   }
 
   /**

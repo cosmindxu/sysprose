@@ -23,20 +23,33 @@ import {
   definingEquationFor,
   definitionKey,
   definitionsInFlight,
+  instanceKey,
+  clashSentence,
+  contradictionSentence,
+  bindingEndPath,
+  defaultGivesWay,
   hasStatedValue,
   isAsserted,
+  isBindingConnector,
   isCalculationValue,
-  readsStatedValueIn,
   mergeContact,
   namesDefinedBy,
+  isCall,
+  isDerivedValue,
   returnTo,
+  shadowedEquation,
+  shadowedNamesOf,
+  shadowedSentence,
+  sharedDefinitions,
   statedValueOf,
   type Contact,
   type DefiningEquation,
   type InFlight,
+  type NameClash,
 } from './defining-equation';
-import { effectiveFeatures } from './inheritance';
-import { evaluate, parseExpr, type EvalResult, type ExprNode } from './expr';
+import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, redefinedClosure } from './inheritance';
+import { evaluateDecided, statedRational, tieSentence, type ExactScope, type Rational } from './exact';
+import { parseExpr, type EvalResult, type ExprNode } from './expr';
 import {
   NO_MARKERS,
   bareLiteralRefusal,
@@ -66,6 +79,7 @@ import {
   quantityKindOf,
   quantityRefsIn,
   refusalSentence,
+  siExact,
   type ConstraintQuantityOptions,
   type ConstraintQuantityResult,
   type DerivationMemo,
@@ -111,14 +125,13 @@ interface ScalarPass {
   /** Settled answers: a value expression's by its feature id, a definition's by {@link definitionKey}. */
   answers: Map<string, ScalarAnswer>;
   inFlight: InFlight;
+  /** The defining equations and the names of every scope the pass reads ({@link DefiningEquations.scope}). */
   definitions: DefiningEquations;
-  /** {@link featureIdsFor} of each context the pass has read. */
-  ids: Map<ElementId, Map<string, ElementId>>;
   /** The unit-aware derivations of the same pass. */
   memo: DerivationMemo;
-  /** The names of the model's calculations that state their body as a value, built on first use. */
+  /** The names of the model's derived values ({@link derivedNames}), built on first use. */
   calculations?: Set<string>;
-  /** {@link calculationElsewhere}'s answer per relation and name (`null` for none), built on first use. */
+  /** {@link derivedElsewhere}'s answer per relation, reading context and name (`null` for none), built on first use. */
   elsewhere?: Map<string, ElementRecord | null>;
 }
 
@@ -127,8 +140,7 @@ function newPass(model: Model): ScalarPass {
     model,
     answers: new Map(),
     inFlight: new Map(),
-    definitions: new DefiningEquations(model),
-    ids: new Map(),
+    definitions: sharedDefinitions(model),
     memo: new Map(),
   };
 }
@@ -136,6 +148,12 @@ function newPass(model: Model): ScalarPass {
 /** What the scalar scope answers for one feature. */
 interface ScalarAnswer {
   value: unknown;
+  /**
+   * A number's exact reading: the decimals written, carried through exact
+   * arithmetic (`evaluateDecided` of ./exact) — what a comparison over it is
+   * decided by. Absent where it has none.
+   */
+  exact?: Rational;
   /**
    * How many defining equations it reads through, nested — itself included
    * when it is one — as the unit-aware derivation counts them.
@@ -175,9 +193,10 @@ function note(reads: ScalarReads, a: ScalarAnswer): void {
 }
 
 /** The answer of a value expression (or of anything that reads definitions without being one) over `reads`. */
-function settled(value: unknown, reads: ScalarReads): ScalarAnswer {
+function settled(value: unknown, reads: ScalarReads, exact?: Rational): ScalarAnswer {
   return {
     value,
+    ...(exact !== undefined && typeof value === 'number' ? { exact } : {}),
     depth: reads.depth,
     ...(reads.contact ? { contact: reads.contact } : {}),
     ...(value === undefined && reads.cause ? { cause: reads.cause } : {}),
@@ -211,10 +230,36 @@ function scopeWith(model: Model, contextId: ElementId, pass: ScalarPass, reads?:
   };
 }
 
-/** The scope's answer for `name` in `contextId`: a stated value first, then the equation that fixes it. */
+/**
+ * {@link scopeWith}, with the exact reading of each number it answers
+ * ({@link ScalarAnswer.exact}) beside it: the answer a name's value came
+ * from is the one its exact reading is taken from, asked once.
+ */
+function decidedScopeWith(
+  model: Model,
+  contextId: ElementId,
+  pass: ScalarPass,
+  reads?: ScalarReads,
+): { value: Scope; exact: ExactScope } {
+  const answered = new Map<string, ScalarAnswer | undefined>();
+  const answer = (name: string): ScalarAnswer | undefined => {
+    if (answered.has(name)) return answered.get(name);
+    const a = answerFor(model, contextId, name, pass);
+    answered.set(name, a);
+    if (a && reads) note(reads, a);
+    return a;
+  };
+  return { value: (name) => answer(name)?.value, exact: (name) => answer(name)?.exact };
+}
+
+/**
+ * The scope's answer for `name` in `contextId`: a stated value first — read
+ * in the context that changes what it reads, where one does
+ * ({@link DefiningEquations.readAt}) — then the equation that fixes it.
+ */
 function answerFor(model: Model, contextId: ElementId, name: string, pass: ScalarPass): ScalarAnswer | undefined {
   const id = idsIn(pass, contextId).get(name);
-  if (id !== undefined) return valueOfFeature(model, id, pass);
+  if (id !== undefined) return valueOfFeature(model, id, pass, pass.definitions.readAt(contextId, name));
   return (
     valueDefinedByEquation(model, contextId, name, pass) ??
     valueBoundTo(model, contextId, name, pass) ??
@@ -225,16 +270,21 @@ function answerFor(model: Model, contextId: ElementId, name: string, pass: Scala
 /**
  * The value the asserted definition of the feature a dotted chain ends at
  * gives it, read where that definition is written — when the chain reads the
- * feature its type declares and changes nothing the definition reads
- * ({@link DefiningEquations.chainSite}): `p.e`, over `part p : P` and P's
- * `assert constraint { e == a * b }`, is P's e. The solver lane solves that
- * feature from that equation; this scope did not read it at all, so every
- * relation over `p.e` was undecided here and decided there. `undefined` for
- * any other name.
+ * feature its type declares and changes nothing the definition reads — and
+ * else in the usage the chain reads it through, over that usage's names
+ * ({@link DefiningEquations.chainDefinition}): `p.e`, over `part p : P` and
+ * P's `assert constraint { e == a * b }`, is P's e, and p's own where p
+ * redefines `a`. The solver lane solves that feature from that equation; this
+ * scope did not read it at all, so every relation over `p.e` was undecided
+ * here and decided there. `undefined` for any other name.
  */
 function valueThroughChain(model: Model, contextId: ElementId, name: string, pass: ScalarPass): ScalarAnswer | undefined {
-  const end = pass.definitions.chainSite([contextId], name);
-  return end ? valueDefinedByEquation(model, end.site, end.feature.declaredName!, pass) : undefined;
+  const end = pass.definitions.chainDefinition([contextId], name);
+  if (!end) return undefined;
+  const own = pass.definitions.nameOf(end.feature)!;
+  // Read in the usage that changes what the definition reads: its own value there.
+  if (end.at !== end.site) return defineIn(model, end.at, end.feature, own, pass.definitions.of(end.site, own), pass, true);
+  return valueDefinedByEquation(model, end.site, own, pass);
 }
 
 /**
@@ -248,7 +298,8 @@ function valueBoundTo(model: Model, contextId: ElementId, name: string, pass: Sc
   const d = boundOf(model, contextId, name, pass)?.derivation;
   if (!d) return undefined;
   const value = d.q ? siValue(d.q) : d.b;
-  return value === undefined ? undefined : { value, depth: d.depth ?? 0 };
+  const exact = d.q ? siExact(d.q) : undefined;
+  return value === undefined ? undefined : { value, ...(exact ? { exact } : {}), depth: d.depth ?? 0 };
 }
 
 /** The valueless, undefined feature `name` denotes in `contextId`, and the derivation a binding gives it. */
@@ -265,13 +316,8 @@ function boundOf(
   return derivation ? { feature, derivation } : undefined;
 }
 
-function idsIn(pass: ScalarPass, contextId: ElementId): Map<string, ElementId> {
-  let ids = pass.ids.get(contextId);
-  if (!ids) {
-    ids = featureIdsFor(pass.model, contextId, pass.definitions);
-    pass.ids.set(contextId, ids);
-  }
-  return ids;
+function idsIn(pass: ScalarPass, contextId: ElementId): ReadonlyMap<string, ElementId> {
+  return pass.definitions.scope(contextId, 'value');
 }
 
 /**
@@ -288,7 +334,8 @@ function idsIn(pass: ScalarPass, contextId: ElementId): Map<string, ElementId> {
  * bare name: the defining equation of a feature is written where the feature
  * is, and it is a fact the model states, not a check (see {@link isAsserted}).
  * A definition the context INHERITS is read where it is written, when the
- * context changes nothing it reads ({@link DefiningEquations.inheritedSite}).
+ * context changes nothing it reads, and in the context, over its own names,
+ * when it does ({@link DefiningEquations.definitionReadIn}).
  * Of several, the one {@link chooseDefinition} picks — the rule the unit-aware
  * derivation reads too. The feature goes on the stack while its other side is
  * evaluated, so `x == y + 1` beside `y == x - 1` answers no value, not a hang;
@@ -307,14 +354,41 @@ function valueDefinedByEquation(
   if (!feature) return undefined;
   const candidates = pass.definitions.of(contextId, name);
   if (candidates.length === 0) {
-    const site = pass.definitions.inheritedSite(contextId, name);
-    return site !== undefined ? valueDefinedByEquation(model, site, name, pass) : undefined;
+    const read = pass.definitions.definitionReadIn(contextId, name);
+    if (!read) return undefined;
+    // Where the context changes what the definition reads, it is read here,
+    // over the context's own names: the definition holds of every instance.
+    if (read.at !== read.site) {
+      return defineIn(model, read.at, feature, name, pass.definitions.of(read.site, name), pass, true);
+    }
+    return valueDefinedByEquation(model, read.site, name, pass);
   }
-  if (pass.inFlight.has(feature.id)) return cameBackTo(returnTo(pass.inFlight, feature.id));
+  return defineIn(model, contextId, feature, name, candidates, pass);
+}
+
+/**
+ * The value `candidates` — asserted equations that may define `feature` — give
+ * it, read in `contextId`. `instance` marks a definition written elsewhere and
+ * read here, for this context's own value of the feature: it is in flight
+ * under a key of its own ({@link instanceKey}), apart from the value the
+ * feature has where the definition is written.
+ */
+function defineIn(
+  model: Model,
+  contextId: ElementId,
+  feature: ElementRecord,
+  name: string,
+  candidates: readonly DefiningEquation[],
+  pass: ScalarPass,
+  instance = false,
+): ScalarAnswer {
+  if (candidates.length === 0) return NO_ANSWER;
+  const flight = instance ? instanceKey(feature.id, contextId) : feature.id;
+  if (pass.inFlight.has(flight)) return cameBackTo(returnTo(pass.inFlight, flight));
   const key = definitionKey(feature.id, contextId);
   const hit = pass.answers.get(key);
   if (hit) return hit;
-  const answer = defineScalar(model, contextId, feature, name, candidates, pass);
+  const answer = defineScalar(model, contextId, feature, name, candidates, pass, flight);
   if (!answer.contact) pass.answers.set(key, answer);
   return answer;
 }
@@ -326,6 +400,7 @@ function defineScalar(
   name: string,
   candidates: readonly DefiningEquation[],
   pass: ScalarPass,
+  flight: ElementId = feature.id,
 ): ScalarAnswer {
   // The unit-aware derivation's guard, at the same count: past the cap at
   // once, before the nest below is measured, and never settled.
@@ -334,7 +409,7 @@ function defineScalar(
   }
   const { chosen, contact, cause } = chooseDefinition(
     pass.inFlight,
-    feature.id,
+    flight,
     candidates,
     (equation) => byEquation(model, contextId, feature, name, equation, pass),
     (a) => ({ answered: a.value !== undefined, deep: a.deep === true, contact: a.contact, cause: a.cause }),
@@ -355,6 +430,8 @@ function byEquation(
   equation: DefiningEquation,
   pass: ScalarPass,
 ): ScalarAnswer {
+  // A refused definition (shadowedEquation): no value, as the unit-aware derivation refuses it.
+  if (shadowedEquation(model, equation).length > 0) return NO_ANSWER;
   if (equation.literals.size > 0) {
     // A `[unit]` literal has no scalar reading — the scalar scope is
     // unit-blind — so the value is the quantity the equation derives, in
@@ -364,13 +441,17 @@ function byEquation(
     const depth = d.depth ?? 1;
     if (d.reason === 'depth') return { value: undefined, depth, deep: true };
     const v = d.q ? siValue(d.q) : d.b;
-    return { value: v, depth, ...(d.contact ? { contact: d.contact } : {}) };
+    const exact = d.q ? siExact(d.q) : undefined;
+    return { value: v, ...(exact ? { exact } : {}), depth, ...(d.contact ? { contact: d.contact } : {}) };
   }
   const reads: ScalarReads = { depth: 0 };
   let value: unknown;
+  let exact: Rational | undefined;
   try {
-    const r = evaluate(equation.definition, scopeWith(model, contextId, pass, reads));
+    const scope = decidedScopeWith(model, contextId, pass, reads);
+    const r = evaluateDecided(equation.definition, scope.value, scope.exact);
     value = 'value' in r && (typeof r.value === 'number' || typeof r.value === 'boolean') ? r.value : undefined;
+    exact = 'value' in r ? r.exact : undefined;
   } catch {
     // The engine's own stack ran out: as much a depth limit as the guard.
     return { ...NO_ANSWER, contact: mergeContact(reads.contact, GUARD_CONTACT) };
@@ -385,13 +466,20 @@ function byEquation(
   // number in its declared kind: `t == d` across a duration and a length is a
   // dimension clash, `dT == t1` on an offset scale is refused — neither fills
   // its feature with a raw magnitude, because the refusal is the answer.
+  // Only a refusal of the QUANTITIES answers here: whether the equation's two
+  // sides meet at this value is no question, since the value is its side's.
   const kind = quantityKindOf(model, feature.id);
-  const asQuantity = { magnitude: value, dimension: kind.dimension ?? DIMENSIONLESS };
+  const asQuantity: Quantity = {
+    magnitude: value,
+    dimension: kind.dimension ?? DIMENSIONLESS,
+    ...(exact ? { exact } : {}),
+  };
   const judged = evaluateConstraintQuantityDetailed(model, equation.constraint, {
     fallback: (ref) => (ref === name ? asQuantity : undefined),
     memo: pass.memo,
   });
-  return { value: isRefusalReason(judged.reason) ? undefined : value, depth, ...met };
+  const refused = isRefusalReason(judged.reason) && judged.reason !== 'tie';
+  return refused ? { value: undefined, depth, ...met } : { value, ...(exact ? { exact } : {}), depth, ...met };
 }
 
 /**
@@ -406,7 +494,7 @@ export function definedFeatureOf(model: Model, constraint: ElementRecord): Eleme
   // literal included (`e == 640.0 [Wh] / power`).
   for (const name of namesDefinedBy(constraint)) {
     const feature = effectiveFeatures(model, constraint.ownerId).find(
-      (f) => f.declaredName === name && !hasStatedValue(model, f),
+      (f) => effectiveNameOf(model, f) === name && !hasStatedValue(model, f),
     );
     if (feature) return feature;
   }
@@ -415,75 +503,47 @@ export function definedFeatureOf(model: Model, constraint: ElementRecord): Eleme
 
 /**
  * The name → feature-id map a scope rooted at `contextId` resolves through:
- * every valued feature reachable from the context, under its dotted chain and
- * its bare name (first occurrence wins). Exposed so a caller can ask WHICH
- * feature a name denotes before deciding how to compare it.
+ * every feature reachable from the context whose stated value is read there,
+ * under its dotted chain and — by the rule of the one walk every scope shares
+ * ({@link DefiningEquations.scope}) — its bare name. Exposed so a caller can
+ * ask WHICH feature a name denotes before deciding how to compare it.
  */
 export function featureIdsFor(
   model: Model,
   contextId: ElementId,
-  definitions: DefiningEquations = new DefiningEquations(model),
+  definitions: DefiningEquations = sharedDefinitions(model),
 ): Map<string, ElementId> {
-  const ids = new Map<string, ElementId>();
-  collectIds(model, contextId, '', ids, new Set(), new Set(), definitions);
-  return ids;
+  return new Map(definitions.scope(contextId, 'value'));
 }
 
-function collectIds(
-  model: Model,
-  ownerId: ElementId,
-  prefix: string,
-  ids: Map<string, ElementId>,
-  visited: Set<string>,
-  onPath: Set<ElementId>,
-  definitions: DefiningEquations,
-  link?: { usage: ElementRecord; clean: boolean },
-): void {
-  // TWO guards, because they answer different questions. `onPath` is the CYCLE
-  // guard and must be keyed on the owner ALONE: a feature whose type is one of
-  // its own owners (`item def Person { timeslice asPresident : Person; }`)
-  // generates an unbounded name tower `asPresident.asPresident…`, and a key
-  // that carries the prefix never repeats, so it cannot see the cycle — it
-  // recursed until the stack died. `visited` is only a work bound for a
-  // diamond reached twice at the SAME prefix, so it keeps the prefix in its
-  // key: two sibling features of one type (`part a : T; part b : T;`) are
-  // different scopes and both must be walked.
-  if (onPath.has(ownerId)) return;
-  const guardKey = `${prefix} ${ownerId}`;
-  if (visited.has(guardKey)) return;
-  visited.add(guardKey);
-  onPath.add(ownerId);
-
-  for (const feat of effectiveFeatures(model, ownerId)) {
-    const name = feat.declaredName;
-    if (!name) continue;
-    const full = prefix ? `${prefix}.${name}` : name;
-    if (readsStatedValueIn(model, feat, ownerId, prefix, definitions, link)) {
-      if (!ids.has(full)) ids.set(full, feat.id);
-      if (!ids.has(name)) ids.set(name, feat.id); // bare-name convenience
-    }
-    // Expose nested features via the feature's declared type(s) — through
-    // `feat`, which a usage on the way may stand for with a feature of its own.
-    const clean = link === undefined || (link.clean && definitions.linkReads(link.usage, feat));
-    for (const type of model.typesOf(feat.id)) {
-      collectIds(model, type.id, full, ids, visited, onPath, definitions, { usage: feat, clean });
-    }
-  }
-
-  onPath.delete(ownerId);
+/** A literal number a feature states, with its exact reading (`statedRational` of ./exact). */
+function literalAnswer(value: number, f: ElementRecord): ScalarAnswer {
+  const exact = statedRational(value, f.attrs.valueText);
+  return { value, ...(exact ? { exact } : {}), depth: 0 };
 }
 
 /**
  * The value of one feature: a literal directly, an expression through the
- * feature's owner scope. A cycle (`a = b + 1; b = a + 1`) yields `undefined`
- * rather than a hang — the conservative answer.
+ * feature's owner scope — or, given `at`, through the scope of the context
+ * that changes what it reads, as that context's own value
+ * ({@link DefiningEquations.readAt}). A cycle (`a = b + 1; b = a + 1`) yields
+ * `undefined` rather than a hang — the conservative answer.
  */
-function valueOfFeature(model: Model, id: ElementId, pass: ScalarPass): ScalarAnswer {
+function valueOfFeature(model: Model, id: ElementId, pass: ScalarPass, at?: ElementId): ScalarAnswer {
   const feat = model.get(id);
   if (!feat) return NO_ANSWER;
+  // A value that contradicts a binding it redefines is not the feature's: the
+  // model states both, and neither is read (the unit-aware path refuses it).
+  if (pass.definitions.contradiction(feat)) return NO_ANSWER;
   const raw = statedValueOf(model, feat);
-  if (raw === undefined || raw === null) return NO_ANSWER;
-  if (typeof raw === 'number' || typeof raw === 'boolean') return { value: raw, depth: 0 };
+  if (raw === undefined || raw === null) {
+    // A redefinition that states nothing, in a context that changes what the
+    // value it redefines reads: that value, read there.
+    const inherited = at === undefined ? pass.definitions.redefinedValueOf(feat) : undefined;
+    return inherited ? valueOfFeature(model, inherited.target.id, pass, inherited.at) : NO_ANSWER;
+  }
+  if (typeof raw === 'number') return literalAnswer(raw, feat);
+  if (typeof raw === 'boolean') return { value: raw, depth: 0 };
   if (typeof raw !== 'string') return NO_ANSWER;
   const s = raw.trim();
   if (
@@ -492,8 +552,9 @@ function valueOfFeature(model: Model, id: ElementId, pass: ScalarPass): ScalarAn
   ) {
     return { value: s.slice(1, -1), depth: 0 };
   }
-  if (pass.inFlight.has(id)) return cameBackTo(returnTo(pass.inFlight, id));
-  const hit = pass.answers.get(id);
+  const key = at !== undefined ? instanceKey(id, at) : id;
+  if (pass.inFlight.has(key)) return cameBackTo(returnTo(pass.inFlight, key));
+  const hit = pass.answers.get(key);
   if (hit) return hit;
   let node: ExprNode | undefined;
   try {
@@ -508,28 +569,37 @@ function valueOfFeature(model: Model, id: ElementId, pass: ScalarPass): ScalarAn
   }
   const refs = node ? undefined : quantityRefsIn(s);
   if (!node && !refs) {
-    pass.answers.set(id, NO_ANSWER);
+    pass.answers.set(key, NO_ANSWER);
+    return NO_ANSWER;
+  }
+  // A value expression reading a name the feature declares itself, which its
+  // owner's scope — or the scope it is read in — answers with another feature:
+  // no value (shadowedNamesOf).
+  const reading = at !== undefined ? { ...feat, ownerId: at } : feat;
+  if (shadowedNamesOf(model, reading, node ? referencedNames(node) : refs!).length > 0) {
+    pass.answers.set(key, NO_ANSWER);
     return NO_ANSWER;
   }
   const reads: ScalarReads = { depth: 0 };
   let answer: ScalarAnswer;
-  pass.inFlight.set(id, undefined);
+  pass.inFlight.set(key, undefined);
   try {
-    const inner = feat.ownerId != null ? scopeWith(model, feat.ownerId, pass, reads) : () => undefined;
+    const where = at ?? feat.ownerId;
+    const inner = where != null ? decidedScopeWith(model, where, pass, reads) : undefined;
     if (node) {
-      const r = evaluate(node, inner);
-      answer = settled('value' in r ? r.value : undefined, reads);
+      const r = evaluateDecided(node, inner?.value ?? (() => undefined), inner?.exact);
+      answer = 'value' in r ? settled(r.value, reads, r.exact) : settled(undefined, reads);
     } else {
-      for (const ref of refs!) inner(ref);
+      for (const ref of refs!) inner?.value(ref);
       answer = settled(undefined, reads);
     }
   } catch {
     // The engine's own stack ran out: a depth limit, never settled.
     answer = { ...NO_ANSWER, contact: mergeContact(reads.contact, GUARD_CONTACT) };
   } finally {
-    pass.inFlight.delete(id);
+    pass.inFlight.delete(key);
   }
-  if (!answer.contact) pass.answers.set(id, answer);
+  if (!answer.contact) pass.answers.set(key, answer);
   return answer;
 }
 
@@ -547,18 +617,27 @@ export function evaluateFeatureValue(model: Model, featureId: ElementId): EvalRe
 function featureAnswer(model: Model, featureId: ElementId, pass: ScalarPass): ScalarAnswer {
   const el = model.get(featureId);
   if (!el) return NO_ANSWER;
-  const raw = el.attrs.value !== undefined ? el.attrs.value : el.attrs.expression;
+  if (pass.definitions.contradiction(el)) return NO_ANSWER;
+  // A default a binding overrides is no value of the feature's (statedValueOf).
+  const raw = defaultGivesWay(model, el)
+    ? undefined
+    : el.attrs.value !== undefined
+      ? el.attrs.value
+      : el.attrs.expression;
   if (raw === undefined || raw === null) {
     // No value of its own: the equation beside it may fix one (CV-17).
-    if (el.declaredName && el.ownerId != null) return answerFor(model, el.ownerId, el.declaredName, pass) ?? NO_ANSWER;
+    const own = pass.definitions.nameOf(el);
+    if (own && el.ownerId != null) return answerFor(model, el.ownerId, own, pass) ?? NO_ANSWER;
     return NO_ANSWER;
   }
-  if (typeof raw === 'number' || typeof raw === 'boolean') return { value: raw, depth: 0 };
+  if (typeof raw === 'number') return literalAnswer(raw, el);
+  if (typeof raw === 'boolean') return { value: raw, depth: 0 };
   if (typeof raw !== 'string') return NO_ANSWER;
   const reads: ScalarReads = { depth: 0 };
   try {
-    const r = evaluate(parseExpr(raw), scopeWith(model, el.ownerId ?? featureId, pass, reads));
-    return settled('value' in r ? r.value : undefined, reads);
+    const scope = decidedScopeWith(model, el.ownerId ?? featureId, pass, reads);
+    const r = evaluateDecided(parseExpr(raw), scope.value, scope.exact);
+    return 'value' in r ? settled(r.value, reads, r.exact) : settled(undefined, reads);
   } catch {
     return NO_ANSWER;
   }
@@ -582,6 +661,24 @@ export interface ConstraintCheck {
    * elsewhere, and two contexts may disagree. See {@link SpecialisationInstance}.
    */
   instances?: SpecialisationInstance[];
+  /**
+   * Set on a check that is no relation of the model's but a value it states
+   * twice ({@link contradictions}): `binding` for a redefinition whose value
+   * conflicts with a binding it overrides, `clash` for two bindings a context
+   * inherits under one name, `bind` for a binding connector whose two ends
+   * the model states different values for ({@link bindingConflicts}). Its
+   * `id` is the redefinition's, `<the other feature's id>@<the context's
+   * id>`, or the connector's — `<its id>@<the context's id>` in a context
+   * that specialises its owner.
+   */
+  conflict?: 'binding' | 'clash' | 'bind';
+  /**
+   * Set on an `unknown` that is a comparison whose two sides are equal within
+   * the evaluators' tolerance and that no exact reading decides (the tie rule
+   * of ./exact): another reading of the same values may not decide it either,
+   * and the numeric surface abstains with it.
+   */
+  tie?: true;
 }
 
 /**
@@ -621,6 +718,13 @@ export interface SpecialisationInstance {
    * and the app's Check, so both say the same thing.
    */
   message: string;
+  /**
+   * For a reading in a context that specialises the constraint's owner
+   * ({@link readInContexts}): the pipeline's own sentence — what a check of the
+   * constraint in that context says (`Constraint violated: …`, `Could not
+   * evaluate: …`), as the verification lane reads it.
+   */
+  detail?: string;
 }
 
 /** One measure of a {@link SpecialisationInstance}, bound to its specialiser. */
@@ -660,11 +764,212 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       expression: expr,
       result: judged.result,
       message: judged.message,
+      ...(judged.tie ? { tie: true as const } : {}),
     };
     if (judged.gap) readThroughSpecialisers(model, el, expr, check, pass);
+    readInContexts(model, el, expr, check, pass);
     out.push(check);
   }
+  out.push(...contradictions(model, pass));
+  out.push(...bindingConflicts(model, pass));
   return out;
+}
+
+/**
+ * The checks of a sweep by the id a worklist row carries: a constraint's own
+ * by its element id, and its reading in a context ({@link readInContexts}) by
+ * `<id>@<context id>` — the id of the worklist row that reads it there
+ * (`Obligation.instance` of ./obligations). What the literal and SMT engines
+ * look a row's numeric reading up in.
+ */
+export function checksByRow(checks: readonly ConstraintCheck[]): Map<ElementId, ConstraintCheck> {
+  const out = new Map<ElementId, ConstraintCheck>();
+  for (const c of checks) {
+    out.set(c.id, c);
+    for (const i of c.instances ?? []) {
+      out.set(`${c.id}@${i.contextId}`, {
+        id: `${c.id}@${i.contextId}`,
+        ownerId: i.contextId,
+        expression: c.expression,
+        result: i.result,
+        message: i.detail ?? i.message,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * One check per redefinition whose value conflicts with a BINDING it
+ * overrides ({@link DefiningEquations.contradiction}), anchored at the
+ * redefinition, in the sentence every surface refuses its value with: its
+ * `id` is the redefinition's, its `expression` the binding as it holds there
+ * (`load == 1.0`). `violated` where two literal values are decided to differ
+ * — the validation surface reports it with every other violated check, and
+ * the verification lane, which carries both values as axioms, finds them
+ * inconsistent — and `unknown` where only an evaluation could compare them
+ * (`:>> load = 50.0` over `load = 2.0 * k`): the two may meet, and the
+ * verification lane decides.
+ */
+function contradictions(model: Model, pass: ScalarPass): ConstraintCheck[] {
+  const out: ConstraintCheck[] = [];
+  for (const f of model.all()) {
+    if (f.attrs.isLibrary === true || f.attrs.value === undefined || f.attrs.value === null) continue;
+    const conflict = pass.definitions.contradiction(f);
+    const name = pass.definitions.nameOf(f);
+    if (!conflict || name === undefined) continue;
+    const { binding } = conflict;
+    const unit = typeof binding.attrs.unit === 'string' && binding.attrs.unit !== '' ? ` [${binding.attrs.unit}]` : '';
+    const sentence = contradictionSentence(model, f, conflict);
+    out.push({
+      id: f.id,
+      ownerId: f.ownerId,
+      expression: `${name} == ${String(binding.attrs.valueText ?? binding.attrs.value).trim()}${unit}`,
+      result: conflict.decided ? 'violated' : 'unknown',
+      message: conflict.decided ? `Constraint violated: ${sentence}` : `Could not evaluate: ${sentence}`,
+      conflict: 'binding',
+    });
+  }
+  // Two bindings a context inherits under one name (`part def C :> A, B`):
+  // one check, at the most general context it arises in, anchored there.
+  for (const { context, name, clash } of pass.definitions.contradictoryClashes()) {
+    const v = clash.otherValue;
+    const unit = typeof v.attrs.unit === 'string' && v.attrs.unit !== '' ? ` [${v.attrs.unit}]` : '';
+    const sentence = clashSentence(model, context.id, clash);
+    out.push({
+      id: `${clash.other.id}@${context.id}`,
+      ownerId: context.id,
+      expression: `${name} == ${String(v.attrs.valueText ?? v.attrs.value).trim()}${unit}`,
+      result: clash.decided ? 'violated' : 'unknown',
+      message: clash.decided ? `Constraint violated: ${sentence}` : `Could not evaluate: ${sentence}`,
+      conflict: 'clash',
+    });
+  }
+  return out;
+}
+
+/**
+ * One check per binding connector whose two ends, read in a context the
+ * binding holds in — where it is written, and every context that specialises
+ * its owner and reads an end differently ({@link
+ * DefiningEquations.changingContexts}), as a definition's assert is read
+ * there — are values the model states that are decided to DIFFER: `bind
+ * p.load = L` in Q over P's `load = 1.0`, read in `q : Q { attribute :>> L =
+ * 50.0; }`. A binding holds in every instance, and a value written with `=` is
+ * a binding too (strict KerML), so the model states both values: `violated`,
+ * anchored at the connector (`<its id>@<the context's id>` in a context), in
+ * the expression the binding is there (`p.load == L`). Read nowhere but by
+ * the verification lane, which found the axioms inconsistent, the binding was
+ * dropped silently on this surface and the numeric one, and the model
+ * feasible. Judged by the one pipeline ({@link judgeConstraint}); an end with
+ * no value there — a valueless feature, or a `default` the binding overrides
+ * ({@link defaultGivesWay}) — leaves nothing to contradict, and no check.
+ */
+function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
+  const out: ConstraintCheck[] = [];
+  for (const b of model.all()) {
+    if (b.attrs.isLibrary === true || b.ownerId == null || !isBindingConnector(b)) continue;
+    const owner = model.get(b.ownerId);
+    const left = bindingEndPath(model, b.source?.[0], b.ownerId);
+    const right = bindingEndPath(model, b.target?.[0], b.ownerId);
+    if (!owner || left === undefined || right === undefined || left === right) continue;
+    const expr = `${left} == ${right}`;
+    for (const x of [owner, ...pass.definitions.changingContexts(b, [left, right])]) {
+      const reading: ElementRecord = {
+        ...b,
+        eClass: 'ConstraintUsage',
+        ownerId: x.id,
+        attrs: { ...b.attrs, expression: expr },
+      };
+      if (judgeConstraint(model, reading, expr, pass).result !== 'violated') continue;
+      const where = pass.definitions.contextName(x.id);
+      const holder = effectiveQualifiedName(model, owner.id);
+      const sentence =
+        `${x.id === owner.id ? holder : `${holder}'s binding, read in ${where},`} binds ${left} to ${right} ` +
+        `(\`bind ${left} = ${right}\`), and the model states different values for the two there — a binding ` +
+        'holds in every instance, as a value written with `=` does, so the model states both values';
+      out.push({
+        id: x.id === owner.id ? b.id : `${b.id}@${x.id}`,
+        ownerId: x.id,
+        expression: expr,
+        result: 'violated',
+        message: `Constraint violated: ${sentence}`,
+        conflict: 'bind',
+      });
+    }
+  }
+  return out;
+}
+
+
+/**
+ * Read a definition's constraint in every context that specialises the
+ * definition and reads it differently ({@link DefiningEquations.changingContexts}):
+ * one {@link SpecialisationInstance} per context, judged by the one pipeline
+ * with the constraint's owner's names replaced by the context's. SysML makes a
+ * constraint of P a feature of every P, so P's own verdict at P's values says
+ * nothing of `part p : P { attribute :>> load = 50.0; }` over a `default`, and
+ * `light : D { :>> k = 0.1 }` read `lim = 10.0 * k` as D's 20. A clause of a
+ * requirement is read so in every context that binds its subject — `satisfy R
+ * by p`, `requirement r : R { subject s = p; }` — at p's values, not at those
+ * of the subject's type.
+ */
+function readInContexts(model: Model, el: ElementRecord, expr: string, check: ConstraintCheck, pass: ScalarPass): void {
+  if (el.ownerId == null) return;
+  const names = namesIn(expr);
+  const contexts = pass.definitions.readingContexts(el, names);
+  if (contexts.length === 0) return;
+  const owner = el.ownerId;
+  const ownIds = pass.definitions.scope(owner, 'all');
+  const ownValues = idsIn(pass, owner);
+  const target = targetName(model, el);
+  const instances = check.instances ?? [];
+  for (const x of contexts) {
+    const reading: ElementRecord = { ...el, ownerId: x.id };
+    const judged = judgeConstraint(model, reading, expr, pass);
+    const ids = pass.definitions.scope(x.id, 'all');
+    const scope = combinedScope(model, reading, pass);
+    // What the context reads differently: the measures with no value where the
+    // constraint is written, else every name it reads through another feature
+    // — or reads IN the context, as the context's own value (`readAt`).
+    const own = (n: string): boolean => pass.definitions.readAt(x.id, n) !== undefined;
+    const changed = names.filter((n) => ids.get(n) !== undefined && (ids.get(n) !== ownIds.get(n) || own(n)));
+    const missing = changed.filter((n) => !ownValues.has(n));
+    // A value read in the context is shown beside a missing measure: it is why
+    // the context reads the body otherwise.
+    const read = missing.length > 0 ? [...missing, ...changed.filter((n) => own(n) && !missing.includes(n))] : changed;
+    const shown: SpecialisationBinding[] = read.map((n) => {
+      const featureId = ids.get(n)!;
+      const value = scope(n);
+      return {
+        name: n,
+        featureId,
+        // A value read in the context is the context's own: named by it.
+        qualifiedName: own(n)
+          ? `${pass.definitions.contextName(x.id)}::${n}`
+          : effectiveQualifiedName(model, featureId),
+        ...(typeof value === 'number'
+          ? { value: Number(value.toPrecision(6)) }
+          : typeof value === 'boolean' || typeof value === 'string'
+            ? { value }
+            : {}),
+      };
+    });
+    const satisfied = pass.definitions.satisfaction(x.id);
+    const contextName = effectiveNameOf(model, satisfied?.satisfier ?? x) ?? nameOf(satisfied?.satisfier ?? x);
+    instances.push({
+      contextId: x.id,
+      context: contextName,
+      featureId: shown[0]?.featureId ?? x.id,
+      qualifiedName: effectiveQualifiedName(model, shown[0]?.featureId ?? x.id),
+      ...(shown[0]?.value !== undefined ? { value: shown[0].value } : {}),
+      bindings: shown,
+      result: judged.result,
+      message: instanceMessage(model, judged, shown, contextName, target, expr),
+      detail: judged.message,
+    });
+  }
+  if (instances.length > 0) check.instances = instances;
 }
 
 /** A name a target is read through: the specialiser standing for a measure. */
@@ -672,6 +977,8 @@ interface Bound {
   featureId: ElementId;
   /** The scalar value, as the scalar scope would answer it. */
   value: unknown;
+  /** That value's exact reading, when it has one ({@link ScalarAnswer.exact}). */
+  exact?: Rational;
   /** The same value as a quantity, for the unit-aware path (absent for a boolean). */
   quantity?: Quantity;
   /**
@@ -691,6 +998,8 @@ interface Judgement {
    * through a specialiser of the missing measure may answer it.
    */
   gap: boolean;
+  /** Set on an `unknown` that is a tie no exact reading decides ({@link ConstraintCheck.tie}). */
+  tie?: true;
 }
 
 /**
@@ -714,6 +1023,12 @@ function judgeConstraint(
   pass: ScalarPass,
   bindings?: ReadonlyMap<string, Bound>,
 ): Judgement {
+  // A body that reads a name its own element declares, which the owner's scope
+  // answers with another feature, is read by no surface (shadowedNamesOf).
+  const shadowed = shadowedNamesOf(model, el, namesIn(expr));
+  if (shadowed.length > 0) {
+    return { result: 'unknown', message: `Could not evaluate: ${shadowedSentence(model, el, shadowed)}`, gap: false };
+  }
   const local = equationBindings(model, el, expr, pass, bindings);
   if ('reason' in local) return { result: 'unknown', message: `Could not evaluate: ${local.reason}`, gap: false };
   // The equation a feature is bound FROM is judged against that binding too,
@@ -799,7 +1114,12 @@ function judgeBound(
       const chains = chainCauses(model, el, namesIn(expr), scope, pass);
       if (chains) return { result: 'unknown', message: `Could not evaluate: ${chains}`, gap: true };
     }
-    return { result: 'unknown', message: `Could not evaluate: ${ua.detail}`, gap: ua.reason === 'unresolved' };
+    return {
+      result: 'unknown',
+      message: `Could not evaluate: ${ua.detail}`,
+      gap: ua.reason === 'unresolved',
+      ...(ua.reason === 'tie' ? { tie: true as const } : {}),
+    };
   }
 
   // UNIT-AWARE FIRST, scalar as the fallback. The scalar evaluator is
@@ -830,7 +1150,12 @@ function judgeBound(
   // number of a dimensioned chain. The membership test lives in units-eval,
   // beside the reasons themselves.
   if (isRefusalReason(ua.reason)) {
-    return { result: 'unknown', message: `Could not evaluate: ${ua.detail}`, gap: false };
+    return {
+      result: 'unknown',
+      message: `Could not evaluate: ${ua.detail}`,
+      gap: false,
+      ...(ua.reason === 'tie' ? { tie: true as const } : {}),
+    };
   }
 
   // The bare-literal contract holds for a LITERAL-valued feature: its
@@ -844,12 +1169,27 @@ function judgeBound(
   if (refusal) return { result: 'unknown', message: refusal, gap: false };
 
   // Scope from the owner (subject context) merged with the constraint itself.
-  const own = combinedAnswer(model, el, pass);
+  const combined = combinedAnswer(model, el, pass);
+  const answered = new Map<string, ScalarAnswer | undefined>();
+  const own = (name: string): ScalarAnswer | undefined => {
+    if (!answered.has(name)) answered.set(name, combined(name));
+    return answered.get(name);
+  };
   const scope: Scope = (name) => {
     const bound = bindings?.get(name);
     return bound !== undefined ? bound.value : own(name)?.value;
   };
-  const r = evaluate(node, scope);
+  // Each number with its exact reading, so a tie is decided by the decimals
+  // written, as the unit-aware path decides it (the tie rule of ./exact):
+  // `mass < 25.0` at 25 kg is violated, `x + 0.2 > 0.3` at 0.1 too.
+  const exact: ExactScope = (name) => {
+    const bound = bindings?.get(name);
+    return bound !== undefined ? bound.exact : own(name)?.exact;
+  };
+  const r = evaluateDecided(node, scope, exact);
+  if ('unknown' in r && r.tie) {
+    return { result: 'unknown', message: `Could not evaluate: ${tieSentence(r.tie)}`, gap: false, tie: true };
+  }
   if ('unknown' in r) {
     // A value past the depth cap is refused, as the unit-aware path refuses
     // it: not a gap a specialiser may fill.
@@ -881,7 +1221,7 @@ function definitionMessage(
   pass: ScalarPass,
 ): string | undefined {
   const defined = definedFeatureOf(model, el);
-  const name = defined?.declaredName;
+  const name = defined ? pass.definitions.nameOf(defined) : undefined;
   if (!name) return undefined;
   const bound = local.get(name);
   if (bound) {
@@ -895,10 +1235,16 @@ function definitionMessage(
 
 /* ─────────────── A feature fixed by an asserted equation in the constraint's own context ─────────────── */
 
-/** A valueless feature an asserted equation may fix, and the context the equation is written in. */
+/**
+ * A valueless feature an asserted equation may fix, and the context the
+ * equation is read in — where it is written, unless `site` says that is
+ * elsewhere: a definition written in `site` and read in `contextId`, over
+ * the names there, because the context changes what it reads.
+ */
 interface EquationSite {
   contextId: ElementId;
   feature: ElementRecord;
+  site?: ElementId;
 }
 
 /**
@@ -939,9 +1285,11 @@ function equationBindings(
       if (refusal) return { reason: refusal };
       const value = held.derivation.q ? siValue(held.derivation.q) : held.derivation.b;
       if (value === undefined) continue;
+      const exact = held.derivation.q ? siExact(held.derivation.q) : undefined;
       bindings.set(name, {
         featureId: held.feature.id,
         value,
+        ...(exact ? { exact } : {}),
         ...(held.derivation.q ? { quantity: held.derivation.q } : {}),
         derivation: held.derivation,
       });
@@ -956,9 +1304,13 @@ function equationBindings(
   const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
   for (const name of namesIn(expr)) {
     if (!name.includes('.') || taken?.has(name)) continue;
-    const end = pass.definitions.chainSite(contexts, name);
+    const end = pass.definitions.chainDefinition(contexts, name);
     if (!end) continue;
-    const read = readSpecialiser(model, end.feature, name, pass, { contextId: end.site, feature: end.feature });
+    const read = readSpecialiser(model, end.feature, name, pass, {
+      contextId: end.at,
+      feature: end.feature,
+      ...(end.at !== end.site ? { site: end.site } : {}),
+    });
     if ('bound' in read) bindings.set(name, read.bound);
     else if (!read.valueless) return { reason: read.reason };
   }
@@ -989,8 +1341,9 @@ function boundSiteOf(
  * {@link combinedScope}: the owner's scope first, then the constraint's own,
  * and in each a stated value of that name (anywhere {@link featureIdsFor}
  * reaches) before an equation — `undefined` when one answers it first. A
- * definition the context inherits and changes nothing of is read where it is
- * written ({@link DefiningEquations.inheritedSite}), and that is its site.
+ * definition the context inherits is read where it is written when the
+ * context changes nothing it reads, and in the context, over its own names,
+ * when it does ({@link DefiningEquations.definitionReadIn}).
  */
 function equationSiteOf(model: Model, el: ElementRecord, name: string, pass: ScalarPass): EquationSite | undefined {
   const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
@@ -998,11 +1351,14 @@ function equationSiteOf(model: Model, el: ElementRecord, name: string, pass: Sca
     const contextId = contexts[i]!;
     const feature = pass.definitions.feature(contextId, name);
     if (!feature) continue;
-    const site =
-      pass.definitions.of(contextId, name).length > 0 ? contextId : pass.definitions.inheritedSite(contextId, name);
-    if (site === undefined) continue;
+    const read =
+      pass.definitions.of(contextId, name).length > 0
+        ? { site: contextId, at: contextId }
+        : pass.definitions.definitionReadIn(contextId, name);
+    if (read === undefined) continue;
     const shadowed = contexts.slice(0, i + 1).some((c) => idsIn(pass, c).has(name));
-    return shadowed ? undefined : { contextId: site, feature };
+    if (shadowed) return undefined;
+    return { contextId: read.at, feature, ...(read.at !== read.site ? { site: read.site } : {}) };
   }
   return undefined;
 }
@@ -1042,7 +1398,11 @@ function chainCauses(
   const lacking = [...new Set(names)].filter((n) => scope(n) === undefined);
   // A calculation read outside its owner has its own reason, chain or not.
   const causes = lacking.map(
-    (n) => (n.includes('.') ? chainCause(model, el, n, pass) : undefined) ?? calculationCause(model, el, n, pass),
+    (n) =>
+      clashCause(model, el, n, pass) ??
+      contradictionCause(model, el, n, pass) ??
+      (n.includes('.') ? chainCause(model, el, n, pass) : undefined) ??
+      calculationCause(model, el, n, pass),
   );
   return causes.length > 0 && causes.every((c) => c !== undefined) ? causes.join('; ') : undefined;
 }
@@ -1052,28 +1412,24 @@ function chainCauses(
  * in the relation's context, although the solver lane would read one there —
  * or `[]`. `names` are the names the body reads, `[unit]` literals excluded.
  *
- * Two shapes, one reason: a value written in one context, read in another
- * that changes what it reads.
- *  - A FEATURE CHAIN (`p.e`) to a feature that states no value and has an
- *    asserted equation beside it, or to a calculation whose body is its value
- *    — where the chain reads it through a usage that redefines what that
- *    equation or body reads (`p : P { :>> capacity = 1300 }`), or a link of
- *    it ({@link chainEnd}).
- *  - A BARE NAME of such a feature or calculation the context INHERITS (`e`
- *    in `part def S :> P`, over `P`'s `assert constraint { e == capacity /
- *    power }`), where the context redefines what it reads (`S :> P { :>>
- *    capacity = 320 [Wh] }`).
+ * What is left of them is a value no context reads as its own: a name two
+ * inherited values collide under ({@link clashOf}), a chain into a
+ * calculation with a parameter ({@link callOnChain}), and — where this
+ * surface finds no reading of it at all — a chain to, or an inherited, value
+ * only an asserted equation defines, or a derived value.
  *
- * The solver lane reads both: the feature is ONE element, P's equation solves
- * it — over P's inputs — and the name resolves to it. That value is the wrong
- * one exactly where the context redefines an input, and the numeric surface
- * and the SMT engine judged, and proved, from it where this surface said the
- * name has no value. They now read such a name as nothing: a verdict that
- * does not depend on it stands (`flag > 0.0 or p.e <= 1.0`), and one that
- * does is undecided — on every surface, in this surface's sentence, and as a
- * limit of this tool rather than a defect in the relation. Where the context
- * changes nothing the value reads, every surface reads it, as the value it
- * has where it is written ({@link DefiningEquations.sameIn}).
+ * A value written in one context and read in another that changes what it
+ * reads (`p.e`, over P's `e == capacity / power` and a `p : P { :>> capacity
+ * = 1300 }`; `e` in `S :> P { :>> capacity = 320 [Wh] }`) used to be one of
+ * them, read as nothing on every surface (Stage 1) — and before that as P's,
+ * a false proof. It is that context's own value now, read there over its
+ * names ({@link DefiningEquations.valueRef},
+ * {@link DefiningEquations.definitionReadIn},
+ * {@link DefiningEquations.chainDefinition}), by every surface, and by a
+ * symbol of its own on the verification lane. A name left here refuses no
+ * relation on its own: a verdict that does not depend on it stands
+ * (`flag > 0.0 or c.load <= 1.0`), and one that does is undecided — on every
+ * surface, in this surface's sentence.
  */
 export function unreadValuesOf(
   model: Model,
@@ -1084,7 +1440,15 @@ export function unreadValuesOf(
   const out: string[] = [];
   const pass = passFor(model, memo);
   for (const name of new Set(names)) {
+    if (clashOf(el, name, pass)) {
+      out.push(name);
+      continue;
+    }
     if (name.includes('.')) {
+      if (callOnChain(model, el, name, pass)) {
+        out.push(name);
+        continue;
+      }
       const end = chainEnd(model, el, name, pass);
       if (end?.asserted && !end.read) {
         out.push(name);
@@ -1094,81 +1458,215 @@ export function unreadValuesOf(
       out.push(name);
       continue;
     }
-    if (calculationElsewhere(model, el, name, pass)) out.push(name);
+    if (derivedElsewhere(model, el, name, pass)) out.push(name);
   }
   return out;
 }
 
 /**
- * A calculation whose body ({@link isCalculationValue}) a relation reads
- * where this surface reads no value for it — by a bare name of a calculation
- * the relation's context INHERITS (`margin` in `part p : P`, over P's `calc
- * margin { 10.0 - load }`), or through a feature chain (`p.margin`), where
- * the context redefines what the body reads (`:>> load = 50.0`) — or
- * `undefined`. The body is P's arithmetic over P's inputs, which is then the
- * wrong value: it is read as an inherited asserted definition is there — no
- * value, on every surface. Where nothing it reads is redefined, the scope
- * reads it ({@link readsStatedValueIn}) and this is `undefined`.
+ * The features the values {@link unreadValuesOf} named depend on, as resolved
+ * where `el` reads them: for each name, the inputs of the value it denotes
+ * ({@link DefiningEquations.dependencies}) in the context it is read through —
+ * the usage a chain reads it through, else the relation's own context. A
+ * command that reaches relations by the features they read reaches a refused
+ * relation over an unread value through these: `assert constraint cap { p.e <=
+ * 1.0 }` over P's `e == x * 2.0`, read through a `p : P2` that changes `x`,
+ * reaches the requirement on `q.p.x` — P2's x — although its own symbol for
+ * `p.e` meets nothing.
+ */
+export function unreadDependenciesOf(
+  model: Model,
+  el: ElementRecord,
+  names: readonly string[],
+  memo?: DerivationMemo,
+): ElementId[] {
+  const pass = passFor(model, memo);
+  const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
+  const out = new Set<ElementId>();
+  for (const name of new Set(names)) {
+    let feature: ElementRecord | undefined;
+    let reader: ElementId | undefined;
+    if (name.includes('.')) {
+      const end = pass.definitions.chain(contexts, name);
+      feature = end?.feature;
+      reader = end?.usage?.id;
+    } else {
+      for (const c of contexts) {
+        feature = pass.definitions.byName(c).get(name);
+        if (feature) {
+          reader = c;
+          break;
+        }
+      }
+    }
+    if (!feature || reader === undefined) continue;
+    out.add(feature.id);
+    for (const id of pass.definitions.dependencies(reader, feature)) out.add(id);
+  }
+  return [...out];
+}
+
+/**
+ * The calculation WITH A PARAMETER a feature chain reads a feature of
+ * (`g.r`, over `calc g { in y = 100.0; return r = y; }`), or `undefined`. Its
+ * features are the values of a call — a default nothing invokes, the result
+ * of one — so no surface reads them, as none reads the calculation's own
+ * value ({@link isParameterisedCalculation}): the chain is an unread name,
+ * never a value read off the parameter's default.
+ */
+function callOnChain(model: Model, el: ElementRecord, name: string, pass: ScalarPass): ElementRecord | undefined {
+  const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
+  const segments = name.split('.');
+  for (let i = 1; i < segments.length; i++) {
+    const link = pass.definitions.chain(contexts, segments.slice(0, i).join('.'))?.feature;
+    if (!link) return undefined;
+    if (isCall(model, link)) return link;
+  }
+  return undefined;
+}
+
+/**
+ * A DERIVED value — an attribute's value expression or a calculation's body
+ * ({@link isDerivedValue}) — that a relation reads where this surface reads
+ * no value for it: by a bare name of one the relation's context INHERITS
+ * (`m2` in `part p : P`, over P's `attribute m2 = 10.0 - load`), or through a
+ * feature chain (`p.m2`) — or `undefined`. The scope reads every such value,
+ * where it is written or, in a context that changes what it reads (`:>> load
+ * = 50.0` over a `default`), in that context over its names
+ * ({@link DefiningEquations.valueRef}); what is left is a value the scope
+ * does not map at all. A redefinition that states nothing stands for the
+ * value it redefines (`attribute :>> m2;`).
  *
  * Asked of every name an unknown row reads, twice (for the row's unread names
  * and for its sentence), so it is answered once per relation and name.
  */
-function calculationElsewhere(
+function derivedElsewhere(
   model: Model,
   el: ElementRecord,
   name: string,
   pass: ScalarPass,
 ): ElementRecord | undefined {
-  // Most names are no calculation's: answered from one sweep of the model.
-  if (!calculationNames(pass).has(name.slice(name.lastIndexOf('.') + 1))) return undefined;
+  // Most names are no derived value's: answered from one sweep of the model.
+  if (!derivedNames(pass).has(name.slice(name.lastIndexOf('.') + 1))) return undefined;
   pass.elsewhere ??= new Map();
-  const key = `${el.id} ${name}`;
+  const key = `${el.id} ${el.ownerId ?? ''} ${name}`;
   const hit = pass.elsewhere.get(key);
   if (hit !== undefined) return hit ?? undefined;
   const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
-  // The calculation first — a walk of the context's own features — and the
-  // scope's names only for a name that is one: most names are not.
-  let calc: ElementRecord | undefined;
+  // The value first — a walk of the context's own features — and the scope's
+  // names only for a name that is one: most names are not.
+  let derived: ElementRecord | undefined;
   if (name.includes('.')) {
     const end = pass.definitions.chain(contexts, name)?.feature;
-    calc = end && isCalculationValue(model, end) ? end : undefined;
+    derived = end ? derivedValueBehind(model, end) : undefined;
   } else {
     for (const c of contexts) {
       const f = pass.definitions.byName(c).get(name);
       if (!f) continue;
-      calc = isCalculationValue(model, f) && f.ownerId !== c ? f : undefined;
+      const behind = derivedValueBehind(model, f);
+      derived = behind && behind.ownerId !== c ? behind : undefined;
       break;
     }
   }
-  const answer = !calc || contexts.some((c) => idsIn(pass, c).has(name)) ? undefined : calc;
+  const answer = !derived || contexts.some((c) => idsIn(pass, c).has(name)) ? undefined : derived;
   pass.elsewhere.set(key, answer ?? null);
   return answer;
 }
 
-/** The declared names of the model's calculations that state their body as a value, once per pass. */
-function calculationNames(pass: ScalarPass): Set<string> {
+/**
+ * The derived value `f` reads: its own ({@link isDerivedValue}), or — for a
+ * redefinition that states nothing — the one it redefines; `undefined` for
+ * any other feature.
+ */
+function derivedValueBehind(model: Model, f: ElementRecord): ElementRecord | undefined {
+  if (isDerivedValue(model, f)) return f;
+  if (hasStatedValue(model, f)) return undefined;
+  const g = redefinedClosure(model, f).find((h) => hasStatedValue(model, h));
+  return g && isDerivedValue(model, g) ? g : undefined;
+}
+
+/** The effective names of the model's derived values ({@link isDerivedValue}), once per pass. */
+function derivedNames(pass: ScalarPass): Set<string> {
   if (!pass.calculations) {
     pass.calculations = new Set();
-    for (const el of pass.model.ofKind('CalculationUsage')) {
-      if (el.declaredName && isCalculationValue(pass.model, el)) {
-        pass.calculations.add(el.declaredName);
-      }
+    for (const el of pass.model.all()) {
+      if (el.attrs.isLibrary === true) continue;
+      if (el.attrs.value === undefined && el.eClass !== 'CalculationUsage') continue;
+      const n = pass.definitions.nameOf(el);
+      if (n && isDerivedValue(pass.model, el)) pass.calculations.add(n);
     }
   }
   return pass.calculations;
 }
 
-/** Why this surface reads no value for {@link calculationElsewhere}'s calculation, or `undefined`. */
+/** Why this surface reads no value for {@link derivedElsewhere}'s value, or `undefined`. */
 function calculationCause(model: Model, el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
-  const calc = calculationElsewhere(model, el, name, pass);
-  if (!calc || calc.ownerId == null) return undefined;
+  const call = name.includes('.') ? callOnChain(model, el, name, pass) : undefined;
+  if (call) {
+    return (
+      `${name} has no value here: ${shortName(model, call)} is a calculation with a parameter, so its features are ` +
+      'the values of a call, which this tool does not read'
+    );
+  }
+  const derived = derivedElsewhere(model, el, name, pass);
+  if (!derived || derived.ownerId == null) return undefined;
   const where = name.includes('.')
     ? 'through a feature chain that redefines what it reads'
     : `in ${nameOf(el.ownerId != null ? model.get(el.ownerId) : undefined)}, which redefines what it reads`;
+  if (derived.eClass === 'CalculationUsage' && isCalculationValue(model, derived)) {
+    return (
+      `${name} has no value here: ${shortName(model, derived)} is a calculation of ${nameOf(model.get(derived.ownerId))}, ` +
+      `and its body is read there only — not ${where}`
+    );
+  }
   return (
-    `${name} has no value here: ${shortName(model, calc)} is a calculation of ${nameOf(model.get(calc.ownerId))}, ` +
-    `and its body is read there only — not ${where}`
+    `${name} has no value here: ${shortName(model, derived)} = ${String(derived.attrs.value).trim()} is written in ` +
+    `${nameOf(model.get(derived.ownerId))}, and is read there only — not ${where}`
   );
+}
+
+/**
+ * The two values a name `el` reads collides under where it is read
+ * ({@link DefiningEquations.clash}) — `c.load` in `part c : C` over `part def
+ * C :> A, B` — with the context the name is read in, or `undefined`.
+ */
+function clashOf(
+  el: ElementRecord,
+  name: string,
+  pass: ScalarPass,
+): { contextId: ElementId; clash: NameClash } | undefined {
+  for (const c of [el.ownerId, el.id]) {
+    if (c == null) continue;
+    const d = pass.definitions.denote(c).get(name);
+    if (!d) continue;
+    const clash = pass.definitions.clash(d.reader, d.feature);
+    return clash ? { contextId: d.reader, clash } : undefined;
+  }
+  return undefined;
+}
+
+/** Why a name a body reads has no value because two inherited values collide under it ({@link clashOf}). */
+function clashCause(model: Model, el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
+  const hit = clashOf(el, name, pass);
+  return hit ? `${name} has no value: ${clashSentence(model, hit.contextId, hit.clash)}` : undefined;
+}
+
+/**
+ * Why a name a body reads has no value because the feature it denotes states
+ * one that contradicts a BINDING it redefines ({@link
+ * DefiningEquations.contradiction}) — `p.load has no value: p::load = 50.0
+ * contradicts P::load = 1.0, …` — or `undefined`.
+ */
+function contradictionCause(model: Model, el: ElementRecord, name: string, pass: ScalarPass): string | undefined {
+  const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
+  for (const c of contexts) {
+    const id = idsIn(pass, c).get(name);
+    if (id === undefined) continue;
+    const f = model.get(id);
+    const binding = f ? pass.definitions.contradiction(f) : undefined;
+    return f && binding ? `${name} has no value: ${contradictionSentence(model, f, binding)}` : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -1323,7 +1821,7 @@ export function readRefusalOf(
   // that feature's own name is ({@link valueThroughChain}).
   const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
   const { definitions } = passFor(model, memo);
-  const chains = new Set(names.filter((n) => n.includes('.') && definitions.chainSite(contexts, n) !== undefined));
+  const chains = new Set(names.filter((n) => n.includes('.') && definitions.chainDefinition(contexts, n) !== undefined));
   const refused = operands ? operandRefusal(model, node, nameToId, markers, memo, skip, chains) : undefined;
   if (refused) {
     return {
@@ -1392,7 +1890,7 @@ function chainCause(model: Model, el: ElementRecord, chain: string, pass: Scalar
  * The feature a chain ends at when it resolves, through each feature's
  * declared type, to one declared without a value — the contexts an equation
  * beside it may be written in, whether an asserted one is, and whether the
- * chain reads that definition ({@link DefiningEquations.chainSite}) — or
+ * chain reads that definition ({@link DefiningEquations.chainDefinition}) — or
  * `undefined`.
  */
 function chainEnd(
@@ -1405,11 +1903,11 @@ function chainEnd(
   const contexts = [el.ownerId, el.id].filter((c): c is ElementId => c != null);
   const end = pass.definitions.chain(contexts, chain);
   const feature = end?.feature;
-  const name = feature?.declaredName;
+  const name = feature ? pass.definitions.nameOf(feature) : undefined;
   if (!end || !feature || !name || hasValue(model, feature)) return undefined;
   const sites = [...new Set([end.via, feature.ownerId].filter((c): c is ElementId => c != null))];
   const asserted = sites.some((c) => pass.definitions.of(c, name).length > 0);
-  const read = asserted && pass.definitions.chainSite(contexts, chain) !== undefined;
+  const read = asserted && pass.definitions.chainDefinition(contexts, chain) !== undefined;
   return { feature, name, sites, asserted, read };
 }
 
@@ -1505,10 +2003,10 @@ function readThroughSpecialisers(
   const valued: Measure[] = [];
   for (const name of names) {
     if (scope(name) === undefined) {
-      const feature = owned.find((f) => f.declaredName === name && !hasValue(model, f));
+      const feature = owned.find((f) => pass.definitions.nameOf(f) === name && !hasValue(model, f));
       if (feature) missing.push({ name, feature });
     } else {
-      const feature = owned.find((f) => f.declaredName === name && hasValue(model, f));
+      const feature = owned.find((f) => pass.definitions.nameOf(f) === name && hasValue(model, f));
       if (feature) valued.push({ name, feature });
     }
   }
@@ -1519,9 +2017,18 @@ function readThroughSpecialisers(
 
   // Contexts in the order the walk met them, from the measures with no value
   // only: a context that merely overrides a valued name has nothing to answer.
+  // A context that SPECIALISES the constraint's owner (`part light : D`)
+  // reads the constraint whole, every name in its own scope
+  // ({@link readInContexts}); here are the others — the namespaces a layered
+  // brief states its estimates in.
+  const specialising = new Set(
+    pass.definitions.specialisersOf(el.ownerId).map((x) => x.id),
+  );
   const contexts: (ElementId | null)[] = [];
   for (const m of missing) {
-    for (const ctx of walks.get(m.name)!.byContext.keys()) if (!contexts.includes(ctx)) contexts.push(ctx);
+    for (const ctx of walks.get(m.name)!.byContext.keys()) {
+      if (!contexts.includes(ctx) && !(ctx != null && specialising.has(ctx))) contexts.push(ctx);
+    }
   }
 
   // The constraint's own message says WHY it is unknown, and where it was read
@@ -1641,9 +2148,12 @@ function instanceMessage(
   expr: string,
 ): string {
   if (judged.result !== 'unknown') {
-    const values = shown
-      .map((b) => `${shortName(model, model.get(b.featureId), b.name)} = ${b.value ?? '?'}${b.unit ? ` [${b.unit}]` : ''}`)
-      .join(', ');
+    // A value read in a context is named by the context it is read in.
+    const label = (b: SpecialisationBinding): string =>
+      b.qualifiedName === effectiveQualifiedName(model, b.featureId)
+        ? shortName(model, model.get(b.featureId), b.name)
+        : b.qualifiedName.split('::').slice(-2).join('::');
+    const values = shown.map((b) => `${label(b)} = ${b.value ?? '?'}${b.unit ? ` [${b.unit}]` : ''}`).join(', ');
     return `${values} ${judged.result === 'violated' ? 'misses' : 'meets'} ${target} (${expr})`;
   }
   const why = judged.message.replace(/^Could not evaluate: /, '');
@@ -1752,8 +2262,9 @@ function readSpecialiser(
   // A feature fixed by an equation beside it states no value to derive: its
   // quantity is the equation's defining side, read by the unit-aware evaluator
   // — of several, the one the shared rule picks, as the scalar scope does.
-  const context = local?.contextId ?? (!hasValue(model, feature) && feature.declaredName ? feature.ownerId : undefined);
-  const byEquation = context != null ? definitionDerivation(model, feature.id, pass.memo, context) : undefined;
+  const context =
+    local?.contextId ?? (!hasValue(model, feature) && pass.definitions.nameOf(feature) ? feature.ownerId : undefined);
+  const byEquation = context != null ? definitionDerivation(model, feature.id, pass.memo, context, local?.site) : undefined;
   const d = byEquation ?? dimensionClaimDetail(model, feature.id, pass.memo);
   // A loop has no value on either path (the scalar scope's guard answers
   // nothing too), so it is refused here, naming the loop, rather than read
@@ -1770,7 +2281,7 @@ function readSpecialiser(
   const inner = valueFaultOf(model, feature.id, pass.memo);
   if (inner) return { reason: `"${name}" cannot be derived: ${inner}`, refused: true, valueless: false };
   const scalar = local
-    ? (valueDefinedByEquation(model, local.contextId, feature.declaredName ?? measure, pass) ?? NO_ANSWER)
+    ? (valueDefinedByEquation(model, local.contextId, pass.definitions.nameOf(feature) ?? measure, pass) ?? NO_ANSWER)
     : featureAnswer(model, feature.id, pass);
   // The scalar path honours the same cap: a chain the unit-aware evaluator
   // could not read (a scalar-only link) is not read on past it there either.
@@ -1810,12 +2321,13 @@ function readSpecialiser(
         valueless: false,
       };
     }
-    quantity = { magnitude: value, dimension: DIMENSIONLESS };
+    quantity = { magnitude: value, dimension: DIMENSIONLESS, ...(scalar.exact ? { exact: scalar.exact } : {}) };
   }
   return {
     bound: {
       featureId: feature.id,
       value,
+      ...(scalar.exact ? { exact: scalar.exact } : {}),
       ...(quantity ? { quantity } : {}),
       ...(byEquation?.q ? { derivation: byEquation } : {}),
     },
@@ -1827,7 +2339,8 @@ function hasValue(model: Model, f: ElementRecord): boolean {
 }
 
 function hasDefiningEquation(model: Model, f: ElementRecord): boolean {
-  return f.ownerId != null && !!f.declaredName && definingEquationFor(model, f.ownerId, f.declaredName) !== undefined;
+  const name = effectiveNameOf(model, f);
+  return f.ownerId != null && !!name && definingEquationFor(model, f.ownerId, name) !== undefined;
 }
 
 /** The bare (undotted) names a body reads, once each, in source order. */
@@ -1869,9 +2382,9 @@ function targetName(model: Model, el: ElementRecord): string {
  */
 function shortName(model: Model, f: ElementRecord | undefined, measure?: string): string {
   if (!f) return '?';
-  const own = f.declaredName ?? f.declaredShortName ?? measure ?? nameOf(f);
+  const own = f.declaredName ?? f.declaredShortName ?? measure ?? effectiveNameOf(model, f) ?? nameOf(f);
   const owner = f.ownerId != null ? model.get(f.ownerId) : undefined;
-  return owner ? `${nameOf(owner)}::${own}` : own;
+  return owner ? `${effectiveNameOf(model, owner) ?? nameOf(owner)}::${own}` : own;
 }
 
 function nameOf(el: ElementRecord | undefined): string {

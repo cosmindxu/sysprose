@@ -4,6 +4,26 @@ Big features that need a refined plan before work starts. Concrete next steps be
 [`TODO.md`](TODO.md). Items that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
 User-interface work has its own roadmap in [`docs/UI-ROADMAP.md`](docs/UI-ROADMAP.md).
 
+## Per-instance readings in the check and the literal engine
+
+The numeric surface and SMT read a value per instance: a definition's derived value evaluated in a
+usage's own context, a value that reaches a feature through a binding, and a `default` that gives way
+to a binding in one usage but not in another. The check (`checkConstraints`, the Problems view) and the
+literal verify engine read one value per feature. Where the instance value differs they abstain —
+`unknown` on the check, `inconclusive` on the literal engine — so they never contradict the other
+surfaces, but they leave those requirements undecided, and an SMT refutation over such a value cannot be
+confirmed by the literal re-read. A default that gives way in one usage is also left unread in its
+siblings, which is cautious but weaker than it needs to be.
+
+**Needs a plan for:**
+
+- instance-path contexts in `evaluate-model.ts` and the literal engine (a shared usage such as `Q::p` is
+  read once per enclosing instance, not once per feature);
+- per-usage `default` resolution, so a sibling that leaves the bound value unset still reads the default;
+- the cost on large instance trees (the solver's per-instance reading already pays it);
+- differential tests that pin the four surfaces to one verdict on every binding/default case of the
+  soundness pass (probes h2, k3, c2–c4, d1b, w2).
+
 ## Behaviour verification in the app
 
 `reach` and `check-behaviour` are terminal- and SDK-only. The README's capability table lists them as

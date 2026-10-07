@@ -778,6 +778,32 @@ describe('useAppStore.solveParametric — the Solve rows carry their units (I6)'
 `);
     expect(rows).toContain('Feasibility: no violated inequality constraint.');
   });
+
+  it('a design freedom gets a free row, not a value row, and no verdict is read off it (D5)', () => {
+    // `dry` has no value, so the asserted loop fixes nothing: the solve used
+    // to publish dry 0.952, mass 1.19 and call `mass >= 130.0` violated there.
+    const rows = solveRows(`package D2 {
+    attribute dry;
+    attribute mass;
+    attribute fuel;
+    assert constraint dm { mass == dry + fuel }
+    assert constraint df { fuel == mass * 0.2 }
+    constraint need { mass >= 130.0 }
+    constraint cap { dry <= 110.0 }
+}
+`);
+    expect(rows.filter((m) => m.startsWith('value:'))).toEqual([]);
+    const free = st().diagnostics.filter((d) => d.id.startsWith('solve#free#'));
+    const name = (id: string | undefined) => st().model.get(id ?? '')?.declaredName;
+    expect(free.map((d) => name(d.elementId)).sort()).toEqual(['dry', 'fuel', 'mass']);
+    expect(free.every((d) => d.severity === 'info')).toBe(true);
+    expect(free[0]!.message).toMatch(/^free: \w+ — left free by the equations/);
+    const need = st().diagnostics.find((d) => d.id.startsWith('solve#unknown#') && d.message.includes('mass >= 130.0'));
+    expect(need?.message).toMatch(/mass is left free by the equations/);
+    expect(rows.some((m) => m.startsWith('violated'))).toBe(false);
+    expect(rows).toContain('Feasibility: no violated inequality constraint. 2 constraint(s) unjudged.');
+    expect(rows[0]).not.toMatch(/no parametric constraints/);
+  });
 });
 
 describe('useAppStore — typing by name, and who owns a drawn typing', () => {

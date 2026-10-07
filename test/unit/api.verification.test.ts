@@ -646,10 +646,10 @@ describe('the gates that refuse a relation, each listed with its reason', () => 
     expect(axiom('m == e + 5.0')?.encodable).toMatchObject({ reason: 'derived-bare-literal' });
   }, 60_000);
 
-  it('refuses what the validation surface refuses an operand for, and reads a chain it reads no definition through as nothing', async () => {
+  it('refuses what the validation surface refuses an operand for, and reads a chain through a context that changes it as that context’s own', async () => {
     const model = await load(`package P {
   part def Sys {
-    attribute capacity : ISQ::EnergyValue = 640.0 [Wh];
+    attribute capacity : ISQ::EnergyValue default = 640.0 [Wh];
     attribute power : ISQ::PowerValue = 650.0 [W];
     attribute r : ScalarValues::Real = capacity / power;
     attribute e;
@@ -670,18 +670,21 @@ describe('the gates that refuse a relation, each listed with its reason', () => 
       reason: 'refused-derivation',
       detail: '"u.r" derives to a dimension that disagrees with its declared type, so it is excluded from unit-aware evaluation',
     });
-    // `u.e` is `Sys::e`, which `fixE` pins to 3544.6 s — over `Sys`'s own
-    // inputs, where `Big` redefines `capacity`. The validation surface reads
-    // no definition through a chain that changes what it reads, so neither
-    // does an engine: the relation is encodable, and the chain is a symbol of
-    // its own that no axiom pins.
+    // `u.e` is `Sys::e`, which `fixE` pins to 3544.6 s over `Sys`'s own
+    // inputs — and read for a Big, which redefines `capacity`, it is Big's
+    // own e: a symbol of its own, `P::Big::e`, which `fixE` read for Big
+    // pins (1300 Wh / 650 W).
     const chain = contractsOf(model).find((c) => c.qualifiedName === 'P::Chain')!.guarantees[0]!;
     expect(chain.encodable).toBe(true);
     const read = chain.variables.find((v) => v.path === 'u.e')!;
-    expect(read.qualifiedName).toBe('P::Sys::e');
-    expect(read.symbol).toBe('P::Chain::u.e (not read here)');
-    const row = obligationsOf(model).find((o) => o.expression === 'u.e >= 45.0 [min]')!;
-    expect(row.unread).toEqual(['u.e']);
+    expect([read.qualifiedName, read.symbol, read.instance?.path]).toEqual(['P::Big::e', undefined, 'P::Big']);
+    const rows = obligationsOf(model);
+    expect(rows.find((o) => o.expression === 'u.e >= 45.0 [min]')!.unread).toBeUndefined();
+    const fixE = rows.find((o) => o.element.qualifiedName === 'P::Sys::fixE in P::Big')!;
+    expect([fixE.role, fixE.vars.map((v) => v.qualifiedName)]).toEqual([
+      'axiom',
+      ['P::Big::e', 'P::Big::capacity', 'P::Sys::power'],
+    ]);
     // Through a subject that changes nothing it reads, the chain IS the
     // feature: read by its own symbol, which `fixE` pins.
     const plain = contractsOf(model).find((c) => c.qualifiedName === 'P::Read')!.guarantees[0]!;

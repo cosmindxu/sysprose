@@ -738,7 +738,8 @@ export function faultTreeCensus(
 /** The basic events of one decomposition, with the intermediate ones named. */
 function eventsOf(target: InjectionTarget, all: readonly InjectionTarget[]): BasicEvent[] {
   return target.components.map((c) => {
-    const below = all.find((t) => t.system.id === c.contract.id);
+    // The tree below it is the one of the same contract on the same part.
+    const below = all.find((t) => t.system.id === c.contract.id && t.part.id === c.part?.id);
     return {
       contract: c.contract,
       shortId: c.shortId,
@@ -831,6 +832,11 @@ async function judgeTarget(
   // ── step (0): can the sub-contracts, the connections and A hold at all? ────
   let checks = 1;
   const zero = await target.baseline(solverOpts);
+  // A step (0) answer that is not one about the contracts the file states
+  // ({@link InjectionTarget.zeroDoubt}): a `sat` found without a refused
+  // clause leaves the top event's survival possibly vacuous — checked below,
+  // at order 0.
+  const doubt = target.zeroDoubt(zero);
   if (zero.status === 'unsat') {
     return {
       ...base,
@@ -880,6 +886,19 @@ async function judgeTarget(
         `tree over an architecture that does not refine describes failures nothing has to cause. ${baseline.detail}. ${target.census}`,
     };
   }
+  if (baseline.status === 'holds' && doubt !== null) {
+    return {
+      ...base,
+      checks,
+      logic: baseline.logic,
+      fragment: baseline.fragment,
+      outcome: 'inconclusive',
+      code: doubt.code,
+      detail:
+        `the top event holds with every sub-contract honoured, but ${doubt.detail}, so there is no baseline ` +
+        `to inject faults against. No cut set is claimed and none is ruled out. ${target.census}`,
+    };
+  }
   if (baseline.status === 'undecided') {
     return {
       ...base,
@@ -900,16 +919,23 @@ async function judgeTarget(
   const undecided: UndecidedCheck[] = [];
   let logic = baseline.logic;
   let fragment = baseline.fragment;
-  const names = target.components.map((c) => c.contract.qualifiedName);
+  // A contract that is a component more than once — satisfied by two parts —
+  // is one basic event per part, named with the part.
+  const twice = (c: (typeof target.components)[number]): boolean =>
+    target.components.filter((o) => o.contract.id === c.contract.id).length > 1 && c.part !== null;
+  const names = target.components.map((c) =>
+    twice(c) ? `${c.contract.qualifiedName} on ${c.part!.qualifiedName}` : c.contract.qualifiedName,
+  );
   // THE SHORT NAME A CUT SET IS PRINTED UNDER, in the three spellings a
   // requirement can carry: `<R-PWR-001>` where the file writes one, the
   // declared name where it does not, and the qualified name as the last resort.
   // A cut set is read as a SET — `{battery, radio}` — and a set whose members
   // are three-segment qualified names is one a reader has to decode before they
   // can act on it.
-  const shortIds = target.components.map(
-    (c) => c.shortId || c.contract.declaredName || c.contract.qualifiedName,
-  );
+  const shortIds = target.components.map((c) => {
+    const id = c.shortId || c.contract.declaredName || c.contract.qualifiedName;
+    return twice(c) ? `${id} on ${c.part!.declaredName ?? c.part!.qualifiedName}` : id;
+  });
   const found: number[][] = [];
   // THE SETS NOBODY DECIDED, kept beside the ones that failed and for the
   // opposite reason. Pruning removes supersets of sets shown to be cut sets;
@@ -927,7 +953,7 @@ async function judgeTarget(
       // it would spend a solver call to learn nothing and would print a set
       // whose failure is already explained by a smaller one.
       if (found.some((cut) => cut.every((i) => subset.includes(i)))) continue;
-      const dropped = new Set(subset.map((i) => target.components[i].contract.id));
+      const dropped = new Set(subset);
       const r = await target.obligationThree(dropped, solverOpts);
       checks += r.checks;
       logic = r.logic;

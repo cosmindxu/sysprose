@@ -60,14 +60,30 @@
  */
 
 import { type ElementId, type Model } from '@core/index';
-import { checkConstraints, type ConstraintCheck } from '../evaluate-model';
-import { evaluate, type ExprNode } from '../expr';
-import { axiomsOf, type Obligation } from '../obligations';
+import { hasStatedValue, sharedDefinitions } from '../defining-equation';
+import {
+  checkConstraints,
+  checksByRow,
+  definedFeatureOf,
+  evaluateFeatureValue,
+  featureIdsFor,
+  type ConstraintCheck,
+} from '../evaluate-model';
+import { rereadRelation, tieSentence, type PointValues } from '../exact';
+import {
+  axiomsOf,
+  reachOfRow,
+  rowElement,
+  reachedBy,
+  refusalReaches,
+  type Obligation,
+  type RefusalReach,
+} from '../obligations';
 import { type ContractVariable, type Refusal } from '../contracts';
-import { idScopeFor } from '../relations';
+import { idScopeFor, mergeMaps } from '../relations';
+import { effectiveNameOf, effectiveQualifiedName } from '../inheritance';
 import { dimToString } from '../units';
 import { evaluateConstraintQuantityDetailed, type DerivationMemo } from '../units-eval';
-import { decimalSymbols } from '../smt/decimal-reading';
 import {
   encodeRelation,
   encodeScript,
@@ -80,7 +96,7 @@ import {
   type ScriptAssertion,
   type SideCondition,
 } from '../smt/encode';
-import { type CheckOutcome, type WitnessValue, type Z3Backend } from '../smt/z3-bridge';
+import { rereadPoint, type CheckOutcome, type WitnessValue, type Z3Backend } from '../smt/z3-bridge';
 import {
   isOutsideTheFragment,
   modelBindings,
@@ -336,6 +352,7 @@ export function resolveFreeFeatures(
   model: Model,
   spellings: readonly string[],
   rows: readonly Obligation[] = [],
+  opts: { measure?: boolean } = {},
 ): FreeResolution {
   const scope = new Map<string, ElementId>();
   for (const el of model.all()) {
@@ -345,17 +362,20 @@ export function resolveFreeFeatures(
   }
   const byQualifiedName = new Map<string, ElementId>();
   // BARE NAMES ARE COUNTED SEPARATELY, because `idScopeFor` cannot answer this
-  // question: its bare-name entry is FIRST-WINS by design (`if (!map.has(name))`
-  // — the resolution a relation body gets, and not something to change from
-  // here), so two `mass` attributes in two part definitions collapse to one
-  // entry and `--free mass` silently released whichever the model walk reached
-  // first. The count is taken over the user's own declared names, which is what
-  // "unique in scope" means to the person typing it.
+  // question: it offers a bare name for the feature a relation body would read
+  // — a nested one only where exactly one feature below has the name — and
+  // was FIRST-WINS once, so two `mass` attributes in two part definitions
+  // collapsed to one entry and `--free mass` silently released whichever the
+  // model walk reached first. The count is taken over the user's own names (by
+  // effective name: an unnamed `:>> mass` is `mass`), which is what "unique in
+  // scope" means to the person typing it.
   const byDeclaredName = new Map<string, Set<ElementId>>();
   for (const el of model.all()) {
     if (el.attrs.isLibrary === true || el.attrs.implicit === true) continue;
-    byQualifiedName.set(model.qualifiedName(el.id), el.id);
-    const declared = el.declaredName;
+    // By the name the lane's symbols carry: an unnamed redefinition (`attribute
+    // :>> load = 50.0` in `p`) is `R::p::load`, as every relation reads it.
+    byQualifiedName.set(effectiveQualifiedName(model, el.id), el.id);
+    const declared = effectiveNameOf(model, el);
     if (declared === undefined || declared === '') continue;
     const seen = byDeclaredName.get(declared);
     if (seen) seen.add(el.id);
@@ -370,6 +390,32 @@ export function resolveFreeFeatures(
     for (const v of r.vars) readable.add(v.qualifiedName);
     if (r.role === 'axiom' && r.source === 'feature-value') readable.add(r.element.qualifiedName);
   }
+  // An INSTANCE's own symbol (`R::p1::g`, for `p1.g` over `part def G {
+  // attribute g; }`) names that instance's value: spelled as the symbol, or as
+  // the dotted path a relation reads it by (`p1.g`), it releases that one.
+  const bySymbol = new Map<string, ElementId>();
+  for (const r of rows) for (const v of r.vars) if (v.instance) bySymbol.set(v.qualifiedName, v.featureId);
+  const definitions = sharedDefinitions(model);
+  const pathSymbol = new Map<string, { symbol: string; same: boolean }>();
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true || el.attrs.implicit === true) continue;
+    if (!el.eClass.endsWith('Package')) continue;
+    for (const [name, d] of definitions.denote(el.id)) {
+      if (pathSymbol.has(name)) continue;
+      pathSymbol.set(name, { symbol: definitions.symbolOf(d), same: definitions.valueRef(d)?.at === undefined });
+    }
+  }
+  // The symbol a dotted path names. A MEASURE read through an instance no
+  // relation reads, which changes nothing its value reads, is bounded by the
+  // feature's own: the instance holds exactly what every instance holds, and
+  // no fact of its own. A release is never widened so: it would free every
+  // instance's value where one was asked for.
+  const symbolAt = (spelling: string, id: ElementId): string => {
+    const at = pathSymbol.get(spelling);
+    if (!at) return effectiveQualifiedName(model, id);
+    if (opts.measure && at.same && !readable.has(at.symbol)) return effectiveQualifiedName(model, id);
+    return at.symbol;
+  };
 
   const features = new Map<string, ElementId>();
   const qualifiedNames = new Set<string>();
@@ -377,16 +423,19 @@ export function resolveFreeFeatures(
   const ambiguous: Array<{ spelling: string; candidates: string[] }> = [];
   const unread: Array<{ spelling: string; qualifiedName: string }> = [];
   for (const spelling of spellings) {
-    const exact = byQualifiedName.get(spelling);
-    const id = exact ?? scope.get(spelling);
+    const exact = byQualifiedName.get(spelling) ?? bySymbol.get(spelling);
+    // Only a BARE name can be ambiguous: a qualified name is exact and a dotted
+    // path is a route, so neither can name two things. A bare name the scope
+    // offers no feature for — it offers a nested one only where exactly one
+    // has the name — is still a name the person typed: counted below.
+    const bare = exact === undefined && !spelling.includes('.') && !spelling.includes('::');
+    const declared = bare ? byDeclaredName.get(spelling) : undefined;
+    const id = exact ?? scope.get(spelling) ?? (declared ? [...declared][0] : undefined);
     if (id === undefined) {
       unresolved.push(spelling);
       continue;
     }
-    // Only a BARE name can be ambiguous: a qualified name is exact and a dotted
-    // path is a route, so neither can name two things.
-    const bare = exact === undefined && !spelling.includes('.') && !spelling.includes('::');
-    const named = bare ? (byDeclaredName.get(spelling) ?? new Set([id])) : new Set([id]);
+    const named = bare ? (declared ?? new Set([id])) : new Set([id]);
     if (named.size > 1) {
       ambiguous.push({
         spelling,
@@ -394,7 +443,11 @@ export function resolveFreeFeatures(
       });
       continue;
     }
-    const qualifiedName = model.qualifiedName(id);
+    const qualifiedName = bySymbol.has(spelling)
+      ? spelling
+      : exact === undefined && scope.has(spelling)
+        ? symbolAt(spelling, id)
+        : effectiveQualifiedName(model, id);
     if (rows.length > 0 && !readable.has(qualifiedName)) {
       unread.push({ spelling, qualifiedName });
       continue;
@@ -444,12 +497,9 @@ export async function judgeBySmt(
   // One sweep of the numeric surface for the whole run — the same surface the
   // literal engine reads, which is what makes the differential gate of §5 a
   // comparison of two engines rather than of three evaluators.
-  const checks = new Map<ElementId, ConstraintCheck>();
-  for (const c of checkConstraints(model)) checks.set(c.id, c);
+  const checks = checksByRow(checkConstraints(model));
 
-  // ONE reading of every numeral per proof context — see ../smt/decimal-reading.
-  const decimal = decimalSymbols(model, rows);
-  const encodedRows = rows.map((row) => encodeRow(row, free, decimal));
+  const encodedRows = rows.map((row) => encodeRow(row, free));
   const byId = new Map<ElementId, EncodedRow>(encodedRows.map((e) => [e.row.element.id, e]));
 
   // A feature-value axiom that PINS a freed feature is dropped: that is what
@@ -480,6 +530,7 @@ export async function judgeBySmt(
   );
 
   const memo: DerivationMemo = new Map();
+  const scopes = new Map<ElementId, Map<string, ElementId>>();
   const out: SmtResult[] = [];
   for (const row of rows) {
     if (row.role !== 'obligation') continue;
@@ -488,12 +539,13 @@ export async function judgeBySmt(
     out.push({
       row,
       judgement: await judgeOne(model, {
-        row: byId.get(row.element.id) ?? encodeRow(row, free, decimal),
+        row: byId.get(row.element.id) ?? encodeRow(row, free),
         readings,
         axioms,
         axiomsRefused,
         premises,
         consistency,
+        scopes,
         backend,
         free,
         timeoutMs,
@@ -546,15 +598,10 @@ export function encodedFootprint(
 }
 
 /** Encode one row's body under its OWN scale decision and the caller's free set. */
-function encodeRow(
-  row: Obligation,
-  free: ReadonlySet<string>,
-  decimal: ReadonlySet<string> = new Set(),
-): EncodedRow {
+function encodeRow(row: Obligation, free: ReadonlySet<string>): EncodedRow {
   const vars = encodeVariables(row.vars, row.sortPerVar, {
     scaled: row.scaled,
     free: freeSpellings(row.vars, free),
-    decimal,
   });
   if (row.node === null || row.encodable !== true) {
     return {
@@ -642,6 +689,8 @@ interface JudgeInput {
   axiomsRefused: readonly EncodedRow[];
   premises: readonly EncodedRow[];
   consistency: CheckOutcome;
+  /** The numeric surface's name → feature map of each context it was asked about, for the run. */
+  scopes: Map<ElementId, Map<string, ElementId>>;
   backend: Z3Backend;
   free: ReadonlySet<string>;
   timeoutMs: number | undefined;
@@ -723,6 +772,27 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     // a relation nothing encoded, and the sentence says so rather than
     // borrowing the negation-check wording.
     const check = input.checks.get(row.row.element.id);
+    // …OF THE FEATURES THE RELATION NAMES. A `violated` the numeric surface
+    // read over a different feature is no violation of this one, exactly as it
+    // confirms no counterexample of it (`confirm`): `x % 4.0 >= 3.5` in a P
+    // whose own `x` has no value was read at a nested part's `x = 7.0` and
+    // printed refuted, exit 1. The two surfaces then read the relation
+    // differently, which nothing forgives.
+    const elsewhere = !rowFreed && check?.result === 'violated' ? readElsewhere(model, row.row, input.scopes) : undefined;
+    if (elsewhere) {
+      return {
+        ...base,
+        ...refusedPoint,
+        outcome: 'not-evaluable',
+        detail:
+          `the numeric surface reads \`${elsewhere.path}\` as ${elsewhere.check} where this relation names ` +
+          `${elsewhere.encoder}, so its \`violated\` is a reading of a different feature — and a gate refuses the ` +
+          `relation for the solver lane (${refusal.reason}: ${refusal.detail}), so nothing reads it as written. ` +
+          '`--allow-inconclusive` does not forgive it',
+        boundKind: 'none',
+        boundDetail: 'no relation was encoded, and the point reading is of another feature, so nothing is claimed',
+      };
+    }
     if (!rowFreed && check?.result === 'violated') {
       const si = refusedSI;
       return {
@@ -1008,6 +1078,43 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
       };
     }
 
+    // AN ASSUMPTION NO SURFACE READS — one over a name its own clause declares,
+    // which its owner's scope answers with another feature (`shadowedNamesOf`
+    // of ../defining-equation) — was refused, so the proof above stood on the
+    // other assumptions alone. Whether it holds at the model is undecided, and
+    // so is whether this pass is vacuous: `assume constraint { in y = 100.0; y
+    // <= 10.0 }` is false, and the requirement says nothing about the design.
+    const shadowedPremise = input.premises.find((p) => (p.row.shadowed?.length ?? 0) > 0);
+    if (shadowedPremise) {
+      return {
+        ...base,
+        ...point,
+        outcome: 'not-evaluable',
+        axiomCensus: census(),
+        checks,
+        logic,
+        detail:
+          `proof not claimed: A ∧ P ∧ ¬G is unsat without the assumption \`${shadowedPremise.row.expression}\`, ` +
+          `which no surface reads (${(shadowedPremise.row.encodable as Refusal).detail}). Whether it holds at the ` +
+          'model, and so whether this pass is vacuous, is undecided, and `--allow-inconclusive` does not forgive it',
+        ...bound('none', 'an assumption no surface reads may make the pass vacuous, so nothing is claimed'),
+      };
+    }
+
+    // THE ASSUMPTIONS WERE SHOWN SATISFIABLE WITHOUT EVERY RELATION THEY STAND
+    // ON — see {@link partialAntecedent}.
+    const partial = partialAntecedent(model, input, row, axioms, reached, countFree(variables) > 0);
+    if (partial) {
+      return {
+        ...base,
+        ...point,
+        ...partial,
+        axiomCensus: census(),
+        checks,
+        logic,
+      };
+    }
+
     // STEP 3: is the goal true of every model, whatever the context says?
     const alone = await input.backend.check(
       scriptOf(row.vars, [{ kind: 'goal', name: nameOf(row.row), term: notTerm(goal.term) }], [row]).text,
@@ -1019,12 +1126,12 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     // A PROOF AT THE MODEL'S OWN VALUES IS CONFIRMED, as a refutation is.
     // With nothing in this proof released, every symbol is pinned to the
     // value the model states, and the numeric surface reads the same relation
-    // at those values: where it reads it VIOLATED, exact arithmetic has
-    // decided a tie the evaluators read within their tolerance — `e !=
-    // 3544.6153846 [s]` over 640 Wh / 650 W, or a factor the registry holds as
-    // a double — and printing `proved` beside a violation would be a pass the
-    // tool's own other reading contradicts. It is reported undecided, with
-    // both readings.
+    // at those values. It decides a tie by the decimals written, as this
+    // engine does (the tie rule of ../exact), so `e != 3544.6153846 [s]` over
+    // 640 Wh / 650 W is satisfied on both; where it reads the relation
+    // VIOLATED all the same, the two readings disagree about something else,
+    // and printing `proved` beside a violation would be a pass the tool's own
+    // other reading contradicts. It is reported undecided, with both readings.
     //
     // A RELEASE DOES NOT TAKE THE MODEL'S OWN POINT OUT OF THE CLAIM. With
     // `--free`, `proved` says the goal holds for EVERY value of the freed
@@ -1090,7 +1197,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   // SAT: a candidate counterexample. Nothing below prints it as a violation
   // until the tool's own evaluator agrees with it.
   const witness = negation.witness;
-  const confirmation = confirm(model, row, witness, input, countFree(variables) > 0);
+  const confirmation = confirm(model, row, rereadPoint(negation), input, countFree(variables) > 0);
   // A witness over a name the numeric surface reads no value for here, where
   // that surface is undecided: the answer depends on a value this tool does
   // not read — filed as the literal engine files it, as a limit of the tool.
@@ -1166,12 +1273,15 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   // `--engine literal` reported the same row `refuted` (exit 1) on the same
   // file. Only a refusal that touches a symbol the goal or its premises READ
   // can exclude this witness, and `reached` is the closure {@link
-  // relevantAxioms} already computes for exactly that question. A refusal with
-  // no readable variables at all is kept: its reach is unknown, and the
-  // conservative reading of unknown is that it might matter.
-  const droppedAxioms = input.axiomsRefused.filter(
-    (a) => a.vars.length === 0 || a.vars.some((v) => reached.has(v.qualifiedName)),
-  );
+  // relevantAxioms} already computes for exactly that question — compared by
+  // FEATURE as well, through the reach test every command shares
+  // ({@link refusalReaches}): a refused row over a value this tool does not
+  // read here reads it by a symbol of its own. A refusal with no readable
+  // variables at all is kept: its reach is unknown, and the conservative
+  // reading of unknown is that it might matter — save a feature value's,
+  // which is its own feature ({@link reachOfRow}).
+  const reachedSet = contextReach(row, axioms, input.premises, reached);
+  const droppedAxioms = input.axiomsRefused.filter((a) => refusalReaches(reachOfEncoded(a), reachedSet));
   if (droppedAxioms.length > 0 || input.premises.some((p) => p.encoded === undefined)) {
     const dropped = [...droppedAxioms, ...input.premises.filter((p) => p.encoded === undefined)];
     return {
@@ -1288,6 +1398,203 @@ function relevantAxioms(
   // needs the whole context" rule is written over, and recomputing it there
   // would be a second reading of one closure.
   return { kept, reached };
+}
+
+/** What one refused row would have read ({@link refusalReaches}, {@link reachOfRow}). */
+function reachOfEncoded(e: EncodedRow): RefusalReach {
+  return reachOfRow(e.row, e.vars.map((v) => v.qualifiedName));
+}
+
+/** What this obligation's asserted context reads: the goal, the premises, the encoded axioms kept. */
+function contextReach(
+  row: EncodedRow,
+  axioms: readonly EncodedRow[],
+  premises: readonly EncodedRow[],
+  reached: ReadonlySet<string>,
+): ReturnType<typeof reachedBy> {
+  return reachedBy([
+    ...[row, ...premises, ...axioms]
+      .filter((e) => e.encoded !== undefined)
+      .map((e) => ({ vars: e.row.vars, symbols: e.vars.map((v) => v.qualifiedName) })),
+    { vars: [], symbols: reached },
+  ]);
+}
+
+/** How the numeric surface reads one row at the model's values: a premise or assert, a value, or nothing. */
+type ModelReading = 'holds' | 'fails' | 'unknown';
+
+/**
+ * "Assumptions satisfiable" over a PARTIAL antecedent, re-read at the model's
+ * point — or `undefined` where the claim stands.
+ *
+ * Step 2 shows `A ∧ P` satisfiable, and a relation a gate refused is not in
+ * `A ∧ P`. Dropping a relation makes a set EASIER to satisfy, so a proof
+ * survives it and the satisfiable antecedent it stands on does not: `assume
+ * p.x % 4.0 >= 3.5` beside `assume p.x >= 5.0 and p.x <= 5.5` holds nowhere,
+ * and the proof printed "assumptions satisfiable"; at x = 5 the literal
+ * engine called it vacuous; and a refused closed `assert { 7.0 % 4.0 == 0.0 }`
+ * hid an axiom set that contradicts itself. So where a premise was refused, or
+ * a refused axiom reaches this context ({@link refusalReaches}), the claim has
+ * to be re-earned at the model's own point, through the numeric surface:
+ *
+ *  - the rows re-read are the refused ones, and every asserted one of the
+ *    context that reads a feature the model gives a value the encoding does
+ *    not pin — a value whose definition was refused, and what is derived from
+ *    it, where the solver's point is free to differ from the model's;
+ *  - an axiom among them the model's values VIOLATE is a contradiction of the
+ *    model (`inconsistent-axioms`), and a premise they make FALSE is an
+ *    antecedent that cannot hold (`vacuous`) — every value read is a binding,
+ *    with nothing freed;
+ *  - where every one HOLDS, the model's point (the solver's, for the features
+ *    the model gives no value) satisfies the whole antecedent, and the proof
+ *    stands;
+ *  - anything else — a row the model's values do not decide, or a release, so
+ *    that there is no model point at all — is `not-evaluable`, never forgiven.
+ */
+function partialAntecedent(
+  model: Model,
+  input: JudgeInput,
+  row: EncodedRow,
+  axioms: readonly EncodedRow[],
+  reached: ReadonlySet<string>,
+  freed: boolean,
+): Pick<SmtJudgement, 'outcome' | 'detail' | 'boundKind' | 'boundDetail'> | undefined {
+  const reachedSet = contextReach(row, axioms, input.premises, reached);
+  const dropped = [
+    ...input.premises.filter((p) => p.encoded === undefined),
+    ...axioms.filter((a) => a.encoded === undefined && refusalReaches(reachOfEncoded(a), reachedSet)),
+  ];
+  if (dropped.length === 0) return undefined;
+  const named = dropped.map((d) => `${d.row.element.qualifiedName}: ${d.refusal?.reason ?? 'refused'}`).join('; ');
+  const without =
+    `the assumptions were shown satisfiable only without ${dropped.length} relation(s) of this proof's context ` +
+    `that a gate refused (${named})`;
+  if (freed) {
+    return {
+      outcome: 'not-evaluable',
+      detail:
+        `proof not claimed: A ∧ P ∧ ¬G is unsat, but ${without}, and with a feature released there is no model ` +
+        'point to re-read them at — so whether this pass is vacuous is undecided. `--allow-inconclusive` does not ' +
+        'forgive it',
+      boundKind: 'none',
+      boundDetail: 'the antecedent was shown satisfiable over a partial context, so nothing is claimed',
+    };
+  }
+
+  const asserted = [...axioms, ...input.premises].filter((e) => e.encoded !== undefined);
+  const pinned = pinnedSymbols(model, asserted);
+  const valued = new Map<ElementId, boolean>();
+  const hasValue = (id: ElementId): boolean => {
+    let v = valued.get(id);
+    if (v === undefined) {
+      v = 'value' in evaluateFeatureValue(model, id);
+      valued.set(id, v);
+    }
+    return v;
+  };
+  // Where the solver's point may differ from the model's: a symbol of its own,
+  // or a feature the model gives a value the encoding leaves free.
+  const open = [
+    ...dropped,
+    ...asserted.filter((e) =>
+      e.row.vars.some(
+        (v) => v.symbol !== undefined || (!pinned.has(v.qualifiedName) && hasValue(v.featureId)),
+      ),
+    ),
+  ];
+  const readings = new Map(input.readings.map((p) => [p.clause.id, p]));
+  const read = (e: EncodedRow): ModelReading => {
+    if (e.row.role === 'premise') return readings.get(e.row.element.id)?.holds ?? 'unknown';
+    // A refusal that is a defect, or a value this tool does not read here, is
+    // no reading at the model's values whatever the evaluator would compute.
+    if (e.refusal !== undefined && !isOutsideTheFragment(e.refusal.reason)) return 'unknown';
+    if (e.row.source === 'feature-value' || e.row.source === 'calculation') {
+      const el = model.get(e.row.element.id);
+      return el && hasStatedValue(model, el) && hasValue(el.id) ? 'holds' : 'unknown';
+    }
+    if (e.row.source === 'assert') {
+      const c = input.checks.get(e.row.element.id)?.result;
+      return c === 'satisfied' ? 'holds' : c === 'violated' ? 'fails' : 'unknown';
+    }
+    return 'unknown';
+  };
+  const readOf = open.map((e) => ({ e, reading: read(e) }));
+  const contradiction = readOf.find((x) => x.e.row.role === 'axiom' && x.reading === 'fails');
+  if (contradiction) {
+    return {
+      outcome: 'axioms-inconsistent',
+      detail:
+        `the axiom set is unsatisfiable at the model's own values: \`${contradiction.e.row.expression}\` is false ` +
+        `there, and ${without}, so step 0 never saw it. A proof from a contradiction is void`,
+      boundKind: 'none',
+      boundDetail: 'no obligation was decided — the context contradicts itself at the model’s values',
+    };
+  }
+  const empty = readOf.find((x) => x.e.row.role === 'premise' && x.reading === 'fails');
+  if (empty) {
+    return {
+      outcome: 'vacuous',
+      detail:
+        `the premises are unsatisfiable under the axioms: the assumption \`${empty.e.row.expression}\` is false at ` +
+        `the model's values, and ${without}, so the obligation is discharged by an antecedent that cannot hold ` +
+        'and says nothing about the design',
+      boundKind: 'none',
+      boundDetail: 'nothing satisfies the assumptions, so there is no point the claim holds at',
+    };
+  }
+  const unread = readOf.find((x) => x.reading !== 'holds');
+  if (!unread) return undefined;
+  return {
+    outcome: 'not-evaluable',
+    detail:
+      `proof not claimed: A ∧ P ∧ ¬G is unsat, but ${without}, and \`${unread.e.row.expression}\` cannot be ` +
+      "re-read at the model's values — so whether the assumptions can hold, and so whether this pass is vacuous, " +
+      'is undecided. `--allow-inconclusive` does not forgive it',
+    boundKind: 'none',
+    boundDetail: 'the antecedent was shown satisfiable over a partial context, so nothing is claimed',
+  };
+}
+
+/**
+ * The symbols the encoded axioms pin to the value the model states, with
+ * nothing freed: a literal value; a derived value, a calculation and an
+ * asserted defining equation whose inputs are pinned; and either end of a
+ * `bind` whose other end is.
+ */
+function pinnedSymbols(model: Model, rows: readonly EncodedRow[]): Set<string> {
+  const pinned = new Set<string>();
+  const symbolOfVar = (v: ContractVariable): string => v.symbol ?? v.qualifiedName;
+  const defines = rows
+    .filter((e) => e.row.role === 'axiom')
+    .map((e) => {
+      if (e.row.source === 'bind') return { e, defined: undefined as ContractVariable | undefined };
+      const el = model.get(e.row.element.id);
+      const target = e.row.source !== 'assert' ? e.row.element.id : el ? definedFeatureOf(model, el)?.id : undefined;
+      return { e, defined: e.row.vars.find((v) => v.featureId === target) };
+    });
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const { e, defined } of defines) {
+      if (e.row.source === 'bind') {
+        const ends = e.row.vars.map(symbolOfVar);
+        if (ends.some((x) => pinned.has(x))) {
+          for (const x of ends) {
+            if (pinned.has(x)) continue;
+            pinned.add(x);
+            grew = true;
+          }
+        }
+        continue;
+      }
+      if (!defined || pinned.has(symbolOfVar(defined)) || defined.symbol !== undefined) continue;
+      if (e.row.vars.every((v) => v === defined || pinned.has(symbolOfVar(v)))) {
+        pinned.add(symbolOfVar(defined));
+        grew = true;
+      }
+    }
+  }
+  return pinned;
 }
 
 /**
@@ -1413,7 +1720,8 @@ async function unboundedSide(
 function confirm(
   model: Model,
   row: EncodedRow,
-  witness: readonly WitnessValue[],
+  /** The witness's point: z3's model COMPLETED ({@link rereadPoint}), never only what is printed. */
+  values: PointValues,
   input: JudgeInput,
   /** Did THIS proof release anything? Not the run — this obligation's context. */
   anyFreed: boolean,
@@ -1421,28 +1729,22 @@ function confirm(
   const node = row.row.node;
   if (node === null) return { ok: false, why: 'the relation has no readable body to re-evaluate' };
 
-  const values = new Map<string, number | boolean>();
-  for (const w of witness) if (w.value !== null) values.set(w.symbol, w.value);
-  const scope = (name: string): unknown => {
-    const v = row.vars.find((x) => x.path === name || x.qualifiedName === name);
-    if (!v) return undefined;
-    const raw = values.get(v.qualifiedName);
-    if (raw === undefined) return undefined;
-    if (typeof raw === 'boolean') return raw;
-    return raw * v.factor + v.offset;
-  };
-  const reread = evaluate(node, scope);
-  if (!('value' in reread)) {
-    return { ok: false, why: 'the tool’s own evaluator could not read the relation at the witness' };
-  }
-  // With nothing released the witness IS the model's values, and the solver
-  // read them in the decimals the author wrote (`numeral` in ../smt/encode):
-  // `3.0 [ft]` is exactly `0.9144 [m]` there and 0.9144000000000001 in
-  // binary64. The arithmetic is then re-read as the validation surface reads
-  // a comparison of quantities — within its relative tolerance — and the
+  // The witness is exact — z3's rationals — and so is the re-read
+  // (`rereadRelation` of ../exact): the solver read the model in the decimals
+  // the author wrote (`numeral` in ../smt/encode), so `3.0 [ft]` is exactly
+  // `0.9144 [m]` there and 0.9144000000000001 in binary64, and the re-read
+  // compares the decimals too, as the validation surface decides a tie. The
   // second gate below still has to find the relation violated.
-  const reading = reread.value === false || anyFreed ? reread : evaluateWithin(node, scope);
-  if (!('value' in reading) || reading.value !== false) {
+  const reread = rereadRelation(node, row.vars, values);
+  if (!('value' in reread)) {
+    return {
+      ok: false,
+      why: reread.tie
+        ? `the tool’s own evaluator cannot decide the relation at the witness: ${tieSentence(reread.tie)}`
+        : 'the tool’s own evaluator could not read the relation at the witness',
+    };
+  }
+  if (reread.value !== false) {
     return {
       ok: false,
       why: `the tool’s own evaluator makes the relation ${String(reread.value)} at the witness, not false`,
@@ -1465,59 +1767,55 @@ function confirm(
           (check?.message ? ` (${check.message})` : ''),
       };
     }
+    // …AND IT HAS TO HAVE READ THE SAME FEATURES. A `violated` over a
+    // different feature confirms nothing about this one: `x <= 5.0` in a P
+    // whose own `x` has no value was "violated" on the numeric surface because
+    // its scope gave the bare `x` to a nested part's `x = 7.0`, and the solver's
+    // counterexample over P's `x` was printed refuted, exit 1, on that reading.
+    const other = readElsewhere(model, row.row, input.scopes);
+    if (other) {
+      return {
+        ok: false,
+        why:
+          `the numeric surface reads \`${other.path}\` as ${other.check} where this relation names ` +
+          `${other.encoder}, so its \`violated\` is a reading of a different feature`,
+      };
+    }
   }
   return { ok: true };
 }
 
-/** The relative tolerance the unit-aware evaluator compares quantities within (`REL_TOL` of ../units-eval). */
-const WITHIN = 1e-9;
-
 /**
- * {@link evaluate}, with every comparison of two numbers read within
- * {@link WITHIN} of the larger — a tie is a tie — and everything else as it
- * reads it.
+ * A name of the relation the numeric surface resolves to a DIFFERENT feature
+ * from the one the encoder read, or `undefined` where the two agree (or the
+ * surface resolves it through an equation, by the name alone). The surface's
+ * scope is the relation's owner first, then the relation itself — the order
+ * its constraint check reads them in.
  */
-function evaluateWithin(node: ExprNode, scope: (name: string) => unknown): ReturnType<typeof evaluate> {
-  const truth = (n: ExprNode): unknown => {
-    const r = evaluateWithin(n, scope);
-    return 'value' in r ? r.value : undefined;
+function readElsewhere(
+  model: Model,
+  row: Obligation,
+  scopes: Map<ElementId, Map<string, ElementId>>,
+): { path: string; encoder: string; check: string } | undefined {
+  const el = model.get(row.element.id);
+  if (!el) return undefined;
+  const scope = (id: ElementId): Map<string, ElementId> => {
+    let ids = scopes.get(id);
+    if (!ids) {
+      ids = featureIdsFor(model, id);
+      scopes.set(id, ids);
+    }
+    return ids;
   };
-  if (node.kind === 'unary' && node.op === 'not') {
-    const v = truth(node.operand);
-    return typeof v === 'boolean' ? { value: !v } : { unknown: true };
-  }
-  if (node.kind === 'binary') {
-    const op = node.op;
-    if (op === 'and' || op === 'or' || op === 'xor' || op === 'implies') {
-      const a = truth(node.left);
-      const b = truth(node.right);
-      if (typeof a !== 'boolean' || typeof b !== 'boolean') return evaluate(node, scope);
-      const value = op === 'and' ? a && b : op === 'or' ? a || b : op === 'xor' ? a !== b : !a || b;
-      return { value };
-    }
-    if (['==', '=', '!=', '<', '<=', '>', '>='].includes(op)) {
-      const l = evaluate(node.left, scope);
-      const r = evaluate(node.right, scope);
-      if ('value' in l && 'value' in r && typeof l.value === 'number' && typeof r.value === 'number') {
-        const x = l.value;
-        const y = r.value;
-        const tie = Math.abs(x - y) <= WITHIN * Math.max(Math.abs(x), Math.abs(y));
-        switch (op) {
-          case '==':
-          case '=':
-            return { value: tie };
-          case '!=':
-            return { value: !tie };
-          case '<':
-          case '<=':
-            return { value: tie || x < y };
-          default:
-            return { value: tie || x > y };
-        }
-      }
+  const names = mergeMaps(el.ownerId != null ? scope(el.ownerId) : new Map(), scope(el.id));
+  for (const v of row.vars) {
+    if (v.symbol !== undefined) continue;
+    const id = names.get(v.path);
+    if (id !== undefined && id !== v.featureId) {
+      return { path: v.path, encoder: v.qualifiedName, check: model.qualifiedName(id) };
     }
   }
-  return evaluate(node, scope);
+  return undefined;
 }
 
 /** The two SI magnitudes and the dimension, when the unit-aware evaluator has them. */
@@ -1526,7 +1824,7 @@ function quantities(
   row: Obligation,
   memo: DerivationMemo = new Map(),
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
-  const el = model.get(row.element.id);
+  const el = rowElement(model, row);
   if (!el) return {};
   const q = evaluateConstraintQuantityDetailed(model, el, { memo });
   return {

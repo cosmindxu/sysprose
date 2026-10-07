@@ -40,10 +40,11 @@
  */
 
 import { type ElementId, type Model } from '@core/index';
-import { checkConstraints, type ConstraintCheck } from '../evaluate-model';
+import { checkConstraints, checksByRow, type ConstraintCheck } from '../evaluate-model';
 import { evaluateFeatureValue, featuresWithoutValue } from '../evaluate-model';
-import { type Obligation } from '../obligations';
+import { rowElement, type Obligation } from '../obligations';
 import { type ContractRef, type Refusal, type RefusalReason, type VariableRole } from '../contracts';
+import { withinTolerance } from '../exact';
 import { dimToString } from '../units';
 import { evaluateConstraintQuantityDetailed, type DerivationMemo } from '../units-eval';
 
@@ -221,8 +222,7 @@ export interface LiteralResult {
 export function judgeLiterally(model: Model, rows: readonly Obligation[]): LiteralResult[] {
   // One sweep of the numeric surface for the whole run: `checkConstraints`
   // walks the model, and calling it per row would walk it once per requirement.
-  const checks = new Map<ElementId, ConstraintCheck>();
-  for (const c of checkConstraints(model)) checks.set(c.id, c);
+  const checks = checksByRow(checkConstraints(model));
 
   // Premises belong to their requirement, and a row with no requirement (a
   // model-level axiom) has none. Keyed on the requirement's element id, which
@@ -364,7 +364,15 @@ function judgeOne(
       detail:
         `refuted with every feature at its model value: \`${row.expression}\` is false here` +
         (detailed.lhsSI !== undefined && detailed.rhsSI !== undefined
-          ? ` (${detailed.lhsSI} vs ${detailed.rhsSI}${detailed.dimension ? ` in ${detailed.dimension}` : ''}, coherent SI)`
+          ? ` (${detailed.lhsSI} vs ${detailed.rhsSI}${detailed.dimension ? ` in ${detailed.dimension}` : ''}, ` +
+            'coherent SI' +
+            // Two doubles within the tolerance say nothing on their own — `0.1
+            // + 0.2 > 0.3` is 0.30000000000000004 vs 0.3 — so the sentence
+            // says what decided it.
+            (withinTolerance(detailed.lhsSI, detailed.rhsSI)
+              ? ', a tie to binary64 that the decimals written decide'
+              : '') +
+            ')'
           : '') +
         gated,
     };
@@ -408,7 +416,7 @@ function quantities(
   row: Obligation,
   memo: DerivationMemo = new Map(),
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
-  const el = model.get(row.element.id);
+  const el = rowElement(model, row);
   if (!el) return {};
   const q = evaluateConstraintQuantityDetailed(model, el, { memo });
   return {

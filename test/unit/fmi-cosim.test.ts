@@ -245,6 +245,21 @@ describe('sysmlBlockInstance — a SysML block co-simulates as an FMU', () => {
     expect(inst.converged!()).toBe(false);
   });
 
+  it('reads an output the law leaves free as NaN, never as the split the solve stopped at (D5)', () => {
+    // `y + z = u` with only `u` held: every split of 10 solves it. The solve
+    // used to hand on y = z = 5 and call the step converged.
+    const { m, blockId } = gainBlock('y + z = u');
+    m.create('PortUsage', { ownerId: blockId, declaredName: 'z', attrs: { direction: 'out' } });
+    const inst = sysmlBlockInstance(m, blockId);
+    const vr = (n: string) => inst.variables.find((v) => v.name === n)!.valueReference;
+    inst.initialize();
+    inst.setReal(vr('u'), 10);
+    inst.doStep(0, 1);
+    expect(inst.converged!()).toBe(false);
+    expect(inst.getReal(vr('y'))).toBeNaN();
+    expect(inst.getReal(vr('z'))).toBeNaN();
+  });
+
   it('excludes non-numeric (Boolean/String) ports from the co-sim surface', () => {
     const m = new Model();
     const blk = m.create('PartDefinition', { declaredName: 'Mixed' });

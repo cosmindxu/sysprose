@@ -511,7 +511,7 @@ refresh); `src/ui/panels/TextEditor.tsx`;
 | **Validate** | the rule engine (26 rules) over the model | naming, typing, multiplicity, containment and traceability findings |
 | **Check** | the same findings, minus the rule engine's own constraint rows, plus one row per constraint in the model | satisfied / violated / could-not-evaluate, per constraint, navigable to the constraint |
 | **Simulate** | one batch run of an action flow or state machine | a step-by-step trace: steps, edges fired, loop iterations, whether it completed |
-| **Solve** | the numeric solver and the measures of effectiveness | solved values, violations, unknowns, and a feasibility verdict |
+| **Solve** | the numeric solver and the measures of effectiveness | solved values, the features the equations leave free, violations, unknowns, and a feasibility verdict |
 
 Two names worth separating:
 
@@ -522,6 +522,45 @@ Two names worth separating:
 - **`feasible` means "no *known* violation."** A relation neither engine could
   judge is reported under *unknowns* and leaves the flag true. Read the two
   together; an unjudged constraint is not a satisfied one.
+- **A design freedom is reported as one, never as a value.** When the
+  equations leave a feature free — `mass == dry + fuel` and `fuel == mass *
+  0.2` with no value for `dry` — Solve lists it as a `free:` row instead of a
+  `value:` row, and every relation over it is *unjudged*: the point the solver
+  happened to stop at is one choice among many, so `mass >= 130.0` is neither
+  met nor missed there. A feature that reads a free one is free with it,
+  however slight the dependence (a range in kilometres moved by an offset in
+  millimetres). An equation the solve itself imposed holds along the
+  freedom and stays satisfied; a plain (not `assert`) constraint the solve took
+  as a design equation to fix such a value is marked *imposed by the solve*,
+  because it holds by construction, not as a check the design passes. A value
+  the model's own facts fix — a `bind` to a determined value, an `assert` over
+  an instance (`assert constraint { p.x == 3.0 }`) — is no freedom, and a
+  plain constraint over it is judged, never imposed — and so is a feature
+  whose stated value expression those facts determine (`y = x * 2.0` over an
+  asserted `x`): `y == 7.0` beside it is violated, never the value y is
+  solved to. The test is local: of
+  two separate roots (`x * x == 4.0`) the one the solver found is still the
+  one judged. A constraint of a definition read in a usage is judged at the
+  values the model states; with any of them `fixed` by an API caller,
+  `solveFeasible` leaves it unjudged (`decided: false`), and so does the
+  numeric check (`unknown`). Every other relation is read at the fixed point,
+  every feature the point moves at the value it has there — `y != 18.0` over
+  `y = x * 2.0` holds with `x` fixed to 1. A value the caller fixes is the
+  decimal it is, read exactly as a value the model states, and so are the
+  literals the point keeps: `x <= 0.99999999999` is violated with `x` fixed to
+  1, never held within the solve's tolerance, which reads only the values the
+  solve produced (`y`, there). A name the point gives no value — a Boolean
+  `ok = x > 5.0` over the fixed `x` — would read the model's own, so a
+  relation over it is *unjudged* at that point, and `solveFeasible` leaves it
+  unjudged too.
+- **A point the solver stopped at without converging is no solution.** When
+  the solve ends off one of the equations it solved — a Newton step that
+  diverged, an instance's value it could not read — the values it produced
+  there are neither listed as values nor as freedoms, and every relation over
+  them is *unjudged* with the reason *the solve did not converge*: never
+  violated at a point the model does not sit at. `solveFeasible` does not hold
+  them there either: it searches them as freedoms, and a violation over them
+  is unresolved, never decided.
 
 **A target on a measure with no value of its own is read where the values
 are.** A brief often states its targets once, on abstract measures that carry
@@ -687,6 +726,7 @@ three buckets are fixed, and the one worth knowing is the last:
 | `assume constraint { … }` | a **premise** — something you may lean on |
 | `assert constraint { … }` | an **axiom** |
 | `attribute m = 18.5 [kg];` | an **axiom** — a `=` value is a binding, not a default |
+| `attribute m default = 18.5 [kg];` | an **axiom** of the definition's own feature, which a redefinition may override |
 | `bind a = b;` | an **axiom** |
 | `constraint c { … }` — no keyword | an **obligation**, not an axiom |
 
@@ -694,6 +734,108 @@ That last row is deliberate. A plain constraint is what the **Analyze** button
 judges, so it has to be what a solver judges as well; filing it as an axiom
 would let one false constraint make the whole axiom set unsatisfiable and turn
 every real violation in the run into "cannot tell".
+
+**A redefinition is the feature in its context, and `=` binds.** In `part p : P
+{ attribute :>> m = 20.0 [kg]; }` every surface reads `p.m` as p's own feature —
+named or not, renamed (`heavy redefines m`), however deep the chain that
+reaches it. Whether it may have a value of its own depends on how P wrote `m`:
+
+- `attribute m default = 18.5 [kg];` — overridable: `p.m` is 20 kg.
+- `attribute m = 18.5 [kg];` — a binding every P holds, so p states two values
+  for one feature. That is a **contradiction**: the check reports it as a
+  violation at the redefinition (`validation/constraint-violation`), no surface
+  reads either value for `p.m`, and the solver lane finds the axioms
+  inconsistent. Write `default` where a
+  usage is meant to override.
+
+The two values are compared as values, not as spelled: `1000.0 [g]` restates
+`1.0 [kg]`, `10.0-k` restates `10.0 - k`, and `2.0 * 0.5` restates `1.0` — none
+of them contradicts anything. A pair only an evaluation could compare
+(`:>> m = 50.0` over `m = 2.0 * k`, where p may change `k`) is reported
+`unknown` at the redefinition, `p.m` is read by no surface, and the solver lane,
+which carries both values in SI, decides whether they meet. A feature that
+hides P's `m` by its name alone (`attribute m = 20.0 [kg];` with no `:>>`)
+overrides it all the same, and so does the same check. Two values a context
+inherits under one name from two general types (`part def C :> A, B` over A's
+and B's `:>> m`) are read by no surface there; two literal bindings that differ
+are a contradiction reported at C.
+
+**A binding overrides a `default` as a redefinition does.** `bind p.m = M` in
+`part def Q`, over P's `attribute m default = 18.5 [kg]`, makes p's m Q's M in
+every Q — wherever M has a value of its own: written with `=`, set in a
+context (`part q : Q { attribute :>> M = 20.0 [kg]; }`), or fixed by an
+asserted equation. The numeric surface and the solver lane read `q.p.m` as
+20 kg, and no surface reads the 18.5 kg; the check and the literal engine read
+it as they read any feature a binding holds — with no value of its own, so a
+relation over it is *could not be evaluated* there. The same holds for a
+`default` on a feature the binding names directly (`bind m = M`), for one a
+context writes on the bound end (`part q : Q { part :>> p { attribute :>> m
+default = 30.0 [kg]; } }` against Q's `M = 20.0 [kg]`), and along a chain of
+bindings: `bind B = A; bind C = B;` reads C as A, and R's `bind q.M = N` over
+Q's `bind p.m = M` reads `r.q.p.m` as r's N. Bindings are read in every context
+they hold in, each end the feature at its path there, and a `default` gives
+way where the bindings joined to it reach a value of its own — in that
+context, which is read per feature: a default that gives way in one context
+is read in none (where `q1 : Q` sets an M that Q leaves valueless, a `q2 : Q`
+that leaves it unset reads no m at all, not P's 18.5 kg). A binding to a feature nothing gives a value (`attribute w; bind
+w = p.m;`) carries the default into it instead: `w` is 18.5 kg. Two defaults
+bound to each other with no value beside them stand where they state one
+value, and give way where they differ: the model states neither, and no
+surface calls it a contradiction. A definition's constraint over a value read
+through a binding is read anew in every context that joins the binding to
+another value, as a constraint over a redefined value is. One read in a usage
+(P's `load <= 10.0` in `Q::p`) whose value a binding of Q joins to another in a
+context of Q (q's L) is read there for Q's own p alone — q's p is named by no
+context — so the solver lane does not carry it (*not evaluable*). Against a value
+written with `=`, a binding is a **contradiction**, as a redefinition is:
+`bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20 kg is reported
+violated at the binding (in a context that specialises the binding's owner, at
+that context) by the check and the numeric surface, `solveFeasible` decides
+the model infeasible, and the solver lane finds the axioms inconsistent. Only a
+pair the check decides to differ is reported so; a pair it cannot compare is
+left to the solver lane. The literal engine reads each relation alone, never
+the model's facts against each other: over such a model it reads the
+relations at P's `m`, as it reads them beside a contradicted `assert`.
+
+A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -
+part1.m`, a calculation's body, an asserted equation, a value read through
+another part's redefinition) is **p's own value**: P's expression evaluated
+over p's names, on every surface — `p.e` is 40 kg where P's own `e` is 37 kg.
+A redefinition that states nothing (`attribute :>> e;`, or the copy a `bind w
+= p.e` makes) reads it the same way, in p. P's constraints and asserts hold in
+`p` too: each is read again in every context that changes what it reads, as
+rows named `P::c in R::p`, beside P's own verdict, on every surface — the
+numeric surface and `solveFeasible` included.
+
+Every instance has its own values. Two parts of one type, `g1 : G` and `g2 :
+G`, are two values of G's `g`: the verification lane reads them by symbols of
+their own (`R::g1::g`, `R::g2::g` — and `R::q1::p::x` for an instance reached
+through two usages), the solver solves each by itself, and nothing one of them
+states fixes the other — `g1.g == g2.g` is not proved of two values nothing
+relates. What G states holds of each instance: its value expressions, its
+asserts and its bindings are filed again for every instance a relation reads,
+as rows named `G::c in R::g1` — and so is what the types of every instance
+ENCLOSING it state: `s.q.load`, over `part s : Sys` whose Sys binds `p.load =
+q.load`, holds Sys's binding as well as P's asserts. A value the same in every
+instance — a literal, or arithmetic over literals the instance changes nothing
+of — keeps the feature's own name. A requirement's subject that nothing binds,
+read in the requirement itself, is the generic instance of its type (the
+requirement is about any one); reached through a usage (`r1.s`, `sys.ra.s`, a
+nested requirement's `r2.t`) it is that usage's own, and a subject that says
+something of its own (`subject s : P { assert constraint … }`) is an instance
+of its own. `--free` and `bounds --measure` take an instance's symbol, or its
+dotted path.
+
+A requirement is read where its subject is bound. `satisfy R by p` and
+`requirement r : R { subject s = p; }` read R's clauses at p — `s.m` is p's
+`m` — as rows named `R::c in R::p` (or `in R::r`), each goal under its own
+assumptions, beside R's own reading at the subject's type, wherever p reads
+them otherwise: a value of its own, or an instance that holds more than R's
+subject does — an assert or value of p's own, a narrower type, an instance
+enclosing it (`satisfy R by q1.p` is q1's p), a relation of the model that
+reads it. A satisfier that holds exactly what the subject holds reads R as the
+subject does, and adds no row. `refine` reads a component's contract at the
+part that satisfies it.
 
 The status column says what is **stored**, never what is true. `open` means
 nothing has been shown yet; `no formal clause` means the requirement is prose
@@ -993,14 +1135,31 @@ $ echo $?
   proved and honestly useless, so it is proved **and flagged as a tautology**.
 
 **A counterexample is re-checked before you see it.** Every witness the solver
-returns is substituted back through this tool's own evaluator, and with nothing
-freed it must also read as *violated* on the numeric surface — a second,
-independent path. A witness that fails either gate is reported as
-`inconclusive: witness not confirmed`, never as a violation. That is what
-catches an encoder defect in the direction that matters, and it is why an exact
-strict boundary (`mass < 18.5 [kg]` at 18.5 kg, where the two surfaces genuinely
-read the tie differently) comes back undecided rather than as a refutation of a
-requirement the checker passes.
+returns is substituted back through this tool's own evaluator — over the exact
+rationals the solver answered with — and with nothing freed it must also read
+as *violated* on the numeric surface — a second, independent path. A witness
+that fails either gate is reported as `inconclusive: witness not confirmed`,
+never as a violation. That is what catches an encoder defect in the direction
+that matters.
+
+**Numbers are the decimals you wrote, on every surface.** `0.1 + 0.2 == 0.3`
+holds and `0.1 + 0.2 > 0.3` does not — on the Problems panel, the numeric
+surface, `verify --engine literal` and `--engine smt`, `consistency`, `bounds`
+and `refine` alike. A strict bound is violated at its boundary (`mass < 18.5
+[kg]` at 18.5 kg is refuted, exit 1, by both engines), and `1.0 +
+0.00000000000000001 > 1.0` is true, although binary64 rounds that sum to
+`1.0`. The point evaluators compute in binary64, but they decide every
+comparison by exact arithmetic over the decimals written — unit factors
+included — wherever it can be computed. Where it cannot (an operand computed
+by a fractional power), two sides within a relative 1e-9 of each other are
+*undecided*: `not-evaluable`, never forgiven, and never either verdict. Two
+readings are binary64 by definition: a numeral written with more than 15
+significant digits is the double it parses to, and a unit factor that is no
+decimal (the hartley and the nat, whose factors are logarithms) is the double
+the registry holds. A value only a numeric solve produced is read at the
+solve's own tolerance: within it `==`, `<=` and `>=` hold, and a strict
+ordering or a `!=` is undecided — the solve does not know which side of the
+bound its value lies on.
 
 **Freeing a feature is a two-sided act.** `--free F` releases a value so the
 solver may vary it — but this tool derives no domain axiom from a quantity kind.
@@ -1248,8 +1407,13 @@ gate refused — arithmetic on a °C scale, a `%`, a collection — is listed wi
 reason and is *not* asserted. That cuts both ways, and the asymmetry is why the
 count is printed every time: an inconsistency found without those relations is
 still an inconsistency (adding an assertion can only make a set harder to
-satisfy), but a set called *consistent* without them might be excluded by the
-very relation that was refused. A requirement that states no relation **at all**
+satisfy), but a set satisfiable without them might be excluded by the very
+relation that was refused — so a set that **reaches** one (its own clause, or a
+refused fact sharing a feature with it) is `inconclusive`, not consistent:
+`verification/unsupported-construct`, which `--allow-inconclusive` may forgive,
+where every such relation is the set's own and outside the fragment (as
+`verify` files it) and, under `--with-values`, none is false at the values (a
+violation `verify` refutes), and `verification/not-evaluable` otherwise. A requirement that states no relation **at all**
 is counted apart, on the same line: no gate refused it, and folding the two
 together would report a file of prose requirements as one whose relations this
 tool turned down.
@@ -2855,7 +3019,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:554-571`, `966-987` (the two rules that ask),
+`src/validation/rules.ts:554-571`, `966-989` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

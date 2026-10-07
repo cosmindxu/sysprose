@@ -450,7 +450,13 @@ export class ModelApi {
    * when the feature carries no numeric value.
    */
   evaluateQuantity(featureId: ElementId): Quantity | undefined {
-    return semEvaluateQuantity(this.model, featureId);
+    const q = semEvaluateQuantity(this.model, featureId);
+    if (!q) return undefined;
+    // The exact reading is the evaluators' own, in BigInts no JSON can carry;
+    // a caller gets the quantity it always did.
+    const out: Quantity = { ...q };
+    delete out.exact;
+    return out;
   }
 
   /**

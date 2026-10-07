@@ -35,6 +35,7 @@ import {
   RANDOM_SEED,
   loadZ3,
   rationalToNumber,
+  rereadPoint,
   resetZ3Cache,
   z3DeathCount,
   z3Disabled,
@@ -288,6 +289,77 @@ describe('the backend names itself, and answers the same way twice', () => {
     const b = await z3.check(s, { variables: ['UAV::uav::mtow'] });
     expect(a.status).toBe(b.status);
     expect(a.witness).toEqual(b.witness);
+  });
+});
+
+/**
+ * z3's model is PARTIAL, and the re-readers read it completed.
+ *
+ * A constant whose value no assertion turns on is left out of the model, and
+ * which ones are depends on what else ran on the shared context — so a re-read
+ * over the bare model found a premise unreadable or not according to unrelated
+ * scripts (measured on v9: three consistency subjects `inconclusive` in a fresh
+ * process for exactly that). `completion` carries every declaration the
+ * witness does not, at z3's own value or its model-completion value, and
+ * `rereadPoint` is what the gates read; the printed witness is untouched.
+ */
+describe('a partial model is completed for the re-read, never for print', () => {
+  // Every constant but `x` and `spare part` appears only under a tautology
+  // z3's rewriter folds to `true`, so no model it returns assigns them — one
+  // of each sort the encoder declares, and one `declare-const` beside the
+  // encoder's `declare-fun`. `spare part` is assigned and simply not asked
+  // for; its quoted name carries the space a qualified name may.
+  const PARTIAL = [
+    '(set-logic QF_LIRA)',
+    '(declare-fun |P::x| () Real)',
+    '(declare-fun |P::idle| () Real)',
+    '(declare-fun |P::count| () Int)',
+    '(declare-fun |P::mode| () Bool)',
+    '(declare-const |P::spare part| Real)',
+    '(assert (>= |P::x| 3.5))',
+    '(assert (or (>= |P::idle| 0.0) (< |P::idle| 0.0)))',
+    '(assert (or (>= |P::count| 0) (< |P::count| 0)))',
+    '(assert (or |P::mode| (not |P::mode|)))',
+    '(assert (= |P::spare part| 2.0))',
+    '',
+  ].join('\n');
+  const DECLARED = ['P::count', 'P::idle', 'P::mode', 'P::spare part', 'P::x'];
+  const ASKED = ['P::x', 'P::idle', 'P::count', 'P::mode'];
+
+  withZ3('carries every declaration the witness leaves out, and prints none of them', async (z3) => {
+    const r = await z3.check(PARTIAL, { variables: ASKED });
+    expect(r.status).toBe('sat');
+    const printed = r.witness.map((w) => w.symbol);
+    const completed = r.completion.map((w) => w.symbol);
+    // NOT VACUOUS: the model really was partial. If a z3 release starts
+    // assigning these, this case no longer exercises the completion and has to
+    // find another constant z3 leaves out.
+    expect(printed, 'z3 assigned a constant only a tautology reads').toEqual(['P::x']);
+    // Every declaration is in exactly one of the two lists.
+    expect([...printed, ...completed].sort()).toEqual(DECLARED);
+    expect(completed.filter((s) => printed.includes(s)), 'a printed symbol was completed again').toEqual([]);
+    const point = rereadPoint(r);
+    expect([...point.keys()].sort(), 'the re-read point misses a declaration').toEqual(DECLARED);
+    // Each at a value of its own sort, and a constant z3 DID assign at z3's value.
+    expect(typeof point.get('P::idle')).toBe('number');
+    expect(Number.isInteger(point.get('P::count'))).toBe(true);
+    expect(typeof point.get('P::mode')).toBe('boolean');
+    expect(point.get('P::spare part'), 'an assigned constant was completed, not read').toBe(2);
+    expect(point.get('P::x')).toBe(r.witness[0].value);
+  });
+
+  withZ3('completes the optimiser’s point too, and nothing where there is no model', async (z3) => {
+    const o = await z3.optimize(`${PARTIAL}(minimize |P::x|)\n`, 'min', { variables: ['P::x'] });
+    expect(o.status).toBe('sat');
+    expect(o.bound?.value).toBe(3.5);
+    expect(o.witness.map((w) => w.symbol)).toEqual(['P::x']);
+    expect(o.completion.map((w) => w.symbol).sort()).toEqual(DECLARED.filter((s) => s !== 'P::x'));
+    const unsat = await z3.check(`${PARTIAL}(assert (< |P::x| 0.0))\n`);
+    expect(unsat.status).toBe('unsat');
+    expect(unsat.completion).toEqual([]);
+    const refused = await z3.check('(declare-fun x () Real)\n(assert (bogus x))');
+    expect(refused.status).toBe('error');
+    expect(refused.completion).toEqual([]);
   });
 });
 

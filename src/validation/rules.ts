@@ -637,14 +637,14 @@ function isSubjectFeature(c: ElementRecord): boolean {
  * Two boundaries of the inherited path, both pinned by tests rather than left
  * to be rediscovered:
  *  - The inherited candidates are USAGES only ({@link effectiveFeatures} →
- *    `ownFeatures`, `src/semantics/inheritance.ts`:49). A `SubjectMembership`
+ *    `ownFeatures`, `src/semantics/inheritance.ts`:50). A `SubjectMembership`
  *    or any other non-Usage child therefore answers on the own-children line
  *    below and never through inheritance.
- *  - `effectiveFeatures` masks an inherited feature by NAME (KerML
- *    redefinition-by-name). An own feature of the usage that happens to share
- *    the inherited subject's name hides it, and the requirement is reported as
- *    having no subject. That is the inheritance semantics the whole codebase
- *    shares, so it is recorded here rather than special-cased for one rule.
+ *  - `effectiveFeatures` masks an inherited feature by REDEFINITION or by its
+ *    effective name (KerML: a redefined feature is not inherited). An own
+ *    feature that redefines the inherited subject or shares its name hides it,
+ *    and unless it is a subject itself the requirement has no subject. That is
+ *    the inheritance semantics the whole codebase shares, recorded here.
  */
 function hasSubject(model: Model, req: ElementRecord): boolean {
   const subj = req.attrs.subject;
@@ -971,14 +971,16 @@ const constraintViolation: ValidationRule = {
     const mk = diagBuilder(this.id, this.severity);
     const out: Diagnostic[] = [];
     for (const check of sweepConstraints(model)) {
-      const el = model.get(check.id);
+      // A clash, or a binding's conflict read in a context: anchored at that context.
+      const inContext = check.conflict === 'clash' || (check.conflict === 'bind' && model.get(check.id) === undefined);
+      const el = model.get(inContext && check.ownerId != null ? check.ownerId : check.id);
       if (!el || isLibraryElement(el)) continue;
       if (isNonNormativeStatement(model, el.id)) continue;
       if (check.result === 'violated') {
-        out.push(mk(check.message, check.id, 'warning'));
+        out.push(mk(check.message, el.id, 'warning'));
       } else if (check.result === 'unknown') {
         out.push(
-          mk(`Constraint could not be evaluated ("${check.expression}"): ${check.message}.`, check.id, 'info'),
+          mk(`Constraint could not be evaluated ("${check.expression}"): ${check.message}.`, el.id, 'info'),
         );
       }
     }
