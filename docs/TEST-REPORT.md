@@ -37,16 +37,16 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **Unit/integration runner** | Vitest + jsdom + Testing Library |
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
-| **Date** | 2026-10-03 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **3654 passed / 0 failed / 0 skipped** across **156 files** |
-| &nbsp;&nbsp;— unit | 2743 passed across 118 files |
-| &nbsp;&nbsp;— integration | 298 passed across 21 files |
+| **Date** | 2026-10-07 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
+| **Vitest checks** | **3848 passed / 0 failed / 0 skipped** across **156 files** |
+| &nbsp;&nbsp;— unit | 2832 passed across 118 files |
+| &nbsp;&nbsp;— integration | 400 passed across 21 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
 | &nbsp;&nbsp;— interop | 8 passed across 1 file |
-| &nbsp;&nbsp;— campaign (L6–L8) | 483 passed across 5 files |
+| &nbsp;&nbsp;— campaign (L6–L8) | 486 passed across 5 files |
 | **E2E scenarios** | **162 passed / 0 failed / 0 flaky / 0 skipped** across **83 spec files** |
-| **Grand total** | **3816 automated checks passed / 0 failed** |
+| **Grand total** | **4010 automated checks passed / 0 failed** |
 
 > **Previously the one failure**, now fixed: `conformance › Systems Library/
 > Actions.sysml › parses with 0 errors`. The OMG corpus (an *external,
@@ -724,8 +724,8 @@ narrowed subset.
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **3816 green automated
-checks** (**3654** unit/integration/conformance/server/interop/campaign across **156 files**,
+SysML v2 standard family — all six read **Covered** — with **4010 green automated
+checks** (**3848** unit/integration/conformance/server/interop/campaign across **156 files**,
 **0 skips**, + **162 E2E** across **83 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
@@ -743,7 +743,7 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (3654 passed /
+*End of report. Counts and verdicts derived from a live `vitest run` (3848 passed /
 0 skipped across 156 files) and Playwright (162/162 across 83 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
