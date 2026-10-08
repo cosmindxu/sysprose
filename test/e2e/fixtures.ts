@@ -8,7 +8,7 @@
  * label text or row indices.
  */
 
-import { type Locator, type Page, expect } from '@playwright/test';
+import { type ConsoleMessage, type Locator, type Page, expect } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 
 export const SHOT_DIR = 'test-results/screenshots';
@@ -21,11 +21,21 @@ export interface WireElement {
   declaredShortName?: string;
 }
 
-/** Attach console/page error listeners; returns the live error array. */
-export function captureErrors(page: Page): string[] {
+/**
+ * Attach console/page error listeners; returns the live error array.
+ *
+ * `ignore` drops console errors a spec provokes on purpose: Chromium logs
+ * "Failed to load resource: …" for every 4xx/5xx a route fulfils, so a spec
+ * that fakes a failing server names exactly those. Every other console error,
+ * and every page error, is still collected.
+ */
+export function captureErrors(
+  page: Page,
+  opts: { ignore?: (m: ConsoleMessage) => boolean } = {},
+): string[] {
   const errors: string[] = [];
   page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text());
+    if (m.type() === 'error' && !opts.ignore?.(m)) errors.push(m.text());
   });
   page.on('pageerror', (e) => errors.push(`PAGEERROR: ${e.message}`));
   return errors;

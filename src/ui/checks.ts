@@ -96,10 +96,54 @@ const ALL_VIEWS: readonly ViewKind[] = [
   'contracts',
 ];
 
-const cli = (sub: string, ctx: CheckContext, extra = ''): string =>
-  `npm run sysprose -- ${sub} ${ctx.fileName}${extra ? ` ${extra}` : ''}`;
+/*
+ * The names in a command. The commands below are pasted into whatever terminal
+ * a person has — bash or zsh, and on Windows cmd.exe or PowerShell — and the
+ * names in them are not this app's to choose: a Google Drive file is called
+ * whatever its owner typed (`Swarm (copy).sysml`, or worse), and a qualified
+ * name may hold quoted parts. No quoting protects a word in all of those
+ * shells — cmd.exe reads `&` inside '…' as the end of a command, and a POSIX
+ * `'\''` closes a PowerShell string — so a name goes into a command only when
+ * it is a plain word that every one of them passes on as it is. Any other
+ * name is left out: a file is named by a stand-in made of plain characters,
+ * an element by the `<qualified name>` placeholder — always a command's last
+ * words, where each of those shells refuses the `>` with nothing after it and
+ * runs nothing — and {@link commandNote} says beside the command what each
+ * stands for.
+ */
 
-const element = (ctx: CheckContext): string => (ctx.selectionName ? `--element ${ctx.selectionName}` : '--element <qualified name>');
+/** A file name no shell reads as anything but itself: letters, digits, `_ . -`, not starting with `-` (an option) or `.`. */
+const PLAIN_FILE = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+/** A qualified name of plain identifiers, `A::B::c` — `::` is a plain word in all those shells too. */
+const PLAIN_QUALIFIED = /^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*$/;
+
+/** The placeholder a person replaces with an element's qualified name. */
+export const QUALIFIED_NAME_PLACEHOLDER = '<qualified name>';
+
+/**
+ * The file name a command names: `fileName` itself when it is a plain word,
+ * else a stand-in of plain characters — every other character an `_` — that
+ * the person saves the file as (see {@link commandNote}).
+ */
+export function commandFileName(fileName: string): string {
+  if (PLAIN_FILE.test(fileName)) return fileName;
+  const stand = fileName.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/^[.-]/, '_');
+  return stand === '' ? 'model.sysml' : stand;
+}
+
+/** Whether a qualified name can stand in a command as it is (see {@link commandFileName}). */
+export function plainQualifiedName(name: string): boolean {
+  return PLAIN_QUALIFIED.test(name);
+}
+
+const cli = (sub: string, ctx: CheckContext, extra = ''): string =>
+  `npm run sysprose -- ${sub} ${commandFileName(ctx.fileName)}${extra ? ` ${extra}` : ''}`;
+
+/** The selected element's qualified name when it is a plain word, else the placeholder a person fills in. */
+const selected = (ctx: CheckContext): string =>
+  ctx.selectionName && plainQualifiedName(ctx.selectionName) ? ctx.selectionName : QUALIFIED_NAME_PLACEHOLDER;
+
+const element = (ctx: CheckContext): string => `--element ${selected(ctx)}`;
 
 const holds = (summary: string, rows: CheckRow[] = []): CheckResult => ({ verdict: 'holds', summary, rows });
 const issues = (summary: string, rows: CheckRow[]): CheckResult =>
@@ -303,7 +347,7 @@ export const CHECKS: readonly CheckSpec[] = [
     engine: 'solver',
     views: ['parametric', 'requirements', 'grid'],
     needsSelection: true,
-    command: (ctx) => cli('bounds', ctx, `--measure ${ctx.selectionName ?? '<qualified name>'}`),
+    command: (ctx) => cli('bounds', ctx, `--measure ${selected(ctx)}`),
   },
   {
     id: 'refine',
@@ -323,6 +367,28 @@ export const CHECKS: readonly CheckSpec[] = [
   },
 ];
 
+/**
+ * What a person needs to know beside `spec`'s command when a name had to be
+ * left out of it (see {@link commandFileName}): the name to save the file as,
+ * and the element `<qualified name>` stands for. Null when the command names
+ * them as they are.
+ */
+export function commandNote(spec: CheckSpec, ctx: CheckContext): string | null {
+  const notes: string[] = [];
+  const file = commandFileName(ctx.fileName);
+  if (file !== ctx.fileName) {
+    notes.push(
+      `Save the file as ${file} to run this: its name, ${ctx.fileName}, has characters a terminal could read as commands.`,
+    );
+  }
+  if (spec.needsSelection && ctx.selectionName && !plainQualifiedName(ctx.selectionName)) {
+    notes.push(
+      `${QUALIFIED_NAME_PLACEHOLDER} stands for ${ctx.selectionName}, which has characters a terminal could read as commands: type it in, quoted the way your terminal quotes.`,
+    );
+  }
+  return notes.length > 0 ? notes.join(' ') : null;
+}
+
 /** The checks a view offers, in registry order. */
 export function checksFor(view: ViewKind): CheckSpec[] {
   return CHECKS.filter((c) => c.views.includes(view));
@@ -334,12 +400,16 @@ export const NOT_ISOLATED =
 
 /**
  * Runs one check. A `model` check runs here; a `solver` check reports
- * `unavailable` with the reason rather than a verdict it has not earned. A
+ * `unavailable` with the reason rather than a verdict it has not earned — its
+ * rows are the command, and what that command left out (`commandNote`). A
  * thrown error becomes an `issues` row carrying the message — never a pass.
  */
 export function runCheck(spec: CheckSpec, ctx: CheckContext): CheckResult {
   if (spec.engine === 'solver' || !spec.run) {
-    return { verdict: 'unavailable', summary: NOT_ISOLATED, rows: [{ code: 'checks/not-here', message: spec.command(ctx), severity: 'info' }] };
+    const note = commandNote(spec, ctx);
+    const rows: CheckRow[] = [{ code: 'checks/not-here', message: spec.command(ctx), severity: 'info' }];
+    if (note !== null) rows.push({ code: 'checks/command-note', message: note, severity: 'info' });
+    return { verdict: 'unavailable', summary: NOT_ISOLATED, rows };
   }
   try {
     return spec.run(ctx);

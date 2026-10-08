@@ -6,8 +6,10 @@ It assumes you know systems engineering — blocks, interfaces, requirements,
 states — and it does **not** assume you know SysML v2. Everything you have to
 type is introduced here, in the order you need it.
 
-Sysprose runs entirely in a browser tab. There is no server, no login and no
-project on anyone's disk but yours. That shapes everything below, especially
+Sysprose runs entirely in a browser tab. There is no server and no project on
+anyone's disk but yours — and no login, unless you choose to keep your model in
+your own Google Drive on a site that offers it
+([§8.1](#81-google-drive-optional)). That shapes everything below, especially
 [what is kept and what is not](#8-what-is-kept-and-what-is-not).
 
 | | |
@@ -28,6 +30,7 @@ project on anyone's disk but yours. That shapes everything below, especially
 6. [Checking and analysing](#6-checking-and-analysing)
 7. [Three kinds of statement](#7-three-kinds-of-statement)
 8. [What is kept, and what is not](#8-what-is-kept-and-what-is-not)
+   - [8.1 Google Drive (optional)](#81-google-drive-optional)
 9. [Limits](#9-limits)
 10. [Where to go next](#10-where-to-go-next)
 - [Appendix A — every control, and the id a test can find it by](#appendix-a--every-control-and-the-id-a-test-can-find-it-by)
@@ -96,6 +99,12 @@ unmanned air system: an air vehicle whose subsystems are wired through power,
 data and RF ports, plus a mission action flow, a flight-mode state machine and
 the requirements they have to meet.
 
+On a site that offers Google Drive, a **Drive ▾** button sits beside
+**Collaborate**: **Drive ▾ → Sign in to Google…**, then **Save to Drive as…**,
+keeps this model as a `.sysml` file in your own Drive, where any device you
+sign in on can open it again. How that works, and what it does and does not
+send, is [§8.1](#81-google-drive-optional).
+
 **Six things to do with it, in order.**
 
 1. **Find the air vehicle.** In the Explorer, expand `UAVSurveillanceSystem` and
@@ -145,7 +154,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:139-253`, `src/ui/panels/Toolbar.tsx:396-545`,
+**Source of truth:** `src/ui/App.tsx:173-296`, `src/ui/panels/Toolbar.tsx:500-632`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -399,8 +408,8 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
-`regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:52-69`
-(the grouping); `src/ui/store.ts:235-249` (the diagram scope).
+`regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:52-78`
+(the grouping); `src/ui/store.ts:298-311` (the diagram scope).
 
 ---
 
@@ -495,9 +504,9 @@ recompute — so the keyboard is never kept waiting.
 Undo is 50 snapshots deep, it covers model changes (not view changes, not the
 theme), and any new edit clears the redo stack. Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:931-1100` (the recompute cycle),
-`2507-2543` (`applyText`), `2918-2954` (undo), `3106-3125` (the post-apply
-refresh); `src/ui/panels/TextEditor.tsx`;
+**Source of truth:** `src/ui/store.ts:1122-1191`, `1308-1391` (the recompute
+cycle), `2631-2670` (`applyText`), `3052-3088` (undo), `3359-3396` (the
+post-apply refresh); `src/ui/panels/TextEditor.tsx`;
 `test/e2e/text-apply-contract.spec.ts:30` (the one-undo guarantee, as a test).
 
 ---
@@ -2778,8 +2787,8 @@ it, every one of these engines is an importable function — `checkText`,
 `modelMetrics`, `requirementSatisfaction`, `whereUsed`, `analysisReport`,
 `buildGrid`, `buildDSM`, `buildPlan` — with no DOM anywhere in them.
 
-**Source of truth:** `src/ui/store.ts:1954-2137` (the four buttons),
-`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:42-72`
+**Source of truth:** `src/ui/store.ts:2362-2510` (the four buttons),
+`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:46-92`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -3027,11 +3036,15 @@ keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 
 ## 8. What is kept, and what is not
 
-Nothing here leaves your browser. Nothing here is saved for you automatically.
+Nothing here leaves your browser unless you sign in to Google Drive
+([§8.1](#81-google-drive-optional)) — then exactly the file you save goes to
+your own Google Drive, and nothing else. Nothing here is saved for you
+automatically.
 
 | What | Where it goes | Survives a reload? |
 |---|---|---|
 | A project you pressed **Save** on | IndexedDB (`sysmlv2-modeler`), falling back to localStorage | **Yes** — reopen it with **Open ▾** |
+| A file you saved to Drive | your Google Drive (`drive.file` scope: only files made or chosen with this app) | **Yes** — Drive ▾ → Recent, Browse Drive…, or its link |
 | Anything you did **not** save | nowhere | **No** — deliberately: the app boots the sample rather than resurrecting your work |
 | Versions-tab commits, branches, merges | memory | **No** |
 | Regroup scenarios | localStorage (`sysmlv2-scenarios`) | Yes |
@@ -3040,16 +3053,184 @@ Nothing here leaves your browser. Nothing here is saved for you automatically.
 | An exported file | your downloads folder | it is a file |
 
 **Save takes no name and shows no confirmation.** It writes over the current
-project name. **New** does not prompt either — it clears the model (one undo
-brings it back).
+project name — and, with a Google Drive file attached that has unsaved changes,
+saves to that file too (which may first ask the strip's rewrite question, or
+meet a conflict).
+**New** does not prompt either — it clears the model (one undo brings it back)
+— unless an attached Drive file has unsaved changes, when the strip under the
+toolbar asks first.
 
 If you want the model out of the browser, use **Export ▾**: SysML text, model
 JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
-`modelDescription.xml` for the selected block.
+`modelDescription.xml` for the selected block. Export's SysML text carries the
+merged standard library along with your packages; the Text view's text — what
+Save to Drive writes — does not.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:570-590`, `2589-2619`, `src/ui/App.tsx:80-84`,
+`src/ui/store.ts:691-710`, `2678-2729`, `src/ui/App.tsx:94-101`,
 `test/e2e/persistence-reload.spec.ts`.
+
+### 8.1 Google Drive (optional)
+
+**Where it is.** Only on a site whose operator has set it up — a `drive.json`
+next to the app names their Google client (the README's *Deploy* section says
+how). There, **Drive ▾** sits on the first toolbar row, beside **Collaborate**.
+A build that nobody configured ships the feature off: no button, and nothing in
+this section applies.
+
+**Nothing goes to Google until you ask.** The app contacts Google only after
+you open **Drive ▾**, press `Ctrl/⌘ + Shift + S`, or follow a link to a Drive
+file — each of those loads Google's sign-in script, and signing in is a click
+of its own after that.
+
+**Signing in.** **Drive ▾ → Sign in to Google…** (it reads *Loading Google
+sign-in…* for the moment the script takes). Google shows its account chooser —
+pick the school or the personal account you mean — then asks you to let the
+app use the Drive files you make or choose with it, and no others: the
+`drive.file` permission. The panel then reads *Signed in as* your address. A
+school account may meet Google's **Access blocked** page instead — a Google
+Workspace for Education account designated under 18 does, until the school
+allows the app, and so does any account missing from the test-user list while
+the site's Google project is still in testing. Closing that page leaves
+*Sign-in was cancelled or blocked*, with **Privacy & data ↗** beside it: that
+page names the app's client ID, which is what your administrator needs (Admin
+console → Security → Access and data control → API controls → Manage
+third-party app access, add the app by its client ID; *Limited* access is
+enough).
+
+**Saving.** **Save to Drive as…** asks for a name — the project's, with `.sysml`
+added — and writes a new file in the root of My Drive; the model is now
+*attached* to it, and the strip under the toolbar says *saved to your Google
+Drive at* the time. After an edit the strip reads *unsaved changes*, and **Save
+to Drive** — the strip's button, the panel's, or `Ctrl/⌘ + Shift + S`, in the
+Text view too — writes it. With a file attached, the toolbar's **Save** and
+`Ctrl/⌘ + S` write its unsaved changes to it as well, beside the copy they keep
+in this browser; if the browser refuses that copy (its storage full, or blocked
+for the site), the strip says so. What goes to Drive is the Text view's text:
+your packages, in this app's layout, and none of the standard library. Text you
+typed and did not apply is applied first, because saving it means making it the
+model — except for the copy in this browser when that text has a syntax error:
+the parser's best guess at broken text is not what you see, so the browser keeps
+the model as it stood, while Drive gets your text as typed. Nothing goes to
+Drive by itself — there is no autosave — and closing or reloading the tab while
+a Drive file has unsaved changes raises the browser's own question whether to
+leave the page. Every row the strip can show, and every Drive control with its
+test id, is in [Appendix A](#google-drive-panel-and-strip).
+
+**Opening.** Signed in, the panel's **Recent** lists the files this app saved or
+opened for your account, newest first; one click opens one. **Browse Drive…**
+opens Google's file picker on your files and on those shared with you (on a
+site that configured the picker). The field under it takes a Drive share link —
+its `resourcekey`, which older link-shared files need, is kept and sent with
+every request for that file — a link to this app, or a bare file id. Opening
+replaces the model, and Undo starts over from the file; if you had edited a
+model no Drive file holds, the strip asks first (**Open anyway**, **Keep
+editing**). A model JSON file opens but is not attached: **Save to Drive as…**
+writes it as a `.sysml` file. With unsaved Drive changes, these commands ask
+first — New, Open, Import, a Drive open, **Close Drive file** and **Sign out** —
+offering **Save to Drive and continue**, **Discard and continue** and **Keep
+editing**. Three others do not ask: switching or merging a branch in the
+Versions tab, and joining a collaboration room. Each detaches the file, unsaved
+changes and all. Your edits are not lost — after a branch switch, one Undo
+brings the previous model back — but the file no longer receives them, and
+**Save to Drive as…** writes them to a new file. While you are connected to a
+room, its peers change the model too, so no Drive file opens or attaches there:
+a Drive open and **Save to Drive as…** say *Leave the collaboration room* first,
+and a file attached while the room's relay was out of reach lets go when it
+connects.
+
+**Links and sharing.** **Copy link to this file** copies a link to this app
+ending in `?drive=` and the file's id (and its `resourcekey`, when it has one).
+Opening it shows a gate — *This link
+opens a file from Google Drive* — with **Sign in and open** and **Skip**. To
+share the model: **Open in Google Drive ↗ → Share** (Editor to let them save
+back, Viewer otherwise), then send the link **Copy link to this file** gives
+you. The first time, Drive will not let the app open a file somebody shared
+with you until you have chosen it once yourself in Google's picker: the gate
+says so and offers **Browse Drive…** on that one file — or, on a site without
+the picker, says the file cannot be opened there. Choosing it there grants
+it, and from then on the link opens directly. Pasting the file's Drive share
+link into the field beside it grants nothing — only the picker does — but the
+link carries the `resourcekey` some older link-shared files need. With view
+access only, the strip reads *you have view access*, and **Save to Drive as…**
+keeps your own copy.
+
+**When two people save one file.** Just before a save, the app asks Drive
+whether the file's content changed since it last read or wrote it (by Drive's
+checksum of the content, so a rename or a new share does not count). If it did,
+nothing is written and the strip turns amber — *changed in Drive since you
+opened it*, with who and when — and offers **Save as copy**, **Overwrite** and
+**Reload from Drive** (one Undo step takes you back to your version). Drive
+keeps the previous version for about 30 days (up to 100 versions): **Open in
+Google Drive ↗**, then *Manage versions*; mark one *Keep forever* to keep it
+longer.
+
+**A file written by hand.** The app writes files in its own layout: `//`
+comments go, while `doc` and `comment` bodies stay. The first time you save a
+file that was written by hand or by another tool, the strip asks once: **Save
+anyway**, **Save as copy** (the original stays as it is), or **Cancel**. Files
+the app wrote itself never ask. A file with a syntax error opens with its parse
+errors in Problems and keeps them through a save; what goes to Drive then is
+your text as typed.
+
+**Offline.** The Drive commands are disabled, their tooltip reading *Offline*.
+If the attached file has unsaved changes, the strip says they stay in this tab:
+its **Save** keeps them in this browser, and Save to Drive works again once you
+are back online.
+
+**The hour-long sign-in.** A Google sign-in in the browser lasts about an hour,
+and there is nothing to renew it with silently. In its last two minutes, a
+strip showing unsaved changes adds *sign-in expires soon*, and after the hour
+*sign-in expired*; the next Drive command — the next **Save to Drive**, say —
+then opens a brief Google window — no account chooser — and carries on. If the
+browser blocks that window, the strip says so: allow pop-ups for the site and
+give the command again. If that window comes back signed in as another Google
+account — it can, once yours is no longer signed in to Google in this browser —
+the command does nothing: the strip says so, the Drive file is closed, the
+Recent list cleared, and the panel names the account now signed in. Google can
+also refuse a sign-in partway through a command — one revoked from another
+device, say. The app then opens the same brief window to renew it, and if that
+window is blocked or closed, the strip says *Your Google sign-in expired*, and
+**Sign in and continue** finishes what was interrupted.
+
+**Signing out.** **Drive ▾ → Sign out** asks Google to revoke the app's access,
+then forgets the session, the Recent list and the attached file; the model stays
+on screen. If your sign-in had expired, it first asks Google for a fresh one in a
+brief window, because revoking needs one (should that window come back as
+another account, it is that account's access that is revoked, and the strip
+says so). When Google does not accept the
+request, the app says so and points to Google Account › Security › Third-party
+access, where you can remove the app yourself. After a sign-out, the next
+sign-in shows Google's permission screen again, and a file a classmate shared
+may need choosing once more.
+
+**What stays where.** The sign-in lives in this page's memory only — the app
+never puts it in the browser's storage or in a URL — and is gone at sign-out,
+when it expires, or when the tab closes; Google's own picker receives it when
+you choose **Browse Drive…**. Your files travel between this browser and
+Google's servers. Whoever runs the site sees nothing of them: there is no
+server of theirs in between, only the host that serves the app's own files. A
+`?drive=` link is an address like any other, though: opening one sends the
+file id in it — and its `resourcekey`, when it has one — to that host, and a
+file shared with *anyone with the link* is as open as that sharing makes it.
+
+**The CLI on a Drive file.** With a file attached, the **Copy command** of the
+palette's checks names that file — as it is when its name is plain letters,
+digits, `_`, `.` and `-`. Any other name could be read as a command by some
+terminal (cmd.exe and PowerShell do not quote the way bash does), so the
+command names a stand-in instead — `Swarm (copy).sysml` becomes
+`Swarm__copy_.sysml` — and the note under the check says to save the file
+under that name. To have it in a terminal, download it —
+**Open in Google Drive ↗ → Download**, which works everywhere — or use Google
+Drive for desktop, which keeps My Drive in a folder on Windows and macOS (there
+is no Linux client). The file holds exactly the Text view's text, so the CLI
+reads what you saw: `npm run sysprose -- stats Swarm.sysml`. Do not reach for
+**Export ▾ → SysML** for this; that text carries the standard library too.
+
+**Source of truth:** `src/ui/store.drive.ts:463-530` (every sentence the
+feature says), `1089-1103` (the content check), `src/persistence/drive/`,
+`src/ui/panels/DriveMenu.tsx`, `src/ui/panels/DriveStrip.tsx`,
+`test/e2e/drive.spec.ts` (against faked Google services).
 
 ---
 
@@ -3072,6 +3253,25 @@ Stated plainly, because finding these out by surprise is worse.
 - **Collaboration needs a relay you start yourself** (`npm run collab`), rooms
   are open with no permissions layer, and your identity is a random per-session
   name and colour.
+- **Google Drive, where a site offers it**
+  ([§8.1](#81-google-drive-optional)): a sign-in lasts about an hour, and
+  renewing it opens a window the browser must allow — so allow pop-ups for the
+  site. One upload is at most 5 MB of text. Nothing is saved to Drive without
+  you: there is no autosave. A tab holds one Drive file at a time. A file
+  somebody shared with you opens here only after you have chosen it once in
+  Google's picker, so a site without the picker cannot open it. The check for
+  somebody else's save runs just before the upload, so two saves landing within
+  the same second or two can still overwrite each other — Drive's version
+  history keeps the other. **Browse Drive…** lists files by type — plain text,
+  unknown binary (which a `.sysml` file often is to Drive) and JSON — and a
+  file Drive typed otherwise does not appear in it. The `resourcekey` an older
+  link-shared file needs is sent as a request header, and whether Google
+  accepts that header from a browser page has so far been tried only against a
+  stand-in for Google; if it does not, such a file will have to be opened
+  through **Browse Drive…**. An edit made through `window.sysml` does not show
+  as unsaved changes to Drive, so Save to Drive sends nothing for it until the
+  model is changed in the app. While connected to a collaboration room, no
+  Drive file is opened or attached.
 - **Feasibility is approximate.** The solver is penalty-driven; `feasible` means
   no known violated inequality, and unjudged relations are listed separately.
 - **The geometry view is massing, not CAD** — primitive solids from attributes.
@@ -3097,9 +3297,9 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:171`,
-`863-910`, `2544-2585`, `src/ui/panels/Toolbar.tsx:85-94`, `191-234`,
-`src/api/analytics.ts:1225-1232`, `src/ui/commands.ts:111-213`.
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:211`,
+`1122-1165`, `3451-3520`, `src/ui/panels/Toolbar.tsx:88-103`, `249-289`,
+`src/api/analytics.ts:1225-1232`, `src/ui/commands.ts:153-267`.
 
 ---
 
@@ -3130,10 +3330,10 @@ quietly go stale.
 
 | Control | What it does | Test id |
 |---|---|---|
-| New | Clears the model to an empty `NewModel` package. No prompt; one undo restores. The standard library stays loaded. | `tb-new` |
-| Open ▾ | Lists saved projects; picking one replaces the model | `tb-open` |
-| Save | Writes the model into browser storage under the current project name. No dialog, no confirmation. | `tb-save` |
-| Import | Opens a `.sysml` / `.json` / `.txt` file and **replaces** the model | `tb-import` |
+| New | Clears the model to an empty `NewModel` package. No prompt — unless an attached Google Drive file has unsaved changes, when the Drive strip asks first ([§8.1](#81-google-drive-optional)). One undo restores. The standard library stays loaded. | `tb-new` |
+| Open ▾ | Lists saved projects; picking one replaces the model; with unsaved changes to an attached Drive file the Drive strip asks first | `tb-open` |
+| Save | Writes the model into browser storage under the current project name. No dialog. With a Google Drive file attached that has unsaved changes it saves to that file too, as **Drive ▾ → Save to Drive** does — which may ask the strip's rewrite question or show a conflict | `tb-save` |
+| Import | Opens a `.sysml` / `.json` / `.txt` file and **replaces** the model; with unsaved changes to an attached Drive file the Drive strip asks first | `tb-import` |
 | Import FMI | Adds a block read from an FMI 3.0 `modelDescription.xml` (adds, does not replace) | `tb-import-fmi` |
 | Export ▾ | The export menu | `tb-export` |
 | Export → SysML (.sysml) | The model as textual notation | `tb-export-sysml` |
@@ -3149,6 +3349,12 @@ quietly go stale.
 | Solve | Numeric solve, measures of effectiveness and feasibility | `tb-solve` |
 | Auto-layout | Re-runs the layout, discarding manual node positions (drawable views only) | `tb-layout` |
 | More ▾ | The commands that do not fit the window at this width — New, Import, Import FMI, Simulate, Solve, Auto-layout give way in that order, and Save, Open, Export, Validate, Check, Undo and Redo never do | `tb-more` |
+| Drive ▾ | Google Drive (optional), present only when the deployment configures it. Opening it loads Google's sign-in script. The dot is grey signed out, green signed in, amber when something waits for you (unsaved changes, a conflict, a question), red after an error | `tb-drive` |
+| Drive → Sign in to Google… | Google's account chooser, then Drive's permission for the files you make or choose with this app. Disabled, reading *Loading Google sign-in…*, until Google's script has loaded | `tb-drive-signin` |
+| Drive → Browse Drive… | Google's file picker — your files and those shared with you; the file you choose replaces the model and Undo starts over. Present when the deployment has a picker key | `tb-drive-browse` |
+| Drive → Save to Drive | Writes the model's text — what the Text view shows — to the attached Drive file; `Ctrl/⌘ + Shift + S` does the same, in the Text view too. Disabled when there is nothing to save, with the reason in its tooltip — and the key then sends nothing either | `tb-drive-save` |
+| Drive → Save to Drive as… | Writes the model to a new `.sysml` file in the root of My Drive, and attaches it | `tb-drive-save-as` |
+| Drive → Sign out | Asks Google to revoke this app's access, and forgets the session, the Recent list and the attached file | `tb-drive-signout` |
 | Collaborate | Room name, connect/disconnect and the participant roster | `tb-collab` |
 | Undo / Redo | Snapshot undo and redo; the depth is in [§5](#5-authoring-and-the-one-dangerous-button) | `tb-undo`, `tb-redo` |
 | Theme | Light/dark, remembered | `tb-theme` |
@@ -3160,6 +3366,35 @@ quietly go stale.
 | Diagrams | General, Interconnection, Action, State, Requirement, Tree, Parametric, Case, Sequence, Geometry | `tb-view-general`, `tb-view-interconnection`, `tb-view-action`, `tb-view-state`, `tb-view-requirement`, `tb-view-tree`, `tb-view-parametric`, `tb-view-case`, `tb-view-sequence`, `tb-view-geometry` |
 | Tables | Allocation, Grid, Requirements, Contracts | `tb-view-allocation`, `tb-view-grid`, `tb-view-requirements`, `tb-view-contracts` |
 | Analyze | Analysis, Planning, Regroup | `tb-view-analysis`, `tb-view-planning`, `tb-view-regroup` |
+
+### Google Drive panel and strip
+
+Present only on a deployment that configures Google Drive. The panel opens from
+**Drive ▾**; the strip is the line under the toolbar, there only while it has
+something to say; the gate is the loading screen a `?drive=` link holds.
+
+| Control | What it does | Test id |
+|---|---|---|
+| Drive panel | Who is signed in — *Not signed in*, *Signed in as …* — and the commands below | `drive-panel`, `drive-account` |
+| Recent | The files this app saved or opened for this account, newest first, each with its time; one click opens it in place of the model. **Refresh** reads the list again; with none yet, it says so (and, on a site with the picker, that **Browse Drive…** finds files shared with you) | `drive-recent-item`, `drive-recent-refresh`, `drive-recent-empty` |
+| Paste a Drive link or file id | Opens a Drive share link (its `resourcekey` kept), a `?drive=` link to this app, or a bare file id | `drive-open-id`, `drive-open-id-go` |
+| Copy link to this file | Copies the link that reopens the attached file in this app (`?drive=<id>`, with `&resourcekey=` when the file has one, also in its `data-link`); when the browser refuses the clipboard, the strip shows the link to copy by hand | `drive-copy-link` |
+| Open in Google Drive ↗ | Drive's own page for the attached file: sharing, Manage versions, Download | `drive-open-in-drive` |
+| Close Drive file | Lets go of the attached file; the model stays | `drive-close` |
+| Privacy & data ↗ | The deployment's privacy page | `drive-privacy` |
+| Drive strip | Where the model stands with Drive, one row at a time, named by `data-status`: `clean`, `dirty` (with *sign-in expires soon* in the sign-in's last two minutes, and *sign-in expired* after the hour — the next Save to Drive opens the brief Google window), `saving`, `opening` (*Opening* and the file's name, once known), `saveas`, `rewrite`, `guard`, `conflict`, `readonly`, `gone`, `offline`, `expired`, `error`, `closed`, `info` — and `link-unsupported` when a `?drive=` link reaches a deployment without Drive. A guard, a conflict and an error are announced as alerts | `drive-strip` |
+| Strip · saved | *`<name>` · saved to your Google Drive at hh:mm*, with Drive's page for the file and its link | `drive-strip-open-in-drive`, `drive-strip-copy` |
+| Strip · link to copy by hand | When the browser refuses the clipboard — for the strip's **Copy link** or the panel's — the link, read-only and selected, beside whatever row the strip shows; it goes once you click elsewhere | `drive-link-text` |
+| Strip · unsaved changes | **Save to Drive**, as `Ctrl/⌘ + Shift + S` does | `drive-strip-save` |
+| Strip · Save to Drive as… | The file name, prefilled (`.sysml` added when missing), then **Save**: a new file in the root of My Drive, attached. Signed out, the button reads **Sign in and save** — disabled, reading *Loading Google sign-in…*, until Google's script has loaded | `drive-saveas-name`, `drive-saveas-confirm`, `drive-saveas-cancel` |
+| Strip · rewrite question | The first save of a file written by hand or by another tool: **Save anyway** (in this app's layout, `//` comments dropped), **Save as copy**, **Cancel** | `drive-strip-rewrite-ok`, `drive-strip-rewrite-copy`, `drive-strip-rewrite-cancel` |
+| Strip · guard | Before New, Open, Import, Close Drive file, Sign out or a Drive open replaces a model with unsaved Drive changes: **Save to Drive and continue**, **Discard and continue**, **Keep editing**. Before a Drive open replaces edited work no Drive file holds: **Open anyway**, **Keep editing** | `drive-guard-save`, `drive-guard-discard`, `drive-guard-keep`, `drive-guard-open-anyway` |
+| Strip · conflict | The file changed in Drive since you opened it: **Save as copy**, **Overwrite** (Drive keeps the other version for about 30 days, under Manage versions), **Reload from Drive** (one Undo step back to yours) | `drive-strip-copy-save`, `drive-strip-overwrite`, `drive-strip-reload` |
+| Strip · view access, or gone | **Save to Drive as…** writes your own copy | `drive-strip-save-as` |
+| Strip · offline | **Save** keeps the unsaved changes in this browser — text typed in the Text view applied first, unless it has a syntax error; a browser that refuses the copy is said so | `drive-strip-save-local` |
+| Strip · sign-in expired | **Sign in and continue** finishes what Google's refusal of the sign-in interrupted | `drive-strip-signin` |
+| Strip · error or note | **Try again** where trying again can help; **Privacy & data ↗** beside every error; **×** hides the message | `drive-strip-retry`, `drive-strip-privacy`, `drive-strip-dismiss` |
+| `?drive=` link gate | **Sign in and open** — disabled, reading *Loading Google sign-in…*, until Google's script has loaded — or **Skip** to the sample model. When Drive refuses a file not yet granted to this app: **Browse Drive…** (Google's picker, on that one file — choosing it there grants it; nothing else does; on a site without the picker, the gate says the file cannot be opened there), the file's Drive link pasted (which grants nothing, but carries the `resourcekey` some older link-shared files need), and which account is signed in (shared with another of yours? Skip, Sign out under Drive ▾, open the link again). Any other failure: **Try again**, and **Privacy & data ↗** — where a sign-in Google blocked for a school account is explained | `drive-link-gate`, `drive-link-signin`, `drive-link-skip`, `drive-link-denied`, `drive-link-browse`, `drive-link-id`, `drive-link-id-go`, `drive-link-retry`, `drive-link-privacy` |
 
 ### Panels
 
@@ -3182,7 +3417,7 @@ quietly go stale.
 | Breadcrumb | The containment path of the **selection** (not the diagram scope) | `breadcrumb` |
 | Palette | Three sections for the active view — **Tools** (what to draw, including an explicit Select), **Edit** (what to do to the selection), **Checks** (what to verify). Every view has one: a table view draws nothing, so it has Edit and Checks only. The column can be put away and comes back where you left it | `palette`, `palette-tools`, `palette-select`, `palette-edit`, `palette-checks`, `palette-collapse`, `palette-expand` |
 | Palette · Edit | Rename (opens the explorer's inline rename), Duplicate, Delete — each disabled with the reason when nothing is selected. Reparenting stays a drag onto the new owner | `palette-rename`, `palette-duplicate`, `palette-delete` |
-| Palette · Checks | One row per verification command that fits this view: the question it answers, **Run** (runs it here, against the model on screen), **Copy command** (the same check for a terminal), and a verdict — `not run`, `holds`, `findings`, `undecided`, `stale` after an edit, or `not here` for a check that needs the z3 solver, which needs a cross-origin-isolated page | `palette-check`, `palette-check-run`, `palette-check-copy`, `palette-check-verdict` |
+| Palette · Checks | One row per verification command that fits this view: the question it answers, **Run** (runs it here, against the model on screen), **Copy command** (the same check for a terminal), and a verdict — `not run`, `holds`, `findings`, `undecided`, `stale` after an edit, or `not here` for a check that needs the z3 solver, which needs a cross-origin-isolated page. A file or element name that some terminal could read as a command — a Drive file named `R&D (copy).sysml`, say — never goes into the command: a stand-in of plain characters does (`R_D__copy_.sysml`), or `<qualified name>` for an element, and a note under the row says what each stands for | `palette-check`, `palette-check-run`, `palette-check-copy`, `palette-check-verdict`, `palette-check-note` |
 | Canvas | The diagram itself | `diagram-canvas` |
 | Fit / zoom to selection / snap / auto-layout | The canvas mini-toolbar | `diagram-fit`, `diagram-fit-selection`, `diagram-snap`, `diagram-autolayout` |
 | Scope diagram to this / Show whole model | Narrow every drawable view to one subtree, and clear it | `node-ctx-scope`, `node-ctx-scope-clear` |
@@ -3208,7 +3443,13 @@ The **▾** at the end of the tab strip folds the panel down to its tabs
 
 ## Appendix B — keyboard shortcuts
 
-Plain keys are suppressed while you are typing in a field.
+Plain keys are suppressed while you are typing in a field. So are the `Ctrl/⌘`
+ones — except `Ctrl/⌘ + S` and `Ctrl/⌘ + Shift + S` in the Text view's editor,
+which save from there too; every other key there stays the editor's own. There,
+`Ctrl/⌘ + S` first applies what you typed, as **Apply text → model** does, so
+the save holds the text on screen — unless the text has a syntax error: then
+the browser keeps the model as it stood, the editor still reads *modified — not
+yet applied*, and an attached Drive file gets the text as typed.
 
 | Key | What it does |
 |---|---|
@@ -3217,7 +3458,8 @@ Plain keys are suppressed while you are typing in a field.
 | `Delete` / `Backspace` | Delete the selection (ignored while a button has focus) |
 | `Ctrl/⌘ + Z` | Undo |
 | `Ctrl/⌘ + Shift + Z`, `Ctrl/⌘ + Y` | Redo |
-| `Ctrl/⌘ + S` | Save the project |
+| `Ctrl/⌘ + S` | Save the project in this browser — and, when the attached Google Drive file has unsaved changes, to that file too |
+| `Ctrl/⌘ + Shift + S` | Save to Drive, when the deployment has Google Drive (nothing is sent while the Drive file has no unsaved changes); with no Drive file attached it opens *Save to Drive as…* |
 | `Ctrl/⌘ + D` | Duplicate the selection |
 | `Ctrl/⌘ + C` | Copy the selected subtrees (defers to native copy when text is selected) |
 | `Ctrl/⌘ + V` | Paste under the selection |
@@ -3225,4 +3467,5 @@ Plain keys are suppressed while you are typing in a field.
 
 There is no `Ctrl+N`; **New** is a button only.
 
-**Source of truth:** `src/ui/commands.ts:111-213`, `src/ui/App.tsx:118-134`.
+**Source of truth:** `src/ui/commands.ts:30-61`, `153-267`, `src/ui/App.tsx:141-158`,
+`src/ui/panels/TextEditor.tsx:107-125`.

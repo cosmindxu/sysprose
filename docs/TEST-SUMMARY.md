@@ -4,8 +4,8 @@
 > `vitest run`. This is the machine-checkable companion to the hand-authored
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
-- **Files:** 156
-- **Tests:** 3848 total — 3848 passed, 0 failed, 0 skipped
+- **Files:** 157
+- **Tests:** 4150 total — 4150 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -59,10 +59,10 @@
 | test/unit/api.sdk.test.ts | 11 | 0 | 0 |
 | test/unit/api.verification.test.ts | 77 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 10 | 0 | 0 |
-| test/unit/branding.test.ts | 7 | 0 | 0 |
+| test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 7 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 7 | 0 | 0 |
-| test/unit/claims.test.ts | 36 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 9 | 0 | 0 |
+| test/unit/claims.test.ts | 39 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 14 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
@@ -84,7 +84,8 @@
 | test/unit/diagram.svg-export.test.ts | 17 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
 | test/unit/diagram.symbols2.test.ts | 14 | 0 | 0 |
-| test/unit/docs-counts.test.ts | 113 | 0 | 0 |
+| test/unit/docs-counts.test.ts | 115 | 0 | 0 |
+| test/unit/drive.test.ts | 172 | 0 | 0 |
 | test/unit/duplicate.test.ts | 6 | 0 | 0 |
 | test/unit/fmi-cosim.test.ts | 22 | 0 | 0 |
 | test/unit/fmi-export.test.ts | 16 | 0 | 0 |
@@ -99,7 +100,7 @@
 | test/unit/persistence.io.test.ts | 23 | 0 | 0 |
 | test/unit/planning.test.ts | 25 | 0 | 0 |
 | test/unit/property.test.ts | 26 | 0 | 0 |
-| test/unit/readme.test.ts | 13 | 0 | 0 |
+| test/unit/readme.test.ts | 15 | 0 | 0 |
 | test/unit/reconnect.test.ts | 9 | 0 | 0 |
 | test/unit/regroup-apply.test.ts | 27 | 0 | 0 |
 | test/unit/regroup.test.ts | 34 | 0 | 0 |
@@ -143,7 +144,7 @@
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 58 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 172 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 12 | 0 | 0 |
@@ -162,6 +163,6 @@
 | test/unit/ui.properties-facets.test.ts | 15 | 0 | 0 |
 | test/unit/ui.requirements-table.test.ts | 20 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 4 | 0 | 0 |
-| test/unit/user-guide.test.ts | 30 | 0 | 0 |
+| test/unit/user-guide.test.ts | 31 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
 | test/unit/validation.rules.test.ts | 83 | 0 | 0 |

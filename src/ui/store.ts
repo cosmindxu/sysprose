@@ -53,6 +53,11 @@
  *   newProject() · saveProject(name?) · loadProject(name) · listProjects()
  *   importModel(text, fmt) · exportModel(fmt) → string · runQuery(q) → result
  *   undo() · redo()
+ *   drive*() — Google Drive (optional): sign in, open, save, guards; see
+ *   `./store.drive`. Every command that replaces the model with another one
+ *   (New, Open, Import, a collab room, a branch switch) detaches the attached
+ *   Drive file (`driveDetach`), so a save never writes another model into
+ *   it; applying text, Undo and Redo edit the same one.
  */
 
 import { create } from 'zustand';
@@ -156,9 +161,12 @@ import {
   createDefaultStore,
   detectFormat,
   downloadText,
+  driveLinkFromUrl,
   exportModel as ioExportModel,
   importModel as ioImportModel,
+  loadDriveConfig,
   MIME_BY_EXTENSION,
+  type DriveFileRef,
   type ModelFormat,
   type ProjectStore,
 } from '@persistence/index';
@@ -190,7 +198,14 @@ import {
   linkedModelFromUrl,
   resolveHttpUrl,
   type LinkedModel,
+  type LinkedModelParams,
 } from './linked-model';
+import {
+  createDriveActions,
+  initialDriveState,
+  type DriveActions,
+  type DriveState,
+} from './store.drive';
 
 /** Max number of undo snapshots retained. */
 const UNDO_LIMIT = 50;
@@ -217,6 +232,38 @@ export interface CollabState {
   peers: CollabPeer[];
 }
 
+/* ───────────────────────── Google Drive (optional) ──────────────────────── */
+
+// The Drive slice, its commands and its selectors live in `./store.drive`
+// (spread into the store below, as one more group of commands); what the
+// panels read of them is re-exported here, beside the rest of the store.
+export {
+  DRIVE_MESSAGES,
+  checkFileName,
+  createDriveServices,
+  driveBeforeUnload,
+  driveConflictMessage,
+  driveDirty,
+  driveFileName,
+  driveFileView,
+  driveLink,
+  driveMessage,
+  driveTime,
+  initialDriveState,
+  setDriveServices,
+  withFinalNewline,
+} from './store.drive';
+export type {
+  DriveActions,
+  DriveFile,
+  DriveNotice,
+  DriveOpenedFrom,
+  DrivePendingOp,
+  DrivePrompt,
+  DriveServices,
+  DriveState,
+} from './store.drive';
+
 /* ─────────────────────────────── State shape ────────────────────────────── */
 
 /** One end of a port-to-port connection — see {@link AppState.connectPorts}. */
@@ -226,7 +273,7 @@ export interface PortEnd {
   port: ElementId;
 }
 
-export interface AppState {
+export interface AppState extends DriveActions {
   // Data + SDK surfaces.
   model: Model;
   api: ModelApi;
@@ -360,6 +407,14 @@ export interface AppState {
   // ── Real-time collaboration (Yjs CRDT + presence) ────────────────────────
   /** Live collaboration status, room, transport URL, self identity + remote peers. */
   collab: CollabState;
+
+  // ── Google Drive (optional) ──────────────────────────────────────────────
+  /**
+   * The deployment's Drive configuration, the session, the attached file and
+   * what the Drive strip shows. Its commands are the `drive*` ones (see
+   * `./store.drive`).
+   */
+  drive: DriveState;
 
   // ── Version control (over api.repository / ProjectRepository) ────────────
   /** The branch the Versions UI currently targets (reads/writes/switch). */
@@ -1126,6 +1181,33 @@ export function recomputePending(): boolean {
   return recomputeTimer !== null;
 }
 
+/**
+ * True while the waiting recompute is one a local model edit forced: when it
+ * runs it replaces the text buffer, whatever was typed there and not applied.
+ */
+export function forcedRecomputePending(): boolean {
+  return recomputeTimer !== null && recomputePendingForce;
+}
+
+/** The body of {@link flushRecompute}; the store factory, whose closure runs recomputes, installs it. */
+let flushRecomputeImpl: () => void = () => {};
+
+/**
+ * Run the recompute an edit is still waiting on NOW, with the force flag that
+ * debounce carried — and nothing at all when none is waiting. For a caller
+ * that must read the derived text as of the last edit before acting on it, as
+ * a Drive save does with the text it uploads.
+ *
+ * Only a PENDING recompute is fired, never a fresh one: a recompute rebuilds
+ * the diagnostics from validation alone, which would erase the parse rows that
+ * `refreshAfterLibraryLoad` keeps after a faulted apply. An edit since then
+ * would have dropped them anyway (they no longer describe the model); with no
+ * edit, they must stand.
+ */
+export function flushRecompute(): void {
+  flushRecomputeImpl();
+}
+
 /* ────────────── evidence in the app: read-only, and paid for once ────────── */
 
 /**
@@ -1292,6 +1374,13 @@ export const useAppStore = create<AppState>((set, get) => {
     recomputePendingForce = false;
   }
 
+  flushRecomputeImpl = () => {
+    if (recomputeTimer === null) return;
+    const force = recomputePendingForce;
+    cancelRecompute();
+    recomputeNow(force);
+  };
+
   /**
    * Run `mutate` (a model reset/mutation) with the collab subscribe listener's
    * auto-recompute suppressed, so an active collab session can't re-arm a
@@ -1376,6 +1465,18 @@ export const useAppStore = create<AppState>((set, get) => {
       self: randomSelf(),
       peers: [],
     },
+
+    // Filled in by the Drive boot below (never under unit tests).
+    drive: initialDriveState,
+    ...createDriveActions(set, get, {
+      openText,
+      whenLibraryReady,
+      whenLibrarySettled,
+      flushRecompute,
+      forcedRecomputePending,
+      lastAppliedText,
+      typedTextFaulted,
+    }),
 
     // Version-control state. Left empty/lazy so the repository is only seeded
     // when the Versions UI first calls refreshVersions() (keeps deterministic
@@ -2577,6 +2678,9 @@ export const useAppStore = create<AppState>((set, get) => {
         ...validSelection(s, model),
         expandedIds: new Set(userRootIds(model)),
       }));
+      // The live model is now this text — until the model changes by any
+      // route other than the library merge (see lastAppliedText).
+      lastApplied = { text: textBuffer, model, modelRev: model.rev };
       void get().rebuildDiagram();
       // model.reset dropped the library; re-merge it and bind type references
       // asynchronously so the (potentially large) library never blocks the edit.
@@ -2593,6 +2697,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (get().simSession) get().simStop(); // a new model orphans the sim target
       const { model } = get();
       pushUndo();
+      get().driveDetach(); // the attached Drive file no longer holds this model
       // Clear the USER model but keep the already-loaded standard library in
       // place (so `mass : Real` still resolves in the fresh project, and an
       // undo of New restores the prior user model beside the same library — C6).
@@ -2620,6 +2725,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!data) throw new Error(`No such project: ${name}`);
       const { model } = get();
       pushUndo();
+      get().driveDetach(); // the attached Drive file no longer holds this model
       forgetParseResult(); // the loaded model did not come from the open text
       model.reset(data);
       set((s) => ({
@@ -2649,6 +2755,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const result = ioImportModel(text, fmt);
       forgetParseResult(); // an import carries no retractable parse result
       pushUndo();
+      get().driveDetach(); // the attached Drive file no longer holds this model
       withCommandMutation(() => model.reset(result.model.toJSON()));
       const parseDiags = (result.diagnostics ?? []).map(parseDiagToDiagnostic);
       set((s) => ({
@@ -2763,9 +2870,14 @@ export const useAppStore = create<AppState>((set, get) => {
       };
       conn.awareness.on('change', onAwareness);
 
-      // Transport status → connected flag.
+      // Transport status → connected flag. Connected — again, after the relay
+      // was out of reach — the room's peers change the model from now on: a
+      // Drive file attached meanwhile lets go of it, as joining does below
+      // (the Drive commands refuse to attach one while connected).
       const onStatus = (e: { status: string }) => {
-        set((s) => ({ collab: { ...s.collab, connected: e.status === 'connected' } }));
+        const connected = e.status === 'connected';
+        set((s) => ({ collab: { ...s.collab, connected } }));
+        if (connected) get().driveDetach();
       };
       conn.provider.on('status', onStatus);
 
@@ -2793,6 +2905,9 @@ export const useAppStore = create<AppState>((set, get) => {
       });
 
       collabRuntime = { doc, binding, conn, onAwareness, onStatus, unsubModelRev };
+      // The room's peers change the model from now on: the attached Drive file
+      // can no longer be said to hold it.
+      get().driveDetach();
 
       // Publish our current selection to peers immediately.
       setLocalSelection(conn.awareness, get().selectionId);
@@ -2910,6 +3025,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (get().simSession) get().simStop(); // switching branches replaces the model
       cancelRecompute();
       pushUndo();
+      get().driveDetach(); // another branch's model is not what the attached Drive file holds
       forgetParseResult(); // the branch head did not come from the open text
       withCommandMutation(() =>
         model.reset(api.repository.getModelAtCommit(branch.headCommitId).toJSON()),
@@ -3028,13 +3144,90 @@ useAppStore.subscribe((state) => {
   }
 }
 
+/**
+ * Which link this page was opened with. A well-formed `?drive=` wins over
+ * `?model=`/`?source=` — it is the more specific intent, and the linked model
+ * would only be replaced by the Drive file — and says so once when both are
+ * there. A malformed `?drive=` is no link at all, so it leaves `?model=` be.
+ */
+export function pageLinks(search?: string): {
+  drive: DriveFileRef | null;
+  model: LinkedModelParams;
+} {
+  const drive = driveLinkFromUrl(search);
+  const model = linkedModelFromUrl(search);
+  if (drive && model.model) {
+    console.warn('the page names both ?drive= and ?model=; opening the Google Drive file');
+    return { drive, model: { model: null, source: null } };
+  }
+  return { drive, model };
+}
+
+/**
+ * Start the Drive slice: record the `?drive=` link — SYNCHRONOUSLY, before the
+ * first render, so the loading gate holds for it as it does for `?model=` —
+ * then read the deployment's `drive.json`. A deployment without one turns a
+ * pending link `unsupported`, which drops the gate to the sample model; one
+ * with it starts loading Google's sign-in script for the pending link.
+ */
+export async function bootDrive(
+  link: DriveFileRef | null,
+  pageHref: string,
+  fetchImpl?: typeof fetch,
+): Promise<void> {
+  useAppStore.setState((s) => ({
+    drive: { ...s.drive, configStatus: 'loading', link: link ? { ref: link, status: 'pending' } : null },
+  }));
+  const config = await loadDriveConfig(pageHref, { fetchImpl });
+  useAppStore.setState((s) => ({
+    drive: {
+      ...s.drive,
+      config,
+      configStatus: config ? 'ready' : 'absent',
+      link:
+        !config && s.drive.link?.status === 'pending'
+          ? { ...s.drive.link, status: 'unsupported' }
+          : s.drive.link,
+    },
+  }));
+  // A link waiting for its file starts loading Google's sign-in script NOW,
+  // not at the click: the gate is the one sign-in entry point that exists
+  // before any panel, and a script fetched inside the click could outlast the
+  // click's permission to open the sign-in window.
+  const { drive } = useAppStore.getState();
+  if (drive.configStatus === 'ready' && drive.link?.status === 'pending') {
+    void useAppStore.getState().drivePrepare();
+  }
+}
+
+/** The page's links, read once (see {@link pageLinks}). */
+const bootLinks = pageLinks();
+
+// Google Drive (optional): the deployment's `drive.json` and a `?drive=` link.
+// Gated like the other boot inputs — and on the build MODE as well, because
+// unlike them it acts on EVERY load, not only when its parameter is present:
+// under Vitest every unit file importing this module would otherwise fetch
+// `drive.json` from jsdom's localhost on import. Under tests the slice stays
+// `absent`; a test that needs it sets it explicitly.
+if (
+  typeof window !== 'undefined' &&
+  (import.meta as unknown as { env?: { MODE?: string } }).env?.MODE !== 'test'
+) {
+  void bootDrive(bootLinks.drive, window.location.href);
+  const trackOnline = (): void =>
+    useAppStore.setState((s) => ({ drive: { ...s.drive, online: navigator.onLine } }));
+  trackOnline();
+  window.addEventListener('online', trackOnline);
+  window.addEventListener('offline', trackOnline);
+}
+
 // Open the model named by `?model=` (see src/ui/linked-model.ts). The status is
 // set SYNCHRONOUSLY, before the first render, so the App's loading gate stays
 // up until the linked model is in place. The fetch runs alongside the boot-time
 // library load; the model is applied only once that load has settled, so the
 // linked text replaces a fully initialized model, never one mid-merge.
 {
-  const { model: modelParam, source: sourceParam } = linkedModelFromUrl();
+  const { model: modelParam, source: sourceParam } = bootLinks.model;
   if (modelParam) {
     const base = window.location.href;
     const url = resolveHttpUrl(modelParam, base);
@@ -3046,18 +3239,7 @@ useAppStore.subscribe((state) => {
         if (!url) throw new Error('only http(s) URLs or paths relative to this page are accepted');
         const text = await fetchLinkedModel(url);
         await whenLibraryReady();
-        const fmt = detectFormat(url.pathname, text);
-        const st = useAppStore.getState();
-        if (fmt === 'sysml') {
-          // The text path, not importModel: applyText keeps the parse result, so
-          // the Problems panel is exactly what editing this text would show —
-          // including retracting specialization warnings the library resolves,
-          // which an import (no retained parse result) keeps standing.
-          st.setTextBuffer(text);
-          st.applyText();
-        } else {
-          st.importModel(text, fmt);
-        }
+        await openText(text, detectFormat(url.pathname, text));
         // The linked model is where this session starts: Undo must not step
         // back into the sample model it replaced.
         useAppStore.setState({ undoStack: [], redoStack: [], linkedModel: { ...linked, status: 'loaded' } });
@@ -3069,6 +3251,37 @@ useAppStore.subscribe((state) => {
       }
     })();
   }
+}
+
+/**
+ * Replace the live model with a file's text, the way an OPENED file replaces
+ * it, and resolve once that model has settled.
+ *
+ * `.sysml` takes the text path, not importModel: applyText keeps the parse
+ * result, so the Problems panel is exactly what editing this text would show —
+ * including retracting specialization warnings the library resolves, which an
+ * import (no retained parse result) keeps standing. Anything else is imported.
+ * Either way the replacement re-merges the library asynchronously, and this
+ * waits for THAT load ({@link whenLibrarySettled}): afterwards the text buffer
+ * and the diagnostics are final.
+ *
+ * There is deliberately no recompute after it. The refresh already rewrote the
+ * buffer — or, with a parse error standing, kept the text as given and marked
+ * it dirty — and a recompute rebuilds the diagnostics from validation alone,
+ * erasing the parse rows the refresh kept on purpose.
+ *
+ * Callers wait for the BOOT library first (`whenLibraryReady`), so the text
+ * replaces a fully initialized model, never one mid-merge.
+ */
+export async function openText(text: string, fmt: ModelFormat): Promise<void> {
+  const st = useAppStore.getState();
+  if (fmt === 'sysml') {
+    st.setTextBuffer(text);
+    st.applyText();
+  } else {
+    st.importModel(text, fmt);
+  }
+  await whenLibrarySettled();
 }
 
 /** Resolve once the boot-time standard-library load has settled. */
@@ -3091,6 +3304,72 @@ function whenLibraryReady(): Promise<void> {
  * from parsing text (an import, a loaded project).
  */
 let lastParse: ParseResult | null = null;
+
+/**
+ * The exact buffer the last `applyText` parsed, with the model it made and that
+ * model's own revision (`Model.rev`, which moves on every structural change
+ * and on nothing else) — carried across the library merge, which adds the
+ * library and binds references but leaves the user's model as the text made
+ * it. Any other change (an edit, an undo, an import, a load, a remote
+ * transaction) moves `Model.rev`, and the model is no longer that text's.
+ *
+ * Not the store's `rev`: that one also moves for what never touches the model
+ * — every collab presence change, every refresh — and with a collab session
+ * connected, for each event batch of the merge itself. See
+ * {@link lastAppliedText}.
+ */
+let lastApplied: { text: string; model: Model; modelRev: number } | null = null;
+
+/**
+ * The text the live model was last applied from, or null once the model has
+ * changed by any other route since.
+ *
+ * A Drive save applies a dirty buffer before uploading it — and only when the
+ * buffer is not this text. After a faulted apply the refresh marks the buffer
+ * dirty although nobody typed (it keeps the text rather than regenerating it),
+ * and `applyText` always pushes an undo step, so re-applying the same text on
+ * every save would stack one identical undo step per save. Null rather than a
+ * stale text after any other change, so a text typed back to what was applied
+ * before an edit IS applied again.
+ */
+export function lastAppliedText(): string | null {
+  const { model } = useAppStore.getState();
+  return lastApplied !== null && lastApplied.model === model && lastApplied.modelRev === model.rev
+    ? lastApplied.text
+    : null;
+}
+
+/** The text {@link typedTextFaulted} parsed last, and what it found: one parse per text. */
+let typedFault: { text: string; faulted: boolean } | null = null;
+
+/**
+ * Text typed in the Text view and not applied yet has a parse error. Applying
+ * it makes the parser's recovery of it the model — elements the text puts in
+ * one package may land in another — which is not what is on screen. So a save
+ * in this browser does not apply such a text first: Ctrl/Cmd+S in the editor,
+ * the browser copy a Drive save also keeps, the offline row's Save each store
+ * the model as it stands, and the editor goes on reading "not yet applied".
+ * (A Drive save still applies it, and uploads the text as typed.)
+ */
+export function typedTextFaulted(): boolean {
+  const { textDirty, textBuffer } = useAppStore.getState();
+  if (!textDirty || textBuffer === lastAppliedText()) return false;
+  if (typedFault?.text !== textBuffer) {
+    const faulted = parseModel(textBuffer).diagnostics.some((d) => d.severity === 'error');
+    typedFault = { text: textBuffer, faulted };
+  }
+  return typedFault.faulted;
+}
+
+/**
+ * Before a save in this browser: make text typed in the Text view the model,
+ * as Apply does — unless it is applied already, or has a parse error (see
+ * {@link typedTextFaulted}); the model is then saved as it stands.
+ */
+export function applyTypedTextToSave(): void {
+  const s = useAppStore.getState();
+  if (s.textDirty && s.textBuffer !== lastAppliedText() && !typedTextFaulted()) s.applyText();
+}
 
 /**
  * Forget the retained parse result — call it from EVERY path that replaces the
@@ -3146,6 +3425,11 @@ function retainedParseRows(current: Diagnostic[], model: Model): Diagnostic[] {
  */
 function refreshAfterLibraryLoad(): void {
   const { model } = useAppStore.getState();
+  // `rev` bumps below a few hundred ms after EVERY apply, import and load,
+  // although the user changed nothing — so `rev` must never serve as a
+  // "saved" marker: a file opened and saved would read as edited the moment
+  // its library settled. What was saved is compared as text, and what was
+  // applied is tied to the model's own revision (see lastApplied).
   useAppStore.setState((s) => {
     const parseRows = retainedParseRows(s.diagnostics, model);
     // A FAULTED APPLY KEEPS THE USER'S TEXT. Re-serializing the model here
@@ -3167,6 +3451,59 @@ function refreshAfterLibraryLoad(): void {
 }
 
 /**
+ * Run a library merge on the live model as what it is: the library load's
+ * own step, which the user did not make.
+ *
+ * - The collab listener's auto-recompute is suppressed for it, as for a store
+ *   command (`withCommandMutation`, Fable D2): the refresh right after owns the
+ *   derived state, and a recompute the merge armed would land after it and
+ *   rebuild the diagnostics from validation alone — erasing the parse rows the
+ *   refresh keeps. The listener still bumps `rev` for the panels.
+ * - The applied text is carried across the model revisions the merge made.
+ *   The merge is synchronous, so nothing else can have changed the model in
+ *   between; a merge that throws carries nothing (the conservative side: the
+ *   next save re-applies).
+ */
+function mergeLibrary(model: Model, merge: () => void): void {
+  const from = model.rev;
+  const suppressed = autoRecomputeSuppressed;
+  autoRecomputeSuppressed = true;
+  try {
+    merge();
+  } finally {
+    autoRecomputeSuppressed = suppressed;
+  }
+  if (lastApplied !== null && lastApplied.model === model && lastApplied.modelRev === from) {
+    lastApplied = { ...lastApplied, modelRev: model.rev };
+  }
+}
+
+/**
+ * Every standard-library load still running, each as its OWN deferred: a
+ * load registers one on entry and settles it in its `finally`, after its
+ * refresh has run. One shared flag would not do, because loads overlap — every
+ * apply, import and load starts one, possibly while an earlier one (the boot
+ * load included) is still merging — and a flag the first one cleared would
+ * release a waiter while the second is in flight.
+ */
+const libraryLoads = new Set<Promise<void>>();
+
+/**
+ * Resolve once no standard-library load is running — including any started
+ * while this was waiting. Afterwards the refresh has run, so the text buffer
+ * and the diagnostics describe the settled model.
+ *
+ * `whenLibraryReady` cannot stand in for it: `libraryReady` is true from the
+ * end of the boot load on, so it does not wait for the re-merge an apply, an
+ * import or a load starts.
+ */
+export function whenLibrarySettled(): Promise<void> {
+  return Promise.all([...libraryLoads]).then(() =>
+    libraryLoads.size > 0 ? whenLibrarySettled() : undefined,
+  );
+}
+
+/**
  * Merge the FULL standard library into the live model and bind every
  * outstanding type reference, then refresh the UI.
  *
@@ -3178,6 +3515,11 @@ function refreshAfterLibraryLoad(): void {
  * so a library hiccup never breaks the interactive app.
  */
 async function loadStandardLibraryAsync(): Promise<void> {
+  let settle!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  libraryLoads.add(settled);
   try {
     try {
       const { loadFullStandardLibrary, preloadFullLibrary } = await import('../library/full-library');
@@ -3187,19 +3529,23 @@ async function loadStandardLibraryAsync(): Promise<void> {
       // the curated-subset fallback below.
       await preloadFullLibrary();
       const { model } = useAppStore.getState();
-      loadFullStandardLibrary(model); // idempotent: skips when a library is present
-      resolveTypeReferences(model);
-      // Connector endpoints chained through freshly-bound library types.
-      resolveConnectorFeatureChains(model);
+      mergeLibrary(model, () => {
+        loadFullStandardLibrary(model); // idempotent: skips when a library is present
+        resolveTypeReferences(model);
+        // Connector endpoints chained through freshly-bound library types.
+        resolveConnectorFeatureChains(model);
+      });
       refreshAfterLibraryLoad();
     } catch (err) {
       console.error('full standard library unavailable; loading curated subset', err);
       try {
         const { loadCuratedLibrary } = await import('../library/standard-library');
         const { model } = useAppStore.getState();
-        if (!model.all().some((e) => e.attrs.isLibrary === true)) loadCuratedLibrary(model);
-        resolveTypeReferences(model);
-        resolveConnectorFeatureChains(model);
+        mergeLibrary(model, () => {
+          if (!model.all().some((e) => e.attrs.isLibrary === true)) loadCuratedLibrary(model);
+          resolveTypeReferences(model);
+          resolveConnectorFeatureChains(model);
+        });
         refreshAfterLibraryLoad();
       } catch (err2) {
         console.error('curated standard-library fallback failed', err2);
@@ -3211,7 +3557,15 @@ async function loadStandardLibraryAsync(): Promise<void> {
     // This is what makes the interactive model DETERMINISTIC — the library is
     // present BEFORE window.sysml / the diagram-canvas appear, so tests (and
     // users) never see counts drift as the library merges in mid-session.
-    if (!useAppStore.getState().libraryReady) useAppStore.setState({ libraryReady: true });
+    try {
+      if (!useAppStore.getState().libraryReady) useAppStore.setState({ libraryReady: true });
+    } finally {
+      // Even if a subscriber threw out of that update: a deferred left
+      // unsettled would hold every `whenLibrarySettled` waiter — the `?model=`
+      // gate, a Drive open or save — for good.
+      libraryLoads.delete(settled);
+      settle();
+    }
   }
 }
 

@@ -13,7 +13,14 @@ import { useEffect, useState } from 'react';
 import '@xyflow/react/dist/style.css';
 import './layout.css';
 
-import { recomputePending, useAppStore } from './store';
+import {
+  driveBeforeUnload,
+  driveDirty,
+  driveFileView,
+  driveLink as driveLinkOf,
+  recomputePending,
+  useAppStore,
+} from './store';
 import { handleShortcut } from './commands';
 
 import { Toolbar } from './panels/Toolbar';
@@ -24,6 +31,7 @@ import { Palette, viewHasPalette } from './panels/Palette';
 import { Properties } from './panels/Properties';
 import { BottomPanel } from './panels/BottomPanel';
 import { LinkedModelBanner } from './panels/LinkedModelBanner';
+import { DriveLinkGate, DriveStrip, driveLinkHolds } from './panels/DriveStrip';
 import { modelFileName } from './linked-model';
 
 export function App(): JSX.Element {
@@ -33,6 +41,7 @@ export function App(): JSX.Element {
   const libraryReady = useAppStore((s) => s.libraryReady);
   const activeView = useAppStore((s) => s.activeView);
   const linkedModel = useAppStore((s) => s.linkedModel);
+  const driveLink = useAppStore((s) => s.drive.link);
 
   // One-time bootstrap: expose the SDK and build the initial projection — but
   // only AFTER the standard library has settled into the model. Withholding
@@ -48,7 +57,9 @@ export function App(): JSX.Element {
     // there was no way to request a single-assembly interconnection view from
     // outside the UI, even though the builder has always supported it.
     (
-      window as unknown as { sysprose: { diagram: Record<string, unknown> } }
+      window as unknown as {
+        sysprose: { diagram: Record<string, unknown>; drive: Record<string, unknown> };
+      }
     ).sysprose = {
       diagram: {
         /** Scope the diagram to an element's subtree; null shows the whole model. */
@@ -62,6 +73,18 @@ export function App(): JSX.Element {
          * still waiting, or a diagram is being laid out.
          */
         busy: () => recomputePending() || useAppStore.getState().diagramLayoutPending,
+      },
+      // Google Drive (optional). What a test or an agent may read; nothing
+      // token-like is reachable from here.
+      drive: {
+        /** `loading` | `ready` | `absent`: whether this deployment has Drive configured. */
+        status: () => useAppStore.getState().drive.configStatus,
+        /** The attached Drive file's metadata (id, name, content hash, …), or null. */
+        file: () => driveFileView(useAppStore.getState().drive.file),
+        /** Whether the model has changes the attached Drive file does not hold. */
+        dirty: () => driveDirty(useAppStore.getState()),
+        /** The link that reopens the attached file in this app, or null. */
+        link: () => driveLinkOf(useAppStore.getState()),
       },
     };
     void rebuildDiagram();
@@ -118,7 +141,7 @@ export function App(): JSX.Element {
   // Global keyboard shortcuts (undo/redo/save).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // Ignore when typing in the text editor / inputs.
+      // Ignore when typing in the text editor / inputs (the editor hands on Ctrl/Cmd+S itself).
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
       if (
@@ -134,20 +157,40 @@ export function App(): JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  // Leaving the page while the attached Drive file has unsaved changes asks
+  // first. The listener is installed only while that is so, so no other state
+  // of the page — and no test that never attaches a file — meets the prompt.
+  const driveUnsaved = useAppStore((s) => driveDirty(s));
+  useEffect(() => {
+    if (!driveUnsaved) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      driveBeforeUnload(useAppStore.getState(), e);
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [driveUnsaved]);
+
   // Brief loading gate while the standard library merges. It intentionally does
   // NOT render the SDK-backed body (Explorer / diagram-canvas / Properties), so
   // the E2E fixtures — which wait for `diagram-canvas` + `window.sysml` — only
   // proceed once the model has settled.
   // A `?model=` link holds the same gate until its model is in place, so the
-  // sample model never flashes up first.
-  if (!libraryReady || linkedModel?.status === 'loading') {
+  // sample model never flashes up first — and so does a `?drive=` link until
+  // its file is open or the user skips it: the gate is where it asks for the
+  // sign-in, and says why a file did not open (DriveLinkGate).
+  const driveGate = driveLinkHolds(driveLink);
+  if (!libraryReady || linkedModel?.status === 'loading' || driveGate) {
     return (
       <div className="app app-loading" data-testid="app-loading">
-        <div className="app-loading-msg">
-          {libraryReady && linkedModel
-            ? `Loading ${modelFileName(linkedModel.url)}…`
-            : 'Loading standard library…'}
-        </div>
+        {libraryReady && driveGate ? (
+          <DriveLinkGate />
+        ) : (
+          <div className="app-loading-msg">
+            {libraryReady && linkedModel
+              ? `Loading ${modelFileName(linkedModel.url)}…`
+              : 'Loading standard library…'}
+          </div>
+        )}
       </div>
     );
   }
@@ -156,6 +199,7 @@ export function App(): JSX.Element {
     <div className="app">
       <Toolbar />
       <LinkedModelBanner />
+      <DriveStrip />
       <div className="app-body">
         {explorerCollapsed ? (
           <button

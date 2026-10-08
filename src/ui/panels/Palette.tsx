@@ -28,8 +28,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
-import { useAppStore } from '../store';
-import { checksFor, runCheck, type CheckSpec } from '../checks';
+import { checkFileName, useAppStore } from '../store';
+import { checksFor, commandNote, runCheck, type CheckSpec } from '../checks';
 import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 
 /* ─────────────────────────── Shared tool state ──────────────────────────── */
@@ -336,12 +336,14 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   const model = useAppStore((st) => st.model);
   const rev = useAppStore((st) => st.rev);
   const selectionId = useAppStore((st) => st.selectionId);
-  const projectName = useAppStore((st) => st.projectName);
+  // The file the terminal commands name: the attached Google Drive file's
+  // name, which is what a student downloads from Drive, else the project's.
+  const fileName = useAppStore(checkFileName);
   const stored = useChecksStore((st) => st.results[spec.id]);
   const record = useChecksStore((st) => st.record);
   const [copied, setCopied] = useState(false);
 
-  // One object per (model, selection, project), so the callbacks below are
+  // One object per (model, selection, file name), so the callbacks below are
   // stable between renders instead of being rebuilt on each one.
   const ctx = useMemo(() => {
     const selected = selectionId ? model.get(selectionId) : undefined;
@@ -350,10 +352,13 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
       selectionId,
       selectionName: selected ? (model.qualifiedName(selected.id) ?? selected.attrs.declaredName ?? null) : null,
       isolated: (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true,
-      fileName: `${projectName || 'model'}.sysml`,
+      fileName,
     };
-  }, [model, selectionId, projectName]);
+  }, [model, selectionId, fileName]);
   const verdict = verdictOf(stored, rev);
+  // A file or element name the command could not carry as it is (it would be
+  // read as code by some terminal): what the stand-in in its place stands for.
+  const note = commandNote(spec, ctx);
 
   const onRun = useCallback(() => {
     record(spec.id, runCheck(spec, ctx), rev);
@@ -388,6 +393,11 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
         </button>
         <code className="palette-check-cli">{spec.id}</code>
       </div>
+      {note !== null && (
+        <div className="palette-check-note" data-testid="palette-check-note">
+          {note}
+        </div>
+      )}
       {stored && <div className="palette-check-summary">{stored.result.summary}</div>}
     </div>
   );

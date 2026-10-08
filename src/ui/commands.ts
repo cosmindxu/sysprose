@@ -8,7 +8,7 @@
  * context (React or plain DOM event handlers).
  */
 
-import { useAppStore } from './store';
+import { driveDirty, forcedRecomputePending, useAppStore, type AppState } from './store';
 import type { ViewKind } from '@diagram/index';
 import type { ModelFormat } from '@persistence/index';
 
@@ -27,6 +27,39 @@ export interface Command {
 /** The default project name used by the "New" command. */
 const DEFAULT_PROJECT_NAME = 'NewModel';
 
+/**
+ * The attached Google Drive file lacks something of the model: what Save to
+ * Drive is for. An edit whose recompute is still waiting has not reached the
+ * text yet, so it counts.
+ */
+function driveUnsaved(store: AppState): boolean {
+  return store.drive.file !== null && (driveDirty(store) || forcedRecomputePending());
+}
+
+/**
+ * Save, as the Save button and Ctrl/Cmd+S do it: the project in this browser
+ * — and, while the attached Google Drive file lacks something of the model,
+ * that file too. A student who presses Save and later finds nothing in Drive
+ * is the one loss the Drive strip alone cannot prevent. With no Drive file,
+ * or one that holds the model already, it is the browser save it always was.
+ */
+export function runSave(): Promise<void> {
+  const store = useAppStore.getState();
+  return driveUnsaved(store) ? store.driveSave({ alsoInBrowser: true }) : store.saveProject();
+}
+
+/**
+ * Save to Drive, as Ctrl/Cmd+Shift+S does it: the attached file when it lacks
+ * something of the model, the Save-as form when no file is attached — and
+ * nothing for a file that holds the model already, as the panel's Save to
+ * Drive is disabled then: no new revision in Drive's history, no sign-in
+ * window after the hour, no question about a layout nothing would rewrite.
+ */
+export function runDriveSave(): Promise<void> {
+  const store = useAppStore.getState();
+  return store.drive.file === null || driveUnsaved(store) ? store.driveSave() : Promise.resolve();
+}
+
 /** All toolbar/keyboard commands, in display order. */
 export const COMMANDS: Command[] = [
   {
@@ -44,7 +77,16 @@ export const COMMANDS: Command[] = [
     id: 'tb-save',
     label: 'Save',
     shortcut: 'Ctrl+S',
-    run: () => useAppStore.getState().saveProject(),
+    run: () => runSave(),
+  },
+  {
+    // Google Drive (optional). On a deployment without it this does nothing,
+    // and its key is left to the browser (see `handleShortcut`). With no Drive
+    // file attached it opens the Save-as form.
+    id: 'tb-drive-save',
+    label: 'Save to Drive',
+    shortcut: 'Ctrl+Shift+S',
+    run: () => runDriveSave(),
   },
   {
     id: 'tb-export-sysml',
@@ -132,7 +174,9 @@ function focusExplorerSearch(): boolean {
  *
  * The App-level listener already suppresses this while the user is typing in an
  * input / textarea / select / contenteditable, so the plain-key shortcuts below
- * (Delete, digits, `/`) are safe from swallowing real text entry.
+ * (Delete, digits, `/`) are safe from swallowing real text entry. The Text
+ * view's editor hands on Ctrl/Cmd+S and Ctrl/Cmd+Shift+S itself, and no other
+ * key.
  */
 export function handleShortcut(e: KeyboardEvent): boolean {
   const store = useAppStore.getState();
@@ -182,7 +226,17 @@ export function handleShortcut(e: KeyboardEvent): boolean {
       store.redo();
       return true;
     case 's':
-      void store.saveProject();
+      // Ctrl/Cmd+Shift+S → Save to Drive (the Save-as form when no Drive file
+      // is attached). Without Google Drive on this deployment the key is not
+      // this app's, and the browser keeps it.
+      if (e.shiftKey) {
+        if (store.drive.configStatus === 'ready') {
+          void runDriveSave();
+          return true;
+        }
+        return false;
+      }
+      void runSave();
       return true;
     case 'd':
       // Duplicate the selection (deep-clone as a sibling). preventDefault stops

@@ -23,6 +23,7 @@ C4Container
 
     System_Ext(omg, "OMG SysML v2 Pilot")
     System_Ext(host, "Static Host / GitHub Pages")
+    System_Ext(gdrive, "Google Drive (optional)", "GIS + Drive REST + Picker")
 
     Rel(modeler, spa, "Uses")
     Rel(spa, store, "Read/write projects")
@@ -31,6 +32,7 @@ C4Container
     Rel(spa, omg, "Interop round-trip (opt-in)", "HTTPS")
     Rel(api, omg, "Interop round-trip (opt-in)", "HTTPS")
     Rel(host, spa, "Serves bundle")
+    Rel(spa, gdrive, "Open / save .sysml (opt-in, config-gated)", "HTTPS")
 ```
 
 ## Container responsibilities
@@ -44,7 +46,7 @@ C4Container
   (`validation/`), KerML semantics (`semantics/`), OMG API/SDK/Query/analytics
   (`api/`), diagram builders + renderers (`diagram/`), persistence
   (`persistence/`), UI (`ui/`), and the collab client (`collab/`).
-- **Exposed automation surface:** `window.sysml` (`src/ui/App.tsx:43`) — the
+- **Exposed automation surface:** `window.sysml` (`src/ui/App.tsx:54`) — the
   `ModelApi` SDK, equivalent in power to DevTools, intentionally unsandboxed.
 
 ### REST / OSLC API (`src/server/`, `Dockerfile`)

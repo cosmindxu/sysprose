@@ -26,6 +26,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 | Per-metaclass tree type icons | Yes | Yes | **Yes** | `iconFor()` renders a category glyph per row (Explorer.tsx); `E gui-navigation` asserts `.tree-icon` |
 | Explorer search / filter + hide-library + focus + breadcrumb | Yes | Yes | **Yes** | `E gui-explorer` (search + count, library toggle, ◎ focus/scope-to-subtree), `E gui-navigation` (breadcrumb path); selection-reveal keeps the two parallel trees in sync |
 | Element search / query navigation | Yes | Yes | **Yes** (via API console) | `E api-console2` (query → tabulated rows), `U api.query`/`api.query2` |
+| Cloud file storage | — | Yes (vendor) | **Yes** (optional: the user's own Google Drive, `drive.file` scope, on a deployment that configures it) | `E drive` (against faked Google services: sign-in, Save to Drive as / Save / both keys, Recent, `?drive=` links and the Picker grant, resource keys, conflicts by content checksum and each resolution, token renewal, view-only and trashed files, sign-out revocation, guards); `U drive` (config, links, REST gateway, sign-in boundary, Picker, the Drive ▾ panel and strip); `U store.reducers` (`google drive`); `U branding` (the CSP admits exactly the hosts the feature contacts). Real Google is to be checked by hand, not in CI — not yet run (`docs/TEST-REPORT.md` §6 item 8) |
 
 ## 2. Graphical diagrams (view kinds)
 
@@ -58,7 +59,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 | Inline rename (dblclick, Enter/Escape) | Yes | Yes | **Yes** | `E explorer-interactions` (dblclick→Enter commits; Escape cancels); `E text-sync` |
 | Properties / specification editing | Yes | Yes | **Yes** | `E properties-all-fields` (name, shortName, type, value, multiplicity, direction, reqId, text, trigger, guard, effect, doc); `E properties` |
 | Undo / redo | Yes | Yes | **Yes** | `E undo-redo`; `E keyboard-shortcuts` (Ctrl/⌘+Z, +Y, +Shift+Z) |
-| Keyboard shortcuts | Yes | Yes | **Yes** | Undo/redo/save, delete, duplicate, copy/paste, view digits `1`–`6` and `/` to search, all wired in `src/ui/commands.ts:111-213` (`E keyboard-shortcuts`, `E gui-keyboard`); listed for a reader in [`USER-GUIDE.md`](USER-GUIDE.md) Appendix B, and `U user-guide` fails on a shortcut LABELLED but not handled |
+| Keyboard shortcuts | Yes | Yes | **Yes** | Undo/redo/save, delete, duplicate, copy/paste, view digits `1`–`6` and `/` to search, all wired in `src/ui/commands.ts:153-267` (`E keyboard-shortcuts`, `E gui-keyboard`); listed for a reader in [`USER-GUIDE.md`](USER-GUIDE.md) Appendix B, and `U user-guide` fails on a shortcut LABELLED but not handled |
 | Real-time multi-user collaboration | Partial (server product) | Yes (live web sessions) | **Yes** | Yjs CRDT co-editing + live presence: `E collab` (two browser contexts, same room, auto-connect → element created in one converges into the other's model + Explorer, and a remote selection lights up a peer-coloured highlight; roster shows ≥2 participants, 0 console errors); `U collab.binding` (deterministic Model↔Y.Doc CRDT convergence: add/update/remove/reparent/attrs, offline-then-merge). Open rooms (academic use, no auth); browser client = `WebsocketProvider` + `y-indexeddb` + awareness, relayed by the Node-only `npm run collab` server |
 
 ## 4. Textual notation
@@ -113,7 +114,7 @@ representative subset is present / a facet is missing; **—**: not implemented.
 
 | Capability | Commercial desktop tool | Open-source web tool | **This tool** | Notes |
 |---|---|---|---|---|
-| Runs fully in-browser, offline, static-hostable | — (desktop) | — (server-backed) | **Yes** | Entire engine/API/persistence is client-side; E2E runs against a static `vite preview` build with no app server |
+| Runs fully in-browser, offline, static-hostable | — (desktop) | — (server-backed) | **Yes** | Entire engine/API/persistence is client-side; the optional Drive feature talks to Google's APIs from the browser, with no server of ours; E2E runs against a static `vite preview` build with no app server |
 | Optional networked REST/OSLC server | Yes | Yes | **Yes** | `src/server` Express adapter, exercised under `test/server` |
 
 ---

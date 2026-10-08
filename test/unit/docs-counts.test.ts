@@ -535,6 +535,24 @@ const CLAIMS: Array<{ file: string; what: string; pattern: RegExp; actual: () =>
     actual: () =>
       sourceNumber('src/ui/panels/Toolbar.tsx', /downloadSvgAsPng\([^)]*scale = (\d+)\)/),
   },
+  // Google Drive's two figures a reader plans around: how much one save may
+  // carry (§9 — the store refuses a larger text before any request) and how
+  // early the strip warns that the sign-in is about to run out (§8.1). Both
+  // are constants a later commit could tune without reading the guide.
+  {
+    file: 'docs/USER-GUIDE.md',
+    what: 'the Drive upload limit in MB',
+    pattern: /One\s+upload\s+is\s+at\s+most\s+(\d+)\s+MB\s+of\s+text/,
+    actual: () =>
+      sourceNumber('src/persistence/drive/types.ts', /DRIVE_UPLOAD_MAX_BYTES = (\d+) \* 1024 \* 1024;/),
+  },
+  {
+    file: 'docs/USER-GUIDE.md',
+    what: 'how many minutes before its end the strip warns the sign-in expires',
+    pattern: /In\s+its\s+last\s+(\w+)\s+minutes,\s+a\s+strip\s+showing\s+unsaved\s+changes\s+adds/,
+    actual: () => sourceNumber('src/ui/panels/DriveStrip.tsx', /DRIVE_EXPIRY_WARNING_MS = (\d+) \* 60 \* 1000;/),
+    words: true,
+  },
 ];
 
 /**

@@ -37,16 +37,16 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **Unit/integration runner** | Vitest + jsdom + Testing Library |
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
-| **Date** | 2026-10-07 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **3848 passed / 0 failed / 0 skipped** across **156 files** |
-| &nbsp;&nbsp;— unit | 2832 passed across 118 files |
+| **Date** | 2026-10-08 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
+| **Vitest checks** | **4150 passed / 0 failed / 0 skipped** across **157 files** |
+| &nbsp;&nbsp;— unit | 3134 passed across 119 files |
 | &nbsp;&nbsp;— integration | 400 passed across 21 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
 | &nbsp;&nbsp;— interop | 8 passed across 1 file |
 | &nbsp;&nbsp;— campaign (L6–L8) | 486 passed across 5 files |
-| **E2E scenarios** | **162 passed / 0 failed / 0 flaky / 0 skipped** across **83 spec files** |
-| **Grand total** | **4010 automated checks passed / 0 failed** |
+| **E2E scenarios** | **182 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
+| **Grand total** | **4332 automated checks passed / 0 failed** |
 
 > **Previously the one failure**, now fixed: `conformance › Systems Library/
 > Actions.sysml › parses with 0 errors`. The OMG corpus (an *external,
@@ -114,6 +114,12 @@ Screenshots are under `test-results/screenshots/`.
 | **Auto-layout** (`tb-layout`) | `E toolbar-lifecycle` (re-lays; nodes visible) | PASS | `lifecycle-e-layout`; `U diagram.layout` |
 | **Undo** (`tb-undo`) | `E undo-redo` | PASS | `09b-undone` |
 | **Redo** (`tb-redo`) | `E undo-redo` | PASS | `09c-redone` |
+| **Drive ▾** — Google Drive (optional), rendered only when the deployment's `drive.json` names a client (`tb-drive`, `drive-panel`) | `E drive` (*without a configuration nothing changes…*, *a routed configuration reads as ready…*); `U drive` (`DriveMenu`, `Toolbar`) | PASS | Absent without a configuration — the toolbar is unchanged; faked Google (§2.14) |
+| **Sign in to Google…** (`tb-drive-signin`) | `E drive` (*sign in, save as, edit and save…*, *a sign-in Google or the browser refuses says why…*); `U drive` (`createGisPopupAuth`, `DriveMenu`) | PASS | Disabled, *Loading Google sign-in…*, until the script has loaded |
+| **Browse Drive…** — Google's Picker (`tb-drive-browse`) | `E drive` (*a ?drive= link Drive denies: choosing the one file in the Picker grants it…*); `U drive` (`createGooglePicker`) | PASS | Present only with a Picker key |
+| **Save to Drive** / **Save to Drive as…** (`tb-drive-save`, `tb-drive-save-as`) | `E drive` (*sign in, save as, edit and save — from the panel, the strip, the toolbar's Save and both keys*); `U store.reducers` (`google drive`) | PASS | Uploads the Text view's text — no standard library |
+| **Save** with a Drive file attached (`tb-save`) | `E drive` (same scenario); `U drive` (`Toolbar`: *Save saves in this browser — and, with a Drive file attached, to that file too*) | PASS | Saves to the browser store and, when it has unsaved changes, to the Drive file |
+| **Sign out** (`tb-drive-signout`) | `E drive` (*sign-out revokes the token at Google…*, *signing out after the hour…*); `U store.reducers` (`google drive`) | PASS | Revocation against a faked endpoint |
 
 ### 2.2 Keyboard shortcuts (`src/ui/commands.ts handleShortcut`)
 
@@ -130,6 +136,8 @@ Screenshots are under `test-results/screenshots/`.
 | **Digits 1–6** → switch primary view | `E gui-keyboard` (*digit hotkeys switch the primary view*) | PASS | `81-keyboard-view-hotkeys`; asserts `is-active` tab |
 | **`/`** → focus Explorer search | `E gui-keyboard` (*"/" focuses the Explorer search box*) | PASS | `document.activeElement` = `explorer-search` |
 | Global handler ignores INPUT/TEXTAREA/**SELECT**/contenteditable | `E keyboard-shortcuts` (focuses brand before keys) | PASS | Matches handler guard |
+| **Ctrl/⌘+Shift+S** → Save to Drive; with no Drive file attached, the Save-as form | `E drive` (*…the toolbar's Save and both keys*); `U store.reducers` (`handleShortcut`: only with a Drive configuration) | PASS | Sends nothing while the attached file has no unsaved changes |
+| **Ctrl/⌘+S** and **Ctrl/⌘+Shift+S** inside the Text view's editor → save (Ctrl/⌘+S applies the typed text first — unless it has a syntax error, when the browser keeps the model as it stood) | `E drive` (Ctrl+Shift+S with `text-editor` focused); `U store.reducers` (the textarea forwards only those two) | PASS | The one exception to the handler's INPUT/TEXTAREA guard; every other key stays the editor's |
 
 ### 2.3 View switching — all 17 view kinds (`tb-view-<kind>`)
 
@@ -330,6 +338,51 @@ the Node-only `npm run collab` relay fans out updates. Toolbar `tb-collab` opens
 | Remote-selection highlight — a peer's selection lights up the Explorer row (peer colour ring) | `E collab` (`tree-remote-selection`, `data-remote-selected`) | PASS |
 | Clean browser bundle — relay (`ws`) never enters the client bundle | build grep (no `ws`/`WebSocketServer`/`setupWSConnection`) | PASS |
 
+### 2.14 Google Drive (faked GIS/Picker/REST)
+
+Optional and config-gated: on a deployment whose `drive.json` names a Google OAuth
+client, `tb-drive` opens the `drive-panel`, and the `drive-strip` under the toolbar
+says where the model stands with Drive. **Every Google surface is faked.** Unit tests
+inject test doubles (`FakeDriveAuth`, `InMemoryDriveGateway`, `FakeDrivePicker`);
+the E2E spec answers `drive.json`, Google Identity Services, `api.js`, the Drive REST
+API and the revocation endpoint with `page.route` (`test/e2e/drive-fakes.ts`, an
+in-memory Drive in the test process that refuses an upload framed with bare line
+feeds, as Drive does). Nothing in either suite reaches Google; §6 item 8 lists what
+only a manual check against Google can show. The spec runs with the service worker
+blocked (`serviceWorkers: 'block'`), because a worker-served `drive.json` is invisible
+to `page.route`; `gui-pwa.spec.ts` keeps covering the worker.
+
+*How "the sign-in window is asked for inside the click" is checked.* The fake GIS
+records `inEvent` — `window.event.type` at the moment `requestAccessToken` runs —
+which a timer or a network `await` before the call would clear. An `await` of an
+already-settled promise keeps it, so the unit ordering cases (the sign-in requested
+before any `await`, and before `applyText`) remain the guard for that; Chromium's
+`navigator.userActivation` stays true for seconds and proves nothing either way.
+
+| Feature | Covered by | Result |
+|---|---|---|
+| No configuration → nothing changes and nothing is asked of Google; the shipped `$comment` placeholder, `{}`, an HTML 200 (a server's SPA fallback), invalid JSON or an invalid field all read as no configuration | `E drive` (*without a configuration nothing changes…*, *an HTML answer for drive.json…*); `U drive` (`parseDriveConfig`, `loadDriveConfig`) | PASS |
+| A routed configuration reads as ready — on a reload too, which is what proves the worker is blocked | `E drive` (*a routed configuration reads as ready…*) | PASS |
+| The CSP admits exactly the hosts the feature contacts (sign-in, Picker, Drive REST, revocation), and no Google URL is spelled outside `src/persistence/drive/hosts.ts` | `U branding` (*the CSP admits exactly the hosts the app contacts*); every `E drive` scenario fails on a refused request | PASS |
+| Sign-in: the script loads when the panel opens, the window is requested synchronously inside the click with the account chooser first, the token lives only in a closure, `hasGrantedAllScopes` is checked, and each refusal (`access_denied`, `popup_closed` with the privacy link, `popup_failed_to_open`) says why and changes nothing | `U drive` (`createGisPopupAuth`, `loadScriptOnce`, `DriveMenu`); `E drive` (*sign in, save as…*, *a sign-in Google or the browser refuses says why…*) | PASS |
+| Save to Drive as / Save: the payload is the Text view's text with no standard library — Save to Drive as… in a CRLF-framed multipart body, Save as a media update — from the panel, the strip, the toolbar's Save, `Ctrl/⌘+S` and `Ctrl/⌘+Shift+S` (also from the Text view's editor); the token in no URL and in no browser storage (`localStorage`, `sessionStorage`, IndexedDB) | `E drive` (*sign in, save as, edit and save…*); `U drive` (`buildMultipart`, `createRestDriveGateway`); `U store.reducers` (`google drive`) | PASS |
+| Unsaved changes are read off the text, not `rev`: the library refresh after an open stays clean; a file with a syntax error uploads as typed, keeps its parse rows, and two saves of it push no Undo step | `U store.reducers` (`google drive`); `E drive` (*a hand-written file is rewritten only when the user says so; a syntax error survives the save*) | PASS |
+| A hand-written file is rewritten only after the user says so (Save anyway / Save as copy); files the app wrote never ask | `E drive` (same scenario); `U store.reducers` | PASS |
+| Recent reopens a file after a reload; the leave-page prompt only while the file has unsaved changes | `E drive` (*Recent reopens a file after a reload…*) | PASS |
+| `?drive=` links: the gate preloads Google's script and waits for it, then one click signs in and opens; a file Drive denies is granted by the Picker on that one file (one `DocsView`, `setFileIds`); without a configuration the sample opens and the strip says why | `E drive` (*a ?drive= link: the gate waits…*, *a ?drive= link Drive denies…*, *a ?drive= link on a deployment without Drive…*, *…holds the loading gate for the file*); `U drive` (`driveLinkFromUrl`, `createGooglePicker`, `DriveStrip`) | PASS |
+| Resource keys: kept from a pasted share link and sent as `X-Goog-Drive-Resource-Keys` with every request for that file, and with no other | `E drive` (*a pasted Drive share link keeps its resource key…*); `U drive` (`parseDriveFileRef`, the gateway's headers) | PASS |
+| Conflicts by content: a rename or a share (version and modified time only) raises none; a content change does, and Save as copy, Overwrite and Reload from Drive (one Undo step) each resolve it | `E drive` (*a conflict only when the content changed in Drive…*); `U store.reducers` (`google drive`) | PASS |
+| Renewal and retries: a token Google refuses partway through a command is renewed by a brief sign-in, or by **Sign in and continue** when that window is blocked or closed; an expired token is renewed inside the click, and a blocked window there is said to be blocked (allow pop-ups, give the command again); a busy Drive retried once, for reads and updates only — never for a create | `E drive` (*a refused token is renewed…*); `U drive` (the gateway's retry policy); `U store.reducers` (`google drive`) | PASS |
+| View-only access and a file gone from Drive: the `readonly` and `gone` rows; Save to Drive as… keeps a copy | `E drive` (*view-only access and a file gone from Drive…*) | PASS |
+| Sign-out revokes the live token; after the hour it renews the sign-in inside the click first, and when that is refused nothing is revoked and the notice says so; an unconfirmed revocation is said to be unconfirmed | `E drive` (*sign-out revokes the token at Google…*, *signing out after the hour…*); `U drive` (`createGisPopupAuth`); `U store.reducers` (`google drive`) | PASS |
+| Guards: unsaved Drive changes before New, Open, Import, Close, Sign out or a Drive open; an open over edited work no Drive file holds; every model-replacing command detaches the file | `E drive` (*a command that would drop unsaved Drive changes asks first…*); `U drive` (`Toolbar`, `DriveMenu`); `U store.reducers` (`google drive`) | PASS |
+| The configured toolbar keeps its commands at the e2e viewport | `E drive` (*with Drive configured the toolbar keeps its commands…*) | PASS |
+| A session's answers stay in it: what a command learns after a sign-out — a file it wrote, a failure naming it — reaches neither the next account's Recent list nor its strip; a renewal that comes back as another Google account writes nothing, closes the file and names the account now signed in, and a sign-out says whose access it revoked; a sign-in Google finished after reporting its window closed is shown before it is used | `U store.reducers` (`google drive`) | PASS |
+| No Drive file is opened or attached while connected to a collaboration room, and one attached while the room's relay was out of reach lets go when it connects | `U store.reducers` (`google drive`) | PASS |
+| An upload Drive answered without saying what became of it is not called unchanged (save again; the content check asks); a 403 reads as view access only on Drive's own reason, a full Drive in its own words; a browser that refuses the copy Save keeps there is said so; Ctrl/⌘+S over a syntax error keeps the browser's model as it stood while Drive gets the text as typed | `U store.reducers` (`google drive`); `U drive` (`DriveStrip`) | PASS |
+| The Check panel's command names a Drive file, or a selected element, only as a plain word that bash, cmd.exe and PowerShell all pass on as it is — a stand-in or `<qualified name>` otherwise, with a note saying what each stands for | `U checks-registry` | PASS |
+| The fake Drive is as strict as Drive about an upload's framing | `E drive` (*the fake Drive is as strict as Drive…*) | PASS |
+
 ---
 
 ## 3. Per-module unit test summary
@@ -421,11 +474,12 @@ the 2026-07-03 run's total; the current run's is §1's and §7's.]*
 
 Playwright, headless Chromium, against the built app at `:4173`
 (`test-results/e2e-results.json`; HTML at `playwright-report/index.html`). All
-**128** scenarios across **83** spec files passed (0 flaky, 0 skipped). (The
+**182** scenarios across **84** spec files passed (0 flaky, 0 skipped). (The
 per-row table below is hand-authored and lags the authoritative total; the
 regroup-workbench rows are appended at the end, followed by the
 model-manipulation rows 53–61, the untouched-affordance rows 62–70, the
-notation/outcome rows 71–79 and the behaviour/error-path rows 80–87.)
+notation/outcome rows 71–79, the behaviour/error-path rows 80–87 and the
+Google Drive rows 88–107.)
 Per-scenario screenshots are under `test-results/screenshots/`;
 per-test trace screenshots at `test-results/e2e/<scenario>/test-finished-1.png`.
 Every scenario also asserts **zero uncaught console/page errors** via
@@ -594,6 +648,34 @@ issue** — see row 87.
 > parse rate" figure only measured an accepting path — was wrong for the same
 > reason and has been retracted there.
 
+**Google Drive scenarios** (added 2026-10-07; `drive.spec.ts`, against the faked
+Google services of `drive-fakes.ts`, with the service worker blocked — §2.14). Each
+one also fails on a console error, less the "Failed to load resource" line Chromium
+logs for a 4xx/5xx a fake Google API answers on purpose.
+
+| # | Spec :: scenario | Status | Dur |
+|---:|---|---|---:|
+| 88 | `drive` :: without a configuration nothing changes, and nothing is asked of Google | PASS | 0.9 s |
+| 89 | `drive` :: a routed configuration reads as ready — on a reload too, the worker being blocked | PASS | 1.4 s |
+| 90 | `drive` :: an HTML answer for drive.json — a server’s SPA fallback — is no configuration | PASS | 0.8 s |
+| 91 | `drive` :: a ?drive= link on a deployment without Drive opens the sample model | PASS | 0.7 s |
+| 92 | `drive` :: a ?drive= link on a configured deployment holds the loading gate for the file | PASS | 0.7 s |
+| 93 | `drive` :: the fake Drive is as strict as Drive about an upload’s framing: bare line feeds are refused | PASS | 1.0 s |
+| 94 | `drive` :: sign in, save as, edit and save — from the panel, the strip, the toolbar’s Save and both keys | PASS | 4.7 s |
+| 95 | `drive` :: Recent reopens a file after a reload, which signed the user out; leaving asks only while unsaved | PASS | 3.3 s |
+| 96 | `drive` :: a ?drive= link: the gate waits for Google’s script, then one click signs in and opens the file | PASS | 2.0 s |
+| 97 | `drive` :: a ?drive= link Drive denies: choosing the one file in the Picker grants it, and it opens | PASS | 2.1 s |
+| 98 | `drive` :: a pasted Drive share link keeps its resource key, and every request for the file carries it | PASS | 2.8 s |
+| 99 | `drive` :: a conflict only when the content changed in Drive — and each way out of one | PASS | 4.0 s |
+| 100 | `drive` :: a sign-in Google or the browser refuses says why, and changes nothing | PASS | 1.2 s |
+| 101 | `drive` :: a refused token is renewed by a brief sign-in, or a click when that is blocked; a busy Drive is retried | PASS | 6.1 s |
+| 102 | `drive` :: view-only access and a file gone from Drive are said so; Save to Drive as… keeps a copy | PASS | 1.9 s |
+| 103 | `drive` :: sign-out revokes the token at Google and forgets the session, the list and the file | PASS | 1.5 s |
+| 104 | `drive` :: signing out after the hour renews the sign-in inside the click, then revokes; refused, nothing is revoked | PASS | 1.3 s |
+| 105 | `drive` :: a command that would drop unsaved Drive changes asks first; so does an open over edited work | PASS | 3.1 s |
+| 106 | `drive` :: with Drive configured the toolbar keeps its commands at the e2e viewport | PASS | 0.8 s |
+| 107 | `drive` :: a hand-written file is rewritten only when the user says so; a syntax error survives the save | PASS | 4.1 s |
+
 ---
 
 ## 6. Known gaps & environment limitations
@@ -639,20 +721,43 @@ limits — not untested interactions.
    deleted, so the correction is on the record.* The shipped set is wider than
    it said: undo/redo/save, `Delete`/`Backspace`, `Ctrl+D` duplicate, `Ctrl+C` /
    `Ctrl+V`, the digits `1`–`6` for the primary views and `/` for the Explorer
-   search are all wired in `src/ui/commands.ts:111-213`. The one false label —
+   search are all wired in `src/ui/commands.ts:153-267`. The one false label —
    New advertising a `Ctrl+N` the handler never received — has been removed, and
    `U user-guide` now fails on a shortcut that is labelled but not handled.
    [`USER-GUIDE.md`](USER-GUIDE.md) Appendix B is the reader's list.
+8. **Google Drive (optional)** — every Google surface is faked (§2.14), so the
+   suites prove the app's side of its contract with Google, as Google documents
+   it: the requests it makes, what it does with every answer, and that the CSP
+   admits each URL the fakes answer. The Drive spec runs **without the service
+   worker** (`serviceWorkers: 'block'`), because a worker-served `drive.json` is
+   invisible to `page.route`; `gui-pwa.spec.ts` covers the worker, and a
+   worker-served `drive.json` in production is part of the manual check. Two
+   things the fakes cannot tell: Playwright answers every intercepted CORS
+   preflight itself, permissively (any origin, method and requested headers), so
+   whether Google's preflight admits `Authorization` and
+   `X-Goog-Drive-Resource-Keys` is not tested here; and the fake revocation
+   endpoint answers with `Access-Control-Allow-Origin`, which assumes Google's
+   `https://oauth2.googleapis.com/revoke` gives the page a CORS-readable answer —
+   the app counts an unreadable one as "not confirmed". Those two, the real
+   consent popup and Google's "Access blocked" page, real token lifetimes,
+   `drive.file` sharing between two accounts, whether `md5Checksum` and
+   `headRevisionId` move on every upload, whether a revocation drops a shared
+   file's grant, the Picker's iframe in each browser and what it does with the
+   token the app hands it, and whether Firefox and Edge leave `Ctrl/⌘+Shift+S`
+   to the page are covered only by a manual check against Google with two
+   accounts, which has **not yet been run**: it needs the Google Cloud project a
+   deployment's `drive.json` names, and its date and findings belong here once
+   it has.
 
 **Deliberate scope omissions (documented as out-of-scope/future):**
 
-8. **Standardized graphical diagram-interchange format** — not exported (OMG has
+9. **Standardized graphical diagram-interchange format** — not exported (OMG has
    not standardized one for SysML v2).
-9. **Pilot-API interop depth** — the live round-trip against the real OMG pilot
+10. **Pilot-API interop depth** — the live round-trip against the real OMG pilot
     (`sysml2.intercax.com:9000`, read 300 elements + write a `Package`, `@id`
     preserved) is a **representative** exchange, not a full-model bidirectional
     migration. See `docs/CONFORMANCE.md` §6.
-10. **Coverage vs. formal 100% conformance** — this is **not a formal
+11. **Coverage vs. formal 100% conformance** — this is **not a formal
     100%-conformance certification**; the deepest formal-semantics corners of the
     complete normative metamodel remain (see §8).
 
@@ -685,9 +790,10 @@ diagnostics, constraint checking + fuller behavioral execution, a numeric
 measure-of-effectiveness solver, full standard libraries
 + units, `.sysml`/JSON/OMG import-export, programmable SDK + analytics console,
 networked REST (OpenAPI 3.1) + OSLC, versioning with diff **and an in-UI 3-way
-branch merge**, **real-time collaboration** (Yjs CRDT + presence), and a **3D WebGL
-geometry view**. **Exceeds** both on pure-browser/offline/static-hostable
-deployment. The remaining differences are honest **depth/scope limits** —
+branch merge**, **real-time collaboration** (Yjs CRDT + presence), a **3D WebGL
+geometry view**, and optional **cloud file storage** — the model's text in the
+user's own Google Drive (`drive.file` scope, §2.14), with no server of ours.
+**Exceeds** both on pure-browser/offline/static-hostable deployment. The remaining differences are honest **depth/scope limits** —
 primitive-solid geometry (not CAD B-rep), a soft-penalty (approximate-feasibility)
 solver, a load-bearing execution subset, and open collaboration rooms with no user-rights
 layer (all in §6).
@@ -724,15 +830,16 @@ narrowed subset.
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **4010 green automated
-checks** (**3848** unit/integration/conformance/server/interop/campaign across **156 files**,
-**0 skips**, + **162 E2E** across **83 spec files**) and no failures. The report now
+SysML v2 standard family — all six read **Covered** — with **4332 green automated
+checks** (**4150** unit/integration/conformance/server/interop/campaign across **157 files**,
+**0 skips**, + **182 E2E** across **84 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
 interaction surface, every Properties field with unit conversion, palette
 create-and-connect per view, node drag, Problems navigation, textual bidirectional
-sync, the API/analytics console with commit history, and simulate/check — each
-driven through the real production build. The dedicated **conformance scorecard**
+sync, the API/analytics console with commit history, simulate/check, and the
+optional Google Drive storage against faked Google services — each driven through
+the real production build. The dedicated **conformance scorecard**
 (`docs/CONFORMANCE.md`) and **feature-parity matrix** (`docs/FEATURE-PARITY.md`)
 complete the picture. The **honest residual** is that this is **not a *formal*
 100%-conformance certification**: the deepest formal-semantics corners remain, the
@@ -743,12 +850,12 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (3848 passed /
-0 skipped across 156 files) and Playwright (162/162 across 83 spec files), plus
+*End of report. Counts and verdicts derived from a live `vitest run` (4150 passed /
+0 skipped across 157 files) and Playwright (182/182 across 84 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
 verdict-bearing write probe — see `docs/CONFORMANCE.md` §6.1) and
 `src/library/std/manifest.json` (38,761 elements / 98 packages) — the Vitest and
-Playwright figures re-measured on 2026-09-30, the rest on 2026-09-16; the prose sections below it date from the 2026-07-03 run they
+Playwright figures re-measured on 2026-10-08, the rest on 2026-09-16; the prose sections below it date from the 2026-07-03 run they
 describe. See `docs/CONFORMANCE.md` for the full scorecard and
 `docs/FEATURE-PARITY.md` for the parity matrix vs. mainstream MBSE tools.*

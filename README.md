@@ -36,7 +36,7 @@ tool does and does not keep for you.
 - **Validation** — a rule engine flags naming, typing, multiplicity, containment and traceability issues.
 - **Formal verification, from a terminal** — read every requirement as the assume/guarantee pair its own `assume` and `require` clauses state, decide it with an SMT solver or say honestly that nothing decided it, find the subset of a requirement set that conflicts, check whether the parts deliver what the whole promised, walk a state machine exhaustively rather than one run at a time, and write the verdict back into the file, where it goes stale the moment the design changes.
 - **API-first** — query the model with OMG-shaped constraint trees, compute analytics (metrics, requirement-satisfaction coverage, traceability, where-used), and script automations.
-- **Local-first** — projects persist in the browser (IndexedDB/localStorage); import/export `.sysml`, model JSON, and OMG element-graph JSON.
+- **Local-first** — projects persist in the browser (IndexedDB/localStorage); optionally, open and save `.sysml` files in your own Google Drive when a deployment enables it; import/export `.sysml`, model JSON, and OMG element-graph JSON.
 - **A kind for every statement** — one keyword says whether a statement binds (`#'requirement'`), explains (`#prose`) or is guidance for an agent (`#prompt`); coverage counts the first, and the guidance is collectable for whatever it applies to.
 
 ## Verification checks at a glance
@@ -295,7 +295,7 @@ See [`docs/03-architecture-and-plan.md`](docs/03-architecture-and-plan.md). Laye
 | Validation | `src/validation` | Rule-based model checker |
 | API | `src/api` | In-browser SDK + OMG Query facade + analytics |
 | Diagram | `src/diagram` | Model→diagram mapping, elkjs auto-layout, React Flow renderers |
-| Persistence | `src/persistence` | Project store + import/export |
+| Persistence | `src/persistence` | Project store + import/export; the optional Google Drive client (`src/persistence/drive`) |
 | UI | `src/ui` | React app: explorer, canvas, palette, properties, text editor |
 
 ## Reference docs
@@ -354,13 +354,24 @@ Sysprose is a pure static SPA — no backend needed. `vite.config.ts` uses `base
 
 - **GitHub Pages:** enable Pages (Settings → Pages → GitHub Actions); `.github/workflows/deploy-pages.yml` builds and deploys on push to `main`.
 - **Any static host:** `npm run build` → serve `dist/` (Netlify, S3, nginx, `python -m http.server`, …).
-- **Open a model from a link:** `?model=<url>` fetches a `.sysml` (or model JSON) file and opens it in place of the sample; `?source=<url>` adds a "Propose a change" link beside it. A path relative to the page is fetched same-origin — deploy `dist/` with your model next to it (`?model=model/My.sysml`) for a one-link view of your project. Absolute URLs must be http(s) and allowed by the CSP `connect-src` in `index.html`, which admits `https://raw.githubusercontent.com`. Nothing is persisted: each visit fetches the file again, and edits stay in the browser until saved or exported (`src/ui/linked-model.ts`).
+- **Open a model from a link:** `?model=<url>` fetches a `.sysml` (or model JSON) file and opens it in place of the sample; `?source=<url>` adds a "Propose a change" link beside it. A path relative to the page is fetched same-origin — deploy `dist/` with your model next to it (`?model=model/My.sysml`) for a one-link view of your project. Absolute URLs must be http(s) and allowed by the CSP `connect-src` in `index.html`, which admits `https://raw.githubusercontent.com` for models; the Google hosts beside it are there for the optional Google Drive feature (below), and a `?model=` URL on one of them is fetched too. Nothing is persisted: each visit fetches the file again, and edits stay in the browser until saved or exported (`src/ui/linked-model.ts`).
 - **Optional OMG API server (REST + OSLC):** `npm run serve`, or containerized:
   ```bash
   docker build -t sysprose-api . && docker run -p 5178:5178 sysprose-api   # OpenAPI at :5178/openapi.json
   ```
   Auth is **off by default** (local-first, bind loopback). Before exposing it, set `SYSML_API_TOKEN=<secret>` to require `Authorization: Bearer <secret>` on every request (`GET /health` stays open); a strict `Content-Security-Policy` is always sent, and `CORS_ORIGINS` restricts the browser allowlist.
 - **Optional collaboration relay (real-time editing via Yjs):** `npm run collab` starts a WebSocket relay (default `ws://127.0.0.1:1234`). It binds loopback-only by default (`HOST`); set an Origin allowlist with `COLLAB_ALLOW_ORIGIN`, a shared secret with `COLLAB_TOKEN=<secret>` (clients then connect with `?token=<secret>`), and bound load with `COLLAB_MAX_ROOMS` (default 512) / `COLLAB_MAX_CONNS_PER_ROOM` (default 256) before exposing it.
+- **Optional Google Drive** (students open and save `.sysml` files in their own Drive): place a `drive.json` next to `index.html` in the deployed site —
+  ```json
+  {
+    "clientId": "123456789012-abc.apps.googleusercontent.com",
+    "apiKey": "AIza…",
+    "appId": "123456789012",
+    "privacyUrl": "https://example.org/privacy/",
+    "supportUrl": "https://example.org/issues"
+  }
+  ```
+  `clientId` (a Google OAuth 2.0 *Web application* client: the site's origin as its authorized JavaScript origin, no redirect URI, no secret) and an https `privacyUrl` are required; `apiKey` with `appId` (the Google Cloud project number) enables Google's file picker (**Browse Drive…**) and the two come together or not at all; `supportUrl` is optional. The only scope asked for is `drive.file` — the files a user makes or chooses with the app. Serve it with a JSON content type: a host that answers otherwise leaves the feature off without a message. The build ships a placeholder that leaves the feature off, `{ "$comment": "Google Drive is off. A deployment enables it by replacing this file; see README, Deploy." }`: without a `clientId` there is no **Drive ▾** button and nothing is fetched from Google, and a file that is present but invalid says why in the browser console. The ids in the file are public by design — the client ID travels with every sign-in request, the API key and project number with every Picker request — so restrict the API key at Google to the Picker API and, under *Websites*, to the site's address and `https://docs.google.com/*` (the Picker's own frame calls with the key). The CSP in `index.html` admits Google's sign-in, Picker and Drive hosts for every deployment, inert without the file. What a user sees is in [the user guide](docs/USER-GUIDE.md#81-google-drive-optional); the Google Cloud console checklist and the model site's own setup are in [mbse-workflow's `docs/site.md`](https://github.com/cosmindxu/mbse-workflow/blob/main/docs/site.md).
 
 ## License
 

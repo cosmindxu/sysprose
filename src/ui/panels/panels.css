@@ -1714,6 +1714,12 @@
   font-size: 10px;
   color: var(--text);
 }
+/* What a copied command left out: the name to save the file as, the element a placeholder stands for. */
+.palette-check-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
 
 /* ───────────────────── Checks tab (results of the palette runs) ───────────── */
 .checks-tab {

@@ -56,10 +56,10 @@ const GUIDE = read('docs/USER-GUIDE.md');
  * guide is full of backticked words (`stats`, `where-used`, `part def`) and a
  * scan for "things that look like an id" would either miss ids or invent them.
  */
-function guideTestIds(): string[] {
+function guideTestIds(text: string = GUIDE): string[] {
   const ids: string[] = [];
   let inTable = false;
-  for (const line of GUIDE.split('\n')) {
+  for (const line of text.split('\n')) {
     if (!line.trimStart().startsWith('|')) {
       inTable = false;
       continue;
@@ -176,6 +176,25 @@ describe('the controls the user guide names', () => {
     const named = new Set(guideTestIds());
     const missing = views.filter((v) => !named.has(`tb-view-${v}`));
     expect(missing, `views the guide does not describe:\n${missing.join('\n')}`).toEqual([]);
+  });
+});
+
+describe('the Google Drive table', () => {
+  /**
+   * The Drive panel, strip and link gate are one feature's ~40 controls, and
+   * every one of them is optional: a deployment without Google Drive renders
+   * none. Nothing else would notice the table drifting from the components —
+   * a strip button left out, or a row naming one renamed since — so the
+   * table is held to EXACTLY the `drive-*` ids the source spells, both ways.
+   */
+  it('names exactly the drive-* controls the app renders', () => {
+    const at = GUIDE.indexOf('\n### Google Drive panel and strip\n');
+    expect(at, 'the appendix has no "Google Drive panel and strip" table').toBeGreaterThan(0);
+    const next = GUIDE.indexOf('\n### ', at + 1);
+    const named = [...new Set(guideTestIds(GUIDE.slice(at, next < 0 ? undefined : next)))].sort();
+    const rendered = [...renderedTestIds()].filter((id) => id.startsWith('drive-')).sort();
+    expect(rendered.length, 'the source spells no drive-* test id at all').toBeGreaterThan(30);
+    expect(named).toEqual(rendered);
   });
 });
 

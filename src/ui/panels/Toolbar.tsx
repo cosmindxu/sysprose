@@ -5,6 +5,11 @@
  * Model:   Validate · Auto-layout
  * View:    segmented control over {@link ViewKind} (general/interconnection/…)
  * History: Undo · Redo
+ * Drive:   Drive ▾ beside Collaborate, on a deployment with Google Drive only
+ *
+ * New, Open and Import replace the model, so they run through `driveGuard`:
+ * with unsaved changes to an attached Google Drive file, the Drive strip asks
+ * first. Save also saves to the attached Drive file (see `runSave`).
  *
  * Every control drives the shared {@link useAppStore}; view buttons reuse the
  * declarative {@link VIEW_COMMANDS} list so ids stay in lock-step with the
@@ -15,7 +20,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useAppStore } from '../store';
 import { useRovingMenu } from './useRovingMenu';
 import { Collaborate } from './Collaborate';
-import { VIEW_COMMANDS } from '../commands';
+import { DriveMenu } from './DriveMenu';
+import { VIEW_COMMANDS, runSave } from '../commands';
 import { svgFromDiagram, type DiagramGraph, type ViewKind } from '@diagram/index';
 import { detectFormat, downloadText, downloadBytes, openTextFile } from '@persistence/index';
 import { exportFmu, fmiModelDescription } from '@interop/index';
@@ -289,7 +295,6 @@ function currentTheme(): 'light' | 'dark' {
 
 export function Toolbar(): JSX.Element {
   const newProject = useAppStore((s) => s.newProject);
-  const saveProject = useAppStore((s) => s.saveProject);
   const loadProject = useAppStore((s) => s.loadProject);
   const listProjects = useAppStore((s) => s.listProjects);
   const importModel = useAppStore((s) => s.importModel);
@@ -302,6 +307,8 @@ export function Toolbar(): JSX.Element {
   const setActiveView = useAppStore((s) => s.setActiveView);
   const undo = useAppStore((s) => s.undo);
   const redo = useAppStore((s) => s.redo);
+  const driveGuard = useAppStore((s) => s.driveGuard);
+  const driveFileName = useAppStore((s) => s.drive.file?.name ?? null);
 
   const activeView = useAppStore((s) => s.activeView);
   const projectName = useAppStore((s) => s.projectName);
@@ -352,15 +359,17 @@ export function Toolbar(): JSX.Element {
   }, [pickerOpen]);
 
   const onOpenProject = useCallback(
-    async (name: string) => {
+    (name: string) => {
       setPickerOpen(false);
-      try {
-        await loadProject(name);
-      } catch (err) {
-        console.error('loadProject failed', err);
-      }
+      driveGuard('Open', 'dirty', async () => {
+        try {
+          await loadProject(name);
+        } catch (err) {
+          console.error('loadProject failed', err);
+        }
+      });
     },
-    [loadProject],
+    [loadProject, driveGuard],
   );
 
   /** The current laid-out graph, or an empty projection for non-graph views. */
@@ -424,11 +433,19 @@ export function Toolbar(): JSX.Element {
     try {
       const file = await openTextFile('.sysml,.json,.txt');
       if (!file) return;
-      importModel(file.content, detectFormat(file.name, file.content));
+      // Asked once the file is chosen: a cancelled chooser asks nothing, and
+      // carrying on after the question needs no file chooser of its own.
+      driveGuard('Import', 'dirty', () => {
+        try {
+          importModel(file.content, detectFormat(file.name, file.content));
+        } catch (err) {
+          console.error('import failed', err);
+        }
+      });
     } catch (err) {
       console.error('import failed', err);
     }
-  }, [importModel]);
+  }, [importModel, driveGuard]);
 
   const onImportFmi = useCallback(async () => {
     try {
@@ -463,7 +480,7 @@ export function Toolbar(): JSX.Element {
   // The commands that can give way, as data: the same entry renders as a bar
   // button or as a "More" item, with the same test id either way.
   const collapsible: Record<(typeof COLLAPSE_ORDER)[number], MenuItem> = {
-    'tb-new': { label: 'New', testid: 'tb-new', onClick: () => newProject(), title: 'New project' },
+    'tb-new': { label: 'New', testid: 'tb-new', onClick: () => driveGuard('New', 'dirty', () => newProject()), title: 'New project' },
     'tb-import': { label: 'Import', testid: 'tb-import', onClick: () => void onImport(), title: 'Import .sysml / .json' },
     'tb-import-fmi': { label: 'Import FMI', testid: 'tb-import-fmi', onClick: () => void onImportFmi(), title: 'Import an FMI 3.0 modelDescription.xml as a SysML block' },
     'tb-simulate': { label: 'Simulate', testid: 'tb-simulate', onClick: () => simulate(), title: 'Simulate the active action flow / state machine' },
@@ -505,7 +522,7 @@ export function Toolbar(): JSX.Element {
                     className="toolbar-picker-item"
                     data-testid="project-pick"
                     data-name={name}
-                    onClick={() => void onOpenProject(name)}
+                    onClick={() => onOpenProject(name)}
                   >
                     {name}
                   </button>
@@ -516,8 +533,12 @@ export function Toolbar(): JSX.Element {
         </div>
         <button
           data-testid="tb-save"
-          onClick={() => void saveProject()}
-          title={`Save project "${projectName}"`}
+          onClick={() => void runSave()}
+          title={
+            driveFileName !== null
+              ? `Save to Drive: ${driveFileName} (and this browser)`
+              : `Save project "${projectName}"`
+          }
         >
           Save
         </button>
@@ -564,6 +585,7 @@ export function Toolbar(): JSX.Element {
 
         <span className="toolbar-spacer" />
 
+        <DriveMenu />
         <Collaborate />
         <span className="toolbar-sep" />
         <button data-testid="tb-undo" onClick={() => undo()} disabled={!canUndo} title="Undo (Ctrl+Z)">

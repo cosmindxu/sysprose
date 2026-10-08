@@ -9,8 +9,9 @@
  * certified one).
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { DRIVE_HOSTS, DRIVE_SCOPE } from '../../src/persistence/drive';
 import {
   PRODUCT_NAME,
   PRODUCT_SHORT_NAME,
@@ -66,5 +67,131 @@ describe('static assets stay in step with src/branding.ts', () => {
     const html = root('index.html');
     expect(html).toContain(`<title>${PRODUCT_NAME}</title>`);
     expect(html).toContain(`content="${PRODUCT_SHORT_NAME}"`);
+  });
+});
+
+/**
+ * The Content-Security-Policy in `index.html` admits exactly the hosts the app
+ * can contact.
+ *
+ * The policy is a static `<meta>`, so a Google host the Drive modules reach
+ * without the policy naming it is a request the browser refuses in production
+ * — while CI, which fakes Google with `page.route`, stays green. The revoke
+ * endpoint is the case that motivated this: `google.accounts.oauth2.revoke`
+ * POSTs to `oauth2.googleapis.com`, and a `connect-src` without it makes
+ * "sign-out revokes" silently false. `src/persistence/drive/hosts.ts` lists the
+ * hosts BY DIRECTIVE, and this holds the policy to that list in both
+ * directions: every listed host is admitted where it is used, and each
+ * directive admits nothing beyond what it admitted before Drive and its own
+ * `DRIVE_HOSTS` entries.
+ */
+describe('the CSP admits exactly the hosts the app contacts', () => {
+  /**
+   * The policy as it stood before Google Drive, directive by directive. The
+   * pin holds `index.html` to exactly this plus `DRIVE_HOSTS`, so any other
+   * widening — a scheme source such as `https:`, a `*`, a host admitted under
+   * another directive than the one it is used in, a new directive — fails here
+   * and has to be made on purpose. `frame-src` is new with Drive; before it,
+   * frames fell back to `default-src 'self'`, which its `'self'` keeps.
+   */
+  const PRE_DRIVE: Record<string, readonly string[]> = {
+    'default-src': ["'self'"],
+    'script-src': ["'self'", "'unsafe-inline'"],
+    'style-src': ["'self'", "'unsafe-inline'"],
+    'img-src': ["'self'", 'data:', 'blob:'],
+    'media-src': ["'self'", 'blob:'],
+    'connect-src': ["'self'", 'ws:', 'wss:', 'blob:', 'data:', 'https://raw.githubusercontent.com'],
+    'frame-src': ["'self'"],
+    'font-src': ["'self'", 'data:'],
+    'worker-src': ["'self'", 'blob:'],
+    'manifest-src': ["'self'"],
+    'object-src': ["'none'"],
+    'base-uri': ["'self'"],
+    'form-action': ["'self'"],
+  };
+
+  /** The directives in the order written, names lowercased as the browser reads them. */
+  const directives = (): Array<[string, string[]]> => {
+    const m = /http-equiv="Content-Security-Policy"\s+content="([^"]+)"/.exec(root('index.html'));
+    expect(m, 'index.html no longer carries a CSP meta').not.toBeNull();
+    return m![1]
+      .split(';')
+      .map((d) => d.trim().split(/\s+/))
+      .filter((parts) => parts[0] !== '')
+      .map(([name, ...sources]) => [name.toLowerCase(), sources]);
+  };
+
+  /**
+   * The policy the browser enforces. A repeated directive is ignored after its
+   * first copy (CSP3, "parse a serialized CSP"), so the first copy is the one
+   * read here — a later, complete copy must not hide an earlier, narrower one.
+   */
+  const policy = (): Map<string, string[]> => {
+    const m = new Map<string, string[]>();
+    for (const [name, sources] of directives()) if (!m.has(name)) m.set(name, sources);
+    return m;
+  };
+
+  it('names each directive once, since the browser ignores every copy after the first', () => {
+    const names = directives().map(([name]) => name);
+    expect(names.filter((name, i) => names.indexOf(name) !== i), 'repeated directives').toEqual([]);
+  });
+
+  it('admits every DRIVE_HOSTS entry in the directive it is listed under', () => {
+    const csp = policy();
+    for (const [key, hosts] of Object.entries(DRIVE_HOSTS)) {
+      const directive = `${key}-src`;
+      expect(csp.has(directive), `the CSP has no ${directive}`).toBe(true);
+      for (const host of hosts) {
+        expect(csp.get(directive), `${directive} does not admit ${host}`).toContain(host);
+      }
+    }
+  });
+
+  it('admits the token, Drive and revoke endpoints in connect-src', () => {
+    // Spelled out, beside the loop above: these are the hosts the auth, the
+    // gateway and sign-out fetch from, and the revoke one is the easy one to lose.
+    const connect = policy().get('connect-src') ?? [];
+    for (const host of ['https://accounts.google.com/gsi/', 'https://www.googleapis.com', 'https://oauth2.googleapis.com']) {
+      expect(DRIVE_HOSTS.connect as readonly string[], `hosts.ts lost ${host}`).toContain(host);
+      expect(connect, `connect-src does not admit ${host}`).toContain(host);
+    }
+  });
+
+  it("keeps frames to 'self' plus Google's sign-in and Picker frames", () => {
+    const frame = policy().get('frame-src') ?? [];
+    expect(frame).toContain("'self'");
+    expect([...frame].sort()).toEqual(["'self'", ...DRIVE_HOSTS.frame].sort());
+  });
+
+  it('admits nothing beyond the pre-Drive policy and DRIVE_HOSTS, directive by directive', () => {
+    const csp = policy();
+    const driveHosts = DRIVE_HOSTS as Record<string, readonly string[]>;
+    for (const key of Object.keys(driveHosts)) {
+      expect(PRE_DRIVE, `DRIVE_HOSTS.${key} names a directive the pin does not know`).toHaveProperty(`${key}-src`);
+    }
+    expect([...csp.keys()].sort(), 'the directives').toEqual(Object.keys(PRE_DRIVE).sort());
+    for (const [name, before] of Object.entries(PRE_DRIVE)) {
+      // Covers the unsafe- keywords too: the two 'unsafe-inline' that predate
+      // Drive (the theme preload's inline script, inline styles) and no other.
+      const drive = driveHosts[name.replace(/-src$/, '')] ?? [];
+      expect([...(csp.get(name) ?? [])].sort(), name).toEqual([...before, ...drive].sort());
+    }
+  });
+
+  it('never spells a Google URL in the Drive sources outside hosts.ts', () => {
+    // The scope identifier names a permission and is never fetched; every
+    // other https URL a Drive module could reach must come from hosts.ts, or
+    // the pin above would not see it.
+    const dir = 'src/persistence/drive';
+    const files = readdirSync(resolve(process.cwd(), dir)).filter((f) => f.endsWith('.ts') && f !== 'hosts.ts');
+    expect(files.length).toBeGreaterThan(2);
+    for (const file of files) {
+      const urls = [...root(`${dir}/${file}`).matchAll(/https:\/\/[^\s'"`)]*/g)].map((m) => m[0]);
+      expect(
+        urls.filter((u) => u !== DRIVE_SCOPE),
+        `${dir}/${file} spells a URL outside hosts.ts`,
+      ).toEqual([]);
+    }
   });
 });

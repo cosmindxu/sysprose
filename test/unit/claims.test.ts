@@ -847,6 +847,114 @@ describe('the sentences the model-checking lane ships pass the guard', () => {
 });
 
 /**
+ * What the optional Google Drive feature may say about Google, and about the
+ * files a user keeps there.
+ *
+ * The feature leans on a third party's service, and a page about it invites
+ * three sentences that would be false here. Drive does not keep every save: it
+ * keeps a file's earlier versions for about 30 days, 100 at most, unless one is
+ * marked "Keep forever" — so "Overwrite is harmless, Drive keeps every save"
+ * would talk a student out of the one precaution that matters. Nothing in this
+ * app makes a user's files safe or secure. And Google has neither verified nor
+ * approved it: its brand check is optional and has not been done. None of the
+ * three is written anywhere in the tree; each form fires on its planted
+ * sentence and not on the honest one beside it, so the guard is shown to be
+ * able to go red.
+ *
+ * These forms are read with each file's lines FOLDED into one ({@link
+ * scanFolded}), not line by line: the guide is an 80-column paragraph, and
+ * "Google Drive / keeps every save" wrapped at the slash is the same sentence.
+ * Each form carries its planted sentence wrapped as well, and the line-by-line
+ * scan is shown to miss it, so the fold is what is being tested.
+ */
+const DRIVE_FORMS: Array<{
+  what: string;
+  pattern: RegExp;
+  planted: string;
+  wrapped: string;
+  honest: string;
+}> = [
+  {
+    what: 'Drive keeps every save',
+    pattern:
+      /\b(?:Drive|Google)\b[^.]{0,60}\b(?:keeps?|retains?|stores?|holds?)\s+(?:every|all(?:\s+(?:of\s+)?(?:your|the))?)\s+(?:saves?|versions?|revisions?)\b/i,
+    planted: 'Overwrite freely: Google Drive keeps every save.',
+    wrapped: 'Overwrite freely: Google Drive\nkeeps every save.',
+    honest: 'Drive keeps the previous version for about 30 days (up to 100 versions).',
+  },
+  {
+    what: "a user's files are safe or secure",
+    pattern: /\byour\s+(?:files?|models?|work|data)\s+(?:is|are|stays?|remains?)\s+(?:\w+ly\s+)?(?:safe|secure)\b/i,
+    planted: 'Sign in, and your files are safe in Google Drive.',
+    wrapped: '> Sign in, and your files are\n> safe in Google Drive.',
+    honest: "Your files travel between this browser and Google's servers.",
+  },
+  {
+    what: 'the app is verified, trusted or approved by Google',
+    pattern: /\b(?:verified|trusted|approved|endorsed)\s+by\s+Google\b|\bGoogle[- ](?:verified|approved)\b/i,
+    planted: 'This app is verified by Google.',
+    wrapped: ' * Sign in: this app is verified\n * by Google.',
+    honest: "Until Google's optional brand check, the consent screen shows the site's domain.",
+  },
+];
+
+/**
+ * Scan `docs` for `pattern` with each file's lines folded into one, so that a
+ * claim a paragraph wraps is read as the sentence it is. A line's indent and
+ * its leading comment or quote marker (`//`, ` * `, `>`, `#`) are layout, not
+ * words, and are dropped before the fold. A hit is reported at the line the
+ * match starts on; the negation look-back is {@link negated}'s, over the folded
+ * text. No allowances: none of the forms that use this has one.
+ */
+function scanFolded(docs: readonly Doc[], pattern: RegExp): Hit[] {
+  const hits: Hit[] = [];
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  for (const { file, lines } of docs) {
+    const bare = lines.map((line) => line.replace(/^\s*(?:\/\/+|\*|>|#+)?\s*/, ''));
+    const starts: number[] = [];
+    let at = 0;
+    for (const line of bare) {
+      starts.push(at);
+      at += line.length + 1;
+    }
+    const folded = bare.join(' ');
+    const re = new RegExp(pattern.source, flags);
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(folded)) !== null) {
+      if (negated(folded.slice(Math.max(0, m.index - 200), m.index), m[0])) continue;
+      let i = starts.length - 1;
+      while (starts[i] > m.index) i--;
+      hits.push({ file, line: i + 1, text: lines[i].trim().slice(0, 160) });
+    }
+  }
+  return hits;
+}
+
+const planted = (text: string): Doc[] => [{ file: 'planted.md', lines: text.split('\n') }];
+
+describe('the Google Drive feature overstates neither Drive nor itself', () => {
+  for (const form of DRIVE_FORMS) {
+    it(`no file says ${form.what}`, () => {
+      const hits = scanFolded(TREE, form.pattern);
+      expect(hits, `overstated — ${form.what}:${show(hits)}`).toEqual([]);
+      expect(
+        scanFolded(planted(form.planted), form.pattern),
+        'the form does not fire on its planted sentence',
+      ).toHaveLength(1);
+      expect(
+        scanFolded(planted(form.wrapped), form.pattern),
+        'the fold does not catch the wrapped sentence',
+      ).toEqual([{ file: 'planted.md', line: 1, text: form.wrapped.split('\n')[0].trim() }]);
+      expect(
+        scanText(form.wrapped, form.pattern),
+        'line by line the wrapped sentence is caught already, so it tests no fold',
+      ).toEqual([]);
+      expect(scanFolded(planted(form.honest), form.pattern), 'the form fires on the honest sentence').toEqual([]);
+    });
+  }
+});
+
+/**
  * The plan document is exempt, and the exemption states its reason.
  *
  * `docs/04-formal-verification-plan.md` has to quote every banned form verbatim

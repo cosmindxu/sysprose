@@ -2,6 +2,10 @@
  * One-line strip shown when the session was opened from a `?model=` link: which
  * file is open, that edits stay in this browser, and — when the link carries a
  * `?source=` — where to propose a change. On a failed load it says why instead.
+ *
+ * It gives way to the Google Drive strip (DriveStrip) while a Drive file is
+ * attached or a `?drive=` link is set: the model is then the Drive file's, and
+ * "edits stay in this browser" would no longer be the whole story.
  */
 
 import { useState } from 'react';
@@ -10,8 +14,9 @@ import { modelFileName } from '../linked-model';
 
 export function LinkedModelBanner(): JSX.Element | null {
   const linked = useAppStore((s) => s.linkedModel);
+  const driveHolds = useAppStore((s) => s.drive.file !== null || s.drive.link !== null);
   const [dismissed, setDismissed] = useState(false);
-  if (!linked || linked.status === 'loading' || dismissed) return null;
+  if (!linked || linked.status === 'loading' || dismissed || driveHolds) return null;
 
   const name = modelFileName(linked.url);
   const failed = linked.status === 'failed';

@@ -569,3 +569,29 @@ describe('the README documentation index', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * The Deploy section's Google Drive bullet is the only place a deployer is told
+ * what `drive.json` holds, and it quotes two things the code owns: the
+ * placeholder the build ships, and the fields the configuration has. Either can
+ * change in a commit that never opens the README — the placeholder's sentence
+ * reworded, a field added to `DriveConfig` — and the front page would then
+ * teach a file the app reads differently, with every other guard green.
+ */
+describe('the README Deploy section on Google Drive', () => {
+  it('quotes the drive.json placeholder the build ships, verbatim', () => {
+    const shipped = read('public/drive.json').trim();
+    expect(Object.keys(JSON.parse(shipped)), 'the placeholder holds more than its comment').toEqual(['$comment']);
+    expect(README, 'README.md no longer quotes public/drive.json as shipped').toContain(shipped);
+  });
+
+  it('shows every field a deployment can put in drive.json, and no other', () => {
+    const decl = /export interface DriveConfig \{([\s\S]*?)\n\}/.exec(read('src/persistence/drive/types.ts'));
+    expect(decl, 'src/persistence/drive/types.ts no longer declares DriveConfig').not.toBeNull();
+    const fields = [...decl![1].matchAll(/^\s+(\w+)\??:/gm)].map((m) => m[1]).sort();
+    expect(fields.length, 'DriveConfig declares no field — the scan is wrong').toBeGreaterThan(2);
+    const sample = /- \*\*Optional Google Drive\*\*[\s\S]*?```json\n([\s\S]*?)```/.exec(README);
+    expect(sample, 'README.md no longer shows a drive.json sample under Deploy').not.toBeNull();
+    expect(Object.keys(JSON.parse(sample![1])).sort(), 'the README sample and DriveConfig disagree').toEqual(fields);
+  });
+});

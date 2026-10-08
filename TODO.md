@@ -9,7 +9,10 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       page and this one is not. Decide how to get isolation (COOP/COEP headers from the dev and
       preview servers, and whatever the static host allows), then let the registry's `solver`
       entries run through `z3-bridge` when `crossOriginIsolated` is true. A check that cannot run
-      must keep saying so rather than passing.
+      must keep saying so rather than passing. Isolation has a cost the decision must weigh:
+      `COOP: same-origin` + `COEP: require-corp` break the optional Google Drive feature's sign-in
+      popup and its `docs.google.com` Picker iframe, so in-browser z3 and Google sign-in constrain
+      each other.
 - [ ] **Scope the palette's checks to the selection where the CLI takes `--element`.**
       `where-used` and `check-behaviour` read the selection today; `contracts`, `obligations` and
       `bounds` take `--element`/`--measure` at the terminal and run whole-model here. Either pass
@@ -50,6 +53,31 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
 - [ ] **Keep hand-placed boxes with the saved project.** `diagramPins` (`src/ui/store.ts`) holds
       the boxes a user moved, per view and scope, for the session only; Save/Open drop them.
       Persist them beside the model in the project store (never in the `.sysml` text).
+- [ ] **Leave the standard library out of Export ▾ → SysML.** `exportModel(model, 'sysml')` →
+      `serializeModel` maps `model.roots()` with no `isLibrary` filter, so the exported text carries
+      the merged standard library (~1.28 MB with the full one) after the user's packages. The Text
+      view and Save to Drive serialize the user roots only (`userRootIds`); the export should too,
+      and the guide's §8 note then goes.
+- [ ] **Guard unsaved work on New, Open and Import, not only Drive's.** The three replace the model
+      without asking (one Undo restores it); the strip asks first only when an attached Google Drive
+      file has unsaved changes (`driveGuard`). A general guard needs to know what the browser
+      project last saved, which the store does not record today.
+- [ ] **Ask before a branch switch, a merge or a room join drops unsaved Drive changes.** Switching
+      or merging a branch in the Versions tab (`BottomPanel.tsx` → `switchBranch`,
+      `mergeBranchesCmd`) and joining a collaboration room (`Collaborate.tsx` → `connectCollab`)
+      detach an attached Google Drive file without the strip's question, unsaved changes and all;
+      only **Save to Drive as…** then keeps them, in a new file. Wrap the three call sites in
+      `driveGuard('…', 'dirty', …)` as New, Open and Import are, and drop the guide's §8.1 sentence
+      that names them as the commands that do not ask.
+- [ ] **Apply typed text before the toolbar's Save.** Save and `Ctrl/⌘+S` outside the Text view's
+      editor store the model without applying text typed in the Text view and not yet applied;
+      `Ctrl/⌘+S` inside the editor applies it first (`applyTypedTextToSave`: not a text with a
+      parse error, whose recovery is not what is on screen), and so does every save to Drive.
+- [ ] **Refresh the text buffer after an SDK edit.** Outside a collaboration room,
+      `window.sysml.update` changes the model without regenerating `textBuffer` (the store
+      subscribes to the model only inside `connectCollab`), so the Text view goes stale and an
+      attached Drive file never reads as unsaved: Save to Drive and `Ctrl/⌘+Shift+S` send nothing,
+      while Save and `Ctrl/⌘+S` still store the edit in the browser.
 - [ ] **Cut the crossings of one-layer General views with hub requirements.** Scoped to the
       drone-swarm model's `OA`, the General view still has ~110 crossings, most of them long
       `«trace»` / `«satisfy»` lines converging on a few hubs (`memberA` takes ~20). Try routing

@@ -8,12 +8,16 @@
  * the app is a same-origin fetch and needs no CSP change. An absolute URL must
  * be http(s), and its origin must be allowed by the `connect-src` directive in
  * `index.html` (which admits `https://raw.githubusercontent.com` for exactly
- * this; any other host needs a CSP edit there, not here).
+ * this; the Google hosts beside it are there for the Drive feature, and a URL
+ * on one of them is fetched too, as nothing here sorts hosts by purpose; any
+ * other host needs a CSP edit there, not here).
  *
  * The linked model is never persisted: every visit fetches it afresh, so the
  * link always shows what upstream holds. Edits live in the session until the
- * user saves the project or exports the text — changes go back to the source
- * by whatever process the source repository uses, never from here.
+ * user saves the project or exports the text — or, when the deployment enables
+ * it, saves it to the user's own Google Drive (`src/persistence/drive/`) —
+ * and changes go back to the source by whatever process the source repository
+ * uses, never from here.
  */
 
 /** What the page URL asks for. Both null when there is no `?model=`. */

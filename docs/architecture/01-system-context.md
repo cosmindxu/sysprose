@@ -24,6 +24,7 @@ C4Context
     System_Ext(omg, "OMG SysML v2 Pilot")
     System_Ext(host, "Static host / GitHub Pages")
     System_Ext(browser_storage, "Browser storage", "localStorage + IndexedDB")
+    System_Ext(gdrive, "Google Drive (optional)", "Google Identity Services + Drive REST API + Picker; the user's own Drive")
 
     Rel(modeler, spa, "Authors models (graphical + textual), validates, exports")
     Rel(automator, spa, "Uses window.sysml SDK + API console")
@@ -32,6 +33,7 @@ C4Context
     Rel(admin, relay, "Deploys & operates")
 
     Rel(spa, browser_storage, "Persists projects locally")
+    Rel(spa, gdrive, "Opens and saves .sysml files (opt-in, config-gated)", "HTTPS / OAuth 2.0")
     Rel(spa, relay, "Syncs model CRDT (opt-in)", "WebSocket")
     Rel(spa, omg, "Interop round-trip (opt-in pilot client)", "HTTPS")
     Rel(api, omg, "Interop round-trip (opt-in pilot client)", "HTTPS")
@@ -55,6 +57,7 @@ C4Context
 | **Browser storage** | Persistence backend | `localStorage` (small projects) + `IndexedDB` (default). Same-origin only |
 | **OMG SysML v2 Pilot** | Opt-in interoperability target | `src/interop/pilot-client.ts`; used by `npm run interop` |
 | **Collab Relay** | Opt-in CRDT sync | `scripts/collab-server.ts`; Yjs over WebSocket |
+| **Google Drive** | Opt-in file storage in the user's own Drive | `src/persistence/drive/`; present only when the deployment's `drive.json` names an OAuth client; `drive.file` scope; the browser calls Google directly, with no server of ours |
 
 ## Key invariants
 
@@ -66,4 +69,5 @@ C4Context
    API element-graph (flat `@id`/`@type`, relationships reified as first-class
    elements). See `02`/`03` for the metamodel shape.
 3. **Local-first.** All persistent state lives in the browser; projects,
-   undo/redo history, and (when enabled) the CRDT doc.
+   undo/redo history, and (when enabled) the CRDT doc. The one exception is
+   opt-in: a `.sysml` file the user saves to their own Google Drive.

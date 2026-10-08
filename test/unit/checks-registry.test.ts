@@ -7,8 +7,18 @@
  * here says so instead of returning a verdict it has not earned.
  */
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { buildSampleModel } from '@core/index';
-import { CHECKS, checksFor, runCheck, NOT_ISOLATED, type CheckContext } from '../../src/ui/checks';
+import {
+  CHECKS,
+  checksFor,
+  commandFileName,
+  commandNote,
+  runCheck,
+  NOT_ISOLATED,
+  QUALIFIED_NAME_PLACEHOLDER,
+  type CheckContext,
+} from '../../src/ui/checks';
 import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 import type { ViewKind } from '@diagram/index';
 
@@ -76,6 +86,82 @@ describe('the checks registry', () => {
     // With nothing selected it asks for a selection rather than inventing one.
     expect(runCheck(whereUsedSpec, ctx()).verdict).toBe('not-run');
     expect(whereUsedSpec.command(ctx())).toContain('--element <qualified name>');
+  });
+
+  /**
+   * The command is pasted into a terminal — bash, or on Windows cmd.exe or
+   * PowerShell — and the names in it are not the app's to choose: a Google
+   * Drive file is called whatever its owner typed (the app's own "Save as
+   * copy" makes `Swarm (copy).sysml`), and a qualified name may hold quoted
+   * parts. No quoting is inert in all three shells (cmd.exe reads `&` inside
+   * '…' as the end of a command; a POSIX `'\''` closes a PowerShell string),
+   * so such a name never enters the command: a stand-in of plain characters
+   * does, or the `<qualified name>` placeholder, and the note beside the
+   * command says what each stands for.
+   */
+  it('puts a file or element name into the command only as a plain word, and says what a stand-in stands for', () => {
+    const plain = /^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/;
+    const stats = CHECKS.find((c) => c.id === 'stats')!;
+    const whereUsed = CHECKS.find((c) => c.id === 'where-used')!;
+    const names = [
+      'Swarm (copy).sysml',
+      'R&D swarm.sysml',
+      'a&echo INJECTED&b.sysml',
+      'a|calc|b.sysml',
+      "x';calc;'.sysml",
+      'notes$(echo INJECTED).sysml',
+      '%PATH%.sysml',
+      'say "hi".sysml',
+      "it's; rm -rf x `y` > z.sysml",
+      '-rf.sysml',
+      'Схема.sysml',
+      '',
+    ];
+    for (const name of names) {
+      const file = commandFileName(name);
+      expect(file, name).toMatch(plain);
+      const command = stats.command(ctx({ fileName: name }));
+      expect(command, name).toBe(`npm run sysprose -- stats ${file}`);
+      for (const word of command.split(' ')) expect(word, command).toMatch(/^[A-Za-z0-9_.:-]+$/);
+      // bash hands it on as one word (a shell function stands in for npm).
+      const words = execFileSync('bash', ['-c', `npm() { printf '%s\\n' "$@"; }; ${command}`], { encoding: 'utf8' });
+      expect(words.split('\n').slice(0, -1), command).toEqual(['run', 'sysprose', '--', 'stats', file]);
+      if (name !== '') {
+        expect(commandNote(stats, ctx({ fileName: name })), name).toBe(
+          `Save the file as ${file} to run this: its name, ${name}, has characters a terminal could read as commands.`,
+        );
+      }
+
+      // An element's qualified name with such a part: the placeholder, last, and the name beside the command.
+      const qualified = `P::'${name}'`;
+      const withSelection = ctx({ fileName: 'model.sysml', selectionId: 'x', selectionName: qualified });
+      const elementCommand = whereUsed.command(withSelection);
+      expect(elementCommand).toBe(`npm run sysprose -- where-used model.sysml --element ${QUALIFIED_NAME_PLACEHOLDER}`);
+      expect(commandNote(whereUsed, withSelection)).toContain(`${QUALIFIED_NAME_PLACEHOLDER} stands for ${qualified},`);
+    }
+    // A placeholder left in runs nothing: the shell refuses the line whole.
+    const left = whereUsed.command(ctx());
+    expect(() => execFileSync('bash', ['-c', `npm() { echo RAN; }; ${left}`], { encoding: 'utf8', stdio: 'pipe' })).toThrow(
+      /syntax error/,
+    );
+  });
+
+  it('names a plain file and a plain qualified name as they are, with nothing to say beside the command', () => {
+    const whereUsed = CHECKS.find((c) => c.id === 'where-used')!;
+    const bounds = CHECKS.find((c) => c.id === 'bounds')!;
+    for (const fileName of ['model.sysml', 'Swarm_v2.sysml', 'drone-swarm.sysml', '2026-plan.sysml']) {
+      expect(commandFileName(fileName)).toBe(fileName);
+    }
+    const c = ctx({ fileName: 'Swarm.sysml', selectionId: 'x', selectionName: 'Swarm::Drone::mass' });
+    expect(whereUsed.command(c)).toBe('npm run sysprose -- where-used Swarm.sysml --element Swarm::Drone::mass');
+    expect(bounds.command(c)).toBe('npm run sysprose -- bounds Swarm.sysml --measure Swarm::Drone::mass');
+    expect(commandNote(whereUsed, c)).toBeNull();
+    // A solver check's rows: the command, and — only when it left a name out — what it left out.
+    expect(runCheck(bounds, c).rows.map((r) => r.code)).toEqual(['checks/not-here']);
+    expect(runCheck(bounds, { ...c, fileName: 'Swarm (copy).sysml' }).rows.map((r) => r.code)).toEqual([
+      'checks/not-here',
+      'checks/command-note',
+    ]);
   });
 
   it('turns a check that throws into a finding, never into a pass', () => {
