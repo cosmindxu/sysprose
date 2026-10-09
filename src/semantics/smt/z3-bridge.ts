@@ -395,6 +395,17 @@ let mutexNoted = false;
 let deaths = 0;
 
 /**
+ * How many checks and optimisations this process has handed to a module.
+ *
+ * Counted once the budget is accepted, so a call refused for its budget is not
+ * one, and a call on a module later found dead is. FOR SUITES: the campaign
+ * reads it around each case to tell a case that drove z3 from one that did not,
+ * which reading the case cannot do — most cases reach the solver through an
+ * engine. Counts and nothing else. Monotonic, never reset.
+ */
+let calls = 0;
+
+/**
  * The slice of `z3-solver` this bridge uses.
  *
  * Declared structurally rather than imported: the package is optional, so a
@@ -668,6 +679,11 @@ export function resetZ3Cache(opts: { terminate?: boolean } = {}): void {
 /** How many modules this process has found dead. See {@link deaths}. */
 export function z3DeathCount(): number {
   return deaths;
+}
+
+/** How many checks and optimisations this process has handed to a module. See {@link calls}. */
+export function z3CallCount(): number {
+  return calls;
 }
 
 /**
@@ -966,6 +982,7 @@ async function runCheck(
   // A bad budget is the caller's error and keeps its own stack: it is refused
   // before the module is touched, so it can never be mistaken for a death.
   const timeoutMs = boundOf(opts.timeoutMs);
+  calls += 1;
   return serially(entry, async () => {
     try {
       return await checkOn(entry, script, timeoutMs, opts.variables);
@@ -1162,6 +1179,7 @@ async function runOptimize(
   opts: CheckOptions = {},
 ): Promise<OptimizeOutcome> {
   const timeoutMs = boundOf(opts.timeoutMs);
+  calls += 1;
   return serially(entry, async () => {
     try {
       return await optimizeOn(entry, script, sense, timeoutMs, opts.variables);

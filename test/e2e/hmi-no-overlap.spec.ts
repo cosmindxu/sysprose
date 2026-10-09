@@ -15,7 +15,7 @@
  *  - the active bottom tab was white text on a white ground.
  */
 import { test, expect, type Page, type Locator } from '@playwright/test';
-import { gotoApp } from './fixtures';
+import { commandsUnderMore, gotoApp } from './fixtures';
 
 const WIDTHS = [1024, 1280, 1440, 1920] as const;
 
@@ -147,9 +147,18 @@ for (const width of WIDTHS) {
 }
 
 test.describe('at the e2e viewport', () => {
+  /**
+   * Every spec runs at this viewport and clicks toolbar commands by test id, so
+   * a command More ▾ took is one they cannot find. This is the widths check for
+   * a command added to the bar: it takes its room from the ones COLLAPSE_ORDER
+   * lets go, and when one has gone the failure names it.
+   */
   test('nothing collapses into a More menu, so specs that click toolbar buttons keep working', async ({ page }) => {
     await gotoApp(page);
-    await expect(page.getByTestId('tb-more')).toHaveCount(0);
+    expect(
+      await commandsUnderMore(page),
+      `commands under More ▾ at ${page.viewportSize()?.width} px: the bar no longer fits`,
+    ).toEqual([]);
     for (const id of ['tb-validate', 'tb-check', 'tb-simulate', 'tb-solve', 'tb-layout', 'tb-undo', 'tb-redo']) {
       await expect(page.getByTestId(id)).toBeVisible();
     }

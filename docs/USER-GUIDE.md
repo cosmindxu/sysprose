@@ -154,7 +154,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:173-296`, `src/ui/panels/Toolbar.tsx:501-633`,
+**Source of truth:** `src/ui/App.tsx:173-296`, `src/ui/panels/Toolbar.tsx:523-659`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -3386,7 +3386,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
 **Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:222`,
-`1169-1199`, `3803-3920`, `src/ui/panels/Toolbar.tsx:89-104`, `250-290`,
+`1169-1199`, `3803-3920`, `src/ui/panels/Toolbar.tsx:89-104`, `272-312`,
 `src/api/analytics.ts:1225-1232`, `src/ui/commands.ts:177-291`.
 
 ---
@@ -3437,7 +3437,7 @@ quietly go stale.
 | Simulate | One batch run of a behaviour, as a trace in Problems | `tb-simulate` |
 | Solve | Numeric solve, measures of effectiveness and feasibility | `tb-solve` |
 | Auto-layout | Re-runs the layout, discarding manual node positions (drawable views only) | `tb-layout` |
-| More ▾ | The commands that do not fit the window at this width — New, Import, Import FMI, Simulate, Solve, Auto-layout give way in that order, and Save, Open, Export, Validate, Check, Undo and Redo never do | `tb-more` |
+| More ▾ | The commands that do not fit the window at this width — Import FMI, Import, Auto-layout, Solve, Simulate and New give way in that order; Open, Save, Export, Validate, Check, Drive, Collaborate, Undo, Redo and Theme never do | `tb-more` |
 | Drive ▾ | Google Drive (optional), present only when the deployment configures it. Opening it loads Google's sign-in script. The dot is grey signed out, green signed in, amber when something waits for you (unsaved changes, a conflict, a question), red after an error | `tb-drive` |
 | Drive → Sign in to Google… | Google's account chooser, then Drive's permission for the files you make or choose with this app. Disabled, reading *Loading Google sign-in…*, until Google's script has loaded | `tb-drive-signin` |
 | Drive → Browse Drive… | Google's file picker — your files and those shared with you; the file you choose replaces the model and Undo starts over. Present when the deployment has a picker key | `tb-drive-browse` |

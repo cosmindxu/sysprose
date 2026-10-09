@@ -119,12 +119,30 @@ When an item moves from research to roadmap to todo, move it; don't copy it.
 ```bash
 npm run typecheck        # tsc --noEmit
 npm run lint             # eslint src/ test/ scripts/
-npm test                 # vitest: unit + integration + conformance + server + interop
+npm test -- --reporter=json --outputFile.json=test-results/unit-results.json
+                         # vitest: unit + integration + conformance + server + interop,
+                         # run as CI runs it, with the JSON the summary below is made from
 npm run build            # production build
 npx playwright test --config="$PWD/playwright.config.ts"
 npm run campaign         # agent authoring testing campaign (part of `npm test`)
 ```
 
-`docs/TEST-SUMMARY.md` is generated (`npm run test:report && npm run report`). It is
-git-tracked but routinely stale — keep it out of unrelated commits, or refresh it in its
-own chore commit.
+`docs/TEST-SUMMARY.md` is generated, and CI holds it to CI's own run: the Vitest step of
+`.github/workflows/ci.yml` writes the JSON reporter's output beside the default one, and the
+job's last step regenerates the summary from that JSON and fails on
+`git diff --exit-code docs/TEST-SUMMARY.md`. The suite runs once. A push that adds or removes
+a test, or adds, removes or renames a test file, must therefore carry the refreshed summary
+(in the same commit, or in a chore commit pushed with it), and with it every figure
+`test/unit/docs-counts.test.ts` holds to it: the totals in `docs/CONFORMANCE.md` and
+`docs/TEST-REPORT.md`, and the L6 figure in `docs/AGENT-AUTHORING-CAMPAIGN.md` when
+`test/campaign/invariants.test.ts` changes. Refresh it from the gate's own run, never a second
+one: after the gate's `npm test` above, run the generator on that run's JSON.
+
+```bash
+npx tsx scripts/gen-test-report.ts --from test-results/unit-results.json
+```
+
+The generator refuses a red or skipped run. Run it with the OMG library checked out at
+`~/.stdlib-src`, as CI does (its first step after `npm ci` fetches `sysml.library` at the commit
+`src/library/std/manifest.json` names): without it `test/conformance/corpus.test.ts` runs one
+placeholder case instead of sixteen, and the summary cannot match CI's.

@@ -31,6 +31,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  DEAD_MODULE_MARGIN_MS,
   DEFAULT_TIMEOUT_MS,
   RANDOM_SEED,
   loadZ3,
@@ -109,13 +110,35 @@ beforeAll(async () => {
 }, 60_000);
 
 /**
+ * The least timeout a solver case may run under: the bridge's death guard plus 5 s.
+ *
+ * The bridge presumes a module dead {@link DEAD_MODULE_MARGIN_MS} past a check's
+ * budget, 35 s for the default one. A case vitest stops sooner reads as a plain
+ * timeout instead of as the death the guard would have named (defect D5). The
+ * same floor as `test/campaign/verification.test.ts`, 40 s today.
+ */
+const SOLVER_CASE_TIMEOUT_MS = DEFAULT_TIMEOUT_MS + DEAD_MODULE_MARGIN_MS + 5_000;
+
+/**
  * Skip a solver case where the optional dependency is not installed.
  *
  * `ctx.skip()` rather than an early `return`: a skipped case is reported as a
- * skip, so a run that decided nothing does not read as a run that passed.
+ * skip, so a run that decided nothing does not read as a run that passed. Only
+ * these cases are handed the backend, so the floor is held here, when the case
+ * is declared.
  */
-const withZ3 = (name: string, fn: (z3: Z3Backend) => Promise<void>, timeout = 30_000) =>
-  it(
+const withZ3 = (
+  name: string,
+  fn: (z3: Z3Backend) => Promise<void>,
+  timeout = SOLVER_CASE_TIMEOUT_MS,
+) => {
+  if (timeout < SOLVER_CASE_TIMEOUT_MS) {
+    throw new Error(
+      `"${name}" drives z3 under a ${timeout} ms timeout; a solver case needs at least ` +
+        `${SOLVER_CASE_TIMEOUT_MS} ms, the death guard plus 5 s (defect D5)`,
+    );
+  }
+  return it(
     name,
     async (ctx) => {
       if (!backend) {
@@ -127,6 +150,7 @@ const withZ3 = (name: string, fn: (z3: Z3Backend) => Promise<void>, timeout = 30
     },
     timeout,
   );
+};
 
 describe('the three probe checks, re-pinned', () => {
   withZ3('unsat: an 18.5 kg mass cannot be 30 kg', async (z3) => {

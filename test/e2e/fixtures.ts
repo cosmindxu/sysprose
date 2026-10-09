@@ -256,3 +256,31 @@ export async function revealNode(
 export async function openTab(page: Page, testid: string): Promise<void> {
   await page.getByTestId(testid).click();
 }
+
+/**
+ * The toolbar commands More ▾ holds, by test id, first to give way first: `[]`
+ * when the bar has no More ▾ (the check retries, so a bar still measuring
+ * itself is waited for). When it has one, the menu is opened and read, and a
+ * menu that reads empty is reported as such, never as `[]`: a More ▾ on the bar
+ * cannot pass for a bar that fits.
+ */
+export async function commandsUnderMore(page: Page): Promise<string[]> {
+  const more = page.getByTestId('tb-more');
+  const fits = await expect(more)
+    .toHaveCount(0)
+    .then(
+      () => true,
+      () => false,
+    );
+  if (fits) return [];
+  await more.click();
+  const items = page.getByTestId('tb-more-menu').getByRole('menuitem');
+  await items
+    .first()
+    .waitFor({ timeout: 5_000 })
+    .catch(() => undefined);
+  const taken = await items.evaluateAll((els) =>
+    els.map((el) => el.getAttribute('data-testid') ?? `"${el.textContent?.trim()}" (no test id)`),
+  );
+  return taken.length > 0 ? taken : ['tb-more is on the bar, and its menu reads empty'];
+}

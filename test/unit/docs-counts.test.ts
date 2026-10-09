@@ -13,7 +13,9 @@
  * until the prose is updated with it. That is the intent: the edit is one word.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { isDefinition, type Model } from '@core/index';
 import { buildDiagram, buildRequirementsTable } from '@diagram/index';
@@ -87,6 +89,7 @@ function sourceNumber(file: string, pattern: RegExp): number {
 
 /** What the bundled standard library actually contains, per its own manifest. */
 const libraryManifest = JSON.parse(read('src/library/std/manifest.json')) as {
+  commit: string;
   emittedElementCount: number;
   packages: string[];
 };
@@ -786,6 +789,155 @@ describe('the suite totals agree across the documents that quote them', () => {
     const row = /\| test\/campaign\/invariants\.test\.ts \| (\d+) \| 0 \| 0 \|/.exec(read('docs/TEST-SUMMARY.md'));
     expect(row, 'TEST-SUMMARY has no row for test/campaign/invariants.test.ts').not.toBeNull();
     expect(num(l6![1]), 'the L6 figure is not what the run recorded for invariants.test.ts').toBe(num(row![1]));
+  });
+});
+
+/**
+ * CI holds the summary to CI's own run.
+ *
+ * The block above holds the documents to EACH OTHER; the total itself it cannot
+ * hold, because a test cannot run the suite it is part of — the summary was only
+ * as current as its last hand regeneration. `.github/workflows/ci.yml` can: its
+ * Vitest step writes the JSON reporter's output beside the default one, and the
+ * job's last step regenerates the summary from that JSON and fails on
+ * `git diff --exit-code`.
+ *
+ * These two read the workflow and RUN that last step's script: under `bash -e`,
+ * the runner's shell for a step that names none, with npm, npx and git standing
+ * in for themselves and nothing else on its PATH. What they hold: Vitest starts
+ * once in the job (an npm script counts as what it runs); the check regenerates
+ * from that run's JSON, after it; its script exits non-zero on a diff and on a
+ * run the generator refuses, and zero when the summary is the run's; its `if:`
+ * runs it exactly when the Vitest step was green; neither it nor the job carries
+ * `continue-on-error`; and the OMG library is fetched before the run — without
+ * it `test/conformance/corpus.test.ts` runs one placeholder case instead of
+ * sixteen (CI run 37920809712, on 8cd1bfa: 4172 against the summary's 4187,
+ * that row and no other), and no committed summary could ever match. Reading
+ * the script's text was not enough: the first draft of these read it, and
+ * passed with `exit 1` dropped from the diff's branch, `|| true` after the
+ * diff, or `if: false` on the step.
+ */
+describe('CI regenerates docs/TEST-SUMMARY.md from its own run and fails on a diff', () => {
+  const ci = () => read('.github/workflows/ci.yml');
+  /** The commands a script runs: its lines and its `&&` / `||` / `;` / `|` lists split, a leading `if` / `!` dropped, comments left out. */
+  const commands = (script: string) =>
+    script
+      .replace(/\\\n\s*/g, ' ')
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('#'))
+      .flatMap((l) => l.split(/&&|\|\|?|;/))
+      .map((c) => c.trim().replace(/^(?:(?:if|then|else|do|!|time|exec)\s+)+/, ''))
+      .filter((c) => c !== '');
+  /** The job's steps, in order, one per `- ` item: its own keys (`id`, `if`, …) as written, and its `run:` script ('' for a `uses:` step). */
+  const steps = () =>
+    ci()
+      .split(/^ {6}- /m)
+      .slice(1)
+      .map((block) => {
+        const lines = `${' '.repeat(8)}${block}`.split('\n');
+        const keys = new Map<string, string>();
+        let script = '';
+        for (let i = 0; i < lines.length; i++) {
+          const key = /^ {8}([\w-]+):\s*(.*)$/.exec(lines[i]);
+          if (!key) continue;
+          keys.set(key[1], key[2]);
+          if (key[1] !== 'run') continue;
+          if (!/^\|[-+]?$/.test(key[2])) {
+            script = key[2];
+            continue;
+          }
+          const body: string[] = [];
+          while (i + 1 < lines.length && (lines[i + 1].trim() === '' || lines[i + 1].startsWith(' '.repeat(10)))) body.push(lines[++i].slice(10));
+          script = `${body.join('\n').trim()}\n`;
+        }
+        return { keys, script };
+      });
+  const scripts = (JSON.parse(read('package.json')) as { scripts: Record<string, string> }).scripts;
+  /** What a command runs: an npm script expanded to the commands it runs, leading `VAR=value`s dropped. */
+  const expand = (c: string, depth = 0): string[] => {
+    const npm = /^npm (?:(?:test|t)\b|run(?:-script)?(?: -s| --silent)? ([\w:-]+))(.*)$/.exec(c);
+    if (!npm || depth > 3) return [c.replace(/^(?:\w+=\S*\s+)*/, '')];
+    return commands(`${scripts[npm[1] ?? 'test'] ?? ''}${npm[2]}`).flatMap((s) => expand(s, depth + 1));
+  };
+  /** A local binary, named bare or through npx, `npm exec` / `npm x` or node_modules/.bin. */
+  const bin = /^(?:npx(?: -y| --yes)? |npm (?:exec|x) (?:-- )?|(?:\.\/)?node_modules\/\.bin\/)?/.source;
+  const vitest = new RegExp(`${bin}vitest\\b`);
+  const generator = new RegExp(`${bin}tsx scripts/gen-test-report\\.ts\\b`);
+  /** A command that starts a Vitest run: Vitest itself, or the summary generator without `--from` (it spawns one). An `echo` quoting either does not. */
+  const startsVitest = (c: string) => vitest.test(c) || (generator.test(c) && !/\s--from\s/.test(c));
+  /**
+   * A step's script, run as the runner runs one that names no shell (`bash -e`),
+   * with npm, npx and git standing in for themselves — each prints its call and
+   * returns the status given — and nothing else on its PATH; in a directory of
+   * its own, so nothing it writes lands in the tree.
+   */
+  const runScript = (script: string, status: { npm: number; git: number }) => {
+    const cwd = mkdtempSync(resolve(tmpdir(), 'ci-step-'));
+    try {
+      const stub = (name: string, rc: number) => `${name}() { printf '@call ${name} %s\\n' "$*"; return ${rc}; }`;
+      const prelude = ['PATH=/nonexistent', stub('npm', status.npm), stub('npx', status.npm), stub('git', status.git)];
+      const r = spawnSync('bash', ['-e', '-c', [...prelude, script].join('\n')], { cwd, encoding: 'utf8', timeout: 10_000 });
+      return {
+        status: r.status,
+        calls: r.stdout.split('\n').filter((l) => l.startsWith('@call ')).map((l) => l.slice('@call '.length)),
+        output: `${r.stdout}${r.stderr}`,
+      };
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  };
+
+  it('the summary is regenerated from the Vitest step’s own JSON, after it, and a diff or a refused run fails the job', () => {
+    const s = steps();
+    const runs = s.flatMap((step, i) => commands(step.script).flatMap((c) => expand(c)).filter(startsVitest).map((c) => ({ i, c })));
+    expect(runs.map((r) => r.c), 'ci.yml starts Vitest more or fewer times than once — the summary must reuse the gate’s one run').toHaveLength(1);
+    const [run] = runs;
+    const json = /--reporter=json\b.*--outputFile(?:\.json)?=(\S+)/.exec(run.c)?.[1];
+    expect(json, 'the Vitest step no longer writes a JSON report').toBeDefined();
+    const regen = (c: string) => expand(c).some((r) => generator.test(r) && /\s--from (\S+)/.exec(r)?.[1] === json);
+    const at = s.findIndex((step) => commands(step.script).some(regen));
+    expect(at, `no step regenerates docs/TEST-SUMMARY.md from ${json} after the Vitest step`).toBeGreaterThan(run.i);
+    const check = s[at];
+
+    // It runs whenever the Vitest step was green, whatever the build and E2E
+    // did, in the shell it is run in below, and its failure is the job's.
+    const id = s[run.i].keys.get('id');
+    expect(id, 'the Vitest step has no `id:` for the check to read its outcome by').toBeDefined();
+    expect(check.keys.get('if'), 'the check no longer runs exactly when the Vitest step was green').toBe(
+      `\${{ !cancelled() && steps.${id}.outcome == 'success' }}`,
+    );
+    expect(check.keys.has('continue-on-error'), 'the check’s failure is no longer the job’s').toBe(false);
+    expect(ci(), 'a failing step no longer fails the job').not.toMatch(/^ {0,4}continue-on-error:/m);
+    expect(check.keys.has('shell') || /^ {0,4}defaults:/m.test(ci()), 'the check no longer runs in the runner’s default shell, bash -e').toBe(false);
+
+    // Its own script: zero when the summary is the run's, non-zero on a diff
+    // and on a run the generator refuses (red or skipped), and no Vitest run.
+    const same = runScript(check.script, { npm: 0, git: 0 });
+    expect(same.status, `the check fails although the summary is the run’s:\n${same.output}`).toBe(0);
+    const regenerated = same.calls.findIndex(regen);
+    expect(regenerated, `the check’s script does not run the generator on ${json}:\n${same.output}`).toBeGreaterThanOrEqual(0);
+    expect(
+      same.calls.findIndex((c) => /^git diff\b.*\s--exit-code\b.*\sdocs\/TEST-SUMMARY\.md$/.test(c)),
+      `the check does not diff docs/TEST-SUMMARY.md after regenerating it:\n${same.output}`,
+    ).toBeGreaterThan(regenerated);
+    expect(same.calls.flatMap((c) => expand(c)).filter(startsVitest), 'the check starts a Vitest run of its own').toEqual([]);
+    const stale = runScript(check.script, { npm: 0, git: 1 });
+    expect(stale.status, `a diff no longer fails the check:\n${stale.output}`).not.toBe(0);
+    const refused = runScript(check.script, { npm: 1, git: 0 });
+    expect(refused.status, `a run the generator refuses no longer fails the check:\n${refused.output}`).not.toBe(0);
+  });
+
+  it('CI fetches the OMG library at the commit src/library/std was converted from, before the Vitest step', () => {
+    const s = steps();
+    const fetch = (script: string) => commands(script).join('\n');
+    const at = s.findIndex(
+      (step) => fetch(step.script).includes(libraryManifest.commit) && fetch(step.script).includes('Systems-Modeling/SysML-v2-Release'),
+    );
+    expect(at, `no step fetches Systems-Modeling/SysML-v2-Release at ${libraryManifest.commit}`).toBeGreaterThanOrEqual(0);
+    expect(fetch(s[at].script), 'the fetch is not where corpus.test.ts reads by default').toContain('$HOME/.stdlib-src');
+    expect(at, 'the library is fetched after the Vitest step has run').toBeLessThan(
+      s.findIndex((step) => commands(step.script).some((c) => expand(c).some(startsVitest))),
+    );
   });
 });
 

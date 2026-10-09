@@ -62,7 +62,7 @@ commit**, and refreshes `docs/TEST-REPORT.md` counts.
 
 ### Platform / distribution
 - **PWA (installable, offline)** — a web manifest (standalone, themed, icon) + a build-time-generated, **content-versioned** service worker (inline `pwaServiceWorker` Vite plugin) that **atomically precaches the boot shell** (index.html + entry + static vendor chunks + CSS) and network-first-caches the rest at runtime; installs + works offline, transparent while online, and purges the old cache on every redeploy. `E gui-pwa`.
-- **CI static deploy** — `.github/workflows/ci.yml` runs the full gate (typecheck · vitest · build · Playwright E2E) on every push/PR; `deploy-pages.yml` builds and publishes `dist/` to GitHub Pages on `main` (the relative base makes the Pages subpath work). *(Runs on GitHub; validated locally as well-formed.)*
+- **CI static deploy** — `.github/workflows/ci.yml` runs the full gate (typecheck · vitest · build · Playwright E2E) on every push/PR, and fails when `docs/TEST-SUMMARY.md` is not the summary of that vitest run; `deploy-pages.yml` builds and publishes `dist/` to GitHub Pages on `main` (the relative base makes the Pages subpath work). *(Runs on GitHub; validated locally as well-formed.)*
 
 ### Accessibility / polish
 - **Reduced-motion** — a global `prefers-reduced-motion` CSS reset (zeroes transitions/animations/scroll-behavior) + the diagram fit animations gated to 0ms. `E gui-a11y`.

@@ -66,7 +66,13 @@ import { checkConstraints, checksByRow, type ConstraintCheck } from '@semantics/
 import { obligationsOf, type Obligation } from '@semantics/obligations';
 import { checkConstraintsNumeric, solveFeasible } from '@semantics/solver';
 import { resolveFreeFeatures } from '@semantics/engines/smt';
-import { loadZ3, resetZ3Cache, z3Disabled } from '@semantics/smt/z3-bridge';
+import {
+  DEAD_MODULE_MARGIN_MS,
+  DEFAULT_TIMEOUT_MS,
+  loadZ3,
+  resetZ3Cache,
+  z3Disabled,
+} from '@semantics/smt/z3-bridge';
 import { BINARY_PREFIXES, SI_PREFIXES, UNIT_REGISTRY, resolveUnit } from '@semantics/units';
 import { loadModelText } from '@text/load';
 import { validate } from '@validation/index';
@@ -187,16 +193,30 @@ let absentReason = '';
 const installed = existsSync(root('node_modules/z3-solver/package.json'));
 
 /**
+ * The least timeout a solver case may run under: the bridge's death guard
+ * (a check's budget plus {@link DEAD_MODULE_MARGIN_MS}, 35 s for the default
+ * one) plus 5 s, as in `test/campaign/verification.test.ts` (defect D5).
+ */
+const SOLVER_CASE_TIMEOUT_MS = DEFAULT_TIMEOUT_MS + DEAD_MODULE_MARGIN_MS + 5_000;
+
+/**
  * Skip a solver case where the optional dependency is not installed.
  *
  * The same pattern, for the same reason, as
  * `test/integration/smt-z3.integration.test.ts`: a clone that skipped optional
  * dependencies must still run every suite, so the rules that need a backend
  * degrade to a SKIP rather than to a failure — and the skip is itself guarded
- * in `beforeAll`, so it can never fire on a machine that has the package.
+ * in `beforeAll`, so it can never fire on a machine that has the package. The
+ * timeout floor is held when the case is declared, as it is there.
  */
-const withZ3 = (name: string, fn: () => void | Promise<void>, timeout = 120_000) =>
-  it(
+const withZ3 = (name: string, fn: () => void | Promise<void>, timeout = 120_000) => {
+  if (timeout < SOLVER_CASE_TIMEOUT_MS) {
+    throw new Error(
+      `"${name}" drives z3 under a ${timeout} ms timeout; a solver case needs at least ` +
+        `${SOLVER_CASE_TIMEOUT_MS} ms, the death guard plus 5 s (defect D5)`,
+    );
+  }
+  return it(
     name,
     async (ctx) => {
       if (!backendPresent) {
@@ -208,6 +228,7 @@ const withZ3 = (name: string, fn: () => void | Promise<void>, timeout = 120_000)
     },
     timeout,
   );
+};
 
 /** The reasons the SMT engine is allowed to be MORE conservative than a point evaluation. */
 const CONSERVATIVE_CODES = new Set([

@@ -37,7 +37,9 @@
  * guard — New, Open and Import on the toolbar, a branch switch and a merge in
  * the Versions tab, a room join under Collaborate — which asks in Drive's
  * words with a Drive file attached and, without one, about work not saved in
- * this browser: on a deployment without Google Drive too.
+ * this browser: on a deployment without Google Drive too. The toolbar it sits
+ * on holds every command, Drive ▾ among them, to one rule: it gives way under
+ * More ▾ or is pinned to the bar.
  *
  * The Drive strip (`DriveStrip`) is rendered from prepared store states, one
  * per row it can show, and held to the order the slice documents — a
@@ -143,7 +145,7 @@ import {
   driveStripStatus,
 } from '../../src/ui/panels/DriveStrip';
 import { LinkedModelBanner } from '../../src/ui/panels/LinkedModelBanner';
-import { Toolbar } from '../../src/ui/panels/Toolbar';
+import { COLLAPSE_ORDER, PINNED_COMMANDS, Toolbar } from '../../src/ui/panels/Toolbar';
 import { BottomPanel } from '../../src/ui/panels/BottomPanel';
 import { Collaborate } from '../../src/ui/panels/Collaborate';
 import { commandById } from '../../src/ui/commands';
@@ -3059,6 +3061,42 @@ describe('Toolbar — where Drive ▾ sits, and the commands that replace the mo
     const plain = render(React.createElement(Toolbar));
     expect(plain.queryByTestId('tb-drive')).toBeNull();
     expect(plain.container.querySelector('.toolbar-spacer')?.nextElementSibling).toHaveClass('toolbar-collab');
+  });
+
+  it('every command on the bar gives way under More ▾ in COLLAPSE_ORDER, or is pinned — Drive ▾ too', () => {
+    // jsdom lays nothing out, so this is the bar at its narrowest: every
+    // command COLLAPSE_ORDER lets go is under More ▾, and what is left on the
+    // bar is what never leaves it. A command added to the bar in neither list
+    // would stay there too, without anyone deciding it should. A control is
+    // anything a user can reach or a spec can click: a native control, an
+    // interactive role, anything focusable, and anything with a `tb-` test id.
+    const view = render(React.createElement(Toolbar));
+    const bar = view.container.querySelector('.toolbar')!;
+    const roles = [
+      'button', 'link', 'switch', 'checkbox', 'radio', 'tab', 'combobox',
+      'slider', 'spinbutton', 'textbox', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+    ];
+    const controls = [
+      'button, a, input, select, textarea, [tabindex], [data-testid^="tb-"]',
+      ...roles.map((r) => `[role="${r}"]`),
+    ].join(', ');
+    const onBar = [...bar.querySelectorAll<HTMLElement>(controls)].map(
+      (el) => el.dataset.testid ?? `<${el.localName}> "${el.textContent?.trim()}" (no test id)`,
+    );
+    const pinned = new Set<string>(PINNED_COMMANDS);
+    expect(
+      onBar.filter((id) => id !== 'tb-more' && !pinned.has(id)),
+      'on the bar at its narrowest, yet not pinned: put each in COLLAPSE_ORDER or PINNED_COMMANDS (Toolbar.tsx)',
+    ).toEqual([]);
+    expect(PINNED_COMMANDS.filter((id) => !onBar.includes(id)), 'pinned, yet not on the bar').toEqual([]);
+    expect(COLLAPSE_ORDER.filter((id) => pinned.has(id)), 'both pinned and let go').toEqual([]);
+
+    fireEvent.click(view.getByTestId('tb-more'));
+    const under = [...screen.getByTestId('tb-more-menu').querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(
+      under.map((el) => el.dataset.testid),
+      'what More ▾ holds at the narrowest bar, first to give way first',
+    ).toEqual([...COLLAPSE_ORDER]);
   });
 
   it('Save saves in this browser — and, with a Drive file attached, to that file too', () => {

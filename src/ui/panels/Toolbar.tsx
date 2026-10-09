@@ -105,11 +105,33 @@ const GRAPH_VIEWS = new Set<ViewKind>([
 
 /**
  * Toolbar commands that give way to a "More ▾" menu when the bar is too narrow,
- * first to last. Save, Open, Export, Validate, Check, Undo and Redo are not in
- * the list: they never leave the bar. Before this, the bar scrolled sideways
- * and at 1024 px Undo, Redo and the theme toggle were simply off-screen.
+ * first to last. The rest are {@link PINNED_COMMANDS}: they never leave the
+ * bar. Before this, the bar scrolled sideways and at 1024 px Undo, Redo and
+ * the theme toggle were simply off-screen.
  */
-const COLLAPSE_ORDER = ['tb-import-fmi', 'tb-import', 'tb-layout', 'tb-solve', 'tb-simulate', 'tb-new'] as const;
+export const COLLAPSE_ORDER = ['tb-import-fmi', 'tb-import', 'tb-layout', 'tb-solve', 'tb-simulate', 'tb-new'] as const;
+
+/**
+ * Toolbar commands that never leave the bar, whatever its width. The overflow
+ * never reads this list: a command outside {@link COLLAPSE_ORDER} stays put
+ * anyway. The list exists so that a command stays because someone decided it
+ * should, not because it was left out of the one above: `drive.test.ts` fails
+ * on a command on the bar that is in neither. Drive ▾ renders only where
+ * Google Drive is set up.
+ */
+export const PINNED_COMMANDS = [
+  'tb-open',
+  'tb-save',
+  'tb-export',
+  'tb-validate',
+  'tb-check',
+  'tb-drive',
+  'tb-collab',
+  'tb-undo',
+  'tb-redo',
+  'tb-theme',
+] as const;
+
 const TOOLBAR_GAP = 6;
 const MORE_WIDTH_GUESS = 72;
 
@@ -500,7 +522,11 @@ export function Toolbar(): JSX.Element {
 
   return (
     <>
-      {/* ── Row 1: command bar (no view tabs → no horizontal scroll) ── */}
+      {/* ── Row 1: command bar (no view tabs → no horizontal scroll) ──
+          A command added to this bar goes into COLLAPSE_ORDER or
+          PINNED_COMMANDS, and the bar, Drive ▾ included, must still fit the
+          Playwright viewport with nothing under More ▾: specs click commands
+          by test id. hmi-no-overlap.spec.ts and drive.spec.ts name what went. */}
       <div className="toolbar" ref={barRef}>
         <span className="toolbar-brand" data-testid="toolbar-brand">
           {PRODUCT_NAME}

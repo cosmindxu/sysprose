@@ -31,7 +31,7 @@
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { captureErrors, findElementId, gotoApp, openTab } from './fixtures';
+import { captureErrors, commandsUnderMore, findElementId, gotoApp, openTab } from './fixtures';
 import { hasNamed, modelSize, renameInTree } from './model-helpers';
 import {
   FAKE_ACCOUNT,
@@ -1357,12 +1357,14 @@ test('with Drive configured the toolbar keeps its commands at the e2e viewport',
   ]) {
     await expect(page.getByTestId(id), id).toBeVisible();
   }
-  // Drive ▾ adds width beside Collaborate; New, the first command to give
-  // way, is on the bar or in More ▾ — either way it is there.
-  if (!(await page.getByTestId('tb-new').isVisible())) {
-    await page.getByTestId('tb-more').click();
-    await expect(page.getByTestId('tb-more-menu').getByTestId('tb-new')).toBeVisible();
-  }
+  // Drive ▾ adds width beside Collaborate, and still nothing gives way at the
+  // viewport the specs run at, where they click toolbar commands by test id.
+  // This is the fullest bar they drive, so a command added to it runs out of
+  // room here first; the failure names the commands that went.
+  expect(
+    await commandsUnderMore(page),
+    `commands under More ▾ at ${page.viewportSize()?.width} px with Drive ▾ on the bar: the bar no longer fits`,
+  ).toEqual([]);
   expect(fakes.googleRequests).toEqual([]);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });

@@ -141,6 +141,41 @@ describe('the controls the user guide names', () => {
     ).toEqual([]);
   });
 
+  it('include a More ▾ row that names what gives way, in the order it does, and what never does', () => {
+    // The row once named New first and Import FMI third, while Import FMI goes
+    // first and New last, and left Drive ▾, Collaborate and the theme toggle
+    // out of what stays. Both lists are read from the source (importing
+    // Toolbar.tsx would load the store), each command named by its own row's
+    // label, so a command added to either list fails here until the row names it.
+    const toolbar = read('src/ui/panels/Toolbar.tsx');
+    const list = (name: string): string[] => {
+      const decl = new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\]`).exec(toolbar);
+      if (!decl) throw new Error(`Toolbar.tsx no longer declares ${name} as an array literal`);
+      return [...decl[1].matchAll(/'(tb-[a-z0-9-]+)'/g)].map((m) => m[1]);
+    };
+    const at = GUIDE.indexOf('\n### Toolbar, row 1\n');
+    expect(at, 'the appendix has no "Toolbar, row 1" table').toBeGreaterThan(0);
+    const next = GUIDE.indexOf('\n### ', at + 1);
+    const rows = GUIDE.slice(at, next < 0 ? undefined : next)
+      .split('\n')
+      .filter((line) => line.startsWith('|'))
+      .map((line) => line.split('|').map((c) => c.trim()));
+    // Each id → its row's label; "Undo / Redo" names `tb-undo`, `tb-redo` in turn.
+    const label = new Map<string, string>();
+    for (const cells of rows) {
+      const ids = [...cells[cells.length - 2].matchAll(/`([a-z0-9-]+)`/g)].map((m) => m[1]);
+      const names = cells[1].replace(/ ▾$/, '').split(' / ');
+      ids.forEach((id, i) => label.set(id, names.length === ids.length ? names[i] : names[0]));
+    }
+    const more = rows.find((cells) => cells[cells.length - 2] === '`tb-more`')?.[2] ?? '';
+    const said = /— (.*) give way in that order; (.*) never do$/.exec(more);
+    expect(said, 'the More ▾ row no longer reads "— … give way in that order; … never do"').not.toBeNull();
+    const names = (s: string): string[] => s.split(/, | and /);
+    const labels = (ids: string[]): string[] => ids.map((id) => label.get(id) ?? `${id} (no row of its own)`);
+    expect(names(said![1]), 'what gives way, first to last').toEqual(labels(list('COLLAPSE_ORDER')));
+    expect(names(said![2]), 'what never leaves the bar').toEqual(labels(list('PINNED_COMMANDS')));
+  });
+
   it('still cover the panels and the bottom panel', () => {
     const named = new Set(guideTestIds());
     const dropped = MUST_DOCUMENT.filter((id) => !named.has(id));

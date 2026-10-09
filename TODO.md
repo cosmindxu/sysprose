@@ -21,22 +21,17 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       today, which is right for the sample model (each is well under a frame) but not for a large
       one: `reach` and `check-behaviour` walk configuration graphs. Measure first, then move the
       walkers into the worker the solver lane already uses.
-- [ ] **Keep the toolbar's `More` menu honest as commands are added.** The overflow order lives in
-      `COLLAPSE_ORDER` (`src/ui/panels/Toolbar.tsx`) and the guard is one e2e assertion that
-      nothing collapses at the Playwright viewport. A new command added ahead of that list without
-      a widths check would push Validate or Check into the menu and break every spec that clicks
-      them.
 - [ ] **Say on screen when the palette column is put away.** The collapsed strip is a 24 px
       chevron with a tooltip; a first-time reader who collapses it has no label telling them what
       it hides.
-- [ ] **Stop `docs/TEST-SUMMARY.md` from drifting.** Add a CI step that runs
-      `npx tsx scripts/gen-test-report.ts --from <the gate's vitest JSON>` and then
-      `git diff --exit-code docs/TEST-SUMMARY.md`. Today the documents are checked against each other,
-      but the suite total is only as current as the last manual regeneration.
-- [ ] **Close the known gap in the z3-death handling (D5).** A z3 hang inside a plain `it(` that keeps
-      vitest's 5 s default timeout is killed before the 35 s death guard fires. That case reads as a
-      timeout, and the `[D5]` line lands on the next case. Give every solver-driving plain `it(` in
-      `test/campaign/verification.test.ts` an explicit timeout of at least 40 s.
+- [ ] **Hold z3's timeout floor where the D5 guard cannot see.** The last case of
+      `test/campaign/verification.test.ts` holds every case that hands z3 a check to 40 s: the death
+      guard for the DEFAULT 5 s budget, plus 5 s. A check given a larger budget needs that budget plus
+      35 s, and nothing holds a case to it (today "an undecided check spends the 2 even when the same
+      tree found cut sets" passes 30 s under a 120 s timeout, which is enough). Hooks are not guarded
+      (vitest's `hookTimeout` is 10 s; the two that reach z3 now are given 240 s and 600 s). Have the
+      bridge report the largest budget handed to it while a case ran, and read the counter around the
+      hooks that load z3.
 - [ ] **Give register row W2's per-step alternative a producer.** `ExploreResult.successors` stores
       no transition id per edge, so the trap entry path can never use the per-step wording
       (`TRAP_ENTRY_WALK_ADMITS` exists and is asserted unprinted). Retain the transition id beside each

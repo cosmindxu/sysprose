@@ -113,7 +113,16 @@ import {
   writeVerdict,
 } from '@semantics/index';
 import { obligationsOf } from '@semantics/obligations';
-import { loadZ3, resetZ3Cache, z3DeathCount, z3Disabled, type Z3Backend } from '@semantics/smt/z3-bridge';
+import {
+  DEAD_MODULE_MARGIN_MS,
+  DEFAULT_TIMEOUT_MS,
+  loadZ3,
+  resetZ3Cache,
+  z3CallCount,
+  z3DeathCount,
+  z3Disabled,
+  type Z3Backend,
+} from '@semantics/smt/z3-bridge';
 import { loadModelText } from '@text/load';
 import { serializeElement, serializeModel } from '@text/serializer';
 import { RULES_BY_ID } from '@validation/rules';
@@ -288,6 +297,37 @@ beforeAll(async () => {
 }, 60_000);
 
 /**
+ * The least timeout a case that drives z3 may run under: past the death guard.
+ *
+ * The bridge presumes a module dead {@link DEAD_MODULE_MARGIN_MS} past a check's
+ * budget, 35 s for the default one. A case vitest stops first (its default is
+ * 5 s) reads as a plain timeout, and the death the guard records later lands on
+ * whichever case is running then: the `[D5]` line names the wrong case, and the
+ * wrapper below re-runs that case if it went red. The floor is the guard plus
+ * 5 s, 40 s today.
+ */
+const SOLVER_CASE_TIMEOUT_MS = DEFAULT_TIMEOUT_MS + DEAD_MODULE_MARGIN_MS + 5_000;
+
+/**
+ * Every case so far whose body handed z3 a check, the timeout it was registered
+ * with, and the bodies that ran beside it: those still running when it began
+ * (`pending`) and those begun before it settled (`overtaken`).
+ *
+ * The record is the bridge's process-wide counter read around the body, so it
+ * belongs to the case only when no other body ran meanwhile. One can: vitest
+ * moves on from a case it stopped while that body is still issuing checks, and
+ * a body a death re-runs goes on in the background. Either already left a red.
+ */
+const solverCases: Array<{ name: string; timeout: number | undefined; pending: string[]; overtaken: string[] }> = [];
+
+/** Every case whose body resolved, so the guard can tell a case that drove nothing from one that went red first. */
+const casesPassed = new Set<string>();
+
+/** The bodies begun so far, in order, and the ones not yet settled. */
+const bodiesBegun: string[] = [];
+const bodiesRunning = new Set<{ name: string; timeout: number | undefined }>();
+
+/**
  * `it`, re-run ONCE when — and only when — the solver died under the case.
  *
  * Defect D5: z3's WASM build can die under a check on a loaded runner (an
@@ -302,16 +342,25 @@ beforeAll(async () => {
  * intermittent of any other kind would then pass behind a yellow suffix — this
  * one re-runs nothing it cannot name, and names it on stderr first.
  *
- * Shadowing vitest's `it` file-locally is deliberate: 25 of the plain cases
- * below drive the solver too (the golden loop, the exit-contract sweep, the
- * method gate), so a wrapper on `withZ3` alone would cover two thirds of the
- * exposure. Every `it(` in this file is the plain three-argument form.
+ * Shadowing vitest's `it` file-locally is deliberate: plain cases drive the
+ * solver too (the golden loop among them), so a wrapper on `withZ3` alone would
+ * miss them. Every `it(` in this file is the plain three-argument form.
+ *
+ * The wrapper also notes every case that handed z3 a check, with the timeout it
+ * was given, for the guard at the end of this file: a case like that has to
+ * outlast {@link SOLVER_CASE_TIMEOUT_MS}, and which cases are like that is
+ * measured here, never read off the source.
  */
 const it = (name: string, fn: TestFunction, timeout?: number) =>
   vitestIt(
     name,
     async (ctx) => {
+      const body = { name, timeout };
+      const pending = [...bodiesRunning].map((b) => b.name);
+      const ordinal = bodiesBegun.push(name);
+      bodiesRunning.add(body);
       const deathsBefore = z3DeathCount();
+      const callsBefore = z3CallCount();
       try {
         await fn(ctx);
       } catch (err) {
@@ -322,7 +371,13 @@ const it = (name: string, fn: TestFunction, timeout?: number) =>
         );
         resetZ3Cache();
         await fn(ctx);
+      } finally {
+        bodiesRunning.delete(body);
+        if (z3CallCount() !== callsBefore) {
+          solverCases.push({ name, timeout, pending, overtaken: bodiesBegun.slice(ordinal) });
+        }
       }
+      casesPassed.add(name);
     },
     timeout,
   );
@@ -344,8 +399,8 @@ afterEach(() => {
  *
  * One context accumulates state across checks — the CLI campaign measured a
  * nonlinear optimisation that answered in 200 ms on a fresh context driving
- * z3 into a 4.2 GB heap request on a used one — and this file's 101 solver
- * cases (76 `withZ3`, 25 plain) used to share a single context from the first
+ * z3 into a 4.2 GB heap request on a used one — and this file's solver cases,
+ * `withZ3` and plain alike, used to share a single context from the first
  * block to the last. Every block holding one of them now starts on its own
  * module, so no context outlives its block; the one block with no solver case
  * (the model digest) runs on whatever the block before it left. Measured:
@@ -5468,4 +5523,70 @@ describe('L8 — staleness scoped to what provably cannot affect the proof', () 
     const total = first.records.reduce((n, rec) => n + (rec.proofScope?.footprint.length ?? 0), 0);
     expect(total, 'the measured footprint total on this model').toBe(24);
   }, 300_000);
+});
+
+/**
+ * D5's last gap: a case that drives z3 outlasts the death guard.
+ *
+ * Read off the wrapper's record, not off the source, because the source does
+ * not say which cases reach the solver: most reach it through an engine, and
+ * the method gate's cases call the same `verifyModel` the golden loop does,
+ * under `--engine literal`. Last in the file, so every case before it has run.
+ * Not vacuous: each golden case that needs a backend drives z3 from a plain
+ * `it(`, and one that passed without being recorded is the record broken.
+ *
+ * A case that began while another body still ran is not asked for a timeout:
+ * its count may be that body's checks, so it is named beside the body instead.
+ * Every list is built before any is asserted, and each is asserted softly, so
+ * no failure here can hide another.
+ */
+describe('D5 — every case that drives z3 outlasts the death guard', () => {
+  it('names no case that handed z3 a check under a timeout shorter than the guard', (ctx) => {
+    if (!backendPresent) {
+      expect(absentReason.length, 'no backend and no reason either').toBeGreaterThan(20);
+      ctx.skip();
+      return;
+    }
+    const limit = (timeout: number | undefined) => (timeout === undefined ? 'vitest’s 5 s default' : `${timeout} ms`);
+    const short = solverCases
+      .filter((c) => c.pending.length === 0 && (c.timeout === undefined || c.timeout < SOLVER_CASE_TIMEOUT_MS))
+      .map(
+        (c) =>
+          `${c.name} (${limit(c.timeout)}` +
+          (c.overtaken.length > 0
+            ? `; vitest moved on before it settled, so its count may include ${c.overtaken.join(', ')})`
+            : ')'),
+      );
+    const shared = solverCases
+      .filter((c) => c.pending.length > 0)
+      .map((c) => `${c.name} (began while ${c.pending.join(', ')} still ran)`);
+    const unsettled = [...bodiesRunning]
+      .filter((b) => b.name !== ctx.task.name)
+      .map((b) => `${b.name} (${limit(b.timeout)})`);
+    const recorded = new Set(solverCases.map((c) => c.name));
+    const unrecorded = caseNames
+      .filter((n) => needsSolver(JSON.parse(read(`test/fixtures/verification/${n}/meta.json`)) as Meta))
+      .map((n) => `${n} matches its golden verdict`)
+      .filter((n) => casesPassed.has(n) && !recorded.has(n));
+    expect
+      .soft(
+        short,
+        `these cases drive z3 under a timeout shorter than ${SOLVER_CASE_TIMEOUT_MS} ms, the death guard plus 5 s; ` +
+          'give each an explicit one at least that long',
+      )
+      .toEqual([]);
+    expect
+      .soft(
+        shared,
+        'these cases began while a case vitest had stopped was still running, so their z3 checks cannot be told ' +
+          'from that case’s: look at the case each one names',
+      )
+      .toEqual([]);
+    expect
+      .soft(unsettled, 'these cases were still running when this one began: vitest stopped them first')
+      .toEqual([]);
+    expect
+      .soft(unrecorded, 'golden cases that passed through z3 went unrecorded: the record is broken')
+      .toEqual([]);
+  });
 });

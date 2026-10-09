@@ -320,7 +320,7 @@ See [`docs/03-architecture-and-plan.md`](docs/03-architecture-and-plan.md). Laye
 
 ## Develop
 
-> Node 22. The optional corpus-conformance tests read a local checkout of the OMG `sysml.library` from `~/.stdlib-src` (override with `SYSML_CORPUS_ROOT`) and skip when it is absent.
+> Node 22. The optional corpus-conformance tests read a local checkout of the OMG `sysml.library` from `~/.stdlib-src` (override with `SYSML_CORPUS_ROOT`) and run one placeholder case when it is absent. CI fetches it, and fails when `docs/TEST-SUMMARY.md` is not the summary of its own run: refresh the summary from a run with the checkout present, as the Validation gate in [`CLAUDE.md`](CLAUDE.md) says.
 >
 > Maintainer note: if your checkout sits on a VirtualBox shared folder, keep `node_modules` on the guest filesystem and use `vite build` + `vite preview` — vboxsf breaks the dev server's file-watching.
 
@@ -330,7 +330,7 @@ npm run typecheck      # tsc --noEmit
 npm test               # vitest unit/integration
 npm run build && npm run preview   # serve the app at :4173
 npm run test:e2e       # Playwright E2E (after preview is up)
-npm run report         # regenerate docs/TEST-SUMMARY.md
+npm run report -- --from <json>   # regenerate docs/TEST-SUMMARY.md from a run's JSON (CLAUDE.md: Validation gate)
 npm run campaign       # the agent authoring testing campaign
 npm run codes          # regenerate docs/DIAGNOSTIC-CODES.md from the catalogue
 npm run commands       # regenerate docs/CLI-REFERENCE.md from the command table

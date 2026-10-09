@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4187 total — 4187 passed, 0 failed, 0 skipped
+- **Tests:** 4192 total — 4192 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -13,7 +13,7 @@
 | test/campaign/cli.sysprose.test.ts | 117 | 0 | 0 |
 | test/campaign/cli.test.ts | 13 | 0 | 0 |
 | test/campaign/invariants.test.ts | 32 | 0 | 0 |
-| test/campaign/verification.test.ts | 180 | 0 | 0 |
+| test/campaign/verification.test.ts | 181 | 0 | 0 |
 | test/conformance/api-contract.test.ts | 22 | 0 | 0 |
 | test/conformance/corpus.test.ts | 16 | 0 | 0 |
 | test/conformance/oslc-conformance.test.ts | 8 | 0 | 0 |
@@ -84,8 +84,8 @@
 | test/unit/diagram.svg-export.test.ts | 17 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
 | test/unit/diagram.symbols2.test.ts | 14 | 0 | 0 |
-| test/unit/docs-counts.test.ts | 115 | 0 | 0 |
-| test/unit/drive.test.ts | 177 | 0 | 0 |
+| test/unit/docs-counts.test.ts | 117 | 0 | 0 |
+| test/unit/drive.test.ts | 178 | 0 | 0 |
 | test/unit/duplicate.test.ts | 6 | 0 | 0 |
 | test/unit/fmi-cosim.test.ts | 22 | 0 | 0 |
 | test/unit/fmi-export.test.ts | 16 | 0 | 0 |
@@ -163,6 +163,6 @@
 | test/unit/ui.properties-facets.test.ts | 15 | 0 | 0 |
 | test/unit/ui.requirements-table.test.ts | 20 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 4 | 0 | 0 |
-| test/unit/user-guide.test.ts | 31 | 0 | 0 |
+| test/unit/user-guide.test.ts | 32 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
 | test/unit/validation.rules.test.ts | 83 | 0 | 0 |
