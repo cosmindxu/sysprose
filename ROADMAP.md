@@ -24,6 +24,26 @@ siblings, which is cautious but weaker than it needs to be.
 - differential tests that pin the four surfaces to one verdict on every binding/default case of the
   soundness pass (probes h2, k3, c2–c4, d1b, w2).
 
+## Run-to-completion in the behaviour walk
+
+The behaviour walk (`reach`, `check-behaviour`; `src/semantics/mc/explore.ts`) offers every trigger at
+every configuration, while the machine's own semantics (`profile.ts`) fires completion transitions
+before any event. So the walk can take an event where a completion transition was enabled or
+undetermined, and explore runs the semantics forbids. Universal answers stay sound (`unreachable`,
+`dead`, safety `pass`, `not-covered`, `vacuous` are over a superset of runs; traps and `recovery` are
+already gated). Existential answers on machines with triggers may not be: a `fail` or `covered`
+witness can use such a step, and a `no way out`, `choice` or undecided-guard row can sit on a
+configuration only such a step reaches. Probes (behaviour-in-app plan C.4): `a_b` plus
+`a accept e then c` with `cover state c` reads `covered` although the interpreter only ever has `b`
+active; a `spurious` model reports two `no way out` rows and a `choice` the interpreter never visits;
+v9's SA witness `recallWhileTransiting` reproduces it. v9's 12 choices are real (confirmed by a
+run-to-completion walk).
+
+**Needs a plan for:** taking no event where a completion transition is enabled or undetermined (or
+rewording the run warrant to what the walk admits); the effect on every existing golden, fixture and
+the campaign; and deleting the app's interim confirmation (`rtc-gap.ts`, behaviour-in-app step 2b)
+once the CLI and the app agree.
+
 ## Behaviour verification in the app
 
 `reach` and `check-behaviour` are terminal- and SDK-only. The README's capability table lists them as
