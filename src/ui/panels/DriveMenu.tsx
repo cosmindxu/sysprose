@@ -19,9 +19,11 @@
  * inside the click, and a script fetched inside the click could outlast the
  * click's permission to open a window.
  *
- * Every command here that replaces the model — an open, Close, Sign out —
- * goes through `driveGuard`, which asks first in the Drive strip below the
- * toolbar when it would lose unsaved Drive changes. The panel closes for
+ * Every command here that replaces the model or lets go of the attached file
+ * — an open, Close, Sign out — goes through `driveGuard`, which asks first in
+ * the Drive strip below the toolbar when it would lose unsaved Drive changes,
+ * or, before an open, work no save holds. Close and Sign out keep the model,
+ * so they ask about nothing else (`detach`). The panel closes for
  * whatever goes on in the strip, so its question is not hidden under it —
  * and when the clipboard refuses the file's link, which the strip then shows
  * to copy by hand.
@@ -41,7 +43,8 @@ export type DriveMenuStatus = 'signed-out' | 'signed-in' | 'attention' | 'error'
 
 /**
  * What the dot says: an error first (red); then signed out (grey); then
- * anything waiting for the user (amber); else signed in (green).
+ * anything waiting for the user (amber); else signed in (green). The strip's
+ * question about work no save holds is not Drive's, and leaves it as it is.
  */
 export function driveMenuStatus(d: DriveState, dirty: boolean): DriveMenuStatus {
   if (d.notice?.kind === 'error') return 'error';
@@ -50,7 +53,7 @@ export function driveMenuStatus(d: DriveState, dirty: boolean): DriveMenuStatus 
     dirty ||
     d.conflict !== null ||
     d.pending !== null ||
-    d.prompt?.kind === 'guard' ||
+    (d.prompt?.kind === 'guard' && d.prompt.variant !== 'browser') ||
     d.prompt?.kind === 'rewrite' ||
     d.file?.trashed === true;
   return waiting ? 'attention' : 'signed-in';
@@ -128,11 +131,17 @@ export function DriveMenu(): JSX.Element | null {
   };
 
   /**
-   * A command that replaces the model, through the guard. The panel closes
-   * when `close` says so — the command goes on in the strip — and whenever
-   * the guard asks first, so its question is in view.
+   * A command that replaces the model, or lets go of the attached file,
+   * through the guard. The panel closes when `close` says so — the command
+   * goes on in the strip — and whenever the guard asks first, so its question
+   * is in view.
    */
-  const guarded = (label: string, variant: 'dirty' | 'open', run: () => void | Promise<void>, close: boolean): void => {
+  const guarded = (
+    label: string,
+    variant: 'open' | 'detach',
+    run: () => void | Promise<void>,
+    close: boolean,
+  ): void => {
     store().driveGuard(label, variant, run);
     if (close || store().drive.prompt?.kind === 'guard') setOpen(false);
   };
@@ -277,7 +286,7 @@ export function DriveMenu(): JSX.Element | null {
                     data-testid="drive-close"
                     className="drive-panel-item"
                     title="Let go of the Drive file; the model stays"
-                    onClick={() => guarded('Close Drive file', 'dirty', () => store().driveDetach(), true)}
+                    onClick={() => guarded('Close Drive file', 'detach', () => store().driveDetach(), true)}
                   >
                     Close Drive file
                   </button>
@@ -366,7 +375,7 @@ export function DriveMenu(): JSX.Element | null {
                 data-testid="tb-drive-signout"
                 className="drive-panel-item"
                 title="Ask Google to revoke this app's access, and forget the session here"
-                onClick={() => guarded('Sign out', 'dirty', () => store().driveSignOut(), false)}
+                onClick={() => guarded('Sign out', 'detach', () => store().driveSignOut(), false)}
               >
                 Sign out
               </button>

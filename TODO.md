@@ -53,31 +53,30 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
 - [ ] **Keep hand-placed boxes with the saved project.** `diagramPins` (`src/ui/store.ts`) holds
       the boxes a user moved, per view and scope, for the session only; Save/Open drop them.
       Persist them beside the model in the project store (never in the `.sysml` text).
-- [ ] **Leave the standard library out of Export ▾ → SysML.** `exportModel(model, 'sysml')` →
-      `serializeModel` maps `model.roots()` with no `isLibrary` filter, so the exported text carries
-      the merged standard library (~1.28 MB with the full one) after the user's packages. The Text
-      view and Save to Drive serialize the user roots only (`userRootIds`); the export should too,
-      and the guide's §8 note then goes.
-- [ ] **Guard unsaved work on New, Open and Import, not only Drive's.** The three replace the model
-      without asking (one Undo restores it); the strip asks first only when an attached Google Drive
-      file has unsaved changes (`driveGuard`). A general guard needs to know what the browser
-      project last saved, which the store does not record today.
-- [ ] **Ask before a branch switch, a merge or a room join drops unsaved Drive changes.** Switching
-      or merging a branch in the Versions tab (`BottomPanel.tsx` → `switchBranch`,
-      `mergeBranchesCmd`) and joining a collaboration room (`Collaborate.tsx` → `connectCollab`)
-      detach an attached Google Drive file without the strip's question, unsaved changes and all;
-      only **Save to Drive as…** then keeps them, in a new file. Wrap the three call sites in
-      `driveGuard('…', 'dirty', …)` as New, Open and Import are, and drop the guide's §8.1 sentence
-      that names them as the commands that do not ask.
-- [ ] **Apply typed text before the toolbar's Save.** Save and `Ctrl/⌘+S` outside the Text view's
-      editor store the model without applying text typed in the Text view and not yet applied;
-      `Ctrl/⌘+S` inside the editor applies it first (`applyTypedTextToSave`: not a text with a
-      parse error, whose recovery is not what is on screen), and so does every save to Drive.
-- [ ] **Refresh the text buffer after an SDK edit.** Outside a collaboration room,
-      `window.sysml.update` changes the model without regenerating `textBuffer` (the store
-      subscribes to the model only inside `connectCollab`), so the Text view goes stale and an
-      attached Drive file never reads as unsaved: Save to Drive and `Ctrl/⌘+Shift+S` send nothing,
-      while Save and `Ctrl/⌘+S` still store the edit in the browser.
+- [ ] **Keep plain `Membership` elements through an api-json round trip.** `fromApiGraph`
+      (`src/persistence/io.ts`) skips every element whose `@type` is in `OWNERSHIP_MEMBERSHIPS`,
+      `Membership` included, as if it were the wire's reified ownership; the full library's 268
+      genuine `Membership` elements are dropped (38,761 elements exported, 38,493 imported back).
+      Tell the reified memberships (`om-<child id>`) from the model's own.
+- [ ] **Never put a user element inside a library root.** `createElement` (owner falls back to
+      the selection), `reparent` and `reparentMany` take a library element as owner, e.g. with the
+      Explorer's library toggle on. Such an element has no `isLibrary` flag but sits under a library
+      root, so the Text view, Save to Drive and Export ▾ → SysML all leave it out, while model
+      JSON keeps it. Nor does an edit to it read unsaved — what is saved is compared as text — so
+      New, Open ▾ and Import drop it without asking, though a Save in this browser would have kept
+      it. Refuse a library owner, or fall back to the root.
+- [ ] **Apply typed text before Export ▾ → SysML, or say it is left out.** Save and `Ctrl/⌘+S`
+      apply text typed in the Text view and not yet applied first (`applyTypedTextToSave`; over a
+      parse error, or in a collaboration room, a save in this browser alone keeps it back and the
+      strip says so), as every save to Drive does (`payloadNow`). Export ▾ → SysML still writes the
+      model without it (the guide's §8 and §8.1 say to press Apply first). Either apply it the same
+      way — an export would then change the model and spend an Undo step — or say in the menu that
+      the typed text is not in the file.
+- [ ] **Decide what `Ctrl/⌘+S` does in a field other than the Text view's editor.** The page's
+      handler ignores keys typed into an input, a select or another textarea, so `Ctrl/⌘+S` in a
+      Properties field or the Explorer search opens the browser's "Save page" dialog. Forwarding
+      it would save without the field's uncommitted value (Properties writes on Enter or blur):
+      commit the field first, or leave the key to the browser and say so in Appendix B.
 - [ ] **Cut the crossings of one-layer General views with hub requirements.** Scoped to the
       drone-swarm model's `OA`, the General view still has ~110 crossings, most of them long
       `«trace»` / `«satisfy»` lines converging on a few hubs (`memberA` takes ~20). Try routing

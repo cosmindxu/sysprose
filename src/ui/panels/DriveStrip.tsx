@@ -10,8 +10,10 @@
  * an action running; a notice; a sign-in to renew; then the attached file —
  * gone from Drive, view access only, unsaved changes while offline, unsaved
  * changes, saved. With nothing to say it renders nothing at all. On a
- * deployment without Google Drive its one row is the note that a `?drive=`
- * link cannot be opened here.
+ * deployment without Google Drive it has three rows: the question before a
+ * command replaces work no save holds — asked on every deployment, in the
+ * guard row — the note that a save in this browser kept typed text back (an
+ * `info` notice), and the note that a `?drive=` link cannot be opened here.
  *
  * A conflict, an error and a guard are `role="alert"`; every other row is a
  * `role="status"`. The error row always carries the privacy page's link: a
@@ -41,6 +43,7 @@ import {
   driveFileName,
   driveLink,
   driveTime,
+  typedTextFaulted,
   useAppStore,
   type DrivePrompt,
   type DriveState,
@@ -92,8 +95,14 @@ const CLOSED_TAIL = DRIVE_MESSAGES.closed('');
  * file does not hold), or null for none.
  */
 export function driveStripStatus(d: DriveState, dirty: boolean): DriveStripStatus | null {
+  // Before a command replaces work nothing holds, the question is asked with
+  // Google Drive or without it — and after a save in this browser kept typed
+  // text back, the note says so with it or without it. (An error notice
+  // carries the privacy page's link, which only a configuration names.)
+  if (d.prompt?.kind === 'guard') return 'guard';
   if (d.configStatus !== 'ready' || d.config === null) {
-    return d.link?.status === 'unsupported' ? 'link-unsupported' : null;
+    if (d.link?.status === 'unsupported') return 'link-unsupported';
+    return d.notice?.kind === 'info' ? 'info' : null;
   }
   if (d.prompt !== null) return d.prompt.kind;
   if (d.conflict !== null) return 'conflict';
@@ -158,6 +167,13 @@ export function DriveStrip(): JSX.Element | null {
   const drive = useAppStore((s) => s.drive);
   const dirty = useAppStore((s) => driveDirty(s));
   const link = useAppStore((s) => driveLink(s));
+  const projectName = useAppStore((s) => s.projectName);
+  // While the question about unsaved work stands: text typed in the Text view
+  // that the parser cannot read is no model this browser can save. Read only
+  // then — it parses the typed text, once per text.
+  const typedFaulted = useAppStore(
+    (s) => s.drive.prompt?.kind === 'guard' && s.drive.prompt.variant === 'browser' && s.textDirty && typedTextFaulted(),
+  );
   const byHand = useLinkByHand((s) => s.link);
   const [copied, setCopied] = useState(false);
   // The name a save-as the strip started writes, for "Saving <name>…" — the
@@ -290,6 +306,52 @@ export function DriveStrip(): JSX.Element | null {
           Keep editing
         </StripButton>
       );
+      if (prompt.variant === 'browser') {
+        // No Drive file holds the model: Save is the save in this browser.
+        const cannotSave = typedFaulted
+          ? 'The text typed in the Text view has a syntax error — fix it, or discard it'
+          : null;
+        // Joining a room drops nothing at once: the room's model merges over
+        // this one, and may change or replace it.
+        const joining = prompt.label === 'Join room';
+        text = (
+          <>
+            <code className="drive-strip-name">{projectName || 'This model'}</code> has unsaved changes.
+            {prompt.refused === true && ` ${DRIVE_MESSAGES.browserRefused}`}
+          </>
+        );
+        actions = (
+          <>
+            <StripButton
+              testid="guard-save"
+              disabled={cannotSave !== null}
+              title={cannotSave ?? `Save the project in this browser, then ${prompt.label}`}
+              onClick={() => void store().driveRunPending('save')}
+            >
+              Save and continue
+            </StripButton>
+            <StripButton
+              testid="guard-discard"
+              title={
+                joining
+                  ? "Join the room without saving: the room's model may change or replace this one"
+                  : `${prompt.label} without saving`
+              }
+              onClick={() => void store().driveRunPending('discard')}
+            >
+              {joining ? 'Join without saving' : 'Discard and continue'}
+            </StripButton>
+            <StripButton
+              testid="guard-keep"
+              title={`Cancel ${prompt.label} and keep editing this model`}
+              onClick={() => void store().driveRunPending('keep')}
+            >
+              Keep editing
+            </StripButton>
+          </>
+        );
+        break;
+      }
       if (prompt.variant === 'open') {
         text = 'Opening from Drive replaces the current model and clears Undo.';
         actions = (
@@ -487,9 +549,10 @@ export function DriveStrip(): JSX.Element | null {
           title="Save the project in this browser"
           // The unsaved changes this row promises to keep are often text
           // typed in the Text view and not applied: not the model yet. It is
-          // applied first, as Ctrl/Cmd+S in the editor does, so the browser
-          // save holds what is on screen — unless it has a parse error — and
-          // a browser that refuses the save is said so here.
+          // applied first, as Save and Ctrl/Cmd+S do, so the browser save
+          // holds what is on screen — unless it has a parse error, when the
+          // strip says the typed text was kept back — and a browser that
+          // refuses the save is said so here.
           onClick={() => void store().driveSaveLocal()}
         >
           Save

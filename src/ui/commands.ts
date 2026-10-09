@@ -8,7 +8,14 @@
  * context (React or plain DOM event handlers).
  */
 
-import { driveDirty, forcedRecomputePending, useAppStore, type AppState } from './store';
+import {
+  applyTypedTextToSave,
+  driveDirty,
+  forcedRecomputePending,
+  sayWhatTheBrowserKept,
+  useAppStore,
+  type AppState,
+} from './store';
 import type { ViewKind } from '@diagram/index';
 import type { ModelFormat } from '@persistence/index';
 
@@ -37,15 +44,30 @@ function driveUnsaved(store: AppState): boolean {
 }
 
 /**
- * Save, as the Save button and Ctrl/Cmd+S do it: the project in this browser
- * — and, while the attached Google Drive file lacks something of the model,
- * that file too. A student who presses Save and later finds nothing in Drive
- * is the one loss the Drive strip alone cannot prevent. With no Drive file,
- * or one that holds the model already, it is the browser save it always was.
+ * Save, as the Save button and Ctrl/Cmd+S do it — the key wherever the page
+ * takes it, the Text view's editor included: the project in this browser — and,
+ * while the attached Google Drive file lacks something of the model, that
+ * file too. A student who presses Save and later finds nothing in Drive is
+ * the one loss the Drive strip alone cannot prevent. With no Drive file, or
+ * one that holds the model already, it is the browser save it always was.
+ *
+ * Save stores the MODEL, and text typed in the Text view and not applied is
+ * not the model yet: it is applied first, so the save holds what is on screen
+ * (`applyTypedTextToSave`), under the open project's name. Not a text with a
+ * parse error — the parser's recovery of it is not what is on screen, and
+ * would overwrite the last good copy in this browser — and not in a
+ * collaboration room, where applying it would replace the room's model for
+ * every peer: the model is saved as it stands, the editor still reads "not
+ * yet applied", and with no Drive file attached the strip under the toolbar
+ * says the typed text was kept back (`sayWhatTheBrowserKept`). A save to the
+ * attached Drive file applies a faulted text for its upload, as Save to Drive
+ * does, and keeps the browser copy as the model stood before.
  */
 export function runSave(): Promise<void> {
+  const kept = applyTypedTextToSave();
   const store = useAppStore.getState();
-  return driveUnsaved(store) ? store.driveSave({ alsoInBrowser: true }) : store.saveProject();
+  if (driveUnsaved(store)) return store.driveSave({ alsoInBrowser: true });
+  return store.saveProject().then(() => sayWhatTheBrowserKept(kept));
 }
 
 /**
@@ -71,7 +93,9 @@ export const COMMANDS: Command[] = [
     // chord, which is why wiring it instead was not the fix.
     id: 'tb-new',
     label: 'New',
-    run: () => useAppStore.getState().newProject(DEFAULT_PROJECT_NAME),
+    // As the toolbar's New: asked first when the model has unsaved work.
+    run: () =>
+      useAppStore.getState().driveGuard('New', 'dirty', () => useAppStore.getState().newProject(DEFAULT_PROJECT_NAME)),
   },
   {
     id: 'tb-save',

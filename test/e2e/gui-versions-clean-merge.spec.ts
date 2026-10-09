@@ -49,6 +49,9 @@ test('two branches touching different elements merge cleanly and keep both edits
   // ── Back on main, rename a DIFFERENT element ──
   await page.getByTestId('version-branch').filter({ hasText: 'main' }).first().click();
   await expect(page.getByTestId('version-current')).toContainText('main');
+  // The commit holds the branch's rename, as a save would: the switch asked
+  // nothing first.
+  await expect(page.getByTestId('drive-strip')).toHaveCount(0);
   // Switching branches reloads main's head, so the branch rename is not here.
   await expect.poll(() => hasNamed(page, 'PartDefinition', 'PowerUnit')).toBe(false);
 

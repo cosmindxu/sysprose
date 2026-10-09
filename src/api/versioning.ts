@@ -455,6 +455,61 @@ export class ProjectRepository {
     targetBranchId: string,
     opts: MergeOptions = {},
   ): MergeResult {
+    const { strategy, ancestorId, source, target, merged, conflicts, applied } = this.planMerge(
+      projectId,
+      sourceBranchId,
+      targetBranchId,
+      opts,
+    );
+    let commit: Commit | null = null;
+    if (applied) {
+      const data: SerializedModel = {
+        formatVersion: FORMAT_VERSION,
+        elements: merged.map((e) => ({ ...e })),
+        rootIds: merged.filter((e) => e.ownerId === null).map((e) => e.id),
+      };
+      const model = Model.fromJSON(data);
+      const description = opts.description ?? `Merge ${source.name} into ${target.name}`;
+      commit = this.commit(projectId, targetBranchId, model, description);
+    }
+
+    const result: MergeResult = { strategy, applied, commit, conflicts };
+    if (ancestorId !== undefined) result.ancestorCommitId = ancestorId;
+    return result;
+  }
+
+  /**
+   * Whether {@link mergeBranches} with the same arguments would produce a
+   * merge commit — a clean merge, or a resolving strategy — without producing
+   * it: nothing in the repository changes. For a caller that acts only on a
+   * merge that resolves (the Versions tab asks before one loads its result).
+   */
+  mergeWouldApply(
+    projectId: string,
+    sourceBranchId: string,
+    targetBranchId: string,
+    opts: MergeOptions = {},
+  ): boolean {
+    return this.planMerge(projectId, sourceBranchId, targetBranchId, opts).applied;
+  }
+
+  /* ──────────────────────────────── Internal ──────────────────────────────── */
+
+  /** The three-way merge {@link mergeBranches} commits, computed and not committed. */
+  private planMerge(
+    projectId: string,
+    sourceBranchId: string,
+    targetBranchId: string,
+    opts: MergeOptions,
+  ): {
+    strategy: MergeStrategy;
+    ancestorId: string | undefined;
+    source: Branch;
+    target: Branch;
+    merged: ElementRecord[];
+    conflicts: MergeConflict[];
+    applied: boolean;
+  } {
     const project = this.projects.get(projectId);
     if (!project) throw new Error(`No such project: ${projectId}`);
     const source = this.branches.get(sourceBranchId);
@@ -517,24 +572,8 @@ export class ProjectRepository {
     }
 
     const applied = strategy !== 'manual' || conflicts.length === 0;
-    let commit: Commit | null = null;
-    if (applied) {
-      const data: SerializedModel = {
-        formatVersion: FORMAT_VERSION,
-        elements: merged.map((e) => ({ ...e })),
-        rootIds: merged.filter((e) => e.ownerId === null).map((e) => e.id),
-      };
-      const model = Model.fromJSON(data);
-      const description = opts.description ?? `Merge ${source.name} into ${target.name}`;
-      commit = this.commit(projectId, targetBranchId, model, description);
-    }
-
-    const result: MergeResult = { strategy, applied, commit, conflicts };
-    if (ancestorId !== undefined) result.ancestorCommitId = ancestorId;
-    return result;
+    return { strategy, ancestorId, source, target, merged, conflicts, applied };
   }
-
-  /* ──────────────────────────────── Internal ──────────────────────────────── */
 
   private newCommit(
     projectId: string,

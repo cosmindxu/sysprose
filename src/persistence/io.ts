@@ -4,7 +4,8 @@
  *  - `'model-json'` — the modeler's native snapshot ({@link SerializedModel} via
  *    `Model.toJSON` / `Model.fromJSON`). Loss-less and trivial.
  *  - `'sysml'`      — SysML v2 textual notation, delegated to the `@text`
- *    serializer/parser.
+ *    serializer/parser. The USER's roots only: the merged standard library
+ *    stays out (see {@link userModelText}).
  *  - `'api-json'`   — the OMG SysML v2 *API & Services* element-graph JSON: a
  *    flat list of elements keyed on `@id`/`@type`, with containment reified as
  *    `OwningMembership`/`FeatureMembership` relationship elements (see
@@ -25,7 +26,7 @@ import {
   type ElementRecord,
   type SerializedModel,
 } from '@core/index';
-import { parseModel, serializeModel, type ParseDiagnostic } from '@text/index';
+import { parseModel, serializeElement, type ParseDiagnostic } from '@text/index';
 import { GENERATOR_ID } from '../branding';
 
 /** Interchange formats understood by {@link exportModel}/{@link importModel}. */
@@ -46,7 +47,7 @@ export function exportModel(model: Model, format: ModelFormat): string {
     case 'model-json':
       return JSON.stringify(model.toJSON(), null, 2);
     case 'sysml':
-      return serializeModel(model);
+      return userModelText(model);
     case 'api-json':
       return JSON.stringify(toApiGraph(model), null, 2);
     default: {
@@ -54,6 +55,34 @@ export function exportModel(model: Model, format: ModelFormat): string {
       throw new Error(`Unknown export format: ${String(never)}`);
     }
   }
+}
+
+/**
+ * The model as text — the user's own roots, never the bundled standard
+ * library (`attrs.isLibrary`).
+ *
+ * `serializeModel` writes every root, and once the app has merged the full
+ * library that is 188 library roots (~1.28 MB of text) after the user's few.
+ * Text carries no `isLibrary` flag, so importing that file made every one
+ * of them the user's — hundreds of parse errors, and a second copy of the
+ * library beside the one merged again. The Text view and Save to Drive
+ * have always written the user's roots only (`userRootIds` in
+ * `src/ui/store.ts`), and so has the CLI (`modelText` in
+ * `scripts/sysprose.ts`); this is the export's copy, so an exported file
+ * holds the text the Text view writes for the same model. `serializeModel`
+ * itself still writes every root: it is asked to write library models too
+ * (the conformance round trip writes ISQ and SI).
+ *
+ * The two JSON formats keep the library on purpose: each element carries its
+ * `isLibrary` flag, so an import reads the library back AS library, as a saved
+ * browser project does.
+ */
+function userModelText(model: Model): string {
+  return model
+    .roots()
+    .filter((r) => r.attrs.isLibrary !== true)
+    .map((r) => serializeElement(model, r.id, 0))
+    .join('\n\n');
 }
 
 /** Parse `text` in the requested `format` into a fresh {@link Model}. */

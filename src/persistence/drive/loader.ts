@@ -1,7 +1,8 @@
 /**
  * Google's scripts, loaded at runtime — never bundled, and never fetched
- * before the user opens Drive ▾ or follows a `?drive=` link on a configured
- * site (the callers decide when; importing this module fetches nothing).
+ * before the user opens Drive ▾, presses Ctrl/Cmd+Shift+S (its Save-as form
+ * signs in) or follows a `?drive=` link on a configured site (the callers
+ * decide when; importing this module fetches nothing).
  *
  * {@link loadScriptOnce} adds a `<script>` for one of {@link DRIVE_SCRIPTS}
  * and for nothing else: any other URL is refused before an element is made,

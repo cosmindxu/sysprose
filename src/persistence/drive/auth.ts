@@ -68,8 +68,9 @@ export interface DriveAuth {
   signOut(): Promise<{ revoked: boolean; hadToken: boolean }>;
   /**
    * Resolve once the vendor script is loaded and usable, starting the load if
-   * needed. Called when the Drive panel opens or a `?drive=` link is pending;
-   * after a failure, the next call tries again.
+   * needed. Called when the Drive panel opens, when the Save-as form opens
+   * signed out (Ctrl/Cmd+Shift+S) or when a `?drive=` link is pending; after a
+   * failure, the next call tries again.
    */
   ready(): Promise<void>;
 }

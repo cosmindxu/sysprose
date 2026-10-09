@@ -23,10 +23,11 @@
  * itself, allowing anything) are the manual check's (plan F.4), not CI's.
  *
  * The edits here are a user's — a part definition renamed in the Explorer,
- * text typed in the Text view — because Save, Ctrl/Cmd+S and Ctrl/Cmd+Shift+S
- * send nothing to an attached file that already holds the model. Every test
- * fails on a console error, less the "Failed to load resource" line Chromium
- * logs for each 4xx/5xx a fake Google answers on purpose.
+ * text typed in the Text view — and, once, an agent's through `window.sysml`,
+ * because Save, Ctrl/Cmd+S and Ctrl/Cmd+Shift+S send nothing to an attached
+ * file that already holds the model. Every test fails on a console error,
+ * less the "Failed to load resource" line Chromium logs for each 4xx/5xx a
+ * fake Google answers on purpose.
  */
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
@@ -71,6 +72,18 @@ const SWARM = 'package Swarm {\n    part def Drone;\n}\n';
 const HAND = 'package Swarm {\n    // the airframe\n    part def Drone;  \n}\n';
 /** A model with a syntax error (`blok`). */
 const FAULTED = 'package Faulted {\n    part def Drone;\n    blok bad;\n}\n';
+/**
+ * {@link SWARM} as a model JSON snapshot: the shape of Export ▾ → JSON (`formatVersion`, `elements`,
+ * `rootIds`), without the library.
+ */
+const SWARM_JSON = JSON.stringify({
+  formatVersion: '0.1.0',
+  elements: [
+    { id: 'json-swarm', eClass: 'Package', declaredName: 'Swarm', ownerId: null, attrs: {} },
+    { id: 'json-drone', eClass: 'PartDefinition', declaredName: 'Drone', ownerId: 'json-swarm', attrs: {} },
+  ],
+  rootIds: ['json-swarm'],
+});
 
 /**
  * Collect console and page errors — less Chromium's "Failed to load resource:
@@ -527,6 +540,25 @@ test('sign in, save as, edit and save — from the panel, the strip, the toolbar
   expect(fakes.file(saved.id).body).toContain('part def Jeep;');
   await expect.poll(() => browserProjectHolds(page, 'VehicleModel', ['"Jeep"'])).toEqual(['"Jeep"']);
 
+  // An edit made through the SDK on window.sysml, as an agent scripting the
+  // page makes one: it reaches the Text view, so the file reads unsaved, and
+  // Ctrl+Shift+S sends it.
+  const jeep = await findElementId(page, 'PartDefinition', 'Jeep');
+  await page.evaluate(
+    (id) =>
+      (window as unknown as { sysml: { update(id: string, patch: { declaredName: string }): unknown } }).sysml.update(id, {
+        declaredName: 'Scripted',
+      }),
+    jeep,
+  );
+  await expect(page.getByTestId('text-editor')).toHaveValue(/part def Scripted;/);
+  await expect(strip(page)).toHaveAttribute('data-status', 'dirty');
+  await page.locator('.react-flow__node').first().focus();
+  await page.keyboard.press('Control+Shift+S');
+  await expect.poll(() => fakes.file(saved.id).headRevisionId).toBe('r7');
+  await expect(strip(page)).toHaveAttribute('data-status', 'clean');
+  expect(fakes.file(saved.id).body).toContain('part def Scripted;');
+
   // The token was in the Authorization header of every request and nowhere
   // the page keeps anything: not in localStorage, sessionStorage or any
   // IndexedDB store (where Save just wrote), not on window.sysprose.
@@ -586,6 +618,50 @@ test('Recent reopens a file after a reload, which signed the user out; leaving a
   await page.getByTestId('tb-undo').click();
   await expect(strip(page)).toHaveAttribute('data-status', 'clean');
   await expect.poll(() => leavingAsks(page)).toBe(false);
+  expect(fakes.unanswered).toEqual([]);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a model JSON file from Drive opens but is not attached; Save to Drive as… writes the model as .sysml', async ({
+  page,
+}) => {
+  const errors = driveErrors(page);
+  const fakes = await configured(page);
+  const json = fakes.seed({ name: 'Swarm.json', body: SWARM_JSON, mimeType: 'application/json' });
+  await signIn(page);
+
+  // Opened from Recent: the model is the file's, and Undo starts over from it…
+  await openRecent(page, json.id);
+  await expect(strip(page)).toHaveAttribute('data-status', 'info');
+  await expect(strip(page)).toContainText(
+    'Opened Swarm.json from Drive as JSON. Save to Drive as… writes it as a .sysml file.',
+  );
+  await expect.poll(() => rootNames(page)).toEqual(['Swarm']);
+  expect(await hasNamed(page, 'PartDefinition', 'Drone')).toBe(true);
+  await expect(page.getByTestId('tb-undo')).toBeDisabled();
+  // …but no file is attached: a save would write another format into it.
+  expect(await driveFile(page)).toBeNull();
+  await expect(page.getByTestId('tb-drive')).toHaveAttribute('data-file', '');
+  await openPanel(page);
+  await expect(page.getByTestId('tb-drive-save')).toBeDisabled();
+  await expect(page.getByTestId('tb-drive-save')).toHaveAttribute(
+    'title',
+    'No Drive file is open — Save to Drive as… writes one',
+  );
+  await expect(page.getByTestId('drive-close')).toHaveCount(0);
+
+  // Save to Drive as…: a new .sysml file, which is the one attached; the JSON
+  // file stays as it was.
+  await page.getByTestId('tb-drive-save-as').click();
+  await expect(strip(page)).toHaveAttribute('data-status', 'saveas');
+  await expect(page.getByTestId('drive-saveas-name')).toHaveValue('Swarm.sysml');
+  await page.getByTestId('drive-saveas-confirm').click();
+  await expect(strip(page)).toHaveAttribute('data-status', 'clean');
+  const written = fakes.files().find((f) => f.name === 'Swarm.sysml');
+  if (written === undefined) throw new Error('Save to Drive as… wrote no .sysml file');
+  expect(written).toMatchObject({ body: SWARM, mimeType: 'text/plain' });
+  expect(await driveFile(page)).toMatchObject({ id: written.id, openedFrom: 'save-as' });
+  expect(fakes.file(json.id)).toMatchObject({ body: SWARM_JSON, headRevisionId: 'r1' });
   expect(fakes.unanswered).toEqual([]);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
@@ -672,6 +748,82 @@ test('a ?drive= link Drive denies: choosing the one file in the Picker grants it
   ]);
   await expect(strip(page)).toHaveAttribute('data-status', 'clean');
   expect(await driveFile(page)).toMatchObject({ id: shared.id });
+  expect(fakes.unanswered).toEqual([]);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a ?drive= link whose open fails: the gate says why beside the privacy page, and Try again opens the file', async ({
+  page,
+}) => {
+  const errors = driveErrors(page);
+  // The sign-in window closes without a token — all GIS reports when Google
+  // showed its "Access blocked" page in it.
+  const fakes = await installDriveFakes(page, { config: FAKE_CONFIG, signIn: 'popup_closed' });
+  const linked = fakes.seed({ name: 'Linked.sysml', body: SWARM });
+  await page.goto(`/?drive=${linked.id}`, { waitUntil: 'domcontentloaded' });
+  const gate = page.getByTestId('drive-link-gate');
+  const retry = page.getByTestId('drive-link-retry');
+  const privacy = page.getByTestId('drive-link-privacy');
+  await expect(page.getByTestId('drive-link-signin')).toBeEnabled({ timeout: 60_000 });
+  await page.getByTestId('drive-link-signin').click();
+
+  // The gate holds, saying why — beside the page that names the client ID for
+  // an administrator, the one way to it while the gate is up.
+  await expect(gate).toHaveAttribute('data-status', 'failed');
+  await expect(gate).toContainText(
+    'Sign-in was cancelled or blocked. If Google showed an "Access blocked" page, your organisation\'s ' +
+      "administrator has to allow this app — Privacy & data explains how and names the app's client ID.",
+  );
+  await expect(privacy).toHaveText('Privacy & data ↗');
+  await expect(privacy).toHaveAttribute('href', FAKE_CONFIG.privacyUrl);
+  await expect(privacy).toHaveAttribute('target', '_blank');
+  await expect(privacy).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(page.getByTestId('drive-link-skip')).toBeVisible();
+  await expect(page.getByTestId('diagram-canvas')).toHaveCount(0);
+  expect(fakes.requests).toEqual([]);
+
+  // Try again signs in inside its own click. Drive then fails the open — its
+  // metadata answered 500 twice, so the one automatic retry does not hide it:
+  // the gate says so, Try again and the privacy page still there.
+  let failed = 0;
+  await page.route(
+    (url) => url.origin === DRIVE_API_ORIGIN && url.pathname === `/drive/v3/files/${linked.id}`,
+    (route) =>
+      failed++ < 2
+        ? route.fulfill({
+            status: 500,
+            headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json; charset=UTF-8' },
+            body: JSON.stringify({
+              error: { code: 500, message: 'Backend Error', errors: [{ domain: 'global', reason: 'backendError' }] },
+            }),
+          })
+        : route.fallback(),
+  );
+  await retry.click();
+  await expect(gate).toContainText(
+    'Google Drive did not answer properly (HTTP 500). Nothing was changed; try again.',
+  );
+  await expect(gate).toHaveAttribute('data-status', 'failed');
+  await expect(retry).toBeEnabled();
+  await expect(privacy).toHaveAttribute('href', FAKE_CONFIG.privacyUrl);
+  expect(fakes.tokenRequests).toMatchObject([
+    { prompt: 'select_account', answer: 'popup_closed' },
+    { prompt: 'select_account', activated: true, inEvent: 'click', answer: 'grant' },
+  ]);
+
+  // Try again, signed in now: the file opens, as the link's.
+  await retry.click();
+  await appReady(page);
+  expect(await rootNames(page)).toEqual(['Swarm']);
+  await expect(strip(page)).toHaveAttribute('data-status', 'clean');
+  await expect(page.getByTestId('tb-undo')).toBeDisabled();
+  expect(await driveFile(page)).toMatchObject({ id: linked.id, openedFrom: 'link' });
+  expect(fakes.tokenRequests).toHaveLength(2);
+  // Drive itself saw only that open: the metadata, then the content.
+  expect(fakes.requests.filter((r) => r.path.includes(linked.id)).map((r) => [r.method, r.status])).toEqual([
+    ['GET', 200],
+    ['GET', 200],
+  ]);
   expect(fakes.unanswered).toEqual([]);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
@@ -953,6 +1105,96 @@ test('view-only access and a file gone from Drive are said so; Save to Drive as�
   await expect(page.getByTestId('tb-drive')).toHaveAttribute('data-status', 'attention');
   expect(fakes.file(copy.id).headRevisionId).toBe('r1');
   expect(await hasNamed(page, 'PartDefinition', 'Truck')).toBe(true);
+  expect(fakes.unanswered).toEqual([]);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('offline, what needs Google waits and says so; the strip’s Save keeps the changes in this browser', async ({
+  page,
+  context,
+}) => {
+  const errors = driveErrors(page);
+  const fakes = await configured(page, { config: FAKE_PICKER_CONFIG });
+  await signIn(page);
+
+  // No Drive file attached yet: Ctrl/Cmd+Shift+S opens the Save-as form, whose
+  // Save waits for the network too — and nothing is sent. (First the sign-in's
+  // Recent list is read, so no Drive action is still running.)
+  await openPanel(page);
+  await expect(page.getByTestId('drive-recent-refresh')).toBeEnabled();
+  await closePanel(page);
+  await context.setOffline(true);
+  const before = fakes.requests.length;
+  await page.keyboard.press('Control+Shift+S');
+  await expect(strip(page)).toHaveAttribute('data-status', 'saveas');
+  await expect(page.getByTestId('drive-saveas-confirm')).toBeDisabled();
+  await expect(page.getByTestId('drive-saveas-confirm')).toHaveAttribute('title', 'Offline');
+  await page.getByTestId('drive-saveas-cancel').click();
+  await expect(strip(page)).toHaveCount(0);
+  expect(fakes.requests.length).toBe(before);
+  await context.setOffline(false);
+  const id = await saveAs(page, 'Offline');
+
+  // Text typed in the Text view, not applied: the file has unsaved changes.
+  // Then the network goes.
+  await openTab(page, 'tab-text');
+  const editor = page.getByTestId('text-editor');
+  const typed = (await editor.inputValue()).replace(/^( *)part def Vehicle;$/m, '$1part def Vehicle;\n$1part def Trailer;');
+  expect(typed).toContain('part def Trailer;');
+  await editor.fill(typed);
+  await expect(strip(page)).toHaveAttribute('data-status', 'dirty');
+  await context.setOffline(true);
+  await expect(strip(page)).toHaveAttribute('data-status', 'offline');
+  await expect(strip(page)).toContainText(
+    'Offline — Offline.sysml has unsaved changes. They stay in this tab; Save keeps them in this browser; ' +
+      'Save to Drive will work when you are back online.',
+  );
+  await expect(page.getByTestId('tb-drive')).toHaveAttribute('data-status', 'attention');
+
+  // Drive ▾: every command that needs Google is disabled, its title saying
+  // why. Sign out is not: it signs out here, with Google or without.
+  await openPanel(page);
+  for (const testid of ['tb-drive-save', 'tb-drive-save-as', 'drive-recent-refresh', 'tb-drive-browse']) {
+    await expect(page.getByTestId(testid), testid).toBeDisabled();
+    await expect(page.getByTestId(testid), testid).toHaveAttribute('title', 'Offline');
+  }
+  const recent = page.locator(`[data-testid="drive-recent-item"][data-id="${id}"]`);
+  await expect(recent).toBeDisabled();
+  await expect(recent).toHaveAttribute('title', 'Offline');
+  await page.getByTestId('drive-open-id').fill(id);
+  await expect(page.getByTestId('drive-open-id-go')).toBeDisabled();
+  await expect(page.getByTestId('drive-open-id-go')).toHaveAttribute('title', 'Offline');
+  await expect(page.getByTestId('tb-drive-signout')).toBeEnabled();
+  await closePanel(page);
+
+  // Ctrl/Cmd+Shift+S sends nothing, and says why; dismissed, the offline row is back.
+  const asked = fakes.requests.length;
+  await editor.press('Control+Shift+S');
+  await expect(strip(page)).toHaveAttribute('data-status', 'error');
+  await expect(strip(page)).toContainText(
+    'You appear to be offline. Your edits stay in this tab; Save keeps them in this browser, and Save to Drive ' +
+      'will work when you are back online.',
+  );
+  await page.getByTestId('drive-strip-dismiss').click();
+  await expect(strip(page)).toHaveAttribute('data-status', 'offline');
+
+  // The strip's Save: the typed text is made the model, and the project kept
+  // in this browser. Drive still lacks it, and the row stays.
+  expect(await browserProjectHolds(page, 'VehicleModel', ['"Trailer"'])).toBeNull();
+  await page.getByTestId('drive-strip-save-local').click();
+  await expect.poll(() => browserProjectHolds(page, 'VehicleModel', ['"Trailer"'])).toEqual(['"Trailer"']);
+  expect(await hasNamed(page, 'PartDefinition', 'Trailer')).toBe(true);
+  await expect(strip(page)).toHaveAttribute('data-status', 'offline');
+  expect(fakes.requests.length).toBe(asked);
+  expect(fakes.file(id).headRevisionId).toBe('r1');
+
+  // Back online: Save to Drive works again.
+  await context.setOffline(false);
+  await expect(strip(page)).toHaveAttribute('data-status', 'dirty');
+  await saveFromStrip(page);
+  await expect.poll(() => fakes.file(id).headRevisionId).toBe('r2');
+  await expect(strip(page)).toHaveAttribute('data-status', 'clean');
+  expect(fakes.file(id).body).toContain('part def Trailer;');
   expect(fakes.unanswered).toEqual([]);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });

@@ -6,11 +6,14 @@
  *  - Import         → drive the hidden <input type=file> fallback (the File
  *                     System Access picker is removed so the input path is used)
  *                     and confirm the imported model replaces the project.
+ *  - Round trip     → the exported .sysml is the Text view's text, without the
+ *                     merged standard library, and imports back to the same
+ *                     user model beside one library.
  */
 
 import { test, expect } from '@playwright/test';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { gotoApp, shot } from './fixtures';
+import { gotoApp, openTab, shot } from './fixtures';
 
 test('export .sysml and JSON download non-empty content; import replaces the model', async ({
   page,
@@ -69,4 +72,66 @@ test('export .sysml and JSON download non-empty content; import replaces the mod
     )
     .toBe(true);
   await shot(page, '07b-imported');
+});
+
+/**
+ * Export ▾ → SysML once wrote the merged standard library after the user's
+ * packages (~1.28 MB). Imported back, every library root became the user's,
+ * with hundreds of parse errors, and the library was merged again beside it.
+ */
+test('Export ▾ → SysML writes the Text view’s text, and that file imports back to the same model', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    delete (window as unknown as { showOpenFilePicker?: unknown }).showOpenFilePicker;
+  });
+  await gotoApp(page);
+
+  /** The user's model as the SDK sees it, and how much library sits beside it. */
+  const snapshot = () =>
+    page.evaluate(() => {
+      const api = (window as unknown as {
+        sysml: {
+          roots: () => { declaredName?: string }[];
+          toModelJSON: () => { '@type': string; declaredName?: string }[];
+          libraryElementCount: () => number;
+        };
+      }).sysml;
+      return {
+        roots: api.roots().map((r) => r.declaredName),
+        elements: api
+          .toModelJSON()
+          .map((e) => `${e['@type']} ${e.declaredName ?? ''}`)
+          .sort(),
+        library: api.libraryElementCount(),
+      };
+    });
+  const before = await snapshot();
+  expect(before.library, 'the standard library merged').toBeGreaterThan(1000);
+  await page.getByTestId('tab-problems').click();
+  const problems = page.getByTestId('problem-row');
+  const problemsBefore = await problems.count();
+
+  const download = page.waitForEvent('download');
+  await page.getByTestId('tb-export').click();
+  await page.getByTestId('tb-export-sysml').click();
+  const exportedPath = await (await download).path();
+  const exported = readFileSync(exportedPath!, 'utf8');
+  expect(exported).toContain('package VehicleModel');
+  expect(exported).not.toContain('library package');
+
+  await openTab(page, 'tab-text');
+  expect(await page.getByTestId('text-editor').inputValue(), 'the Text view’s text').toBe(exported);
+
+  // The model before the import already equals `before`, so the poll below
+  // waits for the import to land first: it pushes the only undo there is.
+  const undo = page.getByTestId('tb-undo');
+  await expect(undo).toBeDisabled();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('tb-import').click();
+  await (await chooser).setFiles(exportedPath!);
+  await expect(undo, 'the import landed').toBeEnabled();
+  await expect.poll(snapshot).toEqual(before);
+  await page.getByTestId('tab-problems').click();
+  await expect.poll(() => problems.count(), 'no parse errors came with the file').toBe(problemsBefore);
 });

@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useAppStore } from '../store';
+import { mergeLoads, useAppStore } from '../store';
 import type { ElementRecord } from '../../core/index';
 import type { ProjectedRow } from '../../api/query';
 
@@ -364,6 +364,11 @@ function VersionsTab(): JSX.Element {
   const createBranchCmd = useAppStore((s) => s.createBranchCmd);
   const switchBranch = useAppStore((s) => s.switchBranch);
   const mergeBranchesCmd = useAppStore((s) => s.mergeBranchesCmd);
+  // A switch, and a merge that resolves, load a branch head in place of the
+  // working model: with work no save or commit holds — or unsaved changes to
+  // an attached Google Drive file — the strip under the toolbar asks first. A
+  // merge that meets conflicts (`manual`) loads nothing, and asks nothing.
+  const driveGuard = useAppStore((s) => s.driveGuard);
 
   // Populate the branch/commit lists on first mount (seeds the repository).
   useEffect(() => {
@@ -437,7 +442,7 @@ function VersionsTab(): JSX.Element {
                 data-testid="version-branch"
                 data-branchid={b.id}
                 className={`version-branch-row ${b.id === currentBranchId ? 'is-active' : ''}`}
-                onClick={() => switchBranch(b.id)}
+                onClick={() => driveGuard('Switch branch', 'dirty', () => switchBranch(b.id))}
                 title="Switch to this branch (loads its head into the workspace)"
                 style={{
                   cursor: 'pointer',
@@ -518,9 +523,12 @@ function VersionsTab(): JSX.Element {
           </label>
           <button
             data-testid="version-merge-btn"
-            onClick={() =>
-              mergeSource && mergeTarget && mergeBranchesCmd(mergeSource, mergeTarget, strategy)
-            }
+            onClick={() => {
+              if (!mergeSource || !mergeTarget) return;
+              const merge = (): void => mergeBranchesCmd(mergeSource, mergeTarget, strategy);
+              if (mergeLoads(mergeSource, mergeTarget, strategy)) driveGuard('Merge', 'dirty', merge);
+              else merge();
+            }}
           >
             Merge
           </button>

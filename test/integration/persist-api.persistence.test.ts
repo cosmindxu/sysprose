@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { buildSampleModel, Model } from '@core/index';
+import { buildSampleModel, Model, type ElementRecord } from '@core/index';
+import { loadFullStandardLibrary, resolveTypeReferences } from '../../src/library/index';
 import {
   InMemoryStore,
   LocalStorageStore,
@@ -24,6 +25,7 @@ import {
   loadVehicleExample,
   expectSameElementSet,
   expectSameElementIdentities,
+  strictSignature,
 } from './helpers';
 
 /* ─────────────────────────── Store round-trips ──────────────────────────── */
@@ -122,6 +124,64 @@ describe('exportModel / importModel — element sets preserved', () => {
     const original = buildSampleModel();
     const { model } = importModel(exportModel(original, 'sysml'), 'sysml');
     expectSameElementSet(original, model);
+  });
+});
+
+/* ─────────────── With the standard library merged, as the app holds it ────────────── */
+
+/**
+ * The app merges the full bundled library into every model it holds (188
+ * roots, ~38,700 elements). The 'sysml' export used to write them all — ~1.28
+ * MB of library text after the user's package — and text carries no
+ * `isLibrary` flag, so the file imported back as the user's, with hundreds of
+ * parse errors and the library merged a second time beside it.
+ */
+describe('exportModel with the standard library merged', () => {
+  /** The sample with the full library merged and bound, as the app holds it. */
+  function withLibrary(): Model {
+    const model = buildSampleModel();
+    loadFullStandardLibrary(model);
+    resolveTypeReferences(model);
+    return model;
+  }
+  const isLibrary = (el: ElementRecord): boolean => el.attrs.isLibrary === true;
+  /** The user's elements at full fidelity, endpoints into the library included. */
+  const userElements = (model: Model): string[] =>
+    model
+      .all()
+      .filter((el) => !isLibrary(el))
+      .map((el) => strictSignature(model, el))
+      .sort();
+
+  it("'sysml' writes the user's roots only: the text it writes without the library", () => {
+    const model = withLibrary();
+    expect(model.roots().filter(isLibrary).length, 'the library merged').toBeGreaterThan(100);
+    expect(exportModel(model, 'sysml')).toBe(exportModel(buildSampleModel(), 'sysml'));
+  });
+
+  it("'sysml' imports back to the same user model, beside one library", () => {
+    const original = withLibrary();
+    const { model, diagnostics } = importModel(exportModel(original, 'sysml'), 'sysml');
+    expect((diagnostics ?? []).filter((d) => d.severity === 'error')).toEqual([]);
+    expect(model.all().some(isLibrary), 'a library came back from text').toBe(false);
+    loadFullStandardLibrary(model);
+    resolveTypeReferences(model);
+    expect(userElements(model)).toEqual(userElements(original));
+    expect(model.size, 'one copy of the library, not two').toBe(original.size);
+  });
+
+  /**
+   * Model JSON keeps the library on purpose: each element carries its
+   * `isLibrary` flag, so an import reads it back AS library and the app's
+   * merge, which skips a model that has one, adds nothing.
+   */
+  it("'model-json' still carries the library, and reads it back as library", () => {
+    const original = withLibrary();
+    const libraryCount = original.all().filter(isLibrary).length;
+    const { model } = importModel(exportModel(original, 'model-json'), 'model-json');
+    expect(model.all().filter(isLibrary).length).toBe(libraryCount);
+    expect(loadFullStandardLibrary(model).length, 'the merge adds nothing').toBe(libraryCount);
+    expect(model.size).toBe(original.size);
   });
 });
 

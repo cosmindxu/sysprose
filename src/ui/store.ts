@@ -18,7 +18,8 @@
  * IMPORTANT — model reactivity:
  *   The {@link Model} is a mutable class instance, so mutating it does NOT by
  *   itself re-render React. Every command that mutates the model bumps a
- *   monotonically-increasing `rev` counter. Panels that read the model
+ *   monotonically-increasing `rev` counter, and so does an edit made through
+ *   the SDK on `window.sysml` (`afterSdkEdit`). Panels that read the model
  *   directly (Explorer tree, Properties fields) MUST subscribe to `rev` so
  *   they re-render on mutations:
  *
@@ -58,6 +59,12 @@
  *   (New, Open, Import, a collab room, a branch switch) detaches the attached
  *   Drive file (`driveDetach`), so a save never writes another model into
  *   it; applying text, Undo and Redo edit the same one.
+ *
+ * What a replacement would lose is read off `savedText` — the text the model
+ * had when last saved (in this browser, to Drive, or as a Versions commit) or
+ * opened — by `browserDirty`; the UI asks before replacing such a model
+ * (`driveGuard`). The store commands themselves never ask: `window.sysml` and
+ * the tests call them directly.
  */
 
 import { create } from 'zustand';
@@ -201,9 +208,13 @@ import {
   type LinkedModelParams,
 } from './linked-model';
 import {
+  DRIVE_MESSAGES,
+  browserDirty,
   createDriveActions,
   initialDriveState,
+  withFinalNewline,
   type DriveActions,
+  type DriveNotice,
   type DriveState,
 } from './store.drive';
 
@@ -239,6 +250,7 @@ export interface CollabState {
 // panels read of them is re-exported here, beside the rest of the store.
 export {
   DRIVE_MESSAGES,
+  browserDirty,
   checkFileName,
   createDriveServices,
   driveBeforeUnload,
@@ -383,6 +395,22 @@ export interface AppState extends DriveActions {
    * Problems panel by the rule that reports it.
    */
   serializeError: string | null;
+  /**
+   * The Text view's text as the model stood when it was last saved — in this
+   * browser (Save), to Google Drive, or as a commit in the Versions tab — or
+   * opened: a project loaded with Open ▾, a `?model=` link, a Drive file, a
+   * branch head the Versions tab loaded; New counts too, and so does the
+   * model a session starts with. One final newline. A commit holds the work
+   * for this session as a save does: switching back to its branch loads it.
+   *
+   * What New, Open ▾, Import, a branch switch or merge and a room join would
+   * lose is the model's text differing from this (`browserDirty`): derived,
+   * never stored, so Undo back to the saved state reads saved again. A text,
+   * not `rev`, which the library merge moves after every open — the merge
+   * carries this across instead (`refreshAfterLibraryLoad`). Null when the
+   * model last saved could not be written as text.
+   */
+  savedText: string | null;
   projectName: string;
   queryResult: QueryResult | null;
   /** Bumps on every model mutation; selector hook for model-backed panels. */
@@ -1135,6 +1163,8 @@ const initialModel = buildSampleModel();
 // model instance so the api/server below observe a single source of truth.
 const initialApi = new ModelApi(initialModel);
 const initialServer = new SysmlApiServer(initialModel);
+/** The sample's text: the Text view's first contents, and the text the session starts saved at. */
+const initialText = textView(initialModel, '');
 
 // Coalesce the per-mutation RECOMPUTE — validation (26 rules), textual
 // re-serialization, and the ELK diagram rebuild — into a single pass after a
@@ -1191,6 +1221,31 @@ export function forcedRecomputePending(): boolean {
 
 /** The body of {@link flushRecompute}; the store factory, whose closure runs recomputes, installs it. */
 let flushRecomputeImpl: () => void = () => {};
+
+/**
+ * The save in this browser still being stored, if one is: resolves with
+ * whether the browser kept it, once `savedText` says so. A command that would
+ * replace the model waits for it (`driveGuard`): saved as of its click, it
+ * may yet be refused.
+ */
+let browserSaving: Promise<boolean> | null = null;
+
+/**
+ * The `savedText` of each save in this browser still being stored, which a
+ * refusal takes back — unless another save, or a command that replaced the
+ * model, has set it since. The library merge's refresh lays the saved text
+ * out afresh (a Save that applied typed text starts that merge) and moves
+ * these along: the same save, in the app's layout.
+ */
+const savesBeingStored = new Set<{ saved: string | null }>();
+
+/**
+ * How many edits the SDK on `window.sysml` has made to the model on screen.
+ * Such an edit pushes no Undo step and regenerates the text, so neither tells
+ * of it: a Drive open compares this instead, and does not replace an edit made
+ * while the file downloaded (`driveOpen`).
+ */
+let sdkEditCount = 0;
 
 /**
  * Run the recompute an edit is still waiting on NOW, with the force flag that
@@ -1407,6 +1462,79 @@ export const useAppStore = create<AppState>((set, get) => {
     scheduleRecompute(true);
   }
 
+  /**
+   * After an edit made through the SDK (`window.sysml`), which changes the
+   * model directly, outside every store command: refresh what the store
+   * derives from the model, as after an edit in the app — `rev` at once (the
+   * Explorer, Properties), then the coalesced recompute (Problems, the
+   * diagram, the Text view). The Text view shows the edit, and so the copy in
+   * this browser and an attached Drive file read unsaved: both compare the
+   * Text view's text.
+   *
+   * THE RULE FOR THE TEXT: an SDK edit never replaces text typed in the Text
+   * view and not applied (`typed`, read before the edit — afterwards the model
+   * is no longer the text it was applied from). That text stays, reading "not
+   * yet applied", as it does when a collaborator edits the model; an edit in
+   * the app is the user's own, and replaces it. Applying the typed text — or
+   * saving it, outside a room — then makes it the model in place of the SDK's
+   * edit, and one Undo brings the edit back (the apply's own step). Any other
+   * text — the model's, or the one a faulted apply kept — is regenerated: it
+   * is no longer the model, and a Drive file opened with a syntax error must
+   * read unsaved.
+   *
+   * In a collaboration room the model listener has bumped `rev` and scheduled
+   * a recompute already — one that keeps a dirty buffer, as a peer's edit
+   * must. This only makes that same recompute replace a buffer nobody typed:
+   * one edit, one refresh.
+   */
+  function afterSdkEdit(typed: boolean): void {
+    if (autoRecomputeSuppressed) return;
+    if (collabRuntime !== null) {
+      if (!typed) scheduleRecompute(true);
+      return;
+    }
+    const { model } = get();
+    set((s) =>
+      s.selectionId == null && s.selectionIds.length === 0
+        ? { rev: s.rev + 1 }
+        : { rev: s.rev + 1, ...validSelection(s, model) },
+    );
+    scheduleRecompute(!typed);
+  }
+
+  // Every method of the SDK on `window.sysml` runs through a check of the
+  // model's revision: a call that moved it — `create`, `update`, `delete`,
+  // `reparent`, `commit(fn)`, and whatever mutating method the SDK gains
+  // later — is an SDK edit; a read moves nothing, and nothing follows it.
+  // Only the outermost call counts (`commit(fn)` makes `fn`'s edits one), and
+  // only on the model on screen. Installed on the instance, so `window.sysml`
+  // stays a `ModelApi`.
+  let sdkDepth = 0;
+  for (const name of Object.getOwnPropertyNames(ModelApi.prototype)) {
+    const method: unknown = Object.getOwnPropertyDescriptor(ModelApi.prototype, name)?.value;
+    if (name === 'constructor' || typeof method !== 'function') continue;
+    Object.defineProperty(initialApi, name, {
+      configurable: true,
+      writable: true,
+      value: function sdkCall(this: ModelApi, ...args: unknown[]): unknown {
+        const model = initialApi.model;
+        if (sdkDepth > 0 || model !== get().model) return method.apply(this, args);
+        const from = model.rev;
+        const typed = typedTextUnapplied();
+        sdkDepth++;
+        try {
+          return method.apply(this, args);
+        } finally {
+          sdkDepth--;
+          if (model.rev !== from) {
+            sdkEditCount++;
+            afterSdkEdit(typed);
+          }
+        }
+      },
+    });
+  }
+
   return {
     model: initialModel,
     api: initialApi,
@@ -1449,7 +1577,14 @@ export const useAppStore = create<AppState>((set, get) => {
     textBuffer: '',
     textDirty: false,
     serializeError: null,
-    ...textView(initialModel, ''),
+    ...initialText,
+    // The model a session starts with counts as saved: a first visit that
+    // touched nothing has nothing to lose. The boot's library merge carries
+    // this across its refresh (refreshAfterLibraryLoad).
+    savedText:
+      initialText.serializeError == null && initialText.textBuffer !== undefined
+        ? withFinalNewline(initialText.textBuffer)
+        : null,
     projectName: deriveProjectName(initialModel),
     queryResult: null,
     rev: 0,
@@ -1476,6 +1611,11 @@ export const useAppStore = create<AppState>((set, get) => {
       forcedRecomputePending,
       lastAppliedText,
       typedTextFaulted,
+      applyTypedTextToSave,
+      sayWhatTheBrowserKept,
+      savedTextNow,
+      browserSaving: () => browserSaving,
+      sdkEdits: () => sdkEditCount,
     }),
 
     // Version-control state. Left empty/lazy so the repository is only seeded
@@ -2377,7 +2517,12 @@ export const useAppStore = create<AppState>((set, get) => {
     /* ─────────────────────────── Validation / text ────────────────────── */
 
     runValidation() {
-      cancelRecompute();
+      // An edit's recompute still waiting runs now, not never: these four
+      // set their own rows, which it would overwrite later, but it also
+      // brings the Text view up to the edit — and with it what reads unsaved
+      // (`browserDirty`, `driveDirty`). Dropped, an edit a script made just
+      // before (`sysml.create(…)`, then Validate) never reached the text.
+      flushRecompute();
       set({ diagnostics: safeValidate(get().model) });
     },
 
@@ -2395,7 +2540,7 @@ export const useAppStore = create<AppState>((set, get) => {
      * navigable to the specialiser, the estimate the row is about.
      */
     runConstraintCheck() {
-      cancelRecompute();
+      flushRecompute(); // the edit's text first, as `runValidation`
       const { model } = get();
       const base = safeValidate(model).filter(
         (d) => d.ruleId !== 'constraint-violation' && d.ruleId !== 'target-by-specialisation',
@@ -2451,7 +2596,7 @@ export const useAppStore = create<AppState>((set, get) => {
      * and the REST `/analytics/execution` route show identical traces.
      */
     simulate() {
-      cancelRecompute();
+      flushRecompute(); // the edit's text first, as `runValidation`
       const { model, activeView, selectionId } = get();
       let report;
       try {
@@ -2509,7 +2654,7 @@ export const useAppStore = create<AppState>((set, get) => {
      * view's "Solve" affordance and mirrors the REST `/analytics/analysis` route.
      */
     solveParametric() {
-      cancelRecompute();
+      flushRecompute(); // the edit's text first, as `runValidation`
       const { model } = get();
       let report: AnalysisReport;
       try {
@@ -2639,11 +2784,24 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     setTextBuffer(text) {
+      const { model, textBuffer, textDirty, serializeError } = get();
+      // Typing begins over the model's own text: remember it (see typedFrom).
+      // Not over a text the model did not write — typed before, kept by a
+      // faulted apply, the last one a refusing serializer could write — nor
+      // while an edit's recompute is still to replace it.
+      if (!textDirty) {
+        typedFrom =
+          serializeError === null && !recomputePending() ? { text: textBuffer, model, modelRev: model.rev } : null;
+      }
       // User keystrokes supersede a pending FORCED recompute (from a just-made
       // canvas/tree edit): downgrade it so it refreshes diagnostics/diagram but
       // no longer overwrites the buffer the user is now typing into (Fable D3).
       recomputePendingForce = false;
-      set({ textBuffer: text, textDirty: true });
+      // Typed back to that text, the model unchanged since: nothing typed
+      // stands, and an edit through the SDK or by a peer shows in the text.
+      const typedBack =
+        typedFrom !== null && text === typedFrom.text && typedFrom.model === model && typedFrom.modelRev === model.rev;
+      set({ textBuffer: text, textDirty: !typedBack });
     },
 
     applyText() {
@@ -2698,6 +2856,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model } = get();
       pushUndo();
       get().driveDetach(); // the attached Drive file no longer holds this model
+      forgetParseResult(); // the new model did not come from the open text
       // Clear the USER model but keep the already-loaded standard library in
       // place (so `mass : Real` still resolves in the fresh project, and an
       // undo of New restores the prior user model beside the same library — C6).
@@ -2711,13 +2870,43 @@ export const useAppStore = create<AppState>((set, get) => {
         rev: s.rev + 1,
       }));
       afterMutation();
+      // A new, empty model has nothing to lose: the next New, Open or Import
+      // does not ask about it.
+      set({ savedText: savedTextNow() });
     },
 
     async saveProject(name) {
       const { model, projectName } = get();
       const target = name ?? projectName;
-      await projectStore.saveProject(target, model.toJSON());
-      set({ projectName: target });
+      // Saved as of the click: the text is the model's as it is written, and
+      // an edit made while the browser stores it reads unsaved. A command that
+      // would replace the model meanwhile waits for the browser's answer
+      // (`browserSaving`).
+      const before = get().savedText;
+      const mark = { saved: savedTextNow() };
+      set({ savedText: mark.saved });
+      savesBeingStored.add(mark);
+      const storing = (async (): Promise<void> => {
+        try {
+          await projectStore.saveProject(target, model.toJSON());
+        } catch (err) {
+          // The browser refused to store it: it is not saved after all.
+          if (get().savedText === mark.saved) set({ savedText: before });
+          throw err;
+        } finally {
+          savesBeingStored.delete(mark);
+        }
+        set({ projectName: target });
+      })();
+      const settled = storing.then(
+        () => true,
+        () => false,
+      );
+      browserSaving = settled;
+      void settled.then(() => {
+        if (browserSaving === settled) browserSaving = null;
+      });
+      await storing;
     },
 
     async loadProject(name) {
@@ -2736,6 +2925,8 @@ export const useAppStore = create<AppState>((set, get) => {
         rev: s.rev + 1,
       }));
       afterMutation();
+      // The project as stored: what this browser holds.
+      set({ savedText: savedTextNow() });
       // (Re)load the library when the saved project predates library support
       // (a no-op merge when it already carries one) and bind references — done
       // asynchronously so a large library never blocks the load.
@@ -2996,6 +3187,9 @@ export const useAppStore = create<AppState>((set, get) => {
       const count = repo.listCommits(api.projectId, branchId).length;
       repo.commit(api.projectId, branchId, get().model, description ?? `Snapshot ${count}`);
       get().refreshVersions();
+      // The commit holds the model for this session, as a save does: a branch
+      // switch, or New, loses nothing switching back to this branch restores.
+      set({ savedText: savedTextNow() });
     },
 
     /**
@@ -3040,6 +3234,8 @@ export const useAppStore = create<AppState>((set, get) => {
         queryResult: null,
         rev: s.rev + 1,
       }));
+      // The branch head holds what was loaded: nothing unsaved.
+      set({ savedText: savedTextNow() });
       void get().rebuildDiagram();
       get().refreshVersions();
       void loadStandardLibraryAsync();
@@ -3241,8 +3437,14 @@ if (
         await whenLibraryReady();
         await openText(text, detectFormat(url.pathname, text));
         // The linked model is where this session starts: Undo must not step
-        // back into the sample model it replaced.
-        useAppStore.setState({ undoStack: [], redoStack: [], linkedModel: { ...linked, status: 'loaded' } });
+        // back into the sample model it replaced, and — opened as it was
+        // published — it has nothing unsaved.
+        useAppStore.setState({
+          undoStack: [],
+          redoStack: [],
+          linkedModel: { ...linked, status: 'loaded' },
+          savedText: savedTextNow(),
+        });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         console.error(`could not open linked model ${modelParam}: ${error}`);
@@ -3321,6 +3523,17 @@ let lastParse: ParseResult | null = null;
 let lastApplied: { text: string; model: Model; modelRev: number } | null = null;
 
 /**
+ * The Text view's text when typing in it began — the model's own text then —
+ * with that model and its revision. A buffer typed back to it (a character
+ * typed and deleted, the textarea's own Undo) holds nothing typed, as long as
+ * the model has not changed since: `setTextBuffer` clears `textDirty`, so an
+ * edit through the SDK, a peer's edit and Save treat it as the model's text,
+ * not as text typed and not applied. Once the model has changed, the text it
+ * was is no longer the model's, and it stays typed.
+ */
+let typedFrom: { text: string; model: Model; modelRev: number } | null = null;
+
+/**
  * The text the live model was last applied from, or null once the model has
  * changed by any other route since.
  *
@@ -3339,36 +3552,152 @@ export function lastAppliedText(): string | null {
     : null;
 }
 
-/** The text {@link typedTextFaulted} parsed last, and what it found: one parse per text. */
-let typedFault: { text: string; faulted: boolean } | null = null;
+/**
+ * The Text view holds text typed there and not applied: `textDirty`, and not
+ * the text the model was last applied from — a faulted apply leaves its text
+ * dirty although nobody typed it (see {@link lastAppliedText}).
+ */
+function typedTextUnapplied(): boolean {
+  const { textDirty, textBuffer } = useAppStore.getState();
+  return textDirty && textBuffer !== lastAppliedText();
+}
+
+/** Where the first syntax error of a text typed in the Text view is: what a save that kept the text back names. */
+export interface TypedTextFault {
+  line: number;
+  column: number;
+}
+
+/** The text {@link typedTextFault} parsed last, and its first syntax error: one parse per text. */
+let typedFault: { text: string; fault: TypedTextFault | null } | null = null;
+
+/**
+ * The first syntax error of text typed in the Text view and not applied yet,
+ * or null — when it has none, or there is no such text.
+ */
+export function typedTextFault(): TypedTextFault | null {
+  if (!typedTextUnapplied()) return null;
+  const { textBuffer } = useAppStore.getState();
+  if (typedFault?.text !== textBuffer) {
+    const first = parseModel(textBuffer).diagnostics.find((d) => d.severity === 'error');
+    typedFault = { text: textBuffer, fault: first ? { line: first.line, column: first.column } : null };
+  }
+  return typedFault.fault;
+}
 
 /**
  * Text typed in the Text view and not applied yet has a parse error. Applying
  * it makes the parser's recovery of it the model — elements the text puts in
  * one package may land in another — which is not what is on screen. So a save
- * in this browser does not apply such a text first: Ctrl/Cmd+S in the editor,
- * the browser copy a Drive save also keeps, the offline row's Save each store
- * the model as it stands, and the editor goes on reading "not yet applied".
+ * in this browser does not apply such a text first: Save and Ctrl/Cmd+S, the
+ * browser copy a Drive save also keeps, the offline row's Save each store the
+ * model as it stands, and the editor goes on reading "not yet applied".
  * (A Drive save still applies it, and uploads the text as typed.)
  */
 export function typedTextFaulted(): boolean {
-  const { textDirty, textBuffer } = useAppStore.getState();
-  if (!textDirty || textBuffer === lastAppliedText()) return false;
-  if (typedFault?.text !== textBuffer) {
-    const faulted = parseModel(textBuffer).diagnostics.some((d) => d.severity === 'error');
-    typedFault = { text: textBuffer, faulted };
-  }
-  return typedFault.faulted;
+  return typedTextFault() !== null;
 }
 
 /**
- * Before a save in this browser: make text typed in the Text view the model,
- * as Apply does — unless it is applied already, or has a parse error (see
- * {@link typedTextFaulted}); the model is then saved as it stands.
+ * The model's text as it stands, for {@link AppState.savedText}: the Text
+ * view's text once an edit's pending recompute has run — unless that is text
+ * typed there and not applied, which is not the model; then the model's own
+ * text. The text a faulted apply was made from stays: it is what the model
+ * was applied from, as a Drive open keeps it. Null for a model the serializer
+ * refuses.
  */
-export function applyTypedTextToSave(): void {
-  const s = useAppStore.getState();
-  if (s.textDirty && s.textBuffer !== lastAppliedText() && !typedTextFaulted()) s.applyText();
+function savedTextNow(): string | null {
+  flushRecompute();
+  const { model, textBuffer, textDirty, serializeError } = useAppStore.getState();
+  if (serializeError !== null) return null;
+  if (!textDirty || textBuffer === lastAppliedText()) return withFinalNewline(textBuffer);
+  const view = textView(model, textBuffer);
+  return view.serializeError == null && view.textBuffer !== undefined ? withFinalNewline(view.textBuffer) : null;
+}
+
+/**
+ * Whether the Versions tab's merge of `sourceBranchId` into `targetBranchId`
+ * with `strategy` would load a model in place of the working one
+ * (`mergeBranchesCmd`): a merge that resolves — a clean one, or `ours` /
+ * `theirs`. A `manual` merge that meets conflicts makes no commit and loads
+ * nothing, so the tab asks nothing before it.
+ */
+export function mergeLoads(sourceBranchId: string, targetBranchId: string, strategy: MergeStrategy): boolean {
+  const { api } = useAppStore.getState();
+  return api.repository.mergeWouldApply(api.projectId, sourceBranchId, targetBranchId, { strategy });
+}
+
+/**
+ * Why a save in this browser kept text typed in the Text view back: its first
+ * syntax error, or `'room'` — a collaboration room is connected (see
+ * {@link applyTypedTextToSave}).
+ */
+export type TypedTextKept = TypedTextFault | 'room';
+
+/**
+ * Before a save in this browser — Save and Ctrl/Cmd+S (in the Text view's
+ * editor too), the offline row's Save, the guard's Save: make text typed in
+ * the Text view the model, as Apply does — unless it is applied already, or
+ * kept back; the model is then saved as it stands, and why the text was kept
+ * back is returned for the save to say ({@link sayWhatTheBrowserKept}). Null
+ * when nothing was kept back. A text is kept back
+ * - over a parse error (see {@link typedTextFaulted});
+ * - in a collaboration room, but for the guard's Save (`replacing`: the
+ *   command it guards replaces the model right after). An apply resets the
+ *   room's model for every peer — `model.reset` reseeds the shared document —
+ *   and the text was typed over the model as it stood before: the room's
+ *   listener keeps a typed buffer when a peer edits, so a Save would erase
+ *   the peers' edits for everyone. **Apply text → model** still does it, as
+ *   a choice.
+ *
+ * The save writes the project that is open. An apply renames the project
+ * after the model's first package (`deriveProjectName`), and the save after
+ * it would then overwrite another saved project of that name, and leave the
+ * open one as it was: the name stays.
+ *
+ * A recompute a local model edit forced goes first: it replaces the text
+ * buffer whatever was typed there — that is what an edit does to text nobody
+ * applied — so applying the buffer before it would put the older text back
+ * over the edit, and the save would hold neither. Typing after the edit takes
+ * the force off, and the typed text wins. (A Drive save's upload does the
+ * same, `payloadNow` in `./store.drive`.)
+ */
+export function applyTypedTextToSave(opts: { replacing?: boolean } = {}): TypedTextKept | null {
+  if (forcedRecomputePending()) flushRecompute();
+  if (!typedTextUnapplied()) return null;
+  const fault = typedTextFault();
+  if (fault !== null) return fault;
+  if (collabRuntime !== null && opts.replacing !== true) return 'room';
+  const { projectName, applyText } = useAppStore.getState();
+  applyText();
+  useAppStore.setState({ projectName });
+  return null;
+}
+
+/** The note {@link sayWhatTheBrowserKept} put up last: taken back by the next save that holds the typed text. */
+let keptBackNote: DriveNotice | null = null;
+
+/**
+ * After a save in this browser alone (Save and Ctrl/Cmd+S with no Drive file
+ * attached, the offline row's Save): when typed text was kept back (`kept`,
+ * from {@link applyTypedTextToSave}), the strip under the toolbar says so —
+ * on every deployment, Google Drive or not — naming the line of a syntax
+ * error, since neither Problems nor the strip under the editor lists the
+ * parse errors of a text not applied, or the room. A save that kept nothing
+ * back takes an earlier such note down: it no longer describes the copy in
+ * this browser. Another notice standing (the browser refused the save, say)
+ * is left as it is.
+ */
+export function sayWhatTheBrowserKept(kept: TypedTextKept | null): void {
+  const { drive } = useAppStore.getState();
+  const standing = drive.notice !== null && drive.notice === keptBackNote;
+  if (kept !== null && (drive.notice === null || standing)) {
+    const message = kept === 'room' ? DRIVE_MESSAGES.typedTextInRoom : DRIVE_MESSAGES.typedTextKeptBack(kept.line);
+    keptBackNote = { kind: 'info', message, retryable: false };
+    useAppStore.setState((s) => ({ drive: { ...s.drive, notice: keptBackNote } }));
+  } else if (kept === null && standing) {
+    useAppStore.setState((s) => ({ drive: { ...s.drive, notice: null } }));
+  }
 }
 
 /**
@@ -3440,10 +3769,31 @@ function refreshAfterLibraryLoad(): void {
     // (warnings do not count: a forward reference is normal and would freeze
     // the buffer forever), the text is left alone and marked dirty, because
     // the model genuinely was not regenerated from it.
+    //
+    // Nor is text typed since the apply replaced: keystrokes made while the
+    // library merged — right after a Save that applied the text, say — are
+    // neither in the model nor anywhere else. It stays, "not yet applied".
     const faulted = parseRows.some((d) => d.ruleId === 'parse' && d.severity === 'error');
+    const typed = s.textDirty && s.textBuffer !== lastAppliedText();
+    const text: Partial<AppState> = faulted ? { textDirty: true } : typed ? {} : textView(model, s.textBuffer);
+    // The merge is the library's step, not the user's: a model that read
+    // saved before it still does, in the text the refresh lays it out in —
+    // the boot's sample, a project just loaded. Not while an edit's recompute
+    // is waiting: the text then lags the model, and carrying it would count
+    // that edit as saved.
+    const carried =
+      text.serializeError === null && text.textBuffer !== undefined && !recomputePending() && !browserDirty(s)
+        ? { savedText: withFinalNewline(text.textBuffer) }
+        : {};
+    // A save still being stored is that save in the new layout: its refusal
+    // must still take it back.
+    if (carried.savedText !== undefined) {
+      for (const mark of savesBeingStored) if (mark.saved === s.savedText) mark.saved = carried.savedText;
+    }
     return {
       diagnostics: [...parseRows, ...safeValidate(model)],
-      ...(faulted ? { textDirty: true } : textView(model, s.textBuffer)),
+      ...text,
+      ...carried,
       rev: s.rev + 1,
     };
   });

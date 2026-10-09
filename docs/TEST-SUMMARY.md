@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4150 total — 4150 passed, 0 failed, 0 skipped
+- **Tests:** 4187 total — 4187 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -26,7 +26,7 @@
 | test/integration/full-library.resolve.test.ts | 16 | 0 | 0 |
 | test/integration/library-resolve.fixpoint.test.ts | 6 | 0 | 0 |
 | test/integration/library-resolve.integration.test.ts | 5 | 0 | 0 |
-| test/integration/persist-api.persistence.test.ts | 17 | 0 | 0 |
+| test/integration/persist-api.persistence.test.ts | 20 | 0 | 0 |
 | test/integration/persist-api.rest.test.ts | 12 | 0 | 0 |
 | test/integration/persist-api.sdk.test.ts | 8 | 0 | 0 |
 | test/integration/pipeline.api.test.ts | 17 | 0 | 0 |
@@ -58,7 +58,7 @@
 | test/unit/api.rest2.test.ts | 9 | 0 | 0 |
 | test/unit/api.sdk.test.ts | 11 | 0 | 0 |
 | test/unit/api.verification.test.ts | 77 | 0 | 0 |
-| test/unit/api.versioning.test.ts | 10 | 0 | 0 |
+| test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 7 | 0 | 0 |
 | test/unit/checks-registry.test.ts | 9 | 0 | 0 |
@@ -85,7 +85,7 @@
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
 | test/unit/diagram.symbols2.test.ts | 14 | 0 | 0 |
 | test/unit/docs-counts.test.ts | 115 | 0 | 0 |
-| test/unit/drive.test.ts | 172 | 0 | 0 |
+| test/unit/drive.test.ts | 177 | 0 | 0 |
 | test/unit/duplicate.test.ts | 6 | 0 | 0 |
 | test/unit/fmi-cosim.test.ts | 22 | 0 | 0 |
 | test/unit/fmi-export.test.ts | 16 | 0 | 0 |
@@ -144,7 +144,7 @@
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 172 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 200 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 12 | 0 | 0 |

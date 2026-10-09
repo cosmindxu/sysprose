@@ -4,10 +4,10 @@
  * user's own Google Drive, and the selectors the UI reads off them.
  *
  * WHAT IS WRITTEN is the Text view's text — `withFinalNewline(textBuffer)`, the
- * canonical serialization of the USER roots — never `exportModel(model,
- * 'sysml')`, which serializes every root, the merged standard library
- * included. Saving is explicit; the browser's own project store is untouched
- * and stays the local draft.
+ * canonical serialization of the USER roots. The merged standard library stays
+ * out, as it does from Export ▾ → SysML (`exportModel(model, 'sysml')` writes
+ * the same roots, without the final newline). Saving is explicit; the
+ * browser's own project store is untouched and stays the local draft.
  *
  * A SIGN-IN NEEDS THE CLICK. A browser opens a popup only inside a user
  * gesture, so every action that may need a token calls `ensureSession` as its
@@ -54,7 +54,7 @@ import {
   type DriveSession,
   type ModelFormat,
 } from '@persistence/index';
-import type { AppState } from './store';
+import type { AppState, TypedTextKept } from './store';
 
 /* ─────────────────────────────── The slice ──────────────────────────────── */
 
@@ -113,13 +113,17 @@ export interface DriveNotice {
 /**
  * A question the strip is asking: the Save-as form (`asCopy` for a copy of
  * the attached file), whether to rewrite a hand-written file, or — before a
- * command replaces the model — what to do with unsaved Drive changes
- * (`dirty`) or with edited work no Drive file holds (`open`).
+ * command replaces the model or lets go of the attached file — what to do
+ * with unsaved Drive changes (`dirty`), with work no save holds before a
+ * Drive open (`open`), or, with no Drive file attached (or one gone from
+ * Drive), with work no save holds (`browser`: Save is the save in this
+ * browser, and `refused` says the browser just refused it). The `browser`
+ * question is asked on every deployment, Google Drive or not.
  */
 export type DrivePrompt =
   | { kind: 'saveas'; suggested: string; asCopy: boolean }
   | { kind: 'rewrite' }
-  | { kind: 'guard'; label: string; variant: 'dirty' | 'open' };
+  | { kind: 'guard'; label: string; variant: 'dirty' | 'open' | 'browser'; refused?: boolean };
 
 /**
  * The Drive slice. Nothing token-like ever lives here; the store holds what
@@ -200,9 +204,9 @@ export const initialDriveState: DriveState = {
 export interface DriveActions {
   /**
    * Start loading Google's sign-in script (once) and set `authReady` when it
-   * is usable. Called when the Drive panel opens and when a `?drive=` link is
-   * pending, so the later sign-in click finds the script there and opens its
-   * popup inside that click.
+   * is usable. Called when the Drive panel opens, when the Save-as form opens
+   * signed out (Ctrl/Cmd+Shift+S) and when a `?drive=` link is pending, so the
+   * later sign-in click finds the script there and opens its popup inside it.
    */
   drivePrepare(): Promise<void>;
   /** Sign in with Google's account chooser, then read who it is and the Recent list. */
@@ -228,7 +232,8 @@ export interface DriveActions {
    * The offline row's Save: the project in this browser, and an error notice
    * when the browser refuses it. Text typed in the Text view is applied first,
    * so the save holds what is on screen — unless the text has a parse error,
-   * whose recovery would not be; then the model is saved as it stands.
+   * whose recovery would not be; then the model is saved as it stands, and an
+   * `info` notice says the typed text was kept back (as Save says it).
    */
   driveSaveLocal(): Promise<void>;
   /**
@@ -254,13 +259,24 @@ export interface DriveActions {
   /** Answer "rewrite this hand-written file?": save anyway, save a copy instead, or not now. */
   driveAcknowledgeRewrite(how: 'save' | 'copy' | 'cancel'): Promise<void>;
   /**
-   * Run `run` — a command that replaces the model — unless that would lose
-   * something: unsaved Drive changes (any variant), or, for a Drive open
-   * (`open`), edited work no Drive file holds. Then the strip asks first, and
-   * {@link driveRunPending} carries out the answer.
+   * Run `run` — a command that replaces the model, or lets go of the
+   * attached Drive file — unless that would lose something: unsaved Drive
+   * changes (any variant); with no Drive file holding the model (none
+   * attached, or one gone from Drive), work no save holds
+   * ({@link browserDirty}), before a Drive open (`open`) or any other
+   * command that replaces the model (`dirty`) — never before one that keeps
+   * it (`detach`: Close Drive file, Sign out). Then the strip asks first, and
+   * {@link driveRunPending} carries out the answer. On every deployment:
+   * without Google Drive, the question about work no save holds is the one
+   * there is. A `dirty` command given while a save in this browser is still
+   * being stored waits for it, and asks if the browser refuses it.
    */
-  driveGuard(label: string, variant: 'dirty' | 'open', run: () => void | Promise<void>): void;
-  /** Answer the guard: save first, discard, keep editing, or open anyway. */
+  driveGuard(label: string, variant: 'dirty' | 'open' | 'detach', run: () => void | Promise<void>): void;
+  /**
+   * Answer the guard: save first (to the attached Drive file, or — the
+   * `browser` question — in this browser, text typed in the Text view applied
+   * first), discard, keep editing, or open anyway.
+   */
   driveRunPending(how: 'save' | 'discard' | 'keep' | 'open-anyway'): Promise<void>;
   /** "Sign in and continue": sign in (this click opens the window) and run the pending action. */
   driveResume(): Promise<void>;
@@ -404,6 +420,20 @@ export function driveDirty(s: Pick<AppState, 'drive' | 'textBuffer' | 'serialize
 }
 
 /**
+ * The model has work nothing holds: the Text view's text — typed and not
+ * applied yet, or not — differs from the text the model had when it was last
+ * saved, in this browser, to Google Drive or as a Versions commit, or opened
+ * (`savedText`). What New, Open ▾, Import, a branch switch or merge, a room
+ * join and a Drive open ask about when no Drive file holds the model. Derived
+ * as {@link driveDirty} is, and for the same reasons; a model the serializer
+ * refuses, or one last saved while it could not be written as text, cannot be
+ * compared, and reads unsaved: asking is the side that loses nothing.
+ */
+export function browserDirty(s: Pick<AppState, 'savedText' | 'textBuffer' | 'serializeError'>): boolean {
+  return s.serializeError !== null || s.savedText === null || !equalsWithFinalNewline(s.textBuffer, s.savedText);
+}
+
+/**
  * The link that reopens the attached file in this app — this page with
  * `?drive=<id>`, and `&resourcekey=<key>` when the file has one — or null
  * when no file is attached.
@@ -515,6 +545,11 @@ export const DRIVE_MESSAGES = {
     "Leave the collaboration room to open or save a file in Google Drive: in a room, the room's peers change this model too.",
   browserSaveFailed:
     'The copy in this browser was not saved: the browser refused to store the project (its storage may be full, or blocked for this site).',
+  browserRefused: 'The browser refused to store the project (its storage may be full, or blocked for this site).',
+  typedTextKeptBack: (line: number) =>
+    `Saved in this browser without the text typed in the Text view: it has a syntax error at line ${line}. Fix it, then save again.`,
+  typedTextInRoom:
+    "Saved in this browser without the text typed in the Text view: in a collaboration room, Save does not replace the room's model with it. Apply text → model does, for everyone in the room; then save again.",
   otherAccount: (now: string, before: string) =>
     `Google's sign-in window came back signed in as ${now}, not ${before}, so nothing was done: the Drive file is closed and the Recent list cleared. To go on as ${before}, sign out under Drive ▾ and sign in again.`,
   linkUnsupported: 'This link names a Google Drive file, but this deployment has no Google Drive support.',
@@ -723,6 +758,23 @@ export interface DriveInternals {
   lastAppliedText(): string | null;
   /** Text typed in the Text view and not applied yet has a parse error: applying it would make the parser's recovery the model. */
   typedTextFaulted(): boolean;
+  /**
+   * Before a save in this browser: apply text typed in the Text view, unless
+   * it has a parse error, or a collaboration room is connected and the save
+   * is not `replacing` — then why it was kept back, else null.
+   */
+  applyTypedTextToSave(opts?: { replacing?: boolean }): TypedTextKept | null;
+  /** After a save in this browser alone: say in the strip what it kept back, or take down an earlier such note. */
+  sayWhatTheBrowserKept(kept: TypedTextKept | null): void;
+  /** The model's text as it stands, for `savedText` — null when it cannot be written as text. */
+  savedTextNow(): string | null;
+  /**
+   * A save in this browser still being stored: resolves with whether the
+   * browser kept it, once `savedText` says so — or null when none is.
+   */
+  browserSaving(): Promise<boolean> | null;
+  /** How many edits the SDK on `window.sysml` has made to the model on screen: it moves on each one. */
+  sdkEdits(): number;
 }
 
 /** What a failing action was about: the wording, and where the failure lands. */
@@ -762,7 +814,7 @@ export function createDriveActions(
   // token, never the token.
   let refusedBy: DriveAuth | null = null;
   // What a standing guard prompt runs once the user goes on.
-  let guarded: { prompt: DrivePrompt; run: () => void | Promise<void> } | null = null;
+  let guarded: { prompt: Extract<DrivePrompt, { kind: 'guard' }>; run: () => void | Promise<void> } | null = null;
 
   const configured = (): boolean => get().drive.configStatus === 'ready' && get().drive.config !== null;
   const services = (): DriveServices => servicesFor(get().drive.config as DriveConfig);
@@ -1069,8 +1121,8 @@ export function createDriveActions(
     if (s.textDirty && s.textBuffer !== internals.lastAppliedText()) s.applyText();
     // An apply merges the library again, and the refresh after it lays the
     // text out as this app writes it: that is the text to upload. The apply
-    // is this one, or one made just before the save — Ctrl/Cmd+S typed in
-    // the Text view applies the text first, so the browser save holds it too.
+    // is this one, or one made just before the save — Save and Ctrl/Cmd+S
+    // apply the text first (`runSave`), so the browser save holds it too.
     await internals.whenLibrarySettled();
     internals.flushRecompute();
     const { serializeError, textBuffer } = get();
@@ -1148,7 +1200,11 @@ export function createDriveActions(
       // it was attached to, and the new model stays unattached.
       const file = get().drive.file;
       if (file === null || attachment !== gen) return;
-      patch({ file: { ...withMeta(file, meta), savedText: payload, rewrites: false }, conflict: null });
+      // Drive holds this text now: nothing a command would replace is lost.
+      set((s) => ({
+        savedText: payload,
+        drive: { ...s.drive, file: { ...withMeta(file, meta), savedText: payload, rewrites: false }, conflict: null },
+      }));
     } catch (err) {
       if (err instanceof DriveNotFoundError) return markFile(gen, { trashed: true });
       if (err instanceof DriveForbiddenError && err.reason === 'insufficientFilePermissions') {
@@ -1220,7 +1276,11 @@ export function createDriveActions(
         await internals.openText(text, 'sysml');
         const current = get().drive.file;
         if (current === null || attachment !== gen) return;
-        patch({ file: { ...withMeta(current, meta), ...asOpened(text) }, conflict: null });
+        const opened = asOpened(text);
+        set((s) => ({
+          savedText: opened.savedText,
+          drive: { ...s.drive, file: { ...withMeta(current, meta), ...opened }, conflict: null },
+        }));
       },
       { opening: file.name },
     );
@@ -1233,12 +1293,24 @@ export function createDriveActions(
    * text was applied (an edit, an Undo while the library merged): then it is
    * the text as fetched, so the change reads unsaved, and whether a save
    * rewrites the file cannot be told. Nor can it when a syntax error kept the
-   * text as fetched: the app never laid it out.
+   * text as fetched: the app never laid it out. Text typed in the Text view
+   * while the library merged is not Drive's either — the refresh keeps it,
+   * "not yet applied" — so saved is then the model's own text, and the typed
+   * text reads unsaved.
    */
   const asOpened = (text: string): Pick<DriveFile, 'savedText' | 'rewrites'> => {
-    if (internals.lastAppliedText() !== text) return { savedText: withFinalNewline(text), rewrites: true };
-    const savedText = withFinalNewline(get().textBuffer);
-    return { savedText, rewrites: get().textDirty || laidOutElsewhere(text, savedText) };
+    const asFetched = { savedText: withFinalNewline(text), rewrites: true };
+    if (internals.lastAppliedText() !== text) return asFetched;
+    const s = get();
+    if (s.textDirty && s.textBuffer !== text) {
+      // Typed since the apply. Over a syntax error the model is the parser's
+      // recovery, which Drive does not hold either.
+      if (s.diagnostics.some((d) => d.ruleId === 'parse' && d.severity === 'error')) return asFetched;
+      const savedText = internals.savedTextNow() ?? withFinalNewline(text);
+      return { savedText, rewrites: laidOutElsewhere(text, savedText) };
+    }
+    const savedText = withFinalNewline(s.textBuffer);
+    return { savedText, rewrites: s.textDirty || laidOutElsewhere(text, savedText) };
   };
 
   /**
@@ -1249,22 +1321,72 @@ export function createDriveActions(
   const parkedAcrossSwitch = (pending: DrivePendingOp | null): DrivePendingOp | null =>
     pending?.op === 'open' && !pending.reload ? pending : null;
 
-  /**
-   * Run `run` — a command that replaces the model — unless that would lose
-   * something; then the strip asks first (see `driveGuard`). Resolves with
-   * `run` when it ran at once.
-   */
-  const guard = (label: string, variant: 'dirty' | 'open', run: () => void | Promise<void>): Promise<void> => {
-    const s = get();
-    let prompt: DrivePrompt | null = null;
-    if (driveDirty(s)) prompt = { kind: 'guard', label, variant: 'dirty' };
-    else if (variant === 'open' && s.drive.file === null && s.undoStack.length > 0) {
-      prompt = { kind: 'guard', label, variant: 'open' };
-    }
-    if (prompt === null) return Promise.resolve(run());
+  /** Put the guard's question to the user: the strip asks it, and `run` waits for the answer. */
+  const ask = (prompt: Extract<DrivePrompt, { kind: 'guard' }>, run: () => void | Promise<void>): void => {
     guarded = { prompt, run };
     patch({ prompt, notice: null });
+  };
+
+  /**
+   * Run `run` — a command that replaces the model, or lets go of the
+   * attached file — unless that would lose something; then the strip asks
+   * first (see `driveGuard`). Resolves with `run` when it ran at once, or
+   * once a save it waited for was stored. `refused`: the browser has just
+   * refused that save, and the question says so.
+   *
+   * An attached Drive file decides alone: what it holds is not lost, whatever
+   * this browser holds — unless it is gone from Drive. Without one, or with
+   * one gone (whose unsaved changes no Save to Drive can keep), the question
+   * is whether anything holds the model at all; a command that keeps the
+   * model (`detach`) has nothing to ask then.
+   */
+  const guard = (
+    label: string,
+    variant: 'dirty' | 'open' | 'detach',
+    run: () => void | Promise<void>,
+    refused = false,
+  ): Promise<void> => {
+    // An edit whose recompute is still waiting has not reached the text, and
+    // the text is what is compared: it counts.
+    internals.flushRecompute();
+    const s = get();
+    const file = s.drive.file;
+    // Saved as of its click, but the browser may still refuse it.
+    const saving = internals.browserSaving();
+    let prompt: Extract<DrivePrompt, { kind: 'guard' }> | null = null;
+    const gone = file?.trashed === true;
+    if (driveDirty(s) && !gone) prompt = { kind: 'guard', label, variant: 'dirty' };
+    else if ((file !== null && !gone) || variant === 'detach') prompt = null;
+    else if (variant === 'open') {
+      // A Drive open runs inside the click, where its sign-in may open a
+      // window: a save still being stored is asked about, not waited for.
+      if (saving !== null || browserDirty(s)) prompt = { kind: 'guard', label, variant: 'open' };
+    } else if (saving !== null) {
+      // Decided once the browser has kept the save, or refused it.
+      return saving.then((kept) => guard(label, variant, run, !kept));
+    } else if (browserDirty(s)) {
+      prompt = { kind: 'guard', label, variant: 'browser', ...(refused ? { refused } : {}) };
+    }
+    if (prompt === null) return Promise.resolve(run());
+    ask(prompt, run);
     return Promise.resolve();
+  };
+
+  /**
+   * The `browser` question's Save: the project in this browser, text typed in
+   * the Text view applied first, so the save holds what is on screen.
+   * Resolves with whether the browser kept it. Typed text with a syntax error
+   * is not saved — the parser's recovery of it is not what is on screen, and
+   * the strip's Save is disabled then. Applied in a collaboration room too,
+   * where Save keeps it back: the command replaces the room's model right
+   * after. A note that an earlier save kept typed text back goes: this copy
+   * holds it.
+   */
+  const saveBeforeReplacing = async (): Promise<boolean> => {
+    if (internals.applyTypedTextToSave({ replacing: true }) !== null) return false;
+    const kept = await browserSave();
+    if (kept) internals.sayWhatTheBrowserKept(null);
+    return kept;
   };
 
   /**
@@ -1448,13 +1570,14 @@ export function createDriveActions(
       return saveAttached({ overwrite: false, inBrowser });
     },
 
-    driveSaveLocal() {
+    async driveSaveLocal() {
       // Typed text is the model only once applied — unless it has a parse
       // error: the parser's recovery of it is not what is on screen, and the
-      // model is kept as it stands (the editor still reads "not yet applied").
-      const s = get();
-      if (s.textDirty && s.textBuffer !== internals.lastAppliedText() && !internals.typedTextFaulted()) s.applyText();
-      return saveInBrowser();
+      // model is kept as it stands (the editor still reads "not yet applied"),
+      // as Save and Ctrl/Cmd+S keep it; the strip then says so.
+      const kept = internals.applyTypedTextToSave();
+      if (await browserSave()) internals.sayWhatTheBrowserKept(kept);
+      else browserSaveFailed();
     },
 
     driveSaveAs(name, opts = {}) {
@@ -1488,6 +1611,7 @@ export function createDriveActions(
           attachment++;
           set((s) => ({
             linkedModel: null,
+            savedText: payload,
             drive: {
               ...s.drive,
               file: { ...meta, savedText: payload, rewrites: false, rewriteAcknowledged: false, openedFrom: 'save-as' },
@@ -1518,14 +1642,20 @@ export function createDriveActions(
       // The model the open replaces, as it stood when the user asked for it.
       // A download takes a while, and the model stays editable meanwhile: a
       // command that replaces it moves `attachment` (New, Open, Import, a
-      // room, a sign-out), an edit or an Undo replaces the undo stack, and
+      // room, a sign-out), an edit or an Undo replaces the undo stack, an
+      // edit through the SDK (which pushes no Undo step) moves its count, and
       // typing changes the text not yet applied. Any of them since, and the
       // open no longer replaces what the user agreed to replace.
       const gen = attachment;
-      const asked = { undo: get().undoStack, text: get().textBuffer };
+      const asked = { undo: get().undoStack, text: get().textBuffer, sdk: internals.sdkEdits() };
       const changedSinceAsked = (): boolean => {
         const s = get();
-        return attachment !== gen || s.undoStack !== asked.undo || (s.textDirty && s.textBuffer !== asked.text);
+        return (
+          attachment !== gen ||
+          s.undoStack !== asked.undo ||
+          internals.sdkEdits() !== asked.sdk ||
+          (s.textDirty && s.textBuffer !== asked.text)
+        );
       };
       /** Leave the model as it is: the gate or a notice says why — nothing at all after a sign-out, which said its own. */
       const giveUp = (message: string): void => {
@@ -1599,6 +1729,9 @@ export function createDriveActions(
           }
           if (fmt === 'model-json') {
             // Opened, not attached: saving JSON back would be another format.
+            // Still, the model is the file Drive holds — unless it was edited
+            // while the library settled over it.
+            if (untouched) set({ savedText: internals.savedTextNow() });
             patch({
               notice: { kind: 'info', message: DRIVE_MESSAGES.openedJson(meta.name), retryable: false },
               ...(link ? { link: null } : {}),
@@ -1610,6 +1743,7 @@ export function createDriveActions(
           attachment++;
           guarded = null;
           set((s) => ({
+            savedText: opened.savedText,
             drive: {
               ...s.drive,
               file: {
@@ -1739,7 +1873,16 @@ export function createDriveActions(
       guarded = null;
       if (prompt?.kind === 'guard') patch({ prompt: null });
       if (standing === null || standing.prompt !== prompt || how === 'keep') return;
-      if (how === 'save') {
+      if (how === 'save' && standing.prompt.variant === 'browser') {
+        // Not saved — the browser refused it, or the typed text cannot be
+        // saved: the command waits, and the question stands again, saying
+        // why when the browser refused.
+        const faulted = internals.typedTextFaulted();
+        if (!(await saveBeforeReplacing())) {
+          if (get().drive.prompt === null) ask({ ...standing.prompt, refused: !faulted }, standing.run);
+          return;
+        }
+      } else if (how === 'save') {
         const parkedBefore = get().drive.pending;
         // Called at once, so its sign-in (if any) opens inside this click.
         await get().driveSave();

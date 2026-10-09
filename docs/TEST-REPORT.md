@@ -37,16 +37,16 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **Unit/integration runner** | Vitest + jsdom + Testing Library |
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
-| **Date** | 2026-10-08 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **4150 passed / 0 failed / 0 skipped** across **157 files** |
-| &nbsp;&nbsp;— unit | 3134 passed across 119 files |
-| &nbsp;&nbsp;— integration | 400 passed across 21 files |
+| **Date** | 2026-10-09 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
+| **Vitest checks** | **4187 passed / 0 failed / 0 skipped** across **157 files** |
+| &nbsp;&nbsp;— unit | 3168 passed across 119 files |
+| &nbsp;&nbsp;— integration | 403 passed across 21 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
 | &nbsp;&nbsp;— interop | 8 passed across 1 file |
 | &nbsp;&nbsp;— campaign (L6–L8) | 486 passed across 5 files |
-| **E2E scenarios** | **182 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
-| **Grand total** | **4332 automated checks passed / 0 failed** |
+| **E2E scenarios** | **188 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
+| **Grand total** | **4375 automated checks passed / 0 failed** |
 
 > **Previously the one failure**, now fixed: `conformance › Systems Library/
 > Actions.sysml › parses with 0 errors`. The OMG corpus (an *external,
@@ -103,7 +103,9 @@ Screenshots are under `test-results/screenshots/`.
 | **New** — reset to empty `NewModel` (`tb-new`) | `E toolbar-lifecycle` (*New resets… Save… Open*) | PASS | Sample discarded; `lifecycle-a-created` |
 | **Open** — project picker + pick (`tb-open`, `project-picker`, `project-pick`) | `E toolbar-lifecycle`; `E keyboard-shortcuts` (`kbd-d-saved`) | PASS | Restores saved project; `lifecycle-b-restored` |
 | **Save** — persist under current project (`tb-save`) | `E toolbar-lifecycle`; `E keyboard-shortcuts` | PASS | Round-trips New→Save→New→Open |
+| **Save** and **Ctrl/⌘+S** (from the diagram, the tree or the Text view's editor) apply text typed in the Text view first, under the open project's name; over a syntax error, or in a collaboration room, the model is saved as it stands and — with no Drive file attached — the strip says so, naming the line of a syntax error (`drive-strip`, `info`, on every deployment) | `E toolbar-lifecycle` (*Save holds the text typed in the Text view, keeps back a text with a syntax error and says so…*); `U store.reducers` (`the keys, and Save with a Drive file attached`: a peer's edit since the typing stays in the room); `U drive` (`DriveStrip`: the note without Google Drive, the offline row's Save) | PASS | `lifecycle-i-kept-back`; an edit in the app made after the typing goes first; text typed while the library merges again stays |
 | **Import** — file chooser replaces model (`tb-import`) | `E toolbar-lifecycle` (native-JSON round-trip); `E import-export` (`.sysml`) | PASS | `lifecycle-g-imported`, `07b-imported` |
+| **The question before a model is replaced** — New, Open, Import, a branch switch, a merge that resolves and a room join ask first while the model has work no save (in this browser, to Drive) or Versions commit holds; Save and continue, Discard and continue, Keep editing (`guard-save`, `guard-discard`, `guard-keep`) | `E toolbar-lifecycle` (*New, Open and Import ask before they replace work no save holds…*); `E gui-versions-clean-merge` (a committed edit: the switch asks nothing); `E model-param` (a `?model=` link opens saved); `U store.reducers` (`unsaved work`); `U drive` (`Toolbar`, `Versions and Collaborate`, `DriveStrip`); `U api.versioning` (`merge`) | PASS | `lifecycle-h-guard` |
 | **Export .sysml** (`tb-export-sysml`) | `E toolbar-lifecycle` (`package VehicleModel`); `E import-export` | PASS | `07a-exported`, `lifecycle-f-exported` |
 | **Export model JSON** (`tb-export-json`) | `E toolbar-lifecycle` (elements[]/rootIds[]); `E import-export` | PASS | Native `SerializedModel` |
 | **Export OMG API JSON** (`tb-export-api-json`) | `E toolbar-lifecycle` (`@type`/`rootElement`) | PASS | OMG element-graph payload |
@@ -137,7 +139,7 @@ Screenshots are under `test-results/screenshots/`.
 | **`/`** → focus Explorer search | `E gui-keyboard` (*"/" focuses the Explorer search box*) | PASS | `document.activeElement` = `explorer-search` |
 | Global handler ignores INPUT/TEXTAREA/**SELECT**/contenteditable | `E keyboard-shortcuts` (focuses brand before keys) | PASS | Matches handler guard |
 | **Ctrl/⌘+Shift+S** → Save to Drive; with no Drive file attached, the Save-as form | `E drive` (*…the toolbar's Save and both keys*); `U store.reducers` (`handleShortcut`: only with a Drive configuration) | PASS | Sends nothing while the attached file has no unsaved changes |
-| **Ctrl/⌘+S** and **Ctrl/⌘+Shift+S** inside the Text view's editor → save (Ctrl/⌘+S applies the typed text first — unless it has a syntax error, when the browser keeps the model as it stood) | `E drive` (Ctrl+Shift+S with `text-editor` focused); `U store.reducers` (the textarea forwards only those two) | PASS | The one exception to the handler's INPUT/TEXTAREA guard; every other key stays the editor's |
+| **Ctrl/⌘+S** and **Ctrl/⌘+Shift+S** inside the Text view's editor → save (Ctrl/⌘+S applies the typed text first, as it does with the focus anywhere — unless it has a syntax error, when the browser keeps the model as it stood) | `E drive` (Ctrl+Shift+S with `text-editor` focused); `U store.reducers` (the textarea forwards only those two) | PASS | The one exception to the handler's INPUT/TEXTAREA guard; every other key stays the editor's |
 
 ### 2.3 View switching — all 17 view kinds (`tb-view-<kind>`)
 
@@ -259,6 +261,7 @@ wired relationship.
 | Editing text → dirty status (`.text-editor-status.is-dirty`) | `E panels-problems-text` | PASS | — |
 | Apply text edit → model+tree (`text-apply`) | `E panels-problems-text` (adds `Gearbox`); `E text-sync` | PASS | `panels-text-applied`, `05b-text-applied` |
 | Model mutation regenerates text (clears dirty) | `E panels-problems-text` (rename→`Transmission`); `E text-sync` | PASS | `panels-text-regenerated`, `05c-text-regenerated` |
+| An edit through the SDK (`window.sysml`: `create`, `update`, `delete`, `reparent`, `commit(fn)`) regenerates the text and reads unsaved — New asks, an attached Drive file is `dirty` and Ctrl/⌘+Shift+S sends it, Validate, Check, Simulate or Solve run before its refresh included — but never replaces text typed and not applied; one refresh in a collaboration room | `E toolbar-lifecycle`; `E drive` (*sign in, save as, edit and save…*); `U store.reducers` (`edits through the SDK on window.sysml`, `the keys, and Save with a Drive file attached`) | PASS | A faulted apply's text is regenerated |
 
 ### 2.9 Validation, checking & simulation (behavior)
 
@@ -369,13 +372,15 @@ before any `await`, and before `applyText`) remain the guard for that; Chromium'
 | Unsaved changes are read off the text, not `rev`: the library refresh after an open stays clean; a file with a syntax error uploads as typed, keeps its parse rows, and two saves of it push no Undo step | `U store.reducers` (`google drive`); `E drive` (*a hand-written file is rewritten only when the user says so; a syntax error survives the save*) | PASS |
 | A hand-written file is rewritten only after the user says so (Save anyway / Save as copy); files the app wrote never ask | `E drive` (same scenario); `U store.reducers` | PASS |
 | Recent reopens a file after a reload; the leave-page prompt only while the file has unsaved changes | `E drive` (*Recent reopens a file after a reload…*) | PASS |
-| `?drive=` links: the gate preloads Google's script and waits for it, then one click signs in and opens; a file Drive denies is granted by the Picker on that one file (one `DocsView`, `setFileIds`); without a configuration the sample opens and the strip says why | `E drive` (*a ?drive= link: the gate waits…*, *a ?drive= link Drive denies…*, *a ?drive= link on a deployment without Drive…*, *…holds the loading gate for the file*); `U drive` (`driveLinkFromUrl`, `createGooglePicker`, `DriveStrip`) | PASS |
+| A model JSON file opens but is not attached: an `info` note says so, Save to Drive stays disabled and Undo starts over from the file; **Save to Drive as…** writes the model as a new `.sysml` file and leaves the JSON file as it was | `E drive` (*a model JSON file from Drive opens but is not attached…*); `U store.reducers` (`google drive`) | PASS |
+| `?drive=` links: the gate preloads Google's script and waits for it, then one click signs in and opens; a file Drive denies is granted by the Picker on that one file (one `DocsView`, `setFileIds`); any other failure — a sign-in window closed (all GIS reports when Google showed its "Access blocked" page), Drive failing the open after its one retry — holds the gate with the reason, **Privacy & data ↗** and **Try again**, which signs in inside its own click when it must and opens the file; without a configuration the sample opens and the strip says why | `E drive` (*a ?drive= link: the gate waits…*, *a ?drive= link Drive denies…*, *a ?drive= link whose open fails…*, *a ?drive= link on a deployment without Drive…*, *…holds the loading gate for the file*); `U drive` (`driveLinkFromUrl`, `createGooglePicker`, `DriveStrip`); `U store.reducers` (`google drive`) | PASS |
 | Resource keys: kept from a pasted share link and sent as `X-Goog-Drive-Resource-Keys` with every request for that file, and with no other | `E drive` (*a pasted Drive share link keeps its resource key…*); `U drive` (`parseDriveFileRef`, the gateway's headers) | PASS |
 | Conflicts by content: a rename or a share (version and modified time only) raises none; a content change does, and Save as copy, Overwrite and Reload from Drive (one Undo step) each resolve it | `E drive` (*a conflict only when the content changed in Drive…*); `U store.reducers` (`google drive`) | PASS |
 | Renewal and retries: a token Google refuses partway through a command is renewed by a brief sign-in, or by **Sign in and continue** when that window is blocked or closed; an expired token is renewed inside the click, and a blocked window there is said to be blocked (allow pop-ups, give the command again); a busy Drive retried once, for reads and updates only — never for a create | `E drive` (*a refused token is renewed…*); `U drive` (the gateway's retry policy); `U store.reducers` (`google drive`) | PASS |
 | View-only access and a file gone from Drive: the `readonly` and `gone` rows; Save to Drive as… keeps a copy | `E drive` (*view-only access and a file gone from Drive…*) | PASS |
+| Offline: with no file attached, `Ctrl/⌘+Shift+S` opens the Save-as form, its Save disabled with the title *Offline*, and sends nothing; with the attached file's changes unsaved, every command that needs Google — Save to Drive, Save to Drive as…, Recent and its Refresh, Browse Drive…, a pasted link — is disabled with the title *Offline* (Sign out is not), and `Ctrl/⌘+Shift+S` sends nothing and says so; the strip's `offline` row, whose **Save** keeps the changes in this browser (text typed in the Text view applied first) while Drive still lacks them; back online, Save to Drive works again | `E drive` (*offline, what needs Google waits and says so…*); `U drive` (`DriveMenu`, `DriveStrip`: the offline row and its Save); `U store.reducers` (`google drive`: no request offline) | PASS |
 | Sign-out revokes the live token; after the hour it renews the sign-in inside the click first, and when that is refused nothing is revoked and the notice says so; an unconfirmed revocation is said to be unconfirmed | `E drive` (*sign-out revokes the token at Google…*, *signing out after the hour…*); `U drive` (`createGisPopupAuth`); `U store.reducers` (`google drive`) | PASS |
-| Guards: unsaved Drive changes before New, Open, Import, Close, Sign out or a Drive open; an open over edited work no Drive file holds; every model-replacing command detaches the file | `E drive` (*a command that would drop unsaved Drive changes asks first…*); `U drive` (`Toolbar`, `DriveMenu`); `U store.reducers` (`google drive`) | PASS |
+| Guards: unsaved Drive changes before New, Open, Import, a branch switch or a merge that resolves, a room join, Close, Sign out or a Drive open; a Drive open over work no save holds; without a Drive file (or with one gone from Drive) the question about work no save holds, which Close and Sign out never ask; every model-replacing command detaches the file | `E drive` (*a command that would drop unsaved Drive changes asks first…*); `U drive` (`Toolbar`, `DriveMenu`, `Versions and Collaborate`); `U store.reducers` (`google drive`, `unsaved work`) | PASS |
 | The configured toolbar keeps its commands at the e2e viewport | `E drive` (*with Drive configured the toolbar keeps its commands…*) | PASS |
 | A session's answers stay in it: what a command learns after a sign-out — a file it wrote, a failure naming it — reaches neither the next account's Recent list nor its strip; a renewal that comes back as another Google account writes nothing, closes the file and names the account now signed in, and a sign-out says whose access it revoked; a sign-in Google finished after reporting its window closed is shown before it is used | `U store.reducers` (`google drive`) | PASS |
 | No Drive file is opened or attached while connected to a collaboration room, and one attached while the room's relay was out of reach lets go when it connects | `U store.reducers` (`google drive`) | PASS |
@@ -479,7 +484,7 @@ per-row table below is hand-authored and lags the authoritative total; the
 regroup-workbench rows are appended at the end, followed by the
 model-manipulation rows 53–61, the untouched-affordance rows 62–70, the
 notation/outcome rows 71–79, the behaviour/error-path rows 80–87 and the
-Google Drive rows 88–107.)
+Google Drive rows 88–110.)
 Per-scenario screenshots are under `test-results/screenshots/`;
 per-test trace screenshots at `test-results/e2e/<scenario>/test-finished-1.png`.
 Every scenario also asserts **zero uncaught console/page errors** via
@@ -675,6 +680,9 @@ logs for a 4xx/5xx a fake Google API answers on purpose.
 | 105 | `drive` :: a command that would drop unsaved Drive changes asks first; so does an open over edited work | PASS | 3.1 s |
 | 106 | `drive` :: with Drive configured the toolbar keeps its commands at the e2e viewport | PASS | 0.8 s |
 | 107 | `drive` :: a hand-written file is rewritten only when the user says so; a syntax error survives the save | PASS | 4.1 s |
+| 108 | `drive` :: a model JSON file from Drive opens but is not attached; Save to Drive as… writes the model as .sysml | PASS | 2.4 s |
+| 109 | `drive` :: a ?drive= link whose open fails: the gate says why beside the privacy page, and Try again opens the file | PASS | 5.4 s |
+| 110 | `drive` :: offline, what needs Google waits and says so; the strip’s Save keeps the changes in this browser | PASS | 4.7 s |
 
 ---
 
@@ -721,7 +729,7 @@ limits — not untested interactions.
    deleted, so the correction is on the record.* The shipped set is wider than
    it said: undo/redo/save, `Delete`/`Backspace`, `Ctrl+D` duplicate, `Ctrl+C` /
    `Ctrl+V`, the digits `1`–`6` for the primary views and `/` for the Explorer
-   search are all wired in `src/ui/commands.ts:153-267`. The one false label —
+   search are all wired in `src/ui/commands.ts:177-291`. The one false label —
    New advertising a `Ctrl+N` the handler never received — has been removed, and
    `U user-guide` now fails on a shortcut that is labelled but not handled.
    [`USER-GUIDE.md`](USER-GUIDE.md) Appendix B is the reader's list.
@@ -830,9 +838,9 @@ narrowed subset.
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **4332 green automated
-checks** (**4150** unit/integration/conformance/server/interop/campaign across **157 files**,
-**0 skips**, + **182 E2E** across **84 spec files**) and no failures. The report now
+SysML v2 standard family — all six read **Covered** — with **4375 green automated
+checks** (**4187** unit/integration/conformance/server/interop/campaign across **157 files**,
+**0 skips**, + **188 E2E** across **84 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
 interaction surface, every Properties field with unit conversion, palette
@@ -850,8 +858,8 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (4150 passed /
-0 skipped across 157 files) and Playwright (182/182 across 84 spec files), plus
+*End of report. Counts and verdicts derived from a live `vitest run` (4187 passed /
+0 skipped across 157 files) and Playwright (188/188 across 84 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
 verdict-bearing write probe — see `docs/CONFORMANCE.md` §6.1) and

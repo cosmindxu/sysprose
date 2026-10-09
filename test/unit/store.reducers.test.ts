@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import * as Y from 'yjs';
 import { Model } from '@core/index';
+import { bindModelToDoc } from '../../src/collab/model-doc';
 
 // The store kicks off an async standard-library merge at module load; stub it so
 // the singleton model stays deterministic for these reducer tests (finding C12).
@@ -26,14 +28,19 @@ vi.mock('../../src/library/standard-library', () => ({
 // awareness, and the transport does nothing (no socket, no IndexedDB). What
 // runs is the store's own collab wiring — its model listener above all. The
 // latest session's status listener is kept, so a test can say the relay came
-// up (or went away), as the real transport would.
-const relay = vi.hoisted(() => ({ status: null as ((e: { status: string }) => void) | null }));
+// up (or went away), as the real transport would; and its document, so a test
+// can sync a peer's document with it, as the relay would.
+const relay = vi.hoisted(() => ({
+  status: null as ((e: { status: string }) => void) | null,
+  doc: null as import('yjs').Doc | null,
+}));
 vi.mock('../../src/collab/provider', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../src/collab/provider')>();
   const { Awareness } = await import('y-protocols/awareness');
   return {
     ...mod,
     connect: (doc: ConstructorParameters<typeof Awareness>[0]) => {
+      relay.doc = doc;
       const awareness = new Awareness(doc);
       return {
         provider: {
@@ -57,6 +64,7 @@ const fetchSpy = vi.hoisted(() => vi.spyOn(globalThis, 'fetch'));
 import {
   DRIVE_MESSAGES,
   bootDrive,
+  browserDirty,
   checkFileName,
   driveBeforeUnload,
   driveDirty,
@@ -64,8 +72,10 @@ import {
   driveLink,
   driveMessage,
   flushRecompute,
+  forcedRecomputePending,
   initialDriveState,
   lastAppliedText,
+  mergeLoads,
   openText,
   pageLinks,
   recomputePending,
@@ -85,6 +95,7 @@ import {
   FakeDriveAuth,
   FakeDrivePicker,
   InMemoryDriveGateway,
+  LocalStorageStore,
   createGisPopupAuth,
   exportModel,
   type DriveConfig,
@@ -100,7 +111,7 @@ import {
 } from '@semantics/index';
 import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
-import { commandById, handleShortcut } from '../../src/ui/commands';
+import { commandById, handleShortcut, runSave } from '../../src/ui/commands';
 import { TextEditor } from '../../src/ui/panels/TextEditor';
 
 /** The Drive slice as the module left it on import, before any test touched it. */
@@ -253,6 +264,46 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
       expect(st().serializeError).toBeNull();
       expect(st().textBuffer).toContain('fixed');
     });
+  });
+
+  /**
+   * Export ▾ → SysML used to write every root, the merged standard library
+   * after the user's packages. Text carries no `isLibrary` flag, so the
+   * exported file imported back as the user's — and the library was merged a
+   * second time beside it.
+   */
+  it('Export ▾ → SysML writes the Text view’s text, never the merged library, and imports back to the same model', async () => {
+    const merge = lib.merge;
+    lib.merge = (m) => {
+      if (!m.all().some((e) => e.attrs.isLibrary === true)) {
+        m.create('Package', { declaredName: 'ScalarValues', attrs: { isLibrary: true } });
+      }
+    };
+    const roots = () =>
+      st()
+        .model.roots()
+        .map((r) => `${r.declaredName}${r.attrs.isLibrary === true ? ' (library)' : ''}`);
+    try {
+      st().importModel('package Swarm {\n    part def Drone;\n}', 'sysml');
+      await whenLibrarySettled();
+      expect(roots(), 'the library merged after the user’s package').toEqual([
+        'Swarm',
+        'ScalarValues (library)',
+      ]);
+
+      const text = st().exportModel('sysml');
+      expect(text, 'what the Text view shows').toBe(st().textBuffer);
+      expect(text).toContain('part def Drone;');
+      expect(text).not.toContain('ScalarValues');
+
+      st().importModel(text, 'sysml');
+      await whenLibrarySettled();
+      expect(roots(), 'one library, and still the library').toEqual(['Swarm', 'ScalarValues (library)']);
+      expect(st().diagnostics.filter((d) => d.ruleId === 'parse')).toEqual([]);
+      expect(st().exportModel('sysml')).toBe(text);
+    } finally {
+      lib.merge = merge;
+    }
   });
 
   it('setAttr and updateElement mutate the element', () => {
@@ -1480,6 +1531,8 @@ describe('google drive', () => {
       textDirty: false,
       diagnostics: [],
       serializeError: null,
+      // The empty model these start from is saved: only Drive is asked about.
+      savedText: withFinalNewline(''),
       linkedModel: null,
       projectName: 'Swarm',
       drive: { ...initialDriveState, configStatus: 'ready', config: CONFIG },
@@ -1862,21 +1915,23 @@ describe('google drive', () => {
 
   describe('saving', () => {
     /**
-     * `exportModel(model, 'sysml')` serializes every root, the merged standard
-     * library included. Drive gets the Text view's text — the user's roots
-     * only.
+     * Drive gets the Text view's text — the user's roots only, the merged
+     * standard library left out, as Export ▾ → SysML leaves it out.
      */
     it('Save to Drive as writes the Text view’s text, never the library, and attaches the file', async () => {
       lib.merge = addLibrary;
       await st().driveSignIn();
       await model();
-      expect(exportModel(st().model, 'sysml'), 'what Export writes: the library too').toContain('ScalarValues');
+      expect(st().model.roots().some((r) => r.attrs.isLibrary === true), 'the library merged').toBe(true);
       useAppStore.setState({ linkedModel: { url: `${PAGE}m.sysml`, source: null, status: 'loaded' } });
 
       await st().driveSaveAs('Swarm');
       expect(calls('create').map((c) => c.name)).toEqual(['Swarm.sysml']);
       const uploaded = gateway.textOf(file().id)!;
       expect(uploaded).toBe(withFinalNewline(st().textBuffer));
+      expect(uploaded, 'what Export writes, with one final newline').toBe(
+        withFinalNewline(exportModel(st().model, 'sysml')),
+      );
       expect(uploaded).toContain('part def Drone;');
       expect(uploaded).not.toContain('ScalarValues');
       expect(uploaded).not.toMatch(/\blibrary\b|\bstandard\b/);
@@ -2535,6 +2590,77 @@ describe('google drive', () => {
       expect(driveDirty(st()), 'back to what Drive holds').toBe(false);
     });
 
+    /**
+     * Keys typed in the Text view while the library settles over the opened
+     * file land before its refresh, which keeps them "not yet applied":
+     * neither Drive nor this browser holds them.
+     */
+    it('attaches the file but reads unsaved when text is typed while the library settles', async () => {
+      await st().driveSignIn();
+      const remote = gateway.seed({ name: 'Remote.sysml', text: SWARM });
+      const release = holdLibrary();
+      const opening = st().driveOpen({ id: remote.id }, 'recent');
+      await vi.waitFor(() => expect(rootNames()).toEqual(['Swarm']));
+      const typed = st().textBuffer.replace('Drone', 'Kite');
+      st().setTextBuffer(typed);
+      release();
+      await opening;
+      expect(file().id).toBe(remote.id);
+      expect(st().textBuffer, 'the refresh keeps what was typed').toBe(typed);
+      expect(st().textDirty).toBe(true);
+      expect(file().savedText, 'Drive does not hold it').not.toContain('Kite');
+      expect(driveDirty(st())).toBe(true);
+      expect(browserDirty(st()), 'nor does this browser').toBe(true);
+      expect(driveBeforeUnload(st(), new Event('beforeunload', { cancelable: true }))).toBe(true);
+      const run = vi.fn();
+      st().driveGuard('New', 'dirty', run);
+      expect(run).not.toHaveBeenCalled();
+      expect(drive().prompt).toEqual({ kind: 'guard', label: 'New', variant: 'dirty' });
+      await st().driveRunPending('keep');
+      await st().driveSave();
+      expect(gateway.textOf(remote.id), 'Save to Drive applies it and uploads it').toContain('part def Kite;');
+      expect(driveDirty(st())).toBe(false);
+    });
+
+    it('and so does Reload from Drive', async () => {
+      const id = await attached();
+      gateway.bump(id, 'package Theirs {\n    part def Kite;\n}\n');
+      edit('Relay');
+      await st().driveSave();
+      expect(drive().conflict).not.toBeNull();
+      const release = holdLibrary();
+      const reloading = st().driveResolveConflict('reload');
+      await vi.waitFor(() => expect(rootNames()).toEqual(['Theirs']));
+      const typed = st().textBuffer.replace('Kite', 'Wing');
+      st().setTextBuffer(typed);
+      release();
+      await reloading;
+      expect(drive().conflict).toBeNull();
+      expect(st().textBuffer).toBe(typed);
+      expect(file().savedText).not.toContain('Wing');
+      expect(driveDirty(st())).toBe(true);
+      expect(browserDirty(st())).toBe(true);
+    });
+
+    /** An SDK edit pushes no Undo step, and the open would clear Undo: nothing would bring it back. */
+    it('nor over an edit made through the SDK while it downloaded', async () => {
+      await st().driveSignIn();
+      // The SDK edits the model the store started with.
+      useAppStore.setState({ model: st().api.model });
+      await model('package Mine;\n');
+      const other = gateway.seed({ name: 'Other.sysml', text: OTHER });
+      const release = holdDownloads();
+      const opening = st().driveOpen({ id: other.id }, 'recent');
+      await vi.waitFor(() => expect(gateway.download).toHaveBeenCalled());
+      const root = st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id;
+      st().api.create('PartDefinition', { declaredName: 'Scripted', ownerId: root });
+      release();
+      await opening;
+      expect(rootNames()).toEqual(['Mine']);
+      expect(st().model.all().some((e) => e.declaredName === 'Scripted')).toBe(true);
+      expect(drive().notice?.message).toBe(DRIVE_MESSAGES.openStopped('Other.sysml'));
+    });
+
     for (const when of ['before', 'after'] as const) {
       it(`attaches nothing after a sign-out while the file downloads (held ${when} Drive answered)`, async () => {
         await st().driveSignIn();
@@ -2570,6 +2696,33 @@ describe('google drive', () => {
       edit('Kite');
       await st().driveSave();
       expect(file().trashed).toBe(true);
+    });
+
+    /**
+     * A save or a reload is what finds a file gone, so it has changes no Save
+     * to Drive can keep. Before New the question is then this browser's — and
+     * there is none once the browser holds them.
+     */
+    it('asks about a file gone from Drive what it asks with none attached', async () => {
+      const id = await attached();
+      edit('Relay');
+      gateway.trash(id);
+      await runSave();
+      expect(file().trashed).toBe(true);
+      expect(driveDirty(st())).toBe(true);
+      expect(browserDirty(st()), 'Save kept it in this browser').toBe(false);
+      const run = vi.fn();
+      st().driveGuard('New', 'dirty', run);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(drive().prompt).toBeNull();
+
+      edit('Kite');
+      st().driveGuard('New', 'dirty', run);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(drive().prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+      await st().driveRunPending('save');
+      expect(run, 'saved in this browser, then New').toHaveBeenCalledTimes(2);
+      expect(browserDirty(st())).toBe(false);
     });
 
     it('reads view-only for a file the user may not change', async () => {
@@ -3464,5 +3617,933 @@ describe('google drive', () => {
         save.restore();
       }
     });
+
+    /** The user's part definitions, by name. */
+    const parts = () =>
+      st()
+        .model.all()
+        .filter((e) => e.eClass === 'PartDefinition' && e.attrs.isLibrary !== true)
+        .map((e) => e.declaredName ?? '');
+
+    /** The browser save, recording the user parts the model held at each one. */
+    function recordingSave() {
+      const saved: string[][] = [];
+      const save = browserSave();
+      save.spy.mockImplementation(async () => {
+        saved.push(parts());
+      });
+      return { saved, restore: save.restore };
+    }
+
+    /**
+     * Save and Ctrl/Cmd+S store the MODEL, from the diagram, the tree or the
+     * Text view's editor alike. Text typed in the Text view and not applied
+     * is applied first, as the editor's Ctrl/Cmd+S always did, so the browser
+     * keeps what is on screen; the toolbar's Save, and the key pressed with
+     * the focus on the diagram or the tree, used to store the model without
+     * it.
+     */
+    it('Save and Ctrl/Cmd+S away from the Text view apply what was typed there first — without Google Drive, with it and no file, offline and online with a file', async () => {
+      const { saved, restore } = recordingSave();
+      /** Type a part beside the Drone — laid out by hand — then Save (`button`) or press Ctrl+S with the focus elsewhere. */
+      const typeAndSave = async (name: string, how: 'button' | 'key'): Promise<void> => {
+        st().setTextBuffer(`package Swarm {\n  part def   Drone;\n part def ${name};}`);
+        if (how === 'button') await commandById('tb-save')!.run();
+        else expect(handleShortcut(key('s'))).toBe(true);
+        await vi.waitFor(() => expect(drive().busy).toBeNull());
+        await whenLibrarySettled();
+      };
+      try {
+        await model();
+        const depth = st().undoStack.length;
+
+        // A deployment without Google Drive.
+        useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+        await typeAndSave('Glider', 'button');
+        expect(saved).toEqual([['Drone', 'Glider']]);
+        expect(st().textDirty, 'applied').toBe(false);
+        expect(st().undoStack.length, 'one undo step, as Apply').toBe(depth + 1);
+        await typeAndSave('Kite', 'key');
+        await vi.waitFor(() => expect(saved).toHaveLength(2));
+        expect(saved.at(-1)).toEqual(['Drone', 'Kite']);
+
+        // Google Drive, no file attached: the browser save, with no form.
+        useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'ready' } }));
+        await typeAndSave('Blimp', 'button');
+        expect(saved.at(-1)).toEqual(['Drone', 'Blimp']);
+        expect(drive().prompt).toBeNull();
+
+        // A file attached, offline: the Drive save cannot go ahead; the browser save holds the typed text.
+        const id = await attached();
+        useAppStore.setState((s) => ({ drive: { ...s.drive, online: false } }));
+        await typeAndSave('Rotor', 'key');
+        await vi.waitFor(() => expect(saved.at(-1)).toEqual(['Drone', 'Rotor']));
+        expect(calls('update')).toEqual([]);
+
+        // Online again: both saves hold it, and Drive gets the app's layout of it.
+        useAppStore.setState((s) => ({ drive: { ...s.drive, online: true } }));
+        await typeAndSave('Vane', 'button');
+        expect(saved.at(-1)).toEqual(['Drone', 'Vane']);
+        expect(calls('update')).toHaveLength(1);
+        expect(gateway.textOf(id)).toContain('\n    part def Vane;\n');
+        expect(driveDirty(st())).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    /**
+     * Over a syntax error Save keeps the model as it stands in this browser:
+     * the parser's recovery of the typed text is not what is on screen. And
+     * since neither Problems nor the editor's strip lists the parse errors of
+     * a text not applied, the strip under the toolbar says so and names the
+     * line — on a deployment without Google Drive too. The next save that
+     * holds the typed text takes the note down; a notice standing for
+     * another reason is never covered by it.
+     */
+    it('Save and Ctrl/Cmd+S over a syntax error keep the model as it stands in this browser and say so, naming the line — until a save holds the text', async () => {
+      const BROKEN = SWARM.replace('part def Drone;', 'part def Drone;\n    blok bad;');
+      const { saved, restore } = recordingSave();
+      try {
+        await model();
+        const depth = st().undoStack.length;
+        useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+        st().setTextBuffer(BROKEN);
+        await commandById('tb-save')!.run();
+        expect(saved).toEqual([['Drone']]);
+        expect(st().textDirty, 'still "not yet applied"').toBe(true);
+        expect(st().textBuffer).toBe(BROKEN);
+        expect(st().undoStack.length, 'nothing applied').toBe(depth);
+        expect(drive().notice).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextKeptBack(3), retryable: false });
+        expect(drive().notice?.message).toBe(
+          'Saved in this browser without the text typed in the Text view: it has a syntax error at line 3. Fix it, then save again.',
+        );
+
+        // Ctrl+S, the same: no apply, no undo step, the one note.
+        const note = drive().notice;
+        expect(handleShortcut(key('s'))).toBe(true);
+        await vi.waitFor(() => expect(saved).toHaveLength(2));
+        expect(saved.at(-1)).toEqual(['Drone']);
+        expect(st().undoStack.length).toBe(depth);
+        expect(drive().notice).toEqual(note);
+
+        // Fixed: the save holds it, and the note goes.
+        st().setTextBuffer(SWARM.replace('Drone', 'Glider'));
+        await commandById('tb-save')!.run();
+        expect(saved.at(-1)).toEqual(['Glider']);
+        expect(drive().notice).toBeNull();
+
+        // A notice standing for another reason stays as it is.
+        const refused = { kind: 'error' as const, message: DRIVE_MESSAGES.browserSaveFailed, retryable: false };
+        useAppStore.setState((s) => ({ drive: { ...s.drive, notice: refused } }));
+        st().setTextBuffer(BROKEN);
+        await commandById('tb-save')!.run();
+        expect(drive().notice).toBe(refused);
+        st().setTextBuffer(SWARM);
+        await commandById('tb-save')!.run();
+        expect(drive().notice).toBe(refused);
+      } finally {
+        restore();
+      }
+    });
+
+    /**
+     * An edit made in the app after the typing replaces the typed text — its
+     * recompute is forced — so a Save before that recompute ran must not
+     * apply the older text over the edit: the edit goes first, as in a Drive
+     * save's upload.
+     */
+    it('Save right after an edit in the app holds the edit: the edit’s recompute goes before the typed text', async () => {
+      const { saved, restore } = recordingSave();
+      try {
+        await model();
+        useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+        st().setTextBuffer(SWARM.replace('Drone', 'Typed'));
+        st().createElement('PartDefinition', st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id, 'Edited');
+        expect(forcedRecomputePending()).toBe(true);
+        await commandById('tb-save')!.run();
+        expect(saved).toEqual([['Drone', 'Edited']]);
+        expect(st().textDirty).toBe(false);
+        expect(st().textBuffer).toContain('part def Edited;');
+      } finally {
+        restore();
+      }
+    });
+
+    /**
+     * Save writes the project that is open. An apply names the project after
+     * the model's first package, so a Save that applied typed text stored it
+     * under that name — over another saved project, which a package renamed
+     * in the app may share — and left the open project as it was.
+     */
+    it('Save that applies typed text writes the project that is open, not another one named after its package', async () => {
+      const userParts = () => parts().sort();
+      await model();
+      useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+      await st().saveProject('Swarm');
+      edit('Relay');
+      await st().saveProject('Fleet');
+      expect(st().projectName).toBe('Fleet');
+
+      st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Typed;'));
+      await commandById('tb-save')!.run();
+      expect(st().textDirty, 'applied').toBe(false);
+      expect(st().projectName, 'still the open project').toBe('Fleet');
+      await st().loadProject('Swarm');
+      expect(userParts(), 'the other project, untouched').toEqual(['Drone']);
+      await st().loadProject('Fleet');
+      expect(userParts(), 'the open project holds the typed text').toEqual(['Drone', 'Relay', 'Typed']);
+    });
+
+    /**
+     * In a collaboration room Save does not apply text typed in the Text
+     * view: an apply resets the room's model for every peer, and the text was
+     * typed over the model as it stood before — the room keeps a typed buffer
+     * when a peer edits — so one Save erased the peers' edits for everyone.
+     * It keeps the text back and says so; Apply text → model still puts it
+     * over the room's model, as a choice. The guard's Save applies it: the
+     * command it guards replaces the model anyway.
+     */
+    it('in a collaboration room, Save and Ctrl/Cmd+S keep typed text back — a peer’s edit since the typing stays, in the room and in the save — and say so', async () => {
+      const { saved, restore } = recordingSave();
+      const sorted = (names: string[]) => [...names].sort();
+      const peerDoc = new Y.Doc();
+      await model();
+      useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+      st().connectCollab('save-room');
+      try {
+        // A peer, synced with the room through its document.
+        const roomDoc = relay.doc!;
+        Y.applyUpdate(peerDoc, Y.encodeStateAsUpdate(roomDoc));
+        roomDoc.on('update', (u: Uint8Array, origin: unknown) => {
+          if (origin !== 'peer') Y.applyUpdate(peerDoc, u, 'room');
+        });
+        peerDoc.on('update', (u: Uint8Array, origin: unknown) => {
+          if (origin !== 'room') Y.applyUpdate(roomDoc, u, 'peer');
+        });
+        const peer = new Model();
+        bindModelToDoc(peer, peerDoc);
+        const peerParts = () =>
+          sorted(peer.all().filter((e) => e.eClass === 'PartDefinition').map((e) => e.declaredName ?? ''));
+        expect(peerParts()).toEqual(['Drone']);
+
+        // Typed here; the peer adds a part meanwhile.
+        st().setTextBuffer(SWARM.replace('part def Drone;', 'part def Drone;\n    part def Typed;'));
+        peer.create('PartDefinition', { declaredName: 'PeerWork', ownerId: peer.roots()[0].id });
+        flushRecompute();
+        expect(sorted(parts())).toEqual(['Drone', 'PeerWork']);
+        expect(st().textDirty, 'the typed text stays').toBe(true);
+
+        await commandById('tb-save')!.run();
+        expect(saved.map(sorted)).toEqual([['Drone', 'PeerWork']]);
+        expect(peerParts(), 'the peer’s edit stays in the room').toEqual(['Drone', 'PeerWork']);
+        expect(st().textDirty, 'still "not yet applied"').toBe(true);
+        expect(drive().notice).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextInRoom, retryable: false });
+        expect(handleShortcut(key('s'))).toBe(true);
+        await vi.waitFor(() => expect(saved).toHaveLength(2));
+        expect(peerParts()).toEqual(['Drone', 'PeerWork']);
+
+        // Apply text → model puts it over the room's model; Save then holds it, and the note goes.
+        st().applyText();
+        expect(peerParts()).toEqual(['Drone', 'Typed']);
+        await commandById('tb-save')!.run();
+        expect(sorted(saved.at(-1)!)).toEqual(['Drone', 'Typed']);
+        expect(drive().notice).toBeNull();
+
+        // The guard's Save applies typed text, in a room too, and New goes on.
+        st().setTextBuffer(st().textBuffer.replace('part def Typed;', 'part def Typed;\n    part def Guarded;'));
+        const run = vi.fn();
+        st().driveGuard('New', 'dirty', run);
+        expect(drive().prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+        await st().driveRunPending('save');
+        expect(sorted(saved.at(-1)!)).toEqual(['Drone', 'Guarded', 'Typed']);
+        expect(run).toHaveBeenCalledTimes(1);
+      } finally {
+        st().disconnectCollab();
+        peerDoc.destroy();
+        restore();
+      }
+    });
+
+    /**
+     * The library merges again after every apply, and the refresh after it
+     * lays the text out anew — but not over text typed since. Keystrokes made
+     * right after a Save that applied the text, while the library merged,
+     * were replaced: neither in the model nor anywhere else.
+     */
+    it('typing right after a Save that applied the text, while the library merges again, is kept', async () => {
+      const { restore } = recordingSave();
+      try {
+        await model();
+        useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+        const release = holdLibrary();
+        st().setTextBuffer(SWARM.replace('part def Drone;', 'part def Drone;\n    part def Saved;'));
+        await commandById('tb-save')!.run();
+        expect(st().textDirty, 'applied').toBe(false);
+        const typed = st().textBuffer.replace('part def Saved;', 'part def Saved;\n    part def AfterSave;');
+        st().setTextBuffer(typed);
+        release();
+        await whenLibrarySettled();
+        expect(st().textBuffer).toBe(typed);
+        expect(st().textDirty, 'still "not yet applied"').toBe(true);
+        expect(parts()).toEqual(['Drone', 'Saved']);
+      } finally {
+        restore();
+      }
+    });
+
+    /**
+     * An edit made through the SDK on `window.sysml` reaches the Text view, so
+     * the attached Drive file reads unsaved and Save to Drive sends it — as
+     * Save does. It used to change the model alone: Ctrl/Cmd+Shift+S sent
+     * nothing, while Save stored the edit in the browser.
+     */
+    it('an edit made through the SDK reads unsaved in Drive: Ctrl/Cmd+Shift+S and Save send it', async () => {
+      const save = browserSave();
+      // The SDK is bound to the model the store started with: these run on it.
+      useAppStore.setState({ model: st().api.model });
+      try {
+        const id = await attached();
+        const root = st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id;
+
+        // Its recompute still waiting: the edit counts already.
+        const relay = st().api.create('PartDefinition', { declaredName: 'Relay', ownerId: root });
+        expect(forcedRecomputePending()).toBe(true);
+        expect(handleShortcut(key('S', { shift: true }))).toBe(true);
+        await vi.waitFor(() => expect(calls('update')).toHaveLength(1));
+        await vi.waitFor(() => expect(drive().busy).toBeNull());
+        expect(gateway.textOf(id)).toContain('part def Relay;');
+        expect(driveDirty(st())).toBe(false);
+
+        // Its recompute run: the strip's "unsaved changes", and Save sends it too.
+        st().api.update(relay.id, { declaredName: 'Kite' });
+        flushRecompute();
+        expect(driveDirty(st())).toBe(true);
+        await commandById('tb-save')!.run();
+        expect(save.spy).toHaveBeenCalledTimes(1);
+        expect(calls('update')).toHaveLength(2);
+        expect(gateway.textOf(id)).toContain('part def Kite;');
+        expect(driveDirty(st())).toBe(false);
+      } finally {
+        save.restore();
+      }
+    });
+  });
+});
+
+/**
+ * What New, Open ▾, Import, a branch switch, a merge and a room join ask
+ * about: work nothing holds. The text the model had when last saved — in this
+ * browser or to Google Drive — or opened is recorded as text, never as `rev`,
+ * and the session's starting model counts as saved: a first visit that
+ * touched nothing has nothing to lose. These run without Google Drive (the
+ * slice is `absent`, as on most deployments): the question is asked there too.
+ */
+describe('unsaved work — what a command that replaces the model asks about', () => {
+  const SWARM = 'package Swarm {\n    part def Drone;\n}\n';
+  const FAULTED = 'package Swarm {\n    blok bad;\n}\n';
+  const rootNames = () => st().model.roots().filter((r) => r.attrs.isLibrary !== true).map((r) => r.declaredName);
+  const named = (name: string) => st().model.all().some((e) => e.declaredName === name);
+  const unsaved = () => browserDirty(st());
+  const prompt = () => st().drive.prompt;
+  const rootId = () => st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  /** An edit by the tree, its recompute fired: the Text view shows it. */
+  function edit(name = 'Relay'): void {
+    st().createElement('PartDefinition', rootId(), name);
+    flushRecompute();
+  }
+
+  /** Hold the next library load until the returned function is called. */
+  function holdLibrary(): () => void {
+    let release!: () => void;
+    lib.holds.push(new Promise<void>((r) => (release = r)));
+    return release;
+  }
+
+  beforeEach(async () => {
+    await whenLibrarySettled();
+    lib.merge = null;
+    reset();
+    useAppStore.setState({ textBuffer: '', textDirty: false, diagnostics: [], serializeError: null });
+    st().newProject('Swarm');
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    useAppStore.setState({ drive: initialDriveState });
+  });
+
+  it('reads saved after New, Save and Open, unsaved after an edit, an import or typed text — and saved again after Undo', async () => {
+    expect(st().drive.configStatus, 'no Google Drive here').toBe('absent');
+    expect(unsaved(), 'New').toBe(false);
+    edit('Relay');
+    expect(unsaved(), 'an edit').toBe(true);
+    st().undo();
+    expect(unsaved(), 'undone back to the saved model').toBe(false);
+    st().redo();
+    expect(unsaved()).toBe(true);
+    await st().saveProject('Swarm');
+    expect(unsaved(), 'Save').toBe(false);
+
+    const saved = st().textBuffer;
+    st().setTextBuffer(saved.replace('Relay', 'Kite'));
+    expect(unsaved(), 'text typed and not applied').toBe(true);
+    st().setTextBuffer(saved);
+    expect(unsaved(), 'typed back as it was').toBe(false);
+
+    st().importModel(SWARM, 'sysml');
+    expect(unsaved(), 'an import is not a save').toBe(true);
+    await whenLibrarySettled();
+    await st().loadProject('Swarm');
+    expect(rootNames()).toEqual(['Swarm']);
+    expect(named('Relay')).toBe(true);
+    expect(unsaved(), 'Open').toBe(false);
+    await whenLibrarySettled();
+    expect(unsaved(), 'and still once its library merged').toBe(false);
+  });
+
+  it('counts a save from the click: an edit made while the browser stores it reads unsaved, and a refused save is taken back', async () => {
+    edit('Relay');
+    const saving = st().saveProject('Swarm');
+    expect(unsaved(), 'saved as of the click').toBe(false);
+    edit('Kite');
+    await saving;
+    expect(unsaved(), 'the edit made meanwhile').toBe(true);
+
+    const refuse = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    try {
+      await expect(st().saveProject('Swarm')).rejects.toThrow();
+      expect(unsaved(), 'nothing was stored').toBe(true);
+    } finally {
+      refuse.mockRestore();
+    }
+  });
+
+  it('takes back a refused save that the library merge laid out afresh while the browser stored it', async () => {
+    await st().saveProject('Swarm');
+    let refuse!: () => void;
+    const refusing = new Promise<void>((r) => (refuse = r));
+    const store = vi.spyOn(LocalStorageStore.prototype, 'saveProject').mockImplementation(async () => {
+      await refusing;
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    try {
+      // Typed text the app lays out otherwise: Save applies it, and the
+      // library merges over it while the browser stores it.
+      const release = holdLibrary();
+      st().setTextBuffer('package   Swarm {\n\n\n  part def   Drone ;\n}\n');
+      const saving = runSave();
+      release();
+      await whenLibrarySettled();
+      expect(st().textBuffer, 'laid out afresh').toBe('package Swarm {\n    part def Drone;\n}');
+      expect(unsaved(), 'saved as of the click').toBe(false);
+      refuse();
+      await expect(saving).rejects.toThrow();
+      expect(unsaved(), 'nothing was stored').toBe(true);
+      const run = vi.fn();
+      st().driveGuard('New', 'dirty', run);
+      expect(run).not.toHaveBeenCalled();
+      expect(prompt()).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+      await st().driveRunPending('keep');
+    } finally {
+      store.mockRestore();
+    }
+  });
+
+  it('the library merge after an open leaves a saved model saved, in its new layout — but not an edit waiting on its recompute', async () => {
+    edit('Relay');
+    await st().saveProject('Swarm');
+    // A merge that changes how the user's text reads, as binding the
+    // library's types may: the refresh lays the text out anew.
+    lib.merge = (m) => {
+      const relay = m.all().find((e) => e.declaredName === 'Relay');
+      if (relay && relay.declaredShortName === undefined) m.setShortName(relay.id, 'R1');
+    };
+    let release = holdLibrary();
+    await st().loadProject('Swarm');
+    expect(unsaved()).toBe(false);
+    release();
+    await whenLibrarySettled();
+    expect(st().textBuffer, 'the refresh changed the text').toContain('<R1>');
+    expect(unsaved(), 'the merge is not an edit').toBe(false);
+
+    lib.merge = (m) => {
+      const relay = m.all().find((e) => e.declaredName === 'Relay');
+      if (relay) m.setShortName(relay.id, 'R2');
+    };
+    release = holdLibrary();
+    await st().loadProject('Swarm');
+    st().createElement('PartDefinition', rootId(), 'Waiting');
+    expect(recomputePending()).toBe(true);
+    release();
+    await whenLibrarySettled();
+    flushRecompute();
+    expect(st().textBuffer).toContain('Waiting');
+    expect(unsaved(), 'the edit made while the library merged').toBe(true);
+  });
+
+  it('asks before a command replaces unsaved work: Keep editing keeps it, Discard runs the command, Save saves it in this browser first', async () => {
+    const run = vi.fn();
+    st().driveGuard('New', 'dirty', run);
+    expect(run, 'saved: at once').toHaveBeenCalledTimes(1);
+    expect(prompt()).toBeNull();
+
+    // An edit whose recompute is still waiting counts.
+    st().createElement('PartDefinition', rootId(), 'Relay');
+    expect(recomputePending()).toBe(true);
+    st().driveGuard('New', 'dirty', run);
+    expect(prompt()).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    await st().driveRunPending('keep');
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(prompt()).toBeNull();
+    expect(named('Relay')).toBe(true);
+
+    st().driveGuard('Switch branch', 'dirty', run);
+    await st().driveRunPending('discard');
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(prompt()).toBeNull();
+
+    // Save and continue: the text typed in the Text view is applied and
+    // saved with the model, then the command runs.
+    st().setTextBuffer(st().textBuffer.replace('Relay', 'Kite'));
+    st().driveGuard('Import', 'dirty', () => st().newProject('Fresh'));
+    expect(prompt()).toEqual({ kind: 'guard', label: 'Import', variant: 'browser' });
+    await st().driveRunPending('save');
+    expect(rootNames()).toEqual(['Fresh']);
+    await st().loadProject('Swarm');
+    expect(named('Kite'), 'what was typed was saved').toBe(true);
+    expect(named('Relay')).toBe(false);
+
+    // A question no longer standing runs nothing.
+    await st().driveRunPending('discard');
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('Save and continue, then New: the saved text’s parse rows do not come back once its library settles', async () => {
+    const release = holdLibrary();
+    st().setTextBuffer('package Swarm {\n    part def Drone :> Missing;\n}\n');
+    st().driveGuard('New', 'dirty', () => st().newProject('Fresh'));
+    expect(prompt()).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    await st().driveRunPending('save');
+    expect(rootNames()).toEqual(['Fresh']);
+    release();
+    await whenLibrarySettled();
+    flushRecompute();
+    expect(st().textBuffer).toBe('package Fresh;');
+    expect(st().diagnostics.filter((d) => d.ruleId === 'parse')).toEqual([]);
+  });
+
+  it('holds the command when the browser refuses the save, saying so — and when the typed text has a syntax error', async () => {
+    edit('Relay');
+    const run = vi.fn();
+    const refuse = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    try {
+      st().driveGuard('New', 'dirty', run);
+      await st().driveRunPending('save');
+      expect(run).not.toHaveBeenCalled();
+      expect(prompt(), 'the question stands again').toEqual({ kind: 'guard', label: 'New', variant: 'browser', refused: true });
+      expect(unsaved()).toBe(true);
+    } finally {
+      refuse.mockRestore();
+    }
+    await st().driveRunPending('save');
+    expect(run, 'saved this time').toHaveBeenCalledTimes(1);
+    expect(unsaved()).toBe(false);
+
+    // Typed text the parser cannot read is not a model this browser can keep.
+    st().setTextBuffer(FAULTED);
+    st().driveGuard('New', 'dirty', run);
+    await st().driveRunPending('save');
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(prompt()).toEqual({ kind: 'guard', label: 'New', variant: 'browser', refused: false });
+    expect(st().textBuffer, 'not applied').toBe(FAULTED);
+    expect(st().textDirty).toBe(true);
+    expect(rootNames()).toEqual(['Swarm']);
+  });
+
+  it('waits for a save the browser is still storing: runs once it is kept, asks — saying so — once it is refused', async () => {
+    edit('Relay');
+    const run = vi.fn();
+    let saving = st().saveProject('Swarm');
+    st().driveGuard('New', 'dirty', run);
+    expect(run, 'not while the browser stores it').not.toHaveBeenCalled();
+    expect(prompt()).toBeNull();
+    await saving;
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(prompt(), 'kept: nothing to ask').toBeNull();
+
+    edit('Kite');
+    const refuse = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    try {
+      saving = st().saveProject('Swarm');
+      st().driveGuard('New', 'dirty', run);
+      await expect(saving).rejects.toThrow();
+      await vi.waitFor(() => expect(prompt()).not.toBeNull());
+      expect(prompt()).toEqual({ kind: 'guard', label: 'New', variant: 'browser', refused: true });
+      expect(run).toHaveBeenCalledTimes(1);
+      await st().driveRunPending('keep');
+    } finally {
+      refuse.mockRestore();
+    }
+
+    // A Drive open runs inside its click, so it does not wait: it asks.
+    const open = vi.fn();
+    saving = st().saveProject('Swarm');
+    st().driveGuard('Open from Drive', 'open', open);
+    expect(prompt()).toEqual({ kind: 'guard', label: 'Open from Drive', variant: 'open' });
+    await saving;
+    await st().driveRunPending('keep');
+    st().driveGuard('Open from Drive', 'open', open);
+    expect(open, 'saved, and stored').toHaveBeenCalledTimes(1);
+  });
+
+  it("a Drive open asks about work no save holds — text typed and not applied too — not about Undo's history", async () => {
+    const open = vi.fn();
+    useAppStore.setState({ undoStack: [], redoStack: [] });
+    st().setTextBuffer(SWARM);
+    st().driveGuard('Open from Drive', 'open', open);
+    expect(prompt(), 'typed, not applied').toEqual({ kind: 'guard', label: 'Open from Drive', variant: 'open' });
+    await st().driveRunPending('keep');
+
+    st().applyText();
+    await st().saveProject('Swarm');
+    expect(st().undoStack.length).toBeGreaterThan(0);
+    st().driveGuard('Open from Drive', 'open', open);
+    expect(open, 'saved, Undo or not').toHaveBeenCalledTimes(1);
+    expect(prompt()).toBeNull();
+  });
+
+  it('a Versions commit holds the work as a save does, and so does a branch head the tab loads; a merge that meets conflicts loads nothing', async () => {
+    const run = vi.fn();
+    st().refreshVersions();
+    const main = st().currentBranchId;
+    edit('Relay');
+    expect(unsaved()).toBe(true);
+    st().commitVersion('relay');
+    expect(unsaved(), 'committed').toBe(false);
+    st().driveGuard('New', 'dirty', run);
+    expect(run, 'nothing a commit does not hold').toHaveBeenCalledTimes(1);
+
+    st().createBranchCmd('kite');
+    const kite = st().currentBranchId;
+    const relay = () => st().model.all().find((e) => e.declaredName === 'Relay' || e.declaredName === 'Kite' || e.declaredName === 'Wing')!;
+    st().updateElement(relay().id, { declaredName: 'Kite' });
+    flushRecompute();
+    st().commitVersion('kite');
+    st().switchBranch(main);
+    expect(named('Kite')).toBe(false);
+    expect(unsaved(), 'the head of main').toBe(false);
+    await whenLibrarySettled();
+    expect(unsaved(), 'and once its library merged').toBe(false);
+
+    // main renames the same element: a manual merge meets a conflict, makes
+    // no commit and loads nothing — so the Versions tab asks nothing first.
+    st().updateElement(relay().id, { declaredName: 'Wing' });
+    flushRecompute();
+    st().commitVersion('wing');
+    expect(mergeLoads(kite, main, 'manual')).toBe(false);
+    expect(mergeLoads(kite, main, 'theirs')).toBe(true);
+    edit('Unsaved');
+    const text = st().textBuffer;
+    st().mergeBranchesCmd(kite, main, 'manual');
+    expect(st().mergeResult?.commitId).toBeUndefined();
+    expect(st().textBuffer, 'nothing loaded').toBe(text);
+    expect(unsaved()).toBe(true);
+
+    // One that resolves loads its merge commit, which holds it.
+    st().mergeBranchesCmd(kite, main, 'theirs');
+    expect(named('Kite')).toBe(true);
+    expect(named('Unsaved')).toBe(false);
+    expect(unsaved(), 'the merge commit').toBe(false);
+  });
+
+  it('a model saved to or opened from Drive needs no saving; with a Drive file attached its own question is the only one', async () => {
+    const CONFIG: DriveConfig = {
+      clientId: '123456789012-abc123def456.apps.googleusercontent.com',
+      privacyUrl: 'https://example.org/site/privacy/',
+    };
+    const auth = new FakeDriveAuth({ now: () => Date.now(), loaded: true });
+    const gateway = new InMemoryDriveGateway({ now: () => Date.now(), token: () => auth.token() });
+    setDriveServices({ auth, gateway, picker: null });
+    useAppStore.setState({ drive: { ...initialDriveState, configStatus: 'ready', config: CONFIG } });
+    try {
+      await st().driveSignIn();
+      const run = vi.fn();
+
+      // Saved to Drive as a new file: Drive holds it — and while it is
+      // attached, only its unsaved changes are asked about.
+      edit('Relay');
+      await st().driveSaveAs('Swarm');
+      expect(st().drive.file).not.toBeNull();
+      expect(unsaved(), 'a Drive save').toBe(false);
+      useAppStore.setState({ savedText: 'package Elsewhere;\n' });
+      st().driveGuard('New', 'dirty', run);
+      expect(run, 'the attached file holds the model').toHaveBeenCalledTimes(1);
+      edit('Kite');
+      st().driveGuard('New', 'dirty', run);
+      expect(prompt()).toEqual({ kind: 'guard', label: 'New', variant: 'dirty' });
+      await st().driveRunPending('keep');
+
+      // Let go of, unsaved: the question is this browser's now.
+      st().driveDetach();
+      st().driveGuard('Join room', 'dirty', run);
+      expect(prompt()).toEqual({ kind: 'guard', label: 'Join room', variant: 'browser' });
+      await st().driveRunPending('keep');
+
+      // A file opened from Drive is saved where it came from: the .sysml
+      // attached, a model JSON file not attached.
+      const other = gateway.seed({ name: 'Other.sysml', text: 'package Other;\n' });
+      await st().driveOpen({ id: other.id }, 'recent');
+      expect(rootNames()).toEqual(['Other']);
+      st().driveDetach();
+      expect(unsaved(), 'a Drive open').toBe(false);
+      const json = gateway.seed({ name: 'Json.json', text: exportModel(parseModel(SWARM).model, 'model-json') });
+      await st().driveOpen({ id: json.id }, 'recent');
+      expect(st().drive.file).toBeNull();
+      expect(rootNames()).toEqual(['Swarm']);
+      expect(unsaved(), 'a Drive open of model JSON').toBe(false);
+      st().driveGuard('New', 'dirty', run);
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally {
+      setDriveServices(null);
+    }
+  });
+});
+
+/**
+ * The SDK on `window.sysml` changes the model directly, outside every store
+ * command. Outside a collaboration room nothing used to follow: the Text view
+ * kept the old text, so neither the copy in this browser nor an attached
+ * Drive file read unsaved, and New, Open or Import asked nothing before
+ * dropping the edit. Every SDK call that moves the model now refreshes what
+ * the store derives from it, once — and never replaces text typed in the Text
+ * view and not applied.
+ */
+describe('edits through the SDK on window.sysml — the Text view, and what reads unsaved', () => {
+  const FAULTED = 'package Swarm {\n    blok bad;\n}\n';
+  const sdk = () => st().api;
+  const named = (name: string) => st().model.all().some((e) => e.declaredName === name);
+  const unsaved = () => browserDirty(st());
+  const rootId = () => st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id;
+
+  beforeEach(async () => {
+    await whenLibrarySettled();
+    lib.merge = null;
+    reset();
+    // The SDK is bound to the model the store started with: these run on it.
+    useAppStore.setState({ model: sdk().model, textBuffer: '', textDirty: false, diagnostics: [], serializeError: null });
+    st().newProject('Swarm');
+  });
+
+  afterEach(() => {
+    useAppStore.setState({ drive: initialDriveState });
+  });
+
+  it('every edit it makes refreshes the Text view at once and reads unsaved — create, update, reparent, delete, commit(fn) — and a read changes nothing', async () => {
+    const root = rootId();
+    let rev = st().rev;
+    sdk().elementsOfType('PartDefinition');
+    sdk().getElement(root);
+    sdk().toModelJSON();
+    expect(st().rev, 'a read').toBe(rev);
+    expect(recomputePending()).toBe(false);
+
+    const relay = sdk().create('PartDefinition', { declaredName: 'Relay', ownerId: root });
+    expect(st().rev, 'the Explorer and Properties refresh at once').toBe(rev + 1);
+    expect(recomputePending(), 'the Text view, Problems and the diagram with the next recompute').toBe(true);
+    flushRecompute();
+    expect(st().textBuffer).toContain('part def Relay;');
+    expect(st().textDirty).toBe(false);
+    expect(unsaved()).toBe(true);
+    await st().saveProject('Swarm');
+    expect(unsaved()).toBe(false);
+
+    sdk().update(relay.id, { declaredName: 'Kite' });
+    flushRecompute();
+    expect(st().textBuffer).toContain('part def Kite;');
+    expect(unsaved()).toBe(true);
+
+    const fleet = sdk().create('Package', { declaredName: 'Fleet' });
+    sdk().reparent(relay.id, fleet.id);
+    flushRecompute();
+    expect(st().textBuffer).toMatch(/package Fleet \{\s*part def Kite;\s*\}/);
+
+    // A deleted selection does not stay selected.
+    st().select(relay.id);
+    sdk().delete(fleet.id);
+    expect(st().selectionIds).not.toContain(relay.id);
+    flushRecompute();
+    expect(st().textBuffer).not.toContain('Kite');
+    expect(st().textBuffer).not.toContain('Fleet');
+
+    // A batch is one edit: one refresh.
+    rev = st().rev;
+    sdk().commit((api) => {
+      api.create('PartDefinition', { declaredName: 'Alpha', ownerId: root });
+      api.create('PartDefinition', { declaredName: 'Beta', ownerId: root });
+    });
+    expect(st().rev).toBe(rev + 1);
+    flushRecompute();
+    expect(st().textBuffer).toMatch(/part def Alpha;\s*part def Beta;/);
+
+    // Unsaved, so New asks first.
+    const run = vi.fn();
+    st().driveGuard('New', 'dirty', run);
+    expect(run).not.toHaveBeenCalled();
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    await st().driveRunPending('keep');
+  });
+
+  /**
+   * Validate, Check, Simulate and Solve set rows of their own, and used to
+   * drop the recompute an edit was still waiting on — its Text view refresh
+   * with it. A script's edit followed by one of them (`sysml.create(…)`, then
+   * Validate) never reached the text: nothing read unsaved, an attached
+   * Drive file read clean, and New dropped the edit without asking.
+   */
+  it('an edit, then Validate, Check, Simulate or Solve before its refresh: the Text view shows it, and New asks', async () => {
+    const actions: Array<[string, () => void]> = [
+      ['Validated', () => st().runValidation()],
+      ['Checked', () => st().runConstraintCheck()],
+      ['Simulated', () => st().simulate()],
+      ['Solved', () => st().solveParametric()],
+    ];
+    for (const [name, run] of actions) {
+      await st().saveProject('Swarm');
+      expect(unsaved()).toBe(false);
+      sdk().create('PartDefinition', { declaredName: name, ownerId: rootId() });
+      expect(recomputePending()).toBe(true);
+      run();
+      expect(recomputePending(), name).toBe(false);
+      expect(st().textBuffer, name).toContain(`part def ${name};`);
+      expect(unsaved(), name).toBe(true);
+    }
+    expect(st().diagnostics.some((d) => d.ruleId === 'solve'), 'Solve’s rows stand').toBe(true);
+
+    const run = vi.fn();
+    st().driveGuard('New', 'dirty', run);
+    expect(run).not.toHaveBeenCalled();
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    await st().driveRunPending('keep');
+  });
+
+  /**
+   * THE RULE FOR THE TEXT. Text typed in the Text view and not applied is the
+   * user's, and an SDK edit never replaces it: it stays, reading "not yet
+   * applied", as it does when a collaborator edits the model. Applying it
+   * puts it over the SDK's edit, and one Undo brings the edit back. A text
+   * nobody typed — the one a faulted apply kept — is no longer the model
+   * once the SDK edits it, and is regenerated: a Drive file opened with a
+   * syntax error must read unsaved after the edit.
+   */
+  it('never replaces text typed and not applied — Apply puts it over the edit, one Undo away — but regenerates the text a faulted apply kept', async () => {
+    const relay = sdk().create('PartDefinition', { declaredName: 'Relay', ownerId: rootId() });
+    flushRecompute();
+    await st().saveProject('Swarm');
+    const typed = st().textBuffer.replace('Relay', 'Typed');
+    st().setTextBuffer(typed);
+
+    sdk().update(relay.id, { declaredName: 'Kite' });
+    expect(recomputePending()).toBe(true);
+    expect(forcedRecomputePending(), 'a recompute that keeps the typed text').toBe(false);
+    flushRecompute();
+    expect(st().textBuffer, 'the typed text stays').toBe(typed);
+    expect(st().textDirty).toBe(true);
+    expect(named('Kite'), 'the edit is in the model').toBe(true);
+    expect(unsaved()).toBe(true);
+
+    st().applyText();
+    expect(named('Typed')).toBe(true);
+    expect(named('Kite')).toBe(false);
+    st().undo();
+    expect(named('Kite'), 'one Undo brings the edit back').toBe(true);
+    await whenLibrarySettled();
+
+    await openText(FAULTED, 'sysml');
+    expect(st().textDirty, 'a faulted apply keeps its text').toBe(true);
+    expect(lastAppliedText()).toBe(FAULTED);
+    sdk().create('PartDefinition', { declaredName: 'Fresh', ownerId: rootId() });
+    expect(forcedRecomputePending()).toBe(true);
+    flushRecompute();
+    expect(st().textDirty).toBe(false);
+    expect(st().textBuffer).toContain('part def Fresh;');
+    expect(lastAppliedText()).toBeNull();
+  });
+
+  /**
+   * A Text view typed back to the model's own text — a character typed and
+   * deleted, the textarea's own Undo — holds nothing typed: an SDK edit then
+   * shows in it and reads unsaved, and Save keeps the edit rather than
+   * applying the old text over it.
+   */
+  it('takes a text typed back to the model’s for the model’s: an SDK edit shows, reads unsaved, and Save keeps it', async () => {
+    sdk().create('PartDefinition', { declaredName: 'Relay', ownerId: rootId() });
+    flushRecompute();
+    await st().saveProject('Swarm');
+    const same = st().textBuffer;
+    st().setTextBuffer(`${same}x`);
+    expect(st().textDirty).toBe(true);
+    st().setTextBuffer(same);
+    expect(st().textDirty, 'nothing typed stands').toBe(false);
+
+    sdk().create('PartDefinition', { declaredName: 'Kite', ownerId: rootId() });
+    expect(forcedRecomputePending()).toBe(true);
+    flushRecompute();
+    expect(st().textBuffer).toContain('part def Kite;');
+    expect(unsaved()).toBe(true);
+    const run = vi.fn();
+    st().driveGuard('New', 'dirty', run);
+    expect(run).not.toHaveBeenCalled();
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    await st().driveRunPending('keep');
+
+    await runSave();
+    expect(named('Kite')).toBe(true);
+    expect(unsaved()).toBe(false);
+    await st().loadProject('Swarm');
+    expect(named('Kite'), 'the save holds the edit').toBe(true);
+  });
+
+  /**
+   * In a room the store's model listener already refreshes after every
+   * change, the SDK's included — keeping a dirty buffer, as a peer's edit
+   * must. The SDK edit adds no second `rev` bump and no second recompute; it
+   * only makes that recompute regenerate a text nobody typed.
+   */
+  it('in a collaboration room, one SDK edit is one refresh — which regenerates a text nobody typed there too', async () => {
+    const rebuild = st().rebuildDiagram;
+    const rebuilt = vi.fn(async () => {});
+    useAppStore.setState({ rebuildDiagram: rebuilt });
+    st().connectCollab('sdk-room');
+    try {
+      const relay = sdk().create('PartDefinition', { declaredName: 'Relay', ownerId: rootId() });
+      await vi.waitFor(() => expect(recomputePending()).toBe(false));
+      rebuilt.mockClear();
+      const rev = st().rev;
+      sdk().update(relay.id, { declaredName: 'Kite' });
+      expect(st().rev, 'one bump: the listener’s').toBe(rev + 1);
+      await vi.waitFor(() => expect(recomputePending()).toBe(false));
+      expect(rebuilt, 'one recompute').toHaveBeenCalledTimes(1);
+      expect(st().textBuffer).toContain('part def Kite;');
+
+      await openText(FAULTED, 'sysml');
+      expect(lastAppliedText()).toBe(FAULTED);
+      sdk().create('PartDefinition', { declaredName: 'Fresh', ownerId: rootId() });
+      flushRecompute();
+      expect(st().textBuffer).toContain('part def Fresh;');
+      expect(st().textDirty).toBe(false);
+    } finally {
+      st().disconnectCollab();
+      useAppStore.setState({ rebuildDiagram: rebuild });
+    }
   });
 });

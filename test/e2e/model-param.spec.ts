@@ -72,6 +72,11 @@ test('?model= opens the linked model in place of the sample, with a propose-chan
 
   await page.getByTestId('linked-banner-close').click();
   await expect(banner).toHaveCount(0);
+
+  // Opened as it was published, it has nothing unsaved: New asks nothing.
+  await page.getByTestId('tb-new').click();
+  await expect.poll(() => rootNames(page)).toEqual(['NewModel']);
+  await expect(page.getByTestId('drive-strip')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

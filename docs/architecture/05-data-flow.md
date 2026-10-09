@@ -185,7 +185,7 @@ flowchart LR
     end
 
     subgraph Formats["Formats (persistence/io.ts)"]
-        sysml[".sysml text\nparseModel/serializeModel"]
+        sysml[".sysml text\nparseModel / user roots (serializeElement)"]
         mjson["model-json\ntoJSON/fromJSON"]
         ajson["api-json (OMG element-graph)\nflat @id/@type"]
     end
@@ -206,6 +206,9 @@ flowchart LR
 ```
 
 - `importModel` accepts any of the three formats; `exportModel` emits any.
+  The `.sysml` export writes the user's roots only — text carries no
+  `isLibrary` flag, so the merged standard library stays out — while the two
+  JSON formats keep it, each element with its flag.
 - `createDefaultStore` prefers IndexedDB, falls back to localStorage, then
   in-memory.
 - `JSON.parse` on import is wrapped (`parseJson`, `persistence/io.ts`) so a

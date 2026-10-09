@@ -8,8 +8,9 @@
  * Drive:   Drive ▾ beside Collaborate, on a deployment with Google Drive only
  *
  * New, Open and Import replace the model, so they run through `driveGuard`:
- * with unsaved changes to an attached Google Drive file, the Drive strip asks
- * first. Save also saves to the attached Drive file (see `runSave`).
+ * with work no save holds — or unsaved changes to an attached Google Drive
+ * file — the strip under the toolbar asks first. Save also saves to the
+ * attached Drive file (see `runSave`).
  *
  * Every control drives the shared {@link useAppStore}; view buttons reuse the
  * declarative {@link VIEW_COMMANDS} list so ids stay in lock-step with the

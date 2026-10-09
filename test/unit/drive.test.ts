@@ -34,7 +34,10 @@
  * is loading, until Google's script is there — and its click then asks for
  * the account chooser before anything is awaited; the items following the
  * session; and every command that replaces the model going through the
- * guard.
+ * guard — New, Open and Import on the toolbar, a branch switch and a merge in
+ * the Versions tab, a room join under Collaborate — which asks in Drive's
+ * words with a Drive file attached and, without one, about work not saved in
+ * this browser: on a deployment without Google Drive too.
  *
  * The Drive strip (`DriveStrip`) is rendered from prepared store states, one
  * per row it can show, and held to the order the slice documents — a
@@ -118,7 +121,9 @@ vi.mock('../../src/library/standard-library', () => ({
 
 import {
   DRIVE_MESSAGES,
+  browserDirty,
   driveConflictMessage,
+  driveDirty,
   driveLink,
   driveTime,
   initialDriveState,
@@ -139,6 +144,9 @@ import {
 } from '../../src/ui/panels/DriveStrip';
 import { LinkedModelBanner } from '../../src/ui/panels/LinkedModelBanner';
 import { Toolbar } from '../../src/ui/panels/Toolbar';
+import { BottomPanel } from '../../src/ui/panels/BottomPanel';
+import { Collaborate } from '../../src/ui/panels/Collaborate';
+import { commandById } from '../../src/ui/commands';
 
 const CLIENT_ID = '123456789012-abc123def456.apps.googleusercontent.com';
 const API_KEY = `AIza${'Sy0_-'.repeat(7)}`;
@@ -2623,6 +2631,8 @@ describe('DriveMenu — the Drive ▾ button and its panel', () => {
       textBuffer: TEXT,
       textDirty: false,
       serializeError: null,
+      // Saved in this browser as it stands: only what a case changes is unsaved.
+      savedText: TEXT,
       undoStack: [],
       redoStack: [],
       drive: { ...initialDriveState, configStatus: 'ready', config: CONFIG },
@@ -2667,6 +2677,14 @@ describe('DriveMenu — the Drive ▾ button and its panel', () => {
     await act(async () => auth.finishLoading());
     expect(item('tb-drive-signin')).toBeEnabled();
     expect(item('tb-drive-signin')).toHaveTextContent('Sign in to Google…');
+    expect(item('tb-drive-signin')).toHaveAttribute('title', 'Choose your Google account');
+
+    // Offline, the sign-in waits for the network, and says why.
+    setDrive({ online: false });
+    expect(item('tb-drive-signin')).toBeDisabled();
+    expect(item('tb-drive-signin')).toHaveAttribute('title', 'Offline');
+    setDrive({ online: true });
+    expect(item('tb-drive-signin')).toBeEnabled();
 
     await act(async () => {
       fireEvent.click(item('tb-drive-signin'));
@@ -2840,7 +2858,7 @@ describe('DriveMenu — the Drive ▾ button and its panel', () => {
     expect(screen.getAllByDisplayValue(driveLink(st())!), 'shown once, in the strip').toHaveLength(1);
   });
 
-  it('every command here that replaces the model goes through the guard first', () => {
+  it('every command here that replaces the model, or lets go of the file, goes through the guard first', () => {
     const detach = spyOn('driveDetach');
     const signOut = spyOn('driveSignOut');
     const open = spyOn('driveOpen');
@@ -2871,10 +2889,19 @@ describe('DriveMenu — the Drive ▾ button and its panel', () => {
       expect(spy, `${id} runs once the user goes on`).toHaveBeenCalledTimes(1);
     }
 
-    // No Drive file, but edited work: opening from Drive asks first too.
+    // No Drive file, and work no save holds: Sign out keeps the model, so it
+    // has nothing to ask — it runs at once, inside the click, where its
+    // sign-in window may open.
     setDrive({ file: null });
-    act(() => useAppStore.setState({ undoStack: [{} as AppState['undoStack'][number]] }));
+    expect(browserDirty(st())).toBe(true);
+    signOut.mockClear();
     openPanel();
+    fireEvent.click(item('tb-drive-signout'));
+    expect(signOut).toHaveBeenCalledTimes(1);
+    expect(st().drive.prompt).toBeNull();
+
+    // Opening from Drive replaces the model: it asks first.
+    if (panel() === null) openPanel();
     fireEvent.click(screen.getAllByTestId('drive-recent-item')[0]);
     expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Open from Drive', variant: 'open' });
     expect(open).not.toHaveBeenCalled();
@@ -2882,8 +2909,11 @@ describe('DriveMenu — the Drive ▾ button and its panel', () => {
     // The row's resource key goes with it.
     expect(open).toHaveBeenCalledWith({ id: ID, resourceKey: KEY }, 'recent');
 
-    // Nothing to lose: the open runs at once, and the panel closes for it.
-    act(() => useAppStore.setState({ undoStack: [] }));
+    // Nothing to lose — saved, however long Undo's history: the open runs at
+    // once, and the panel closes for it.
+    act(() =>
+      useAppStore.setState((s) => ({ savedText: s.textBuffer, undoStack: [{} as AppState['undoStack'][number]] })),
+    );
     openPanel();
     fireEvent.click(screen.getAllByTestId('drive-recent-item')[1]);
     expect(open).toHaveBeenLastCalledWith({ id: ID2 }, 'recent');
@@ -2949,6 +2979,10 @@ describe('DriveMenu — the Drive ▾ button and its panel', () => {
     ];
     for (const [what, d, dirty] of waiting) expect(driveMenuStatus(d, dirty), what).toBe('attention');
     expect(driveMenuStatus({ ...signedIn, notice: error }, true), 'an error first').toBe('error');
+    // The question about work no save holds is not Drive's.
+    expect(
+      driveMenuStatus({ ...signedIn, prompt: { kind: 'guard', label: 'New', variant: 'browser' } }, false),
+    ).toBe('signed-in');
   });
 });
 
@@ -3001,6 +3035,7 @@ describe('Toolbar — where Drive ▾ sits, and the commands that replace the mo
       textBuffer: TEXT,
       textDirty: false,
       serializeError: null,
+      savedText: TEXT,
       undoStack: [],
       redoStack: [],
       projectName: 'Swarm',
@@ -3076,6 +3111,202 @@ describe('Toolbar — where Drive ▾ sits, and the commands that replace the mo
     expect(loadProject).not.toHaveBeenCalled();
     await act(async () => st().driveRunPending('discard'));
     expect(loadProject).toHaveBeenCalledWith('Alpha');
+
+    // A file gone from Drive holds nothing any more: with no changes to it
+    // unsaved, the question is the one about work no save holds.
+    act(() =>
+      useAppStore.setState((s) => ({
+        textBuffer: TEXT,
+        savedText: 'package Elsewhere;\n',
+        drive: { ...s.drive, prompt: null, file: { ...FILE, trashed: true } },
+      })),
+    );
+    clickNew();
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    expect(newProject).toHaveBeenCalledTimes(1);
+    act(() => void st().driveRunPending('keep'));
+
+    // With changes unsaved to it too — the usual case: a save or a reload is
+    // what finds a file gone — no Save to Drive can keep them, and the
+    // question is still this browser's; none once the browser holds them.
+    act(() => useAppStore.setState({ textBuffer: TEXT.replace('Drone', 'Kite') }));
+    expect(driveDirty(st())).toBe(true);
+    clickNew();
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    expect(newProject).toHaveBeenCalledTimes(1);
+    act(() => void st().driveRunPending('keep'));
+    act(() => useAppStore.setState({ savedText: TEXT.replace('Drone', 'Kite') }));
+    clickNew();
+    expect(st().drive.prompt).toBeNull();
+    expect(newProject).toHaveBeenCalledTimes(2);
+  });
+
+  it('without Google Drive, New and Open ask first while the model has unsaved work, and run at once while it is saved', async () => {
+    const { newProject, loadProject, listProjects } = spies('newProject', 'loadProject', 'listProjects');
+    listProjects.mockResolvedValue(['Alpha']);
+    useAppStore.setState({ drive: initialDriveState, savedText: TEXT });
+    const view = render(React.createElement(Toolbar));
+    const clickNew = (): void => {
+      if (screen.queryByTestId('tb-new') === null) fireEvent.click(view.getByTestId('tb-more'));
+      fireEvent.click(screen.getByTestId('tb-new'));
+    };
+
+    // Saved (here: as the session started): New runs at once.
+    clickNew();
+    expect(newProject).toHaveBeenCalledTimes(1);
+    expect(st().drive.prompt).toBeNull();
+
+    // An edit nothing holds: the strip asks, in this browser's words.
+    act(() => useAppStore.setState({ textBuffer: TEXT.replace('Drone', 'Kite') }));
+    clickNew();
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    expect(newProject).toHaveBeenCalledTimes(1);
+    act(() => void st().driveRunPending('keep'));
+    expect(newProject).toHaveBeenCalledTimes(1);
+
+    await act(async () => fireEvent.click(view.getByTestId('tb-open')));
+    fireEvent.click(await view.findByTestId('project-pick'));
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Open', variant: 'browser' });
+    expect(loadProject).not.toHaveBeenCalled();
+    await act(async () => st().driveRunPending('discard'));
+    expect(loadProject).toHaveBeenCalledWith('Alpha');
+
+    // The command table's New asks as the button does.
+    act(() => void commandById('tb-new')!.run());
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'New', variant: 'browser' });
+    expect(newProject).toHaveBeenCalledTimes(1);
+    act(() => void st().driveRunPending('keep'));
+  });
+});
+
+/**
+ * The commands outside the toolbar's File group that load another model in
+ * place of this one: a branch switch and a merge (`switchBranch` loads the
+ * merged head) in the Versions tab, and a room join under Collaborate. Each
+ * goes through the guard as New does — Drive's question with a Drive file
+ * attached, this browser's without — and never detaches a file with unsaved
+ * changes unasked.
+ */
+describe('Versions and Collaborate — a branch switch, a merge that loads and a room join ask first', () => {
+  const CONFIG = { clientId: CLIENT_ID, privacyUrl: VALID.privacyUrl };
+  const TEXT = 'package Swarm {\n    part def Drone;\n}\n';
+  const EDITED = TEXT.replace('Drone', 'Kite');
+  const FILE: DriveFile = {
+    ...META,
+    savedText: TEXT,
+    rewrites: false,
+    rewriteAcknowledged: false,
+    openedFrom: 'save-as',
+  };
+  const st = () => useAppStore.getState();
+  let replaced: Partial<AppState> = {};
+
+  /** Replace store actions with spies, as the panels read them; put back after the case. */
+  function spies<K extends 'switchBranch' | 'mergeBranchesCmd' | 'connectCollab'>(...names: K[]) {
+    const made = {} as Record<K, ReturnType<typeof vi.fn>>;
+    for (const name of names) {
+      if (!(name in replaced)) Object.assign(replaced, { [name]: st()[name] });
+      made[name] = vi.fn();
+    }
+    useAppStore.setState(made as unknown as Partial<AppState>);
+    return made;
+  }
+  /** A Drive file attached — with unsaved changes, as the text was edited. */
+  const attachDrive = (): void =>
+    act(() => useAppStore.setState({ drive: { ...initialDriveState, configStatus: 'ready', config: CONFIG, file: FILE } }));
+
+  beforeEach(() => {
+    useAppStore.setState({
+      textBuffer: TEXT,
+      textDirty: false,
+      serializeError: null,
+      savedText: TEXT,
+      projectName: 'Swarm',
+      drive: initialDriveState,
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useAppStore.setState({ ...replaced, drive: initialDriveState });
+    replaced = {};
+  });
+
+  it('the Versions tab switches and merges at once while the model is saved, and asks first otherwise', async () => {
+    const { switchBranch, mergeBranchesCmd } = spies('switchBranch', 'mergeBranchesCmd');
+    const view = render(React.createElement(BottomPanel));
+    fireEvent.click(view.getByTestId('tab-versions'));
+    const branch = await view.findByTestId('version-branch');
+
+    fireEvent.click(branch);
+    fireEvent.click(view.getByTestId('version-merge-btn'));
+    expect(switchBranch).toHaveBeenCalledTimes(1);
+    expect(mergeBranchesCmd).toHaveBeenCalledTimes(1);
+    expect(st().drive.prompt).toBeNull();
+
+    act(() => useAppStore.setState({ textBuffer: EDITED }));
+    fireEvent.click(branch);
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Switch branch', variant: 'browser' });
+    expect(switchBranch).toHaveBeenCalledTimes(1);
+    await act(async () => st().driveRunPending('discard'));
+    expect(switchBranch).toHaveBeenCalledTimes(2);
+    fireEvent.click(view.getByTestId('version-merge-btn'));
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Merge', variant: 'browser' });
+    await act(async () => st().driveRunPending('keep'));
+    expect(mergeBranchesCmd).toHaveBeenCalledTimes(1);
+
+    // An attached Drive file with unsaved changes: Drive's question, which a
+    // switch or a merge used to skip, detaching the file unasked.
+    attachDrive();
+    fireEvent.click(branch);
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Switch branch', variant: 'dirty' });
+    await act(async () => st().driveRunPending('keep'));
+    fireEvent.click(view.getByTestId('version-merge-btn'));
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Merge', variant: 'dirty' });
+    await act(async () => st().driveRunPending('discard'));
+    expect(switchBranch).toHaveBeenCalledTimes(2);
+    expect(mergeBranchesCmd).toHaveBeenCalledTimes(2);
+
+    // A merge that would meet conflicts (`manual`) loads nothing: it runs at
+    // once, unsaved work or not.
+    act(() => useAppStore.setState({ drive: initialDriveState }));
+    const wouldApply = vi.spyOn(st().api.repository, 'mergeWouldApply').mockReturnValue(false);
+    try {
+      fireEvent.click(view.getByTestId('version-merge-btn'));
+      expect(wouldApply).toHaveBeenCalledWith(st().api.projectId, expect.any(String), expect.any(String), {
+        strategy: 'manual',
+      });
+      expect(mergeBranchesCmd).toHaveBeenCalledTimes(3);
+      expect(st().drive.prompt).toBeNull();
+    } finally {
+      wouldApply.mockRestore();
+    }
+  });
+
+  it('Collaborate joins a room at once while the model is saved, and asks first otherwise — from Connect and from Enter', async () => {
+    const { connectCollab } = spies('connectCollab');
+    const view = render(React.createElement(Collaborate));
+    fireEvent.click(view.getByTestId('tb-collab'));
+    fireEvent.change(view.getByTestId('collab-room'), { target: { value: 'swarm' } });
+
+    fireEvent.click(view.getByTestId('collab-connect'));
+    expect(connectCollab).toHaveBeenCalledTimes(1);
+    expect(connectCollab).toHaveBeenLastCalledWith('swarm');
+    expect(st().drive.prompt).toBeNull();
+
+    act(() => useAppStore.setState({ textBuffer: EDITED }));
+    fireEvent.click(view.getByTestId('collab-connect'));
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Join room', variant: 'browser' });
+    await act(async () => st().driveRunPending('keep'));
+    fireEvent.keyDown(view.getByTestId('collab-room'), { key: 'Enter' });
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Join room', variant: 'browser' });
+    await act(async () => st().driveRunPending('discard'));
+    expect(connectCollab).toHaveBeenCalledTimes(2);
+
+    attachDrive();
+    fireEvent.click(view.getByTestId('collab-connect'));
+    expect(st().drive.prompt).toEqual({ kind: 'guard', label: 'Join room', variant: 'dirty' });
+    await act(async () => st().driveRunPending('keep'));
+    expect(connectCollab).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -3181,6 +3412,42 @@ describe('DriveStrip — the strip under the toolbar, and the gate a ?drive= lin
     expect(auth.calls, 'the strip asks nothing of Google by itself').toEqual([]);
   });
 
+  /**
+   * A save in this browser that kept typed text back — it has a syntax error
+   * — says so on every deployment: the note is an `info` row, with nothing
+   * of Google's in it. An error notice is a configured deployment's alone,
+   * beside the privacy page only a configuration names.
+   */
+  it('without Google Drive too: the note that a save in this browser kept the typed text back', () => {
+    useAppStore.setState({ drive: initialDriveState });
+    show();
+    setDrive({ notice: { kind: 'info', message: DRIVE_MESSAGES.typedTextKeptBack(3), retryable: false } });
+    expect(status()).toBe('info');
+    expect(strip()).toHaveAttribute('role', 'status');
+    expect(strip()).toHaveTextContent(
+      'Saved in this browser without the text typed in the Text view: it has a syntax error at line 3. Fix it, then save again.',
+    );
+    absent('drive-strip-privacy', 'drive-strip-retry');
+    fireEvent.click(item('drive-strip-dismiss'));
+    expect(st().drive.notice).toBeNull();
+    expect(strip()).toBeNull();
+
+    setDrive({ notice: { kind: 'error', message: DRIVE_MESSAGES.browserSaveFailed, retryable: false } });
+    expect(strip()).toBeNull();
+    expect(driveStripStatus({ ...initialDriveState, notice: { kind: 'info', message: 'x', retryable: false } }, false)).toBe('info');
+    // The question before a command replaces the model still comes first.
+    expect(
+      driveStripStatus(
+        {
+          ...initialDriveState,
+          prompt: { kind: 'guard', label: 'New', variant: 'browser' },
+          notice: { kind: 'info', message: 'x', retryable: false },
+        },
+        false,
+      ),
+    ).toBe('guard');
+  });
+
   it('the attached file: saved, with Drive’s page and the link; unsaved, with Save; view access, gone and offline, each with its way on', () => {
     const save = spyOn('driveSave');
     const saveAs = spyOn('driveSaveAs');
@@ -3282,6 +3549,12 @@ describe('DriveStrip — the strip under the toolbar, and the gate a ?drive= lin
       expect(savedTyped).toBe(true);
       expect(st().textDirty, 'kept as typed').toBe(true);
       expect(st().undoStack).toHaveLength(undo);
+      // ...and the strip says so, as Save and Ctrl/Cmd+S say it: the `}`
+      // missing at the end of the text, line 5. Put away, the row is back.
+      expect(status()).toBe('info');
+      expect(st().drive.notice?.message).toBe(DRIVE_MESSAGES.typedTextKeptBack(5));
+      fireEvent.click(item('drive-strip-dismiss'));
+      expect(status()).toBe('offline');
       await act(async () => {
         fireEvent.click(item('drive-strip-save-local'));
         await whenLibrarySettled();
@@ -3367,6 +3640,63 @@ describe('DriveStrip — the strip under the toolbar, and the gate a ?drive= lin
     expect(runPending).toHaveBeenLastCalledWith('open-anyway');
     fireEvent.click(item('drive-guard-keep'));
     expect(runPending).toHaveBeenLastCalledWith('keep');
+  });
+
+  it('without Google Drive too: the question before a command replaces unsaved work, whose Save is this browser’s', () => {
+    const runPending = spyOn('driveRunPending');
+    useAppStore.setState({ drive: initialDriveState });
+    show();
+    setDrive({ prompt: { kind: 'guard', label: 'New', variant: 'browser' } });
+    expect(status()).toBe('guard');
+    expect(strip()).toHaveAttribute('role', 'alert');
+    expect(strip()).toHaveTextContent(/^Swarm has unsaved changes\.Save and continue/);
+    expect(item('guard-save')).toHaveAttribute('title', 'Save the project in this browser, then New');
+    expect(item('guard-discard')).toHaveAttribute('title', 'New without saving');
+    expect(item('guard-keep')).toHaveAttribute('title', 'Cancel New and keep editing this model');
+    absent('drive-guard-save', 'drive-guard-discard', 'drive-guard-keep', 'drive-guard-open-anyway', 'drive-strip-privacy');
+    for (const [id, how] of [
+      ['guard-save', 'save'],
+      ['guard-discard', 'discard'],
+      ['guard-keep', 'keep'],
+    ] as const) {
+      fireEvent.click(item(id));
+      expect(runPending, id).toHaveBeenLastCalledWith(how);
+    }
+
+    // The browser refused the save: the question stands, saying so — with no
+    // other copy to speak of.
+    setDrive({ prompt: { kind: 'guard', label: 'New', variant: 'browser', refused: true } });
+    expect(strip()).toHaveTextContent(`Swarm has unsaved changes. ${DRIVE_MESSAGES.browserRefused}Save and continue`);
+
+    // Joining a room drops nothing at once — the room's model merges over this
+    // one — so its button does not say discard.
+    setDrive({ prompt: { kind: 'guard', label: 'Join room', variant: 'browser' } });
+    expect(item('guard-discard')).toHaveTextContent('Join without saving');
+    expect(item('guard-discard')).toHaveAttribute(
+      'title',
+      "Join the room without saving: the room's model may change or replace this one",
+    );
+    expect(item('guard-keep')).toHaveAttribute('title', 'Cancel Join room and keep editing this model');
+    setDrive({ prompt: { kind: 'guard', label: 'New', variant: 'browser' } });
+    expect(item('guard-discard')).toHaveTextContent('Discard and continue');
+
+    // Text typed in the Text view that the parser cannot read: no model to save.
+    act(() => useAppStore.setState({ textBuffer: 'package Swarm {\n    blok bad;\n}\n', textDirty: true }));
+    expect(item('guard-save')).toBeDisabled();
+    expect(item('guard-save')).toHaveAttribute(
+      'title',
+      'The text typed in the Text view has a syntax error — fix it, or discard it',
+    );
+    expect(item('guard-discard')).toBeEnabled();
+    act(() => useAppStore.setState({ textBuffer: EDITED }));
+    expect(item('guard-save')).toBeEnabled();
+
+    // With Google Drive configured and no file attached, the same question.
+    setDrive({ configStatus: 'ready', config: CONFIG, prompt: { kind: 'guard', label: 'Import', variant: 'browser' } });
+    expect(item('guard-save')).toHaveAttribute('title', 'Save the project in this browser, then Import');
+    expect(driveStripStatus({ ...initialDriveState, prompt: { kind: 'guard', label: 'New', variant: 'browser' } }, false)).toBe(
+      'guard',
+    );
   });
 
   it('a conflict, as an amber alert with its three answers — none of them while another Drive action runs', () => {

@@ -21,6 +21,7 @@ export function Collaborate(): JSX.Element {
   const collab = useAppStore((s) => s.collab);
   const connectCollab = useAppStore((s) => s.connectCollab);
   const disconnectCollab = useAppStore((s) => s.disconnectCollab);
+  const driveGuard = useAppStore((s) => s.driveGuard);
 
   const [open, setOpen] = useState(false);
   const [room, setRoom] = useState(collab.room || 'room-1');
@@ -42,9 +43,13 @@ export function Collaborate(): JSX.Element {
     return () => window.removeEventListener('mousedown', onDown);
   }, [open]);
 
+  // Joining lets the room's model change this one — or replace it, when the
+  // room has one already: with work no save holds — or unsaved changes to an
+  // attached Google Drive file — the strip under the toolbar asks first.
   const onConnect = useCallback(() => {
-    connectCollab(room.trim() || 'room-1');
-  }, [connectCollab, room]);
+    const target = room.trim() || 'room-1';
+    driveGuard('Join room', 'dirty', () => connectCollab(target));
+  }, [connectCollab, driveGuard, room]);
 
   // Total participants = self + remote peers (drives the "N present" badge).
   const participants = collab.peers.length + 1;

@@ -11,8 +11,8 @@
  *   text view in sync with diagram/tree edits (bidirectional sync, plan §5).
  * - Parse diagnostics are surfaced in an inline strip beneath the editor.
  * - Ctrl/Cmd+S and Ctrl/Cmd+Shift+S typed here save, as they do elsewhere on
- *   the page — Ctrl/Cmd+S applying the typed text first, so the save holds
- *   it; every other key stays the textarea's.
+ *   the page — and as there, Ctrl/Cmd+S applies the typed text first, so the
+ *   save holds it (`runSave`); every other key stays the textarea's.
  * - When the model cannot be written as text at all (`store.serializeError`),
  *   the buffer is the LAST text that could be written: the status strip says so,
  *   an inline notice gives the reason, and "Apply text → model" is disabled,
@@ -22,7 +22,7 @@
  */
 
 import { useMemo, useRef, useState } from 'react';
-import { applyTypedTextToSave, useAppStore } from '../store';
+import { useAppStore } from '../store';
 import { handleShortcut } from '../commands';
 import type { Diagnostic } from '@validation/index';
 import './panels.css';
@@ -111,16 +111,11 @@ export function TextEditor(): JSX.Element {
             // student who just typed reaches for Save. Only these two keys:
             // undo, copy and the rest stay the editor's own.
             if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
-            // Ctrl/Cmd+S saves the MODEL, in this browser (and to an attached
-            // Drive file). Text typed here and not applied is not the model
-            // yet, so it is applied first — as a Drive save does, and as
-            // "Apply text → model" would — and the save holds what is on
-            // screen. Not a text with a parse error: the parser's recovery of
-            // it is not what is on screen, and would overwrite the last good
-            // copy in this browser, so the model is saved as it stands and
-            // the status above still reads "not yet applied". Ctrl/Cmd+Shift+S
-            // saves to Drive alone, which applies the text itself.
-            if (!e.shiftKey) applyTypedTextToSave();
+            // Ctrl/Cmd+S saves the MODEL, here as elsewhere on the page: the
+            // text typed here is applied first, unless it has a parse error
+            // or a collaboration room is connected (`runSave`).
+            // Ctrl/Cmd+Shift+S saves to Drive alone, which applies the text
+            // itself.
             if (handleShortcut(e.nativeEvent)) e.preventDefault();
           }}
           onScroll={(e) => {

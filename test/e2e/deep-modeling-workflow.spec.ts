@@ -385,15 +385,12 @@ test('deep modeling session: powertrain from scratch → text → validate → u
   const { writeFileSync, mkdirSync } = await import('node:fs');
   mkdirSync('test-results', { recursive: true });
   const stagedSysml = 'test-results/deep-powertrain.sysml';
-  // Stage only the user model: the export includes the merged ~36 k-element
-  // standard library, and re-importing THAT in the browser blocks the main
-  // thread for minutes (a separate performance concern — see the review doc).
-  // Library content begins at the first `library ` statement; everything
-  // before it is the authored powertrain.
-  const libStart = sysmlText.indexOf('\nlibrary ');
-  const userPart = libStart === -1 ? sysmlText : sysmlText.slice(0, libStart);
-  expect(userPart).toContain('part def Engine');
-  writeFileSync(stagedSysml, userPart, 'utf8');
+  // The export is the user's model only. It used to carry the merged ~38 k
+  // element standard library after it — from the first `library ` statement on
+  // — and this step cut that off before re-importing, because importing it
+  // blocked the main thread for minutes. The file now goes back as it came.
+  expect(sysmlText, 'the export carries no library text').not.toMatch(/^(standard )?library /m);
+  writeFileSync(stagedSysml, sysmlText, 'utf8');
 
   /* ── 16. Export JSON → valid SerializedModel shape ── */
   const jsonDownload = page.waitForEvent('download');

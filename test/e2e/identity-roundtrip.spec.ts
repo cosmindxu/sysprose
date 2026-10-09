@@ -133,7 +133,12 @@ test('a GUI-authored model survives an export → import round-trip intact', asy
   await shot(page, 'identity-c-exported');
 
   // ── Wipe the workspace, then import the file back ──
+  // The authored model was never saved, so New asks first: wiping it is the
+  // point here (the exported file holds it), so Discard and continue.
   await page.getByTestId('tb-new').click();
+  await expect(page.getByTestId('drive-strip')).toHaveAttribute('data-status', 'guard');
+  await page.getByTestId('guard-discard').click();
+  await expect.poll(() => hasNamed(page, 'Package', 'NewModel')).toBe(true);
   for (const { eClass, name } of authored) {
     expect(await hasNamed(page, eClass, name), `${name} should be gone after New`).toBe(false);
   }

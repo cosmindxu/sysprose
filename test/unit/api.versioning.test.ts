@@ -191,3 +191,35 @@ describe('ProjectRepository — diff', () => {
     expect(d.changed).toHaveLength(0);
   });
 });
+
+describe('ProjectRepository — merge', () => {
+  it('mergeWouldApply says whether mergeBranches would commit, and changes nothing', () => {
+    const repo = new ProjectRepository();
+    const project = repo.createProject('Demo', pkgModel('Root'));
+    const mainId = project.defaultBranchId;
+    const feature = repo.createBranch(project.id, 'feature', repo.getBranch(mainId)!.headCommitId);
+    // The one package renamed on both branches: a change-change conflict.
+    repo.commit(project.id, mainId, pkgModel('Ours'));
+    repo.commit(project.id, feature.id, pkgModel('Theirs'));
+    const heads = () => [repo.getBranch(mainId)!.headCommitId, repo.getBranch(feature.id)!.headCommitId];
+    const before = heads();
+    const commits = repo.listCommits(project.id, mainId).length;
+
+    expect(repo.mergeWouldApply(project.id, feature.id, mainId, { strategy: 'manual' })).toBe(false);
+    expect(repo.mergeWouldApply(project.id, feature.id, mainId), 'manual by default').toBe(false);
+    expect(repo.mergeWouldApply(project.id, feature.id, mainId, { strategy: 'theirs' })).toBe(true);
+    expect(repo.mergeWouldApply(project.id, feature.id, mainId, { strategy: 'ours' })).toBe(true);
+    expect(heads(), 'no head moved').toEqual(before);
+    expect(repo.listCommits(project.id, mainId)).toHaveLength(commits);
+
+    // As the merge itself finds.
+    expect(repo.mergeBranches(project.id, feature.id, mainId, { strategy: 'manual' }).applied).toBe(false);
+    expect(heads()).toEqual(before);
+    const merged = repo.mergeBranches(project.id, feature.id, mainId, { strategy: 'theirs' });
+    expect(merged.applied).toBe(true);
+    expect(merged.conflicts).toHaveLength(1);
+    // Merged since: nothing left to arbitrate, so even `manual` would commit.
+    expect(repo.mergeWouldApply(project.id, feature.id, mainId, { strategy: 'manual' })).toBe(true);
+    expect(() => repo.mergeWouldApply(project.id, 'no-such-branch', mainId)).toThrow(/No such branch/);
+  });
+});
