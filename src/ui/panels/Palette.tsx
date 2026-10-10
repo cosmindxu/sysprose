@@ -24,13 +24,14 @@
  * only two files this surface owns.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
 import { checkFileName, useAppStore } from '../store';
-import { checksFor, commandNote, runCheck, selectionKey, type CheckSpec } from '../checks';
+import { checksFor, commandNote, selectionKey, type CheckSpec } from '../checks';
 import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
+import { cancelChecked, runChecked } from './checks-runner';
 
 /* ─────────────────────────── Shared tool state ──────────────────────────── */
 
@@ -347,7 +348,7 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   // name, which is what a student downloads from Drive, else the project's.
   const fileName = useAppStore(checkFileName);
   const stored = useChecksStore((st) => st.results[spec.id]);
-  const record = useChecksStore((st) => st.record);
+  const running = useChecksStore((st) => st.running[spec.id] !== undefined);
   const [copied, setCopied] = useState(false);
 
   // One object per (model, selection, file name), so the callbacks below are
@@ -365,14 +366,31 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   // What of the selection the result read: once that moves, the row shows the
   // result as stale, since the command beside it names the new selection.
   const reads = selectionKey(spec, ctx);
-  const verdict = verdictOf(stored, rev, reads);
+  // A check in a worker is running until it settles, whatever it said before.
+  const verdict = running ? 'running' : verdictOf(stored, rev, reads);
   // A file or element name the command could not carry as it is (it would be
   // read as code by some terminal): what the stand-in in its place stands for.
   const note = commandNote(spec, ctx);
 
   const onRun = useCallback(() => {
-    record(spec.id, runCheck(spec, ctx), rev, selectionKey(spec, ctx));
-  }, [record, spec, ctx, rev]);
+    runChecked(spec, ctx, rev);
+  }, [spec, ctx, rev]);
+  const onCancel = useCallback(() => cancelChecked(spec.id), [spec.id]);
+
+  // Cancel goes when the check stops, whether the person pressed it or the answer
+  // came while it had the focus. A focused button that leaves the page leaves the
+  // focus on <body>, and there the Backspace guard (`handleShortcut` refuses
+  // Delete/Backspace only on a button or link) no longer holds: a reflex Backspace
+  // would delete the selection. So the focus goes to Run, which stays. A ref
+  // callback runs with null before the node leaves the page, while it still has it.
+  const runButton = useRef<HTMLButtonElement>(null);
+  const cancelNode = useRef<HTMLButtonElement | null>(null);
+  const cancelRef = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null && cancelNode.current !== null && document.activeElement === cancelNode.current) {
+      runButton.current?.focus();
+    }
+    cancelNode.current = node;
+  }, []);
 
   const onCopy = useCallback(() => {
     void navigator.clipboard?.writeText(spec.command(ctx)).then(
@@ -385,7 +403,13 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   }, [spec, ctx]);
 
   return (
-    <div className="palette-check" data-testid="palette-check" data-check={spec.id} data-verdict={verdict}>
+    <div
+      className="palette-check"
+      data-testid="palette-check"
+      data-check={spec.id}
+      data-verdict={verdict}
+      data-ran-in={stored?.ranIn}
+    >
       <div className="palette-check-head">
         <span className="palette-check-label" title={`${spec.question}\n\n${spec.command(ctx)}`}>
           {spec.label}
@@ -395,9 +419,22 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
         </span>
       </div>
       <div className="palette-check-actions">
-        <button type="button" data-testid="palette-check-run" onClick={onRun} title={`Run ${spec.id} on the model as it is now`}>
+        {/* aria-disabled, not disabled: the button keeps the focus the click gave it while the check runs. */}
+        <button
+          ref={runButton}
+          type="button"
+          data-testid="palette-check-run"
+          aria-disabled={running}
+          onClick={running ? undefined : onRun}
+          title={running ? `${spec.id} is running` : `Run ${spec.id} on the model as it is now`}
+        >
           Run
         </button>
+        {running && (
+          <button ref={cancelRef} type="button" data-testid="palette-check-cancel" onClick={onCancel} title={`Stop ${spec.id}; it keeps the result it had`}>
+            Cancel
+          </button>
+        )}
         <button type="button" data-testid="palette-check-copy" onClick={onCopy} title={spec.command(ctx)}>
           {copied ? 'Copied' : 'Copy command'}
         </button>
@@ -408,7 +445,13 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
           {note}
         </div>
       )}
-      {stored && <div className="palette-check-summary">{stored.result.summary}</div>}
+      {running ? (
+        <div className="palette-check-summary" role="status">
+          Running in the background — the page stays usable. Cancel stops it.
+        </div>
+      ) : (
+        stored && <div className="palette-check-summary">{stored.result.summary}</div>
+      )}
     </div>
   );
 }

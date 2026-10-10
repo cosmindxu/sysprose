@@ -8,7 +8,15 @@
  *
  * Two engines:
  *  - `model` — a pure function over the loaded model (`src/api`), so it runs
- *    here, now, against exactly what is on screen.
+ *    here, now, against exactly what is on screen. Most are a few milliseconds
+ *    (measured on the drone-swarm model, `docs/TEST-REPORT.md` §2.15). The two
+ *    that walk configuration graphs, `reach` and `check-behaviour`, are not
+ *    guaranteed to be: a state machine of two dozen states with five composites
+ *    among them takes the walk to its 10,000-configuration bound, a fifth of a
+ *    second for `reach` and half a second for `check-behaviour`, and a larger
+ *    one more. Those carry {@link CheckSpec.offThread}: the palette runs them in
+ *    a worker (`panels/checks-runner.ts`) with the same function, so a result is
+ *    the same wherever it was computed.
  *  - `solver` — needs z3, which needs a cross-origin-isolated page. When the
  *    page is not isolated the entry does not pretend: it reports `unavailable`
  *    with the reason and the exact terminal command. A check that cannot run
@@ -94,6 +102,15 @@ export interface CheckSpec {
    * says so — when there is no selection to narrow to ({@link checkScope}).
    */
   scopedBySelection?: boolean;
+  /**
+   * True when the check walks a state machine's configuration graph, whose cost
+   * grows with the machine and not with the model: the palette runs it in a
+   * worker (a busy state, Cancel, a result tagged with the model it read), and
+   * on this thread only where the page has no worker, or no state machine to
+   * walk ({@link hasStateMachine}). `run` is the same function in both places,
+   * so the two cannot disagree.
+   */
+  offThread?: boolean;
   /** The terminal command that runs the same check. */
   command(ctx: CheckContext): string;
   /** Runs it here; absent for solver checks, which the runner handles. */
@@ -225,8 +242,18 @@ const scopeWords = (scope: CheckScope): string =>
  * ` of N` after a scoped figure, N the whole model's: a count narrowed to one
  * package of several must never read as the model's total. Nothing when the
  * figure already is the whole model's.
+ *
+ * `scoped` is the figure just computed. When the scope is the one root there is,
+ * it contains every element a person wrote and IS the whole model's figure, so
+ * the second pass over the model is not made: the app selects that root on
+ * open, so the first Run of `obligations` on the drone-swarm model was twice the
+ * 25 ms one pass takes (`docs/TEST-REPORT.md` §2.15).
  */
-const ofWhole = (scope: CheckScope, whole: () => number): string => (scope.kind === 'element' ? ` of ${whole()}` : '');
+const ofWhole = (scope: CheckScope, model: Model, scoped: number, whole: () => number): string => {
+  if (scope.kind !== 'element') return '';
+  const roots = model.roots().filter((r) => r.attrs.isLibrary !== true);
+  return ` of ${roots.length === 1 && roots[0].id === scope.id ? scoped : whole()}`;
+};
 
 /** The same, as a row with a code, so automation reads the scope without parsing the summary. */
 const scopeRow = (scope: CheckScope): CheckRow =>
@@ -341,6 +368,7 @@ export const CHECKS: readonly CheckSpec[] = [
     label: 'Reachability',
     question: 'Can every state be reached, and does every transition fire?',
     engine: 'model',
+    offThread: true,
     views: ['state', 'action', 'general'],
     command: (ctx) => cli('reach', ctx),
     run: (ctx) => {
@@ -362,6 +390,7 @@ export const CHECKS: readonly CheckSpec[] = [
     label: 'Behaviour properties',
     question: 'Do the properties this machine states hold on every run?',
     engine: 'model',
+    offThread: true,
     views: ['state', 'action'],
     needsSelection: true,
     command: (ctx) => cli('check-behaviour', ctx, element(ctx)),
@@ -396,7 +425,7 @@ export const CHECKS: readonly CheckSpec[] = [
     run: (ctx) => {
       const scope = checkScope(ctx);
       const r = contractReport(ctx.model, scope.kind === 'element' ? { scopeId: scope.id } : {});
-      const of = ofWhole(scope, () => contractReport(ctx.model).contracts.length);
+      const of = ofWhole(scope, ctx.model, r.contracts.length, () => contractReport(ctx.model).contracts.length);
       return holds(`${r.contracts.length}${of} contract(s) — ${scopeWords(scope)}`, [
         scopeRow(scope),
         ...r.contracts.slice(0, 50).map((c): CheckRow => ({ code: 'contracts/contract', message: `${c.subject?.name ?? c.id}: ${c.assumptions.length} assumption(s), ${c.guarantees.length} guarantee(s)`, elementId: c.id, severity: 'info' })),
@@ -414,7 +443,7 @@ export const CHECKS: readonly CheckSpec[] = [
     run: (ctx) => {
       const scope = checkScope(ctx);
       const r = obligationsReport(ctx.model, scope.kind === 'element' ? { scopeId: scope.id } : {});
-      const of = ofWhole(scope, () => obligationsReport(ctx.model).total);
+      const of = ofWhole(scope, ctx.model, r.total, () => obligationsReport(ctx.model).total);
       return holds(
         `${r.total}${of} obligation(s): ${r.byRole.axiom} axiom, ${r.byRole.premise} premise, ${r.byRole.obligation} to prove — ${scopeWords(scope)}`,
         [scopeRow(scope)],
@@ -493,6 +522,14 @@ export function commandNote(spec: CheckSpec, ctx: CheckContext): string | null {
   }
   return notes.length > 0 ? notes.join(' ') : null;
 }
+
+/**
+ * Whether there is a state machine for a {@link CheckSpec.offThread} check to
+ * walk. A model with none is answered by the check itself — "No state machine in
+ * this model" — in the few milliseconds this scan takes, so the palette answers
+ * it on the spot and starts no worker (and loads no second library) to say so.
+ */
+export const hasStateMachine = (model: Model): boolean => stateMachinesIn(model).length > 0;
 
 /** The checks a view offers, in registry order. */
 export function checksFor(view: ViewKind): CheckSpec[] {

@@ -38,10 +38,29 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       `obligations` exist only in the terminal and the SDK. The palette's Checks section runs all
       of them (`src/ui/checks.ts`). Name the palette check in that column and drop those names
       from the note.
-- [ ] **Let a check run off the main thread when it is slow.** Every `model` check is synchronous
-      today, which is right for the sample model (each is well under a frame) but not for a large
-      one: `reach` and `check-behaviour` walk configuration graphs. Measure first, then move the
-      walkers into the worker the solver lane already uses.
+- [ ] **Stop a composite state's last-active child from multiplying the configurations a walk keeps.**
+      `hashConfig` (`src/semantics/mc/config.ts`) puts the history map into the visited-set key, and
+      `exitTo` records the last-active child of every composite it leaves, so the configurations of a
+      machine multiply with its composites: five composites of 3 to 4 substates (24 states) reach
+      `reach`'s 10,000-configuration bound (`docs/TEST-REPORT.md` §2.15), where a flat machine of 24
+      states has 24. Only a history composite ever reads the map (`enterCascade`), and `exploreMachine`
+      refuses those machines (`history-state`, unsupported), so for every machine it walks the map is
+      dead state in the key. Leave it out of the key when the machine has no history composite and see
+      what moves: every `configs` figure and `after N configuration(s)` sentence of a machine with
+      composites (goldens in `test/unit/semantics.mc.*` and `test/campaign`, the user guide's reach
+      sections), and the machines that now finish inside the bound and so publish their unreachable and
+      dead lists where they said *undecided*. Tried once, with the map left out of the key and nothing
+      else changed: the flight controller of §2.15 walks 19 configurations in 3 ms and `reach` decides;
+      a generated machine of five composites whose every substate also exits to a top state still
+      reaches the bound, so something else multiplies there and wants finding. The palette's worker
+      (`src/ui/checks-worker.ts`) already keeps such a walk off the page; this removes the walk.
+      Fixtures to re-make and figures to re-measure when it lands, since they rely on a machine that
+      still hits the bound: `test/unit/checks-registry.test.ts` (*give a machine at the walk's
+      bound…* asserts `reach` is `undecided` on five composites), `test/e2e/palette-checks.spec.ts`
+      (*a state-machine check runs in a worker…* waits for `undecided`, *hit a bound* and
+      `verification/bound-hit` on `heavyMachine(6, 4)`, and for the page-held frame gap to mean
+      anything the walk must take a good fraction of a second), and the §2.15 timings of
+      `docs/TEST-REPORT.md`.
 - [ ] **Keep the toolbar's `More` menu honest as commands are added.** The overflow order lives in
       `COLLAPSE_ORDER` (`src/ui/panels/Toolbar.tsx`) and the guard is one e2e assertion that
       nothing collapses at the Playwright viewport. A new command added ahead of that list without

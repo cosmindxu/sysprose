@@ -1690,6 +1690,15 @@
   color: var(--warning);
   border-color: var(--warning);
 }
+/* A check in a worker: not a verdict at all yet, so it takes the accent and none of the verdict colours. */
+.palette-check-verdict.is-running {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.palette-check-actions button[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
 .palette-check-question {
   font-size: 10px;
   color: var(--text-muted);
