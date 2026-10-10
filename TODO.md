@@ -66,9 +66,14 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       nothing collapses at the Playwright viewport. A new command added ahead of that list without
       a widths check would push Validate or Check into the menu and break every spec that clicks
       them.
-- [ ] **Say on screen when the palette column is put away.** The collapsed strip is a 24 px
-      chevron with a tooltip; a first-time reader who collapses it has no label telling them what
-      it hides.
+- [ ] **Decide what a palette put away does with an armed tool.** Collapsing the column hides the
+      "Placing X" hint, but the tool stays armed until Escape or Cancel, so the next canvas click
+      places an element the screen no longer announces. Either name the armed tool on the put-away
+      strip (`palette-collapsed-label`) or disarm on collapse.
+- [ ] **Keep the keyboard focus when the Explorer or Properties column is put away or brought
+      back.** The palette now hands the focus to the control that replaces the one pressed
+      (`Palette.tsx`, `refocus`); the two side panels (`src/ui/App.tsx`) swap their trees the same
+      way and leave the focus on `<body>`.
 - [ ] **Stop `docs/TEST-SUMMARY.md` from drifting.** Add a CI step that runs
       `npx tsx scripts/gen-test-report.ts --from <the gate's vitest JSON>` and then
       `git diff --exit-code docs/TEST-SUMMARY.md`. Today the documents are checked against each other,

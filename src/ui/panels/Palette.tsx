@@ -24,7 +24,7 @@
  * only two files this surface owns.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
@@ -484,7 +484,16 @@ function initiallyCollapsed(): boolean {
 export function Palette(): JSX.Element {
   const activeView = useAppStore((s) => s.activeView);
   const [collapsed, setCollapsed] = useState(initiallyCollapsed);
-  const toggleCollapsed = useCallback(() => {
+  // Put away or brought back, the control pressed is replaced by its opposite (two
+  // different trees). A focused button that leaves the page leaves the focus on
+  // <body>, where a reflex Backspace would delete the selection (the guard refuses
+  // it only on a button), so the keyboard goes to the control that took its place.
+  // Only when the pressed one held the focus: a mouse click that gave none stays put.
+  const hideButton = useRef<HTMLButtonElement>(null);
+  const showButton = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  const toggleCollapsed = useCallback((e: ReactMouseEvent<HTMLButtonElement>) => {
+    refocus.current = document.activeElement === e.currentTarget;
     setCollapsed((c) => {
       try {
         localStorage.setItem(COLLAPSE_KEY, c ? '0' : '1');
@@ -494,6 +503,11 @@ export function Palette(): JSX.Element {
       return !c;
     });
   }, []);
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    (collapsed ? showButton : hideButton).current?.focus();
+  }, [collapsed]);
   const tool = usePaletteStore((s) => s.tool);
   const setTool = usePaletteStore((s) => s.setTool);
 
@@ -527,17 +541,26 @@ export function Palette(): JSX.Element {
           ?.label ?? (tool as { eClass: string }).eClass);
 
   if (collapsed) {
+    // What the column hides, named in its own section words (a table view draws
+    // nothing, so it has no Tools). The accessible name holds the visible label
+    // whole, then says what the click does.
+    const sections = groups.length > 0 ? 'Tools, Edit, Checks' : 'Edit, Checks';
     return (
       <div className="palette is-collapsed" data-testid="palette" data-collapsed="true">
         <button
+          ref={showButton}
           type="button"
-          className="palette-collapse"
+          className="app-rail app-rail-left palette-rail"
           data-testid="palette-expand"
-          title="Show the palette (tools, edit, checks)"
+          title={`Show the palette (${sections.toLowerCase()})`}
+          aria-label={`Show Palette: ${sections}`}
           aria-expanded={false}
           onClick={toggleCollapsed}
         >
-          ›
+          <span className="app-rail-chev">›</span>
+          <span className="app-rail-label" data-testid="palette-collapsed-label">
+            Palette:<span className="palette-rail-sections"> {sections}</span>
+          </span>
         </button>
       </div>
     );
@@ -548,10 +571,12 @@ export function Palette(): JSX.Element {
       <div className="palette-head">
         <span className="palette-group-title">Palette · {activeView}</span>
         <button
+          ref={hideButton}
           type="button"
           className="palette-collapse"
           data-testid="palette-collapse"
           title="Hide the palette"
+          aria-label="Hide the palette"
           aria-expanded
           onClick={toggleCollapsed}
         >

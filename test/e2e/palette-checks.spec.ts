@@ -180,6 +180,76 @@ test('the palette column can be put away and comes back', async ({ page }) => {
   await expect(page.getByTestId('palette-checks')).toBeVisible();
 });
 
+test('a palette put away says what it hides, on screen and to a screen reader', async ({ page }) => {
+  await gotoApp(page);
+  // Open, the hide button has a name of its own (its glyph is not one).
+  await expect(page.getByRole('button', { name: 'Hide the palette', exact: true })).toHaveAttribute(
+    'data-testid',
+    'palette-collapse',
+  );
+  const open = (await page.locator('.app-palette').boundingBox())!.width;
+  await page.getByTestId('palette-collapse').click();
+
+  // A visible label, not only a tooltip, names the sections the column holds.
+  const label = page.getByTestId('palette-collapsed-label');
+  await expect(label).toBeVisible();
+  await expect(label).toHaveText(/^Palette:\s+Tools, Edit, Checks$/);
+  // The strip's accessible name holds that label whole and says what a click does.
+  const shown = ((await label.textContent()) ?? '').trim().replace(/\s+/g, ' ');
+  const strip = page.getByRole('button', { name: 'Show Palette: Tools, Edit, Checks', exact: true });
+  await expect(strip).toHaveAttribute('data-testid', 'palette-expand');
+  await expect(strip).toHaveAttribute('aria-expanded', 'false');
+  expect(await strip.getAttribute('aria-label')).toContain(shown);
+  // Put away, the column is the strip: the canvas has the width back, not a blank column.
+  const rail = (await page.locator('.app-palette').boundingBox())!.width;
+  expect(rail, `rail ${rail}px, open ${open}px`).toBeLessThan(40);
+  expect(open).toBeGreaterThan(150);
+
+  // A table draws nothing, so it has no Tools to name.
+  await page.getByTestId('tb-view-grid').click();
+  await expect(label).toHaveText(/^Palette:\s+Edit, Checks$/);
+  await expect(page.getByRole('button', { name: 'Show Palette: Edit, Checks', exact: true })).toBeVisible();
+
+  // The strip brings the column back, and the label goes with it.
+  await page.getByTestId('tb-view-general').click();
+  await expect(label).toHaveText(/Tools, Edit, Checks/);
+  await strip.click();
+  await expect(label).toHaveCount(0);
+  await expect(page.getByTestId('palette-checks')).toBeVisible();
+  expect((await page.locator('.app-palette').boundingBox())!.width).toBe(open);
+
+  // From the keyboard, each control hands the focus to the one that replaces it (a
+  // focus left on <body> sends the next Tab back to the top of the page), and the
+  // put-away strip shows a focus ring. The ring is drawn outside the strip's box and
+  // the column clips to the strip, so a computed outline would read right while the
+  // paint is cut away: compare what is painted, focused against not.
+  await page.getByTestId('palette-collapse').focus();
+  await page.keyboard.press('Enter');
+  await expect(strip).toBeFocused();
+  const box = (await page.locator('.app-palette').boundingBox())!;
+  const clip = { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 240) };
+  await page.mouse.move(box.x + 400, box.y + 300);
+  const ringed = await page.screenshot({ clip });
+  await page.keyboard.press('Tab');
+  await expect(strip).not.toBeFocused();
+  const plain = await page.screenshot({ clip });
+  expect(ringed.equals(plain), 'the put-away strip paints a focus ring').toBe(false);
+  await page.keyboard.press('Shift+Tab');
+  await expect(strip).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('palette-collapse')).toBeFocused();
+
+  // A window too short for the whole label cuts it inside the strip (an ellipsis), and
+  // the accessible name stays whole.
+  await page.setViewportSize({ width: 1280, height: 480 });
+  await page.getByTestId('palette-collapse').click();
+  const railBox = (await strip.boundingBox())!;
+  const labelBox = (await label.boundingBox())!;
+  expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(railBox.y + railBox.height + 0.5);
+  expect(await label.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await expect(strip).toHaveAttribute('aria-label', 'Show Palette: Tools, Edit, Checks');
+});
+
 test('Edit acts on the selection, and is disabled without one', async ({ page }) => {
   await gotoApp(page);
   // The app opens with the root selected, so the actions are live from the start.
