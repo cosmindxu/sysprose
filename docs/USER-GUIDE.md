@@ -837,16 +837,35 @@ they hold in, each end the feature at its path there, and a `default` gives
 way where the bindings joined to it reach a value of its own — in that
 context, which is read per feature: a default that gives way in one context
 is read in none (where `q1 : Q` sets an M that Q leaves valueless, a `q2 : Q`
-that leaves it unset reads no m at all, not P's 18.5 kg). A binding to a feature nothing gives a value (`attribute w; bind
-w = p.m;`) carries the default into it instead: `w` is 18.5 kg. Two defaults
-bound to each other with no value beside them stand where they state one
-value, and give way where they differ: the model states neither, and no
+that leaves it unset reads no m at all, not P's 18.5 kg). A binding to a
+feature nothing gives a value (`attribute w; bind w = p.m;`) carries the
+default into it instead: `w` is 18.5 kg. Two defaults bound to each other with
+no value beside them stand where they state one constant value — numbers,
+booleans or expressions that read no name, compared exactly (`1000.0 [g]` and
+`1.0 [kg]` are one) — and give way otherwise, where they differ and where one
+reads a name, however alike the text (`bind a1.v = a2.v` over A's `v default =
+2.0 * K` joins two values where a2 sets K). The model states neither, and no
 surface calls it a contradiction. A definition's constraint over a value read
 through a binding is read anew in every context that joins the binding to
 another value, as a constraint over a redefined value is. One read in a usage
 (P's `load <= 10.0` in `Q::p`) whose value a binding of Q joins to another in a
 context of Q (q's L) is read there for Q's own p alone — q's p is named by no
-context — so the solver lane does not carry it (*not evaluable*). Against a value
+context — so the solver lane does not carry it (*not evaluable*), and the
+check reads it as *could not be evaluated* there. A relation written in such a
+usage (`part p : P { constraint c2 { load <= 10.0 } }` in Q) holds of every Q's
+p, so no surface decides it while a binding above the usage reads what it
+reads otherwise; an `assert` there stays an axiom. A value the partner of a
+binding derives (Q's `L = 2.0 * K`) is read for the bound feature only where
+every instance it stands for reads the partner alike — not for q's p, whose K q
+sets. A binding written in a usage's body to a feature of the definition around
+it (`part q : Q { bind p.load = L; }` in R, over R's L) is read in every
+instance of that definition, so not for r's q where `r : R` sets K. No value is
+read through a binding for any one instance while a binding of the model holds
+in more than 4,096 contexts or more than 32 usages deep, nor through one whose
+end has no instance in a context it holds in (R's nested Q used outside any R).
+A context that reads a definition's relation otherwise only because a value
+the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
+listed, and decided by no surface yet. Against a value
 written with `=`, a binding is a **contradiction**, as a redefinition is:
 `bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20 kg is reported
 violated at the binding (in a context that specialises the binding's owner, at
@@ -878,13 +897,17 @@ as rows named `G::c in R::g1` — and so is what the types of every instance
 ENCLOSING it state: `s.q.load`, over `part s : Sys` whose Sys binds `p.load =
 q.load`, holds Sys's binding as well as P's asserts. A value the same in every
 instance — a literal, or arithmetic over literals the instance changes nothing
-of — keeps the feature's own name. A requirement's subject that nothing binds,
-read in the requirement itself, is the generic instance of its type (the
-requirement is about any one); reached through a usage (`r1.s`, `sys.ra.s`, a
-nested requirement's `r2.t`) it is that usage's own, and a subject that says
-something of its own (`subject s : P { assert constraint … }`) is an instance
-of its own. `--free` and `bounds --measure` take an instance's symbol, or its
-dotted path.
+of — keeps the feature's own name. A verify row prints a path read through
+an instance at that instance's value (`bindings`, and the evidence record's
+`witness`): `q.m2` is −40 where Q's own `m2` is 9, and no value where the
+scalar reading finds none there (a value a binding carries into the
+instance, or an expression with a unit literal). A requirement's subject
+that nothing binds, read in the requirement itself, is the generic instance
+of its type (the requirement is about any one); reached through a usage
+(`r1.s`, `sys.ra.s`, a nested requirement's `r2.t`) it is that usage's own,
+and a subject that says something of its own (`subject s : P { assert
+constraint … }`) is an instance of its own. `--free` and `bounds --measure`
+take an instance's symbol, or its dotted path.
 
 A requirement is read where its subject is bound. `satisfy R by p` and
 `requirement r : R { subject s = p; }` read R's clauses at p — `s.m` is p's

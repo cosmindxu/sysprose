@@ -5,7 +5,11 @@ import {
   solve,
   evaluateMoEs,
   optimize,
+  checkConstraints,
+  checkConstraintsNumeric,
+  obligationsOf,
 } from '../../src/semantics/index';
+import { loadModelText } from '@text/load';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -66,6 +70,101 @@ describe('solve — binding equalities', () => {
     // A binding contributes an equality equation.
     const eqs = gatherConstraints(m);
     expect(eqs.some((e) => e.vars.includes(a.id) && e.vars.includes(b.id))).toBe(true);
+  });
+});
+
+/*
+ * A relation written in a USAGE is a feature of every instance the usage stands
+ * for: R17c's `part p : P { constraint c2 { load <= 10.0 } }` in Q holds of Q's
+ * own p AND of q's p, which Q's `bind p.load = L` gives q's L of 50. Read at Q's
+ * L of 1, c2 was PROVED on the numeric surface and by the SMT engine. Every
+ * surface now reads it as no verdict, in one sentence, while a binding above
+ * the usage reads what it reads otherwise; an asserted one keeps its axiom.
+ */
+describe('solve — a relation a usage owns, read otherwise in an instance a binding above it reaches', () => {
+  const R17C = (role: 'constraint' | 'assert constraint') => `package R17c {
+    part def P { attribute load : ScalarValues::Real default = 1.0; }
+    part def Q {
+      attribute L : ScalarValues::Real default = 1.0;
+      part p : P { ${role} c2 { load <= 10.0 } }
+      bind p.load = L;
+    }
+    part q : Q { attribute :>> L = 50.0; }
+  }`;
+  const SENTENCE =
+    'the relation is read in R17c::Q::p, and a binding above it joins what it reads to another value in R17c::q: ' +
+    'each instance reads it otherwise, and this tool reads it for one alone, so it is not carried';
+
+  it('is undecided on the check and the numeric surface, and refused as a goal, in one sentence', async () => {
+    const { model: m } = await loadModelText(R17C('constraint'));
+    const own = (id: string) => m!.qualifiedName(id) === 'R17c::Q::p::c2';
+    const check = checkConstraints(m!).find((c) => own(c.id))!;
+    expect([check.result, check.message]).toEqual(['unknown', `Could not evaluate: ${SENTENCE}`]);
+    const row = checkConstraintsNumeric(m!).find((r) => own(r.id))!;
+    expect([row.result, row.reason]).toEqual(['unknown', SENTENCE]);
+    const goal = obligationsOf(m!).find((o) => o.element.qualifiedName === 'R17c::Q::p::c2')!;
+    expect([goal.role, goal.encodable]).toEqual(['obligation', { reason: 'unread-definition', detail: SENTENCE }]);
+  });
+
+  it('keeps an asserted one as an axiom, read for the usage generic instance, with no verdict of its own', async () => {
+    const { model: m } = await loadModelText(R17C('assert constraint'));
+    const check = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'R17c::Q::p::c2')!;
+    expect(check.result).toBe('unknown');
+    const axiom = obligationsOf(m!).find((o) => o.element.qualifiedName === 'R17c::Q::p::c2')!;
+    expect([axiom.role, axiom.encodable]).toEqual(['axiom', true]);
+  });
+
+  it('reads it as before where no binding reaches the usage', async () => {
+    const { model: m } = await loadModelText(R17C('constraint').replace('bind p.load = L;', ''));
+    const own = (id: string) => m!.qualifiedName(id) === 'R17c::Q::p::c2';
+    expect(checkConstraints(m!).find((c) => own(c.id))!.result).toBe('satisfied');
+    expect(checkConstraintsNumeric(m!).find((r) => own(r.id))!.result).toBe('satisfied');
+    expect(obligationsOf(m!).find((o) => o.element.qualifiedName === 'R17c::Q::p::c2')!.encodable).toBe(true);
+  });
+  it('refuses the goal a context is listed for by a member’s own value alone, beside the axioms it had', async () => {
+    // Q2's K makes Q's asserted L Q2's own 50 (FanS): QB's cq is read in Q2 by no surface yet. The axioms
+    // read in Q2 are the ones filed before (Q2's defL and binding rows, and the assert those reach).
+    const { model: m } = await loadModelText(`package FanS {
+      part def P { attribute load : ScalarValues::Real default = 1.0; }
+      part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
+      part def QB :> Q { bind p.load = L; constraint cq { p.load <= 5.0 } assert constraint ca { p.load <= 100.0 } }
+      part def Q2 :> QB { attribute :>> K = 25.0; }
+      part q0 : Q2;
+    }`);
+    const sentence =
+      'the relation is read in FanS::Q2, and a binding joins what it reads to a value FanS::Q2 reads as its own: ' +
+      'this tool reads a bound value for one instance only where every instance reads it alike, so it is not carried';
+    const rows = obligationsOf(m!);
+    const inQ2 = rows.filter((o) => o.instance?.contextId === m!.all().find((e) => m!.qualifiedName(e.id) === 'FanS::Q2')!.id);
+    expect(inQ2.map((o) => [o.element.qualifiedName, o.role, o.encodable])).toEqual([
+      ['FanS::Q::defL in FanS::Q2', 'axiom', true],
+      ['FanS::QB::cq in FanS::Q2', 'obligation', { reason: 'unread-definition', detail: sentence }],
+      ['FanS::QB::«BindingConnectorAsUsage» in FanS::Q2', 'axiom', true],
+      ['FanS::QB::ca in FanS::Q2', 'axiom', true],
+    ]);
+    // Nothing is read in q0, which reads every name as Q2 does.
+    expect(rows.filter((o) => o.element.qualifiedName.endsWith('in FanS::q0'))).toEqual([]);
+    const numeric = checkConstraintsNumeric(m!).find((r) => r.id.endsWith(`@${inQ2[0]!.instance!.contextId}`) && r.id.startsWith(
+      m!.all().find((e) => m!.qualifiedName(e.id) === 'FanS::QB::cq')!.id,
+    ))!;
+    expect([numeric.result, numeric.reason]).toEqual(['unknown', sentence]);
+  });
+
+  it('keeps the unit gates on a bound partner whose value it reads in no instance (G271)', async () => {
+    // r's q binds p's load to L = 2.0 * K, K bound to J = 0.5 * N, N 50 kg in Q2: no surface reads K's value
+    // for r's q through Q's generic reading — but its kilograms are every instance's. Withheld with the
+    // value, they made the gates refuse `L == 2.0 * K` as a bare number, and r0's refutation inconclusive.
+    const { model: m } = await loadModelText(`package G271 {
+      part def P { attribute load : ISQ::MassValue default = 3.0 [SI::kg]; attribute m2 : ISQ::MassValue = 10.0 [SI::kg] - load; }
+      part def Q { attribute N : ISQ::MassValue default = 1.0 [SI::kg]; attribute J : ISQ::MassValue default = 0.5 * N; attribute K : ISQ::MassValue; bind K = J; attribute L : ISQ::MassValue = 2.0 * K; part p : P; }
+      part def Q2 :> Q { attribute :>> N = 50.0 [SI::kg]; }
+      part def R { part q : Q2; }
+      part r : R { part :>> q { bind p.load = L; } }
+      part def R0 { part q : Q; }
+      part r0 : R0;
+      constraint ctlA { r0.q.p.m2 >= 8.5 [SI::kg] }
+    }`);
+    expect(obligationsOf(m!).filter((o) => o.encodable !== true).map((o) => o.element.qualifiedName)).toEqual([]);
   });
 });
 

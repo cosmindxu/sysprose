@@ -27,6 +27,9 @@ import {
   clashSentence,
   contradictionSentence,
   bindingEndPath,
+  boundAboveSentence,
+  boundHereSentence,
+  boundPartnerSafe,
   defaultGivesWay,
   hasStatedValue,
   isAsserted,
@@ -34,6 +37,7 @@ import {
   isCalculationValue,
   mergeContact,
   namesDefinedBy,
+  relationNamesOf,
   isCall,
   isDerivedValue,
   returnTo,
@@ -42,6 +46,7 @@ import {
   shadowedSentence,
   sharedDefinitions,
   statedValueOf,
+  usageOwnedRefusal,
   type Contact,
   type DefiningEquation,
   type InFlight,
@@ -302,7 +307,13 @@ function valueBoundTo(model: Model, contextId: ElementId, name: string, pass: Sc
   return value === undefined ? undefined : { value, ...(exact ? { exact } : {}), depth: d.depth ?? 0 };
 }
 
-/** The valueless, undefined feature `name` denotes in `contextId`, and the derivation a binding gives it. */
+/**
+ * The valueless, undefined feature `name` denotes in `contextId`, and the
+ * derivation a binding gives it — read where the partner is written, so only
+ * where that is the value of every instance `contextId` stands for
+ * ({@link boundPartnerSafe}): M2's `load` read in `Q::p` for q's p, whose L
+ * is 50, was Q's 1.
+ */
 function boundOf(
   model: Model,
   contextId: ElementId,
@@ -312,6 +323,7 @@ function boundOf(
   if (name.includes('.')) return undefined;
   const feature = pass.definitions.feature(contextId, name);
   if (!feature || pass.definitions.of(contextId, name).length > 0) return undefined;
+  if (!boundPartnerSafe(model, contextId, name, feature.id)) return undefined;
   const derivation = boundDerivation(model, feature.id, pass.memo);
   return derivation ? { feature, derivation } : undefined;
 }
@@ -613,6 +625,26 @@ export function evaluateFeatureValue(model: Model, featureId: ElementId): EvalRe
   return a.value !== undefined ? { value: a.value } : { unknown: true };
 }
 
+/**
+ * The value the dotted `path` has where the relation `el` reads it: the answer
+ * the check's own SCALAR scope gives it ({@link combinedAnswer}), over a pass of
+ * its own — so `q.m2`, over `part q : Q { :>> K = 25.0 }` and Q's derived `m2`
+ * (`10.0 - 2.0 * K`), is q's own value (−40), not the 9 the feature `Q::m2`
+ * has where it is declared ({@link evaluateFeatureValue}). `undefined` where
+ * that reading finds none there — a path it abstains on (a derived value a
+ * binding carries into the instance, M2's `q.p.m2`, until it reads per
+ * instance), a value the unit-aware reading alone derives (a unit literal
+ * applied to a computed operand, xtrack's `r.total`), or one that is no
+ * number, boolean or string: the honest print is "no value", never the
+ * feature's value elsewhere. It is NOT the check's verdict reading: a row the
+ * check refuses can still print the value this scope finds (a `p.total` of
+ * 4 GiB beside an inconclusive row); `check.reads` (F5) replaces it.
+ */
+export function valueAtPath(model: Model, el: ElementRecord, path: string): number | boolean | string | undefined {
+  const value = combinedAnswer(model, el, newPass(model))(path)?.value;
+  return typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string' ? value : undefined;
+}
+
 /** {@link evaluateFeatureValue} within a pass, as the scalar scope's answer. */
 function featureAnswer(model: Model, featureId: ElementId, pass: ScalarPass): ScalarAnswer {
   const el = model.get(featureId);
@@ -757,7 +789,12 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
     const expr = el.attrs.expression;
     if (typeof expr !== 'string' || expr.trim() === '') continue;
 
-    const judged = judgeConstraint(model, el, expr, pass);
+    // Written in a usage that stands for instances a binding above it reads
+    // otherwise: no verdict, in the sentence every surface gives.
+    const shared = usageOwnedRefusal(model, el, relationNamesOf(expr));
+    const judged: Judgement = shared
+      ? { result: 'unknown', message: `Could not evaluate: ${shared}`, gap: false }
+      : judgeConstraint(model, el, expr, pass);
     const check: ConstraintCheck = {
       id: el.id,
       ownerId: el.ownerId,
@@ -864,6 +901,12 @@ function contradictions(model: Model, pass: ScalarPass): ConstraintCheck[] {
  * feasible. Judged by the one pipeline ({@link judgeConstraint}); an end with
  * no value there — a valueless feature, or a `default` the binding overrides
  * ({@link defaultGivesWay}) — leaves nothing to contradict, and no check.
+ * Two defaults bound to each other read no value unless they are one
+ * constant (`heldDefaults`), so they never differ here, and no pair is skipped
+ * for being written `default`: an end with a default and an asserted
+ * equation that defines it reads the equation's value, one the model states
+ * (`L default = 5.0` with `assert constraint { L == 5.0 }`, bound to a `load`
+ * P asserts is 7.0, is a contradiction).
  */
 function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
   const out: ConstraintCheck[] = [];
@@ -875,6 +918,9 @@ function bindingConflicts(model: Model, pass: ScalarPass): ConstraintCheck[] {
     if (!owner || left === undefined || right === undefined || left === right) continue;
     const expr = `${left} == ${right}`;
     for (const x of [owner, ...pass.definitions.changingContexts(b, [left, right])]) {
+      // A context listed only because a member reads its own value there reads
+      // no bound value yet: nothing to contradict.
+      if (x.id !== owner.id && pass.definitions.readsBoundOnly(b, [left, right], x.id)) continue;
       const reading: ElementRecord = {
         ...b,
         eClass: 'ConstraintUsage',
@@ -924,9 +970,26 @@ function readInContexts(model: Model, el: ElementRecord, expr: string, check: Co
   const ownValues = idsIn(pass, owner);
   const target = targetName(model, el);
   const instances = check.instances ?? [];
+  const bodyNames = relationNamesOf(expr);
   for (const x of contexts) {
     const reading: ElementRecord = { ...el, ownerId: x.id };
-    const judged = judgeConstraint(model, reading, expr, pass);
+    // A context that stands for instances a binding above it reads otherwise
+    // — P's `load <= 10.0` in `Q::p`, q's p bound to q's L — has no reading
+    // of its own: the verification lane refuses it in this sentence, and a
+    // verdict here would be one instance's, published for all.
+    // So has one a binding reads otherwise only through a member's value of
+    // its own there (M7's q2, whose K makes Q's L its own 50): no surface
+    // reads a bound value for one instance yet.
+    const above = pass.definitions.boundAbove(x.id, bodyNames);
+    const why = above
+      ? boundAboveSentence(pass.definitions, x.id, above)
+      : pass.definitions.readsBoundOnly(el, names, x.id)
+        ? boundHereSentence(pass.definitions, x.id)
+        : undefined;
+    const judged: Judgement =
+      why !== undefined
+        ? { result: 'unknown', message: `Could not evaluate: ${why}`, gap: false }
+        : judgeConstraint(model, reading, expr, pass);
     const ids = pass.definitions.scope(x.id, 'all');
     const scope = combinedScope(model, reading, pass);
     // What the context reads differently: the measures with no value where the
@@ -965,7 +1028,7 @@ function readInContexts(model: Model, el: ElementRecord, expr: string, check: Co
       ...(shown[0]?.value !== undefined ? { value: shown[0].value } : {}),
       bindings: shown,
       result: judged.result,
-      message: instanceMessage(model, judged, shown, contextName, target, expr),
+      message: instanceMessage(model, judged, shown, contextName, target, expr, scope),
       detail: judged.message,
     });
   }
@@ -1687,6 +1750,8 @@ export function featuresWithoutValue(model: Model, ids: readonly ElementId[]): E
     const f = model.get(id);
     if (!f) return true;
     if (hasStatedValue(model, f)) return false;
+    // Whether the model gives one at all, wherever read — not which: no
+    // `boundPartnerSafe`, which guards a partner's value per instance.
     const d = definitionDerivation(model, id, memo) ?? boundDerivation(model, id, memo);
     return d === undefined || (d.q === undefined && d.b === undefined);
   });
@@ -2138,7 +2203,13 @@ function readThroughSpecialisers(
   if (instances.length > 0) check.instances = instances;
 }
 
-/** The finding an instance reports, worded for the specialiser it is anchored at. */
+/**
+ * The finding an instance reports, worded for the specialiser it is anchored
+ * at. A context that reads the body otherwise through a binding alone — no
+ * name of it another feature there, none read there as its own — has no
+ * specialiser to name: each name the body reads is shown as the context reads
+ * it (`q2::load = 50`), through `scope`, so the finding never opens on nothing.
+ */
 function instanceMessage(
   model: Model,
   judged: Judgement,
@@ -2146,6 +2217,7 @@ function instanceMessage(
   contextName: string,
   target: string,
   expr: string,
+  scope?: Scope,
 ): string {
   if (judged.result !== 'unknown') {
     // A value read in a context is named by the context it is read in.
@@ -2153,7 +2225,18 @@ function instanceMessage(
       b.qualifiedName === effectiveQualifiedName(model, b.featureId)
         ? shortName(model, model.get(b.featureId), b.name)
         : b.qualifiedName.split('::').slice(-2).join('::');
-    const values = shown.map((b) => `${label(b)} = ${b.value ?? '?'}${b.unit ? ` [${b.unit}]` : ''}`).join(', ');
+    const shownValue = (v: unknown): string =>
+      typeof v === 'number'
+        ? String(Number(v.toPrecision(6)))
+        : typeof v === 'boolean' || typeof v === 'string'
+          ? String(v)
+          : '?';
+    const values =
+      shown.length > 0 || !scope
+        ? shown.map((b) => `${label(b)} = ${b.value ?? '?'}${b.unit ? ` [${b.unit}]` : ''}`).join(', ')
+        : namesIn(expr)
+            .map((n) => `${contextName}::${n} = ${shownValue(scope(n))}`)
+            .join(', ');
     return `${values} ${judged.result === 'violated' ? 'misses' : 'meets'} ${target} (${expr})`;
   }
   const why = judged.message.replace(/^Could not evaluate: /, '');

@@ -3231,6 +3231,2070 @@ describe('a redefinition is the feature in its context, and a value written with
 });
 
 /*
+ * PER-INSTANCE READINGS: FOUR SURFACES, ONE VERDICT (the ROADMAP item "Per-instance readings in the
+ * check and the literal engine"; decisions 2, 10 and 13 of the soundness pass).
+ *
+ * A value a binding carries into ONE instance of a definition — Q's `bind p.load = L` with q's L of 50
+ * — is that instance's own: q's p's m2 is 10 − 50. The numeric surface and the SMT engine read it at
+ * the instance path (`q.p.m2`); the check and the literal engine abstain (decision 13). Where a derived
+ * value or a second binding hid the binding from them, they read the definition's value instead and
+ * published a FALSE verdict; they now read a bound partner only where every instance it stands for
+ * reads it alike (`boundPartnerSafe`), and abstain elsewhere. This table pins every probe of that
+ * work, row by row, on all four surfaces, as they stand, and states what each change must keep:
+ *
+ *  I1  no row is T on one surface and F on another;
+ *  I2  a decided verdict is the hand-computed `ref` — except the rows of KNOWN_FALSE, false today and
+ *      each named with the step that corrects it; the list is EXACT, so a row that stops being false
+ *      fails here until it leaves the list;
+ *  I3  every row, and its four verdicts, as they stand: the column a change moves is that change's diff;
+ *  I4  every abstention says why;
+ *  I5  a row has one element id on every surface that files it, the numeric surface's included;
+ *  I6  the witness a literal or SMT row prints for each side of its relation that is one path is the
+ *      value it compared (`bindings[].value` and the evidence record's `witness`, against `bound.si.lhs`
+ *      and `.rhs`; one printed with a unit as its SI quantity) — except the rows of KNOWN_FALSE_WITNESS,
+ *      listed exactly as I2's are;
+ *      a witness printed with no value is not compared, and its rows are listed exactly too;
+ *  I7  the SMT engine's `inconsistent-axioms` beside a T or F on another surface only where listed, with
+ *      the reason — and only while it still happens, so the list cannot rot.
+ *
+ * Letters, in the order check / literal / numeric / SMT: T holds (the literal engine's
+ * `holds-at-values`), F violated or refuted, ? abstains, X inconsistent axioms, V vacuous, U a construct
+ * outside the fragment, t the numeric surface's "imposed by the solve" (no decision), - no such row on
+ * that surface. `ref`: T or F, the verdict decisions 1–13 give (H2: a literal default stands per usage);
+ * ? no value (a contradiction, two defaults that differ, a valueless feature); - no such fact (a
+ * conflict row that must not exist); null where the decisions settle nothing (out of scope: a
+ * definition's feature bound from outside, an enclosing assert's value, a contradictory model).
+ *
+ * The probes are the design's, inlined; three more are pinned out of tree because of their size (r4cap's
+ * 4,100 instances, perf9 and perf9b) with the rest of the probe corpus.
+ */
+describe('per-instance readings: four surfaces, one verdict', () => {
+  type Letter = 'T' | 'F' | '?' | 'X' | 'V' | 'U' | 't' | '-';
+  type Ref = 'T' | 'F' | '?' | '-' | null;
+  /** One row as the four surfaces filed it. */
+  interface SurfaceRow {
+    /** check / literal / numeric / SMT. */
+    verdicts: [Letter, Letter, Letter, Letter];
+    /** Every element id a surface filed the row under. */
+    ids: Set<string>;
+    /** Why each abstaining surface abstained, by surface. */
+    why: [string, string, string, string];
+    /** I6: each printed witness that is not the value compared. */
+    witness: string[];
+    /** I6: each witness printed with no value (recorded, not compared). */
+    unprinted: string[];
+  }
+  const SURFACES = ['check', 'literal', 'numeric', 'smt'] as const;
+  const POINT: Record<string, Letter> = { satisfied: 'T', violated: 'F', unknown: '?' };
+  const engineLetter = (r: ObligationVerdict): Letter =>
+    r.claim === 'proved' || r.claim === 'holds-at-values'
+      ? 'T'
+      : r.claim === 'refuted'
+        ? 'F'
+        : r.claim === 'vacuous'
+          ? 'V'
+          : r.code === 'verification/inconsistent-axioms'
+            ? 'X'
+            : r.code === 'verification/unsupported-construct'
+              ? 'U'
+              : '?';
+  const decided = (l: Letter) => l === 'T' || l === 'F';
+
+  /** Every row of a model on the four surfaces, by qualified name (`R in C` for a context's reading). */
+  async function fourSurfaces(text: string, pkg: string): Promise<Map<string, SurfaceRow>> {
+    const m = await contextModel(text, pkg);
+    const qn = (id: string) => m.qualifiedName(id as ElementId) || id;
+    const key = (id: string) => {
+      const [base, ctx] = id.split('@');
+      return ctx === undefined ? qn(base!) : `${qn(base!)} in ${qn(ctx)}`;
+    };
+    const rows = new Map<string, SurfaceRow>();
+    const put = (k: string, s: number, letter: Letter, id: string, why: string) => {
+      let row = rows.get(k);
+      if (!row) {
+        row = { verdicts: ['-', '-', '-', '-'], ids: new Set(), why: ['', '', '', ''], witness: [], unprinted: [] };
+        rows.set(k, row);
+      }
+      if (row.verdicts[s] !== '-') throw new Error(`${pkg}: two ${SURFACES[s]} rows are both ${k}`);
+      row.verdicts[s] = letter;
+      row.ids.add(id);
+      if (!decided(letter)) row.why[s] = why;
+    };
+    for (const c of checkConstraints(m)) {
+      put(c.conflict ? `${key(c.id)}#${c.conflict}` : key(c.id), 0, POINT[c.result]!, c.id, c.message);
+      for (const i of c.instances ?? []) {
+        // An instance row (plan F7: `instance`, its path as the solver spells it) is keyed and filed by
+        // that path, as the other surfaces file it (`${id}@${path}`); a context's reading by the context.
+        const at = (i as { instance?: string }).instance;
+        put(`${key(c.id)} in ${at ?? qn(i.contextId)}`, 0, POINT[i.result]!, `${c.id}@${at ?? i.contextId}`, i.message);
+      }
+    }
+    for (const r of checkConstraintsNumeric(m)) {
+      const k = r.conflict ? `${key(r.id)}#${r.conflict}` : key(r.id);
+      put(k, 2, r.imposed ? 't' : POINT[r.result]!, r.id, r.reason ?? '');
+    }
+    for (const [s, engine] of [
+      [1, 'literal'],
+      [3, 'smt'],
+    ] as const) {
+      const report = await verifyModel(m, { engine, sourceText: text });
+      for (const r of report.results) {
+        put(r.clause.qualifiedName, s, engineLetter(r), r.clause.id, r.detail);
+        // I6: each side of the relation, where it is one bare path the row prints a value for — in the
+        // row's bindings and in its evidence record. A value printed with a unit is compared as a quantity
+        // (its SI value, as `bound.si` holds the compared sides); one printed with NO value is recorded,
+        // not compared. A side that is a literal or an expression has no path of its own and is skipped.
+        const si2 = r.bound.si;
+        const split = /^(.*?)(?:<=|>=|==|!=|<|>)(.*)$/s.exec(r.expression);
+        if (si2 === undefined || split === null) continue;
+        const bare = (side: string) => /^\s*([A-Za-z_][\w.]*)\s*$/.exec(side)?.[1];
+        const row = rows.get(r.clause.qualifiedName)!;
+        const record = report.records.find(
+          (x) => x.obligation.clause === r.clause.qualifiedName && x.obligation.expression === r.expression,
+        );
+        for (const [path, compared, side] of [
+          [bare(split[1]!), si2.lhs, 'lhs'],
+          [bare(split[2]!), si2.rhs, 'rhs'],
+        ] as const) {
+          if (path === undefined) continue;
+          for (const [where, b] of [
+            ['bindings', r.bindings.find((x) => x.path === path)],
+            ['record', record?.witness?.values.find((x) => x.path === path)],
+          ] as const) {
+            if (!b) continue;
+            if (b.value === null || b.value === undefined) {
+              row.unprinted.push(`${engine}: ${where}`);
+              continue;
+            }
+            const unit = b.unit == null ? undefined : resolveUnit(b.unit);
+            const si =
+              typeof b.value !== 'number' || (b.unit != null && !unit)
+                ? undefined
+                : unit
+                  ? b.value * unit.factorToSI + (unit.offsetSI ?? 0)
+                  : b.value;
+            const same =
+              si !== undefined && (unit ? Math.abs(si - compared) <= 1e-12 * Math.max(1, Math.abs(compared)) : si === compared);
+            if (!same)
+              row.witness.push(
+                `${engine}: ${where} ${side === 'rhs' ? '(rhs) ' : ''}${b.value}${b.unit == null ? '' : ` [${b.unit}]`} vs compared ${compared}`,
+              );
+          }
+        }
+      }
+    }
+    return rows;
+  }
+
+  const probe = (text: string, rows: Record<string, [string, Ref]>) => ({ text, rows });
+  /** big-bind-N: N definitions Qk binding their p's load to their L, each Qk's usage qk setting L to k. */
+  const bigBind = (n: number) =>
+    [
+      'package Big {',
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; constraint c { m2 <= 100.0 } }',
+      ...Array.from({ length: n }, (_, k) => [
+        `  part def Q${k} { attribute L : ScalarValues::Real default = 1.0; attribute K : ScalarValues::Real = 2.0; part p : P; bind p.load = L; }`,
+        `  part q${k} : Q${k} { attribute :>> L = ${k}.0; }`,
+        `  constraint k${k} { q${k}.p.m2 <= 5.0 }`,
+      ]).flat(),
+      '}',
+    ].join('\n');
+  /** A binding carried down `depth` usages: top's L of 50 is top.a.….a's load, so its m2 is −40. */
+  const bindingChain = (depth: number) => {
+    const path = `top.${Array.from({ length: depth }, () => 'a').join('.')}.m2`;
+    return [
+      'package Deep {',
+      '  part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }',
+      ...Array.from(
+        { length: depth },
+        (_, i) =>
+          `  part def T${i + 1} { attribute L : ScalarValues::Real default = 1.0; part a : T${i}; bind a.${i === 0 ? 'load' : 'L'} = L; }`,
+      ),
+      `  part top : T${depth} { attribute :>> L = 50.0; }`,
+      `  constraint deepNegT { ${path} <= 0.0 }`,
+      `  constraint deepPosF { ${path} >= 0.0 }`,
+      '}',
+    ].join('\n');
+  };
+  /**
+   * A binding written ONCE, at package level, `depth − 1` usages down — `bind top.a.….a.L = X` into the T1
+   * whose own `bind a.load = L` carries it into the T0 below: top.a.….a's load is X's 50, so its m2 is
+   * −40. Past 32 segments the package frame is the one dropped (`heldDefaults`' segment cap), and it is the
+   * one that carries the value — unlike `bindingChain`, whose every level re-binds.
+   */
+  const bindingChainPkg = (depth: number) => {
+    const as = (n: number) => Array.from({ length: n }, () => 'a').join('.');
+    return [
+      `package DP${depth} {`,
+      '  part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }',
+      '  part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }',
+      ...Array.from({ length: depth - 1 }, (_, i) => `  part def T${i + 2} { part a : T${i + 1}; }`),
+      `  part top : T${depth};`,
+      '  attribute X : ScalarValues::Real = 50.0;',
+      `  bind top.${as(depth - 1)}.L = X;`,
+      `  constraint negT { top.${as(depth)}.m2 <= 0.0 }`,
+      `  constraint posF { top.${as(depth)}.m2 >= 0.0 }`,
+      '}',
+    ].join('\n');
+  };
+
+  /**
+   * Each probe: its text, and per row `[check/literal/numeric/SMT as they stand, ref]`. The design's names:
+   * the binding and default probes of the soundness pass (h2 … w3, r14, the cross-track c3c and c5), the
+   * mapper's siblings and shared usages, the derived-partner series M1–M9, big-bind, the refutation round
+   * (refute-*), a binding carried past 32 usages, the shapes the table's own review found (a package
+   * binding past 32 segments, a usage-body binding whose type redefines an end, an asserted partner, the
+   * M2 family with units, a specialised override or a sibling, a plain value against a binding), the
+   * controls that must keep abstaining (k4 … n4), and the rows where the check decides and another
+   * surface abstains (d1-dec-inst … c1-chain).
+   */
+  const PROBES: Record<string, { text: string; rows: Record<string, [string, Ref]> }> = {
+    h2: probe(`package H2 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'H2::m2NegT': ['?/?/T/T', 'T'],
+      'H2::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    h2h: probe(`package H2H {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part p : P;
+        attribute L : ScalarValues::Real = 50.0;
+        bind p.load = L;
+        constraint m2NegT { p.m2 <= 0.0 }
+        constraint m2PosF { p.m2 >= 0.0 }
+      }`, {
+      'H2H::m2NegT': ['?/?/T/T', 'T'],
+      'H2H::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    h2i: probe(`package H2I {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; bind p.load = L; }
+        part q : Q;
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'H2I::m2NegT': ['?/?/T/T', 'T'],
+      'H2I::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    h2c: probe(`package H2C {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P;
+          bind p.load = L;
+          constraint c { p.m2 >= 0.0 }
+        }
+        part q : Q { attribute :>> L = 50.0; }
+      }`, {
+      'H2C::Q::c': ['?/?/T/T', 'T'],
+      'H2C::Q::c in H2C::q': ['?/?/?/?', 'F'],
+    }),
+    h2p: probe(`package H2P {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          constraint c { load <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; }
+      }`, {
+      'H2P::P::c': ['T/T/T/T', 'T'],
+      'H2P::P::c in H2P::Q::p': ['?/?/?/?', 'T'],
+    }),
+    k1: probe(`package K1 {
+        attribute L : ScalarValues::Real = 50.0;
+        attribute x : ScalarValues::Real;
+        bind x = L;
+        constraint c { x >= 40.0 }
+      }`, {
+      'K1::c': ['?/?/T/T', 'T'],
+    }),
+    k2: probe(`package K2 {
+        part def P { attribute x : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - x; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.x = L; constraint c { p.m2 >= 0.0 } }
+        part q : Q { attribute :>> L = 50.0; }
+        constraint d { q.p.m2 <= 0.0 }
+      }`, {
+      'K2::Q::c': ['?/?/T/T', 'T'],
+      'K2::Q::c in K2::q': ['?/?/?/?', 'F'],
+      'K2::d': ['?/?/T/T', 'T'],
+    }),
+    k2p: probe(`package K2P {
+        part def P {
+          attribute load : ScalarValues::Real;
+          constraint c { load <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; }
+      }`, {
+      'K2P::P::c': ['?/?/?/?', '?'],
+    }),
+    k3: probe(`package K3 {
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute load : ScalarValues::Real default = 2.0;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          bind load = L;
+        }
+        part q : Q { attribute :>> L = 50.0; }
+        constraint dNegT { q.m2 <= 0.0 }
+      }`, {
+      'K3::dNegT': ['?/?/T/T', 'T'],
+    }),
+    k3b: probe(`package K3 {
+          part def Q {
+            attribute L : ScalarValues::Real default = 1.0;
+            attribute load : ScalarValues::Real default = 2.0;
+            attribute m2 : ScalarValues::Real = 10.0 - load;
+            bind load = L;
+          }
+          part q : Q { attribute :>> L = 50.0; }
+          constraint m2NegT { q.m2 <= 0.0 }
+          constraint m2PosF { q.m2 >= 0.0 } }`, {
+      'K3::m2NegT': ['?/?/T/T', 'T'],
+      'K3::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    k5: probe(`package K5 {
+        attribute L : ScalarValues::Real = 50.0;
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute m2 : ScalarValues::Real = 10.0 - load;
+        bind load = L;
+        constraint k { load == 7.0 }
+        constraint n { m2 <= -30.0 }
+      }`, {
+      'K5::k': ['?/?/F/?', 'F'],
+      'K5::n': ['?/?/T/T', 'T'],
+    }),
+    c2: probe(`package C2 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R { attribute M : ScalarValues::Real default = 1.0; part q : Q; bind q.L = M; }
+        part r : R { attribute :>> M = 50.0; }
+        constraint m2NegT { r.q.p.m2 <= 0.0 }
+        constraint m2PosF { r.q.p.m2 >= 0.0 }
+      }`, {
+      'C2::m2NegT': ['?/?/T/T', 'T'],
+      'C2::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    c3: probe(`package C3 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R { attribute M : ScalarValues::Real = 50.0; part q : Q; bind q.L = M; }
+        part r : R;
+        constraint m2NegT { r.q.p.m2 <= 0.0 }
+        constraint m2PosF { r.q.p.m2 >= 0.0 }
+      }`, {
+      'C3::m2NegT': ['?/?/T/T', 'T'],
+      'C3::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    c4: probe(`package C4 {
+        part def Q {
+          attribute A : ScalarValues::Real = 50.0;
+          attribute B : ScalarValues::Real default = 1.0;
+          attribute C : ScalarValues::Real default = 1.0;
+          attribute m2 : ScalarValues::Real = 10.0 - C;
+          bind B = A;
+          bind C = B;
+        }
+        part q : Q;
+        constraint m2NegT { q.m2 <= 0.0 }
+        constraint m2PosF { q.m2 >= 0.0 }
+      }`, {
+      'C4::m2NegT': ['?/?/T/T', 'T'],
+      'C4::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    d1: probe(`package D1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; bind p.load = L; }
+        part q : Q { part :>> p { attribute :>> load default = 30.0; } }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'D1::m2NegT': ['?/?/T/T', 'T'],
+      'D1::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    d1b: probe(`package D1b {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; bind p.load = L; }
+        part q : Q { part :>> p { attribute :>> load default = 30.0; } }
+        constraint atL { q.p.m2 <= -30.0 }
+        constraint at30 { q.p.m2 >= -30.0 }
+      }`, {
+      'D1b::at30': ['?/?/F/?', 'F'],
+      'D1b::atL': ['?/?/T/T', 'T'],
+    }),
+    d3: probe(`package D3 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def P2 :> P { attribute :>> load default = 5.0; }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P2; bind p.load = L; }
+        part q : Q;
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'D3::m2NegT': ['?/?/T/T', 'T'],
+      'D3::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    d4: probe(`package D4 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute L : ScalarValues::Real = 50.0;
+          part p : P { attribute :>> load default = 30.0; }
+          bind p.load = L;
+        }
+        part q : Q;
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'D4::m2NegT': ['?/?/T/T', 'T'],
+      'D4::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    g2: probe(`package G2 {
+        part def P { attribute load : ScalarValues::Real = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 7.0;
+          attribute dL : ScalarValues::Real = L * 2.0;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q;
+        constraint dlT { q.dL <= 2.0 }
+        constraint dlF { q.dL >= 10.0 }
+      }`, {
+      'G2::dlF': ['?/?/F/?', 'F'],
+      'G2::dlT': ['?/?/T/T', 'T'],
+    }),
+    w2: probe(`package W2 {
+        part def P { attribute load : ScalarValues::Real default = 5.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 50.0; }
+        part q2 : Q;
+        constraint c1 { q1.p.m2 <= 0.0 }
+        constraint c2 { q2.p.m2 >= 0.0 }
+        constraint c3 { q2.p.m2 <= 2.0 }
+      }`, {
+      'W2::c1': ['?/?/T/T', 'T'],
+      'W2::c2': ['?/?/?/?', 'T'],
+      'W2::c3': ['?/?/?/?', 'F'],
+    }),
+    w3: probe(`package W3 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; }
+        part q1 : Q { bind p.load = L; }
+        part q2 : Q;
+        constraint c1 { q1.p.m2 <= 0.0 }
+        constraint c2 { q2.p.m2 >= 0.0 }
+        constraint c3 { q2.p.m2 <= 5.0 }
+      }`, {
+      'W3::c1': ['?/?/T/T', 'T'],
+      'W3::c2': ['T/T/T/T', 'T'],
+      'W3::c3': ['F/F/F/F', 'F'],
+    }),
+    r14: probe(`package R14 {
+          part def P { attribute load : ScalarValues::Real = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+          part p : P { attribute :>> load = 50.0; }
+          attribute w : ScalarValues::Real;
+          attribute w2 : ScalarValues::Real;
+          bind w = p.load;
+          bind w2 = p.m2;
+          constraint wF { w <= 10.0 }
+          constraint w2F { w2 >= 0.0 }
+      }`, {
+      'R14::p::«AttributeUsage»#binding': ['F/-/F/-', 'F'],
+      'R14::w2F': ['?/?/?/?', '?'],
+      'R14::wF': ['?/?/?/?', '?'],
+    }),
+    'r14-dflt': probe(`package R14 {
+          part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+          part p : P { attribute :>> load = 50.0; }
+          attribute w : ScalarValues::Real;
+          attribute w2 : ScalarValues::Real;
+          bind w = p.load;
+          bind w2 = p.m2;
+          constraint wF { w <= 10.0 }
+          constraint w2F { w2 >= 0.0 }
+      }`, {
+      'R14::w2F': ['F/F/F/F', 'F'],
+      'R14::wF': ['?/?/F/?', 'F'],
+    }),
+    'xtrack-c3c': probe(`package C3C {
+          part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; attribute m3 : ScalarValues::Real = m2 * 2.0; }
+          part p : P;
+          attribute w : ScalarValues::Real;
+          bind w = p.m3;
+          constraint wF { w == 5.0 }
+      }`, {
+      'C3C::wF': ['?/?/F/?', 'F'],
+    }),
+    'xtrack-c5': probe(`package C5 {
+          part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+          part def Top { part p : P; attribute w : ScalarValues::Real; bind w = p.m2; }
+          part t : Top { part :>> p { attribute :>> load = 50.0; } }
+          constraint wF { t.w == 18.0 }
+      }`, {
+      'C5::wF': ['?/?/F/?', 'F'],
+    }),
+    'mapper-s1': probe(`package S1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; }
+        part q2 : Q;
+        part other : P;
+        constraint inQ2 { q2.p.m2 >= 0.0 }
+        constraint inOther { other.m2 >= 0.0 }
+        constraint inP { other.load <= 2.0 }
+      }`, {
+      'S1::inOther': ['T/T/T/T', 'T'],
+      'S1::inP': ['T/T/T/T', 'T'],
+      'S1::inQ2': ['?/?/T/T', 'T'],
+    }),
+    'mapper-s2': probe(`package S2 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          constraint c { m2 >= 0.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R { part a : Q; part b : Q; attribute X : ScalarValues::Real default = 1.0; bind a.L = X; }
+        part r1 : R { attribute :>> X = 50.0; }
+        part r2 : R;
+      }`, {
+      'S2::P::c': ['T/T/T/T', 'T'],
+      'S2::P::c in S2::Q::p': ['?/?/?/?', 'T'],
+    }),
+    'mapper-s3': probe(`package S3 {
+        part def P { attribute x : ScalarValues::Real; constraint c { x >= 40.0 } }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; bind p.x = L; }
+        part q : Q;
+        constraint top { q.p.x >= 40.0 }
+      }`, {
+      'S3::P::c': ['?/?/?/?', '?'],
+      'S3::top': ['?/?/T/T', 'T'],
+    }),
+    S1: probe(`package S1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 50.0; }
+        part q2 : Q { attribute :>> L = 3.0; }
+        part q3 : Q;
+        part p0 : P;
+      }`, {
+      'S1::P::c': ['T/T/T/T', 'T'],
+      'S1::P::c in S1::Q::p': ['?/?/?/?', 'T'],
+    }),
+    M1: probe(`package M1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real default = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> L = 50.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'M1::m2NegT': ['?/?/T/T', 'T'],
+      'M1::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    M2: probe(`package M2 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> K = 25.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'M2::m2NegT': ['?/?/T/T', 'T'],
+      'M2::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    M2b: probe(`package M2b {
+        part def P { attribute load : ScalarValues::Real default = 3.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> K = 25.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'M2b::m2NegT': ['?/?/T/T', 'T'],
+      'M2b::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    M3: probe(`package M3 {
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          attribute m2 : ScalarValues::Real = 10.0 - L;
+        }
+        part q : Q { attribute :>> K = 25.0; }
+        constraint m2NegT { q.m2 <= 0.0 }
+        constraint m2PosF { q.m2 >= 0.0 }
+      }`, {
+      'M3::m2NegT': ['T/T/T/T', 'T'],
+      'M3::m2PosF': ['F/F/F/F', 'F'],
+    }),
+    // M3 with a second instance and the paths on the RIGHT: I6 compares each bare-path side, so q2's own 9.8
+    // (not Q's 9) beside q's −40, and q's −40 as the right-hand side of a literal.
+    M3R: probe(`package M3R {
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          attribute m2 : ScalarValues::Real = 10.0 - L;
+        }
+        part q : Q { attribute :>> K = 25.0; }
+        part q2 : Q { attribute :>> K = 0.1; }
+        constraint lowT { q.m2 <= q2.m2 }
+        constraint lowF { q.m2 >= q2.m2 }
+        constraint rhsT { 0.0 >= q.m2 }
+        constraint rhsF { 0.0 <= q.m2 }
+      }`, {
+      'M3R::lowT': ['T/T/T/T', 'T'],
+      'M3R::lowF': ['F/F/F/F', 'F'],
+      'M3R::rhsT': ['T/T/T/T', 'T'],
+      'M3R::rhsF': ['F/F/F/F', 'F'],
+    }),
+    M4: probe(`package M4 {
+        part def P { attribute load : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> K = 25.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'M4::m2NegT': ['?/?/T/T', 'T'],
+      'M4::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    M5: probe(`package M5 {
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          attribute load : ScalarValues::Real;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          bind load = L;
+        }
+        part q : Q { attribute :>> K = 25.0; }
+        constraint m2NegT { q.m2 <= 0.0 }
+        constraint m2PosF { q.m2 >= 0.0 }
+      }`, {
+      'M5::m2NegT': ['?/?/T/T', 'T'],
+      'M5::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    M6: probe(`package M6 {
+        attribute K : ScalarValues::Real default = 0.5;
+        attribute L : ScalarValues::Real = 2.0 * K;
+        attribute load : ScalarValues::Real;
+        bind load = L;
+        constraint c1 { load <= 1.0 }
+        constraint c2 { load >= 1.0 }
+      }`, {
+      'M6::c1': ['T/T/T/T', 'T'],
+      'M6::c2': ['T/T/T/T', 'T'],
+    }),
+    M7: probe(`package M7 {
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          attribute load : ScalarValues::Real;
+          bind load = L;
+          constraint c { load <= 5.0 }
+        }
+        part q1 : Q;
+        part q2 : Q { attribute :>> K = 25.0; }
+      }`, {
+      'M7::Q::c': ['T/T/T/T', 'T'],
+      'M7::Q::c in M7::q2': ['?/?/?/?', 'F'],
+    }),
+    M8: probe(`package M8 {
+        part def P {
+          attribute load : ScalarValues::Real default = 3.0;
+          constraint c { load <= 10.0 }
+        }
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> K = 25.0; }
+      }`, {
+      'M8::P::c': ['T/T/T/T', 'T'],
+      'M8::P::c in M8::Q::p': ['?/?/?/?', 'T'],
+    }),
+    M9: probe(`package M9 {
+        part def P {
+          attribute load : ScalarValues::Real default = 3.0;
+          constraint c { load <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; }
+      }`, {
+      'M9::P::c': ['T/T/T/T', 'T'],
+      'M9::P::c in M9::Q::p': ['?/?/?/?', '?'],
+    }),
+    // Found by F1: a derived DEFAULT partner a usage overrides. Q's c read in q2 read Q's L of 1 for q2's
+    // load, which is q2's own L of 50 (T/T/T/? before F1, and a false `#bind` in q2).
+    M7dflt: probe(`package M7F {
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real default = 2.0 * K;
+          attribute load : ScalarValues::Real;
+          bind load = L;
+          constraint c { load <= 5.0 }
+        }
+        part q1 : Q;
+        part q2 : Q { attribute :>> L = 50.0; }
+        constraint top { q2.load <= 5.0 }
+      }`, {
+      'M7F::Q::c': ['T/T/T/T', 'T'],
+      'M7F::Q::c in M7F::q2': ['?/?/?/?', 'F'],
+      'M7F::top': ['?/?/F/?', 'F'],
+    }),
+    bigBind5: probe(bigBind(5), {
+      'Big::P::c': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::Q0::p': ['?/?/?/?', 'T'],
+      'Big::P::c in Big::Q1::p': ['?/?/?/?', 'T'],
+      'Big::P::c in Big::Q2::p': ['?/?/?/?', 'T'],
+      'Big::P::c in Big::Q3::p': ['?/?/?/?', 'T'],
+      'Big::P::c in Big::Q4::p': ['?/?/?/?', 'T'],
+      'Big::k0': ['?/?/F/?', 'F'],
+      'Big::k1': ['?/?/F/?', 'F'],
+      'Big::k2': ['?/?/F/?', 'F'],
+      'Big::k3': ['?/?/F/?', 'F'],
+      'Big::k4': ['?/?/F/?', 'F'],
+    }),
+    'refute-r1': probe(`package R1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          constraint c { load + x <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.x == 50.0 } }
+        part q2 : Q;
+        constraint top1 { q1.p.load + q1.p.x <= 10.0 }
+      }`, {
+      'R1::P::c': ['T/T/T/X', 'T'],
+      'R1::P::c in R1::Q::p': ['?/?/?/?', 'T'],
+      'R1::q1::tie': ['F/-/F/-', null],
+      'R1::top1': ['?/?/T/X', null],
+    }),
+    // Two defaults a binding joins with no value beside them stand only as one CONSTANT (A.4 Part 0): R3a's
+    // one `2.0 * K` read at a1.v and a2.v is 2 and 10, R3b's and R3c's two alike texts read two Ks. Agreed
+    // by their text, they were read (T/T/T/X, F/F/F/X) and called a contradiction (`#bind`) until F1b.
+    'refute-r3a': probe(`package R3a {
+        part def A { attribute K : ScalarValues::Real default = 1.0; attribute v : ScalarValues::Real default = 2.0 * K; }
+        part a1 : A;
+        part a2 : A { attribute :>> K = 5.0; }
+        bind a1.v = a2.v;
+        constraint c1 { a1.v <= 3.0 }
+        constraint c2 { a2.v >= 9.0 }
+        constraint c3 { a1.v >= 9.0 }
+      }`, {
+      'R3a::c1': ['?/?/?/?', '?'],
+      'R3a::c2': ['?/?/?/?', '?'],
+      'R3a::c3': ['?/?/?/?', '?'],
+    }),
+    'refute-r3b': probe(`package R3b {
+        part def A { attribute K : ScalarValues::Real default = 1.0; attribute v : ScalarValues::Real default = 2.0 * K; }
+        part def B { attribute K : ScalarValues::Real default = 5.0; attribute w : ScalarValues::Real default = 2.0 * K; }
+        part a : A;
+        part b : B;
+        bind a.v = b.w;
+        constraint c1 { a.v <= 3.0 }
+        constraint c2 { b.w >= 9.0 }
+        constraint c3 { a.v >= 9.0 }
+      }`, {
+      'R3b::c1': ['?/?/?/?', '?'],
+      'R3b::c2': ['?/?/?/?', '?'],
+      'R3b::c3': ['?/?/?/?', '?'],
+    }),
+    'refute-r3c': probe(`package R3c {
+        part def P {
+          attribute K : ScalarValues::Real default = 1.0;
+          attribute load : ScalarValues::Real default = 2.0 * K;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+        }
+        part def Q {
+          attribute K : ScalarValues::Real default = 25.0;
+          attribute L : ScalarValues::Real default = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q;
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'R3c::m2NegT': ['?/?/?/?', '?'],
+      'R3c::m2PosF': ['?/?/?/?', '?'],
+    }),
+    // Found by F1b's review. Both ends of a binding are written `default`, and each has an asserted equation
+    // that defines it: every P asserts load = 7, every Q asserts L = 5. The check reads the asserted values,
+    // so the binding is a contradiction — in Q's definition (GA6), in a usage's body (GA12), and between two
+    // instances whose one default `2.0 * K` the binding holds (GA5B). A guard that skipped a pair whose ends
+    // are both written `default` dropped it (and the model read feasible). The model contradicts itself, so
+    // its other rows settle nothing.
+    'ga6-asserted-ends': probe(`package GA6 {
+        part def P { attribute load : ScalarValues::Real default = 7.0; assert constraint pa { load == 7.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 5.0; assert constraint qa { L == 5.0 } part p : P; bind p.load = L; }
+        part q : Q;
+      }`, {
+      'GA6::P::pa': ['T/-/T/-', null],
+      'GA6::Q::qa': ['T/-/?/-', null],
+      'GA6::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'ga12-asserted-ends-usage': probe(`package GA12 {
+        part def P { attribute load : ScalarValues::Real default = 7.0; assert constraint pa { load == 7.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 5.0; assert constraint qa { L == 5.0 } part p : P; }
+        part q : Q { bind p.load = L; }
+      }`, {
+      'GA12::P::pa': ['T/-/T/-', null],
+      'GA12::Q::qa': ['T/-/T/-', null],
+      'GA12::q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+    }),
+    'ga5b-asserted-held-source': probe(`package GA5B {
+        part def A { attribute K : ScalarValues::Real default = 1.0; attribute v : ScalarValues::Real default = 2.0 * K; }
+        part a1 : A { attribute :>> K = 1.5; assert constraint x1 { v == 3.0 } }
+        part a2 : A { attribute :>> K = 2.0; assert constraint x2 { v == 4.0 } }
+        bind a1.v = a2.v;
+        constraint c { a1.v <= 3.5 }
+      }`, {
+      'GA5B::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
+      'GA5B::a1::x1': ['T/-/?/-', null],
+      'GA5B::a2::x2': ['T/-/?/-', null],
+      'GA5B::c': ['T/T/?/?', null],
+    }),
+    // F1b's reading beyond R3a–c, put to the user under H1 (plan J). (1) Two defaults alike in text that read
+    // a name, bound to each other, are held even where every instance reads them alike — U1's one
+    // `2.0 * K` at a1 and a2 (2 and 2; T/T/T/T and F/F/F/F before F1b), U6's in a definition, U8's Boolean
+    // `K > 0.5` — and so are two alike quoted strings (U2; T on the check and the literal engine before):
+    // the rule's constants are numbers, Booleans and expressions that read no name. Sound, not false.
+    // (2) A held default's feature with an asserted equation is read at that equation (GA7's L = 5; F on the
+    // check and numeric, judged at the alike defaults' 2, before F1b), as an asserted definition beside a
+    // default the binding holds already was (GA6's qa); its `pl` (T/T/T/X before) now abstains.
+    // Default-vs-assert is open (H5), so GA7 settles nothing.
+    'u1-same-source-alike': probe(`package U1 {
+        part def A { attribute K : ScalarValues::Real default = 1.0; attribute v : ScalarValues::Real default = 2.0 * K; }
+        part a1 : A;
+        part a2 : A;
+        bind a1.v = a2.v;
+        constraint c1 { a1.v <= 3.0 }
+        constraint c3 { a1.v >= 9.0 }
+      }`, {
+      'U1::c1': ['?/?/?/?', 'T'],
+      'U1::c3': ['?/?/?/?', 'F'],
+    }),
+    'u6-same-source-alike-def': probe(`package U6 {
+        part def A { attribute K : ScalarValues::Real default = 1.0; attribute v : ScalarValues::Real default = 2.0 * K; }
+        part def S { part a1 : A; part a2 : A; bind a1.v = a2.v; constraint c1 { a1.v <= 3.0 } }
+        part s : S;
+        constraint top { s.a1.v <= 3.0 }
+      }`, {
+      'U6::S::c1': ['?/?/?/?', 'T'],
+      'U6::top': ['?/?/?/?', 'T'],
+    }),
+    'u8-same-source-boolean': probe(`package U8 {
+        part def A { attribute K : ScalarValues::Real default = 1.0; attribute ok : ScalarValues::Boolean default = K > 0.5; }
+        part a1 : A;
+        part a2 : A;
+        bind a1.ok = a2.ok;
+        constraint c1 { a1.ok }
+      }`, {
+      'U8::c1': ['?/?/?/?', 'T'],
+    }),
+    'u2-string-defaults': probe(`package U2 {
+        part def P { attribute nm : ScalarValues::String default = "x"; }
+        part def Q { attribute n : ScalarValues::String default = "x"; part p : P; bind p.nm = n; constraint c { n == "x" } constraint d { p.nm == "x" } }
+        part q : Q;
+        constraint top { q.n == "x" }
+      }`, {
+      'U2::Q::c': ['?/U/?/U', 'T'],
+      'U2::Q::d': ['?/U/?/U', 'T'],
+      'U2::top': ['?/U/?/U', 'T'],
+    }),
+    'ga7-held-default-assert': probe(`package GA7 {
+        part def P { attribute load : ScalarValues::Real default = 2.0 * K; attribute K : ScalarValues::Real default = 1.0; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 2.0 * K;
+          attribute K : ScalarValues::Real default = 1.0;
+          assert constraint qa { L == 5.0 }
+          part p : P;
+          bind p.load = L;
+          constraint pl { p.load <= 3.0 }
+        }
+        part q : Q;
+      }`, {
+      'GA7::Q::qa': ['T/-/T/-', null],
+      'GA7::Q::pl': ['?/?/?/?', null],
+    }),
+    'refute-r6': probe(`package R6 {
+        part def P { attribute k : ScalarValues::Real default = 0.5; attribute load : ScalarValues::Real default = 2.0 * k; }
+        part def Q { attribute w : ScalarValues::Real; part p : P; bind w = p.load; }
+        part q1 : Q { part :>> p { attribute :>> k = 25.0; } }
+        constraint wNegT { q1.w >= 40.0 }
+        constraint wPosF { q1.w <= 2.0 }
+      }`, {
+      'R6::wNegT': ['?/?/T/T', 'T'],
+      'R6::wPosF': ['?/?/F/?', 'F'],
+    }),
+    'refute-r8': probe(`package R8 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute N : ScalarValues::Real default = 1.0;
+          attribute K : ScalarValues::Real = 0.5 * N;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> N = 50.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'R8::m2NegT': ['?/?/T/T', 'T'],
+      'R8::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    'refute-r13': probe(`package R13 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; part pp :>> p; }
+        constraint m2NegT { q.pp.m2 <= 0.0 }
+        constraint m2PosF { q.pp.m2 >= 0.0 }
+      }`, {
+      'R13::m2NegT': ['?/?/?/?', 'T'],
+      'R13::m2PosF': ['?/?/?/?', 'F'],
+    }),
+    'refute-r13b': probe(`package R13b {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; part pp :>> p { attribute :>> load default = 7.0; } }
+        constraint m2NegT { q.pp.m2 <= 0.0 }
+        constraint m2PosF { q.pp.m2 >= 0.0 }
+      }`, {
+      'R13b::m2NegT': ['?/?/?/?', 'T'],
+      'R13b::m2PosF': ['?/?/?/?', 'F'],
+    }),
+    'refute-r13c': probe(`package R13c {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute M :>> L = 50.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'R13c::m2NegT': ['?/?/T/T', 'T'],
+      'R13c::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    'refute-r14b': probe(`package R14b {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          constraint c { load <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part q2 : Q;
+      }`, {
+      'R14b::P::c': ['T/T/T/T', 'T'],
+      'R14b::P::c in R14b::Q::p': ['?/?/?/?', 'T'],
+    }),
+    'refute-r14c': probe(`package R14c {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          constraint c { load <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R {
+          part q : Q { attribute :>> L = 50.0; }
+          constraint inR { q.p.load <= 10.0 }
+        }
+        part def Q2 :> Q {
+          attribute :>> L = 50.0;
+          constraint inQ2 { p.load <= 10.0 }
+        }
+        part q2 : Q;
+      }`, {
+      'R14c::P::c': ['T/T/T/T', 'T'],
+      'R14c::P::c in R14c::Q::p': ['?/?/?/?', 'T'],
+      'R14c::Q2::inQ2': ['?/?/F/?', 'F'],
+      'R14c::R::inR': ['?/?/F/?', 'F'],
+    }),
+    'refute-r14d': probe(`package R14d {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          constraint c { load <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q2 : Q;
+        package Inner {
+          part q9 : Q { attribute :>> L = 50.0; }
+          constraint inInner { q9.p.load <= 10.0 }
+        }
+      }`, {
+      'R14d::Inner::inInner': ['?/?/F/?', 'F'],
+      'R14d::P::c': ['T/T/T/T', 'T'],
+      'R14d::P::c in R14d::Q::p': ['?/?/?/?', 'T'],
+    }),
+    'refute-r14e': probe(`package R14eLib {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          constraint c { load <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q2 : Q;
+      }
+      package R14eUse {
+        part q9 : R14eLib::Q { attribute :>> L = 50.0; }
+        constraint inUse { q9.p.load <= 10.0 }
+      }`, {
+      'R14eLib::P::c': ['T/T/T/T', 'T'],
+      'R14eLib::P::c in R14eLib::Q::p': ['?/?/?/?', 'T'],
+      'R14eUse::inUse': ['?/?/F/?', 'F'],
+    }),
+    'refute-r15': probe(`package R15 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          constraint c { m2 >= 0.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P[2]; bind p.load = L; }
+        part q : Q { attribute :>> L = 50.0; }
+        part qs : Q[3];
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+        constraint qsT { qs.p.m2 >= 0.0 }
+      }`, {
+      'R15::P::c': ['T/T/T/T', 'T'],
+      'R15::P::c in R15::Q::p': ['?/?/?/?', 'T'],
+      'R15::m2NegT': ['?/?/T/T', 'T'],
+      'R15::m2PosF': ['?/?/F/?', 'F'],
+      'R15::qsT': ['?/?/T/T', 'T'],
+    }),
+    'refute-r16': probe(`package R16 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute N : ScalarValues::Real default = 1.0;
+          attribute J : ScalarValues::Real default = 0.5 * N;
+          attribute K : ScalarValues::Real;
+          bind K = J;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> N = 50.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'R16::m2NegT': ['?/?/T/T', 'T'],
+      'R16::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    'refute-r16b': probe(`package R16b {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute N : ScalarValues::Real default = 1.0;
+          attribute J : ScalarValues::Real = 0.5 * N;
+          attribute K : ScalarValues::Real;
+          bind K = J;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> N = 50.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'R16b::m2NegT': ['?/?/T/T', 'T'],
+      'R16b::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    'refute-r16c': probe(`package R16c {
+        part def Q {
+          attribute N : ScalarValues::Real default = 1.0;
+          attribute J : ScalarValues::Real = 0.5 * N;
+          attribute K : ScalarValues::Real;
+          bind K = J;
+          attribute m2 : ScalarValues::Real = 10.0 - 2.0 * K;
+        }
+        part q : Q { attribute :>> N = 50.0; }
+        constraint m2NegT { q.m2 <= 0.0 }
+        constraint m2PosF { q.m2 >= 0.0 }
+      }`, {
+      'R16c::m2NegT': ['?/?/T/T', 'T'],
+      'R16c::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    'refute-r17': probe(`package R17 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R {
+          attribute X : ScalarValues::Real default = 1.0;
+          part q : Q {
+            constraint c { p.load <= 10.0 }
+          }
+          bind q.L = X;
+        }
+        part r1 : R { attribute :>> X = 50.0; }
+        part r2 : R;
+        constraint top { r1.q.p.load <= 10.0 }
+      }`, {
+      'R17::R::q::c': ['?/?/?/?', 'T'],
+      'R17::top': ['?/?/F/?', 'F'],
+    }),
+    'refute-r17c': probe(`package R17c {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P {
+            constraint c2 { load <= 10.0 }
+          }
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> L = 50.0; }
+        constraint top { q.p.load <= 10.0 }
+      }`, {
+      'R17c::Q::p::c2': ['?/?/?/?', 'T'],
+      'R17c::top': ['?/?/F/?', 'F'],
+    }),
+    'refute-r18': probe(`package R18 {
+        calc def Twice { in x : ScalarValues::Real; return r : ScalarValues::Real = 2.0 * x; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = Twice(K);
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> K = 25.0; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'R18::m2NegT': ['?/?/?/?', 'T'],
+      'R18::m2PosF': ['?/?/?/?', 'F'],
+    }),
+    'refute-r19': probe(`package R19 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          constraint c { m2 >= 0.0 }
+        }
+        part def P2 :> P { attribute :>> load default = 3.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P2; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 50.0; }
+        part q2 : Q;
+        part solo : P2;
+        constraint soloT { solo.m2 >= 0.0 }
+        constraint q2T { q2.p.m2 >= 0.0 }
+      }`, {
+      'R19::P::c': ['T/T/T/T', 'T'],
+      'R19::P::c in R19::P2': ['T/T/T/T', 'T'],
+      'R19::P::c in R19::Q::p': ['?/?/?/?', '?'],
+      'R19::P::c in R19::solo': ['T/T/T/T', 'T'],
+      'R19::q2T': ['?/?/?/?', '?'],
+      'R19::soloT': ['T/T/T/T', 'T'],
+    }),
+    chain33: probe(bindingChain(33), {
+      'Deep::deepNegT': ['?/?/T/T', 'T'],
+      'Deep::deepPosF': ['?/?/F/?', 'F'],
+    }),
+    // Found by the soundness review of this table (F0): shapes the design's probes did not build.
+    chainPkg33: probe(bindingChainPkg(33), {
+      'DP33::negT': ['?/?/T/T', 'T'],
+      'DP33::posF': ['?/?/F/?', 'F'],
+    }),
+    chainPkg32: probe(bindingChainPkg(32), {
+      'DP32::negT': ['?/?/T/T', 'T'],
+      'DP32::posF': ['?/?/F/?', 'F'],
+    }),
+    'h2-bodyspec-plain': probe(`package H2BP {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real; part p : P; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+        part q : Q2 { bind p.load = L; }
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'H2BP::m2NegT': ['F/F/F/F', 'T'],
+      'H2BP::m2PosF': ['T/T/T/T', 'F'],
+    }),
+    'h2-bodyspec-rev': probe(`package H2BR {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; }
+        part def Q2 :> Q { part :>> p { attribute :>> load = 50.0; } }
+        part q : Q2 { bind L = p.load; }
+        constraint lT { q.L >= 40.0 }
+        constraint lF { q.L <= 2.0 }
+      }`, {
+      'H2BR::lF': ['T/T/T/T', 'F'],
+      'H2BR::lT': ['F/F/F/F', 'T'],
+    }),
+    // Found by F2's review (identical before F1): a bound partner's default RESTATED, equal to the partner
+    // definition's own, in a redefinition (`part :>> p { attribute :>> a default = 50.0; }`). The restated
+    // default is held, so q4's p.a reads nothing, but p.b is read at P::b over P::a's own default — and the
+    // guard sees the restated default as alike, so the generic partner counts as safe. The binding gives a
+    // the value 2.0 in every instance (decision 10), so b is 8. A restated 30.0 abstains; the same text as P's
+    // own default does not — unanimously false on all four surfaces, in the usage, with a derived L, and in a
+    // specialising definition.
+    'held-redef': probe(`package HB {
+        part def P { attribute a : ScalarValues::Real default = 50.0; attribute b : ScalarValues::Real = 10.0 - a; }
+        part def Q { attribute L : ScalarValues::Real = 2.0; part p : P; bind p.a = L; }
+        part q4 : Q { part :>> p { attribute :>> a default = 50.0; } }
+        constraint same50 { q4.p.b >= 0.0 }
+        constraint same50F { q4.p.b <= 0.0 }
+      }`, {
+      'HB::same50': ['F/F/F/F', 'T'],
+      'HB::same50F': ['T/T/T/T', 'F'],
+    }),
+    'held-redef-derived': probe(`package HBD {
+        part def P { attribute a : ScalarValues::Real default = 50.0; attribute b : ScalarValues::Real = 10.0 - a; }
+        part def Q { attribute K : ScalarValues::Real default = 1.0; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.a = L; }
+        part q4 : Q { part :>> p { attribute :>> a default = 50.0; } }
+        constraint same50 { q4.p.b >= 0.0 }
+        constraint same50F { q4.p.b <= 0.0 }
+      }`, {
+      'HBD::same50': ['F/F/F/F', 'T'],
+      'HBD::same50F': ['T/T/T/T', 'F'],
+    }),
+    'held-redef-spec': probe(`package HBG {
+        part def P { attribute a : ScalarValues::Real default = 50.0; attribute b : ScalarValues::Real = 10.0 - a; }
+        part def Q { attribute L : ScalarValues::Real = 2.0; part p : P; bind p.a = L; }
+        part def Q2 :> Q { part :>> p { attribute :>> a default = 50.0; } }
+        part q5 : Q2;
+        constraint same50 { q5.p.b >= 0.0 }
+        constraint same50F { q5.p.b <= 0.0 }
+      }`, {
+      'HBG::same50': ['F/F/F/F', 'T'],
+      'HBG::same50F': ['T/T/T/T', 'F'],
+    }),
+    'assert-min': probe(`package AM {
+        part def P { attribute load : ScalarValues::Real default = 3.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real; assert constraint defL { L == 1.0 } part p : P; }
+        part def QB :> Q { bind p.load = L; }
+        part q0 : QB;
+        constraint ctlT { q0.p.m2 >= 8.5 }
+        constraint ctlF { q0.p.m2 <= 8.0 }
+      }`, {
+      'AM::Q::defL': ['T/-/?/-', 'T'],
+      'AM::Q::defL in AM::QB': ['?/-/?/-', 'T'],
+      'AM::ctlF': ['T/T/T/X', 'F'],
+      'AM::ctlT': ['F/F/F/X', 'T'],
+    }),
+    'assert-min-def': probe(`package AMD {
+        part def P { attribute load : ScalarValues::Real default = 3.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real; assert constraint defL { L == 1.0 } part p : P; bind p.load = L; }
+        part q0 : Q;
+        constraint ctlT { q0.p.m2 >= 8.5 }
+        constraint ctlF { q0.p.m2 <= 8.0 }
+      }`, {
+      'AMD::Q::defL': ['T/-/T/-', 'T'],
+      'AMD::ctlF': ['F/F/F/F', 'F'],
+      'AMD::ctlT': ['T/T/T/T', 'T'],
+    }),
+    M2a: probe(`package M2a {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; bind p.load = L; }
+        part q : Q { attribute :>> K = 25.0; }
+        part q0 : Q;
+        constraint negT { q.p.m2 <= 0.0 }
+        constraint posF { q.p.m2 >= 0.0 }
+        constraint ctlA { q0.p.m2 >= 8.5 }
+      }`, {
+      'M2a::Q::defL': ['T/-/T/-', 'T'],
+      'M2a::Q::defL in M2a::q': ['T/-/T/-', 'T'],
+      'M2a::ctlA': ['?/?/T/T', 'T'],
+      'M2a::negT': ['?/?/T/T', 'T'],
+      'M2a::posF': ['?/?/F/?', 'F'],
+    }),
+    G340: probe(`package G340 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
+        part def Q2 :> Q { attribute :>> K = 25.0; }
+        part def R { part q : Q2; }
+        part r : R;
+        part def R0 { part q : Q; }
+        part r0 : R0;
+        bind r.q.p.load = r.q.L;
+        constraint negT { r.q.p.m2 <= 0.0 }
+        constraint posF { r.q.p.m2 >= 0.0 }
+        constraint ctlA { r0.q.p.m2 >= 8.5 }
+      }`, {
+      'G340::Q::defL': ['T/-/T/-', 'T'],
+      'G340::Q::defL in G340::Q2': ['T/-/T/-', 'T'],
+      'G340::«BindingConnectorAsUsage»#bind': ['F/-/F/-', '-'],
+      'G340::ctlA': ['T/T/T/T', 'T'],
+      'G340::negT': ['F/F/F/F', 'T'],
+      'G340::posF': ['T/T/T/T', 'F'],
+    }),
+    'u-m2': probe(`package UM2 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute m2 : ISQ::MassValue = 10.0 [SI::kg] - load; }
+        part def Q {
+          attribute K : ISQ::MassValue default = 0.5 [SI::kg];
+          attribute L : ISQ::MassValue = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part q : Q { attribute :>> K = 25.0 [SI::kg]; }
+        constraint m2NegT { q.p.m2 <= 0.0 [SI::kg] }
+        constraint m2PosF { q.p.m2 >= 0.0 [SI::kg] }
+      }`, {
+      'UM2::m2NegT': ['?/?/T/?', 'T'],
+      'UM2::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    // I6 on quantities: p's witness 2000 [g] IS the compared 2 kg; p2's k prints its own 10 (unit-less), as
+    // the row compared 10 kg — not P's 4000 (grams, F2).
+    'u-witness': probe(`package UG {
+        part def P { attribute m : ISQ::MassValue default = 2000.0 [SI::g]; attribute k : ISQ::MassValue = m * 2.0; }
+        part p : P;
+        part p2 : P { attribute :>> m = 5.0 [SI::kg]; }
+        constraint cT { p.m <= 3.0 [SI::kg] }
+        constraint cF { p.m >= 3.0 [SI::kg] }
+        constraint dT { p2.k >= 9.0 [SI::kg] }
+        constraint gT { p.m <= 3000.0 [SI::g] }
+      }`, {
+      'UG::cF': ['F/F/F/F', 'F'],
+      'UG::cT': ['T/T/T/T', 'T'],
+      'UG::dT': ['T/T/T/T', 'T'],
+      'UG::gT': ['T/T/T/T', 'T'],
+    }),
+    'spec-m2': probe(`package SM2 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part p : P;
+          bind p.load = L;
+        }
+        part def Q2 :> Q { attribute :>> K = 25.0; }
+        part q : Q2;
+        constraint m2NegT { q.p.m2 <= 0.0 }
+        constraint m2PosF { q.p.m2 >= 0.0 }
+      }`, {
+      'SM2::m2NegT': ['?/?/T/T', 'T'],
+      'SM2::m2PosF': ['?/?/F/?', 'F'],
+    }),
+    'm2-dup': probe(`package M2D {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> K = 25.0; }
+        part q2 : Q { attribute :>> K = 0.1; }
+        constraint aT { q.p.m2 <= 0.0 }
+        constraint bT { q2.p.m2 >= 9.7 }
+        constraint cF { q2.p.m2 >= 9.9 }
+      }`, {
+      'M2D::aT': ['?/?/T/T', 'T'],
+      'M2D::bT': ['?/?/T/T', 'T'],
+      'M2D::cF': ['?/?/F/?', 'F'],
+    }),
+    d1plain: probe(`package D1P {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute L : ScalarValues::Real = 50.0; part p : P; bind p.load = L; }
+        part q : Q { part :>> p { attribute :>> load = 30.0; } }
+        constraint at30 { q.p.m2 >= -20.0 }
+        constraint atL { q.p.m2 <= -40.0 }
+      }`, {
+      'D1P::Q::«BindingConnectorAsUsage» in D1P::q#bind': ['F/-/F/-', 'F'],
+      'D1P::at30': ['T/T/T/X', '?'],
+      'D1P::atL': ['F/F/F/X', '?'],
+    }),
+    // Found by the F1 reviews. A binding in a usage body whose partner is a feature of the ENCLOSING
+    // definition (R's L): read only where it is written, its partner was R's own 1 for r's q, whose K
+    // makes L 50 — false on all four surfaces before (negT F/F/F/F). The binding is now read in every
+    // instance of R, so r reads it otherwise and no surface reads R's L for r's q.
+    'encl-W1': probe(`package EnclW1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { part p : P; }
+        part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part q : Q { bind p.load = L; } }
+        part r : R { attribute :>> K = 25.0; }
+        part r0 : R;
+        constraint negT { r.q.p.m2 <= 0.0 }
+        constraint posF { r.q.p.m2 >= 0.0 }
+        constraint ctlA { r0.q.p.m2 >= 8.5 }
+      }`, {
+      'EnclW1::ctlA': ['?/?/?/?', 'T'],
+      'EnclW1::negT': ['?/?/?/?', 'T'],
+      'EnclW1::posF': ['?/?/?/?', 'F'],
+    }),
+    // The same with the binding in a definition nested in R: read where it is written, by L's own id, for
+    // every R alike.
+    'encl-W3': probe(`package EnclW3 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def R {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part def Q { part p : P; bind p.load = L; }
+          part q : Q;
+        }
+        part r : R { attribute :>> K = 25.0; }
+        part r0 : R;
+        constraint negT { r.q.p.m2 <= 0.0 }
+        constraint posF { r.q.p.m2 >= 0.0 }
+        constraint ctlA { r0.q.p.m2 >= 8.5 }
+      }`, {
+      'EnclW3::ctlA': ['?/?/?/?', 'T'],
+      'EnclW3::negT': ['?/?/?/?', 'T'],
+      'EnclW3::posF': ['?/?/?/?', 'F'],
+    }),
+    // A literal default partner r overrides: the two defaults agreed in the one context the binding was
+    // read in, so P's 1 stood for r's load of 50 (negT F/F/F/F, posF T/T/T/T). Now r's frame holds it.
+    'encl-W5': probe(`package EnclW5 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { part p : P; }
+        part def R { attribute L : ScalarValues::Real default = 1.0; part q : Q { bind p.load = L; } }
+        part r : R { attribute :>> L = 50.0; }
+        part r0 : R;
+        constraint negT { r.q.p.m2 <= 0.0 }
+        constraint posF { r.q.p.m2 >= 0.0 }
+        constraint ctlA { r0.q.p.m2 >= 8.5 }
+      }`, {
+      'EnclW5::ctlA': ['?/?/?/?', 'T'],
+      'EnclW5::negT': ['?/?/?/?', 'T'],
+      'EnclW5::posF': ['?/?/?/?', 'F'],
+    }),
+    // R's own constraint over the bound path, and the context row r gains (q's m2 is −40 there).
+    'encl-W4': probe(`package EnclW4 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; constraint c { m2 >= 8.5 } }
+        part def Q { part p : P; }
+        part def R {
+          attribute K : ScalarValues::Real default = 0.5;
+          attribute L : ScalarValues::Real = 2.0 * K;
+          part q : Q { bind p.load = L; }
+          constraint rc { q.p.m2 >= 8.5 }
+        }
+        part r : R { attribute :>> K = 25.0; }
+        part r0 : R;
+      }`, {
+      'EnclW4::P::c': ['T/T/T/T', 'T'],
+      'EnclW4::R::rc': ['?/?/T/T', 'T'],
+      'EnclW4::R::rc in EnclW4::r': ['?/?/?/?', 'F'],
+    }),
+    // A package's own partner is one instance wherever it is read: still read (a control).
+    'global-W10': probe(`package GlobW10 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        attribute K : ScalarValues::Real default = 0.5;
+        attribute G : ScalarValues::Real = 2.0 * K;
+        part def Q { part p : P; bind p.load = G; }
+        part q : Q;
+        constraint ctlT { q.p.m2 >= 8.5 }
+        constraint ctlF { q.p.m2 <= 8.0 }
+      }`, {
+      'GlobW10::ctlF': ['F/F/F/F', 'F'],
+      'GlobW10::ctlT': ['T/T/T/?', 'T'],
+    }),
+    // An asserted partner a specialised definition's usages share: q0 and q1 change nothing Q2 does not,
+    // so they read QB's binding as Q2 does and add no row (each added one; FanA1000's thousand made 2,003
+    // findings). Q2's own row read P's default through the end copy (the G340 defect) and published a
+    // false T; a context listed only because a member reads its own value there decides nothing yet.
+    FanS2: probe(`package FanS2 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; }
+        part def QB :> Q { bind p.load = L; constraint cq { p.load <= 5.0 } }
+        part def Q2 :> QB { attribute :>> K = 25.0; }
+        part q0 : Q2;
+        part q1 : Q2;
+      }`, {
+      'FanS2::Q::defL': ['T/-/T/-', 'T'],
+      'FanS2::Q::defL in FanS2::Q2': ['T/-/T/-', 'T'],
+      'FanS2::Q::defL in FanS2::QB': ['?/-/?/-', 'T'],
+      'FanS2::QB::«BindingConnectorAsUsage» in FanS2::Q2#bind': ['F/-/F/-', '-'],
+      'FanS2::QB::cq': ['T/T/T/X', 'T'],
+      'FanS2::QB::cq in FanS2::Q2': ['?/?/?/?', 'F'],
+    }),
+    // The M-generator's bind2 family in a usage body, in kg (G271): the guard on a bound partner's VALUE
+    // withheld its kilograms from the unit gates too, which refused `L == 2.0 * K` and `P::m2 in r::q::p`
+    // and so left r0's correct refutation (7 kg vs 8.5) inconclusive. The gates read the dimension again.
+    G271: probe(`package G271 {
+        part def P { attribute load : ISQ::MassValue default = 3.0 [SI::kg]; attribute m2 : ISQ::MassValue = 10.0 [SI::kg] - load; }
+        part def Q { attribute N : ISQ::MassValue default = 1.0 [SI::kg]; attribute J : ISQ::MassValue default = 0.5 * N; attribute K : ISQ::MassValue; bind K = J; attribute L : ISQ::MassValue = 2.0 * K; part p : P; }
+        part def Q2 :> Q { attribute :>> N = 50.0 [SI::kg]; }
+        part def R { part q : Q2; }
+        part r : R { part :>> q { bind p.load = L; } }
+        part def R0 { part q : Q; }
+        part r0 : R0;
+        constraint negT { r.q.p.m2 <= 0.0 [SI::kg] }
+        constraint posF { r.q.p.m2 >= 0.0 [SI::kg] }
+        constraint ctlA { r0.q.p.m2 >= 8.5 [SI::kg] }
+      }`, {
+      'G271::ctlA': ['F/F/F/F', 'F'],
+      'G271::negT': ['?/?/T/T', 'T'],
+      'G271::posF': ['?/?/F/?', 'F'],
+    }),
+    // A partner read through a reference feature's value (q's r is r1, whose K makes L 50): the check
+    // abstains, the numeric surface and the SMT engine read the referenced definition's value (see
+    // KNOWN_FALSE: no step of this plan takes it on).
+    'ref-W9': probe(`package RefW9 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; }
+        part def Q { ref part r : R; part p : P; bind p.load = r.L; }
+        part r1 : R { attribute :>> K = 25.0; }
+        part q : Q { ref part :>> r = r1; }
+        part q0 : Q;
+        constraint negT { q.p.m2 <= 0.0 }
+        constraint posF { q.p.m2 >= 0.0 }
+      }`, {
+      'RefW9::negT': ['?/?/F/?', 'T'],
+      'RefW9::posF': ['?/?/T/T', 'F'],
+    }),
+    k4: probe(`package K4 {
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute load : ScalarValues::Real default = 2.0;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          bind load = L;
+        }
+        part q : Q;
+        constraint m2Pos { q.m2 >= 0.0 }
+      }`, {
+      'K4::m2Pos': ['?/?/?/?', '?'],
+    }),
+    w4: probe(`package W4 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        attribute L : ScalarValues::Real = 50.0;
+        bind P::load = L;
+        part p2 : P;
+        constraint c2 { p2.m2 >= 0.0 }
+      }`, {
+      'W4::c2': ['?/?/?/?', null],
+    }),
+    h2p0: probe(`package H2P0 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          constraint c { load <= 10.0 }
+        }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute pl : ScalarValues::Real = L;
+          part p : P { attribute :>> load = pl; }
+        }
+        part q : Q { attribute :>> L = 50.0; }
+      }`, {
+      'H2P0::P::c': ['T/T/T/T', 'T'],
+      'H2P0::P::c in H2P0::Q::p': ['?/?/?/?', 'T'],
+    }),
+    h2c0: probe(`package H2C0 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P { attribute :>> load = L; }
+          constraint c { p.m2 >= 0.0 }
+        }
+        part q : Q { attribute :>> L = 50.0; }
+      }`, {
+      'H2C0::Q::c': ['?/?/?/?', 'T'],
+    }),
+    'mapper-s4': probe(`package S4 {
+        part def P { attribute x : ScalarValues::Real; constraint c { x <= 10.0 } }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P;
+          assert constraint tie { p.x == L }
+        }
+        part q1 : Q { attribute :>> L = 50.0; }
+        constraint top { q1.p.x <= 10.0 }
+      }`, {
+      'S4::P::c': ['?/?/?/?', '?'],
+      'S4::Q::tie': ['?/-/T/-', null],
+      'S4::Q::tie in S4::q1': ['?/-/?/-', null],
+      'S4::top': ['?/?/F/?', 'F'],
+    }),
+    'mapper-s5': probe(`package S5 {
+        part def P { attribute x : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - x; constraint c { m2 >= 0.0 } }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P;
+          assert constraint tie { p.x == L }
+        }
+        part q1 : Q { attribute :>> L = 50.0; }
+      }`, {
+      'S5::P::c': ['?/?/?/?', '?'],
+      'S5::Q::tie': ['?/-/T/-', null],
+      'S5::Q::tie in S5::q1': ['?/-/?/-', null],
+    }),
+    'xtrack-b1': probe(`package B1 {
+          part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = x * 2.0; }
+          part p : P;
+          assert constraint px { p.x == 3.0 }
+          constraint g1 { p.y == 6.0 }
+          constraint g2 { p.y <= 6.0 }
+      }`, {
+      'B1::g1': ['?/?/T/T', 'T'],
+      'B1::g2': ['?/?/T/T', 'T'],
+      'B1::px': ['?/-/T/-', 'T'],
+    }),
+    'xtrack-b2': probe(`package B2 {
+          part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = x * 2.0; }
+          part def Q { part p : P; assert constraint qx { p.x <= 3.0 } }
+          part q : Q;
+          constraint g1 { q.p.y <= 6.0 }
+      }`, {
+      'B2::Q::qx': ['?/-/?/-', null],
+      'B2::g1': ['?/?/?/T', 'T'],
+    }),
+    'xtrack-b3': probe(`package B3 {
+          part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = x * 2.0; }
+          part p : P;
+          assert constraint px { p.x == 3.0 }
+          constraint gF { p.y == 7.0 }
+      }`, {
+      'B3::gF': ['?/?/F/?', 'F'],
+      'B3::px': ['?/-/T/-', 'T'],
+    }),
+    'xtrack-s2-usage-assert-leak': probe(`package S2 {
+          part def C { attribute v : ScalarValues::Real; attribute u : ScalarValues::Real default = 1.0; }
+          part a : C { assert constraint { v >= 5.0 } attribute :>> u = 7.0; }
+          part b : C;
+          constraint n1 { b.v >= 5.0 }
+          constraint n2 { b.u == 7.0 }
+          constraint y1 { a.v >= 5.0 }
+          constraint y2 { a.u == 7.0 }
+          constraint y3 { b.u == 1.0 }
+      }`, {
+      'S2::a::«ConstraintUsage»': ['?/-/?/-', null],
+      'S2::n1': ['?/?/?/?', '?'],
+      'S2::n2': ['F/F/F/F', 'F'],
+      'S2::y1': ['?/?/?/T', 'T'],
+      'S2::y2': ['T/T/T/T', 'T'],
+      'S2::y3': ['T/T/T/T', 'T'],
+    }),
+    n4: probe(`package N4 {
+        attribute x;
+        attribute z;
+        assert constraint c1 { x * x == -1.0 }
+        constraint cz { z == 3.0 }
+        constraint zl { z <= 2.0 }
+        constraint xl { x <= 100.0 }
+      }`, {
+      'N4::c1': ['?/-/?/-', null],
+      'N4::cz': ['?/?/t/X', null],
+      'N4::xl': ['?/?/?/X', null],
+      'N4::zl': ['?/?/F/X', null],
+    }),
+    'xtrack-d1-dec-inst': probe(`package D1 {
+          part def P {
+              attribute a : ScalarValues::Real default = 0.5;
+              attribute b : ScalarValues::Real default = 0.5;
+              attribute s : ScalarValues::Real = a + b;
+          }
+          part q : P { attribute :>> a = 0.1; attribute :>> b = 0.2; }
+          constraint gSumF { q.a + q.b > 0.3 }
+          constraint gSumT { q.a + q.b <= 0.3 }
+          constraint gDerF { q.s > 0.3 }
+          constraint gDerT { q.s <= 0.3 }
+          attribute w : ScalarValues::Real;
+          bind w = q.s;
+          constraint gBindF { w > 0.3 }
+      }`, {
+      'D1::gBindF': ['F/F/?/F', 'F'],
+      'D1::gDerF': ['F/F/F/?', 'F'],
+      'D1::gDerT': ['T/T/T/T', 'T'],
+      'D1::gSumF': ['F/F/F/F', 'F'],
+      'D1::gSumT': ['T/T/T/T', 'T'],
+    }),
+    'soundC-r8': probe(`package R8 {
+          part def P {
+              attribute load : ScalarValues::Real;
+              attribute m2 : ScalarValues::Real = 10.0 - load;
+              assert constraint dl { load == 1.0 }
+          }
+          part p : P {
+              attribute :>> load;
+              assert constraint d50 { load == 50.0 }
+          }
+          constraint pLoad { p.load >= 10.0 }
+          constraint pM2 { p.m2 >= 0.0 }
+      }`, {
+      'R8::P::dl': ['T/-/T/-', null],
+      'R8::P::dl in R8::p': ['F/-/F/-', null],
+      'R8::p::d50': ['T/-/?/-', null],
+      'R8::pLoad': ['T/T/?/X', null],
+      'R8::pM2': ['F/F/F/X', null],
+    }),
+    n2: probe(`package N2 {
+        attribute x;
+        attribute y;
+        assert constraint a1 { x == 1.0 }
+        assert constraint a2 { x == 2.0 }
+        constraint c { y == x + 1.0 }
+        constraint lim { x >= 5.0 }
+      }`, {
+      'N2::a1': ['T/-/?/-', null],
+      'N2::a2': ['F/-/?/-', null],
+      'N2::c': ['?/?/?/X', null],
+      'N2::lim': ['F/F/?/X', null],
+    }),
+    fx4: probe(`package Fx4 {
+          attribute x = 9.0;
+          attribute z = x % 4.0;
+          constraint c { z == 1.0 }
+          constraint c2 { z <= 1.5 }
+      }`, {
+      'Fx4::c': ['T/T/T/?', 'T'],
+      'Fx4::c2': ['T/T/T/?', 'T'],
+    }),
+    'xtrack-c1-chain': probe(`package C1 {
+          part def P {
+              attribute load : ScalarValues::Real default = 1.0;
+              attribute m2 : ScalarValues::Real = 10.0 - load;
+              attribute m3 : ScalarValues::Real = m2 * 2.0;
+          }
+          part p : P { attribute :>> load = 50.0; }
+          constraint gT { p.m3 <= -79.0 }
+          constraint gF { p.m3 >= 0.0 }
+          attribute w : ScalarValues::Real;
+          bind w = p.m3;
+          constraint wT { w == -80.0 }
+          constraint wF { w == 18.0 }
+      }`, {
+      'C1::gF': ['F/F/F/?', 'F'],
+      'C1::gT': ['T/T/T/T', 'T'],
+      'C1::wF': ['F/F/F/F', 'F'],
+      'C1::wT': ['T/T/T/T', 'T'],
+    }),
+  };
+
+  /**
+   * I2's exceptions: the rows a surface decides FALSELY today, `probe | row` → why, and the step that
+   * corrects it.
+   *
+   * F1 corrected the rows where a derived value a binding reaches through a second definition-level
+   * value (M2's `L = 2.0 * K` under q's K of 25, refute-r8's two levels, refute-r16*'s input through a
+   * second binding, an asserted partner, units, a specialised override, a sibling) was read at the
+   * definition — q's p's m2 read 9 where it is −40, and the same reading called the binding a
+   * contradiction (`#bind`) — and a package binding past 32 segments (chainPkg33) left the end's default
+   * standing: the check and the literal engine now abstain on them.
+   *
+   * The table's own review added rows false on ALL FOUR surfaces — no clash, so only a `ref` sees them:
+   * a usage-body binding whose type redefines a bound end (h2-bodyspec-*), an assert inherited through
+   * the end copy (assert-min, G340; FanS2's `#bind`, found by F1's review). They name no step yet: the
+   * plan must take them on. d1plain is A.5 against A.2.1, for the plan to settle. ref-W9 (F1's review)
+   * is false on the numeric surface and the SMT engine alone, which read a referenced definition's value.
+   * F2's review added held-redef*: a bound partner's default restated in a redefinition (the same value as the
+   * partner definition's own) is read as alike, though the binding overrides it.
+   *
+   * F1b corrected the rows where two defaults a binding joins were agreed by their TEXT (`2.0 * K` read in
+   * two instances, R3a–c) though their values differ (2 vs 10; 2 vs 50): no value exists, and no
+   * contradiction (their `#bind`); every surface now abstains on them.
+   */
+  const KNOWN_FALSE = new Map<string, string>([
+    ...[
+      ['h2-bodyspec-plain', 'H2BP::m2NegT'],
+      ['h2-bodyspec-plain', 'H2BP::m2PosF'],
+      ['h2-bodyspec-rev', 'H2BR::lT'],
+      ['h2-bodyspec-rev', 'H2BR::lF'],
+    ].map(
+      ([p, row]) =>
+        [
+          `${p} | ${row}`,
+          'NO STEP YET (plan amendment needed): the implicit end copy of a usage-body binding redefines the DECLARING feature (`H2BP::q::L` redefines Q::L, not Q2::L), so every surface reads the general value or none, and P’s default stands; outside B.1’s files (the copy should redefine the most specific inherited feature, or such a binding be refused on all four surfaces)',
+        ] as const,
+    ),
+    ...[
+      ['assert-min', 'AM::ctlT'],
+      ['assert-min', 'AM::ctlF'],
+      ['G340', 'G340::negT'],
+      ['G340', 'G340::posF'],
+      ['G340', 'G340::«BindingConnectorAsUsage»#bind'],
+      ['FanS2', 'FanS2::QB::«BindingConnectorAsUsage» in FanS2::Q2#bind'],
+    ].map(
+      ([p, row]) =>
+        [
+          `${p} | ${row}`,
+          'NO STEP YET (plan amendment needed): `endValue` (defining-equation.ts) checks `defines(f.ownerId, name)` on the implicit copy’s owner, so an assert inherited from a general definition is missed, P’s default stands beside the binding, and (G340) the binding reads as a contradiction; `heldDefaults` must see an asserted definition through the copy’s redefinition closure',
+        ] as const,
+    ),
+    ...['D1P::at30', 'D1P::atL'].map(
+      (row) =>
+        [
+          `d1plain | ${row}`,
+          'A.5 against A.2.1, for the plan to settle: q’s plain `load = 30.0` against the bound L = 50.0 is two values (decision 1), and A.5 has both read nothing (the conflict row reports it); A.2.1 never replaces today’s decided reading, so no step yet makes these abstain',
+        ] as const,
+    ),
+    ...[
+      ['held-redef', 'HB::same50'],
+      ['held-redef', 'HB::same50F'],
+      ['held-redef-derived', 'HBD::same50'],
+      ['held-redef-derived', 'HBD::same50F'],
+      ['held-redef-spec', 'HBG::same50'],
+      ['held-redef-spec', 'HBG::same50F'],
+    ].map(
+      ([p, row]) =>
+        [
+          `${p} | ${row}`,
+          'NO STEP YET (plan amendment needed; F2’s review): `heldDefaults`/`endValue` hold the restated default, but `boundPartnerSafe` sees it as alike (the same value as P’s own default) and reads p.b at P::b over P::a’s default, although the binding gives a another value in every instance; a held redefinition’s fall-through to the redefined feature’s default must count as unsafe (F5, or F9’s list)',
+        ] as const,
+    ),
+    ...['RefW9::negT', 'RefW9::posF'].map(
+      (row) =>
+        [
+          `ref-W9 | ${row}`,
+          'NO STEP YET (outside this plan’s surfaces): a binding to `r.L` through a reference feature (`ref part :>> r = r1`) — the numeric surface and the SMT engine read R’s own L of 1, not r1’s 50 (q’s m2 is −40); the check and the literal engine abstain',
+        ] as const,
+    ),
+  ]);
+  /**
+   * I6's exceptions: rows whose printed witness is not the value they compared. There were eleven (M3's two,
+   * refute-r19's three, sound-C r8's p, d1plain's two, assert-min-def's two, u-witness's p2.k): every one a
+   * path read through an instance of its own, whose witness `modelBindings` took from the feature
+   * (`evaluateFeatureValue`, the definition's 9 or 7 or 4000) instead of from where the relation reads it.
+   * F2 reads such a path with `valueAtPath`, and the list is empty — it stays, exact, so that a witness
+   * that stops being the compared value fails here instead of being listed.
+   */
+  const KNOWN_FALSE_WITNESS = new Set<string>();
+  /**
+   * I6's rows whose witness prints NO value for the compared path (`value: null`), on both engines, in
+   * the row and in its record — recorded, not compared, and listed exactly as the false ones are.
+   * u-m2's (a derived quantity, `q.p.m2` in kg, left empty beside the compared 9) left with F1, which
+   * decides those rows no longer where the witness was printed; G271's control r0's `q.p.m2` (kg) is
+   * such a quantity too, beside its correct refutation.
+   */
+  const WITNESS_UNPRINTED = new Set(['G271 | G271::ctlA']);
+  /**
+   * I7's exceptions: an SMT `inconsistent-axioms` beside a T or F elsewhere, `probe | row` → reason.
+   * Checked on every probe, not only those with `bind` or `default`: three of the reviewed entries (n4,
+   * sound-C r8, n2) are models whose asserts alone admit no value. sound-C r8's two variants are one
+   * text, so it is one probe here, and its `pM2` sits beside `pLoad` for the same reason.
+   */
+  const I7_ALLOWED = new Map<string, string>([
+    ['n4 | N4::zl', 'an asserted `x * x == -1.0` admits no model; the numeric surface reads z apart from it (out of scope)'],
+    ['soundC-r8 | R8::pLoad', 'P’s asserted `load == 1.0` and p’s asserted `load == 50.0` contradict; the check reads p’s'],
+    ['soundC-r8 | R8::pM2', 'the same contradiction, read through m2'],
+    ['n2 | N2::lim', 'two asserts give x two values; the check reads one'],
+    ['refute-r1 | R1::P::c', 'q1’s asserted `p.x == 50.0` against x’s default: the default-vs-assert semantics is open (H5)'],
+    ['refute-r1 | R1::top1', 'the same; the check abstains (an enclosing assert, F5)'],
+    ...[
+      ['assert-min', 'AM::ctlT'],
+      ['assert-min', 'AM::ctlF'],
+      ['FanS2', 'FanS2::QB::cq'],
+    ].map(
+      ([p, row]) =>
+        [
+          `${p} | ${row}`,
+          'P’s default axiom is kept beside QB’s binding and Q’s asserted L (core: P::load, Q::defL, QB’s binding), though decision 10 has the default give way — the KNOWN_FALSE `endValue` defect (no step yet)',
+        ] as const,
+    ),
+    ...['D1P::at30', 'D1P::atL'].map(
+      (row) =>
+        [
+          `d1plain | ${row}`,
+          'q’s plain `load = 30.0` against the bound L = 50.0: the strict-KerML contradiction (decision 1) the SMT engine reports; the other surfaces read q’s value (A.5 against A.2.1, see KNOWN_FALSE)',
+        ] as const,
+    ),
+  ]);
+
+  const seen = new Map<string, Map<string, SurfaceRow>>();
+  beforeAll(async () => {
+    if (!backendPresent) return;
+    for (const [name, p] of Object.entries(PROBES)) seen.set(name, await fourSurfaces(p.text, name));
+  }, 600_000);
+  /** Every row a probe pins or a surface filed, with its `ref` (null for a row no pin names: I3 reports it). */
+  const each = () =>
+    Object.entries(PROBES).flatMap(([name, p]) =>
+      [...new Set([...Object.keys(p.rows), ...(seen.get(name)?.keys() ?? [])])].map((row) => ({
+        name,
+        row,
+        ref: p.rows[row]?.[1] ?? null,
+        got: seen.get(name)?.get(row),
+      })),
+    );
+
+  withZ3('I3: every probe’s rows, and each row’s four verdicts, are as pinned', () => {
+    const drift: string[] = [];
+    for (const [name, p] of Object.entries(PROBES)) {
+      const got = seen.get(name)!;
+      for (const [row, s] of got) {
+        const pinned = p.rows[row]?.[0];
+        if (pinned !== s.verdicts.join('/')) drift.push(`${name} | ${row}: pinned ${pinned ?? 'no row'}, now ${s.verdicts.join('/')}`);
+      }
+      for (const row of Object.keys(p.rows)) if (!got.has(row)) drift.push(`${name} | ${row}: pinned, now no row`);
+    }
+    expect(drift).toEqual([]);
+  });
+
+  withZ3('I1: no row is T on one surface and F on another', () => {
+    const clash = each().filter((r) => r.got && r.got.verdicts.includes('T') && r.got.verdicts.includes('F'));
+    expect(clash.map((r) => `${r.name} | ${r.row}: ${r.got!.verdicts.join('/')}`)).toEqual([]);
+  });
+
+  withZ3('I2: a decided verdict is the hand-computed one — the known false ones exactly excepted', () => {
+    const wrong = new Map<string, string>();
+    for (const { name, row, ref, got } of each()) {
+      if (ref === null || !got) continue;
+      const bad = got.verdicts.flatMap((l, s) => (decided(l) && l !== ref ? [`${SURFACES[s]} ${l}`] : []));
+      if (bad.length > 0) wrong.set(`${name} | ${row}`, `${bad.join(', ')} where it is ${ref}`);
+    }
+    // Exactly the known ones: a new false verdict fails, and so does a corrected one still listed.
+    expect([...wrong.keys()].filter((k) => !KNOWN_FALSE.has(k)).map((k) => `${k}: ${wrong.get(k)}`)).toEqual([]);
+    expect([...KNOWN_FALSE.keys()].filter((k) => !wrong.has(k))).toEqual([]);
+    // Every known one a step of this plan corrects is one the check and the literal engine publish, the
+    // surfaces this work corrects; one no step takes on may be another surface's alone (ref-W9).
+    for (const [k, why] of KNOWN_FALSE) if (!why.startsWith('NO STEP')) expect(wrong.get(k), k).toMatch(/check [TF]/);
+  });
+
+  withZ3('I4: every abstention says why', () => {
+    const silent = each().flatMap(({ name, row, got }) =>
+      got
+        ? got.verdicts.flatMap((l, s) =>
+            l !== '-' && l !== 't' && !decided(l) && got.why[s]!.trim().length < 20 ? [`${name} | ${row}: ${SURFACES[s]}`] : [],
+          )
+        : [],
+    );
+    expect(silent).toEqual([]);
+  });
+
+  withZ3('I5: a row has one element id on every surface that files it', () => {
+    const split = each().filter((r) => r.got && r.got.ids.size !== 1);
+    expect(split.map((r) => `${r.name} | ${r.row}: ${[...r.got!.ids].join(', ')}`)).toEqual([]);
+  });
+
+  withZ3('I6: a literal or SMT witness is the value the row compared — the known false ones exactly excepted', () => {
+    const wrong = each().filter((r) => r.got && r.got.witness.length > 0);
+    expect(
+      wrong.filter((r) => !KNOWN_FALSE_WITNESS.has(`${r.name} | ${r.row}`)).map((r) => `${r.name} | ${r.row}: ${r.got!.witness.join('; ')}`),
+    ).toEqual([]);
+    expect([...KNOWN_FALSE_WITNESS].filter((k) => !wrong.some((r) => `${r.name} | ${r.row}` === k))).toEqual([]);
+    // Every one of them is printed by both engines, in the row and in its evidence record.
+    for (const r of wrong) expect(r.got!.witness.map((w) => w.split(' ').slice(0, 2).join(' ')), r.row).toEqual([
+      'literal: bindings',
+      'literal: record',
+      'smt: bindings',
+      'smt: record',
+    ]);
+    // A witness with no value is not compared — and not silently skipped: exactly the listed rows, everywhere.
+    const unprinted = each().filter((r) => r.got && r.got.unprinted.length > 0);
+    expect(unprinted.map((r) => `${r.name} | ${r.row}`).filter((k) => !WITNESS_UNPRINTED.has(k))).toEqual([]);
+    expect([...WITNESS_UNPRINTED].filter((k) => !unprinted.some((r) => `${r.name} | ${r.row}` === k))).toEqual([]);
+    for (const r of unprinted) expect(r.got!.unprinted, r.row).toEqual(['literal: bindings', 'literal: record', 'smt: bindings', 'smt: record']);
+  });
+
+  withZ3('I7: inconsistent axioms beside a decided verdict only where reviewed, and only while it happens', () => {
+    const beside = each().filter((r) => r.got && r.got.verdicts[3] === 'X' && r.got.verdicts.some(decided));
+    const keys = beside.map((r) => `${r.name} | ${r.row}`);
+    expect(keys.filter((k) => !I7_ALLOWED.has(k))).toEqual([]);
+    expect([...I7_ALLOWED.keys()].filter((k) => !keys.includes(k))).toEqual([]);
+  });
+});
+
+/*
+ * The witness a literal or SMT row prints for a path read through an instance of its own — q's m2, over
+ * `part q : Q { :>> K = 25.0 }` — is that instance's value, read where the relation reads it
+ * (`valueAtPath`), in the row's bindings and in its evidence record. It was the feature's own value, Q's 9
+ * beside the −40 the row compared; and where the check reads no value at the path it is no value, not 9.
+ * The per-instance table pins the left-hand side of every row (I6); this pins the rest of a relation.
+ */
+describe('a witness is the value at the path the row read, not the feature’s own', () => {
+  const Q = `part def Q {
+      attribute K : ScalarValues::Real default = 0.5;
+      attribute L : ScalarValues::Real = 2.0 * K;
+      attribute m2 : ScalarValues::Real = 10.0 - L;
+    }`;
+  const TWO = `package W2 { ${Q}
+      part q : Q { attribute :>> K = 25.0; }
+      part q2 : Q { attribute :>> K = 0.1; }
+      constraint both { q.m2 <= q2.m2 }
+    }`;
+  const M2 = `package W3 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def Q2 {
+        attribute K : ScalarValues::Real default = 0.5;
+        attribute L : ScalarValues::Real = 2.0 * K;
+        part p : P;
+        bind p.load = L;
+      }
+      part q : Q2 { attribute :>> K = 25.0; }
+      constraint m2NegT { q.p.m2 <= 0.0 }
+    }`;
+  /** The values a row printed per path, in its bindings and in its record. */
+  async function printed(text: string, pkg: string, engine: 'literal' | 'smt', clause: string) {
+    const m = await contextModel(text, pkg);
+    const report = await verifyModel(m, { engine, sourceText: text });
+    const row = report.results.find((r) => r.clause.qualifiedName === clause)!;
+    const record = report.records.find((x) => x.obligation.clause === clause);
+    const by = (list: ReadonlyArray<{ path: string; value?: unknown }> | undefined) =>
+      Object.fromEntries((list ?? []).map((b) => [b.path, b.value ?? null]));
+    return { claim: row.claim, row: by(row.bindings), record: by(record?.witness?.values) };
+  }
+  const close = (got: Record<string, unknown>, want: Record<string, number>) => {
+    expect(Object.keys(got).sort()).toEqual(Object.keys(want).sort());
+    for (const [path, v] of Object.entries(want)) expect(got[path] as number, path).toBeCloseTo(v, 12);
+  };
+
+  it('literal: each instance of one definition prints its own value on both sides of the relation', async () => {
+    const p = await printed(TWO, 'W2', 'literal', 'W2::both');
+    expect(p.claim).toBe('holds-at-values');
+    close(p.row, { 'q.m2': -40, 'q2.m2': 9.8 });
+    close(p.record, { 'q.m2': -40, 'q2.m2': 9.8 });
+  });
+
+  withZ3('smt: the same point, in the row and in its record', async () => {
+    const p = await printed(TWO, 'W2', 'smt', 'W2::both');
+    expect(p.claim).toBe('proved');
+    close(p.row, { 'q.m2': -40, 'q2.m2': 9.8 });
+    close(p.record, { 'q.m2': -40, 'q2.m2': 9.8 });
+  });
+
+  it('literal: prints no value where the check reads none at the path (M2 until F5), never the definition’s 9', async () => {
+    const p = await printed(M2, 'W3', 'literal', 'W3::m2NegT');
+    expect(p.claim).toBe('inconclusive');
+    expect(p.row).toEqual({ 'q.p.m2': null });
+    expect(p.record).toEqual({ 'q.p.m2': null });
+  });
+
+  withZ3('smt: a proof that stands on no point the check read prints no value for the path either', async () => {
+    const p = await printed(M2, 'W3', 'smt', 'W3::m2NegT');
+    expect(p.claim).toBe('proved');
+    expect(p.row).toEqual({ 'q.p.m2': null });
+    expect(p.record).toEqual({ 'q.p.m2': null });
+  });
+
+  // xtrack iu1: a unit literal applied to a computed operand. The scalar reading `valueAtPath` does not
+  // read r's total (4 GiB), though the unit-aware reading the row is judged by does — so the row is decided and
+  // the witness has no value. F5's `check.reads` replaces valueAtPath: these two pins must then print
+  // r.total = 4 GiB, and the two M2 pins above -40 — rewrite the four with it.
+  const IU1 = `package IU1 {
+      part def P {
+        attribute cap : ISQ::StorageCapacityValue default = 2.0 [GiB];
+        attribute k : ScalarValues::Real default = 1.0;
+        attribute total : ISQ::StorageCapacityValue = (k * 2.0) [GiB];
+      }
+      part r : P { attribute :>> k = cap / 1.0 [GiB]; }
+      constraint rT { r.total == 4.0 [GiB] }
+    }`;
+
+  it('literal: a decided row whose value is a unit-literal expression prints no value (until F5), never a false one', async () => {
+    const p = await printed(IU1, 'IU1', 'literal', 'IU1::rT');
+    expect(p.claim).toBe('holds-at-values');
+    expect(p.row).toEqual({ 'r.total': null });
+    expect(p.record).toEqual({ 'r.total': null });
+  });
+
+  withZ3('smt: the same, proved', async () => {
+    const p = await printed(IU1, 'IU1', 'smt', 'IU1::rT');
+    expect(p.claim).toBe('proved');
+    expect(p.row).toEqual({ 'r.total': null });
+    expect(p.record).toEqual({ 'r.total': null });
+  });
+
+  it('keeps the feature’s own value, in its declared unit, for a path read through no instance of its own', async () => {
+    const text = `package W4 {
+      part def P { attribute m : ISQ::MassValue default = 2000.0 [SI::g]; attribute n : ScalarValues::Real = 3.0; }
+      part p : P;
+      constraint c { p.m <= 3.0 [SI::kg] }
+      constraint d { p.n <= 4.0 }
+    }`;
+    const lit = await printed(text, 'W4', 'literal', 'W4::c');
+    expect(lit.row).toEqual({ 'p.m': 2000 });
+    expect(lit.record).toEqual({ 'p.m': 2000 });
+    expect((await printed(text, 'W4', 'literal', 'W4::d')).row).toEqual({ 'p.n': 3 });
+  });
+});
+
+/*
  * A body is read in its OWNER's scope by every evaluator, and SysML resolves a
  * name in the innermost namespace first: where a body declares a name itself
  * — a parameter, a local, a parameter of the definition typing it, an unnamed

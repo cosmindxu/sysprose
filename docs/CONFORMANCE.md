@@ -25,7 +25,7 @@ W3C **RDF 1.1** (Turtle / XML Syntax) and **JSON-LD 1.1**, **OpenAPI 3.1**.
 | Dimension | Result |
 |---|---|
 | Conformance suite (`test/conformance`) | **71 passed / 0 failed** across **4 files** |
-| Full automated suite | **4227 passed / 0 failed / 0 skipped** across **157 files** + **193 E2E** across **84 spec files** = **4420 green** (measured 2026-10-09) |
+| Full automated suite | **4266 passed / 0 failed / 0 skipped** across **157 files** + **193 E2E** across **84 spec files** = **4459 green** (measured 2026-10-09) |
 | Command-line surface | **22 subcommands** in one spec table, over **6 shipped example models**, each of which is verified on every push — both figures measured off the tree by `test/unit/docs-counts.test.ts`, never quoted |
 | OMG element-graph JSON Schema validity of our `api-json` exports | **PASS** (all standard models, import→export stable) |
 | Reference XMI standard libraries ingested | **38,761 elements** across **98 packages** (from 109,673 source elements) |
@@ -1511,7 +1511,7 @@ Sysprose has never been conformance-tested by the OMG or anyone else.
 ```bash
 cd sysprose
 
-# Full unit + integration + conformance suite (4227 pass / 0 skip, 157 files)
+# Full unit + integration + conformance suite (4266 pass / 0 skip, 157 files)
 npm test                    # === npx vitest run
 
 # Just the conformance scorecard suite (71 pass, 4 files)

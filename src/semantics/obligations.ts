@@ -84,13 +84,17 @@ import {
   type VarSort,
 } from './contracts';
 import {
+  boundAboveSentence,
+  boundHereSentence,
   contradictedBindingOf,
   defaultGivesWay,
   hasStatedValue,
   isAsserted,
   isParameterisedCalculation,
+  relationNamesOf,
   sharedDefinitions,
   statedValueOf,
+  usageOwnedRefusal,
 } from './defining-equation';
 import { DOUBLE_DIGITS, significantDigitsOf, type ExprNode } from './expr';
 import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
@@ -591,7 +595,13 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
     const encodable =
       filed.source === 'calculation' && isParameterisedCalculation(model, el)
         ? parameterisedCalculation(reading.encodable)
-        : unreadAxiom(filed.role, reading.encodable, reading.unread);
+        : usageOwnedGoal(
+            model,
+            el,
+            filed.role,
+            relationNamesOf(raw),
+            unreadAxiom(filed.role, reading.encodable, reading.unread),
+          );
     const instances = filed.source !== 'calculation' ? instanceRows(model, el, raw, filed, memo, contract) : undefined;
     if (filed.source !== 'calculation') read.set(el.id, { el, raw, filed, ...(contract ? { contract } : {}) });
     const sharedWith = instances?.shared[0];
@@ -857,6 +867,11 @@ function instanceRows(
   const sharedOut: Array<{ context: ElementRecord; vars: ContractVariable[] }> = [];
   const definitions = sharedDefinitions(model);
   for (const context of only ?? definitions.readingContexts(el, names)) {
+    // A context listed only because a binding member reads its own value there
+    // (M7's q2) is read by no surface yet: its goal is refused in the sentence
+    // the check gives it, and an assert adds no axiom there.
+    const boundOnly = !only && definitions.readsBoundOnly(el, names, context.id);
+    if (boundOnly && filed.role === 'axiom') continue;
     // Read for the context's own instance: a feature the relation owns (a
     // constraint's `attribute k`) is the context's, one per context, and not
     // the symbol the relation's own reading and every other context share.
@@ -865,12 +880,16 @@ function instanceRows(
     const own = unreadAxiom(filed.role, reading.encodable, reading.unread);
     const shared = filed.role === 'axiom' && own === true ? sharedSymbolsOf(model, context, reading) : [];
     if (shared.length > 0) sharedOut.push({ context, vars: shared });
-    const encodable = boundAbove(
-      model,
-      context,
-      names,
-      filed.role === 'axiom' ? sharedSymbolAxiom(model, context, reading, own) : reading.encodable,
-    );
+    const encodable: Encodable = boundOnly
+      ? reading.encodable === true
+        ? { reason: 'unread-definition', detail: boundHereSentence(definitions, context.id) }
+        : reading.encodable
+      : boundAbove(
+          model,
+          context,
+          names,
+          filed.role === 'axiom' ? sharedSymbolAxiom(model, context, reading, own) : reading.encodable,
+        );
     out.push({
       // A requirement's clauses read in one context are a requirement of their
       // own there: its assumptions are the premises of its goals, never of
@@ -911,16 +930,31 @@ function instanceRows(
 function boundAbove(model: Model, context: ElementRecord, names: readonly string[], encodable: Encodable): Encodable {
   if (encodable !== true) return encodable;
   const definitions = sharedDefinitions(model);
-  const other = definitions.boundAbove(context.id, names);
-  if (!other) return encodable;
-  const where = definitions.contextName(context.id);
-  return {
-    reason: 'unread-definition',
-    detail:
-      `the relation is read in ${where}, and a binding above it joins what it reads to another value in ` +
-      `${definitions.contextName(other.id)}: each instance reads it otherwise, and this tool reads it for one ` +
-      'alone, so it is not carried',
-  };
+  const above = definitions.boundAbove(context.id, names);
+  if (!above) return encodable;
+  return { reason: 'unread-definition', detail: boundAboveSentence(definitions, context.id, above) };
+}
+
+/**
+ * The encodability of a GOAL — a constraint, a `require`d clause or an
+ * assumption — written in a usage that stands for several instances, one of
+ * which a binding above it reads otherwise ({@link usageOwnedRefusal}):
+ * refused, whatever the gates said. R17c's `part p : P { constraint c2 {
+ * load <= 10.0 } }` in Q was PROVED at Q's own L, which Q's `bind p.load = L`
+ * gives p's load, while q's p — L of 50 — breaks it. An asserted relation
+ * keeps its axiom: read for the usage's generic instance, it is a weaker
+ * assumption than the one every instance holds, and sound.
+ */
+function usageOwnedGoal(
+  model: Model,
+  el: ElementRecord,
+  role: ObligationRole,
+  names: readonly string[],
+  encodable: Encodable,
+): Encodable {
+  if (encodable !== true || role === 'axiom') return encodable;
+  const detail = usageOwnedRefusal(model, el, names);
+  return detail ? { reason: 'unread-definition', detail } : encodable;
 }
 
 /** A relation as {@link obligationsOf} filed it: what {@link satisfierRows} reads again. */
@@ -1473,6 +1507,8 @@ function bindingInstanceRows(model: Model, el: ElementRecord, memo: DerivationMe
   const definitions = sharedDefinitions(model);
   const out: Obligation[] = [];
   for (const context of definitions.changingContexts(el, [left, right])) {
+    // Listed only because a member reads its own value there: no axiom yet.
+    if (definitions.readsBoundOnly(el, [left, right], context.id)) continue;
     const reading = readRelation(
       model,
       { ...el, ownerId: context.id },

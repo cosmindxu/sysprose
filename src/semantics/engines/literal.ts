@@ -41,7 +41,7 @@
 
 import { type ElementId, type Model } from '@core/index';
 import { checkConstraints, checksByRow, type ConstraintCheck } from '../evaluate-model';
-import { evaluateFeatureValue, featuresWithoutValue } from '../evaluate-model';
+import { evaluateFeatureValue, featuresWithoutValue, valueAtPath } from '../evaluate-model';
 import { rowElement, type Obligation } from '../obligations';
 import { type ContractRef, type Refusal, type RefusalReason, type VariableRole } from '../contracts';
 import { withinTolerance } from '../exact';
@@ -171,7 +171,10 @@ export interface ValueBinding {
   path: string;
   /** The same feature by qualified name — never by element id, which is fresh per load. */
   qualifiedName: string;
-  /** The value as STORED, in the feature's own declared unit. */
+  /**
+   * The value as STORED, in the feature's own declared unit — `null` where the model gives none, and for a
+   * path read through an instance where the check's scalar scope finds none ({@link modelBindings}).
+   */
   value: number | boolean | string | null;
   unit: string | null;
   /**
@@ -433,6 +436,10 @@ function quantities(
  * it is recorded so an evidence record says WHICH point of the design space was
  * evaluated rather than only what happened there. Values are reported as
  * STORED, in the feature's declared unit, because that is what the file says.
+ * A path read through an instance of its own is that instance's value, as the
+ * check's scalar scope reads it ({@link valueAtPath}), and no value (`null`)
+ * where that reading finds none — a derived value a binding carries into the
+ * instance, or an expression with a unit literal, which it does not read.
  *
  * "What a reader would have to change to move the verdict" is true only of the
  * roles that are *stated*. A `derived` feature stores the magnitude its own
@@ -448,9 +455,18 @@ function quantities(
  */
 export function modelBindings(model: Model, row: Obligation): ValueBinding[] {
   const out: ValueBinding[] = [];
+  const el = rowElement(model, row);
   for (const v of row.vars) {
-    const r = evaluateFeatureValue(model, v.featureId);
-    const raw = 'value' in r ? r.value : null;
+    // A path read through an instance of its own (`q.m2`, ContractVariable.instance) is THAT instance's
+    // value, read where the relation reads it: the feature's own value is the definition's (9 beside the
+    // −40 the row compared). Every other path is its feature's, the same wherever it is read.
+    let raw: unknown = null;
+    if (!v.instance) {
+      const r = evaluateFeatureValue(model, v.featureId);
+      raw = 'value' in r ? r.value : null;
+    } else if (el) {
+      raw = valueAtPath(model, el, v.path);
+    }
     out.push({
       path: v.path,
       qualifiedName: v.qualifiedName,

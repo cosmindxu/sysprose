@@ -44,9 +44,11 @@ import {
   GUARD_CONTACT,
   MAX_DERIVATION_DEPTH,
   baseIdOf,
+  boundPartnerSafe,
   chooseDefinition,
   definitionKey,
   definitionsInFlight,
+  hasUserBindings,
   instanceKey,
   isAsserted,
   hasStatedValue,
@@ -1541,6 +1543,10 @@ export type DerivationMemo = Map<ElementId, FeatureDerivation> & {
   everyPath?: true;
   /** The every-path memo of this pass, made on first use. */
   everyPathMemo?: DerivationMemo;
+  /** This memo's derivations are read for a dimension, never a value ({@link dimensionsMemo}). */
+  dimensions?: true;
+  /** The dimension memo of this pass, made on first use. */
+  dimensionsMemo?: DerivationMemo;
 };
 
 /** What one pass reads of the model once: the defining equations of each context, and its scope's names. */
@@ -1573,6 +1579,32 @@ function everyPathMemo(model: Model, memo: DerivationMemo): DerivationMemo {
     memo.everyPathMemo = every;
   }
   return memo.everyPathMemo;
+}
+
+/**
+ * The memo of the DIMENSION reading of this pass: derivations read for the
+ * kind of quantity a value is — its dimension, unit and claim, which are one
+ * in every instance — and never for a verdict ({@link derivationOf}, {@link
+ * operandDerivation}, {@link dimensionClaim}). So a bound partner is read
+ * where it is written there, though a context that stands for instances which
+ * read it otherwise reads no value through it ({@link definedQuantity}): the
+ * unit gates of the solver lane and the verification engines kept refusing
+ * `L == 2.0 * K` (K bound to a mass) as a bare number against a derived
+ * dimension, where only K's value — not its kilograms — was another in each
+ * instance. It shares the pass's reading of the model, never its derivations;
+ * it is the model's own memo where no binding the user wrote can make a
+ * partner's value differ ({@link hasUserBindings}).
+ */
+function dimensionsMemo(model: Model, memo: DerivationMemo): DerivationMemo {
+  if (memo.dimensions === true || memo.everyPath === true || !hasUserBindings(model)) return memo;
+  const pass = passOf(model, memo);
+  if (memo.dimensionsMemo?.pass !== pass) {
+    const dims: DerivationMemo = new Map();
+    dims.pass = pass;
+    dims.dimensions = true;
+    memo.dimensionsMemo = dims;
+  }
+  return memo.dimensionsMemo;
 }
 
 /**
@@ -2117,7 +2149,12 @@ function definedQuantity(
   if (candidates.length === 0) {
     const inherited = definitions.definitionReadIn(contextId, name);
     if (inherited !== undefined) return read(feature.id, name, inherited.site, inherited.at);
-    // No equation: a binding may hold it to a derived value ({@link boundDerivation}).
+    // No equation: a binding may hold it to a derived value ({@link
+    // boundDerivation}) — read where the partner is written, so only where
+    // that is every instance's value the context stands for (the guard the
+    // scalar twin `boundOf` of ./evaluate-model reads too). Its dimension is
+    // every instance's ({@link dimensionsMemo}).
+    if (memo.dimensions !== true && !boundPartnerSafe(model, contextId, name, feature.id)) return undefined;
     const bound = boundDerivation(model, feature.id, memo);
     if (!bound) return undefined;
     note(reads, bound);
@@ -2147,7 +2184,7 @@ function backTo(model: Model, id: ElementId, inFlight: InFlight): FeatureDerivat
 
 /** The {@link DimensionClaim} of a feature's value. */
 export function dimensionClaim(model: Model, featureId: ElementId, memo: DerivationMemo = new Map()): DimensionClaim {
-  return deriveFeature(model, featureId, new Map(), memo).claim;
+  return deriveFeature(model, featureId, new Map(), dimensionsMemo(model, memo)).claim;
 }
 
 /**
@@ -2198,14 +2235,17 @@ export function derivedDimensionOf(
 export function derivationOf(
   model: Model,
   featureId: ElementId,
-  memo: DerivationMemo = new Map(),
+  given: DerivationMemo = new Map(),
 ): FeatureDerivation | undefined {
+  const memo = dimensionsMemo(model, given);
   const own = deriveFeature(model, featureId, new Map(), memo);
   if (own.derived) return own;
   const feat = model.get(featureId);
   if (!feat || hasStatedValue(model, feat)) return undefined;
   const byEquation = definitionDerivation(model, featureId, memo);
   if (byEquation) return byEquation.derived && byEquation.claim !== 'mismatch' ? byEquation : undefined;
+  // The dimension alone, which a binding gives every instance alike: no value
+  // is read here ({@link dimensionsMemo}).
   const bound = boundDerivation(model, featureId, memo);
   return bound?.derived && bound.claim !== 'mismatch' ? bound : undefined;
 }
@@ -2224,15 +2264,18 @@ export function derivationOf(
 export function operandDerivation(
   model: Model,
   featureId: ElementId,
-  memo: DerivationMemo = new Map(),
+  given: DerivationMemo = new Map(),
 ): { derivation: FeatureDerivation; byDefinition: boolean } | undefined {
   const feat = model.get(featureId);
   if (!feat) return undefined;
+  const memo = dimensionsMemo(model, given);
   if (hasStatedValue(model, feat)) {
     return { derivation: deriveFeature(model, featureId, new Map(), memo), byDefinition: false };
   }
   const byEquation = definitionDerivation(model, featureId, memo);
   if (byEquation) return { derivation: byEquation, byDefinition: true };
+  // The record a gate refuses the operand by — its dimension and unit, the
+  // same in every instance ({@link dimensionsMemo}).
   const bound = boundDerivation(model, featureId, memo);
   return bound ? { derivation: bound, byDefinition: false } : undefined;
 }

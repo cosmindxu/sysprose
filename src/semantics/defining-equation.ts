@@ -282,6 +282,8 @@ export class DefiningEquations {
   private specialised?: Map<ElementId, ElementRecord[]>;
   private satisfying?: Map<ElementId, { requirement: ElementRecord; satisfier: ElementRecord }>;
   private readonly clauseContexts = new Map<ElementId, ElementRecord[]>();
+  /** {@link changingContexts} per relation and names, with those a feature-only binding reading lists too. */
+  private readonly changing = new Map<string, { listed: ElementRecord[]; plain: ReadonlySet<ElementId> }>();
 
   constructor(readonly model: Model) {
     this.rev = model.rev;
@@ -1434,16 +1436,70 @@ export class DefiningEquations {
    * (`part s : S` beside `part def S :> P { :>> load … }`).
    */
   changingContexts(el: ElementRecord, names: readonly string[]): ElementRecord[] {
+    return this.contextsOf(el, names).listed;
+  }
+
+  /**
+   * Is the context `contextId` one `el` is read in ({@link readingContexts})
+   * only because a binding member is read there otherwise than where it is
+   * written ({@link readsOtherwise}) — a context the binding's reading by
+   * feature alone does not list? M7's `q2 : Q { :>> K = 25.0; }` reads Q's `L =
+   * 2.0 * K`, which Q's `bind p.load = L` gives p's load, as its own 50: Q's `c
+   * { p.load <= 5.0 }` is q2's own there, and no surface reads a bound value
+   * for one instance yet — so every surface leaves that reading undecided
+   * ({@link boundHereSentence}). Read as the context reads its names, it
+   * published a value the binding does not give: over an asserted partner
+   * (`assert constraint { L == 2.0 * K }`), P's default through the end copy,
+   * as Q2's `p.load` beside Q2's L of 50.
+   */
+  readsBoundOnly(el: ElementRecord, names: readonly string[], contextId: ElementId): boolean {
+    const role = el.attrs.requirementRole;
+    if ((role !== 'require' && role !== 'assume') || el.ownerId == null) {
+      return !this.contextsOf(el, names).plain.has(contextId);
+    }
+    for (const c of this.model.children(el.ownerId)) {
+      const r = c.attrs.requirementRole;
+      if ((r !== 'require' && r !== 'assume') || typeof c.attrs.expression !== 'string') continue;
+      const body = parseRelationBody(c.attrs.expression);
+      if (body && this.contextsOf(c, refsIn(body.node, body.literals)).plain.has(contextId)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * {@link changingContexts}, and the contexts the binding reading by feature
+   * alone lists (`plain`, {@link bindingReadingIn}): a context is listed where
+   * either lists it, so none a feature-only reading lists is ever dropped.
+   */
+  private contextsOf(
+    el: ElementRecord,
+    names: readonly string[],
+  ): { listed: ElementRecord[]; plain: ReadonlySet<ElementId> } {
+    const key = `${el.id} ${el.ownerId ?? ''} ${names.join(' ')}`;
+    const hit = this.changing.get(key);
+    if (hit) return hit;
+    const answer = this.contextsUncached(el, names);
+    this.changing.set(key, answer);
+    return answer;
+  }
+
+  private contextsUncached(
+    el: ElementRecord,
+    names: readonly string[],
+  ): { listed: ElementRecord[]; plain: ReadonlySet<ElementId> } {
+    const plain = new Set<ElementId>();
     const owner = el.ownerId;
-    if (owner == null || names.length === 0) return [];
+    if (owner == null || names.length === 0) return { listed: [], plain };
     const contexts = this.specialisersOf(owner);
-    if (contexts.length === 0) return [];
+    if (contexts.length === 0) return { listed: [], plain };
     const ownAll = this.scope(owner, 'all');
     const ownValue = this.scope(owner, 'value');
     const reads = this.boundReads(owner, names);
     const ownBound = reads.size > 0 ? bindingReadingIn(this.model, owner, owner, reads) : undefined;
+    const ownPlain = reads.size > 0 ? bindingReadingIn(this.model, owner, owner, reads, false) : undefined;
     const out: ElementRecord[] = [];
     const readings = new Set<string>();
+    const plainReadings = new Set<string>();
     for (const x of contexts) {
       if (x.id === owner || x.id === el.id) continue;
       const all = this.scope(x.id, 'all');
@@ -1473,19 +1529,32 @@ export class DefiningEquations {
         else if (valued && (at === undefined) !== (this.readAt(owner, n) === undefined)) changed = true;
         else if (!valued && (site === undefined) !== (this.definitionSite(owner, n) === undefined)) changed = true;
       }
-      // A value read through a binding the context joins otherwise: its own.
+      // A value read through a binding the context joins otherwise: its own —
+      // by the features it joins (`plain`), or by what a member reads there.
+      let listed = false;
       if (ownBound !== undefined) {
         const bound = bindingReadingIn(this.model, owner, x.id, reads);
+        const byFeature = bindingReadingIn(this.model, owner, x.id, reads, false);
+        const key = [...reading, byFeature ?? ''].join(' ');
+        if ((changed || byFeature !== ownPlain) && !plainReadings.has(key)) {
+          plainReadings.add(key);
+          plain.add(x.id);
+          listed = true;
+        }
         reading.push(bound ?? '');
         if (bound !== ownBound) changed = true;
+      } else if (changed && !plainReadings.has(reading.join(' '))) {
+        plainReadings.add(reading.join(' '));
+        plain.add(x.id);
       }
-      if (!changed) continue;
       const key = reading.join(' ');
-      if (readings.has(key)) continue;
-      readings.add(key);
-      out.push(x);
+      if (changed && !readings.has(key)) {
+        readings.add(key);
+        listed = true;
+      }
+      if (listed || plain.has(x.id)) out.push(x);
     }
-    return out;
+    return { listed: out, plain };
   }
 
   /**
@@ -1524,11 +1593,25 @@ export class DefiningEquations {
    * <= 10.0` read in `Q::p` — or `undefined`. A relation read in `Q::p` is read
    * for Q's own p; q's p is an instance of P that no context names, so the
    * reading is not every Q's p's ({@link bindingReadingIn}).
+   *
+   * While a binding of the model was read in fewer contexts than it holds in
+   * ({@link bindingCapOf}), the context that reads it otherwise may be one
+   * left out: any reading of a binding's end — what `names` read, or what
+   * their values read — answers the cap (`pastCap`), wherever it is read. So
+   * does a reading of an end of one binding left out of a context
+   * ({@link BindingEnds.unread}).
    */
-  boundAbove(contextId: ElementId, names: readonly string[]): ElementRecord | undefined {
-    if (bindingEndsOf(this.model).size === 0) return undefined;
+  boundAbove(contextId: ElementId, names: readonly string[]): BoundAbove | undefined {
+    if (!hasUserBindings(this.model)) return undefined;
     const reads = this.boundReads(contextId, names);
     if (reads.size === 0) return undefined;
+    const { cap, ends, unread } = bindingEnds(this.model);
+    if (cap !== undefined || unread.size > 0) {
+      for (const id of reads) {
+        if (cap !== undefined && ends.has(id)) return { pastCap: cap };
+        if (unread.has(id)) return { pastCap: 'outside' };
+      }
+    }
     const seen = new Set<ElementId>();
     for (let cur = this.model.get(contextId); cur && isUsage(cur.eClass) && cur.ownerId != null; ) {
       if (seen.has(cur.id)) return undefined;
@@ -1552,7 +1635,7 @@ export class DefiningEquations {
    */
   private boundReads(contextId: ElementId, names: readonly string[]): Set<ElementId> {
     const out = new Set<ElementId>();
-    if (bindingEndsOf(this.model).size === 0) return out;
+    if (!hasUserBindings(this.model)) return out;
     const denoted = this.denote(contextId);
     for (const n of names) {
       const d = denoted.get(n);
@@ -1817,6 +1900,59 @@ interface BindingEnds {
    * and the component it is in ({@link heldDefaults}).
    */
   readings: ReadonlyMap<ElementId, ReadonlyMap<string, { feature: ElementId; component: string }>>;
+  /**
+   * Whether a binding was read in fewer contexts than it holds in — past
+   * {@link MAX_BINDING_FRAMES}, or a context deeper than
+   * {@link MAX_BINDING_SEGMENTS} usages left out ({@link heldDefaults}) —
+   * and which cap it met first. While it holds, no bound value is read for
+   * any one instance ({@link boundPartnerSafe}, {@link
+   * DefiningEquations.boundAbove}): coarse, and model-wide, but sound.
+   */
+  partial: boolean;
+  cap?: BindingCap;
+  /**
+   * The ends of the bindings read in a context where one of their ends is no
+   * feature this tool finds ({@link heldDefaults}) — held as past a cap, and
+   * read for no one instance ({@link boundPartnerSafe}, {@link
+   * DefiningEquations.boundAbove}): per binding, not model-wide.
+   */
+  unread: ReadonlySet<ElementId>;
+  /**
+   * The ends of the bindings that join a feature of an instance enclosing
+   * where they are written (R's `L` in `part q : Q { bind p.load = L; }`):
+   * read where they are written by their own id (`#…`), for every such
+   * instance alike ({@link readAsJoined}).
+   */
+  enclosed: ReadonlySet<ElementId>;
+  /** How many binding connectors the USER wrote — the library's are never read ({@link hasUserBindings}). */
+  userBindings: number;
+  /** The two ends of each of them: what one connector joins, whatever context reads it ({@link joinedTo}). */
+  edges: ReadonlyArray<readonly [ElementId, ElementId]>;
+  /** Lazy indexes over `readings`, built when first asked ({@link indexOf}). */
+  index?: BindingIndex;
+}
+
+/**
+ * The cap a binding's reading met ({@link BindingEnds.partial}) — or, for one
+ * binding alone, `outside`: a context it holds in where an end it joins is no
+ * feature this tool finds ({@link BindingEnds.unread}).
+ */
+export type BindingCap = 'frames' | 'segments' | 'outside';
+
+/**
+ * The lazy indexes over {@link BindingEnds.readings}: each context's
+ * components with their member paths (`members`), the contexts and paths
+ * each feature is a member at (`roots`), how each member is read there
+ * (`marks`, {@link readsOtherwise}), the features the connectors join to
+ * each end (`joined`, {@link joinedTo}), and whether every context reads a
+ * feature's component as its connectors join it (`uniform`).
+ */
+interface BindingIndex {
+  members: Map<ElementId, Map<string, string[]>>;
+  roots: Map<ElementId, Array<{ root: ElementId; path: string }>>;
+  marks: Map<ElementId, Map<string, string>>;
+  joined?: Map<ElementId, ReadonlySet<ElementId>>;
+  uniform: Map<ElementId, boolean>;
 }
 
 const BINDING_ENDS = new WeakMap<Model, BindingEnds>();
@@ -1824,18 +1960,35 @@ const BINDING_ENDS = new WeakMap<Model, BindingEnds>();
 /** Past this many contexts for one binding, its ends are held wherever they read a default. */
 const MAX_BINDING_FRAMES = 4096;
 
+/** Past this many usages on a context's path below where a binding is written, the context is not read. */
+const MAX_BINDING_SEGMENTS = 32;
+
 function bindingEnds(model: Model): BindingEnds {
   const hit = BINDING_ENDS.get(model);
   if (hit && hit.rev === model.rev) return hit;
   const ends = new Set<ElementId>();
   const bindings: ElementRecord[] = [];
+  const edges: Array<readonly [ElementId, ElementId]> = [];
   for (const el of model.all()) {
     if (!isBindingConnector(el)) continue;
     for (const id of [...(el.source ?? []), ...(el.target ?? [])]) ends.add(id);
-    if (el.attrs.isLibrary !== true && el.ownerId != null) bindings.push(el);
+    if (el.attrs.isLibrary === true || el.ownerId == null) continue;
+    bindings.push(el);
+    const [s, t] = [el.source?.[0], el.target?.[0]];
+    if (s !== undefined && t !== undefined && s !== t) edges.push([s, t]);
   }
-  const read = bindings.length > 0 ? heldDefaults(model, bindings) : { held: new Set<ElementId>(), readings: new Map() };
-  const fresh: BindingEnds = { rev: model.rev, ends, ...read };
+  const read: Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed'> =
+    bindings.length > 0
+      ? heldDefaults(model, bindings)
+      : { held: new Set<ElementId>(), readings: new Map(), unread: new Set<ElementId>(), enclosed: new Set<ElementId>() };
+  const fresh: BindingEnds = {
+    rev: model.rev,
+    ends,
+    ...read,
+    partial: read.cap !== undefined,
+    userBindings: bindings.length,
+    edges,
+  };
   BINDING_ENDS.set(model, fresh);
   return fresh;
 }
@@ -1843,6 +1996,361 @@ function bindingEnds(model: Model): BindingEnds {
 /** Every feature a binding connector touches ({@link isBindingConnector}), once per model revision. */
 export function bindingEndsOf(model: Model): ReadonlySet<ElementId> {
   return bindingEnds(model).ends;
+}
+
+/**
+ * Does the user's model hold a binding connector of its own? The library
+ * carries dozens (82 `BindingConnectorAsUsage` in the full one), and no
+ * surface reads them as the model's: a model that writes none — v9 — reads
+ * every value as it always did, and nothing below asks about bindings.
+ */
+export function hasUserBindings(model: Model): boolean {
+  return bindingEnds(model).userBindings > 0;
+}
+
+/**
+ * The cap a binding of the model met ({@link BindingEnds.partial}) —
+ * `undefined` while every binding is read in every context it holds in.
+ */
+export function bindingCapOf(model: Model): BindingCap | undefined {
+  return bindingEnds(model).cap;
+}
+
+/** The indexes over the model's binding readings ({@link BindingIndex}), built once per revision. */
+function indexOf(model: Model): BindingIndex {
+  const ends = bindingEnds(model);
+  if (ends.index) return ends.index;
+  const members = new Map<ElementId, Map<string, string[]>>();
+  const roots = new Map<ElementId, Array<{ root: ElementId; path: string }>>();
+  for (const [root, reading] of ends.readings) {
+    const byComponent = new Map<string, string[]>();
+    for (const [path, r] of reading) {
+      const list = byComponent.get(r.component);
+      if (list) list.push(path);
+      else byComponent.set(r.component, [path]);
+      const at = roots.get(r.feature);
+      if (at) at.push({ root, path });
+      else roots.set(r.feature, [{ root, path }]);
+    }
+    members.set(root, byComponent);
+  }
+  ends.index = { members, roots, marks: new Map(), uniform: new Map() };
+  return ends.index;
+}
+
+/**
+ * How the member at `path` of the binding reading of context `root` is read
+ * there: its feature id, with `@` and what its value reads there
+ * ({@link readSignature}) where it is read in another context than where it
+ * is written ({@link readsOtherwise}) — once per member.
+ */
+function markOf(model: Model, root: ElementId, path: string): string | undefined {
+  const r = bindingEnds(model).readings.get(root)?.get(path);
+  if (!r) return undefined;
+  const { marks } = indexOf(model);
+  let byPath = marks.get(root);
+  if (!byPath) {
+    byPath = new Map();
+    marks.set(root, byPath);
+  }
+  let mark = byPath.get(path);
+  if (mark === undefined) {
+    const f = model.get(r.feature);
+    const at = f ? readsOtherwise(model, root, path, f) : undefined;
+    mark = at === undefined || !f ? r.feature : `${r.feature}@${readSignature(model, at, f)}`;
+    byPath.set(path, mark);
+  }
+  return mark;
+}
+
+/**
+ * What makes the value of `f`, read in the context `at` ({@link
+ * readsOtherwise}), the one it is there: the features it reads, as `at`
+ * resolves them ({@link DefiningEquations.dependencies}). A usage that
+ * changes nothing the value reads — each of a thousand `part qi : Q2;` — reads
+ * it as Q2 does and signs it alike, so {@link
+ * DefiningEquations.changingContexts} lists one of them, as it lists one for a
+ * value it reads directly; q's `:>> K = 25.0` and q2's `:>> K = 0.1` sign it
+ * apart. Where the value reads a binding's end, what that end reads is no
+ * feature `at` resolves (`L = 2.0 * K` with `bind K = J`): the context itself
+ * signs it.
+ */
+function readSignature(model: Model, at: ElementId, f: ElementRecord): string {
+  const deps = sharedDefinitions(model).dependencies(at, f);
+  const { ends } = bindingEnds(model);
+  if (deps.length === 0 || deps.some((id) => ends.has(id))) return at;
+  return [...deps].sort().join('+');
+}
+
+/**
+ * The context the value of `f`, the member at `path` of a binding read in
+ * `contextId`, is read IN there, where that is not where it is written — or
+ * `undefined`. A value over names the context changes is the context's own
+ * ({@link DefiningEquations.readAt}): Q's `L = 2.0 * K` read at `L` in `q :
+ * Q { :>> K = 25.0; }` is q's 50, not Q's 1. So is one an asserted equation
+ * defines, read where the context changes what it reads ({@link
+ * DefiningEquations.definitionReadIn}, {@link
+ * DefiningEquations.chainDefinition}). A literal never is: it is one value in
+ * every instance.
+ *
+ * Where its own reading reads it already is no other context: a redefinition
+ * that states nothing reads the value it redefines in its own usage ({@link
+ * DefiningEquations.redefinedValueOf}) — p's copy of P's `m2 = 10.0 - load`
+ * in `p : P { :>> load = 50.0; }` is p's −40 however it is reached.
+ *
+ * Two contexts that join the same features read a binding alike only where
+ * each member is read as its own reading reads it in both — or in one context
+ * both share: a value the binding carries to its other end is read for the
+ * instance, and the generic reading of a partner (`boundDerivation` of
+ * ./units-eval, which reads it so) is that instance's only then ({@link
+ * boundPartnerSafe}).
+ */
+export function readsOtherwise(model: Model, contextId: ElementId, path: string, f: ElementRecord): ElementId | undefined {
+  const v = f.attrs.value;
+  if (typeof v === 'number' || typeof v === 'boolean') return undefined;
+  if (path.startsWith('#')) return undefined;
+  const definitions = sharedDefinitions(model);
+  const at = definitions.readAt(contextId, path);
+  if (at !== undefined) return at === definitions.redefinedValueOf(f)?.at ? undefined : at;
+  const read = path.includes('.')
+    ? definitions.chainDefinition([contextId], path)
+    : definitions.definitionReadIn(contextId, path);
+  return read && read.at !== read.site ? read.at : undefined;
+}
+
+/**
+ * Where a context `contextId` reads the binding component of the feature its
+ * bare `name` denotes — the context itself where a binding is read there,
+ * else the nearest context above it, climbing from a usage to its owner as
+ * {@link heldDefaults} does (`Q::p`'s `load` is read in Q, at `p.load`) — or
+ * `undefined` where no binding reaches it.
+ */
+function componentOf(
+  model: Model,
+  contextId: ElementId,
+  name: string,
+): { root: ElementId; path: string; feature: ElementId; component: string } | undefined {
+  const { readings } = bindingEnds(model);
+  const definitions = sharedDefinitions(model);
+  const seen = new Set<ElementId>();
+  let path = name;
+  for (let cur = model.get(contextId); cur && !seen.has(cur.id); ) {
+    seen.add(cur.id);
+    const r = readings.get(cur.id)?.get(path);
+    if (r) return { root: cur.id, path, ...r };
+    if (!isUsage(cur.eClass) || cur.ownerId == null || path.split('.').length > MAX_BINDING_SEGMENTS) return undefined;
+    const n = definitions.nameOf(cur);
+    if (n === undefined) return undefined;
+    path = `${n}.${path}`;
+    cur = model.get(cur.ownerId);
+  }
+  return undefined;
+}
+
+/**
+ * The features the user's binding connectors join to `featureId`, itself
+ * included — each connector's two ends, joined through the ends they share
+ * (`bind x = y; bind y = e;` holds `x` to `e`), wherever they are read. These
+ * are the partners `boundDerivation` of ./units-eval reads a value from.
+ */
+function joinedTo(model: Model, featureId: ElementId): ReadonlySet<ElementId> {
+  const index = indexOf(model);
+  if (!index.joined) {
+    const parent = new Map<ElementId, ElementId>();
+    const find = (a: ElementId): ElementId => {
+      let root = a;
+      while (parent.has(root) && parent.get(root) !== root) root = parent.get(root)!;
+      parent.set(a, root);
+      return root;
+    };
+    for (const [a, b] of bindingEnds(model).edges) {
+      if (!parent.has(a)) parent.set(a, a);
+      if (!parent.has(b)) parent.set(b, b);
+      const [x, y] = [find(a), find(b)];
+      if (x !== y) parent.set(x, y);
+    }
+    const classes = new Map<ElementId, Set<ElementId>>();
+    for (const id of parent.keys()) {
+      const root = find(id);
+      const set = classes.get(root) ?? new Set<ElementId>();
+      set.add(id);
+      classes.set(root, set);
+    }
+    index.joined = new Map([...parent.keys()].map((id) => [id, classes.get(find(id))!]));
+  }
+  return index.joined.get(featureId) ?? new Set([featureId]);
+}
+
+/**
+ * Does context `root` read the binding component `component` as its
+ * connectors join it to `featureId` — its members exactly the features they
+ * join ({@link joinedTo}), none a redefinition that stands in one's place
+ * there (`q2 : Q { :>> L = 50.0; }` joins Q's `load` to q2's own L), and each
+ * read where it is written ({@link readsOtherwise})? Then the value a partner
+ * gives where it is written is the value it gives there.
+ *
+ * Where the binding is written, a feature of an instance enclosing it is read
+ * by its own id — R's `L` for `part q : Q { bind p.load = L; }`, whichever R
+ * the q is in ({@link BindingEnds.enclosed}) — so that reading is every such
+ * instance's only `alike`: when every context that reads the binding in an
+ * instance of R reads it as joined ({@link uniformlyRead}).
+ */
+function readAsJoined(model: Model, root: ElementId, component: string, featureId: ElementId, alike = false): boolean {
+  const { readings, enclosed } = bindingEnds(model);
+  const reading = readings.get(root);
+  const paths = indexOf(model).members.get(root)?.get(component) ?? [];
+  const joined = joinedTo(model, featureId);
+  const features = new Set<ElementId>();
+  for (const path of paths) {
+    if (markOf(model, root, path)?.includes('@')) return false;
+    const r = reading?.get(path);
+    if (!r || !joined.has(r.feature)) return false;
+    if (!alike && path.startsWith('#') && enclosed.has(r.feature)) return false;
+    features.add(r.feature);
+  }
+  return features.size === joined.size;
+}
+
+/**
+ * Does every context a binding is read in read the component of `featureId`
+ * as its connectors join it ({@link readAsJoined})? Then a partner's value is
+ * one in every instance, and its generic reading is each one's. Vacuously so
+ * for a feature no binding reading reaches.
+ */
+function uniformlyRead(model: Model, featureId: ElementId): boolean {
+  const index = indexOf(model);
+  const hit = index.uniform.get(featureId);
+  if (hit !== undefined) return hit;
+  const { readings } = bindingEnds(model);
+  let answer = true;
+  for (const { root, path } of index.roots.get(featureId) ?? []) {
+    const component = readings.get(root)?.get(path)?.component;
+    if (component === undefined || !readAsJoined(model, root, component, featureId, true)) {
+      answer = false;
+      break;
+    }
+  }
+  index.uniform.set(featureId, answer);
+  return answer;
+}
+
+/**
+ * May the value a BINDING gives the valueless feature `featureId` — the one
+ * the bare `name` denotes in `contextId` — be read where its partner is
+ * written (`boundDerivation` of ./units-eval, which reads a derived partner at
+ * its own element)? That is each instance's value only where every instance
+ * the reading stands for reads the partner so:
+ *  - always, in a model that writes no binding ({@link hasUserBindings});
+ *  - never, while a binding was read in fewer contexts than it holds in
+ *    ({@link BindingEnds.partial}) and the feature, or the one it reads, is
+ *    any binding's end — or is an end of a binding left out of a context
+ *    ({@link BindingEnds.unread});
+ *  - where every context reads its component as its connectors join it
+ *    ({@link uniformlyRead});
+ *  - else where the context's own reading of the component does
+ *    ({@link readAsJoined}), and no context above it reads the binding
+ *    otherwise ({@link DefiningEquations.boundAbove}).
+ *
+ * M2's `q.p.m2` (P's `10.0 - load`, Q's `bind p.load = L` over `L = 2.0 *
+ * K`, q's K of 25) is read in `Q::p` for every Q's p: read at Q, L was 1 and
+ * m2 9 — a false refutation of `q.p.m2 <= 0.0`, where q's is −40. So was
+ * Q's `load <= 5.0` read in `q2 : Q { :>> L = 50.0; }` over Q's `L default =
+ * 2.0 * K`: Q's L of 1, where q2's load is its own L of 50. No value is read
+ * there now; only a reading per instance may give one.
+ */
+export function boundPartnerSafe(model: Model, contextId: ElementId, name: string, featureId: ElementId): boolean {
+  const ends = bindingEnds(model);
+  if (ends.userBindings === 0) return true;
+  const f = model.get(featureId);
+  if (!f) return true;
+  const definitions = sharedDefinitions(model);
+  const carried = definitions.carrier(contextId, f).id;
+  if (ends.partial && (ends.ends.has(f.id) || ends.ends.has(carried))) return false;
+  if (ends.unread.has(f.id) || ends.unread.has(carried)) return false;
+  if (uniformlyRead(model, f.id)) return true;
+  // Read where the context reads the component: no binding reaching it there
+  // leaves nothing that says which instances it stands for.
+  const own = componentOf(model, contextId, name);
+  if (!own || own.feature !== f.id || !readAsJoined(model, own.root, own.component, f.id)) return false;
+  return definitions.boundAbove(contextId, [name]) === undefined;
+}
+
+/**
+ * What {@link DefiningEquations.boundAbove} finds above a context: another
+ * context that reads a binding otherwise, or the cap a binding of the model
+ * met ({@link BindingEnds.partial}).
+ */
+export type BoundAbove = ElementRecord | { pastCap: BindingCap };
+
+/**
+ * Why a relation read in `contextId` is not read there for one instance
+ * ({@link DefiningEquations.boundAbove}) — the sentence every surface refuses
+ * or abstains on it with.
+ */
+export function boundAboveSentence(definitions: DefiningEquations, contextId: ElementId, above: BoundAbove): string {
+  const where = definitions.contextName(contextId);
+  if ('pastCap' in above) {
+    if (above.pastCap === 'outside') {
+      return (
+        `the relation is read in ${where} and reads a value a binding joins, and that binding joins a feature ` +
+        'outside where it is written that this tool finds no instance of in a context the binding holds in: ' +
+        'so it reads no value the binding gives for any one instance, and the relation is not carried'
+      );
+    }
+    const cap =
+      above.pastCap === 'frames'
+        ? `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
+        : `a binding of this model is read deeper than ${MAX_BINDING_SEGMENTS} usages`;
+    return (
+      `the relation is read in ${where} and reads a value a binding joins, and ${cap}: past that, this tool ` +
+      'reads no bound value for any one instance, so it is not carried'
+    );
+  }
+  return (
+    `the relation is read in ${where}, and a binding above it joins what it reads to another value in ` +
+    `${definitions.contextName(above.id)}: each instance reads it otherwise, and this tool reads it for one ` +
+    'alone, so it is not carried'
+  );
+}
+
+/**
+ * Why a relation is not read in the context `contextId`, which reads it
+ * otherwise only because a binding member's value is its own there ({@link
+ * DefiningEquations.readsBoundOnly}) — the sentence every surface leaves that
+ * reading undecided with.
+ */
+export function boundHereSentence(definitions: DefiningEquations, contextId: ElementId): string {
+  const where = definitions.contextName(contextId);
+  return (
+    `the relation is read in ${where}, and a binding joins what it reads to a value ${where} reads as its own: ` +
+    'this tool reads a bound value for one instance only where every instance reads it alike, so it is not carried'
+  );
+}
+
+/**
+ * Why a relation written in a USAGE is not read for one instance — the usage
+ * stands for several, and a binding above it reads what the relation reads
+ * otherwise in one of them ({@link DefiningEquations.boundAbove}) — or
+ * `undefined`. `part p : P { constraint c2 { load <= 10.0 } }` in Q, whose
+ * `bind p.load = L` gives q's p the load of q's `L = 50.0`, was PROVED at Q's
+ * own L of 1: c2 is a feature of every Q's p, and q's breaks it. Every surface
+ * reads such a relation as no verdict, in this sentence; an asserted one stays
+ * a fact of the model (its generic reading is a weaker, sound assumption).
+ * `names` are the names its body reads.
+ */
+export function usageOwnedRefusal(model: Model, el: ElementRecord, names: readonly string[]): string | undefined {
+  if (el.ownerId == null || !hasUserBindings(model)) return undefined;
+  const owner = model.get(el.ownerId);
+  if (!owner || !isUsage(owner.eClass)) return undefined;
+  const definitions = sharedDefinitions(model);
+  const above = definitions.boundAbove(owner.id, names);
+  return above ? boundAboveSentence(definitions, owner.id, above) : undefined;
+}
+
+/** The names a relation body reads, a `[unit]` literal's marker excluded, once each — `[]` for one that does not parse. */
+export function relationNamesOf(expr: string): string[] {
+  const body = parseRelationBody(expr.trim());
+  return body ? [...new Set(refsIn(body.node, body.literals))] : [];
 }
 
 /**
@@ -1880,23 +2388,45 @@ type EndValue = { kind: 'value' } | { kind: 'default'; source: ElementRecord } |
  * `default` in it gives way: the one a member writes (q's `:>> load default =
  * 30.0` in a `p` Q binds to its `L = 50.0`) and the one a member reads
  * through a redefinition (the copy `bind p.load = L` makes of P's `load`).
- * Where it has none, the defaults stand when they state one value — a binding
- * to a feature nothing gives a value (`attribute w; bind w = p.load;`)
- * carries the default INTO it, as it always did — and give way when they
- * differ: two defaults bound to each other are no value the model states,
- * and reading both made it contradict itself.
+ * Where it has none, one default stands — a binding to a feature nothing
+ * gives a value (`attribute w; bind w = p.load;`) carries the default INTO
+ * it, as it always did, an expression too — and two or more stand only where
+ * they are one CONSTANT value ({@link defaultsAgree}); otherwise they give
+ * way: two defaults bound to each other are no value the model states, and
+ * reading both made it contradict itself. An expression is never one value
+ * by its text: `2.0 * K` is another value in each instance that sets K.
  *
  * Read per context, a context's own value is no reason for a default where
  * the binding does not reach: Q's `L default = 1.0` stands in Q, though `q :
  * Q` sets L to 50 (q's L masks it there). The answer is per FEATURE: a
  * default that gives way in one context gives way in every one — a context
  * where it would have stood reads it through the binding, or not at all.
+ *
+ * A binding read in fewer contexts than it holds in — more than {@link
+ * MAX_BINDING_FRAMES}, or one deeper than {@link MAX_BINDING_SEGMENTS} usages
+ * left out — holds its ends wherever they read a default, since the context
+ * left out may be the one that gives them another value (a package's `bind
+ * top.a.….a.L = X` 33 usages down left T1's `L default = 1.0` standing
+ * beside X's 50), and sets `cap` ({@link BindingEnds.partial}).
  */
-function heldDefaults(model: Model, bindings: readonly ElementRecord[]): Pick<BindingEnds, 'held' | 'readings'> {
+function heldDefaults(
+  model: Model,
+  bindings: readonly ElementRecord[],
+): Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed'> {
   const definitions = sharedDefinitions(model);
   // Per context: the paths its bindings join, and the feature at each.
   const contexts = new Map<ElementId, { parent: Map<string, string>; at: Map<string, ElementRecord> }>();
   const held = new Set<ElementId>();
+  const unread = new Set<ElementId>();
+  const enclosed = new Set<ElementId>();
+  let cap: BindingCap | undefined;
+  // Read nowhere in particular: held wherever an end reads a default.
+  const holdEnds = (holder: ElementRecord, ids: readonly ElementId[]): void => {
+    for (const id of ids) {
+      const f = model.get(id);
+      if (f && endValue(model, f, holder, '').kind === 'default') held.add(f.id);
+    }
+  };
   const resolve = (root: ElementId, path: string): ElementRecord | undefined => {
     let owner = root;
     let f: ElementRecord | undefined;
@@ -1922,49 +2452,96 @@ function heldDefaults(model: Model, bindings: readonly ElementRecord[]): Pick<Bi
     const left = b.source?.[0];
     const right = b.target?.[0];
     if (!holder || left === undefined || right === undefined || left === right) continue;
-    const ends = [bindingEndPath(model, left, holder.id), bindingEndPath(model, right, holder.id)];
-    // The contexts it holds in, each with the path its ends are read at.
-    const frames: Array<{ root: ElementRecord; prefix: string }> = [{ root: holder, prefix: '' }];
-    const seen = new Set<string>([`${holder.id} `]);
+    const pair = [left, right] as const;
+    const places = [endPlace(model, left, holder), endPlace(model, right, holder)] as const;
+    places.forEach((place, k) => place.kind === 'enclosed' && enclosed.add(pair[k]));
+    // The contexts it holds in, each with the path its ends are read at — and,
+    // for an end of an instance that encloses the holder (R's `L` in `part q :
+    // Q { bind p.load = L; }`), the path from the context to that instance
+    // (`outer`), once a climb from a usage to its owner reached it.
+    type Frame = { root: ElementRecord; prefix: string; outer: readonly [string | undefined, string | undefined] };
+    const frames: Frame[] = [{ root: holder, prefix: '', outer: [undefined, undefined] }];
+    const index = new Map<string, number>([[`${holder.id} `, 0]]);
+    const next: number[][] = [];
+    let dropped = false;
     for (let i = 0; i < frames.length && frames.length <= MAX_BINDING_FRAMES; i++) {
-      const { root, prefix } = frames[i]!;
-      const next: Array<{ root: ElementRecord; prefix: string }> = definitions
-        .specialisersOf(root.id)
-        .map((z) => ({ root: z, prefix }));
+      const { root, prefix, outer } = frames[i]!;
+      const succ: Frame[] = definitions.specialisersOf(root.id).map((z) => ({ root: z, prefix, outer }));
       const name = isUsage(root.eClass) ? definitions.nameOf(root) : undefined;
       const owner = root.ownerId != null ? model.get(root.ownerId) : undefined;
       if (name !== undefined && owner && owner.attrs.isLibrary !== true) {
-        next.push({ root: owner, prefix: prefix === '' ? name : `${name}.${prefix}` });
+        const up = (k: 0 | 1): string | undefined => {
+          const o = outer[k];
+          if (o !== undefined) return o === '' ? name : `${name}.${o}`;
+          const place = places[k];
+          return place.kind === 'enclosed' && place.within.has(owner.id) ? '' : undefined;
+        };
+        succ.push({ root: owner, prefix: prefix === '' ? name : `${name}.${prefix}`, outer: [up(0), up(1)] });
       }
-      for (const f of next) {
+      const edges: number[] = [];
+      for (const f of succ) {
         const key = `${f.root.id} ${f.prefix}`;
-        if (seen.has(key) || f.prefix.split('.').length > 32) continue;
-        seen.add(key);
+        const known = index.get(key);
+        if (known !== undefined) {
+          edges.push(known);
+          continue;
+        }
+        if (f.prefix.split('.').length > MAX_BINDING_SEGMENTS) {
+          dropped = true;
+          continue;
+        }
+        index.set(key, frames.length);
+        edges.push(frames.length);
         frames.push(f);
       }
+      next[i] = edges;
     }
     if (frames.length > MAX_BINDING_FRAMES) {
-      // Read nowhere in particular: held wherever an end reads a default.
-      for (const id of [left, right]) {
-        const f = model.get(id);
-        if (f && endValue(model, f, holder, '').kind === 'default') held.add(f.id);
-      }
+      cap ??= 'frames';
+      holdEnds(holder, pair);
       continue;
     }
-    for (const { root, prefix } of frames) {
-      const at = (end: ElementId, path: string | undefined): [string, ElementRecord] | undefined => {
-        if (prefix === '' && root.id === holder.id) {
+    if (dropped) {
+      cap ??= 'segments';
+      holdEnds(holder, pair);
+    }
+    // A context below the instance that owns an end (a usage of the holder in
+    // that instance's definition, before a climb reaches it) reads the end
+    // where the climb does (`pending`); one in which an end is no feature at
+    // all — its path does not resolve there, or no climb reaches its owner —
+    // is a context left out, and its ends are held as past a cap.
+    const located: boolean[] = [];
+    const pending: boolean[] = [];
+    let outside = false;
+    for (let i = 0; i < frames.length; i++) {
+      const { root, prefix, outer } = frames[i]!;
+      const own = prefix === '' && root.id === holder.id;
+      const at = (k: 0 | 1): [string, ElementRecord] | 'pending' | undefined => {
+        const end = pair[k];
+        const place = places[k];
+        if (own || place.kind === 'global') {
           const f = model.get(end);
-          return f ? [path ?? `#${end}`, f] : undefined;
+          return f ? [own && place.kind === 'below' ? place.path : `#${end}`, f] : undefined;
         }
-        if (path === undefined) return undefined;
-        const full = prefix === '' ? path : `${prefix}.${path}`;
+        if (place.kind === 'nowhere') return undefined;
+        let full: string;
+        if (place.kind === 'below') full = prefix === '' ? place.path : `${prefix}.${place.path}`;
+        else if (outer[k] === undefined) return 'pending';
+        else full = outer[k] === '' ? place.path : `${outer[k]}.${place.path}`;
         const f = resolve(root.id, full);
         return f ? [full, f] : undefined;
       };
-      const l = at(left, ends[0]);
-      const r = at(right, ends[1]);
-      if (!l || !r) continue;
+      const l = at(0);
+      const r = at(1);
+      if (l === undefined || r === undefined) {
+        outside = true;
+        continue;
+      }
+      if (l === 'pending' || r === 'pending') {
+        pending[i] = true;
+        continue;
+      }
+      located[i] = true;
       let ctx = contexts.get(root.id);
       if (!ctx) {
         ctx = { parent: new Map(), at: new Map() };
@@ -1977,6 +2554,22 @@ function heldDefaults(model: Model, bindings: readonly ElementRecord[]): Pick<Bi
       const a = find(ctx.parent, l[0]);
       const c = find(ctx.parent, r[0]);
       if (a !== c) ctx.parent.set(a, c);
+    }
+    // A pending context is read where a climb from it reads both ends; one
+    // no climb takes there is left out.
+    const reached = located.slice();
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (let i = frames.length - 1; i >= 0; i--) {
+        if (reached[i] === true || pending[i] !== true || !(next[i] ?? []).some((j) => reached[j] === true)) continue;
+        reached[i] = true;
+        changed = true;
+      }
+    }
+    if (pending.some((p, i) => p && reached[i] !== true)) outside = true;
+    if (outside) {
+      holdEnds(holder, pair);
+      for (const id of pair) unread.add(id);
     }
   }
   const readings = new Map<ElementId, Map<string, { feature: ElementId; component: string }>>();
@@ -1993,16 +2586,112 @@ function heldDefaults(model: Model, bindings: readonly ElementRecord[]): Pick<Bi
     }
     readings.set(rootId, reading);
     for (const members of components.values()) {
-      const sources = new Map<ElementId, ElementRecord>();
-      for (const m of members) if (m.value.kind === 'default') sources.set(m.value.source.id, m.value.source);
-      if (sources.size === 0) continue;
+      // One default per MEMBER, not per source: R3a's `A::v` read at a1.v and
+      // at a2.v is two readings of `2.0 * K`, one per instance.
+      const defaults = members.flatMap((m) => (m.value.kind === 'default' ? [m.value.source] : []));
+      if (defaults.length === 0) continue;
       const stated = members.some((m) => m.value.kind === 'value');
-      const first = [...sources.values()][0]!;
-      const agree = [...sources.values()].every((g) => compareWrittenValues(first, g) === 'same');
-      if (stated || !agree) for (const m of members) if (m.value.kind === 'default') held.add(m.f.id);
+      if (stated || !defaultsAgree(defaults)) for (const m of members) if (m.value.kind === 'default') held.add(m.f.id);
     }
   }
-  return { held, readings };
+  return { held, readings, unread, enclosed, ...(cap !== undefined ? { cap } : {}) };
+}
+
+/**
+ * Do the defaults a binding component joins with no value of its own — one
+ * per member, `sources` the features that write them ({@link heldDefaults})
+ * — stand as ONE value in every instance they are read in?
+ *  - One default stands: a binding into a feature with nothing of its own
+ *    carries it, even an expression, read in that member's own instance.
+ *  - Two or more agree only where each is a CONSTANT — a literal number with
+ *    its unit, a boolean, or an expression that reads no name ({@link
+ *    constantOf}) — and all compare the same exactly ({@link sameConstant}).
+ *    Never by their text: R3a's one `v default = 2.0 * K`, read at a1.v and
+ *    at a2.v where a2 sets K to 5, is 2 and 10; and R3c's P and Q each write
+ *    `2.0 * K` over a K of their own.
+ */
+function defaultsAgree(sources: readonly ElementRecord[]): boolean {
+  if (sources.length < 2) return true;
+  const [first, ...rest] = sources;
+  return rest.every((g) => sameConstant(first!, g));
+}
+
+/**
+ * Do `a` and `b` write one CONSTANT value, compared exactly ({@link
+ * defaultsAgree})? Two literal numbers as {@link compareQuantities} reads
+ * them, two booleans as written, and otherwise two name-free expressions
+ * ({@link compareConstants}); anything that reads a name is no constant.
+ */
+function sameConstant(a: ElementRecord, b: ElementRecord): boolean {
+  const x = a.attrs.value;
+  const y = b.attrs.value;
+  if (typeof x === 'number' && typeof y === 'number') return compareQuantities(a, b) === 'same';
+  if (typeof x === 'boolean' && typeof y === 'boolean') return x === y;
+  const cx = constantOf(a);
+  const cy = constantOf(b);
+  return cx !== undefined && cy !== undefined && compareConstants(cx, cy) === 'same';
+}
+
+/**
+ * Where an end of a binding written in `holder` is, for {@link heldDefaults}:
+ *  - `below` the holder, at a path every context of it reads (`p.load` in `part
+ *    q : Q { bind p.load = L; }`);
+ *  - `global`: a feature of no definition — a package's, or a feature of one
+ *    of its usages — one instance wherever it is read (a package's `attribute G
+ *    = 2.0 * K` beside `part def Q { bind p.load = G; }`);
+ *  - `enclosed` by an instance the holder is a feature of: the nearest owner
+ *    of the holder the end is a feature of, through usages alone — R for R's
+ *    `L` above — with the path below it, and the contexts that are such an
+ *    instance (`within`: the owner and what specialises it);
+ *  - `nowhere` this tool finds an instance of it.
+ */
+type EndPlace =
+  | { kind: 'below'; path: string }
+  | { kind: 'global' }
+  | { kind: 'enclosed'; path: string; within: ReadonlySet<ElementId> }
+  | { kind: 'nowhere' };
+
+function endPlace(model: Model, end: ElementId, holder: ElementRecord): EndPlace {
+  const below = bindingEndPath(model, end, holder.id);
+  if (below !== undefined) return { kind: 'below', path: below };
+  const seen = new Set<ElementId>();
+  for (let cur = model.get(end); cur && !seen.has(cur.id); ) {
+    seen.add(cur.id);
+    const owner = cur.ownerId != null ? model.get(cur.ownerId) : undefined;
+    if (!owner || isDefinition(owner.eClass)) break;
+    if (!isUsage(owner.eClass)) return { kind: 'global' };
+    cur = owner;
+  }
+  const definitions = sharedDefinitions(model);
+  seen.clear();
+  for (let cur = holder.ownerId != null ? model.get(holder.ownerId) : undefined; cur && !seen.has(cur.id); ) {
+    seen.add(cur.id);
+    if (cur.attrs.isLibrary === true) break;
+    const path = instancePathBelow(model, end, cur.id);
+    if (path !== undefined) {
+      return { kind: 'enclosed', path, within: new Set([cur.id, ...definitions.specialisersOf(cur.id).map((x) => x.id)]) };
+    }
+    cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined;
+  }
+  return { kind: 'nowhere' };
+}
+
+/**
+ * The dotted path of feature `id` below `ownerId` through usages alone — the
+ * path an instance of `ownerId` reads it at — or `undefined`.
+ */
+function instancePathBelow(model: Model, id: ElementId, ownerId: ElementId): string | undefined {
+  const segments: string[] = [];
+  const seen = new Set<ElementId>();
+  for (let cur = model.get(id); cur; cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined) {
+    if (cur.id === ownerId) return segments.length > 0 ? segments.join('.') : undefined;
+    if (seen.has(cur.id) || !isUsage(cur.eClass)) return undefined;
+    seen.add(cur.id);
+    const name = effectiveNameOf(model, cur);
+    if (name === undefined) return undefined;
+    segments.unshift(name);
+  }
+  return undefined;
 }
 
 /**
@@ -2013,25 +2702,35 @@ function heldDefaults(model: Model, bindings: readonly ElementRecord[]): Pick<Bi
  * to Q's `L` in Q and to q's `:>> L = 50.0` in `q : Q`: a value Q reads
  * through p's load (`m2 = 10.0 - load`) is another in q, though no name of it
  * is redefined there.
+ *
+ * Each member is signed with what its value reads where it is read ({@link
+ * readsOtherwise}, {@link readSignature}): Q's `L = 2.0 * K` is the same
+ * feature in `q : Q { :>> K = 25.0; }`, read there as q's own 50 — so q joins
+ * p's load to another value too, and a relation Q reads through it is q's own
+ * (`Q::c in q`). `marked: false` signs by feature alone, as this did before
+ * values were signed ({@link DefiningEquations.readsBoundOnly}).
  */
 export function bindingReadingIn(
   model: Model,
   ownerId: ElementId,
   contextId: ElementId,
   features: ReadonlySet<ElementId>,
+  marked = true,
 ): string | undefined {
   const { readings } = bindingEnds(model);
   const own = readings.get(ownerId);
   if (!own) return undefined;
   const there = readings.get(contextId);
+  const { members } = indexOf(model);
+  const sign = (root: ElementId, p: string): string =>
+    (marked ? markOf(model, root, p) : readings.get(root)?.get(p)?.feature) ?? '';
+  const signed = (root: ElementId, component: string): string =>
+    [...new Set((members.get(root)?.get(component) ?? []).map((p) => sign(root, p)))].sort().join(',');
   const out: string[] = [];
   for (const [path, r] of own) {
     if (!features.has(r.feature)) continue;
     const x = there?.get(path);
-    const members = x
-      ? [...there!.values()].filter((m) => m.component === x.component).map((m) => m.feature)
-      : [...own.values()].filter((m) => m.component === r.component).map((m) => m.feature);
-    out.push(`${path}=${[...new Set(members)].sort().join(',')}`);
+    out.push(`${path}=${x ? signed(contextId, x.component) : signed(ownerId, r.component)}`);
   }
   return out.length > 0 ? out.sort().join(' ') : undefined;
 }

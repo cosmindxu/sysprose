@@ -3059,8 +3059,11 @@ read in q, as over any value q changes. Whether a default gives way is decided p
 a binding holds in: one that gives way in one context is read in none, so
 where `q1 : Q` sets the valueless L that P's load is bound to, a `q2 : Q` that
 leaves L unset reads no load at all rather than P's default. Two defaults
-bound to each other stand where they state one value and give way where they
-differ — the model states neither — so no surface calls that a contradiction.
+bound to each other stand only where they state one constant value (numbers,
+booleans or expressions that read no name, compared exactly) and give way
+otherwise — where they differ, and where one reads a name, however alike the
+text (`2.0 * K` bound to `2.0 * K` is two values where the Ks differ) — and
+the model states neither, so no surface calls that a contradiction.
 
 **A binding's contradiction is reported where the check decides the two ends
 differ.** A binding against a value written with `=` (P's `load = 1.0` beside

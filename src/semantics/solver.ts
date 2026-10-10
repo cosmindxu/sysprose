@@ -80,10 +80,12 @@ import {
   hasStatedValue,
   isAsserted,
   isParameterisedCalculation,
+  relationNamesOf,
   shadowedNamesOf,
   shadowedSentence,
   sharedDefinitions,
   statedValueOf,
+  usageOwnedRefusal,
   type InstanceReading,
 } from './defining-equation';
 import { effectiveNameOf, generalizationsOf } from './inheritance';
@@ -4101,6 +4103,17 @@ function numericRows(
       body !== undefined ? shadowedNamesOf(model, el, namesReadIn(body.node).filter((n) => !body.literals.has(n))) : [];
     if (shadowed.length > 0) {
       row.reason = shadowedSentence(model, el, shadowed);
+      out.push(row);
+      continue;
+    }
+    // A relation written in a usage that stands for instances a binding above
+    // it reads otherwise (usageOwnedRefusal): no verdict for any one of them,
+    // in the sentence the other surfaces give — the solve reads the usage's
+    // generic instance alone, and q's p, whose load the binding sets, breaks
+    // what Q's own p meets.
+    const shared = usageOwnedRefusal(model, el, relationNamesOf(raw));
+    if (shared) {
+      row.reason = shared;
       out.push(row);
       continue;
     }
