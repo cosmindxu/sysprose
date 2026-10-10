@@ -8,7 +8,8 @@
  * diamond/bar, state stadium) with its «keyword» + name, and each edge as a
  * straight connector clipped to the two shape borders (reusing
  * {@link getEdgeEndpoints}) with the per-kind SysML markers + line style
- * (reusing {@link edgeStyleFor}).
+ * (reusing {@link edgeStyleFor}). A layered General view's column headers
+ * (`graph.columns`) are drawn above the boxes they name.
  *
  * The result is a de-facto graphical interchange format: SysML v2 has no
  * standardized diagram-interchange file, but a standalone SVG round-trips into
@@ -20,6 +21,7 @@
 import { TEXTUAL_KEYWORD } from '@core/index';
 import { edgeStyleFor, MARKER, roundedPath, routeIsCurrent, routeLabelPoint } from './edges';
 import { edgeLabelText } from './edge-labels';
+import { COLUMN_LABEL_PAD_EM, columnLabelSizeFor, fitColumnLabel } from './column-headers';
 import { getEdgeEndpoints, shapeForKind, type NodeShape, type ShapedNode } from './geometry';
 import type { DiagramGraph, DiagramNode } from './types';
 
@@ -51,6 +53,10 @@ const KEYWORD_INK = '#718096';
 const NAME_INK = '#2d3748';
 const CONTROL_INK = '#2d3748';
 const EDGE_INK = '#4a5568';
+// The column headers' light-theme colours (--accent-soft, --accent, --text).
+const COLUMN_FILL = '#e8f0fe';
+const COLUMN_RULE = '#2563eb';
+const COLUMN_INK = '#1f2733';
 
 /* ──────────────────────────────── helpers ──────────────────────────────── */
 
@@ -283,7 +289,9 @@ export function svgFromDiagram(graph: DiagramGraph, opts: SvgExportOptions = {})
     placed.set(node.id, { node, x, y, w, h, shape: shapeForKind(node.kind) });
   }
 
-  // viewBox: bounding box of all node rectangles, padded. Empty graph → unit box.
+  // viewBox: bounding box of all node rectangles and column headers, padded.
+  // Empty graph → unit box.
+  const columns = graph.columns ?? [];
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -293,6 +301,12 @@ export function svgFromDiagram(graph: DiagramGraph, opts: SvgExportOptions = {})
     minY = Math.min(minY, p.y);
     maxX = Math.max(maxX, p.x + p.w);
     maxY = Math.max(maxY, p.y + p.h);
+  }
+  for (const c of columns) {
+    minX = Math.min(minX, c.x);
+    minY = Math.min(minY, c.y);
+    maxX = Math.max(maxX, c.x + c.w);
+    maxY = Math.max(maxY, c.y + c.h);
   }
   if (!Number.isFinite(minX)) {
     minX = 0;
@@ -354,6 +368,27 @@ export function svgFromDiagram(graph: DiagramGraph, opts: SvgExportOptions = {})
     }
   }
 
+  /* ── column headers: the package over each column of a layered view ── */
+  const columnSvg: string[] = [];
+  for (const c of columns) {
+    columnSvg.push(
+      `<g data-column-id="${escapeXml(c.id)}" data-elementid="${escapeXml(c.elementId)}">` +
+        `<rect x="${num(c.x)}" y="${num(c.y)}" width="${num(c.w)}" height="${num(c.h)}" ` +
+        `fill="${COLUMN_FILL}" stroke="${COLUMN_RULE}" stroke-width="${num(c.h * 0.04)}" />`,
+    );
+    if (withLabels) {
+      // A name wider than its column is shrunk to fit, then cut: a file cannot clip by CSS.
+      const size = columnLabelSizeFor(c.label, c.w, c.fontSize);
+      const label = fitColumnLabel(c.label, c.w - 2 * COLUMN_LABEL_PAD_EM * size, size);
+      columnSvg.push(
+        `<text x="${num(c.x + c.w / 2)}" y="${num(c.y + c.h / 2 + size * 0.35)}" text-anchor="middle" ` +
+          `font-family="${escapeXml(fontFamily)}" font-size="${num(size)}" font-weight="600" ` +
+          `fill="${COLUMN_INK}">${escapeXml(label)}</text>`,
+      );
+    }
+    columnSvg.push('</g>');
+  }
+
   /* ── nodes on top ── */
   const nodeSvg: string[] = [];
   for (const node of nodes) {
@@ -381,6 +416,7 @@ export function svgFromDiagram(graph: DiagramGraph, opts: SvgExportOptions = {})
     `data-node-count="${nodes.length}" data-edge-count="${edges.length}">` +
     markerDefs() +
     `<rect x="${num(vbX)}" y="${num(vbY)}" width="${width}" height="${height}" fill="#ffffff" />` +
+    (columnSvg.length ? `<g data-layer="column-headers">${columnSvg.join('')}</g>` : '') +
     `<g data-layer="edges">${edgeSvg.join('')}</g>` +
     `<g data-layer="nodes">${nodeSvg.join('')}</g>` +
     '</svg>'

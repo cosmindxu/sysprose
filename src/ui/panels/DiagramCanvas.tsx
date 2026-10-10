@@ -25,9 +25,11 @@ import {
   Panel,
   ReactFlow,
   ReactFlowProvider,
+  getViewportForBounds,
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useStoreApi,
   type Connection,
   type Edge,
   type EdgeMouseHandler,
@@ -51,6 +53,7 @@ import { usePaletteStore } from './Palette';
 import { NodeContextMenu } from './NodeContextMenu';
 import { PaneContextMenu } from './PaneContextMenu';
 import { Legend } from './Legend';
+import { ColumnHeaders } from './ColumnHeaders';
 
 /**
  * Canvas width (px) below which the minimap becomes a toggle ("Map"). It first
@@ -173,6 +176,40 @@ function DiagramCanvasInner(): JSX.Element {
   }, [tool.mode]);
 
   const rf = useReactFlow();
+  const rfStore = useStoreApi();
+  /**
+   * Fit the whole drawing in the canvas. On a layered General view the column
+   * headers are part of it: one cut off at the canvas's edge names nothing, and
+   * fitting the boxes alone left the top row's headers there. They also start
+   * below the toolbar floating over the canvas's top-right, which would
+   * otherwise hide the names of the columns it lies over.
+   */
+  const fitDrawing = useCallback(
+    (opts: { maxZoom?: number; duration?: number } = {}) => {
+      const columns = useAppStore.getState().diagram?.columns ?? [];
+      if (columns.length === 0) return rf.fitView({ padding: 0.15, ...opts });
+      const boxes = rf.getNodesBounds(rf.getNodes());
+      const x0 = Math.min(boxes.x, ...columns.map((c) => c.x));
+      const y0 = Math.min(boxes.y, ...columns.map((c) => c.y));
+      const x1 = Math.max(boxes.x + boxes.width, ...columns.map((c) => c.x + c.w));
+      const y1 = Math.max(boxes.y + boxes.height, ...columns.map((c) => c.y + c.h));
+      const { width, height, minZoom, maxZoom, domNode } = rfStore.getState();
+      const bar = domNode?.querySelector('.react-flow__panel.top.right');
+      const barBottom = domNode && bar ? bar.getBoundingClientRect().bottom - domNode.getBoundingClientRect().top : 0;
+      // The 15% margin of fitView, in px, or the toolbar's bottom edge and a gap, whichever is more.
+      const top = Math.max(Math.floor((height - height / 1.15) * 0.5), Math.ceil(barBottom) + 6);
+      const viewport = getViewportForBounds(
+        { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
+        width,
+        height,
+        minZoom,
+        opts.maxZoom ?? maxZoom,
+        { top: `${top}px`, x: 0.15, bottom: 0.15 },
+      );
+      return rf.setViewport(viewport, { duration: opts.duration });
+    },
+    [rf, rfStore],
+  );
   /** The view + scope the viewport was last fitted to (see the rebuild effect). */
   const fittedIdentity = useRef<string | null>(null);
   /** The node ids a fit is waiting for — see the fit effect below. */
@@ -271,14 +308,14 @@ function DiagramCanvasInner(): JSX.Element {
         pendingFit.current = null;
         // Never past 100%: a lone box blown up to fill the canvas reads no
         // better and covers the space where the next one would be placed.
-        void rf.fitView({ padding: 0.15, maxZoom: 1 });
+        void fitDrawing({ maxZoom: 1 });
       } else if (++frame < 120) {
         raf = requestAnimationFrame(tryFit);
       }
     };
     raf = requestAnimationFrame(tryFit);
     return () => cancelAnimationFrame(raf);
-  }, [nodes, rf]);
+  }, [nodes, rf, fitDrawing]);
 
   // Reflect the current model selection as React Flow selection.
   //
@@ -529,10 +566,7 @@ function DiagramCanvasInner(): JSX.Element {
 
   /* ───────────────────────── canvas mini-toolbar ─────────────────────────── */
 
-  const onFitAll = useCallback(
-    () => rf.fitView({ padding: 0.15, duration: fitDuration() }),
-    [rf],
-  );
+  const onFitAll = useCallback(() => fitDrawing({ duration: fitDuration() }), [fitDrawing]);
   /** Zoom/centre on a specific element's node (if it's in the current diagram). */
   const fitElement = useCallback(
     (elementId: string) => {
@@ -677,6 +711,7 @@ function DiagramCanvasInner(): JSX.Element {
         proOptions={{ hideAttribution: true }}
       >
         <Background />
+        <ColumnHeaders columns={diagram?.columns ?? []} />
         <Controls position="bottom-left" />
         {!narrowCanvas && <MiniMap pannable zoomable />}
         {narrowCanvas && minimapOpen && (

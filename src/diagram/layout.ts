@@ -33,10 +33,11 @@ import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ELK as ElkInstance, ElkExtendedEdge, ElkNode, ElkPort } from 'elkjs/lib/elk-api';
 import { isControlNode } from '@core/index';
 import { edgeLabelText, keywordLabelsAreRepetition } from './edge-labels';
+import { COLUMN_HEADER_GAP, columnHeaderHeight, columnLabelSize, columnSpans } from './column-headers';
 import { textWidth } from './text-measure';
 
 export { textWidth } from './text-measure';
-import type { DiagramEdge, DiagramGraph, DiagramNode, Point, ViewKind } from './types';
+import type { DiagramColumn, DiagramEdge, DiagramGraph, DiagramNode, Point, ViewKind } from './types';
 
 /** Fallback box size when a node has no measurable content. */
 const DEFAULT_NODE_W = 180;
@@ -629,6 +630,46 @@ export function thoroughnessFor(nodes: number): string {
 }
 
 /**
+ * The header columns of a laid-out piece, in the piece's own coordinates: one per
+ * package it spans, over that package's boxes, `band` px tall (see
+ * `column-headers.ts`). Undefined unless the graph names its packages
+ * (`partitions`) and the piece spans two or more of them.
+ */
+function columnHeads(
+  partitions: DiagramGraph['partitions'],
+  partitionOf: ReadonlyMap<string, unknown>,
+  piece: Piece,
+  g: PieceGeometry,
+): { band: number; columns: DiagramColumn[] } | undefined {
+  if (!partitions) return undefined;
+  const boxes: { partition: number; x: number; w: number }[] = [];
+  for (const id of piece.tops) {
+    const partition = partitionOf.get(id);
+    const n = g.nodes.get(id);
+    if (typeof partition === 'number' && n) boxes.push({ partition, x: n.absX, w: n.w });
+  }
+  const spans = columnSpans(boxes);
+  if (spans.length === 0) return undefined;
+  const band = columnHeaderHeight(g.width);
+  return {
+    band,
+    columns: spans.map((s) => {
+      const lane = partitions[s.partition]!;
+      return {
+        id: `col:${lane.elementId}:${piece.tops[0]}`,
+        elementId: lane.elementId,
+        label: lane.label,
+        x: s.x0,
+        y: 0,
+        w: s.x1 - s.x0,
+        h: band,
+        fontSize: columnLabelSize(band),
+      };
+    }),
+  };
+}
+
+/**
  * Lay out `graph` and return a new graph with `position` and `size` set on every
  * node and a `route` on every edge ELK routed. Positions of nested nodes are
  * relative to their parent (React Flow semantics); top-level nodes and routes
@@ -652,29 +693,38 @@ export async function layoutDiagram(
   for (const piece of pieces) {
     geoms.push(await layoutPiece(graph, piece, opts.elkOptions));
   }
+  // A piece that spans several packages is headed by a band naming each column;
+  // its room is reserved here, above the piece, so no box is ever under one.
+  const partitionOf = new Map(graph.nodes.map((n) => [n.id, (n.data as Record<string, unknown> | undefined)?.layoutPartition]));
+  const heads = pieces.map((piece, i) => columnHeads(graph.partitions, partitionOf, piece, geoms[i]!));
   const packed = packRows(
-    geoms.map((g) => ({ w: g.width, h: g.height })),
+    geoms.map((g, i) => ({ w: g.width, h: g.height + (heads[i] ? heads[i]!.band + COLUMN_HEADER_GAP : 0) })),
     opts.aspect ?? TARGET_ASPECT,
   );
 
   const place = new Map<string, { x: number; y: number; w: number; h: number; absX: number; absY: number }>();
   const routes = new Map<string, Point[]>();
   const labels = new Map<string, Point>();
+  const columns: DiagramColumn[] = [];
   geoms.forEach((g, i) => {
     const off = packed.offsets[i]!;
+    const head = heads[i];
+    // Everything of the piece sits under its header band, when it has one.
+    const dy = off.y + (head ? head.band + COLUMN_HEADER_GAP : 0);
     const tops = new Set(pieces[i]!.tops);
     for (const [id, n] of g.nodes) {
       place.set(id, {
         ...n,
         // Top-level boxes move with their piece; nested ones stay parent-relative.
         x: tops.has(id) ? n.x + off.x : n.x,
-        y: tops.has(id) ? n.y + off.y : n.y,
+        y: tops.has(id) ? n.y + dy : n.y,
         absX: n.absX + off.x,
-        absY: n.absY + off.y,
+        absY: n.absY + dy,
       });
     }
-    for (const [id, pts] of g.routes) routes.set(id, pts.map((p) => ({ x: p.x + off.x, y: p.y + off.y })));
-    for (const [id, p] of g.labels) labels.set(id, { x: p.x + off.x, y: p.y + off.y });
+    for (const [id, pts] of g.routes) routes.set(id, pts.map((p) => ({ x: p.x + off.x, y: p.y + dy })));
+    for (const [id, p] of g.labels) labels.set(id, { x: p.x + off.x, y: p.y + dy });
+    for (const c of head?.columns ?? []) columns.push({ ...c, x: c.x + off.x, y: off.y });
   });
 
   const nodes: DiagramNode[] = graph.nodes.map((n) => {
@@ -701,5 +751,5 @@ export async function layoutDiagram(
     };
   });
 
-  return { nodes, edges, viewKind: graph.viewKind };
+  return { nodes, edges, viewKind: graph.viewKind, ...(columns.length ? { columns } : {}) };
 }

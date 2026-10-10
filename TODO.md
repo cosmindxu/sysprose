@@ -90,11 +90,14 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       clause as `N more clause(s) inherited from X`, while `contracts` in the terminal prints its body
       marked `(inherited)`. Either show the body in the app, or record the difference as deliberate
       in `docs/USER-GUIDE.md`.
-- [ ] **Label the layer columns of a partitioned General view.** When a view spans a model's
-      top-level packages, the layout keeps them as left-to-right columns
-      (`assignPackagePartitions`, `src/diagram/build.ts`), but nothing on the canvas names the
-      columns. Draw a header per column (the package name, above its x-range) so the reading
-      order is visible, not only felt.
+- [ ] **Keep a layered General view's column headers on screen while panning down a column.** A
+      header (`src/ui/panels/ColumnHeaders.tsx`) is drawn once, above the top of its piece, so in
+      the drone-swarm model's whole General view (columns about 19,000 px tall) it is off screen
+      at every zoom where the boxes read. Pin it to the canvas's top edge while its piece runs
+      beneath it, clamped to the piece; decide how it then stays clear of the boxes under it. A box
+      moved by hand is not kept clear of a header either: it can be dropped into a band, and after
+      a re-layout its pin keeps its old coordinates (`applyPins`, `src/ui/store.ts`) while the
+      headers move with the new layout.
 - [ ] **Keep hand-placed boxes with the saved project.** `diagramPins` (`src/ui/store.ts`) holds
       the boxes a user moved, per view and scope, for the session only; Save/Open drop them.
       Persist them beside the model in the project store (never in the `.sysml` text).

@@ -338,9 +338,21 @@ the layout made room for them — never on a box, a line or another label.
 - **Many pieces become rows, not a strip.** A view's disconnected pieces are
   laid out one by one and packed row by row to about the screen's proportions:
   the largest piece top-left, then single boxes grouped by kind.
-- **A layered model reads layer by layer.** When a General view spans a
-  model's top-level packages (Kinds, Common, OA, SA, LA, PA, EPBS, say), they
-  become columns in that order.
+- **A layered model reads layer by layer.** When the boxes of a General view
+  all lie in two or more packages that sit directly in one package — the
+  model's single top-level package, or the package the view is scoped to (Kinds,
+  Common, OA, SA, LA, PA, EPBS, say) — those packages become columns in that
+  order, and the boxes of each connected piece that reaches across them get a
+  header over each column naming its package. The header is a band the layout
+  keeps above the boxes, so as laid out it lies over none (a box moved by hand
+  can cover it). Its label is sized for the zoom, so it still reads when the
+  whole model is fitted — and **Fit** frames the headers with the boxes, below
+  the canvas's toolbar — and a package name wider than its column is shrunk to
+  fit, then ends in an ellipsis. The headers are drawn into the SVG and PNG
+  exports. A piece inside one package has no header, and neither does a view
+  of a single layer package. A file with several top-level packages, or one
+  wrapper package around the layers, has no columns in its whole-model view:
+  scope the view to the package that holds the layers.
 - **A label that would say the same thing on every line is left off.** When
   every dependency in a view is of one kind — the Requirement view's
   `«satisfy»`, for instance — the keyword is dropped and lines that leave one
@@ -3510,6 +3522,7 @@ every deployment: it is in the toolbar table above.)
 | Palette · Edit | Rename (opens the explorer's inline rename), Duplicate, Delete — each disabled with the reason when nothing is selected. Reparenting stays a drag onto the new owner | `palette-rename`, `palette-duplicate`, `palette-delete` |
 | Palette · Checks | One row per verification command that fits this view: the question it answers, **Run** (runs it here, against the model on screen), **Copy command** (the same check for a terminal), and a verdict — `not run`, `holds`, `findings`, `undecided`, `stale` after an edit (and, for a check that reads the selection, once the selection moves off what it read: the command beside it then names something else), or `not here` for a check that needs the z3 solver, which needs a cross-origin-isolated page. `reach` and `check-behaviour` walk a state machine's configurations, which can take a second or more on a machine with several composite states, so they run in the background: the Checks tab comes forward at the click and lists the check as `running…`, the row reads `running…` with a **Cancel** button beside Run, the page stays usable meanwhile (an answer that arrives while you are in another tab leaves you there), and the answer lands in the Checks tab (marked `stale`, like any result, if the model was edited while it ran). Cancel keeps the result the check had before, and the keyboard focus moves to Run. The first Run in a while — after the page opens, or after a minute unused — takes a fraction of a second longer, as the background worker starts. A model with no state machine is answered on the spot, with no worker. A page that cannot start a worker, or a worker that fails or says nothing for a minute, has the check run where it stands, which holds the page for the walk. A check reads the selection where its terminal command does: `where-used` and `check-behaviour` name it as `--element`, `bounds` as `--measure`, and `contracts` and `obligations` cover the selected element and what it contains, as their optional `--element` does — the summary gives the figure beside the whole model's (*1 of 5 contract(s)*) and ends *scoped to* its name, and **Copy command** names it too. With nothing selected, a bundled library element (which the terminal refuses as a scope), or an element that can hold no contract — a comment, an import, a relationship, such as the header comment the app selects on opening a file that starts with one — those two cover the whole model, their command names no element, and the summary ends *covers the whole model:* and why. A file or element name that some terminal could read as a command — a Drive file named `R&D (copy).sysml`, say — never goes into the command: a stand-in of plain characters does (`R_D__copy_.sysml`), or `<qualified name>` for an element (also when a check needs one and nothing is selected), and a note under the row says what each stands for | `palette-check`, `palette-check-run`, `palette-check-cancel`, `palette-check-copy`, `palette-check-verdict`, `palette-check-note` |
 | Canvas | The diagram itself | `diagram-canvas` |
+| Column header | The package's name over one column of a layered General view — a band above the boxes of a connected piece that spans several packages; a click goes through it to the canvas | `column-header` |
 | Fit / zoom to selection / snap / auto-layout | The canvas mini-toolbar | `diagram-fit`, `diagram-fit-selection`, `diagram-snap`, `diagram-autolayout` |
 | Scope diagram to this / Show whole model | Narrow every drawable view to one subtree, and clear it | `node-ctx-scope`, `node-ctx-scope-clear` |
 | Legend | The notation families present in this view, docked bottom-left beside the zoom controls | `diagram-legend`, `legend-toggle` |

@@ -121,11 +121,46 @@ export interface Point {
   y: number;
 }
 
+/**
+ * A top-level package the general view keeps as a column: the builder lists
+ * them in reading order, and a box's `data.layoutPartition` is its index.
+ */
+export interface DiagramPartition {
+  /** The package's element id. */
+  elementId: string;
+  /** The package's name. */
+  label: string;
+}
+
+/**
+ * The header over one package's column of a layered general view, in diagram
+ * coordinates: a band above the column's boxes that spans their x-range, in
+ * room the layout reserved for it, so it overlaps no box.
+ */
+export interface DiagramColumn {
+  /** Stable id: the package, and the piece of the diagram the column sits in. */
+  id: string;
+  /** The package the column holds. */
+  elementId: string;
+  /** The package's name, drawn in the band. */
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** The label's largest size (px) — the band's, so it never leaves it. */
+  fontSize: number;
+}
+
 /** A complete diagram projection for one view kind. */
 export interface DiagramGraph {
   nodes: DiagramNode[];
   edges: DiagramEdge[];
   viewKind: ViewKind;
+  /** General view only: the packages kept as columns, in order (see `assignPackagePartitions`). */
+  partitions?: DiagramPartition[];
+  /** Set by {@link layoutDiagram}: a header for each column of each piece that spans several packages. */
+  columns?: DiagramColumn[];
 }
 
 /* ─────────────────── non-graph view result contracts ───────────────────── */

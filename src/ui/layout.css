@@ -45,6 +45,33 @@
   border-radius: 6px;
 }
 
+/* A layered General view names its columns: the package over each one's x-range,
+ * in the band the layout kept above the boxes. The font size is set per zoom, so
+ * the label reads from far out; a click goes through to the canvas. */
+.column-headers {
+  pointer-events: none;
+}
+.column-header {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.4em; /* COLUMN_LABEL_PAD_EM */
+  background: var(--accent-soft);
+  border-bottom: 0.08em solid var(--accent);
+  border-radius: 0.15em 0.15em 0 0;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1;
+}
+.column-header > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Simulation: the currently-active state(s) pulse with a success-hued glow. */
 .react-flow__node.rf-sim-active {
   outline: 2px solid var(--dgm-green, #1a7f37);

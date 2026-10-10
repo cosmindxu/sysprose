@@ -11,7 +11,8 @@
  *  - boxes are wide enough for their text;
  *  - a label repeated on every line is dropped and the lines joined (C1, C3);
  *  - the tree grows one opened branch at a time;
- *  - a model's layer packages read left to right as columns.
+ *  - a model's layer packages read left to right as columns, each headed by its
+ *    package's name.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -34,6 +35,17 @@ import {
   thoroughnessFor,
 } from '@diagram/layout';
 import { keywordLabelsAreRepetition, REPEATED_KEYWORD_MIN } from '@diagram/edge-labels';
+import {
+  COLUMN_HEADER_MAX_H,
+  COLUMN_HEADER_MIN_H,
+  COLUMN_LABEL_SCREEN_PX,
+  columnHeaderHeight,
+  columnLabelSize,
+  columnLabelSizeAt,
+  columnLabelSizeFor,
+  columnSpans,
+  fitColumnLabel,
+} from '@diagram/column-headers';
 import { fitRouteToEnds, roundedPath, routeIsCurrent, routeLabelPoint } from '@diagram/edges';
 import type { DiagramGraph, DiagramNode, Point, ViewKind } from '@diagram/types';
 
@@ -362,6 +374,181 @@ describe('general view — a layered model reads layer by layer, left to right',
     const sa = model.all().find((e) => e.declaredName === 'SA')!;
     const g = buildDiagram(model, 'general', sa.id);
     expect(g.nodes.every((n) => n.data.layoutPartition === undefined)).toBe(true);
+    expect(g.partitions).toBeUndefined();
+  });
+
+  it('names the packages in the order the boxes are tagged', () => {
+    const g = buildDiagram(model, 'general');
+    expect(g.partitions!.map((p) => p.label)).toEqual(['OA', 'SA', 'PA']);
+    for (const n of g.nodes) {
+      const p = g.partitions![n.data.layoutPartition as number]!;
+      expect(model.qualifiedName(n.elementId).startsWith(`System::${p.label}::`)).toBe(true);
+    }
+  });
+});
+
+describe('general view — each column of a layered model is headed by its package', () => {
+  // Chains across the packages make connected pieces that span two or three
+  // of them; Loner has no edge and is packed with the loose boxes.
+  const { model } = parseModel(`package System {
+    package OA {
+        part def Operator;
+        part def Mission;
+    }
+    package SA {
+        part def Swarm :> OA::Operator;
+        part def Drone;
+        part def Relay :> OA::Mission;
+    }
+    package PA {
+        part def Airframe :> SA::Drone;
+        part def Radio;
+        part def Dish :> SA::Relay;
+        part def Loner;
+    }
+}`);
+
+  it('puts one header over each package of a piece that spans several, in column order', async () => {
+    const g = await layoutDiagram(buildDiagram(model, 'general'));
+    const cols = g.columns!;
+    // Three pieces span packages: Mission-Relay-Dish (OA, SA, PA), Operator-Swarm
+    // (OA, SA) and Drone-Airframe (SA, PA).
+    expect(cols.map((c) => c.label).sort()).toEqual(['OA', 'OA', 'PA', 'PA', 'SA', 'SA', 'SA']);
+    // One piece's headers (the id ends with the piece's first box) read left to
+    // right in package order.
+    const pieces = new Map<string, string[]>();
+    for (const c of [...cols].sort((a, b) => a.x - b.x)) {
+      const piece = c.id.split(':')[2]!;
+      pieces.set(piece, [...(pieces.get(piece) ?? []), c.label]);
+    }
+    expect([...pieces.values()].sort()).toEqual([['OA', 'SA'], ['OA', 'SA', 'PA'], ['SA', 'PA']]);
+    for (const c of cols) {
+      expect(c.w).toBeGreaterThan(0);
+      expect(c.h).toBeGreaterThanOrEqual(32);
+      expect(c.fontSize).toBeLessThanOrEqual(c.h);
+    }
+  });
+
+  it('spans exactly its package\'s boxes, and sits above them', async () => {
+    const g = await layoutDiagram(buildDiagram(model, 'general'));
+    const boxes = absoluteBoxes(g);
+    for (const c of g.columns!) {
+      // The boxes under this header: the package's, in the header's piece, whose x-range is its own.
+      const under = g.nodes.filter((n) => {
+        const b = boxes.get(n.id)!;
+        return n.elementId && model.qualifiedName(n.elementId).includes(`::${c.label}::`) && b.x >= c.x - 0.5 && b.x + b.w <= c.x + c.w + 0.5 && b.y >= c.y + c.h;
+      });
+      expect(under.length, `${c.label} header has boxes under it`).toBeGreaterThan(0);
+      expect(Math.min(...under.map((n) => boxes.get(n.id)!.x))).toBeCloseTo(c.x, 0);
+      expect(Math.max(...under.map((n) => boxes.get(n.id)!.x + boxes.get(n.id)!.w))).toBeCloseTo(c.x + c.w, 0);
+    }
+  });
+
+  it('overlaps no box and no other header', async () => {
+    const g = await layoutDiagram(buildDiagram(model, 'general'));
+    const boxes = [...absoluteBoxes(g).values()];
+    const cols = g.columns!;
+    for (const c of cols) {
+      for (const b of boxes) expect(overlap(c, b), `header ${c.label} overlaps a box`).toBe(false);
+    }
+    for (let i = 0; i < cols.length; i++) {
+      for (let j = i + 1; j < cols.length; j++) expect(overlap(cols[i]!, cols[j]!), `headers ${i} and ${j} overlap`).toBe(false);
+    }
+    expectReadable(g);
+  });
+
+  it('gives a piece inside one package, and loose boxes, no header', async () => {
+    // Every box of this model is alone, or in a pair inside one package.
+    const { model: apart } = parseModel(`package System {
+    package OA { part def A; part def B :> A; }
+    package SA { part def C; part def D :> C; }
+}`);
+    const g = await layoutDiagram(buildDiagram(apart, 'general'));
+    expect(g.nodes.every((n) => typeof n.data.layoutPartition === 'number')).toBe(true);
+    expect(g.columns).toBeUndefined();
+    // And an unpartitioned view has none.
+    const sa = model.all().find((e) => e.declaredName === 'SA')!;
+    expect((await layoutDiagram(buildDiagram(model, 'general', sa.id))).columns).toBeUndefined();
+  });
+
+  it('heads a view scoped to a package that holds several, not a wrapper or several top-level packages', async () => {
+    const layers = 'package Layers { package OA { part def X; } package SA { part def Y :> OA::X; } }';
+    const { model: wrapped } = parseModel(`package Top { ${layers} }`);
+    const headsOf = async (m: typeof wrapped, scope?: string): Promise<string[]> => {
+      const root = scope ? m.all().find((e) => e.declaredName === scope)!.id : undefined;
+      return ((await layoutDiagram(buildDiagram(m, 'general', root))).columns ?? []).map((c) => c.label);
+    };
+    // One wrapper package around the layers: its only child is Layers, so the whole model is not layered.
+    expect(await headsOf(wrapped)).toEqual([]);
+    expect(await headsOf(wrapped, 'Top')).toEqual([]);
+    // Scoped to the package that holds the layers, it is, and is headed.
+    expect(await headsOf(wrapped, 'Layers')).toEqual(['OA', 'SA']);
+    // A single layer package is not layered.
+    expect(await headsOf(wrapped, 'OA')).toEqual([]);
+    // Nor are two top-level packages: the view has no single root to take the columns from.
+    const { model: roots } = parseModel('package OA { part def X; } package SA { part def Y :> OA::X; }');
+    expect(await headsOf(roots)).toEqual([]);
+  });
+
+  it('draws them in the SVG export, inside its viewBox', async () => {
+    const g = await layoutDiagram(buildDiagram(model, 'general'));
+    const svg = svgFromDiagram(g);
+    expect(svg).toContain('<g data-layer="column-headers">');
+    expect(svg.match(/data-column-id=/g)!.length).toBe(g.columns!.length);
+    for (const label of ['OA', 'SA', 'PA']) expect(svg).toContain(`>${label}</text>`);
+    const [x, y, w, h] = /viewBox="([^"]+)"/.exec(svg)![1]!.split(' ').map(Number) as [number, number, number, number];
+    for (const c of g.columns!) {
+      expect(c.x).toBeGreaterThanOrEqual(x);
+      expect(c.y).toBeGreaterThanOrEqual(y);
+      expect(c.x + c.w).toBeLessThanOrEqual(x + w);
+      expect(c.y + c.h).toBeLessThanOrEqual(y + h);
+    }
+  });
+});
+
+describe('column headers — size', () => {
+  it('grows with the piece, between a floor and a ceiling', () => {
+    expect(columnHeaderHeight(300)).toBe(COLUMN_HEADER_MIN_H);
+    expect(columnHeaderHeight(5000)).toBe(200);
+    expect(columnHeaderHeight(1_000_000)).toBe(COLUMN_HEADER_MAX_H);
+  });
+
+  it('keeps the label readable from far out, within its band', () => {
+    const col = { fontSize: columnLabelSize(COLUMN_HEADER_MAX_H) };
+    expect(columnLabelSizeAt(col, 1)).toBe(COLUMN_LABEL_SCREEN_PX);
+    expect(columnLabelSizeAt(col, 2)).toBe(COLUMN_LABEL_SCREEN_PX);
+    expect(columnLabelSizeAt(col, 0.1) * 0.1).toBeCloseTo(COLUMN_LABEL_SCREEN_PX, 5);
+    expect(columnLabelSizeAt(col, 0.001)).toBe(col.fontSize);
+  });
+
+  it('cuts a label that cannot fit its column with an ellipsis', () => {
+    expect(fitColumnLabel('OA', 100, 18)).toBe('OA');
+    const cut = fitColumnLabel('SurveillanceDroneSwarm', 100, 18);
+    expect(cut.endsWith('…')).toBe(true);
+    expect(cut.length).toBeLessThan('SurveillanceDroneSwarm'.length);
+  });
+
+  it('shrinks a name wider than its column before cutting it, to a floor', () => {
+    const name = 'SurveillanceDroneSwarm';
+    expect(columnLabelSizeFor('OA', 300, 18)).toBe(18);
+    const snug = columnLabelSizeFor(name, 200, 18);
+    expect(snug).toBeLessThan(18);
+    expect(snug).toBeGreaterThan(18 * 0.6);
+    expect(columnLabelSizeFor(name, 20, 18)).toBeCloseTo(18 * 0.6, 5);
+  });
+
+  it('names a column only where a piece spans two packages or more', () => {
+    expect(columnSpans([{ partition: 1, x: 0, w: 100 }, { partition: 1, x: 200, w: 100 }])).toEqual([]);
+    expect(
+      columnSpans([
+        { partition: 2, x: 400, w: 100 },
+        { partition: 0, x: 0, w: 100 },
+        { partition: 0, x: 20, w: 150 },
+      ]),
+    ).toEqual([
+      { partition: 0, x0: 0, x1: 170 },
+      { partition: 2, x0: 400, x1: 500 },
+    ]);
   });
 });
 

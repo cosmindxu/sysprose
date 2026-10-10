@@ -172,7 +172,7 @@ has not been revised to match.
 ## Abstraction leaks & contract drift
 
 - **The "PURE" `svg-export.ts` transitively pulls React + `@xyflow/react`**
-  through `src/diagram/svg-export.ts:21` → `./edges` (a `.tsx` file). The
+  through `src/diagram/svg-export.ts:22` → `./edges` (a `.tsx` file). The
   "PURE function (no DOM, no React, no React Flow)" header at line 5 is false.
 - **`diagram/index.ts` re-exports React components** (`MatrixView`,
   `SequenceView`, `GridView` at lines 55-59), so any consumer of `buildDiagram`
