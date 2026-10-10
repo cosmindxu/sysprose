@@ -79,6 +79,7 @@ import {
   openText,
   pageLinks,
   recomputePending,
+  sayWhatTheBrowserKept,
   setDriveServices,
   useAppStore,
   whenLibrarySettled,
@@ -111,7 +112,7 @@ import {
 } from '@semantics/index';
 import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
-import { commandById, handleShortcut, runSave } from '../../src/ui/commands';
+import { commandById, handlePageKey, handleShortcut, runExportSysml, runSave } from '../../src/ui/commands';
 import { TextEditor } from '../../src/ui/panels/TextEditor';
 
 /** The Drive slice as the module left it on import, before any test touched it. */
@@ -807,6 +808,304 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
   });
 });
 
+/**
+ * The Text view, Save to Drive and Export ▾ → SysML write the user's roots
+ * only, never the standard library's. An element of the user's put under a
+ * library root — added in the Explorer with its library toggle on, drawn with
+ * a library element selected, dragged onto one, or made through the SDK —
+ * carried no library flag, yet all three left it out while model JSON kept
+ * it; and an edit to it did not read unsaved (what is saved is compared as
+ * text), so New, Open ▾ and Import dropped it without asking. Asked to go
+ * there, a user element now goes to the top level of the user's model, and
+ * the strip under the toolbar says so. (A line drawn from a library box and
+ * the Type field of a library usage are not among these yet: see TODO.md.)
+ */
+describe('createElement, reparent, reparentMany, paste and the SDK never put a user element inside the standard library', () => {
+  const sdk = () => st().api;
+  const ownerOf = (id: string) => st().model.get(id)?.ownerId;
+  const said = (what: 'new' | number) => ({
+    kind: 'info',
+    message: DRIVE_MESSAGES.notIntoLibrary(what),
+    retryable: false,
+  });
+  /** The user's root package, a library root, a library element in it, and an element of nobody's flag left in it. */
+  let own: string;
+  let shelf: string;
+  let shelved: string;
+  let stray: string;
+
+  beforeEach(async () => {
+    await whenLibrarySettled();
+    lib.merge = null;
+    reset();
+    // The SDK is bound to the model the store started with: these run on it.
+    useAppStore.setState({ model: sdk().model, textBuffer: '', textDirty: false, diagnostics: [], serializeError: null });
+    st().newProject('Hangar');
+    own = st().model.roots().find((r) => r.attrs.isLibrary !== true)!.id;
+    const model = st().model;
+    shelf = model.create('Package', { declaredName: 'Shelf', attrs: { isLibrary: true } }).id;
+    shelved = model.create('PartDefinition', { declaredName: 'Shelved', ownerId: shelf, attrs: { isLibrary: true } }).id;
+    stray = model.create('PartDefinition', { declaredName: 'Stray', ownerId: shelf }).id;
+    flushRecompute();
+  });
+
+  afterEach(() => {
+    // New keeps library elements: take this one away for the tests after.
+    for (const r of st().model.roots()) if (r.attrs.isLibrary === true) st().model.remove(r.id);
+    useAppStore.setState({ drive: initialDriveState, undoStack: [], redoStack: [] });
+  });
+
+  it('createElement puts a child of a library element at the top level of the model, says so — and the text holds it', async () => {
+    await st().saveProject('Hangar');
+    const undos = st().undoStack.length;
+    const id = st().createElement('PartDefinition', shelved, 'Spare');
+    expect(ownerOf(id), 'not inside the library').toBeNull();
+    expect(st().model.get(id)?.attrs.isLibrary).toBeUndefined();
+    expect(st().drive.notice).toEqual(said('new'));
+    expect(st().selectionId).toBe(id);
+    expect(st().undoStack.length).toBe(undos + 1);
+    flushRecompute();
+    expect(st().textBuffer).toContain('part def Spare;');
+    expect(browserDirty(st()), 'New, Open and Import ask before dropping it').toBe(true);
+    st().undo();
+    expect(st().model.has(id)).toBe(false);
+  });
+
+  it('createElement with no owner takes the selection — and a selection in the library is no owner either', () => {
+    st().select(shelved);
+    const fromLibrary = st().createElement('PartDefinition');
+    expect(ownerOf(fromLibrary)).toBeNull();
+    expect(st().drive.notice).toEqual(said('new'));
+
+    // An element with no flag of its own under a library root is in the library all the same.
+    useAppStore.setState({ drive: initialDriveState });
+    st().select(stray);
+    const fromStray = st().createElement('PartDefinition');
+    expect(ownerOf(fromStray)).toBeNull();
+    expect(st().drive.notice).toEqual(said('new'));
+
+    // In the user's own package nothing changes, and nothing is said.
+    useAppStore.setState({ drive: initialDriveState });
+    st().select(own);
+    const inOwn = st().createElement('PartDefinition');
+    expect(ownerOf(inOwn)).toBe(own);
+    expect(st().drive.notice).toBeNull();
+  });
+
+  it('reparent onto a library element moves the element to the top level instead, in one undo step, and says so', () => {
+    const wheel = st().createElement('PartDefinition', own, 'Wheel');
+    const undos = st().undoStack.length;
+    st().reparent(wheel, shelved);
+    expect(ownerOf(wheel)).toBeNull();
+    expect(st().drive.notice).toEqual(said(1));
+    expect(st().undoStack.length).toBe(undos + 1);
+    st().undo();
+    expect(ownerOf(wheel), 'one Undo puts it back').toBe(own);
+    expect(st().drive.notice, 'and takes the note down: it no longer holds').toBeNull();
+
+    // Already at the top level: nothing moves, no undo step — and it is still said.
+    useAppStore.setState({ drive: initialDriveState });
+    const top = st().createElement('PartDefinition', null, 'Top');
+    const before = st().undoStack.length;
+    st().reparent(top, shelf);
+    expect(ownerOf(top)).toBeNull();
+    expect(st().undoStack.length).toBe(before);
+    expect(st().drive.notice).toEqual(said(1));
+
+    // An element of the user's left in the library comes out when it is moved within it.
+    st().reparent(stray, shelved);
+    expect(ownerOf(stray)).toBeNull();
+    // A library element moves within the library as it always did.
+    useAppStore.setState({ drive: initialDriveState });
+    st().reparent(shelved, stray);
+    expect(ownerOf(shelved)).toBe(stray);
+    expect(st().drive.notice).toBeNull();
+  });
+
+  it('reparentMany onto a library element moves every user element to the top level, in one undo step, and says how many', () => {
+    const a = st().createElement('PartDefinition', own, 'A');
+    const b = st().createElement('PartDefinition', own, 'B');
+    const top = st().createElement('PartDefinition', null, 'C');
+    const undos = st().undoStack.length;
+    st().reparentMany([a, b, top], shelved);
+    expect([ownerOf(a), ownerOf(b), ownerOf(top)]).toEqual([null, null, null]);
+    expect(st().drive.notice).toEqual(said(3));
+    expect(st().undoStack.length).toBe(undos + 1);
+    st().undo();
+    expect([ownerOf(a), ownerOf(b), ownerOf(top)]).toEqual([own, own, null]);
+
+    // All of them at the top level already: nothing moves, no undo step, and it is said.
+    useAppStore.setState({ drive: initialDriveState });
+    const before = st().undoStack.length;
+    st().reparentMany([top], shelf);
+    expect(ownerOf(top)).toBeNull();
+    expect(st().undoStack.length).toBe(before);
+    expect(st().drive.notice).toEqual(said(1));
+  });
+
+  it('the SDK on window.sysml does the same — create and reparent, alone or in commit(fn) — and a library element goes where it is asked', () => {
+    const made = sdk().create('PartDefinition', { declaredName: 'Scripted', ownerId: shelved });
+    expect(made.ownerId).toBeNull();
+    expect(st().drive.notice).toEqual(said('new'));
+    flushRecompute();
+    expect(st().textBuffer).toContain('part def Scripted;');
+
+    useAppStore.setState({ drive: initialDriveState });
+    const moved = sdk().create('PartDefinition', { declaredName: 'Moved', ownerId: own });
+    expect(moved.ownerId).toBe(own);
+    expect(st().drive.notice).toBeNull();
+    sdk().reparent(moved.id, shelf);
+    expect(ownerOf(moved.id)).toBeNull();
+    expect(st().drive.notice).toEqual(said(1));
+
+    sdk().commit((api) => {
+      api.create('PartDefinition', { declaredName: 'Batched', ownerId: stray });
+    });
+    expect(st().model.all().find((e) => e.declaredName === 'Batched')?.ownerId).toBeNull();
+
+    useAppStore.setState({ drive: initialDriveState });
+    const library = sdk().create('PartDefinition', { declaredName: 'Bound', ownerId: shelf, attrs: { isLibrary: true } });
+    expect(library.ownerId).toBe(shelf);
+    expect(st().drive.notice).toBeNull();
+  });
+
+  it('paste under a library element puts the copies at the top level of the model, in one undo step, and says so', () => {
+    const wheel = st().createElement('PartDefinition', own, 'Wheel');
+    const axle = st().createElement('PartDefinition', own, 'Axle');
+    st().select(wheel);
+    st().copySelection();
+    const undos = st().undoStack.length;
+    const [copy] = st().pasteClipboard(shelved);
+    expect(ownerOf(copy!), 'not inside the library').toBeNull();
+    expect(st().model.get(copy!)?.declaredName).toBe('Wheel');
+    expect(st().drive.notice).toEqual(said(1));
+    expect(st().selectionId).toBe(copy);
+    expect(st().undoStack.length).toBe(undos + 1);
+    flushRecompute();
+    expect(st().textBuffer, 'the text holds the copy').toContain('part def Wheel;');
+    st().undo();
+    expect(st().model.has(copy!)).toBe(false);
+    expect(st().drive.notice, 'and takes the note down').toBeNull();
+
+    // Pasting with no owner given takes the selection: a selection in the
+    // library is no owner either, flag or no flag — and every root says so at once.
+    useAppStore.setState({ drive: initialDriveState });
+    st().setSelection([wheel, axle]);
+    st().copySelection();
+    st().select(stray);
+    const both = st().pasteClipboard();
+    expect(both.map(ownerOf)).toEqual([null, null]);
+    expect(st().drive.notice).toEqual(said(2));
+
+    // In the user's own package nothing changes, and nothing is said.
+    useAppStore.setState({ drive: initialDriveState });
+    const [inOwn] = st().pasteClipboard(own);
+    expect(ownerOf(inOwn!)).toBe(own);
+    expect(st().drive.notice).toBeNull();
+
+    // A copied library element goes where it is asked, within the library.
+    st().select(shelved);
+    st().copySelection();
+    const [inLibrary] = st().pasteClipboard(shelf);
+    expect(ownerOf(inLibrary!)).toBe(shelf);
+    expect(st().drive.notice).toBeNull();
+  });
+
+  /**
+   * The note names an element of the model on screen, so a command that
+   * replaces the model takes it down, as Undo does: New, Open, Import, a
+   * file opened as text. (A note that a save kept typed text back, or a
+   * notice of another kind, is a different note, and stands.)
+   */
+  describe('the note comes down when the model it is about is replaced', () => {
+    const sayIt = (): void => {
+      useAppStore.setState({ drive: initialDriveState });
+      st().createElement('PartDefinition', shelved, 'Spare');
+      expect(st().drive.notice).toEqual(said('new'));
+    };
+
+    it('New', () => {
+      sayIt();
+      st().newProject('Other');
+      expect(st().drive.notice).toBeNull();
+    });
+
+    it('Open', async () => {
+      await st().saveProject('Hangar');
+      sayIt();
+      await st().loadProject('Hangar');
+      expect(st().drive.notice).toBeNull();
+    });
+
+    it('Import', () => {
+      sayIt();
+      st().importModel('package Imported;\n', 'sysml');
+      expect(st().drive.notice).toBeNull();
+    });
+
+    it('a file opened as text', async () => {
+      sayIt();
+      await openText('package Other {\n    part def Opened;\n}\n', 'sysml');
+      expect(st().model.all().some((e) => e.declaredName === 'Opened')).toBe(true);
+      expect(st().drive.notice).toBeNull();
+    });
+
+    it('a note held behind another notice is forgotten with the model: it never comes up after', () => {
+      const failed = { kind: 'error' as const, message: 'Drive refused the save.', retryable: true, retry: { op: 'save' as const } };
+      useAppStore.setState((s) => ({ drive: { ...s.drive, notice: failed } }));
+      st().createElement('PartDefinition', shelved, 'Spare');
+      expect(st().drive.notice, 'held behind the error').toBe(failed);
+      st().newProject('Other');
+      st().driveDismiss();
+      expect(st().drive.notice).toBeNull();
+    });
+  });
+
+  /**
+   * The note is about what was just done, so it replaces an earlier one, or
+   * the note that a save kept typed text back. It never covers a notice of
+   * another kind — a failed Drive save and its Try again, `<name> closed`:
+   * it waits until that one has gone. Undo and Redo take it down, held or
+   * standing: the element it names may be back where it was, or gone.
+   */
+  it('the note replaces a kept-back note, waits behind a notice of another kind, and goes with an Undo', () => {
+    sayWhatTheBrowserKept({ line: 3, column: 5 });
+    expect(st().drive.notice?.message).toBe(DRIVE_MESSAGES.typedTextKeptBack(3));
+    st().createElement('PartDefinition', shelved, 'First');
+    expect(st().drive.notice, 'over the kept-back note').toEqual(said('new'));
+
+    // A failed Drive save, and its Try again: the note waits behind it — the latest of them.
+    const failed = { kind: 'error' as const, message: 'Drive refused the save.', retryable: true, retry: { op: 'save' as const } };
+    useAppStore.setState((s) => ({ drive: { ...s.drive, notice: failed } }));
+    const spare = st().createElement('PartDefinition', shelved, 'Spare');
+    expect(ownerOf(spare)).toBeNull();
+    expect(st().drive.notice, 'the error and its Try again stand').toBe(failed);
+    st().reparent(spare, shelf);
+    expect(st().drive.notice).toBe(failed);
+    st().driveDismiss();
+    expect(st().drive.notice, 'then the note goes up').toEqual(said(1));
+
+    // `<name> closed`, the same; then Undo takes the note down.
+    const closed = { kind: 'info' as const, message: DRIVE_MESSAGES.closed('Swarm.sysml'), retryable: false };
+    useAppStore.setState((s) => ({ drive: { ...s.drive, notice: closed } }));
+    const other = st().createElement('PartDefinition', shelved, 'Other');
+    expect(st().drive.notice).toBe(closed);
+    st().driveDismiss();
+    expect(st().drive.notice).toEqual(said('new'));
+    st().undo();
+    expect(st().model.has(other)).toBe(false);
+    expect(st().drive.notice, 'the element it names is gone').toBeNull();
+
+    // A held note goes with an Undo too, and never comes up after.
+    useAppStore.setState((s) => ({ drive: { ...s.drive, notice: failed } }));
+    st().createElement('PartDefinition', shelved, 'Third');
+    st().undo();
+    expect(st().drive.notice).toBe(failed);
+    st().driveDismiss();
+    expect(st().drive.notice).toBeNull();
+  });
+});
+
 describe('useAppStore — diagram scope', () => {
   /**
    * The builder has always accepted a scope root; nothing ever passed one, so
@@ -1476,7 +1775,7 @@ describe('google drive', () => {
   }
 
   /** Spy on a store action through the state object (what the store calls it by), restoring it afterwards. */
-  function spyAction<K extends 'applyText' | 'importModel' | 'saveProject'>(name: K) {
+  function spyAction<K extends 'applyText' | 'exportModel' | 'importModel' | 'saveProject'>(name: K) {
     const original = st()[name];
     const spy = vi.fn((...args: Parameters<AppState[K]>) =>
       (original as (...a: Parameters<AppState[K]>) => ReturnType<AppState[K]>)(...args),
@@ -1957,6 +2256,21 @@ describe('google drive', () => {
       expect(driveDirty(st()), 'Undo back to what Drive holds').toBe(false);
     });
 
+    it('Save keeps the boxes moved by hand with the copy in this browser — the file gets the text alone', async () => {
+      const id = await attached();
+      edit('Relay');
+      useAppStore.setState({ activeView: 'general', diagramRootId: null, diagramPins: {} });
+      await st().rebuildDiagram();
+      const relay = st().model.all().find((e) => e.declaredName === 'Relay')!.id;
+      st().pinNodePositions(new Map([[relay, { x: 640, y: 480 }]]));
+      await runSave();
+      expect(driveDirty(st())).toBe(false);
+      expect(gateway.textOf(id)).toBe(withFinalNewline(st().textBuffer));
+      expect(gateway.textOf(id)).not.toMatch(/640|480/);
+      const kept = await new LocalStorageStore().loadProject('Swarm');
+      expect(kept?.meta?.diagramPins).toEqual({ 'general|': { [relay]: { x: 640, y: 480 } } });
+    });
+
     it('fires an edit’s pending recompute, so the upload holds the edit', async () => {
       const id = await attached();
       st().createElement('PartDefinition', null, 'Pending');
@@ -2301,11 +2615,14 @@ describe('google drive', () => {
       await model('package Other;\n');
       edit('Scratch');
       useAppStore.setState({ linkedModel: { url: `${PAGE}m.sysml`, source: null, status: 'loaded' } });
+      // A box moved by hand on the model it replaces: not the file's, and with no Undo to bring it back.
+      useAppStore.setState({ diagramPins: { 'general|': { someBox: { x: 40, y: 60 } } } });
       const meta = gateway.seed({ name: 'Swarm.sysml', text: canonical });
       await st().driveOpen({ id: meta.id }, 'recent');
       expect(rootNames()).toEqual(['Swarm']);
       expect(st().undoStack).toEqual([]);
       expect(st().redoStack).toEqual([]);
+      expect(st().diagramPins, 'a fresh layout, and Undo starts over: the old boxes are gone').toEqual({});
       expect(st().linkedModel).toBeNull();
       expect(file()).toMatchObject({ id: meta.id, name: 'Swarm.sysml', openedFrom: 'recent', rewrites: false });
       expect(file().savedText).toBe(withFinalNewline(st().textBuffer));
@@ -3315,6 +3632,11 @@ describe('google drive', () => {
   });
 
   describe('the keys, and Save with a Drive file attached', () => {
+    // The page's keydown listener, as `App` installs it: a key typed into the
+    // Text view's editor reaches the app through it.
+    beforeEach(() => window.addEventListener('keydown', handlePageKey));
+    afterEach(() => window.removeEventListener('keydown', handlePageKey));
+
     /** A Ctrl (or, `meta`, Cmd) keydown, as the page's listener hands it to the shortcut handler. */
     const key = (k: string, mods: { shift?: boolean; meta?: boolean } = {}): KeyboardEvent =>
       new KeyboardEvent('keydown', {
@@ -3396,7 +3718,7 @@ describe('google drive', () => {
       expect(drive().prompt).toEqual({ kind: 'saveas', suggested: 'Swarm.sysml', asCopy: false });
     });
 
-    it('the Text view’s editor hands on Ctrl/Cmd+S and Ctrl/Cmd+Shift+S — Drive gets what was typed — and keeps every other key', async () => {
+    it('Ctrl/Cmd+S and Ctrl/Cmd+Shift+S typed in the Text view’s editor save — Drive gets what was typed — and every other key stays the editor’s', async () => {
       const save = browserSave();
       const view = render(React.createElement(TextEditor));
       try {
@@ -3866,6 +4188,187 @@ describe('google drive', () => {
     });
 
     /**
+     * Export ▾ → SysML writes the model's text, and text typed in the Text
+     * view and not applied was not in it: the file lacked what was on screen,
+     * and the guide said to press Apply first. The export applies it first
+     * now, as Save does — one Undo step, as Apply's — and over a syntax error
+     * writes the model as it stands and says so, as Save does. A save's note
+     * and an export's each go with the next save, or export, that holds the
+     * text: the other one's copy still lacks it. A newer note of either kind
+     * replaces the older.
+     */
+    it('Export ▾ → SysML applies what was typed in the Text view first, as Save does — one Undo step — and over a syntax error writes the model as it stands and says so', async () => {
+      const BROKEN = SWARM.replace('part def Drone;', 'part def Drone;\n    blok bad;');
+      const { restore } = recordingSave();
+      const exports = spyAction('exportModel');
+      const exported = () => exports.spy.mock.results.at(-1)?.value as string | undefined;
+      // jsdom makes no object URLs: the store logs that it could not download.
+      const noDownload = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        await model();
+        useAppStore.setState((s) => ({ projectName: 'Fleet', drive: { ...s.drive, configStatus: 'absent' } }));
+        const depth = st().undoStack.length;
+
+        // Typed and not applied: the menu's export applies it, then writes it.
+        st().setTextBuffer(`package Swarm {\n  part def   Drone;\n part def Glider;}`);
+        const text = runExportSysml();
+        expect(parts(), 'applied').toEqual(['Drone', 'Glider']);
+        expect(text).toContain('    part def Glider;\n');
+        expect(st().textDirty).toBe(false);
+        expect(st().undoStack.length, 'one undo step, as Apply').toBe(depth + 1);
+        expect(st().projectName, 'the file is named after the open project').toBe('Fleet');
+        expect(drive().notice).toBeNull();
+        await whenLibrarySettled();
+        expect(text, 'the Text view’s text').toBe(st().textBuffer);
+        st().undo();
+        expect(parts(), 'one Undo takes the apply back').toEqual(['Drone']);
+
+        // The command palette's export, the same.
+        st().setTextBuffer(SWARM.replace('Drone', 'Kite'));
+        await commandById('tb-export-sysml')!.run();
+        expect(parts()).toEqual(['Kite']);
+        expect(exported()).toContain('part def Kite;');
+
+        // A syntax error: the model as it stands, nothing applied, and the strip says so.
+        const before = st().undoStack.length;
+        st().setTextBuffer(BROKEN);
+        expect(runExportSysml()).toBe(exportModel(st().model, 'sysml'));
+        expect(exported()).not.toContain('blok');
+        expect(parts()).toEqual(['Kite']);
+        expect(st().textDirty, 'still "not yet applied"').toBe(true);
+        expect(st().textBuffer).toBe(BROKEN);
+        expect(st().undoStack.length, 'nothing applied').toBe(before);
+        const exportNote = { kind: 'info', message: DRIVE_MESSAGES.typedTextNotExported(3), retryable: false };
+        expect(drive().notice).toEqual(exportNote);
+        expect(drive().notice?.message).toBe(
+          'Exported without the text typed in the Text view: it has a syntax error at line 3. Fix it, then export again.',
+        );
+
+        // Fixed, and saved: the browser holds it, the exported file still does not.
+        st().setTextBuffer(SWARM.replace('Drone', 'Vane'));
+        await commandById('tb-save')!.run();
+        expect(parts()).toEqual(['Vane']);
+        expect(drive().notice, 'the export’s note stays').toEqual(exportNote);
+        runExportSysml();
+        expect(exported()).toContain('part def Vane;');
+        expect(drive().notice, 'an export that holds the text takes it down').toBeNull();
+
+        // And the other way round: a save's note outlasts an export that holds the text.
+        st().setTextBuffer(BROKEN);
+        await commandById('tb-save')!.run();
+        expect(drive().notice?.message).toBe(DRIVE_MESSAGES.typedTextKeptBack(3));
+        st().setTextBuffer(SWARM.replace('Drone', 'Rotor'));
+        runExportSysml();
+        expect(parts()).toEqual(['Rotor']);
+        expect(drive().notice?.message, 'the save’s note stays').toBe(DRIVE_MESSAGES.typedTextKeptBack(3));
+        await commandById('tb-save')!.run();
+        expect(drive().notice).toBeNull();
+
+        // A newer note of either kind replaces the older: a save that keeps the text back says so over
+        // an export's note, and an export that keeps it back over a save's.
+        st().setTextBuffer(BROKEN);
+        runExportSysml();
+        expect(drive().notice).toEqual(exportNote);
+        await commandById('tb-save')!.run();
+        expect(drive().notice?.message, 'the save’s note over the export’s').toBe(DRIVE_MESSAGES.typedTextKeptBack(3));
+        runExportSysml();
+        expect(drive().notice?.message, 'the export’s note over the save’s').toBe(DRIVE_MESSAGES.typedTextNotExported(3));
+
+        // A notice standing for another reason stays as it is.
+        const refused = { kind: 'error' as const, message: DRIVE_MESSAGES.browserSaveFailed, retryable: false };
+        useAppStore.setState((s) => ({ drive: { ...s.drive, notice: refused } }));
+        st().setTextBuffer(BROKEN);
+        runExportSysml();
+        expect(drive().notice).toBe(refused);
+      } finally {
+        noDownload.mockRestore();
+        exports.restore();
+        restore();
+      }
+    });
+
+    /**
+     * The note that an element went to the top level of the model rather
+     * than into the standard library stands until it is dismissed, and a save
+     * or an export that kept typed text back while it stood said nothing: the
+     * strip went on showing the library sentence, and the user took the copy
+     * for one holding what they typed. Either says so over it now; one that
+     * kept nothing back leaves it.
+     */
+    it('a save or an export that keeps typed text back says so over the library note — one that keeps nothing back leaves it', async () => {
+      const BROKEN = SWARM.replace('part def Drone;', 'part def Drone;\n    blok bad;');
+      const { saved, restore } = recordingSave();
+      const noDownload = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await model();
+      useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+      const shelf = st().model.create('Package', { declaredName: 'Shelf', attrs: { isLibrary: true } }).id;
+      const libraryNote = { kind: 'info', message: DRIVE_MESSAGES.notIntoLibrary('new'), retryable: false };
+      try {
+        st().createElement('PartDefinition', shelf, 'Spare');
+        expect(drive().notice).toEqual(libraryNote);
+        await commandById('tb-save')!.run();
+        expect(saved.at(-1)).toEqual(['Drone', 'Spare']);
+        expect(drive().notice, 'nothing kept back: the note stays').toEqual(libraryNote);
+        runExportSysml();
+        expect(drive().notice).toEqual(libraryNote);
+
+        // Export over a syntax error: the typed text is not in the file, and the strip says so over the note.
+        st().setTextBuffer(BROKEN);
+        expect(runExportSysml()).not.toContain('blok');
+        expect(st().textDirty, 'still "not yet applied"').toBe(true);
+        expect(drive().notice).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextNotExported(3), retryable: false });
+
+        // The note again, then Save over a syntax error: the same.
+        st().driveDismiss();
+        st().createElement('PartDefinition', shelf, 'Rotor');
+        flushRecompute();
+        expect(drive().notice).toEqual(libraryNote);
+        st().setTextBuffer(BROKEN);
+        await commandById('tb-save')!.run();
+        expect(saved.at(-1)).toEqual(['Drone', 'Spare', 'Rotor']);
+        expect(st().textDirty, 'still "not yet applied"').toBe(true);
+        expect(drive().notice).toEqual({ kind: 'info', message: DRIVE_MESSAGES.typedTextKeptBack(3), retryable: false });
+      } finally {
+        if (st().model.has(shelf)) st().model.remove(shelf);
+        noDownload.mockRestore();
+        restore();
+      }
+    });
+
+    /**
+     * In a collaboration room Export ▾ → SysML keeps typed text back, as Save
+     * does: applying it would replace the room's model for every peer. The
+     * file holds the model as it stands, and the strip says so.
+     */
+    it('in a collaboration room, Export ▾ → SysML keeps typed text back, as Save does, and says so', async () => {
+      const noDownload = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await model();
+      useAppStore.setState((s) => ({ drive: { ...s.drive, configStatus: 'absent' } }));
+      st().connectCollab('export-room');
+      try {
+        const depth = st().undoStack.length;
+        st().setTextBuffer(SWARM.replace('part def Drone;', 'part def Drone;\n    part def Typed;'));
+        expect(runExportSysml()).not.toContain('Typed');
+        expect(parts()).toEqual(['Drone']);
+        expect(st().textDirty, 'still "not yet applied"').toBe(true);
+        expect(st().undoStack.length, 'nothing applied').toBe(depth);
+        expect(drive().notice).toEqual({
+          kind: 'info',
+          message: DRIVE_MESSAGES.typedTextNotExportedInRoom,
+          retryable: false,
+        });
+
+        // Apply text → model puts it over the room's model; the export then holds it, and the note goes.
+        st().applyText();
+        expect(runExportSysml()).toContain('part def Typed;');
+        expect(drive().notice).toBeNull();
+      } finally {
+        st().disconnectCollab();
+        noDownload.mockRestore();
+      }
+    });
+
+    /**
      * The library merges again after every apply, and the refresh after it
      * lays the text out anew — but not over text typed since. Keystrokes made
      * right after a Save that applied the text, while the library merged,
@@ -4316,6 +4819,244 @@ describe('unsaved work — what a command that replaces the model asks about', (
     } finally {
       setDriveServices(null);
     }
+  });
+});
+
+/**
+ * Boxes moved by hand on a diagram used to last the session: Save stored the
+ * model alone, so Open laid every diagram out afresh. They are now kept with
+ * the project in this browser's project store, beside the model, and never in
+ * its text — the `.sysml` file, the Text view and a Google Drive file are the
+ * model alone. Open puts them back; New and Import start from a fresh layout,
+ * and their Undo puts the boxes back with the model they were arranged on.
+ */
+describe('boxes moved by hand — kept with the project in this browser, never in its text', () => {
+  const SWARM = 'package Swarm {\n    part def Drone;\n    part def Relay;\n}\n';
+  const idOf = (name: string) => st().model.all().find((e) => e.declaredName === name)!.id;
+  const rootNames = () => st().model.roots().filter((r) => r.attrs.isLibrary !== true).map((r) => r.declaredName);
+  /** The project as this browser's store holds it. */
+  const stored = (name: string) => new LocalStorageStore().loadProject(name);
+
+  /**
+   * Where the diagram, laid out now, draws the box of `id` — once every
+   * rebuild started meanwhile (a recompute, the library's refresh) has
+   * published: only the latest one does.
+   */
+  async function boxAt(id: string): Promise<{ x: number; y: number }> {
+    await whenLibrarySettled();
+    flushRecompute();
+    await st().rebuildDiagram();
+    await vi.waitFor(() => expect(st().diagramLayoutPending).toBe(false));
+    const node = st().diagram?.nodes.find((n) => n.id === id);
+    expect(node?.position, `the diagram draws a box for ${id}`).toBeDefined();
+    return node!.position!;
+  }
+
+  /** Drop the box of `id` at `to`, as the canvas reports a drop on empty canvas. */
+  async function move(id: string, to: { x: number; y: number }): Promise<void> {
+    await boxAt(id);
+    st().pinNodePositions(new Map([[id, to]]));
+  }
+
+  beforeEach(async () => {
+    await whenLibrarySettled();
+    lib.merge = null;
+    reset();
+    useAppStore.setState({
+      textBuffer: '',
+      textDirty: false,
+      diagnostics: [],
+      serializeError: null,
+      activeView: 'general',
+      diagramRootId: null,
+      diagramPins: {},
+    });
+    await openText(SWARM, 'sysml');
+    useAppStore.setState({ undoStack: [], redoStack: [] });
+  });
+
+  it('Save keeps them beside the model in this browser, and Open puts them back where they were — per view and scope', async () => {
+    const drone = idOf('Drone');
+    const root = idOf('Swarm');
+    const laid = await boxAt(drone);
+    const dropped = { x: laid.x + 300, y: laid.y + 200 };
+    const text = st().textBuffer;
+    await move(drone, dropped);
+    expect(await boxAt(drone), 'through a rebuild').toEqual(dropped);
+    st().setDiagramRoot(root);
+    await move(drone, { x: 7, y: 9 });
+    flushRecompute();
+    expect(st().textBuffer, 'a moved box is no edit of the text').toBe(text);
+
+    await st().saveProject('Swarm');
+    const record = await stored('Swarm');
+    expect(record?.elements.some((e) => e.id === drone), 'the model').toBe(true);
+    expect(record?.meta?.diagramPins, 'and the boxes beside it').toEqual({
+      'general|': { [drone]: dropped },
+      [`general|${root}`]: { [drone]: { x: 7, y: 9 } },
+    });
+
+    st().newProject('Other');
+    await whenLibrarySettled();
+    await st().loadProject('Swarm');
+    expect(rootNames()).toEqual(['Swarm']);
+    st().setDiagramRoot(null);
+    expect(await boxAt(drone), 'where it was dropped').toEqual(dropped);
+    st().setDiagramRoot(root);
+    expect(await boxAt(drone), 'and in the diagram scoped to the package').toEqual({ x: 7, y: 9 });
+    expect(st().textBuffer, 'the text holds none of it').toBe(text);
+  });
+
+  it('a project saved before they were kept opens as it did, laid out afresh — and a malformed record of them is skipped', async () => {
+    const drone = idOf('Drone');
+    // What Save stored until now: the model, and nothing beside it.
+    const before = st().model.toJSON();
+    expect(before.meta).toBeUndefined();
+    await new LocalStorageStore().saveProject('Earlier', before);
+    await move(drone, { x: 900, y: 900 });
+
+    await st().loadProject('Earlier');
+    expect(rootNames()).toEqual(['Swarm']);
+    expect(st().diagramPins, 'the boxes of the model it replaced are not its').toEqual({});
+    expect(await boxAt(drone)).not.toEqual({ x: 900, y: 900 });
+
+    await new LocalStorageStore().saveProject('Odd', {
+      ...before,
+      meta: {
+        diagramPins: {
+          'general|': { [drone]: { x: 5, y: 6 }, ghost: { x: 'left', y: 1 }, gap: { x: null, y: 2 } },
+          'tree|': 'not boxes',
+          'sequence|': [],
+        },
+      },
+    });
+    await st().loadProject('Odd');
+    expect(st().diagramPins).toEqual({ 'general|': { [drone]: { x: 5, y: 6 } } });
+    await new LocalStorageStore().saveProject('Odder', { ...before, meta: { diagramPins: 'boxes' } });
+    await st().loadProject('Odder');
+    expect(rootNames()).toEqual(['Swarm']);
+    expect(st().diagramPins).toEqual({});
+  });
+
+  it('New and Import start from a fresh layout, Open from the project’s — and Undo puts back the boxes of the model it brings back', async () => {
+    const drone = idOf('Drone');
+    const dropped = { x: 640, y: 480 };
+    await move(drone, dropped);
+    const pins = st().diagramPins;
+
+    st().newProject('Fresh');
+    expect(st().diagramPins).toEqual({});
+    st().undo();
+    expect(rootNames()).toEqual(['Swarm']);
+    expect(st().diagramPins).toEqual(pins);
+    expect(await boxAt(drone)).toEqual(dropped);
+    st().redo();
+    expect(rootNames()).toEqual(['Fresh']);
+    expect(st().diagramPins, 'Redo takes them away again').toEqual({});
+    st().undo();
+
+    st().importModel(SWARM, 'sysml');
+    expect(st().diagramPins).toEqual({});
+    await whenLibrarySettled();
+    st().undo();
+    expect(st().diagramPins).toEqual(pins);
+    expect(await boxAt(drone)).toEqual(dropped);
+
+    await st().saveProject('Swarm');
+    await move(drone, { x: 1, y: 2 });
+    const moved = st().diagramPins;
+    await st().loadProject('Swarm');
+    expect(st().diagramPins, 'the project’s').toEqual(pins);
+    await whenLibrarySettled();
+    st().undo();
+    expect(st().diagramPins, 'the ones Open replaced').toEqual(moved);
+    st().redo();
+    expect(st().diagramPins).toEqual(pins);
+
+    // Moving a box is no Undo step, and an edit's Undo leaves the boxes be.
+    st().createElement('PartDefinition', idOf('Swarm'), 'Kite');
+    await move(drone, { x: 11, y: 12 });
+    const now = st().diagramPins;
+    st().undo();
+    expect(st().model.all().some((e) => e.declaredName === 'Kite')).toBe(false);
+    expect(st().diagramPins).toEqual(now);
+  });
+
+  it('an apply of text — the Text view’s, or the one Save makes of typed text — keeps each box with its element, by qualified name', async () => {
+    const drone = idOf('Drone');
+    await move(drone, { x: 312, y: 212 });
+    await move(idOf('Relay'), { x: 40, y: 640 });
+    st().setDiagramRoot(idOf('Swarm'));
+    await move(drone, { x: 7, y: 9 });
+    st().setDiagramRoot(null);
+    const before = st().diagramPins;
+
+    // Typed and not applied, then Save: the apply makes every element anew,
+    // under a new id — the boxes stay where they were dropped.
+    st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Relay;\n    part def Kite;'));
+    await runSave();
+    const droneNow = idOf('Drone');
+    expect(droneNow, 'the apply made Drone anew').not.toBe(drone);
+    expect(await boxAt(droneNow)).toEqual({ x: 312, y: 212 });
+    expect(await boxAt(idOf('Relay'))).toEqual({ x: 40, y: 640 });
+    const record = await stored('Swarm');
+    expect(record?.elements.some((e) => e.id === droneNow), 'the model saved is the applied one').toBe(true);
+    expect(record?.meta?.diagramPins, 'and the boxes beside it are under its ids').toEqual({
+      'general|': { [droneNow]: { x: 312, y: 212 }, [idOf('Relay')]: { x: 40, y: 640 } },
+      [`general|${idOf('Swarm')}`]: { [droneNow]: { x: 7, y: 9 } },
+    });
+
+    // Undo of the apply: the model it replaced, its ids, and their boxes.
+    await whenLibrarySettled();
+    st().undo();
+    expect(idOf('Drone')).toBe(drone);
+    expect(st().diagramPins).toEqual(before);
+    expect(await boxAt(drone)).toEqual({ x: 312, y: 212 });
+    st().redo();
+    expect(idOf('Drone')).toBe(droneNow);
+    expect(await boxAt(droneNow)).toEqual({ x: 312, y: 212 });
+
+    st().newProject('Other');
+    await whenLibrarySettled();
+    await st().loadProject('Swarm');
+    expect(await boxAt(droneNow), 'and Open puts them back').toEqual({ x: 312, y: 212 });
+
+    // The Text view's Apply: a renamed element is another element, and lays
+    // out afresh; text unlike the model keeps nothing.
+    st().setTextBuffer(st().textBuffer.replace('part def Relay;', 'part def Mast;'));
+    st().applyText();
+    expect(st().diagramPins['general|']).toEqual({ [idOf('Drone')]: { x: 312, y: 212 } });
+    expect(await boxAt(idOf('Drone'))).toEqual({ x: 312, y: 212 });
+    expect(await boxAt(idOf('Mast'))).not.toEqual({ x: 40, y: 640 });
+    st().setTextBuffer('package Other {\n    part def Drone;\n}\n');
+    st().applyText();
+    expect(st().diagramPins, 'Other::Drone is not Swarm::Drone').toEqual({});
+
+    // Two elements of one name: the name tells neither apart, so neither box goes.
+    st().setTextBuffer('package Twins {\n    part def Drone;\n    part def Drone;\n}\n');
+    st().applyText();
+    await whenLibrarySettled();
+    const twin = st().model.all().find((e) => e.declaredName === 'Drone')!.id;
+    await move(twin, { x: 5, y: 5 });
+    st().setTextBuffer(st().textBuffer);
+    st().applyText();
+    expect(st().model.all().filter((e) => e.declaredName === 'Drone')).toHaveLength(2);
+    expect(st().diagramPins).toEqual({});
+  });
+
+  it('a .sysml file opened as text starts from a fresh layout, as Import does, and the Undo step it leaves (Reload from Drive keeps it) puts the boxes back', async () => {
+    const drone = idOf('Drone');
+    await move(drone, { x: 900, y: 700 });
+    const pins = st().diagramPins;
+
+    await openText(SWARM, 'sysml');
+    expect(st().diagramPins, 'not even for elements of the same names').toEqual({});
+    await st().saveProject('Swarm');
+    expect((await stored('Swarm'))?.meta?.diagramPins).toEqual({});
+    st().undo();
+    expect(idOf('Drone')).toBe(drone);
+    expect(st().diagramPins).toEqual(pins);
+    expect(await boxAt(drone)).toEqual({ x: 900, y: 700 });
   });
 });
 

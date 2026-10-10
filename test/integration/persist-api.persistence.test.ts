@@ -183,6 +183,36 @@ describe('exportModel with the standard library merged', () => {
     expect(loadFullStandardLibrary(model).length, 'the merge adds nothing').toBe(libraryCount);
     expect(model.size).toBe(original.size);
   });
+
+  /**
+   * API JSON keeps the library the same way, and must bring back every element
+   * it wrote. The library's 268 `alias`es are `Membership` elements, and the
+   * import used to take every membership on the wire for the export's reified
+   * ownership: 38,761 library elements out, 38,493 back — and the app's merge,
+   * which skips a model that has a library, never put the aliases back.
+   */
+  it("'api-json' re-imports every element it exported, the library's aliases included", () => {
+    const original = withLibrary();
+    const aliases = (m: Model): string[] =>
+      m
+        .all()
+        .filter((el) => el.eClass === 'Membership')
+        .map((el) => strictSignature(m, el))
+        .sort();
+    expect(aliases(original).length, 'the library has aliases').toBeGreaterThan(200);
+    const { model } = importModel(exportModel(original, 'api-json'), 'api-json');
+    const lost = original
+      .all()
+      .filter((el) => model.get(el.id)?.eClass !== el.eClass || model.get(el.id)?.ownerId !== el.ownerId)
+      .map((el) => `${el.eClass} ${el.id}`);
+    expect(lost).toEqual([]);
+    expect(model.size).toBe(original.size);
+    expect(aliases(model)).toEqual(aliases(original));
+    expect(userElements(model)).toEqual(userElements(original));
+    expect(loadFullStandardLibrary(model).length, "the app's merge finds the whole library").toBe(
+      original.all().filter(isLibrary).length,
+    );
+  });
 });
 
 /* ──────────────────── api-json validates as an OMG graph ────────────────── */
@@ -204,7 +234,8 @@ interface ApiGraph {
   rootElement?: Array<{ '@id': string }>;
 }
 
-const MEMBERSHIP_TYPES = new Set(['OwningMembership', 'FeatureMembership', 'Membership']);
+/** The metaclasses the export reifies ownership with (a plain `Membership` is an alias). */
+const MEMBERSHIP_TYPES = new Set(['OwningMembership', 'FeatureMembership']);
 
 describe('api-json — OMG element-graph validity', () => {
   const cases: Array<[string, () => Model]> = [
@@ -236,6 +267,8 @@ describe('api-json — OMG element-graph validity', () => {
         const owner = m.owningRelatedElement?.['@id'];
         expect(child).toBeTruthy();
         expect(owner).toBeTruthy();
+        // The import tells it from the model's own memberships by this id.
+        expect(m['@id']).toBe(`om-${child}`);
         // Every membership endpoint references a real element in the graph.
         expect(ids.has(child!)).toBe(true);
         expect(ids.has(owner!)).toBe(true);

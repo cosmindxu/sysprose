@@ -572,6 +572,9 @@ export function RequirementsTable(): JSX.Element {
  * never links anything — the native <select> this replaces linked on its first
  * change, so typing "acknowledgeReports" to find it linked whatever began with
  * "a", and a model with hundreds of candidates was a long list to scroll.
+ * Ctrl/Cmd+S commits a field by leaving it, which here would cancel: the box
+ * is marked `data-blur-cancels`, and the key saves with the picker left open,
+ * its query kept (`handlePageKey`).
  */
 function RefPicker(props: {
   placeholder: string;
@@ -592,6 +595,7 @@ function RefPicker(props: {
       <input
         className="req-ref-picker"
         data-testid="req-ref-picker"
+        data-blur-cancels=""
         autoFocus
         placeholder={props.placeholder}
         value={query}

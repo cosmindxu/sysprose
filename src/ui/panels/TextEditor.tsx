@@ -10,9 +10,11 @@
  *   auto-regenerates the canonical text via `store.regenerateText`, keeping the
  *   text view in sync with diagram/tree edits (bidirectional sync, plan §5).
  * - Parse diagnostics are surfaced in an inline strip beneath the editor.
- * - Ctrl/Cmd+S and Ctrl/Cmd+Shift+S typed here save, as they do elsewhere on
- *   the page — and as there, Ctrl/Cmd+S applies the typed text first, so the
- *   save holds it (`runSave`); every other key stays the textarea's.
+ * - Ctrl/Cmd+S and Ctrl/Cmd+Shift+S typed here save, as in every field of the
+ *   page (the page's listener, `handlePageKey`) — and Ctrl/Cmd+S applies the
+ *   typed text first, so the save holds it (`runSave`); Ctrl/Cmd+Shift+S saves
+ *   to Drive alone, which applies the text itself. Every other key stays the
+ *   textarea's.
  * - When the model cannot be written as text at all (`store.serializeError`),
  *   the buffer is the LAST text that could be written: the status strip says so,
  *   an inline notice gives the reason, and "Apply text → model" is disabled,
@@ -23,7 +25,6 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store';
-import { handleShortcut } from '../commands';
 import type { Diagnostic } from '@validation/index';
 import './panels.css';
 
@@ -104,20 +105,6 @@ export function TextEditor(): JSX.Element {
           wrap="off"
           value={textBuffer}
           onChange={(e) => setTextBuffer(e.target.value)}
-          onKeyDown={(e) => {
-            // Ctrl/Cmd+S and Ctrl/Cmd+Shift+S save from here too: the page's
-            // shortcut handler ignores keys typed into a field, which left the
-            // browser's own "Save page" dialog as the answer — right where a
-            // student who just typed reaches for Save. Only these two keys:
-            // undo, copy and the rest stay the editor's own.
-            if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return;
-            // Ctrl/Cmd+S saves the MODEL, here as elsewhere on the page: the
-            // text typed here is applied first, unless it has a parse error
-            // or a collaboration room is connected (`runSave`).
-            // Ctrl/Cmd+Shift+S saves to Drive alone, which applies the text
-            // itself.
-            if (handleShortcut(e.nativeEvent)) e.preventDefault();
-          }}
           onScroll={(e) => {
             if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop;
           }}

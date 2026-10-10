@@ -84,6 +84,33 @@ describe('PilotApiClient self round-trip', () => {
     expect(b.endpoints).toEqual(a.endpoints);
   });
 
+  /**
+   * An `alias` is a `Membership` element of the model. The file import once
+   * dropped every one, taking it for the reified ownership its element graph
+   * carries; this wire carries containment as an `owner` back-link instead, and
+   * must keep the alias, its owner and what it names.
+   */
+  it("keeps the model's own Membership elements (aliases)", async () => {
+    const client = new PilotApiClient(baseUrl);
+    const parsed = parseModel(
+      'package Shop {\n    part def Vehicle;\n    alias Car for Vehicle;\n' +
+        '    package Inner {\n        alias <V> Wagon for Vehicle;\n    }\n}\n',
+    );
+    const aliases = parsed.model.all().filter((el) => el.eClass === 'Membership');
+    expect(aliases).toHaveLength(2);
+
+    const pushed = await client.pushModel(parsed.model, 'AliasRT');
+    const pulled = await client.pullModel(pushed.projectId, pushed.commitId);
+    expect(pulled.size).toBe(parsed.model.size);
+    for (const alias of aliases) {
+      const back = pulled.get(alias.id);
+      expect(back?.eClass).toBe('Membership');
+      expect(back?.ownerId).toBe(alias.ownerId);
+      expect(back?.target).toEqual(alias.target);
+    }
+    expect(signature(pulled)).toEqual(signature(parsed.model));
+  });
+
   it('preserves ids, metaclasses and containment element-by-element', async () => {
     const client = new PilotApiClient(baseUrl);
     const source = buildSampleModel();

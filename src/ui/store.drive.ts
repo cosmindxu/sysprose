@@ -550,6 +550,14 @@ export const DRIVE_MESSAGES = {
     `Saved in this browser without the text typed in the Text view: it has a syntax error at line ${line}. Fix it, then save again.`,
   typedTextInRoom:
     "Saved in this browser without the text typed in the Text view: in a collaboration room, Save does not replace the room's model with it. Apply text → model does, for everyone in the room; then save again.",
+  typedTextNotExported: (line: number) =>
+    `Exported without the text typed in the Text view: it has a syntax error at line ${line}. Fix it, then export again.`,
+  typedTextNotExportedInRoom:
+    "Exported without the text typed in the Text view: in a collaboration room, Export does not replace the room's model with it. Apply text → model does, for everyone in the room; then export again.",
+  notIntoLibrary: (what: 'new' | number) =>
+    `The standard library is not part of your model's text, so ${
+      what === 'new' ? 'the new element is' : what === 1 ? 'the element is' : `the ${what} elements are`
+    } at the top level of your model instead.`,
   otherAccount: (now: string, before: string) =>
     `Google's sign-in window came back signed in as ${now}, not ${before}, so nothing was done: the Drive file is closed and the Recent list cleared. To go on as ${before}, sign out under Drive ▾ and sign in again.`,
   linkUnsupported: 'This link names a Google Drive file, but this deployment has no Google Drive support.',

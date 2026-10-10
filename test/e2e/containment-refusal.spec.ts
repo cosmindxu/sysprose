@@ -12,11 +12,14 @@
  * had already cleared. All three of those are asserted here, because a rollback
  * that leaves a phantom undo entry is its own bug: the user's next Undo would
  * appear to do nothing.
+ *
+ * Nor does an element added in the Explorer, dragged there or pasted there land
+ * inside the standard library (the last test).
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { findElementId, gotoApp, selectElementById, shot } from './fixtures';
-import { addChild, exists, modelSize, renameInTree } from './model-helpers';
+import { captureErrors, findElementId, gotoApp, openTab, selectElementById, shot } from './fixtures';
+import { addChild, exists, idsOfType, modelSize, renameInTree } from './model-helpers';
 
 /** Owner id of an element, straight from the model. */
 function ownerOf(page: Page, id: string): Promise<string | null> {
@@ -25,6 +28,17 @@ function ownerOf(page: Page, id: string): Promise<string | null> {
       (
         window as unknown as { sysml: { getElement(i: string): { ownerId?: string } | undefined } }
       ).sysml.getElement(i)?.ownerId ?? null,
+    id,
+  );
+}
+
+/** Where an element's row is among the Explorer's rows, top to bottom (-1 for none). */
+function rowIndex(page: Page, id: string): Promise<number> {
+  return page.evaluate(
+    (i) =>
+      Array.from(document.querySelectorAll('[data-testid="tree-node"]')).findIndex(
+        (r) => r.getAttribute('data-elementid') === i,
+      ),
     id,
   );
 }
@@ -151,4 +165,76 @@ test('pasting a subtree into one of its own members clones a snapshot, finitely'
   await expect.poll(() => modelSize(page)).toBe(sizeBefore);
 
   expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
+/**
+ * Nor does an element of the user's land inside the standard library, which
+ * the text never holds: with the Explorer's library toggle on, one added under
+ * a library row, dragged onto one, or pasted onto one, goes to the top level of
+ * the model instead — so the Text view holds it — and the strip under the
+ * toolbar says so. One Undo takes the move back, and the note with it. Nor
+ * does a library element's Documentation box write a doc: it is read-only.
+ */
+test('an element added under, dragged onto, or pasted onto a library row goes to the top level of the model', async ({
+  page,
+}) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await page.getByTestId('explorer-library-toggle').check();
+  const libRow = page.locator('[data-testid="tree-node"].is-library').first();
+  await expect(libRow).toBeVisible();
+  const libId = (await libRow.getAttribute('data-elementid'))!;
+  const strip = page.getByTestId('drive-strip');
+
+  // ── A library element's Documentation box is read-only ──
+  await selectElementById(page, libId);
+  await expect(page.getByTestId('prop-doc')).toHaveAttribute('readonly', '');
+
+  // ── Add a part definition under the library package: it lands at the top ──
+  const strayId = await addChild(page, libId, 'PartDefinition');
+  expect(await ownerOf(page, strayId)).toBe(null);
+  await expect(strip).toHaveAttribute('data-status', 'info');
+  await expect(strip).toContainText('so the new element is at the top level of your model instead');
+  await renameInTree(page, strayId, 'Stray');
+  // Its row sits among the model's own, above the library's packages — not
+  // below them, where it would read as having landed in one.
+  const strayRow = await rowIndex(page, strayId);
+  expect(strayRow).toBeGreaterThan(-1);
+  expect(strayRow).toBeLessThan(await rowIndex(page, libId));
+  await openTab(page, 'tab-text');
+  await expect(page.getByTestId('text-editor')).toHaveValue(/part def Stray;/);
+  await shot(page, 'library-a-added-at-top');
+  await page.getByTestId('drive-strip-dismiss').click();
+  await expect(strip).toHaveCount(0);
+
+  // ── Drag one of the model's part definitions onto the library package ──
+  const engineId = await findElementId(page, 'PartDefinition', 'Engine');
+  const ownerBefore = await ownerOf(page, engineId);
+  expect(ownerBefore).not.toBe(null);
+  await dragRowOnto(page, engineId, libId);
+  await expect.poll(() => ownerOf(page, engineId)).toBe(null);
+  await expect(strip).toContainText('so the element is at the top level of your model instead');
+  await shot(page, 'library-b-dragged-to-top');
+
+  // ── One Undo puts it back where it was, and takes the note down ──
+  await page.getByTestId('tb-undo').click();
+  await expect.poll(() => ownerOf(page, engineId)).toBe(ownerBefore);
+  await expect(strip).toHaveCount(0);
+
+  // ── Copy it and paste onto the library package: the copy goes to the top level ──
+  const partDefsBefore = await idsOfType(page, 'PartDefinition');
+  await selectElementById(page, engineId);
+  await page.locator('.toolbar-brand').click(); // off any control, so the page takes the keys
+  await page.keyboard.press('ControlOrMeta+c');
+  await selectElementById(page, libId);
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect.poll(async () => (await idsOfType(page, 'PartDefinition')).length).toBe(partDefsBefore.length + 1);
+  const copyId = (await idsOfType(page, 'PartDefinition')).find((id) => !partDefsBefore.includes(id))!;
+  expect(await ownerOf(page, copyId)).toBe(null);
+  await expect(strip).toContainText('so the element is at the top level of your model instead');
+  await shot(page, 'library-c-pasted-to-top');
+  await page.getByTestId('tb-undo').click();
+  await expect.poll(() => exists(page, copyId)).toBe(false);
+  await expect(strip).toHaveCount(0);
+  expect(errors, `console errors:\n${errors.join('\n')}`).toEqual([]);
 });

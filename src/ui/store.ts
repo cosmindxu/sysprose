@@ -80,6 +80,7 @@ import {
   isRequirement,
   type AttrValue,
   type ClipboardPayload,
+  type CreateElementOptions,
   type ElementId,
   type ElementRecord,
   type SerializedModel,
@@ -330,8 +331,13 @@ export interface AppState extends DriveActions {
    * reports it). Every rebuild lays the diagram out afresh and then puts these
    * boxes back where the user left them, so an edit elsewhere in the model does
    * not undo the arranging. Auto-layout clears the current diagram's pins.
+   * An apply of text gives every element a new id, so the pins follow their
+   * elements by qualified name ({@link carryPins}).
+   * Save keeps them with the project in this browser, beside the model and
+   * never in its text; Open puts them back, and New, Import and a file opened
+   * as text start without any — see {@link pinsOf}.
    */
-  diagramPins: Record<string, Record<string, { x: number; y: number }>>;
+  diagramPins: DiagramPins;
   /** True while a graph view is being laid out (the layout runs off-page). */
   diagramLayoutPending: boolean;
   /** Allocation-matrix projection — populated only while `activeView === 'allocation'`. */
@@ -471,7 +477,9 @@ export interface AppState extends DriveActions {
   /** Copy the current selection's subtrees into the clipboard (not undoable). */
   copySelection(): void;
   /** Paste the clipboard under `ownerId` (default: the primary selection), in
-   *  one undo step; returns the new root ids. */
+   *  one undo step; returns the new root ids. Copies of the user's elements
+   *  never go inside the standard library: under a library element they land
+   *  at the top level of the model, and the strip says so ({@link createElement}). */
   pasteClipboard(ownerId?: ElementId | null): ElementId[];
   /** Set/clear the cross-view hover highlight (null = nothing hovered). */
   setHover(id: ElementId | null): void;
@@ -529,6 +537,12 @@ export interface AppState extends DriveActions {
    */
   applyRegroup(): void;
 
+  /**
+   * Make an element under `ownerId` — the selection when it is not given, the
+   * top level of the model when it is null or gone. Never inside the standard
+   * library: the text leaves the library out, so an owner there is refused for
+   * the top level of the model, and the strip says so. Selects the new element.
+   */
   createElement(eClass: string, ownerId?: ElementId | null, name?: string): ElementId;
   updateElement(id: ElementId, patch: Partial<Omit<ElementRecord, 'id' | 'ownerId'>>): void;
   setAttr(id: ElementId, key: string, value: AttrValue): void;
@@ -593,11 +607,18 @@ export interface AppState extends DriveActions {
   deleteElement(id: ElementId): void;
   /** Deep-clone an element + its subtree as a sibling; returns the new root id. */
   duplicateElement(id: ElementId): ElementId | null;
+  /**
+   * Move an element under `ownerId` (null: the top level of the model). A user
+   * element asked into the standard library goes to the top level instead, as
+   * in {@link createElement}, and the strip says so.
+   */
   reparent(id: ElementId, ownerId: ElementId | null): void;
   /**
    * Reparent several elements under one new owner in a SINGLE undo step. Skips
    * ids that don't exist, are already owned by `ownerId`, or whose move is
    * illegal (self / cycle); applies the rest. Used by canvas drag-to-reparent.
+   * Into the standard library, a user element goes to the top level of the
+   * model instead, as in {@link reparent}.
    */
   reparentMany(ids: ElementId[], ownerId: ElementId | null): void;
   connect(sourceId: ElementId, targetId: ElementId, kind: string): ElementId;
@@ -798,6 +819,56 @@ function outermostSimulatable(model: Model): ElementId | null {
 const isLibraryEl = (el: ElementRecord): boolean => el.attrs.isLibrary === true;
 /** An element belongs to the user's model (everything that isn't library). */
 const isUserEl = (el: ElementRecord): boolean => el.attrs.isLibrary !== true;
+
+/**
+ * True when `id` sits in the standard library: under a library root, or one
+ * itself. The flag on the root is what counts, not the element's own: the
+ * Text view, Save to Drive and Export ▾ → SysML write the user's roots only
+ * (`userRootIds`), so an element of the user's put anywhere under a library
+ * root, flag or no flag, is left out of all three — while model JSON keeps
+ * it, and an edit to it does not read unsaved. Properties asks it too: it
+ * writes no documentation on such an element.
+ */
+export function inLibrary(model: Model, id: ElementId): boolean {
+  const el = model.get(id);
+  if (!el) return false;
+  const owners = model.ancestors(id);
+  return isLibraryEl(owners[owners.length - 1] ?? el);
+}
+
+/**
+ * The owner a user element asked to go under `ownerId` gets: `ownerId`
+ * itself, or — when that is in the standard library ({@link inLibrary}) —
+ * null, the top level of the user's model. `refused` says which.
+ */
+function userOwner(model: Model, ownerId: ElementId | null): { ownerId: ElementId | null; refused: boolean } {
+  return ownerId !== null && inLibrary(model, ownerId) ? { ownerId: null, refused: true } : { ownerId, refused: false };
+}
+
+/**
+ * A call to the SDK on `window.sysml` that would put a user element inside the
+ * standard library, where the store's commands put none: a `create` or a
+ * `reparent` whose owner is in the library ({@link inLibrary}). Returns its
+ * arguments with the top level of the model for the owner, and what the strip
+ * says once it has run — or null for any other call. A library element, one
+ * `create` is given `attrs.isLibrary` for or one `reparent` moves, goes where
+ * it is asked.
+ */
+function sdkIntoLibrary(model: Model, name: string, args: unknown[]): { args: unknown[]; what: 'new' | 1 } | null {
+  if (name === 'create') {
+    const opts = args[1] as CreateElementOptions | undefined;
+    if (opts?.attrs?.isLibrary === true || !userOwner(model, opts?.ownerId ?? null).refused) return null;
+    return { args: [args[0], { ...opts, ownerId: null }, ...args.slice(2)], what: 'new' };
+  }
+  if (name === 'reparent') {
+    const el = model.get(args[0] as ElementId);
+    const ownerId = (args[1] as ElementId | null | undefined) ?? null;
+    if (!el || !isUserEl(el) || !userOwner(model, ownerId).refused) return null;
+    return { args: [args[0], null, ...args.slice(2)], what: 1 };
+  }
+  return null;
+}
+
 /** An empty serialised model — used with `resetPreserving` to clear only the user scope. */
 const EMPTY_SNAPSHOT: SerializedModel = {
   formatVersion: FORMAT_VERSION,
@@ -1085,6 +1156,9 @@ const OWNED_BY_SOURCE = new Set([
 /** Counts rebuilds, so only the latest started one publishes its layout. */
 let diagramGeneration = 0;
 
+/** Hand-placed boxes: per diagram ({@link diagramKey}), node id → position. */
+export type DiagramPins = Record<string, Record<string, { x: number; y: number }>>;
+
 /** One diagram's identity for hand-placed boxes: its view and its scope root. */
 function diagramKey(view: ViewKind, rootId: ElementId | null): string {
   return `${view}|${rootId ?? ''}`;
@@ -1104,6 +1178,95 @@ function applyPins(
     ...graph,
     nodes: graph.nodes.map((n) => (pins[n.id] ? { ...n, position: { ...pins[n.id]! } } : n)),
   };
+}
+
+/**
+ * Each user element by its qualified name, where that name is its alone (an
+ * unnamed element shares its `«kind»` with its unnamed siblings): what finds a
+ * hand-placed box's element again in a model rebuilt from text.
+ */
+function userElementsByName(model: Model): Map<string, ElementId> {
+  const byName = new Map<string, ElementId>();
+  const shared = new Set<string>();
+  for (const el of model.all()) {
+    if (!isUserEl(el)) continue;
+    const name = model.qualifiedName(el.id);
+    if (byName.has(name)) shared.add(name);
+    else byName.set(name, el.id);
+  }
+  for (const name of shared) byName.delete(name);
+  return byName;
+}
+
+/**
+ * Hand-placed boxes carried over to a model rebuilt from text, where every
+ * element came back under a new id: each box — and the scope root of each
+ * diagram that has some — goes to the element of the same qualified name
+ * ({@link userElementsByName}, before and after). A box whose element is gone,
+ * renamed or moved to another owner, or whose name is not its alone, is
+ * dropped, and lays out afresh.
+ */
+function carryPins(
+  pins: DiagramPins,
+  before: ReadonlyMap<string, ElementId>,
+  after: ReadonlyMap<string, ElementId>,
+): DiagramPins {
+  const newId = new Map<ElementId, ElementId>();
+  for (const [name, id] of before) {
+    const now = after.get(name);
+    if (now !== undefined) newId.set(id, now);
+  }
+  const carried: DiagramPins = {};
+  for (const [key, boxes] of Object.entries(pins)) {
+    // A diagramKey: the view, and the scope root ('' for the whole model).
+    const bar = key.indexOf('|');
+    const root = key.slice(bar + 1);
+    const rootNow = root === '' ? '' : newId.get(root);
+    if (rootNow === undefined) continue;
+    const kept: Record<string, { x: number; y: number }> = {};
+    for (const [id, p] of Object.entries(boxes)) {
+      const now = newId.get(id);
+      if (now !== undefined) kept[now] = p;
+    }
+    if (Object.keys(kept).length > 0) carried[`${key.slice(0, bar)}|${rootNow}`] = kept;
+  }
+  return carried;
+}
+
+/**
+ * A model snapshot with hand-placed boxes beside it, in its `meta`: how Save
+ * keeps them with the project in this browser's store, and how the Undo step
+ * of a command that replaces them (New, Open, Import, an apply of text) keeps
+ * the ones it replaced. Never the model's text — the `.sysml` file, the Text
+ * view and a Google Drive file are the model alone.
+ */
+function withPins(data: SerializedModel, pins: DiagramPins): SerializedModel {
+  return { ...data, meta: { ...data.meta, diagramPins: pins } };
+}
+
+/**
+ * The hand-placed boxes a snapshot carries, or undefined when it carries none:
+ * a project saved before they were kept, or an Undo step that left them be.
+ * The store holds whatever a build of this app wrote, so only well-formed
+ * positions are taken and the rest is skipped.
+ */
+function pinsOf(data: SerializedModel): DiagramPins | undefined {
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+  const raw = data.meta?.diagramPins;
+  if (raw === undefined) return undefined;
+  const pins: DiagramPins = {};
+  if (!isRecord(raw)) return pins;
+  for (const [key, boxes] of Object.entries(raw)) {
+    if (!isRecord(boxes)) continue;
+    const kept: Record<string, { x: number; y: number }> = {};
+    for (const [id, p] of Object.entries(boxes)) {
+      if (!isRecord(p) || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      kept[id] = { x: p.x as number, y: p.y as number };
+    }
+    if (Object.keys(kept).length > 0) pins[key] = kept;
+  }
+  return pins;
 }
 
 /**
@@ -1364,14 +1527,21 @@ export function proveInTerminalHint(command: string): string {
 }
 
 export const useAppStore = create<AppState>((set, get) => {
-  /** Snapshot the current model onto the undo stack and clear redo. */
-  function pushUndo(): void {
+  /**
+   * Snapshot the current model onto the undo stack and clear redo. A command
+   * that replaces the hand-placed boxes along with the model (New, Open,
+   * Import, an apply of text) passes `pins`: its Undo then puts back the boxes
+   * of the model it brings back. Moving a box is no step of its own, so no
+   * other Undo touches them.
+   */
+  function pushUndo(opts: { pins?: boolean } = {}): void {
     const { model, undoStack } = get();
     // Snapshot only the USER model — the ~38.8 k-element standard library is
     // immutable and shared, so cloning it on every edit (up to UNDO_LIMIT deep
     // copies) was the dominant undo cost (finding C6). Restores re-attach the
     // live library via Model.resetPreserving.
-    const snap = model.toJSONWhere(isUserEl);
+    const user = model.toJSONWhere(isUserEl);
+    const snap = opts.pins ? withPins(user, get().diagramPins) : user;
     const next = [...undoStack, snap];
     if (next.length > UNDO_LIMIT) next.splice(0, next.length - UNDO_LIMIT);
     set({ undoStack: next, redoStack: [] });
@@ -1516,14 +1686,23 @@ export const useAppStore = create<AppState>((set, get) => {
     Object.defineProperty(initialApi, name, {
       configurable: true,
       writable: true,
-      value: function sdkCall(this: ModelApi, ...args: unknown[]): unknown {
+      value: function sdkCall(this: ModelApi, ...asked: unknown[]): unknown {
         const model = initialApi.model;
-        if (sdkDepth > 0 || model !== get().model) return method.apply(this, args);
+        // Nor does a user element land inside the standard library through
+        // the SDK, inside `commit(fn)` or out of it: the strip says where it
+        // went instead, once the call has made it.
+        const outside = sdkIntoLibrary(model, name, asked);
+        const call = (): unknown => {
+          const result = method.apply(this, outside?.args ?? asked);
+          if (outside) sayNotIntoLibrary(outside.what);
+          return result;
+        };
+        if (sdkDepth > 0 || model !== get().model) return call();
         const from = model.rev;
         const typed = typedTextUnapplied();
         sdkDepth++;
         try {
-          return method.apply(this, args);
+          return call();
         } finally {
           sdkDepth--;
           if (model.rev !== from) {
@@ -1720,12 +1899,18 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!clipboard || clipboard.records.length === 0) return [];
       // Default target: the primary selection (paste as its children); fall back
       // to the root when nothing valid is selected.
-      const target = ownerId !== undefined ? ownerId : selectionId;
+      const asked = ownerId !== undefined ? ownerId : selectionId;
+      const target = asked && model.has(asked) ? asked : null;
+      // Copies of the user's elements go to the top level of the model, not
+      // under a library element, as in `createElement` (copies of library
+      // elements go where they are asked, as a moved one does).
+      const ofUser = clipboard.records.some((r) => clipboard.rootIds.includes(r.id) && r.attrs.isLibrary !== true);
+      const placed = ofUser ? userOwner(model, target) : { ownerId: target, refused: false };
       const redoBefore = get().redoStack;
       pushUndo();
       let roots: ElementId[];
       try {
-        roots = pasteSubtrees(model, clipboard, target && model.has(target) ? target : null);
+        roots = pasteSubtrees(model, clipboard, placed.ownerId);
       } catch {
         const { undoStack } = get();
         const snap = undoStack[undoStack.length - 1];
@@ -1746,10 +1931,11 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       set((s) => {
         const expandedIds = new Set(s.expandedIds);
-        if (target && model.has(target)) expandedIds.add(target);
+        if (placed.ownerId) expandedIds.add(placed.ownerId);
         return { expandedIds, selectionId: roots[roots.length - 1], selectionIds: roots };
       });
       afterMutation();
+      if (placed.refused) sayNotIntoLibrary(roots.length);
       return roots;
     },
 
@@ -2121,7 +2307,9 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model } = get();
       const owner = ownerId !== undefined ? ownerId : get().selectionId;
       // Guard: only nest under an existing owner; otherwise create at root.
-      const ownerArg = owner && model.has(owner) ? owner : null;
+      // Nor under one in the standard library, which the text leaves out.
+      const placed = userOwner(model, owner && model.has(owner) ? owner : null);
+      const ownerArg = placed.ownerId;
       pushUndo();
       const el = model.create(eClass, {
         declaredName: name,
@@ -2133,6 +2321,7 @@ export const useAppStore = create<AppState>((set, get) => {
         return { expandedIds, ...singleSel(el.id) };
       });
       afterMutation();
+      if (placed.refused) sayNotIntoLibrary('new');
       return el.id;
     },
 
@@ -2394,12 +2583,21 @@ export const useAppStore = create<AppState>((set, get) => {
 
     reparent(id, ownerId) {
       const { model } = get();
-      if (!model.has(id)) return;
+      const el = model.get(id);
+      if (!el) return;
+      // A user element asked into the standard library goes to the top level
+      // of the model instead, and the strip says so; one already there has
+      // nowhere to go, and spends no undo step. A library element moves
+      // within the library as it always did.
+      const placed = isUserEl(el) ? userOwner(model, ownerId) : { ownerId, refused: false };
+      if (placed.refused) sayNotIntoLibrary(1);
+      if (placed.refused && el.ownerId === null) return;
+      const to = placed.ownerId;
       const redoBefore = get().redoStack;
       try {
         pushUndo();
-        model.reparent(id, ownerId);
-        if (ownerId) get().expand(ownerId, true);
+        model.reparent(id, to);
+        if (to) get().expand(to, true);
         afterMutation();
       } catch (err) {
         // Illegal reparent (cycle / self): roll the snapshot back off the stack
@@ -2414,10 +2612,16 @@ export const useAppStore = create<AppState>((set, get) => {
       // Reduce to subtree roots first: reparenting must move whole subtrees, not
       // flatten them (a set holding both a parent and its descendant would
       // otherwise rip the descendant out and re-own it directly). Then keep only
-      // elements that exist and would actually change owner.
-      const targets = subtreeRoots(model, ids).filter(
-        (id) => model.has(id) && model.get(id)?.ownerId !== ownerId,
-      );
+      // elements that exist and would actually change owner — where a user
+      // element asked into the standard library goes to the top level of the
+      // model instead, as in `reparent`, and the strip says how many did.
+      const roots = subtreeRoots(model, ids).filter((id) => model.has(id));
+      const intoLibrary = userOwner(model, ownerId).refused;
+      const ownerFor = (id: ElementId): ElementId | null =>
+        intoLibrary && isUserEl(model.get(id)!) ? null : ownerId;
+      const refused = intoLibrary ? roots.filter((id) => isUserEl(model.get(id)!)).length : 0;
+      if (refused > 0) sayNotIntoLibrary(refused);
+      const targets = roots.filter((id) => model.get(id)?.ownerId !== ownerFor(id));
       if (targets.length === 0) return;
       // Capture redo so a fully-failed call doesn't destroy the user's redo
       // history (pushUndo clears it) — matches duplicateSelection/duplicateElement.
@@ -2426,7 +2630,7 @@ export const useAppStore = create<AppState>((set, get) => {
       let moved = 0;
       for (const id of targets) {
         try {
-          model.reparent(id, ownerId);
+          model.reparent(id, ownerFor(id));
           moved++;
         } catch (err) {
           // Skip an individual illegal move (self / cycle); the rest still apply.
@@ -2439,7 +2643,7 @@ export const useAppStore = create<AppState>((set, get) => {
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
         return;
       }
-      if (ownerId) get().expand(ownerId, true);
+      if (ownerId && targets.some((id) => ownerFor(id) === ownerId)) get().expand(ownerId, true);
       afterMutation();
     },
 
@@ -2814,12 +3018,17 @@ export const useAppStore = create<AppState>((set, get) => {
       if (get().serializeError !== null && !get().textDirty) return;
       if (get().simSession) get().simStop(); // replacing the model orphans the sim target
       cancelRecompute();
-      const { model, textBuffer } = get();
+      const { model, textBuffer, diagramPins } = get();
       const result = parseModel(textBuffer);
       lastParse = result;
-      pushUndo();
+      // The text makes every element anew, under a new id: the boxes moved by
+      // hand follow their elements by qualified name, and this step's Undo
+      // puts back the ones the old ids had.
+      pushUndo({ pins: true });
+      const pinnedBefore = Object.keys(diagramPins).length > 0 ? userElementsByName(model) : null;
       // Replace the live model's contents in place (keeps api/server bound).
       withCommandMutation(() => model.reset(result.model.toJSON()));
+      const pins = pinnedBefore ? carryPins(diagramPins, pinnedBefore, userElementsByName(model)) : {};
       const parseDiags = result.diagnostics.map(parseDiagToDiagnostic);
       const validationDiags = safeValidate(model);
       set((s) => ({
@@ -2835,6 +3044,7 @@ export const useAppStore = create<AppState>((set, get) => {
         projectName: deriveProjectName(model),
         ...validSelection(s, model),
         expandedIds: new Set(userRootIds(model)),
+        diagramPins: pins,
       }));
       // The live model is now this text — until the model changes by any
       // route other than the library merge (see lastAppliedText).
@@ -2854,9 +3064,10 @@ export const useAppStore = create<AppState>((set, get) => {
     newProject(name = 'NewModel') {
       if (get().simSession) get().simStop(); // a new model orphans the sim target
       const { model } = get();
-      pushUndo();
+      pushUndo({ pins: true });
       get().driveDetach(); // the attached Drive file no longer holds this model
       forgetParseResult(); // the new model did not come from the open text
+      takeDownLibraryNote(); // it names an element of the model replaced
       // Clear the USER model but keep the already-loaded standard library in
       // place (so `mass : Real` still resolves in the fresh project, and an
       // undo of New restores the prior user model beside the same library — C6).
@@ -2867,6 +3078,7 @@ export const useAppStore = create<AppState>((set, get) => {
         ...singleSel(root.id),
         expandedIds: new Set([root.id]),
         queryResult: null,
+        diagramPins: {}, // a fresh layout; Undo puts the old boxes back
         rev: s.rev + 1,
       }));
       afterMutation();
@@ -2888,7 +3100,9 @@ export const useAppStore = create<AppState>((set, get) => {
       savesBeingStored.add(mark);
       const storing = (async (): Promise<void> => {
         try {
-          await projectStore.saveProject(target, model.toJSON());
+          // The boxes moved by hand go beside the model, as of the click too;
+          // the text knows nothing of them.
+          await projectStore.saveProject(target, withPins(model.toJSON(), get().diagramPins));
         } catch (err) {
           // The browser refused to store it: it is not saved after all.
           if (get().savedText === mark.saved) set({ savedText: before });
@@ -2913,15 +3127,19 @@ export const useAppStore = create<AppState>((set, get) => {
       const data = await projectStore.loadProject(name);
       if (!data) throw new Error(`No such project: ${name}`);
       const { model } = get();
-      pushUndo();
+      pushUndo({ pins: true });
       get().driveDetach(); // the attached Drive file no longer holds this model
       forgetParseResult(); // the loaded model did not come from the open text
+      takeDownLibraryNote();
       model.reset(data);
       set((s) => ({
         projectName: name,
         ...rootSelection(model),
         expandedIds: new Set(userRootIds(model)),
         queryResult: null,
+        // The boxes saved with it; a project saved before they were kept has
+        // none, and lays out afresh.
+        diagramPins: pinsOf(data) ?? {},
         rev: s.rev + 1,
       }));
       afterMutation();
@@ -2945,7 +3163,8 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model } = get();
       const result = ioImportModel(text, fmt);
       forgetParseResult(); // an import carries no retractable parse result
-      pushUndo();
+      takeDownLibraryNote();
+      pushUndo({ pins: true });
       get().driveDetach(); // the attached Drive file no longer holds this model
       withCommandMutation(() => model.reset(result.model.toJSON()));
       const parseDiags = (result.diagnostics ?? []).map(parseDiagToDiagnostic);
@@ -2955,6 +3174,7 @@ export const useAppStore = create<AppState>((set, get) => {
         ...rootSelection(model),
         expandedIds: new Set(userRootIds(model)),
         queryResult: null,
+        diagramPins: {}, // a file carries no boxes; Undo puts the old ones back
         ...textView(model, s.textBuffer),
         rev: s.rev + 1,
       }));
@@ -3221,6 +3441,7 @@ export const useAppStore = create<AppState>((set, get) => {
       pushUndo();
       get().driveDetach(); // another branch's model is not what the attached Drive file holds
       forgetParseResult(); // the branch head did not come from the open text
+      takeDownLibraryNote();
       withCommandMutation(() =>
         model.reset(api.repository.getModelAtCommit(branch.headCommitId).toJSON()),
       );
@@ -3271,9 +3492,14 @@ export const useAppStore = create<AppState>((set, get) => {
     undo() {
       const { model, undoStack, redoStack } = get();
       if (undoStack.length === 0) return;
+      takeDownLibraryNote();
       cancelRecompute();
       const snapshot = undoStack[undoStack.length - 1];
-      const current = model.toJSONWhere(isUserEl);
+      // A step that replaced the hand-placed boxes (New, Open, Import) puts
+      // them back, and its Redo the ones that replaced them.
+      const pins = pinsOf(snapshot);
+      const user = model.toJSONWhere(isUserEl);
+      const current = pins ? withPins(user, get().diagramPins) : user;
       withCommandMutation(() => model.resetPreserving(snapshot, isLibraryEl));
       set((s) => ({
         undoStack: undoStack.slice(0, -1),
@@ -3282,6 +3508,7 @@ export const useAppStore = create<AppState>((set, get) => {
         ...textView(model, s.textBuffer),
         projectName: deriveProjectName(model),
         ...validSelection(s, model),
+        ...(pins ? { diagramPins: pins } : {}),
         rev: s.rev + 1,
       }));
       void get().rebuildDiagram();
@@ -3290,9 +3517,12 @@ export const useAppStore = create<AppState>((set, get) => {
     redo() {
       const { model, undoStack, redoStack } = get();
       if (redoStack.length === 0) return;
+      takeDownLibraryNote();
       cancelRecompute();
       const snapshot = redoStack[redoStack.length - 1];
-      const current = model.toJSONWhere(isUserEl);
+      const pins = pinsOf(snapshot);
+      const user = model.toJSONWhere(isUserEl);
+      const current = pins ? withPins(user, get().diagramPins) : user;
       withCommandMutation(() => model.resetPreserving(snapshot, isLibraryEl));
       set((s) => ({
         redoStack: redoStack.slice(0, -1),
@@ -3301,6 +3531,7 @@ export const useAppStore = create<AppState>((set, get) => {
         ...textView(model, s.textBuffer),
         projectName: deriveProjectName(model),
         ...validSelection(s, model),
+        ...(pins ? { diagramPins: pins } : {}),
         rev: s.rev + 1,
       }));
       void get().rebuildDiagram();
@@ -3467,6 +3698,10 @@ if (
  * waits for THAT load ({@link whenLibrarySettled}): afterwards the text buffer
  * and the diagnostics are final.
  *
+ * Either way it lays out afresh, as Import does: a file carries no boxes moved
+ * by hand, and those of the model it replaced are not its own, though the
+ * apply alone would carry them over by name. Its Undo step puts them back.
+ *
  * There is deliberately no recompute after it. The refresh already rewrote the
  * buffer — or, with a parse error standing, kept the text as given and marked
  * it dirty — and a recompute rebuilds the diagnostics from validation alone,
@@ -3480,6 +3715,14 @@ export async function openText(text: string, fmt: ModelFormat): Promise<void> {
   if (fmt === 'sysml') {
     st.setTextBuffer(text);
     st.applyText();
+    // Once it applied (it pushed its Undo step), the file's model lays out
+    // afresh, and the library note — about an element of the model it
+    // replaced — comes down; an apply refused leaves the model, its boxes and
+    // that note as they were.
+    if (useAppStore.getState().undoStack !== st.undoStack) {
+      useAppStore.setState({ diagramPins: {} });
+      takeDownLibraryNote();
+    }
   } else {
     st.importModel(text, fmt);
   }
@@ -3628,19 +3871,20 @@ export function mergeLoads(sourceBranchId: string, targetBranchId: string, strat
 }
 
 /**
- * Why a save in this browser kept text typed in the Text view back: its first
- * syntax error, or `'room'` — a collaboration room is connected (see
- * {@link applyTypedTextToSave}).
+ * Why a save in this browser, or Export ▾ → SysML, kept text typed in the
+ * Text view back: its first syntax error, or `'room'` — a collaboration room
+ * is connected (see {@link applyTypedTextToSave}).
  */
 export type TypedTextKept = TypedTextFault | 'room';
 
 /**
  * Before a save in this browser — Save and Ctrl/Cmd+S (in the Text view's
- * editor too), the offline row's Save, the guard's Save: make text typed in
- * the Text view the model, as Apply does — unless it is applied already, or
- * kept back; the model is then saved as it stands, and why the text was kept
- * back is returned for the save to say ({@link sayWhatTheBrowserKept}). Null
- * when nothing was kept back. A text is kept back
+ * editor too), the offline row's Save, the guard's Save — and before
+ * Export ▾ → SysML: make text typed in the Text view the model, as Apply
+ * does — unless it is applied already, or kept back; the model is then saved
+ * (or exported) as it stands, and why the text was kept back is returned for
+ * the save to say ({@link sayWhatTheBrowserKept}, {@link sayWhatTheExportKept}).
+ * Null when nothing was kept back. A text is kept back
  * - over a parse error (see {@link typedTextFaulted});
  * - in a collaboration room, but for the guard's Save (`replacing`: the
  *   command it guards replaces the model right after). An apply resets the
@@ -3653,7 +3897,8 @@ export type TypedTextKept = TypedTextFault | 'room';
  * The save writes the project that is open. An apply renames the project
  * after the model's first package (`deriveProjectName`), and the save after
  * it would then overwrite another saved project of that name, and leave the
- * open one as it was: the name stays.
+ * open one as it was: the name stays — and an export still names its file
+ * after the open project.
  *
  * A recompute a local model edit forced goes first: it replaces the text
  * buffer whatever was typed there — that is what an edit does to text nobody
@@ -3674,8 +3919,12 @@ export function applyTypedTextToSave(opts: { replacing?: boolean } = {}): TypedT
   return null;
 }
 
-/** The note {@link sayWhatTheBrowserKept} put up last: taken back by the next save that holds the typed text. */
-let keptBackNote: DriveNotice | null = null;
+/**
+ * The note {@link sayWhatTheBrowserKept} or {@link sayWhatTheExportKept} put
+ * up last, and which of them: taken back by the next of its kind that holds
+ * the typed text, and replaced by a newer note of either kind.
+ */
+let keptBackNote: { notice: DriveNotice; by: 'save' | 'export' } | null = null;
 
 /**
  * After a save in this browser alone (Save and Ctrl/Cmd+S with no Drive file
@@ -3689,16 +3938,95 @@ let keptBackNote: DriveNotice | null = null;
  * is left as it is.
  */
 export function sayWhatTheBrowserKept(kept: TypedTextKept | null): void {
+  sayWhatWasKept(kept, 'save');
+}
+
+/**
+ * After Export ▾ → SysML wrote its file: the same note as
+ * {@link sayWhatTheBrowserKept}, about the file. An export that kept nothing
+ * back takes down an earlier export's note, and leaves a save's: the copy in
+ * this browser still lacks the text — as an export's stays after a save.
+ */
+export function sayWhatTheExportKept(kept: TypedTextKept | null): void {
+  sayWhatWasKept(kept, 'export');
+}
+
+/**
+ * Put up the note that a save or an export (`by`) kept typed text back — over
+ * an earlier such note, or the library note ({@link sayNotIntoLibrary}) — or
+ * take its own kind down.
+ */
+function sayWhatWasKept(kept: TypedTextKept | null, by: 'save' | 'export'): void {
   const { drive } = useAppStore.getState();
-  const standing = drive.notice !== null && drive.notice === keptBackNote;
-  if (kept !== null && (drive.notice === null || standing)) {
-    const message = kept === 'room' ? DRIVE_MESSAGES.typedTextInRoom : DRIVE_MESSAGES.typedTextKeptBack(kept.line);
-    keptBackNote = { kind: 'info', message, retryable: false };
-    useAppStore.setState((s) => ({ drive: { ...s.drive, notice: keptBackNote } }));
-  } else if (kept === null && standing) {
+  // The last kept-back note, of either kind, when it is the notice up now.
+  const standing = drive.notice !== null && drive.notice === keptBackNote?.notice ? keptBackNote : null;
+  // The library note is about an element placed before: a save or an export
+  // that kept typed text back says so over it — it standing must never let
+  // one go unsaid — and one that kept nothing back leaves it.
+  const library = drive.notice !== null && drive.notice === libraryNote?.notice;
+  if (kept !== null && (drive.notice === null || standing !== null || library)) {
+    const message =
+      by === 'save'
+        ? kept === 'room'
+          ? DRIVE_MESSAGES.typedTextInRoom
+          : DRIVE_MESSAGES.typedTextKeptBack(kept.line)
+        : kept === 'room'
+          ? DRIVE_MESSAGES.typedTextNotExportedInRoom
+          : DRIVE_MESSAGES.typedTextNotExported(kept.line);
+    const notice: DriveNotice = { kind: 'info', message, retryable: false };
+    keptBackNote = { notice, by };
+    useAppStore.setState((s) => ({ drive: { ...s.drive, notice } }));
+  } else if (kept === null && standing?.by === by) {
     useAppStore.setState((s) => ({ drive: { ...s.drive, notice: null } }));
   }
 }
+
+/**
+ * The note {@link sayNotIntoLibrary} put up last — or holds back (`held`)
+ * while a notice of another kind stands, until that one has gone. A note that
+ * a save or an export kept typed text back replaces it; Undo and Redo take it
+ * down.
+ */
+let libraryNote: { notice: DriveNotice; held: boolean } | null = null;
+
+/**
+ * Say in the strip under the toolbar that a new element (`'new'`), or so many
+ * moved ones, went to the top level of the user's model, not into the
+ * standard library where they were asked to go — on every deployment, Google
+ * Drive or not. It replaces an earlier such note, or a kept-back one: both
+ * are about something done before. A notice of another kind — a failed Drive
+ * save and its Try again, `<name> closed` — is never covered: the note waits
+ * until that one has gone, then goes up.
+ */
+function sayNotIntoLibrary(what: 'new' | number): void {
+  const notice: DriveNotice = { kind: 'info', message: DRIVE_MESSAGES.notIntoLibrary(what), retryable: false };
+  const standing = useAppStore.getState().drive.notice;
+  const replaces = standing === null || standing === libraryNote?.notice || standing === keptBackNote?.notice;
+  libraryNote = { notice, held: !replaces };
+  if (replaces) useAppStore.setState((s) => ({ drive: { ...s.drive, notice } }));
+}
+
+/**
+ * Take the library note down, or forget it while it is held — Undo and Redo
+ * call it: the element it names may be back where it was, or gone. So do New,
+ * Open, Import, a file opened as text and a branch switch, which replace the
+ * model it is about. A notice of another kind standing is left as it is.
+ */
+function takeDownLibraryNote(): void {
+  if (libraryNote === null) return;
+  const standing = useAppStore.getState().drive.notice === libraryNote.notice;
+  libraryNote = null;
+  if (standing) useAppStore.setState((s) => ({ drive: { ...s.drive, notice: null } }));
+}
+
+// A held library note goes up once the notice it waited behind has gone:
+// dismissed, or taken down by what it was about.
+useAppStore.subscribe((state) => {
+  if (libraryNote?.held !== true || state.drive.notice !== null) return;
+  const { notice } = libraryNote;
+  libraryNote = { notice, held: false };
+  useAppStore.setState((s) => ({ drive: { ...s.drive, notice } }));
+});
 
 /**
  * Forget the retained parse result — call it from EVERY path that replaces the

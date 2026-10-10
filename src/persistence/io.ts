@@ -215,16 +215,55 @@ const RESERVED_KEYS = new Set<string>([
   'owningRelatedElement',
 ]);
 
-/** Membership metaclasses used to reify ownership on the wire. */
-const OWNERSHIP_MEMBERSHIPS = new Set<string>([
-  'OwningMembership',
-  'FeatureMembership',
-  'Membership',
-]);
+/**
+ * Membership metaclasses used to reify ownership on the wire. A plain
+ * `Membership` is not one: it never owns its member (KerML), the export never
+ * reifies ownership with one, and in a model it is an element of its own — an
+ * `alias`.
+ */
+const OWNERSHIP_MEMBERSHIPS = new Set<string>(['OwningMembership', 'FeatureMembership']);
 
 /** Deterministic id for the synthesised ownership membership of `childId`. */
 function membershipId(childId: ElementId): ElementId {
   return `om-${childId}`;
+}
+
+/**
+ * The containment an entry of the graph reifies, or `null` when the entry is an
+ * element of the model.
+ *
+ * The type alone does not tell: the model's own membership elements are on the
+ * wire too, under their own metaclass (the full library holds 268 `alias`
+ * `Membership`s). An entry reifies the ownership of its member only when it is
+ * an owning or feature membership that names a member and an owner, and is that
+ * member's OWNING membership:
+ * - the export's `om-<member id>`;
+ * - in a graph written elsewhere, whose memberships carry ids of their own, the
+ *   membership the member names as its `owningRelationship`;
+ * - or, when the member names no `owningRelationship` at all (it is derived, and
+ *   optional on the wire), any owning membership of it, as the import has always
+ *   read one.
+ *
+ * A plain `Membership` (an alias) never owns what it names, and neither does any
+ * other owning membership whose member names another as its
+ * `owningRelationship`: each is an element of the model and never re-parents
+ * the element it points at. (A model's own `OwningMembership` or
+ * `FeatureMembership` element carries no `memberElement` on the wire —
+ * {@link RESERVED_KEYS} — so it is kept as well.)
+ *
+ * @param owningOf each entry's `owningRelationship` id, by entry id.
+ */
+function reifiedOwnership(
+  ae: ApiElement,
+  owningOf: ReadonlyMap<ElementId, ElementId>,
+): { child: ElementId; owner: ElementId } | null {
+  if (!OWNERSHIP_MEMBERSHIPS.has(ae['@type'])) return null;
+  const child = ae.memberElement?.['@id'] ?? ae.ownedMemberElement?.['@id'];
+  const owner = ae.owningRelatedElement?.['@id'];
+  if (!child || !owner) return null;
+  const id = ae['@id'];
+  const named = owningOf.get(child);
+  return id === membershipId(child) || named === undefined || named === id ? { child, owner } : null;
 }
 
 /**
@@ -310,25 +349,44 @@ function toApiGraph(model: Model): ApiGraph {
  * Rebuild a {@link Model} from an OMG element-graph. The synthesised ownership
  * memberships are *consumed* (their `memberElement`→`owningRelatedElement` link
  * restores `ownerId`) rather than materialised as model elements, so the
- * round-trip reproduces the original element set exactly.
+ * round-trip reproduces the original element set exactly. The model's own
+ * membership elements (an `alias` is a `Membership`) are elements like any
+ * other: see {@link reifiedOwnership} for how the two are told apart.
  */
 function fromApiGraph(graph: ApiGraph): Model {
   const apiElements = graph.elements ?? [];
-  // Pass 1: index ownership from membership elements.
-  const ownerOf = new Map<ElementId, ElementId>();
+  // Pass 1: index ownership from the reified ownership memberships.
+  const owningOf = new Map<ElementId, ElementId>();
   for (const ae of apiElements) {
-    if (OWNERSHIP_MEMBERSHIPS.has(ae['@type'])) {
-      const child = ae.memberElement?.['@id'] ?? ae.ownedMemberElement?.['@id'];
-      const owner = ae.owningRelatedElement?.['@id'];
-      if (child && owner) ownerOf.set(child, owner);
-    }
+    const owning = ae.owningRelationship?.['@id'];
+    if (owning) owningOf.set(ae['@id'], owning);
+  }
+  const ownerOf = new Map<ElementId, ElementId>();
+  const reified = new Set<ApiElement>();
+  for (const ae of apiElements) {
+    const link = reifiedOwnership(ae, owningOf);
+    if (!link) continue;
+    ownerOf.set(link.child, link.owner);
+    reified.add(ae);
+  }
+  // A relationship kept as an element of the model (another tool's alias, say)
+  // is owned by its `owningRelatedElement`, as KerML has it, when no reified
+  // membership owns it. Sysprose's own export writes that link only on its
+  // reified memberships, never on an element of the model (RESERVED_KEYS).
+  const kept = new Set<ElementId>();
+  for (const ae of apiElements) if (!reified.has(ae)) kept.add(ae['@id']);
+  for (const ae of apiElements) {
+    const id = ae['@id'];
+    const related = ae.owningRelatedElement?.['@id'];
+    if (reified.has(ae) || ownerOf.has(id) || !related || related === id || !kept.has(related)) continue;
+    ownerOf.set(id, related);
   }
 
-  // Pass 2: build ElementRecords for the real (non-membership) elements.
+  // Pass 2: build ElementRecords for the model's elements.
   const elements: ElementRecord[] = [];
   const rootIds: ElementId[] = [];
   for (const ae of apiElements) {
-    if (OWNERSHIP_MEMBERSHIPS.has(ae['@type'])) continue;
+    if (reified.has(ae)) continue;
     const id = ae['@id'];
     const ownerId = ownerOf.get(id) ?? null;
     const rec: ElementRecord = {

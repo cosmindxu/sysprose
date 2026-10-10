@@ -154,7 +154,7 @@ examples/uav-isr.sysml: 113 element(s) — 82 node(s), 31 relationship(s), 1 roo
     ...
 ```
 
-**Source of truth:** `src/ui/App.tsx:173-296`, `src/ui/panels/Toolbar.tsx:523-659`,
+**Source of truth:** `src/ui/App.tsx:161-284`, `src/ui/panels/Toolbar.tsx:524-660`,
 `src/core/factory.ts:194` (the boot sample), `scripts/sysprose.ts`.
 
 ---
@@ -350,10 +350,27 @@ the layout made room for them — never on a box, a line or another label.
   runs in a background worker, so a large diagram never freezes the page.
 
 **Arranging by hand.** Drag a box and it stays where you drop it, through model
-edits and view switches; its connectors step around to meet it. **Auto-layout**
-(toolbar, or the canvas mini-toolbar) forgets the boxes you moved in the
-current diagram and lays it out afresh. Moves are kept per view and scope, for
-the session.
+edits and view switches; its connectors step around to meet it. Text edits keep
+it too. An apply of text (**Apply text → model**, or the apply that **Save**,
+`Ctrl/⌘ + S` and **Export ▾ → SysML** make of typed text) builds every element
+anew from the text, and each moved box goes to the element with the same
+qualified name (`Package::Part`). A box lays out afresh when you renamed its
+element, moved it to another owner, or gave another element the same name.
+**Auto-layout** (toolbar, or the canvas mini-toolbar) forgets the boxes you
+moved in the current diagram and lays it out afresh. Moves are kept per view
+and scope. **Save** keeps them with the project in this browser, beside the
+model, and **Open ▾** puts each box back where you left it. **New**,
+**Import** and **Reload from Drive** start from a fresh layout, and their Undo
+brings the boxes back with the model. A file opened from Google Drive
+(**Browse Drive…**, **Recent**, a `?drive=` link) or from a `?model=` link
+starts from a fresh layout too, but Undo starts over there
+([§8.1](#81-google-drive-optional)): an arrangement never saved with **Save**
+is gone for good, so press **Save** first. The boxes are not part of the
+model's text: the Text view, the SysML and JSON exports and a Google Drive file
+never hold them. Moving a box is not an edit: it spends no Undo step, and the
+model does not read unsaved for it, so the question that guards a command
+which replaces the model ([§8](#8-what-is-kept-and-what-is-not)) is not asked
+for boxes. Press **Save** to keep an arrangement.
 
 ### Tables
 
@@ -408,8 +425,11 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
-`regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:53-79`
-(the grouping); `src/ui/store.ts:310-323` (the diagram scope).
+`regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
+(the grouping); `src/ui/store.ts:311-324` (the diagram scope), `1159-1270`,
+`1990-2017` (boxes moved by hand, and how a saved project keeps them),
+`3011-3056`, `3689-3730` (an apply of text carries them over by qualified name;
+a file opened as text starts afresh).
 
 ---
 
@@ -463,6 +483,18 @@ takes `name : Type` (`holder : SwarmMember`) and writes `subject holder :
 SwarmMember;`; an empty field removes it, and a type that names nothing is not
 written.
 
+**The standard library in the Explorer.** With the Explorer's library toggle
+on, the library's packages are rows like any other, but the text never holds
+them — not the Text view, not **Export ▾ → SysML**, not a Google Drive file. So
+an element added under a library element (its **+**, or a palette tool with one
+selected), dragged onto one, or pasted onto one (`Ctrl/⌘ + V`), goes to the top
+level of your model instead, and the strip under the toolbar says so. One Undo
+takes it back, as any edit, and the note with it. Replacing the model — New,
+Open, Import, a file opened from Drive — takes the note down too: it names an
+element of the model that is gone. For the same reason the **Documentation** box
+in Properties is read-only on a library element: it shows the library's own
+documentation, and a doc typed there would be in no file.
+
 The tree and Properties update instantly. The diagram, the Problems list and the
 Text tab are *derived*, and they lag a burst of edits by up to 250 ms. That is
 deliberate: it keeps typing responsive. On a large model, where working them out
@@ -476,11 +508,13 @@ recompute — so the keyboard is never kept waiting.
   made through the SDK on `window.sysml` ([§6](#scripting-it)) is re-serialised
   too — except over text typed here and not yet applied: an SDK edit, like a
   collaborator's, never replaces that. The text stays, reading *modified — not
-  yet applied*; applying it — or saving it, outside a collaboration room —
-  puts it over the SDK's edit, which one Undo brings back.
+  yet applied*; applying it — or saving it, or exporting it with **Export ▾ →
+  SysML**, outside a collaboration room — puts it over the SDK's edit, which
+  one Undo brings back.
 - **Text → model** happens when you press **Apply text → model** — or **Save**
-  / `Ctrl/⌘ + S`, which apply it first unless it has a syntax error or a
-  collaboration room is connected ([§8](#8-what-is-kept-and-what-is-not)).
+  / `Ctrl/⌘ + S` or **Export ▾ → SysML**, which apply it first unless it has a
+  syntax error or a collaboration room is connected
+  ([§8](#8-what-is-kept-and-what-is-not)).
   Until then the indicator reads *modified — not yet applied* — unless you
   type the text back as it was (delete what you typed) before the model
   changes: nothing typed stands then, and it reads *in sync with model* again.
@@ -513,12 +547,18 @@ recompute — so the keyboard is never kept waiting.
 ### Undo
 
 Undo is 50 snapshots deep, it covers model changes (not view changes, not the
-theme), and any new edit clears the redo stack. Copy is not undoable; paste is.
+theme), and any new edit clears the redo stack. One view change rides along:
+undoing New, Open, Import or an apply of text also puts back the boxes moved by
+hand on the model it restores (*Arranging by hand*,
+[§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1169-1264`, `1380-1536` (the recompute
-cycle, and an SDK edit), `2807-2846` (`applyText`), `3271-3307` (undo),
-`3743-3801` (the post-apply refresh); `src/ui/panels/TextEditor.tsx`;
-`test/e2e/text-apply-contract.spec.ts:30` (the one-undo guarantee, as a test).
+**Source of truth:** `src/ui/store.ts:1332-1427`, `1550-1715` (the recompute
+cycle, and an SDK edit), `823-870`, `2306-2326`, `2584-2648`, `3984-4029`
+(nothing added to the standard library, and the note that says so),
+`3011-3056` (`applyText`), `3492-3538` (undo), `4071-4129` (the post-apply
+refresh); `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
+Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
+guarantee, as a test).
 
 ---
 
@@ -2806,9 +2846,11 @@ the next refresh. The model then reads unsaved: **New**, **Open ▾** and
 *unsaved changes*. The one exception is text typed in the Text view and not
 applied, which an SDK edit never replaces
 ([§5](#the-text-tab-in-both-directions)). An SDK edit is not an Undo step of
-its own.
+its own. Nor does it put an element of yours inside the standard library: a
+`create` or a `reparent` with an owner there puts the element at the top level
+of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:2519-2672` (the four buttons), `1465-1536`
+**Source of truth:** `src/ui/store.ts:2723-2876` (the four buttons), `1635-1715`
 (an SDK edit),
 `src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:46-92`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
@@ -3066,6 +3108,7 @@ automatically.
 | What | Where it goes | Survives a reload? |
 |---|---|---|
 | A project you pressed **Save** on | IndexedDB (`sysmlv2-modeler`), falling back to localStorage | **Yes** — reopen it with **Open ▾** |
+| Boxes you moved by hand on a diagram | with that project, beside the model — never in its text, a SysML or JSON export, or a Drive file | **Yes**, with the project — **Open ▾** puts them back |
 | A file you saved to Drive | your Google Drive (`drive.file` scope: only files made or chosen with this app) | **Yes** — Drive ▾ → Recent, Browse Drive…, or its link |
 | Anything you did **not** save | nowhere | **No** — deliberately: the app boots the sample rather than resurrecting your work |
 | Versions-tab commits, branches, merges | memory | **No** |
@@ -3077,13 +3120,14 @@ automatically.
 **Save takes no name and shows no confirmation.** It writes over the current
 project name — and, with a Google Drive file attached that has unsaved changes,
 saves to that file too (which may first ask the strip's rewrite question, or
-meet a conflict). Save — the button, or `Ctrl/⌘ + S` from the diagram, the
-tree or the Text view's editor — stores the model, so text typed in the Text
-view and not yet applied is applied first, as **Apply text → model** does, and
-the save holds what is on screen, still under the current project name. Two
-kinds of typed text are kept back instead: the model is saved as it stands,
-the Text view still reads *modified — not yet applied*, and, when no Google
-Drive file is attached, the strip under the toolbar says so.
+meet a conflict). Save — the button, or `Ctrl/⌘ + S` from anywhere in the app,
+a field included ([Appendix B](#appendix-b--keyboard-shortcuts)) — stores the
+model, so text typed in the Text view and not yet applied is applied first, as
+**Apply text → model** does, and the save holds what is on screen, still under
+the current project name. Two kinds of typed text are kept back instead: the
+model is saved as it stands, the Text view still reads *modified — not yet
+applied*, and, when no Google Drive file is attached, the strip under the
+toolbar says so.
 
 - **A text with a syntax error.** The parser's best guess at it is not what
   you see. The strip says *Saved in this browser without the text typed in the
@@ -3116,8 +3160,9 @@ commit in the Versions tab, or opened: a project from **Open ▾**, a `?model=`
 link, a Drive file, the branch the Versions tab loaded. **New** counts as
 saved, and so does the model the app starts with, so a first visit that
 touched nothing is never asked; Undo back to the saved model reads saved
-again. An import is not a save. A merge that meets conflicts (**manual**)
-loads nothing, and asks nothing. **Save and continue** is disabled while text
+again. An import is not a save. A box moved by hand changes no text, so it is
+not asked about. A merge that meets conflicts (**manual**) loads nothing, and
+asks nothing. **Save and continue** is disabled while text
 typed in the Text view has a syntax error — this browser keeps models, not
 text: fix it, or discard it. A command given while the browser is still
 storing a **Save** waits for it; if the browser refuses the save (its storage
@@ -3134,15 +3179,27 @@ JSON, OMG-API-shaped JSON, the diagram as SVG or PNG, or an FMI 3.0 FMU /
 text — what the Text view shows when it reads *in sync with model*: your
 packages, without the standard library the app merges in, so **Import** opens
 it as the same model and the CLI reads it as it is. Text typed in the Text view
-and not yet applied is not in it; press **Apply text → model** first. The two
-JSON exports carry the merged library too, as a saved project does.
+and not yet applied is applied first, as **Save** applies it, so the file holds
+what is on screen: the export then changes the model, and spends one Undo step,
+as **Apply text → model** does. Save's two exceptions hold: a text with a
+syntax error, and any typed text in a collaboration room, are kept back — the
+file holds the model as it stands, the Text view still reads *modified — not
+yet applied*, and the strip under the toolbar says *Exported without the text
+typed in the Text view*, naming the line of the first syntax error, or the
+room. The next export that holds the text takes that note down. A save in
+this browser does not — the file still lacks the text — nor does an export
+take down a save's note; but a newer note of either kind replaces the older
+one, and a save to an attached Google Drive file takes either down. The two
+JSON exports write the model as it stands, without text not yet applied, and
+carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:719-738`, `2854-2934` (New, Save, Open and what they mark
-saved), `3178-3242` (a commit, and a branch head loaded), `3618-3628` (a merge
-that loads), `3630-3701` (typed text applied before a save, or kept back and
-said so), `src/ui/commands.ts:37-83` (Save), `src/ui/store.drive.ts:422-434`
-(what reads unsaved), `1325-1390` (the question), `src/api/versioning.ts:481-494`,
+`src/ui/store.ts:740-759`, `3064-3152` (New, Save, Open and what they mark
+saved), `3398-3463` (a commit, and a branch head loaded), `3861-3871` (a merge
+that loads), `3873-3982` (typed text applied before a save or an export, or
+kept back and said so), `src/ui/commands.ts:39-104` (Save, and Export ▾ →
+SysML), `src/ui/store.drive.ts:422-434` (what reads unsaved), `1333-1398` (the
+question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:94-101`,
 `src/persistence/io.ts:45-86`, `test/e2e/persistence-reload.spec.ts`,
 `test/e2e/import-export.spec.ts`, `test/e2e/toolbar-lifecycle.spec.ts`.
@@ -3179,12 +3236,15 @@ enough).
 added — and writes a new file in the root of My Drive; the model is now
 *attached* to it, and the strip under the toolbar says *saved to your Google
 Drive at* the time. After an edit the strip reads *unsaved changes*, and **Save
-to Drive** — the strip's button, the panel's, or `Ctrl/⌘ + Shift + S`, in the
-Text view too — writes it. With a file attached, the toolbar's **Save** and
-`Ctrl/⌘ + S` write its unsaved changes to it as well, beside the copy they keep
-in this browser; if the browser refuses that copy (its storage full, or blocked
-for the site), the strip says so. What goes to Drive is the Text view's text:
-your packages, in this app's layout, and none of the standard library. Text you
+to Drive** — the strip's button, the panel's, or `Ctrl/⌘ + Shift + S`, from
+anywhere in the app, a field included — writes it. With a file attached, the
+toolbar's **Save** and `Ctrl/⌘ + S` write its unsaved changes to it as well,
+beside the copy they keep in this browser; if the browser refuses that copy
+(its storage full, or blocked for the site), the strip says so. What goes to
+Drive is the Text view's text:
+your packages, in this app's layout, and none of the standard library — nor
+the boxes you moved by hand on a diagram, which only the copy in this browser
+keeps. Text you
 typed and did not apply is applied first, because saving it means making it the
 model — except for the copy in this browser when that text has a syntax error:
 the parser's best guess at broken text is not what you see, so the browser keeps
@@ -3313,12 +3373,13 @@ Drive for desktop, which keeps My Drive in a folder on Windows and macOS (there
 is no Linux client). The file holds exactly the Text view's text, so the CLI
 reads what you saw: `npm run sysprose -- stats Swarm.sysml`.
 **Export ▾ → SysML** writes the model's text too, changes not yet saved to
-Drive included, but not text typed in the Text view and not yet applied — press
-**Apply text → model** first. It names the file after the project, so save it
-under the name the command uses.
+Drive included; text typed in the Text view and not yet applied is applied
+first, as Save does — one Undo step — unless it has a syntax error or a
+collaboration room is connected ([§8](#8-what-is-kept-and-what-is-not)). It
+names the file after the project, so save it under the name the command uses.
 
-**Source of truth:** `src/ui/store.drive.ts:493-565` (every sentence the
-feature says), `1141-1155` (the content check), `src/persistence/drive/`,
+**Source of truth:** `src/ui/store.drive.ts:493-573` (every sentence the
+feature says), `1149-1163` (the content check), `src/persistence/drive/`,
 `src/ui/panels/DriveMenu.tsx`, `src/ui/panels/DriveStrip.tsx`,
 `test/e2e/drive.spec.ts` (against faked Google services).
 
@@ -3385,9 +3446,9 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:222`,
-`1169-1199`, `3803-3920`, `src/ui/panels/Toolbar.tsx:89-104`, `272-312`,
-`src/api/analytics.ts:1225-1232`, `src/ui/commands.ts:177-291`.
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:223`,
+`1332-1362`, `4131-4248`, `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
+`src/api/analytics.ts:1225-1232`, `src/ui/commands.ts:198-310`.
 
 ---
 
@@ -3425,7 +3486,7 @@ quietly go stale.
 | The question before a model is replaced | With no Google Drive file attached, on every deployment: before New, Open ▾, Import, a branch switch or a merge that resolves (Versions tab) or joining a room replaces a model with work no save holds, the strip under the toolbar reads *`<project>` has unsaved changes* (`data-status="guard"`, announced as an alert) — **Save and continue** saves the project in this browser, text typed in the Text view applied first (disabled while that text has a syntax error), then goes on; **Discard and continue** (**Join without saving**, before a room join); **Keep editing**. When the browser refuses the save, the command waits and the row says so | `guard-save`, `guard-discard`, `guard-keep` |
 | Import FMI | Adds a block read from an FMI 3.0 `modelDescription.xml` (adds, does not replace) | `tb-import-fmi` |
 | Export ▾ | The export menu | `tb-export` |
-| Export → SysML (.sysml) | The model as textual notation | `tb-export-sysml` |
+| Export → SysML (.sysml) | The model as textual notation, text typed in the Text view applied first | `tb-export-sysml` |
 | Export → Model JSON | The native model graph | `tb-export-json` |
 | Export → OMG API JSON | The OMG-API-shaped element graph | `tb-export-api-json` |
 | Export → Diagram SVG | The current diagram (drawable views only) | `tb-export-svg` |
@@ -3441,7 +3502,7 @@ quietly go stale.
 | Drive ▾ | Google Drive (optional), present only when the deployment configures it. Opening it loads Google's sign-in script. The dot is grey signed out, green signed in, amber when something waits for you (unsaved changes, a conflict, a question), red after an error | `tb-drive` |
 | Drive → Sign in to Google… | Google's account chooser, then Drive's permission for the files you make or choose with this app. Disabled, reading *Loading Google sign-in…*, until Google's script has loaded | `tb-drive-signin` |
 | Drive → Browse Drive… | Google's file picker — your files and those shared with you; the file you choose replaces the model and Undo starts over. Present when the deployment has a picker key | `tb-drive-browse` |
-| Drive → Save to Drive | Writes the model's text — what the Text view shows — to the attached Drive file; `Ctrl/⌘ + Shift + S` does the same, in the Text view too. Disabled when there is nothing to save, with the reason in its tooltip — and the key then sends nothing either | `tb-drive-save` |
+| Drive → Save to Drive | Writes the model's text — what the Text view shows — to the attached Drive file; `Ctrl/⌘ + Shift + S` does the same, from a field too. Disabled when there is nothing to save, with the reason in its tooltip — and the key then sends nothing either | `tb-drive-save` |
 | Drive → Save to Drive as… | Writes the model to a new `.sysml` file in the root of My Drive, and attaches it | `tb-drive-save-as` |
 | Drive → Sign out | Asks Google to revoke this app's access, and forgets the session, the Recent list and the attached file | `tb-drive-signout` |
 | Collaborate | Room name, connect/disconnect and the participant roster. Joining a room asks first when the model has work no save holds, or unsaved changes to an attached Drive file | `tb-collab` |
@@ -3462,7 +3523,10 @@ Present only on a deployment that configures Google Drive. The panel opens from
 **Drive ▾**; the strip is the line under the toolbar, there only while it has
 something to say; the gate is the loading screen a `?drive=` link holds. (The
 strip's question about work no save holds, with no Drive file attached, is on
-every deployment: it is in the toolbar table above.)
+every deployment: it is in the toolbar table above. So are two of its notes —
+that a save in this browser, or **Export ▾ → SysML**, kept typed text back, and
+that an element went to the top level of your model rather than into the
+standard library: see the *Strip · error or note* row.)
 
 | Control | What it does | Test id |
 |---|---|---|
@@ -3484,7 +3548,7 @@ every deployment: it is in the toolbar table above.)
 | Strip · view access, or gone | **Save to Drive as…** writes your own copy | `drive-strip-save-as` |
 | Strip · offline | **Save** keeps the unsaved changes in this browser — text typed in the Text view applied first, unless it has a syntax error, when the strip says the typed text was kept back (**×** brings the offline row back); a browser that refuses the copy is said so | `drive-strip-save-local` |
 | Strip · sign-in expired | **Sign in and continue** finishes what Google's refusal of the sign-in interrupted | `drive-strip-signin` |
-| Strip · error or note | **Try again** where trying again can help; **Privacy & data ↗** beside every error; **×** hides the message. The note that a save in this browser kept typed text back (`info`) shows on every deployment, Google Drive or not | `drive-strip-retry`, `drive-strip-privacy`, `drive-strip-dismiss` |
+| Strip · error or note | **Try again** where trying again can help; **Privacy & data ↗** beside every error; **×** hides the message. The note that a save in this browser, or **Export ▾ → SysML**, kept typed text back, and the note that an element went to the top level of your model rather than into the standard library (`info`), show on every deployment, Google Drive or not. The library note never covers another message: it waits until that one is hidden; Undo takes it down | `drive-strip-retry`, `drive-strip-privacy`, `drive-strip-dismiss` |
 | `?drive=` link gate | **Sign in and open** — disabled, reading *Loading Google sign-in…*, until Google's script has loaded — or **Skip** to the sample model. When Drive refuses a file not yet granted to this app: **Browse Drive…** (Google's picker, on that one file — choosing it there grants it; nothing else does; on a site without the picker, the gate says the file cannot be opened there), the file's Drive link pasted (which grants nothing, but carries the `resourcekey` some older link-shared files need), and which account is signed in (shared with another of yours? Skip, Sign out under Drive ▾, open the link again). Any other failure: **Try again**, and **Privacy & data ↗** — where a sign-in Google blocked for a school account is explained | `drive-link-gate`, `drive-link-signin`, `drive-link-skip`, `drive-link-denied`, `drive-link-browse`, `drive-link-id`, `drive-link-id-go`, `drive-link-retry`, `drive-link-privacy` |
 
 ### Panels
@@ -3493,11 +3557,11 @@ every deployment: it is in the toolbar table above.)
 |---|---|---|
 | Explorer tree | The containment hierarchy of the model | `explorer-tree` |
 | Explorer search | Filters to matches and their ancestors; `/` focuses it, Escape clears | `explorer-search` |
-| Library toggle | Shows the bundled standard library in the tree (off by default) | `explorer-library-toggle` |
+| Library toggle | Shows the bundled standard library in the tree, below your own packages (off by default). An element added under a library row, dragged onto one, or pasted onto one, goes to the top level of your model instead, and the strip says so ([§5](#the-loop)) | `explorer-library-toggle` |
 | Focus a subtree | Narrows the Explorer to one element; the chip clears it | `tree-focus`, `explorer-focus`, `explorer-focus-clear` |
 | Scope the diagrams | ⊞ on a row draws only that element's subtree in every graph view; the breadcrumb's **Diagrams:** chip and its × clear it | `tree-scope`, `scope-chip`, `scope-clear` |
 | Add child / rename / delete | Per-row tree editing | `tree-add`, `tree-rename`, `tree-delete` |
-| Properties fields | Name, type, value, multiplicity, direction, documentation, requirement id and text | `prop-name`, `prop-type`, `prop-value`, `prop-doc` |
+| Properties fields | Name, type, value, multiplicity, direction, documentation (read-only on an element of the standard library), requirement id and text | `prop-name`, `prop-type`, `prop-value`, `prop-doc` |
 | Tags | The `#Tag` keywords written on the element, applied on Enter or on leaving the field; a statement kind stays with the Kind control | `prop-tags` |
 | Subject | A requirement's subject as `name : Type`, applied on Enter; empty removes it | `prop-subject` |
 | Statement kind | What the selected element is for — requirement / prose / prompt — offered wherever the notation can carry the keyword, which is most declarations and not only requirements | `prop-statement-kind` |
@@ -3535,14 +3599,31 @@ The **▾** at the end of the tab strip folds the panel down to its tabs
 ## Appendix B — keyboard shortcuts
 
 Plain keys are suppressed while you are typing in a field. So are the `Ctrl/⌘`
-ones — except `Ctrl/⌘ + S` and `Ctrl/⌘ + Shift + S` in the Text view's editor,
-which save from there too; every other key there stays the editor's own. There
-as elsewhere, `Ctrl/⌘ + S` first applies what you typed in the Text view, as
+ones — except `Ctrl/⌘ + S` and, where the deployment has Google Drive,
+`Ctrl/⌘ + Shift + S`, which save from anywhere in the app, a field included: a
+Properties box, the Explorer search, the Text view's editor. The browser's own
+*Save page* dialog does not open. A box that
+applies what you type on `Enter` or on leaving it — Properties' Subject, Tags,
+Type and requirement attributes, a rename, a Requirements table cell — is
+applied first, as leaving it would, so the save holds what is on screen; the
+cursor stays where it was, except in a rename or a table cell, which close as
+`Enter` closes them. The focus then goes to the toolbar's **Save** button, as
+after a click on it, so the keys you press next do not delete anything:
+`Backspace` and `Delete` are ignored while a button has focus, where they would
+remove the selection — often the element you just renamed. The Requirements
+table's reference picker, which leaving cancels, stays open with what you typed
+in it, and nothing is linked. Every other key in a field stays the field's
+own.
+
+`Ctrl/⌘ + S` also first applies what you typed in the Text view, as
 **Apply text → model** does, so the save holds the text on screen — unless the
 text has a syntax error, or a collaboration room is connected: then the
 browser keeps the model as it stood and the editor still reads *modified — not
 yet applied*; with no Drive file attached the strip under the toolbar says so,
-and an attached Drive file gets a faulted text as typed.
+and an attached Drive file gets a faulted text as typed. A change applied from
+a field is an edit, though, and an edit replaces text typed in the Text view
+and not yet applied ([§5](#the-text-tab-in-both-directions)): the save holds
+the field's change, not that text.
 
 | Key | What it does |
 |---|---|
@@ -3551,7 +3632,7 @@ and an attached Drive file gets a faulted text as typed.
 | `Delete` / `Backspace` | Delete the selection (ignored while a button has focus) |
 | `Ctrl/⌘ + Z` | Undo |
 | `Ctrl/⌘ + Shift + Z`, `Ctrl/⌘ + Y` | Redo |
-| `Ctrl/⌘ + S` | Save the project in this browser, text typed in the Text view applied first (not over a syntax error, nor in a collaboration room) — and, when the attached Google Drive file has unsaved changes, to that file too |
+| `Ctrl/⌘ + S` | Save the project in this browser, from a field too (what you typed there applied first), text typed in the Text view applied first (not over a syntax error, nor in a collaboration room, nor once a change applied from a field has replaced it) — and, when the attached Google Drive file has unsaved changes, to that file too |
 | `Ctrl/⌘ + Shift + S` | Save to Drive, when the deployment has Google Drive (nothing is sent while the Drive file has no unsaved changes); with no Drive file attached it opens *Save to Drive as…* |
 | `Ctrl/⌘ + D` | Duplicate the selection |
 | `Ctrl/⌘ + C` | Copy the selected subtrees (defers to native copy when text is selected) |
@@ -3560,5 +3641,5 @@ and an attached Drive file gets a faulted text as typed.
 
 There is no `Ctrl+N`; **New** is a button only.
 
-**Source of truth:** `src/ui/commands.ts:37-83`, `177-291`, `src/ui/App.tsx:141-158`,
-`src/ui/panels/TextEditor.tsx:107-120`.
+**Source of truth:** `src/ui/commands.ts:39-104`, `198-422`, `src/ui/App.tsx:141-146`,
+`src/ui/panels/RequirementsTable.tsx:569-606` (the reference picker).

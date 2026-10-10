@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4192 total — 4192 passed, 0 failed, 0 skipped
+- **Tests:** 4227 total — 4227 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -26,7 +26,7 @@
 | test/integration/full-library.resolve.test.ts | 16 | 0 | 0 |
 | test/integration/library-resolve.fixpoint.test.ts | 6 | 0 | 0 |
 | test/integration/library-resolve.integration.test.ts | 5 | 0 | 0 |
-| test/integration/persist-api.persistence.test.ts | 20 | 0 | 0 |
+| test/integration/persist-api.persistence.test.ts | 21 | 0 | 0 |
 | test/integration/persist-api.rest.test.ts | 12 | 0 | 0 |
 | test/integration/persist-api.sdk.test.ts | 8 | 0 | 0 |
 | test/integration/pipeline.api.test.ts | 17 | 0 | 0 |
@@ -39,7 +39,7 @@
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
 | test/integration/verification.differential.test.ts | 180 | 0 | 0 |
-| test/interop/self-roundtrip.test.ts | 8 | 0 | 0 |
+| test/interop/self-roundtrip.test.ts | 9 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
 | test/server/concurrency-full.test.ts | 5 | 0 | 0 |
@@ -97,7 +97,7 @@
 | test/unit/library.load.test.ts | 13 | 0 | 0 |
 | test/unit/linked-model.test.ts | 15 | 0 | 0 |
 | test/unit/paste.test.ts | 7 | 0 | 0 |
-| test/unit/persistence.io.test.ts | 23 | 0 | 0 |
+| test/unit/persistence.io.test.ts | 26 | 0 | 0 |
 | test/unit/planning.test.ts | 25 | 0 | 0 |
 | test/unit/property.test.ts | 26 | 0 | 0 |
 | test/unit/readme.test.ts | 15 | 0 | 0 |
@@ -144,7 +144,7 @@
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 200 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 221 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 12 | 0 | 0 |
@@ -160,8 +160,8 @@
 | test/unit/text.roundtrip.test.ts | 115 | 0 | 0 |
 | test/unit/ui.contracts-table.test.ts | 11 | 0 | 0 |
 | test/unit/ui.properties-evidence.test.ts | 10 | 0 | 0 |
-| test/unit/ui.properties-facets.test.ts | 15 | 0 | 0 |
-| test/unit/ui.requirements-table.test.ts | 20 | 0 | 0 |
+| test/unit/ui.properties-facets.test.ts | 22 | 0 | 0 |
+| test/unit/ui.requirements-table.test.ts | 22 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 4 | 0 | 0 |
 | test/unit/user-guide.test.ts | 32 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |

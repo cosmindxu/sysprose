@@ -391,11 +391,18 @@ export function Explorer(): JSX.Element {
 
   // Roots to show: when FOCUSED, just that element's subtree (scope-to-subtree);
   // otherwise the user model always + the (huge) standard library only when
-  // toggled on — off by default so the tree isn't a 38k-row haystack.
+  // toggled on — off by default so the tree isn't a 38k-row haystack. The
+  // user's roots come first: one made after the library merged (an element
+  // sent to the top level of the model) would otherwise sit below the
+  // library's packages and read as if it had landed in them.
   const focusEl = focusId ? model.get(focusId) : undefined;
+  const allRoots = model.roots();
   const roots = focusEl
     ? [focusEl]
-    : model.roots().filter((r) => showLibrary || r.attrs.isLibrary !== true);
+    : [
+        ...allRoots.filter((r) => r.attrs.isLibrary !== true),
+        ...(showLibrary ? allRoots.filter((r) => r.attrs.isLibrary === true) : []),
+      ];
 
   // Live filter: match rows by name / short name / metaclass keyword. When active,
   // show only matches PLUS their ancestors (so the path stays visible) and force

@@ -6,9 +6,13 @@
  * requirement whose declaration did not parse — and that is where the control
  * was live, wrote nothing, and said nothing. It is pinned here because a faulted
  * declaration is a parse result, not something a click can produce in the app.
+ *
+ * Also Ctrl/Cmd+S typed into the panel's fields, which the page's listener
+ * takes: the panel rendered is where a box that writes on leaving it, and a
+ * facet box rebuilt around the value it wrote, can be held to the key.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
 import React from 'react';
 import { Model } from '@core/index';
@@ -22,9 +26,15 @@ vi.mock('../../src/library/standard-library', () => ({
 }));
 
 import { useAppStore } from '../../src/ui/store';
+import { handlePageKey } from '../../src/ui/commands';
 import { Properties } from '../../src/ui/panels/Properties';
 import { parseModel } from '@text/index';
-import { NOTE_BODY_TERMINATOR, untaggedStatementKindLabel } from '@semantics/index';
+import {
+  NOTE_BODY_TERMINATOR,
+  getRequirementAttr,
+  keywordsOnRecord,
+  untaggedStatementKindLabel,
+} from '@semantics/index';
 
 /** Load `src`, select the element named `name`, and render the panel over it. */
 function mount(src: string, name: string) {
@@ -241,5 +251,190 @@ describe('Properties — a note body the file cannot hold', () => {
       useAppStore.setState({ selectionId: first, selectionIds: [first] });
     });
     expect(view.queryByTestId('prop-note-refusal'), 'coming back is not another attempt').toBeNull();
+  });
+});
+
+/**
+ * The Documentation box makes its doc lazily, on the first key, through
+ * `createElement`, and finds it again under the element on the next. Under an
+ * element of the standard library `createElement` puts a new element at the
+ * top level of the model instead — the text leaves the library out — so the
+ * box never found its doc: each key made another top-level `doc` comment,
+ * holding that one key, in the user's own text — an Undo step and the strip's
+ * note with it — and the box stayed empty. The box is read-only there, with
+ * the reason on it.
+ */
+describe('Properties — the Documentation box of an element in the standard library', () => {
+  /** The user's package, and a library package holding a part definition — documented when `doc` is given. */
+  function mountLibrary(doc?: string) {
+    const { model } = parseModel('package Mine { part def Wing; }');
+    const shelf = model.create('Package', { declaredName: 'Shelf', attrs: { isLibrary: true } }).id;
+    const shelved = model.create('PartDefinition', { declaredName: 'Shelved', ownerId: shelf, attrs: { isLibrary: true } }).id;
+    // No flag of its own, under a library root: in the library all the same.
+    const stray = model.create('PartDefinition', { declaredName: 'Stray', ownerId: shelf }).id;
+    if (doc !== undefined) model.create('Documentation', { ownerId: shelved, attrs: { body: doc, isLibrary: true } });
+    useAppStore.setState({ model, undoStack: [], redoStack: [], rev: 0, selectionId: shelved, selectionIds: [shelved] });
+    return { view: render(React.createElement(Properties)), model, shelved, stray };
+  }
+  const docs = () => useAppStore.getState().model.all().filter((e) => e.eClass === 'Documentation');
+  /** Type `text` into the box one key at a time, as the browser's change events come. */
+  const type = (box: () => HTMLTextAreaElement, text: string): void => {
+    for (const key of text) fireEvent.change(box(), { target: { value: box().value + key } });
+  };
+
+  it('is read-only, with the reason on it, and typing into it makes nothing', () => {
+    const { view, model } = mountLibrary();
+    const box = () => view.getByTestId('prop-doc') as HTMLTextAreaElement;
+    expect(box().readOnly).toBe(true);
+    expect(box().title).toMatch(/standard library, which is not part of your model.s text/);
+    const size = model.all().length;
+    type(box, 'Wheel');
+    expect(docs(), 'no doc, at the top level or anywhere').toEqual([]);
+    expect(model.all().length).toBe(size);
+    expect(useAppStore.getState().undoStack, 'no Undo step').toEqual([]);
+    expect(useAppStore.getState().drive.notice, 'and nothing to say').toBeNull();
+  });
+
+  it('shows a library element’s own documentation, and leaves it as it is', () => {
+    const { view } = mountLibrary('As the library has it.');
+    const box = () => view.getByTestId('prop-doc') as HTMLTextAreaElement;
+    expect(box().value).toBe('As the library has it.');
+    expect(box().readOnly).toBe(true);
+    type(box, '!');
+    expect(docs().map((d) => d.attrs.body)).toEqual(['As the library has it.']);
+  });
+
+  it('is read-only on an element of nobody’s flag left under a library root too — and live on the user’s own', () => {
+    const { view, model, stray } = mountLibrary();
+    act(() => {
+      useAppStore.setState({ selectionId: stray, selectionIds: [stray] });
+    });
+    const box = () => view.getByTestId('prop-doc') as HTMLTextAreaElement;
+    expect(box().readOnly).toBe(true);
+
+    const wing = model.all().find((e) => e.declaredName === 'Wing')!.id;
+    act(() => {
+      useAppStore.setState({ selectionId: wing, selectionIds: [wing] });
+    });
+    expect(box().readOnly).toBe(false);
+    expect(box().title).toBe('');
+    type(box, 'abc');
+    expect(box().value).toBe('abc');
+    expect(docs().map((d) => [d.ownerId, d.attrs.body]), 'one doc, under the element, holding every key').toEqual([[wing, 'abc']]);
+  });
+});
+
+/**
+ * Ctrl/Cmd+S typed into a Properties field is the app's Save, never the
+ * browser's "Save page" dialog. The page's listener used to ignore every key
+ * typed into a field, and forwarding the key alone would have saved without the
+ * value on screen: the facet boxes, Tags and Subject write on Enter or on
+ * leaving the box, not per keystroke. The box is committed first, as leaving it
+ * does, then the project is saved, and the box has its focus back.
+ */
+describe('Properties — Ctrl/Cmd+S typed into a field', () => {
+  const REQ = `package P {\n    requirement <R1> maxMass;\n}`;
+  const saveProject = useAppStore.getState().saveProject;
+  /** What each save in this browser held: the rationale facet and the tags of the selection. */
+  let held: Array<{ rationale: string | undefined; tags: string[] }> = [];
+
+  beforeEach(() => {
+    // The page's keydown listener, as `App` installs it.
+    window.addEventListener('keydown', handlePageKey);
+    held = [];
+    useAppStore.setState((s) => ({
+      drive: { ...s.drive, configStatus: 'absent' },
+      saveProject: async () => {
+        const { model, selectionId } = useAppStore.getState();
+        held.push({
+          rationale: getRequirementAttr(model, selectionId!, 'rationale'),
+          tags: keywordsOnRecord(model.require(selectionId!)).map((k) => k.written),
+        });
+      },
+    }));
+  });
+  afterEach(() => {
+    window.removeEventListener('keydown', handlePageKey);
+    useAppStore.setState({ saveProject });
+  });
+
+  it('writes a requirement attribute typed and not yet written, then saves it — and the caret goes back into the box', async () => {
+    const { view, model, id } = mount(REQ, 'maxMass');
+    const box = view.getByTestId('prop-rm-rationale') as HTMLInputElement;
+    box.focus();
+    fireEvent.change(box, { target: { value: 'Road limit' } });
+    box.setSelectionRange(4, 4);
+    expect(getRequirementAttr(model, id, 'rationale'), 'written on leaving the box').toBeUndefined();
+    const depth = useAppStore.getState().undoStack.length;
+
+    expect(fireEvent.keyDown(box, { key: 's', ctrlKey: true }), 'default prevented').toBe(false);
+    await vi.waitFor(() => expect(held).toHaveLength(1));
+    expect(held[0]).toEqual({ rationale: 'Road limit', tags: [] });
+    expect(useAppStore.getState().undoStack.length, 'one Undo step, as leaving the box takes').toBe(depth + 1);
+    // The box is rebuilt around the value it wrote: the caret is in the new one, where it was.
+    const again = view.getByTestId('prop-rm-rationale') as HTMLInputElement;
+    expect(again).not.toBe(box);
+    expect(document.activeElement).toBe(again);
+    expect(again.value).toBe('Road limit');
+    expect([again.selectionStart, again.selectionEnd]).toEqual([4, 4]);
+
+    // Cmd+S with nothing new typed: saved again, nothing written.
+    expect(fireEvent.keyDown(again, { key: 's', metaKey: true }), 'default prevented').toBe(false);
+    await vi.waitFor(() => expect(held).toHaveLength(2));
+    expect(useAppStore.getState().undoStack.length).toBe(depth + 1);
+    expect(document.activeElement).toBe(view.getByTestId('prop-rm-rationale'));
+  });
+
+  it('writes the tags typed and not yet applied, then saves them — the box keeps the focus', async () => {
+    const { view } = mount(REQ, 'maxMass');
+    const box = view.getByTestId('prop-tags') as HTMLInputElement;
+    box.focus();
+    fireEvent.change(box, { target: { value: '#Hazard' } });
+    expect(fireEvent.keyDown(box, { key: 's', ctrlKey: true }), 'default prevented').toBe(false);
+    await vi.waitFor(() => expect(held).toHaveLength(1));
+    expect(held[0]!.tags).toEqual(['Hazard']);
+    expect(document.activeElement).toBe(box);
+    expect(box.value).toBe('#Hazard');
+  });
+
+  it('saves from a select or a read-only box without leaving it', async () => {
+    const { view } = mount(REQ, 'maxMass');
+    for (const testid of ['prop-rm-status', 'prop-eclass']) {
+      const field = view.getByTestId(testid);
+      field.focus();
+      let left = 0;
+      field.addEventListener('blur', () => left++);
+      const saves = held.length;
+      expect(fireEvent.keyDown(field, { key: 's', ctrlKey: true }), `${testid}: default prevented`).toBe(false);
+      await vi.waitFor(() => expect(held).toHaveLength(saves + 1));
+      expect(left, `${testid}: a select writes on change, a read-only box holds nothing typed`).toBe(0);
+      expect(document.activeElement).toBe(field);
+    }
+  });
+
+  it('leaves every other key typed into a field to the field — Ctrl/Cmd+Shift+S too, without Google Drive', () => {
+    const { view, model, id } = mount(REQ, 'maxMass');
+    const box = view.getByTestId('prop-rm-rationale') as HTMLInputElement;
+    box.focus();
+    fireEvent.change(box, { target: { value: 'Road limit' } });
+    const before = { view: useAppStore.getState().activeView, depth: useAppStore.getState().undoStack.length };
+    for (const init of [
+      { key: 'z', ctrlKey: true },
+      { key: 'y', ctrlKey: true },
+      { key: 'd', ctrlKey: true },
+      { key: 'Backspace' },
+      { key: 'Delete' },
+      { key: '3' },
+      { key: 's' },
+      { key: 'S', ctrlKey: true, shiftKey: true },
+    ]) {
+      expect(fireEvent.keyDown(box, init), JSON.stringify(init)).toBe(true);
+    }
+    expect(held, 'nothing saved').toEqual([]);
+    expect(getRequirementAttr(model, id, 'rationale'), 'nothing written').toBeUndefined();
+    expect(model.get(id), 'nothing deleted').toBeDefined();
+    expect(useAppStore.getState().activeView).toBe(before.view);
+    expect(useAppStore.getState().undoStack.length).toBe(before.depth);
+    expect(document.activeElement).toBe(box);
   });
 });

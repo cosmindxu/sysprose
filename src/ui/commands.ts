@@ -8,11 +8,13 @@
  * context (React or plain DOM event handlers).
  */
 
+import { flushSync } from 'react-dom';
 import {
   applyTypedTextToSave,
   driveDirty,
   forcedRecomputePending,
   sayWhatTheBrowserKept,
+  sayWhatTheExportKept,
   useAppStore,
   type AppState,
 } from './store';
@@ -44,8 +46,8 @@ function driveUnsaved(store: AppState): boolean {
 }
 
 /**
- * Save, as the Save button and Ctrl/Cmd+S do it — the key wherever the page
- * takes it, the Text view's editor included: the project in this browser — and,
+ * Save, as the Save button and Ctrl/Cmd+S do it — the key anywhere on the
+ * page, in a field too (`handlePageKey`): the project in this browser — and,
  * while the attached Google Drive file lacks something of the model, that
  * file too. A student who presses Save and later finds nothing in Drive is
  * the one loss the Drive strip alone cannot prevent. With no Drive file, or
@@ -68,6 +70,25 @@ export function runSave(): Promise<void> {
   const store = useAppStore.getState();
   if (driveUnsaved(store)) return store.driveSave({ alsoInBrowser: true });
   return store.saveProject().then(() => sayWhatTheBrowserKept(kept));
+}
+
+/**
+ * Export ▾ → SysML, the menu's and the command's: the model's text, so text
+ * typed in the Text view and not applied is applied first, as Save does
+ * (`applyTypedTextToSave`) — the file holds what is on screen, and the apply
+ * is one Undo step, as Apply's — and kept back for Save's reasons: over a
+ * parse error, and in a collaboration room. The file then holds the model
+ * as it stands, and the strip under the toolbar says the typed text is not
+ * in it (`sayWhatTheExportKept`) — unless the export wrote nothing: a model
+ * the serializer refuses is named where the Text view shows it. Returns the
+ * text exported ('' for none).
+ */
+export function runExportSysml(): string {
+  const kept = applyTypedTextToSave();
+  const text = useAppStore.getState().exportModel('sysml');
+  // A refusal returns '' and records why; an empty model's text is '' too.
+  if (text !== '' || useAppStore.getState().serializeError === null) sayWhatTheExportKept(kept);
+  return text;
 }
 
 /**
@@ -116,7 +137,7 @@ export const COMMANDS: Command[] = [
     id: 'tb-export-sysml',
     label: 'Export .sysml',
     run: () => {
-      useAppStore.getState().exportModel('sysml' as ModelFormat);
+      runExportSysml();
     },
   },
   {
@@ -193,14 +214,12 @@ function focusExplorerSearch(): boolean {
 }
 
 /**
- * Global keyboard handler — wire to `window` keydown. Returns true when a
- * shortcut was handled (so callers can `preventDefault`).
+ * Global keyboard handler — the page's listener (`handlePageKey`) calls it.
+ * Returns true when a shortcut was handled (so callers can `preventDefault`).
  *
- * The App-level listener already suppresses this while the user is typing in an
- * input / textarea / select / contenteditable, so the plain-key shortcuts below
- * (Delete, digits, `/`) are safe from swallowing real text entry. The Text
- * view's editor hands on Ctrl/Cmd+S and Ctrl/Cmd+Shift+S itself, and no other
- * key.
+ * The page's listener hands on no key typed into an input / textarea / select /
+ * contenteditable but the two save keys, so the plain-key shortcuts below
+ * (Delete, digits, `/`) are safe from swallowing real text entry.
  */
 export function handleShortcut(e: KeyboardEvent): boolean {
   const store = useAppStore.getState();
@@ -288,4 +307,116 @@ export function handleShortcut(e: KeyboardEvent): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Whether `e` is one of the app's save keys: Ctrl/Cmd+S, and Ctrl/Cmd+Shift+S
+ * on a deployment with Google Drive — without Drive that one is the browser's
+ * (`handleShortcut`).
+ */
+function isSaveKey(e: KeyboardEvent): boolean {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return false;
+  return !e.shiftKey || useAppStore.getState().drive.configStatus === 'ready';
+}
+
+/** The field a key was typed into — an input, a text area, a select, an editable element — or null. */
+function fieldOf(target: EventTarget | null): HTMLElement | null {
+  const el = target as HTMLElement | null;
+  const tag = el?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable === true) return el;
+  return null;
+}
+
+/**
+ * Where the focus goes when Ctrl/Cmd+S closed the box it was typed in (a
+ * rename, a table cell): to the Save button, as a click on it leaves the focus.
+ * Left to fall to the page, the next keys would be the page's — Backspace or
+ * Delete would remove the selection, often the element just renamed, and a
+ * digit would switch the view — while a button is one the destructive keys
+ * leave alone (`handleShortcut`). A control that holds the focus already, a
+ * button, a link or another field, keeps it.
+ */
+function focusSave(): void {
+  const active = document.activeElement;
+  const tag = active?.tagName;
+  if (tag === 'BUTTON' || tag === 'A' || fieldOf(active) !== null) return;
+  document.querySelector<HTMLElement>('[data-testid="tb-save"]')?.focus({ preventScroll: true });
+}
+
+/**
+ * Commit what was typed into `field` and not written yet, as leaving the field
+ * does, and give the field its focus back. Properties writes Subject, Tags,
+ * Type and the requirement attributes on Enter or on leaving the box, not per
+ * keystroke — as do the Explorer's rename, the Requirements table's cells and
+ * the planning and regrouping boxes — so a save from inside one would miss the
+ * value on screen.
+ *
+ * The blur renders before focus goes back (`flushSync`): a requirement
+ * attribute's box is rebuilt around the value it wrote, and the caret goes
+ * into the new box where it was in the old one. A box the commit closes — a
+ * rename — stays closed, as Enter leaves it, and the focus goes to Save
+ * (`focusSave`). A select writes on change, a read-only box holds nothing
+ * typed (the Drive strip's link box goes away on blur), and leaving a box
+ * marked `data-blur-cancels` throws away what was typed (the Requirements
+ * table's reference picker): none of them is touched.
+ */
+function commitField(field: HTMLElement): void {
+  if (
+    field.tagName === 'SELECT' ||
+    (field as HTMLInputElement).readOnly === true ||
+    field.dataset.blurCancels !== undefined
+  )
+    return;
+  const parent = field.parentElement;
+  const testid = field.dataset.testid;
+  const typed = field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement ? field : null;
+  const caret = typed ? { start: typed.selectionStart, end: typed.selectionEnd } : null;
+  flushSync(() => field.blur());
+  // The box itself, or the one rebuilt in its place: the same test id, under the same parent.
+  const rebuilt = (el: Element): el is HTMLElement => el instanceof HTMLElement && el.dataset.testid === testid;
+  const back = field.isConnected
+    ? field
+    : parent?.isConnected && testid !== undefined
+      ? (Array.from(parent.children).find(rebuilt) ?? null)
+      : null;
+  if (back === null) {
+    focusSave();
+    return;
+  }
+  back.focus({ preventScroll: true });
+  if (
+    back !== field &&
+    caret?.start != null &&
+    caret.end != null &&
+    (back instanceof HTMLInputElement || back instanceof HTMLTextAreaElement)
+  ) {
+    const length = back.value.length;
+    back.setSelectionRange(Math.min(caret.start, length), Math.min(caret.end, length));
+  }
+}
+
+/**
+ * The page's keydown listener (`App` puts it on `window`).
+ *
+ * Out of a field every key is `handleShortcut`'s. A key typed into a field is
+ * the field's — a digit, Delete, Ctrl/Cmd+Z and the rest — but for the save
+ * keys: Ctrl/Cmd+S is the app's Save anywhere on the page, and Ctrl/Cmd+Shift+S
+ * its Save to Drive where the deployment has Google Drive, so the browser's own
+ * "Save page" dialog never opens over the app. A save from a field holds what
+ * was typed there: the field is committed first, as leaving it does
+ * (`commitField`); text typed in the Text view's editor the save applies
+ * itself (`runSave`).
+ */
+export function handlePageKey(e: KeyboardEvent): void {
+  const field = fieldOf(e.target);
+  if (field === null) {
+    if (handleShortcut(e)) e.preventDefault();
+    return;
+  }
+  if (!isSaveKey(e)) return;
+  // Taken before the commit runs: whatever a field does on leaving, the
+  // browser's dialog stays shut.
+  e.preventDefault();
+  commitField(field);
+  handleShortcut(e);
 }

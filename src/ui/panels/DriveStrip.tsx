@@ -12,8 +12,10 @@
  * changes, saved. With nothing to say it renders nothing at all. On a
  * deployment without Google Drive it has three rows: the question before a
  * command replaces work no save holds — asked on every deployment, in the
- * guard row — the note that a save in this browser kept typed text back (an
- * `info` notice), and the note that a `?drive=` link cannot be opened here.
+ * guard row — the notes that a save in this browser, or Export ▾ → SysML,
+ * kept typed text back, or that an element went to the top level of the
+ * model rather than into the standard library (`info` notices), and the note
+ * that a `?drive=` link cannot be opened here.
  *
  * A conflict, an error and a guard are `role="alert"`; every other row is a
  * `role="status"`. The error row always carries the privacy page's link: a
@@ -96,9 +98,11 @@ const CLOSED_TAIL = DRIVE_MESSAGES.closed('');
  */
 export function driveStripStatus(d: DriveState, dirty: boolean): DriveStripStatus | null {
   // Before a command replaces work nothing holds, the question is asked with
-  // Google Drive or without it — and after a save in this browser kept typed
-  // text back, the note says so with it or without it. (An error notice
-  // carries the privacy page's link, which only a configuration names.)
+  // Google Drive or without it — and after a save in this browser, or an
+  // export, kept typed text back, or an element went to the top level of the
+  // model rather than into the standard library, the note says so with it or
+  // without it. (An error notice carries the privacy page's link, which only
+  // a configuration names.)
   if (d.prompt?.kind === 'guard') return 'guard';
   if (d.configStatus !== 'ready' || d.config === null) {
     if (d.link?.status === 'unsupported') return 'link-unsupported';

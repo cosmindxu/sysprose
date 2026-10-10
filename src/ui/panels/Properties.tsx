@@ -47,7 +47,7 @@ import {
   type StatementKind,
 } from '@semantics/index';
 import { DIMENSIONLESS, dimEqual, dimToString } from '@semantics/units';
-import { evidenceRowAt, proveInTerminalHint, useAppStore } from '../store';
+import { evidenceRowAt, inLibrary, proveInTerminalHint, useAppStore } from '../store';
 import { ImpactGraph } from './ImpactGraph';
 
 /** Read an attribute as a display string (empty for absent/non-primitive). */
@@ -64,6 +64,11 @@ function refLabel(el: ElementRecord): string {
 }
 
 const DIRECTIONS: FeatureDirection[] = ['in', 'out', 'inout'];
+
+/** Why the documentation box of an element in the standard library is read-only: its title. */
+const LIBRARY_DOC_READ_ONLY =
+  'This element is in the standard library, which is not part of your model\u2019s text: its ' +
+  'documentation can be read here, not written.';
 
 /**
  * The nine management facets, in the order {@link RM_ATTR_KEYS} declares them.
@@ -343,6 +348,11 @@ export function Properties(): JSX.Element {
     .children(id)
     .find((c) => c.eClass === 'Documentation' || c.eClass === 'Comment');
   const docBody = docChild ? attrString(docChild, 'body') : '';
+  // The standard library is not part of the model's text, so a doc written on
+  // one of its elements would reach no file — and the one this box makes would
+  // go to the top level of the model instead (`createElement`), where the box
+  // never finds it: a stray `doc` comment per keystroke. Read-only there.
+  const docReadOnly = inLibrary(model, id);
 
   // Read-only relationship facets.
   const types = model.typesOf(id);
@@ -388,6 +398,7 @@ export function Properties(): JSX.Element {
   }
 
   function commitDoc(value: string): void {
+    if (docReadOnly) return;
     commitNote(
       'doc',
       () => {
@@ -718,6 +729,8 @@ export function Properties(): JSX.Element {
           <textarea
             data-testid="prop-doc"
             value={docBody}
+            readOnly={docReadOnly}
+            title={docReadOnly ? LIBRARY_DOC_READ_ONLY : undefined}
             onChange={(e) => commitDoc(e.target.value)}
           />
           {noteRefusalNotice('doc')}

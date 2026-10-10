@@ -27,6 +27,7 @@ vi.mock('../../src/library/standard-library', () => ({
 }));
 
 import { useAppStore } from '../../src/ui/store';
+import { handlePageKey } from '../../src/ui/commands';
 import { RequirementsTable } from '../../src/ui/panels/RequirementsTable';
 import { parseModel, serializeModel } from '@text/index';
 import { attachEvidence, modelVersionOf, recordEvidence } from '@api/index';
@@ -503,5 +504,98 @@ describe('RequirementsTable — the Evidence chip', () => {
     expect(chip.getAttribute('data-status')).toBe('none');
     expect(chip.getAttribute('data-claim')).toBe('');
     expect(chip.getAttribute('title')).toContain('no evidence recorded');
+  });
+});
+
+/**
+ * Ctrl/Cmd+S typed into the reference picker. The page's listener commits a
+ * field by leaving it before it saves, and leaving this one CANCELS: the key
+ * closed the picker, dropped the query and linked nothing, where Enter links
+ * the highlighted candidate. The picker is left as it was instead — open, its
+ * query and focus kept — and the project is saved.
+ */
+describe('Requirements panel — Ctrl/Cmd+S in the reference picker', () => {
+  const SRC = `package P {\n    part def Mast;\n    requirement <R1> maxMass;\n}`;
+
+  it('saves and leaves the picker open with its query: nothing linked, nothing cancelled', async () => {
+    const saveProject = st().saveProject;
+    let saves = 0;
+    useAppStore.setState((s) => ({
+      drive: { ...s.drive, configStatus: 'absent' },
+      saveProject: async () => {
+        saves++;
+      },
+    }));
+    // The page's keydown listener, as `App` installs it.
+    window.addEventListener('keydown', handlePageKey);
+    try {
+      const view = mount(SRC);
+      const row = view.getAllByTestId('req-row').find((r) => rowName(r).includes('maxMass'))!;
+      fireEvent.click(row.querySelector('[data-testid="req-ref-add"]')!);
+      const picker = view.getByTestId('req-ref-picker') as HTMLInputElement;
+      picker.focus();
+      fireEvent.change(picker, { target: { value: 'Ma' } });
+      const depth = st().undoStack.length;
+
+      expect(fireEvent.keyDown(picker, { key: 's', ctrlKey: true }), 'default prevented').toBe(false);
+      await vi.waitFor(() => expect(saves).toBe(1));
+      expect(view.queryByTestId('req-ref-picker'), 'still open').toBe(picker);
+      expect(picker.value).toBe('Ma');
+      expect(document.activeElement).toBe(picker);
+      expect(view.queryAllByTestId('req-ref-chip'), 'nothing linked').toHaveLength(0);
+      expect(st().undoStack.length).toBe(depth);
+    } finally {
+      window.removeEventListener('keydown', handlePageKey);
+      useAppStore.setState({ saveProject });
+    }
+  });
+});
+
+/**
+ * Ctrl/Cmd+S in a cell commits it and closes it, as Enter does — a rename, an
+ * id, a text — and the save holds what was typed. Left to fall to the page,
+ * the focus would make the next keys the page's: Backspace would delete the
+ * requirement just renamed. It goes to the toolbar's Save button, as after a
+ * click on it, where the destructive keys are ignored.
+ */
+describe('Requirements panel — Ctrl/Cmd+S in a cell', () => {
+  const SRC = `package P {\n    requirement <R1> maxMass;\n}`;
+
+  it('saves what was typed, closes the cell, and leaves the focus on Save, where Backspace deletes nothing', async () => {
+    const saveProject = st().saveProject;
+    let saves = 0;
+    useAppStore.setState((s) => ({
+      drive: { ...s.drive, configStatus: 'absent' },
+      saveProject: async () => {
+        saves++;
+      },
+    }));
+    // The toolbar's button, as `focusSave` finds it.
+    const save = document.createElement('button');
+    save.dataset.testid = 'tb-save';
+    document.body.appendChild(save);
+    window.addEventListener('keydown', handlePageKey);
+    try {
+      const view = mount(SRC);
+      const id = idOf(view, 'maxMass');
+      fireEvent.click(view.getAllByTestId('req-row')[0]!.querySelector('[data-col-key="name"]')!);
+      const input = view.getByTestId('req-cell-input') as HTMLInputElement;
+      input.focus();
+      fireEvent.change(input, { target: { value: 'maxWeight' } });
+      act(() => st().select(id));
+
+      expect(fireEvent.keyDown(input, { key: 's', ctrlKey: true }), 'default prevented').toBe(false);
+      await vi.waitFor(() => expect(saves).toBe(1));
+      expect(st().model.require(id).declaredName).toBe('maxWeight');
+      expect(view.queryByTestId('req-cell-input'), 'the cell closed, as Enter closes it').toBeNull();
+      expect(document.activeElement).toBe(save);
+
+      expect(fireEvent.keyDown(save, { key: 'Backspace' }), 'the page did not take the key').toBe(true);
+      expect(st().model.has(id), 'the requirement just renamed is still there').toBe(true);
+    } finally {
+      window.removeEventListener('keydown', handlePageKey);
+      save.remove();
+      useAppStore.setState({ saveProject });
+    }
   });
 });

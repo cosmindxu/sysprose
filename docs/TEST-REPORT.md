@@ -38,15 +38,15 @@ vs. mainstream MBSE tools** is in `docs/FEATURE-PARITY.md`.
 | **E2E runner** | Playwright, headless Chromium (single worker, fullyParallel off) |
 | **App under test (E2E)** | Production build served by `vite preview` at `http://localhost:4173` |
 | **Date** | 2026-10-09 (this table, §5's totals and §7 are one run — `test/unit/docs-counts.test.ts` holds the four documents that quote it to the same figures) |
-| **Vitest checks** | **4192 passed / 0 failed / 0 skipped** across **157 files** |
-| &nbsp;&nbsp;— unit | 3172 passed across 119 files |
-| &nbsp;&nbsp;— integration | 403 passed across 21 files |
+| **Vitest checks** | **4227 passed / 0 failed / 0 skipped** across **157 files** |
+| &nbsp;&nbsp;— unit | 3205 passed across 119 files |
+| &nbsp;&nbsp;— integration | 404 passed across 21 files |
 | &nbsp;&nbsp;— conformance | 71 passed across 4 files |
 | &nbsp;&nbsp;— server (HTTP/OSLC) | 51 passed across 7 files |
-| &nbsp;&nbsp;— interop | 8 passed across 1 file |
+| &nbsp;&nbsp;— interop | 9 passed across 1 file |
 | &nbsp;&nbsp;— campaign (L6–L8) | 487 passed across 5 files |
-| **E2E scenarios** | **188 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
-| **Grand total** | **4380 automated checks passed / 0 failed** |
+| **E2E scenarios** | **193 passed / 0 failed / 0 flaky / 0 skipped** across **84 spec files** |
+| **Grand total** | **4420 automated checks passed / 0 failed** |
 
 > **Previously the one failure**, now fixed: `conformance › Systems Library/
 > Actions.sysml › parses with 0 errors`. The OMG corpus (an *external,
@@ -103,7 +103,7 @@ Screenshots are under `test-results/screenshots/`.
 | **New** — reset to empty `NewModel` (`tb-new`) | `E toolbar-lifecycle` (*New resets… Save… Open*) | PASS | Sample discarded; `lifecycle-a-created` |
 | **Open** — project picker + pick (`tb-open`, `project-picker`, `project-pick`) | `E toolbar-lifecycle`; `E keyboard-shortcuts` (`kbd-d-saved`) | PASS | Restores saved project; `lifecycle-b-restored` |
 | **Save** — persist under current project (`tb-save`) | `E toolbar-lifecycle`; `E keyboard-shortcuts` | PASS | Round-trips New→Save→New→Open |
-| **Save** and **Ctrl/⌘+S** (from the diagram, the tree or the Text view's editor) apply text typed in the Text view first, under the open project's name; over a syntax error, or in a collaboration room, the model is saved as it stands and — with no Drive file attached — the strip says so, naming the line of a syntax error (`drive-strip`, `info`, on every deployment) | `E toolbar-lifecycle` (*Save holds the text typed in the Text view, keeps back a text with a syntax error and says so…*); `U store.reducers` (`the keys, and Save with a Drive file attached`: a peer's edit since the typing stays in the room); `U drive` (`DriveStrip`: the note without Google Drive, the offline row's Save) | PASS | `lifecycle-i-kept-back`; an edit in the app made after the typing goes first; text typed while the library merges again stays |
+| **Save** and **Ctrl/⌘+S** (from anywhere in the app, a field included) apply text typed in the Text view first, under the open project's name; over a syntax error, or in a collaboration room, the model is saved as it stands and — with no Drive file attached — the strip says so, naming the line of a syntax error (`drive-strip`, `info`, on every deployment) | `E toolbar-lifecycle` (*Save holds the text typed in the Text view, keeps back a text with a syntax error and says so…*); `U store.reducers` (`the keys, and Save with a Drive file attached`: a peer's edit since the typing stays in the room); `U drive` (`DriveStrip`: the note without Google Drive, the offline row's Save) | PASS | `lifecycle-i-kept-back`; an edit in the app made after the typing goes first; text typed while the library merges again stays |
 | **Import** — file chooser replaces model (`tb-import`) | `E toolbar-lifecycle` (native-JSON round-trip); `E import-export` (`.sysml`) | PASS | `lifecycle-g-imported`, `07b-imported` |
 | **The question before a model is replaced** — New, Open, Import, a branch switch, a merge that resolves and a room join ask first while the model has work no save (in this browser, to Drive) or Versions commit holds; Save and continue, Discard and continue, Keep editing (`guard-save`, `guard-discard`, `guard-keep`) | `E toolbar-lifecycle` (*New, Open and Import ask before they replace work no save holds…*); `E gui-versions-clean-merge` (a committed edit: the switch asks nothing); `E model-param` (a `?model=` link opens saved); `U store.reducers` (`unsaved work`); `U drive` (`Toolbar`, `Versions and Collaborate`, `DriveStrip`); `U api.versioning` (`merge`) | PASS | `lifecycle-h-guard` |
 | **Export .sysml** (`tb-export-sysml`) | `E toolbar-lifecycle` (`package VehicleModel`); `E import-export` | PASS | `07a-exported`, `lifecycle-f-exported` |
@@ -137,9 +137,9 @@ Screenshots are under `test-results/screenshots/`.
 | Delete/Backspace **suppressed while a `<button>`/`<a>` holds focus** | `E gui-keyboard` (*Backspace does NOT delete while a button holds focus*) | PASS | Prevents a reflex Backspace cascade-deleting the selection |
 | **Digits 1–6** → switch primary view | `E gui-keyboard` (*digit hotkeys switch the primary view*) | PASS | `81-keyboard-view-hotkeys`; asserts `is-active` tab |
 | **`/`** → focus Explorer search | `E gui-keyboard` (*"/" focuses the Explorer search box*) | PASS | `document.activeElement` = `explorer-search` |
-| Global handler ignores INPUT/TEXTAREA/**SELECT**/contenteditable | `E keyboard-shortcuts` (focuses brand before keys) | PASS | Matches handler guard |
+| Global handler leaves every key typed into INPUT/TEXTAREA/**SELECT**/contenteditable to the field — but the save keys | `E keyboard-shortcuts` (focuses brand before keys); `U ui.properties-facets` (Ctrl/⌘+Z, +Y, +D, a digit, Delete, Backspace and, without Google Drive, Ctrl/⌘+Shift+S stay the field's) | PASS | `handlePageKey` |
 | **Ctrl/⌘+Shift+S** → Save to Drive; with no Drive file attached, the Save-as form | `E drive` (*…the toolbar's Save and both keys*); `U store.reducers` (`handleShortcut`: only with a Drive configuration) | PASS | Sends nothing while the attached file has no unsaved changes |
-| **Ctrl/⌘+S** and **Ctrl/⌘+Shift+S** inside the Text view's editor → save (Ctrl/⌘+S applies the typed text first, as it does with the focus anywhere — unless it has a syntax error, when the browser keeps the model as it stood) | `E drive` (Ctrl+Shift+S with `text-editor` focused); `U store.reducers` (the textarea forwards only those two) | PASS | The one exception to the handler's INPUT/TEXTAREA guard; every other key stays the editor's |
+| **Ctrl/⌘+S** and **Ctrl/⌘+Shift+S** typed into a field → save, never the browser's *Save page* dialog. A box that writes on Enter or on leaving it (Properties' Subject, Tags, Type, the requirement attributes) is committed first, as leaving it does, and keeps the caret — in the attribute box rebuilt around its value too; a select, a read-only box or the Requirements table's reference picker (leaving it cancels) is not left: the picker stays open, its query kept, nothing linked. A rename or a Requirements table cell closes, as Enter closes it, and the focus goes to the toolbar's Save button, where Backspace and Delete are ignored. In the Text view's editor Ctrl/⌘+S applies the typed text first, as it does with the focus anywhere — unless it has a syntax error, when the browser keeps the model as it stood | `E keyboard-shortcuts` (*Ctrl/⌘+S in a Properties field or the Explorer search…*: the stored project holds the typed value, and a digit and Backspace typed next stay the box's); `E drive` (Ctrl+Shift+S with `text-editor` focused); `U ui.properties-facets` (`Ctrl/Cmd+S typed into a field`); `E keyboard-shortcuts` (*Ctrl/⌘+S in the Explorer rename box saves the name, and the next Backspace deletes nothing*); `U ui.requirements-table` (`Ctrl/Cmd+S in the reference picker`; `Ctrl/Cmd+S in a cell`); `U store.reducers` (the Text view's editor) | PASS | `kbd-e-saved-from-a-field`, `kbd-f-rename-saved`; the two exceptions to the handler's field guard |
 
 ### 2.3 View switching — all 17 view kinds (`tb-view-<kind>`)
 
@@ -179,6 +179,7 @@ geometry → the lazy Three.js `geometry-3d` WebGL view (no `diagram-canvas`).
 | Inline rename — Escape cancels (name unchanged) | `E explorer-interactions` | PASS | `explorer-c-renamed` |
 | Delete — cascades to descendants (`tree-delete`) | `E explorer-interactions` (parent+child both removed); `E explorer-crud`; `U core.model` | PASS | `explorer-d-deleted`, `02c-deleted` |
 | Drag-and-drop reparent (HTML5 dragstart/dragover/drop) | `E explorer-interactions` (model reparents dragged elt); `U core.model` (cycle-guard) | PASS | `explorer-e-reparented` |
+| An element added under a library row (`tree-add`, `explorer-library-toggle` on), made with a library element selected, dragged onto one, pasted onto one, or made or moved there by the SDK's `create` and `reparent`, goes to the top level of the model, which the text holds, not into the standard library, which it leaves out, and its row sits among the model's own, above the library's; the strip says so (`drive-strip`, `info`, on every deployment) without covering another message, and Undo takes the note down, as New, Open, Import and a file opened as text do. The Documentation box of a library element is read-only (`prop-doc`). A line drawn from a library box and the Type field of a library usage are not covered yet (TODO.md) | `E containment-refusal` (*an element added under, dragged onto, or pasted onto a library row…*); `U store.reducers` (`createElement, reparent, reparentMany, paste and the SDK never put a user element inside the standard library`; `the note comes down when the model it is about is replaced`; a save or an export that keeps typed text back says so over the library note); `U ui.properties-facets` (`the Documentation box of an element in the standard library`) | PASS | `library-a-added-at-top`, `library-b-dragged-to-top`, `library-c-pasted-to-top`; one Undo takes it back |
 | Select a row → Properties reflects it | `E explorer-crud`; `E properties-all-fields`; `E panels-problems-text` | PASS | — |
 | Hierarchical containment renders | `E app-loads`; `U core.model`; `I pipeline.diagram` | PASS | `01-app-loaded` |
 | Per-metaclass tree type icons | — | GAP | Icons render; not asserted (§6) |
@@ -234,6 +235,7 @@ wired relationship.
 | Interaction | Covered by | Result | Screenshot |
 |---|---|---|---|
 | Manual node move (mouse drag persists position) | `E diagram-node-drag` (`onNodeDragStop` → store round-trip) | PASS | `drag-a-before`, `drag-b-after` |
+| A box moved by hand is saved with the browser project (never in the text, an export or a Drive file) and **Open ▾** puts it back; an apply of text (**Apply text → model**, or the one Save makes of typed text) keeps it with the element of the same qualified name; New, Import and Reload from Drive start from a fresh layout, and their Undo puts it back; a file opened from Drive or a `?model=` link starts from one too, and its Undo starts over | `E persistence-reload` (*a box moved by hand is saved with the project, and is where it was when the project reopens after a reload*, through Save's apply of typed text); `U store.reducers` (`boxes moved by hand — kept with the project in this browser, never in its text`; `google drive > saving`: the Drive file gets the text alone) | PASS | `reload-d-box-moved`, `reload-e-box-where-it-was` |
 | Click-to-connect two nodes | `E palette-per-view`; `E diagram-create-connect` (model wired) | PASS | `04c-connected` |
 | Relationship edges render (DOM `.react-flow__edge`) | `E diagram-edges` (general/tree/requirement/interconnection; 0 console errors) | PASS | `10-edges-*` |
 | Floating edges attach to node **borders**; IBD port-to-port connectors stay **handle-anchored** | `E diagram-edges` (edges render + boundary-port `data-handleid` handles present in interconnection) | PASS | `10-edges-interconnection` |
@@ -294,7 +296,7 @@ wired relationship.
 |---|---|---|---|
 | Export `.sysml` / model JSON / OMG API JSON (non-empty) | `E toolbar-lifecycle`, `E import-export` | PASS | `07a-exported`, `lifecycle-f-exported` |
 | Import replaces / round-trips the model | `E import-export` (`.sysml`); `E toolbar-lifecycle` (native JSON) | PASS | `07b-imported`, `lifecycle-g-imported` |
-| Lossless + idempotent api-json | `U persistence.io`; `C roundtrip` | PASS | — |
+| Lossless + idempotent api-json | `U persistence.io`; `C roundtrip`; `I persist-api.persistence` (*'api-json' re-imports every element it exported, the library's aliases included*) | PASS | — |
 
 ### 2.12 Engine, semantics, library & API surface (non-UI, unit/integration/conformance)
 
@@ -368,7 +370,7 @@ before any `await`, and before `applyText`) remain the guard for that; Chromium'
 | A routed configuration reads as ready — on a reload too, which is what proves the worker is blocked | `E drive` (*a routed configuration reads as ready…*) | PASS |
 | The CSP admits exactly the hosts the feature contacts (sign-in, Picker, Drive REST, revocation), and no Google URL is spelled outside `src/persistence/drive/hosts.ts` | `U branding` (*the CSP admits exactly the hosts the app contacts*); every `E drive` scenario fails on a refused request | PASS |
 | Sign-in: the script loads when the panel opens, the window is requested synchronously inside the click with the account chooser first, the token lives only in a closure, `hasGrantedAllScopes` is checked, and each refusal (`access_denied`, `popup_closed` with the privacy link, `popup_failed_to_open`) says why and changes nothing | `U drive` (`createGisPopupAuth`, `loadScriptOnce`, `DriveMenu`); `E drive` (*sign in, save as…*, *a sign-in Google or the browser refuses says why…*) | PASS |
-| Save to Drive as / Save: the payload is the Text view's text with no standard library — Save to Drive as… in a CRLF-framed multipart body, Save as a media update — from the panel, the strip, the toolbar's Save, `Ctrl/⌘+S` and `Ctrl/⌘+Shift+S` (also from the Text view's editor); the token in no URL and in no browser storage (`localStorage`, `sessionStorage`, IndexedDB) | `E drive` (*sign in, save as, edit and save…*); `U drive` (`buildMultipart`, `createRestDriveGateway`); `U store.reducers` (`google drive`) | PASS |
+| Save to Drive as / Save: the payload is the Text view's text with no standard library — Save to Drive as… in a CRLF-framed multipart body, Save as a media update — from the panel, the strip, the toolbar's Save, `Ctrl/⌘+S` and `Ctrl/⌘+Shift+S` (from anywhere in the app, a field included); the token in no URL and in no browser storage (`localStorage`, `sessionStorage`, IndexedDB) | `E drive` (*sign in, save as, edit and save…*); `U drive` (`buildMultipart`, `createRestDriveGateway`); `U store.reducers` (`google drive`) | PASS |
 | Unsaved changes are read off the text, not `rev`: the library refresh after an open stays clean; a file with a syntax error uploads as typed, keeps its parse rows, and two saves of it push no Undo step | `U store.reducers` (`google drive`); `E drive` (*a hand-written file is rewritten only when the user says so; a syntax error survives the save*) | PASS |
 | A hand-written file is rewritten only after the user says so (Save anyway / Save as copy); files the app wrote never ask | `E drive` (same scenario); `U store.reducers` | PASS |
 | Recent reopens a file after a reload; the leave-page prompt only while the file has unsaved changes | `E drive` (*Recent reopens a file after a reload…*) | PASS |
@@ -729,7 +731,7 @@ limits — not untested interactions.
    deleted, so the correction is on the record.* The shipped set is wider than
    it said: undo/redo/save, `Delete`/`Backspace`, `Ctrl+D` duplicate, `Ctrl+C` /
    `Ctrl+V`, the digits `1`–`6` for the primary views and `/` for the Explorer
-   search are all wired in `src/ui/commands.ts:177-291`. The one false label —
+   search are all wired in `src/ui/commands.ts:198-310`. The one false label —
    New advertising a `Ctrl+N` the handler never received — has been removed, and
    `U user-guide` now fails on a shortcut that is labelled but not handled.
    [`USER-GUIDE.md`](USER-GUIDE.md) Appendix B is the reader's list.
@@ -838,9 +840,9 @@ narrowed subset.
 
 **Bottom line.** With F1–F5 complete **and the full UI interaction surface now
 end-to-end tested**, this tool touches **every pillar** of the OMG
-SysML v2 standard family — all six read **Covered** — with **4380 green automated
-checks** (**4192** unit/integration/conformance/server/interop/campaign across **157 files**,
-**0 skips**, + **188 E2E** across **84 spec files**) and no failures. The report now
+SysML v2 standard family — all six read **Covered** — with **4420 green automated
+checks** (**4227** unit/integration/conformance/server/interop/campaign across **157 files**,
+**0 skips**, + **193 E2E** across **84 spec files**) and no failures. The report now
 **covers all features and all user–tool interactions** (§2): the entire toolbar and
 project lifecycle, keyboard shortcuts, all 17 view switches, the full Explorer
 interaction surface, every Properties field with unit conversion, palette
@@ -858,8 +860,8 @@ pilot round-trip is a **representative** exchange, not a full-model migration (�
 
 ---
 
-*End of report. Counts and verdicts derived from a live `vitest run` (4192 passed /
-0 skipped across 157 files) and Playwright (188/188 across 84 spec files), plus
+*End of report. Counts and verdicts derived from a live `vitest run` (4227 passed /
+0 skipped across 157 files) and Playwright (193/193 across 84 spec files), plus
 `scripts/grammar-coverage.ts` (100%, 94/94), `scripts/pilot-roundtrip.ts` (self
 round-trip, EQUIVALENT), `scripts/pilot-write-roundtrip.ts` (the live
 verdict-bearing write probe — see `docs/CONFORMANCE.md` §6.1) and

@@ -10,7 +10,8 @@
  * New, Open and Import replace the model, so they run through `driveGuard`:
  * with work no save holds — or unsaved changes to an attached Google Drive
  * file — the strip under the toolbar asks first. Save also saves to the
- * attached Drive file (see `runSave`).
+ * attached Drive file (see `runSave`). Save and Export ▾ → SysML apply text
+ * typed in the Text view first (see `runExportSysml`).
  *
  * Every control drives the shared {@link useAppStore}; view buttons reuse the
  * declarative {@link VIEW_COMMANDS} list so ids stay in lock-step with the
@@ -22,7 +23,7 @@ import { useAppStore } from '../store';
 import { useRovingMenu } from './useRovingMenu';
 import { Collaborate } from './Collaborate';
 import { DriveMenu } from './DriveMenu';
-import { VIEW_COMMANDS, runSave } from '../commands';
+import { VIEW_COMMANDS, runExportSysml, runSave } from '../commands';
 import { svgFromDiagram, type DiagramGraph, type ViewKind } from '@diagram/index';
 import { detectFormat, downloadText, downloadBytes, openTextFile } from '@persistence/index';
 import { exportFmu, fmiModelDescription } from '@interop/index';
@@ -575,7 +576,7 @@ export function Toolbar(): JSX.Element {
           label="Export"
           testid="tb-export"
           items={[
-            { label: 'SysML (.sysml)', testid: 'tb-export-sysml', onClick: () => exportModel('sysml'), title: 'Export SysML v2 textual notation' },
+            { label: 'SysML (.sysml)', testid: 'tb-export-sysml', onClick: () => runExportSysml(), title: 'Export SysML v2 textual notation' },
             { label: 'Model JSON', testid: 'tb-export-json', onClick: () => exportModel('model-json'), title: 'Export native model JSON' },
             { label: 'OMG API JSON', testid: 'tb-export-api-json', onClick: () => exportModel('api-json'), title: 'Export OMG API element-graph JSON' },
             { label: 'Diagram SVG', testid: 'tb-export-svg', onClick: () => onExportSvg(), disabled: !isGraphView, title: graphOnlyTitle('Export the current diagram as SVG') },

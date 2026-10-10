@@ -21,7 +21,7 @@ import {
   recomputePending,
   useAppStore,
 } from './store';
-import { handleShortcut } from './commands';
+import { handlePageKey } from './commands';
 
 import { Toolbar } from './panels/Toolbar';
 import { Explorer } from './panels/Explorer';
@@ -138,23 +138,11 @@ export function App(): JSX.Element {
     el.addEventListener('pointercancel', end);
   };
 
-  // Global keyboard shortcuts (undo/redo/save).
+  // Global keyboard shortcuts (undo/redo/save) — in a field, the save keys
+  // alone, the field committed first (`handlePageKey`).
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      // Ignore when typing in the text editor / inputs (the editor hands on Ctrl/Cmd+S itself).
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (
-        tag === 'TEXTAREA' ||
-        tag === 'INPUT' ||
-        tag === 'SELECT' ||
-        target?.isContentEditable
-      )
-        return;
-      if (handleShortcut(e)) e.preventDefault();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', handlePageKey);
+    return () => window.removeEventListener('keydown', handlePageKey);
   }, []);
 
   // Leaving the page while the attached Drive file has unsaved changes asks

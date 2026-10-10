@@ -45,33 +45,62 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       (`assignPackagePartitions`, `src/diagram/build.ts`), but nothing on the canvas names the
       columns. Draw a header per column (the package name, above its x-range) so the reading
       order is visible, not only felt.
-- [ ] **Keep hand-placed boxes with the saved project.** `diagramPins` (`src/ui/store.ts`) holds
-      the boxes a user moved, per view and scope, for the session only; Save/Open drop them.
-      Persist them beside the model in the project store (never in the `.sysml` text).
-- [ ] **Keep plain `Membership` elements through an api-json round trip.** `fromApiGraph`
-      (`src/persistence/io.ts`) skips every element whose `@type` is in `OWNERSHIP_MEMBERSHIPS`,
-      `Membership` included, as if it were the wire's reified ownership; the full library's 268
-      genuine `Membership` elements are dropped (38,761 elements exported, 38,493 imported back).
-      Tell the reified memberships (`om-<child id>`) from the model's own.
-- [ ] **Never put a user element inside a library root.** `createElement` (owner falls back to
-      the selection), `reparent` and `reparentMany` take a library element as owner, e.g. with the
-      Explorer's library toggle on. Such an element has no `isLibrary` flag but sits under a library
-      root, so the Text view, Save to Drive and Export ▾ → SysML all leave it out, while model
-      JSON keeps it. Nor does an edit to it read unsaved — what is saved is compared as text — so
-      New, Open ▾ and Import drop it without asking, though a Save in this browser would have kept
-      it. Refuse a library owner, or fall back to the root.
-- [ ] **Apply typed text before Export ▾ → SysML, or say it is left out.** Save and `Ctrl/⌘+S`
-      apply text typed in the Text view and not yet applied first (`applyTypedTextToSave`; over a
-      parse error, or in a collaboration room, a save in this browser alone keeps it back and the
-      strip says so), as every save to Drive does (`payloadNow`). Export ▾ → SysML still writes the
-      model without it (the guide's §8 and §8.1 say to press Apply first). Either apply it the same
-      way — an export would then change the model and spend an Undo step — or say in the menu that
-      the typed text is not in the file.
-- [ ] **Decide what `Ctrl/⌘+S` does in a field other than the Text view's editor.** The page's
-      handler ignores keys typed into an input, a select or another textarea, so `Ctrl/⌘+S` in a
-      Properties field or the Explorer search opens the browser's "Save page" dialog. Forwarding
-      it would save without the field's uncommitted value (Properties writes on Enter or blur):
-      commit the field first, or leave the key to the browser and say so in Appendix B.
+- [ ] **Count a hand arrangement as unsaved work.** `browserDirty` (`src/ui/store.drive.ts`)
+      compares text only, so boxes moved by hand since the last Save or Open never read unsaved:
+      New, Open, Import, a Drive open and closing the tab let them go without a question. Undo
+      brings them back after New, Open and Import, but a Drive open clears Undo, so there an
+      arrangement never saved is lost for good, and Reload from Drive followed by Save stores
+      none in its place. Keep the pins Save and Open mark beside `savedText`, and let
+      `browserDirty` compare them too, so the existing question covers it. Or keep Undo, or the
+      pins, across a Drive open of a model whose element names match.
+- [ ] **Give back the library aliases an older api-json Import dropped.** Until fixes2 S5 an
+      api-json Import lost the full library's 268 `alias` `Membership` elements, and a browser
+      project saved after one still lacks them. `loadFullStandardLibrary`
+      (`src/library/full-library.ts`) returns early once a model holds any library element, so
+      they never come back and names reached through them stay unresolved. Let the merge add the
+      library ids such a model is missing, or tell the user that New and a fresh Import repair it.
+- [ ] **Read OMG's other owning memberships as containment in an api-json Import.**
+      `fromApiGraph` (`src/persistence/io.ts`) takes ownership from `OwningMembership` and
+      `FeatureMembership` only. A graph written by another tool can own a member through a subtype
+      (`ParameterMembership`, `ReturnParameterMembership`, `EndFeatureMembership`,
+      `ResultExpressionMembership`, …): that membership is kept as an element in its namespace,
+      and its member lands at the top level of the model. Sysprose's own export never writes them.
+- [ ] **Keep the other writers out of the standard library too.** `connect` (a line drawn from
+      a library box in a diagram scoped to the library) and `bindType` (the Type field on a
+      library usage) put a new user element — the relationship, the typing — under the library
+      element they act on, where the Text view, Save to Drive and Export ▾ → SysML leave it out.
+      `createElement`, `reparent`, `reparentMany`, `pasteClipboard` and the SDK's `create` /
+      `reparent` send such an element to the top level of the model with a note (`userOwner`);
+      give these the same, or refuse with a note.
+- [ ] **Keep library elements in the standard library.** The mirror of the item above:
+      `reparent` and `reparentMany` move a library element under one of the user's — a library
+      row dragged onto a user row in the Explorer (library toggle on) — and the Text view then
+      writes it into the user's package (`library part def Shelved;`), while the library no longer
+      has it. Refuse such a move with a note, or move a copy.
+- [ ] **Give the focus somewhere safe when a rename closes on `Enter`.** `Enter` in the
+      Explorer's rename (`tree-rename`), the context menu's (`node-ctx-rename-input`) or a
+      Requirements table cell (`req-cell-input`, `req-attr-input`) commits and closes the box,
+      and the focus falls to the page (to the canvas node, for the context menu): the next
+      `Backspace` deletes the selection — the element just renamed, with its subtree — and a
+      digit switches the view. Undo brings it back. `Ctrl/⌘+S` in those boxes already leaves the
+      focus on Save (`focusSave`, `src/ui/commands.ts`); do the same after `Enter`, or return
+      it to the row, guarded.
+- [ ] **Show the strip's note beside its status row, not in place of it.** With Google Drive
+      configured, any `info` notice — a save or an export that kept typed text back, an element
+      sent to the top level of the model — outranks the rows for a save waiting on a sign-in
+      (`expired`), a file in the trash or read-only (`gone`, `readonly`), unsaved changes
+      (`dirty`) and being offline (`driveStripStatus`, `src/ui/panels/DriveStrip.tsx`), until it
+      is hidden or Undone: the row that says the file lacks the model is not shown. In the other
+      direction `sayWhatWasKept` puts nothing up while an unrelated notice stands (a Drive error,
+      `<name> closed`), so an export that kept typed text back leaves the file lacking it
+      unsaid. Render the note on a line of its own under the row, and hold the export's until
+      the strip is free.
+- [ ] **Keep text typed in the Text view when a field's change is applied.** An edit in the app
+      re-serialises the Text view over text typed there and not applied (`recomputeNow` with
+      `forceText`, `src/ui/store.ts`), so a Properties box left — or `Ctrl/⌘+S` typed in it —
+      while the Text view reads *modified — not yet applied* drops that text with no note and
+      no Undo. Appendix B says so. Apply the typed text first when the element ids survive it,
+      or leave it standing, as an SDK edit or a collaborator's does.
 - [ ] **Cut the crossings of one-layer General views with hub requirements.** Scoped to the
       drone-swarm model's `OA`, the General view still has ~110 crossings, most of them long
       `«trace»` / `«satisfy»` lines converging on a few hubs (`memberA` takes ~20). Try routing
