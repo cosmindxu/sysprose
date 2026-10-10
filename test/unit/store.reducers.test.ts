@@ -75,6 +75,7 @@ import {
   forcedRecomputePending,
   initialDriveState,
   lastAppliedText,
+  loadHealth,
   mergeLoads,
   openText,
   pageLinks,
@@ -103,6 +104,8 @@ import {
   type GisTokenResponse,
   type GoogleNs,
 } from '@persistence/index';
+import * as textApi from '@text/index';
+import * as validationApi from '@validation/index';
 import { parseModel, serializeModel } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
@@ -5286,5 +5289,245 @@ describe('edits through the SDK on window.sysml — the Text view, and what read
       st().disconnectCollab();
       useAppStore.setState({ rebuildDiagram: rebuild });
     }
+  });
+});
+
+/**
+ * What a check is judged under: whether the model on screen is the model a
+ * file of it would hold. `reach` and `check-behaviour` report on what parsed
+ * when a file does not load cleanly (exit 1 and 2), and the page must not say
+ * `holds` over half a model. It is measured over the TEXTS a file can hold —
+ * what Save writes and what Export ▾ SysML writes — and the validator's
+ * errors, never read off Problems: Simulate, Solve and Check replace that.
+ */
+describe('the load health a check is judged under', () => {
+  /** A holding cycle, and a package whose `part x : ;` the parser recovers into `part x;`. */
+  const BROKEN_PART = 'package C { state def M { state a; state b; transition a then b; transition b then a; } }\npackage Broken { part x : ; }\n';
+  /** A clean machine and a part whose value the parser cannot read: the serializer writes it back as it came. */
+  const RAW_VALUE =
+    'package C {\n  part def Ctl { state def M { state idle; state busy; transition idle then busy; transition busy then idle; } }\n  part def Pump { attribute rate : Real = 1 +; }\n}\n';
+  const CLEAN =
+    'package C {\n  part def Ctl { state def M { state idle; state busy; transition idle then busy; transition busy then idle; } }\n  part def Pump { attribute rate : Real = 2; }\n}\n';
+
+  const parseErrors = (text: string) => parseModel(text).diagnostics.filter((d) => d.severity === 'error').length;
+  const byName = (name: string) => st().model.all().find((e) => e.declaredName === name)!.id;
+  const exported = () => exportModel(st().model, 'sysml');
+
+  async function apply(text: string): Promise<void> {
+    st().setTextBuffer(text);
+    st().applyText();
+    await whenLibrarySettled();
+  }
+
+  /** Apply `text` with its library merge held open; resolves once the merge is in flight, and gives the way to release it. */
+  async function heldLoad(text: string): Promise<() => void> {
+    let release = (): void => {};
+    lib.holds.push(new Promise<void>((r) => (release = r)));
+    useAppStore.setState({ textBuffer: text });
+    st().applyText();
+    await vi.waitFor(() => expect(lib.holds).toHaveLength(0));
+    return release;
+  }
+
+  beforeEach(async () => {
+    await whenLibrarySettled();
+    lib.merge = null;
+    reset();
+    useAppStore.setState({ textBuffer: '', textDirty: false, diagnostics: [], serializeError: null });
+  });
+
+  it('a text with a syntax error: Save writes it back, Export writes the recovered model; Simulate does not clear it; an edit regenerates the text', async () => {
+    await apply(BROKEN_PART);
+    const h = loadHealth();
+    expect(h.saved?.parseErrors, 'Save keeps the text a faulted apply was made from').toBeGreaterThan(0);
+    expect(h.exported?.parseErrors, 'Export writes `part x;`, which parses').toBe(0);
+    expect(h.exported?.parseErrors).toBe(parseErrors(exported()));
+    expect(h.sameText).toBe(false);
+    expect(h.errors).toBeGreaterThan(0);
+    expect(h.unwritable).toBeNull();
+
+    // Simulate replaces the Problems rows. A signal read off them would read 0 now.
+    st().simulate();
+    expect(st().diagnostics.some((d) => d.ruleId === 'parse'), 'Problems no longer holds the parse errors').toBe(false);
+    expect(loadHealth().errors, 'the health is measured over the text').toBeGreaterThan(0);
+    expect(loadHealth().saved?.parseErrors).toBe(h.saved?.parseErrors);
+
+    // An edit regenerates the text, so Save and Export now write the same text, and it is what is measured.
+    st().createElement('PartDefinition', null, 'Extra');
+    const after = loadHealth();
+    expect(after.sameText).toBe(true);
+    expect(after.saved?.parseErrors).toBe(after.exported?.parseErrors);
+    expect(after.errors).toBe(parseErrors(exported()) + after.validationErrors);
+    expect(after.errors, '`part x;` parses').toBe(0);
+  });
+
+  it('a value the parser cannot read survives an edit: the regenerated text keeps it', async () => {
+    await apply(RAW_VALUE);
+    expect(loadHealth().errors).toBeGreaterThan(0);
+    st().updateElement(byName('Pump'), { declaredName: 'PumpUnit' });
+    const h = loadHealth();
+    expect(h.sameText, 'the text was regenerated').toBe(true);
+    expect(st().textBuffer).toContain('1 +');
+    expect(parseErrors(st().textBuffer), 'and it does not parse').toBeGreaterThan(0);
+    expect(h.saved?.parseErrors).toBeGreaterThan(0);
+    expect(h.errors).toBe(h.saved!.parseErrors + h.validationErrors);
+    expect(h.errors).toBeGreaterThan(0);
+  });
+
+  it('a value typed in Properties is stored raw: an unparseable expression is never clean', async () => {
+    await apply(CLEAN);
+    expect(loadHealth().errors, 'a clean model, to start from').toBe(0);
+    for (const typed of ['1 +', '2 * (3', 'rate)']) {
+      st().setAttr(byName('rate'), 'value', typed);
+      const h = loadHealth();
+      expect(h.errors, typed).toBeGreaterThan(0);
+      expect(h.sameText, typed).toBe(true);
+      expect(h.saved?.parseErrors, typed).toBe(parseErrors(exported()));
+      st().setAttr(byName('rate'), 'value', '2');
+      expect(loadHealth().errors, `${typed}, put right`).toBe(0);
+    }
+  });
+
+  it('a model-JSON import carries the same raw value text', () => {
+    const m = parseModel(CLEAN).model;
+    const rate = m.all().find((e) => e.declaredName === 'rate')!;
+    m.setAttrs(rate.id, { value: '1 +', valueText: undefined });
+    st().importModel(JSON.stringify(m.toJSON()), 'model-json');
+    const h = loadHealth();
+    expect(h.errors).toBeGreaterThan(0);
+    expect(h.saved?.parseErrors).toBeGreaterThan(0);
+  });
+
+  it('a model-JSON import of a clean model, and a sysml import of a broken one', () => {
+    st().importModel(JSON.stringify(parseModel(CLEAN).model.toJSON()), 'model-json');
+    expect(loadHealth().errors).toBe(0);
+    st().importModel('package C { part def Pump { attribute rate : Real = 1 +; } }\n', 'sysml');
+    expect(loadHealth().errors).toBeGreaterThan(0);
+  });
+
+  it('counts the validator’s errors on the user’s elements, and a clean text has none', async () => {
+    await apply(CLEAN);
+    const clean = loadHealth();
+    expect(clean).toMatchObject({
+      errors: 0,
+      validationErrors: 0,
+      validateThrew: false,
+      unwritable: null,
+      sameText: true,
+    });
+    expect(clean.saved).toEqual({ parseErrors: 0 });
+    expect(clean.exported).toEqual({ parseErrors: 0 });
+
+    await apply('package Two { part def D; part def D; }\n');
+    const dup = loadHealth();
+    expect(dup.validationErrors, 'a duplicate name is an error').toBeGreaterThan(0);
+    expect(dup.saved?.parseErrors).toBe(0);
+    expect(dup.errors).toBe(dup.validationErrors);
+  });
+
+  it('a model the serializer refuses is unwritable, and counts', () => {
+    useAppStore.setState({ serializeError: 'the note body contains "*/"' });
+    const h = loadHealth();
+    expect(h.unwritable).toBe('the note body contains "*/"');
+    expect(h.saved, 'no file holds it').toBeNull();
+    expect(h.errors).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a model whose export throws is unwritable too, with no exported text', () => {
+    const id = st().createElement('PartDefinition', null, 'Engine');
+    const doc = st().createElement('Documentation', id);
+    st().setAttr(doc, 'body', 'a real note');
+    st().regenerateText();
+    // Straight onto the model, as the element-graph API or a model-JSON import reaches the serializer.
+    st().model.setAttrs(doc, { body: `bad ${NOTE_BODY_TERMINATOR} part def Ghost; doc /*` });
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = loadHealth();
+    quiet.mockRestore();
+    expect(h.exported).toBeNull();
+    expect(h.unwritable).toContain(NOTE_BODY_TERMINATOR);
+    expect(h.errors).toBeGreaterThanOrEqual(1);
+  });
+
+  it('parses a text once: the applied text’s parse is kept, and a second look parses nothing', async () => {
+    // Texts no other test applies, so the two-entry memo cannot already hold their export.
+    const once = (n: number, end: string) =>
+      `package Once${n} { state def M { state a; state b; transition a then b; transition b then a; } }\npackage Broken${n} { part x : ; }${end}`;
+    const parse = vi.spyOn(textApi, 'parseModel');
+    try {
+      // Save adds the one final newline a file ends in, so a text typed with none, or with two, is the same text to it.
+      for (const [n, end] of [[1, '\n'], [2, ''], [3, '\n\n']] as const) {
+        const text = once(n, end);
+        st().setTextBuffer(text);
+        st().applyText();
+        parse.mockClear();
+        const h = loadHealth();
+        // Right after the apply the buffer is the applied text: its parse is already known.
+        expect(h.saved?.parseErrors, `case ${n}`).toBeGreaterThan(0);
+        expect(parse, `case ${n}: only the export text`).toHaveBeenCalledTimes(1);
+        expect(parse.mock.calls[0]?.[0]).toBe(exported());
+        parse.mockClear();
+        expect(loadHealth(), `case ${n}`).toEqual(h);
+        expect(parse, `case ${n}: both are known now`).not.toHaveBeenCalled();
+        await whenLibrarySettled();
+      }
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it('validates the live model only when none ran at this revision', async () => {
+    await apply(CLEAN);
+    const validate = vi.spyOn(validationApi, 'validate');
+    const ofLive = () => validate.mock.calls.filter(([m]) => m === st().model).length;
+    try {
+      loadHealth();
+      validate.mockClear();
+      loadHealth();
+      expect(ofLive(), 'the refresh after the merge validated this revision').toBe(0);
+      st().createElement('PartDefinition', null, 'Extra');
+      validate.mockClear();
+      loadHealth();
+      expect(ofLive(), 'the edit’s recompute validates; loadHealth reads that').toBe(1);
+    } finally {
+      validate.mockRestore();
+    }
+  });
+
+  it('a file is judged on the model its text parses to: renaming a connected port leaves the connector one end short', async () => {
+    const WIRED =
+      'package P {\n  port def Pw;\n  part def A { port pwrOut : Pw; }\n  part def B { port pwrIn : Pw; }\n  part def S {\n    part a : A;\n    part b : B;\n    connection link connect a.pwrOut to b.pwrIn;\n  }\n}\n';
+    await apply(WIRED);
+    expect(loadHealth().errors, 'wired, to start from').toBe(0);
+    st().updateElement(byName('pwrOut'), { declaredName: 'C' });
+    await whenLibrarySettled();
+    flushRecompute();
+    // The live connector still holds its end as an element, so the live model is clean…
+    const live = validationApi.validate(st().model).filter((d) => d.severity === 'error' && d.elementId !== undefined && !st().model.get(d.elementId)?.attrs.isLibrary);
+    expect(live, 'the live model has no error').toHaveLength(0);
+    // …but the text it is written as names `a.pwrOut`, which no longer exists.
+    const reparsed = validationApi.validate(parseModel(st().textBuffer).model);
+    expect(reparsed.some((d) => d.code === 'validation/connector-endpoints' || d.ruleId === 'connector-endpoints')).toBe(true);
+    const h = loadHealth();
+    expect(h.sameText).toBe(true);
+    expect(h.saved?.parseErrors, 'it parses, with a warning').toBe(0);
+    expect(h.validationErrors, 'the file fails validation').toBeGreaterThan(0);
+    expect(h.errors).toBeGreaterThan(0);
+    // Put right, it is clean again.
+    st().updateElement(byName('C'), { declaredName: 'pwrOut' });
+    await whenLibrarySettled();
+    expect(loadHealth().errors).toBe(0);
+  });
+
+  it('says a library merge is still running, so a number read now may be high', async () => {
+    await whenLibrarySettled();
+    expect(loadHealth().libraryPending, 'nothing is merging').toBe(false);
+    const release = await heldLoad(CLEAN);
+    try {
+      expect(loadHealth().libraryPending, 'the apply’s merge is in flight').toBe(true);
+    } finally {
+      release();
+    }
+    await whenLibrarySettled();
+    expect(loadHealth().libraryPending).toBe(false);
   });
 });

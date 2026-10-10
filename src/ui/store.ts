@@ -718,14 +718,50 @@ function parseDiagToDiagnostic(d: ParseDiagnostic, i: number): Diagnostic {
   };
 }
 
+/**
+ * What the last {@link safeValidate} found, of the model at that revision: the
+ * error findings on the user's own elements, and whether validation threw.
+ * {@link loadHealth} reads it so a check does not validate again when a
+ * recompute has just done so. The model is held weakly: a model the store has
+ * dropped (a project load, a collab replace) is not kept alive by it.
+ */
+let validationHealth: { model: WeakRef<Model>; modelRev: number; errors: number; threw: boolean } | null = null;
+
 /** Safe validation that never throws into a render. */
 function safeValidate(model: Model): Diagnostic[] {
+  const modelRev = model.rev;
   try {
-    return validate(model);
+    const found = validate(model);
+    validationHealth = {
+      model: new WeakRef(model),
+      modelRev,
+      // A finding whose element is gone from the model is the user's to look
+      // at (fails closed); `loadModelText` would skip it.
+      errors: userErrors(found, (id) => {
+        const el = model.get(id);
+        return el === undefined || isUserEl(el);
+      }),
+      threw: false,
+    };
+    return found;
   } catch (err) {
     console.error('validation failed', err);
+    validationHealth = { model: new WeakRef(model), modelRev, errors: 0, threw: true };
     return [];
   }
+}
+
+/**
+ * The error findings that are the user's to fix: on no element, or on one
+ * `mine` says is theirs — the bundled library's findings are not counted, as
+ * `loadModelText` does not count them.
+ */
+function userErrors(found: readonly Diagnostic[], mine: (id: ElementId) => boolean): number {
+  let n = 0;
+  for (const d of found) {
+    if (d.severity === 'error' && (d.elementId === undefined || mine(d.elementId))) n++;
+  }
+  return n;
 }
 
 /**
@@ -3021,6 +3057,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model, textBuffer, diagramPins } = get();
       const result = parseModel(textBuffer);
       lastParse = result;
+      rememberText(textBuffer, { parseErrors: errorsOf(result.diagnostics), validationErrors: null });
       // The text makes every element anew, under a new id: the boxes moved by
       // hand follow their elements by qualified name, and this step's Undo
       // puts back the ones the old ids had.
@@ -3796,6 +3833,202 @@ export function lastAppliedText(): string | null {
 }
 
 /**
+ * The model a check judges against what a file of it would hold: the number of
+ * errors `loadModelText` would report on each text a file named by the copied
+ * command can hold — parse errors, and the error findings validation puts on
+ * the user's own elements of the model that text parses to — plus one for each
+ * of: validation throwing, the serializer refusing the model. A check whose
+ * answer rests on a model with errors is a report of what parsed, and says so
+ * (the terminal exits 1 or 2 on it).
+ *
+ * Measured over the TEXTS, never read off Problems: Simulate, Solve and Check
+ * replace `diagnostics`, and an edit does not clean the parse part — the text
+ * the model is written back as keeps the raw text of a value whose
+ * expression the parser could not read (`attribute rate : Real = 1 +;`), a
+ * value typed in the Properties panel is stored raw, and a model-JSON import
+ * carries the same raw text. Nor is validation read off the live model alone:
+ * a file is judged on the model its text parses to, and a rename leaves the
+ * name a connector's end is written with behind (`connect a.pwrOut to …`), so
+ * the file fails validation where the live model, whose ends are elements,
+ * does not.
+ */
+export interface LoadHealth {
+  /** Parse errors of each distinct text below + `validationErrors` + `validateThrew` + `unwritable`, each as 1. */
+  readonly errors: number;
+  /** What Save in this browser and Save to Drive write ({@link savedTextNow}); null when the model cannot be written. */
+  readonly saved: { readonly parseErrors: number } | null;
+  /** What Export ▾ SysML writes; null when the serializer refuses the model. */
+  readonly exported: { readonly parseErrors: number } | null;
+  /** The two are one text (Save's differs by its final newline), so a parse error is counted once. */
+  readonly sameText: boolean;
+  /**
+   * Error findings on the user's elements (library elements are not counted):
+   * the most any one reading found — the live model, and the model each
+   * distinct text parses to.
+   */
+  readonly validationErrors: number;
+  readonly validateThrew: boolean;
+  /** Why the model cannot be written as text, or null. */
+  readonly unwritable: string | null;
+  /**
+   * A standard-library merge into the live model is still running. Until it
+   * has finished, the live model's findings include false ones about library
+   * types, so `errors` may read high: run again once it settles.
+   */
+  readonly libraryPending: boolean;
+}
+
+/** What a text is worth to a check. */
+interface TextHealth {
+  readonly parseErrors: number;
+  /**
+   * Error findings on the user's elements of the model the text parses to,
+   * with the full library merged; null when only the parse is known — a seed
+   * from {@link applyText}, whose model is the live one.
+   */
+  readonly validationErrors: number | null;
+}
+
+/** What {@link loadHealth} knows of the last two distinct texts it was asked about, by {@link withFinalNewline} of the text. */
+const healthMemo = new Map<string, TextHealth>();
+
+/** Count the errors among a parse's diagnostics. */
+function errorsOf(diagnostics: readonly Pick<ParseDiagnostic, 'severity'>[]): number {
+  return diagnostics.filter((d) => d.severity === 'error').length;
+}
+
+/**
+ * Keep what is known of `text`, the newest first, two at most. Save adds the
+ * one final newline a file ends in and a text typed may end otherwise, which
+ * is not a difference to a parse: the key is the text as Save writes it.
+ */
+function rememberText(text: string, health: TextHealth): void {
+  const key = withFinalNewline(text);
+  const validationErrors = health.validationErrors ?? healthMemo.get(key)?.validationErrors ?? null;
+  healthMemo.delete(key);
+  healthMemo.set(key, { parseErrors: health.parseErrors, validationErrors });
+  for (const old of healthMemo.keys()) {
+    if (healthMemo.size <= 2) break;
+    healthMemo.delete(old);
+  }
+}
+
+/**
+ * The full-library merge of the lazy chunk, once its data is in; null before,
+ * and for good when the full library could not be loaded. {@link loadHealth}
+ * is synchronous and merges it into a text's own parse, as `loadModelText`
+ * does.
+ */
+let fullLibraryMerge: ((model: Model) => unknown) | null = null;
+
+/**
+ * Parse `text` as `loadModelText` does and count what it would report as
+ * errors: the parse's own, and validation's on the user's elements, run after
+ * the full library is merged (without it a library type reads as unresolved).
+ * A parser or a validator that throws counts as one error. Without the library
+ * merge the validation count may read high, so it is not kept.
+ */
+function measureText(text: string): { health: TextHealth; keep: boolean } {
+  let parsed: ReturnType<typeof parseModel>;
+  try {
+    parsed = parseModel(text);
+  } catch (err) {
+    console.error('parse failed', err);
+    return { health: { parseErrors: 1, validationErrors: 0 }, keep: true };
+  }
+  const model = parsed.model;
+  const mine = new Set(model.all().map((el) => el.id)); // before the library goes in
+  let validationErrors: number;
+  try {
+    if (fullLibraryMerge !== null) {
+      fullLibraryMerge(model);
+      resolveTypeReferences(model);
+      resolveConnectorFeatureChains(model);
+    }
+    validationErrors = userErrors(validate(model), (id) => mine.has(id));
+  } catch (err) {
+    console.error('validation failed', err);
+    validationErrors = 1;
+  }
+  return {
+    health: { parseErrors: errorsOf(parsed.diagnostics), validationErrors },
+    keep: fullLibraryMerge !== null,
+  };
+}
+
+/**
+ * What a check needs to know of `text`. While the live model stands as the
+ * parse of `applied` (no edit since), its own validation reads for that text
+ * and nothing is parsed again; every other text is parsed once and kept.
+ */
+function textHealthOf(text: string, applied: string | null): { parseErrors: number; validationErrors: number } {
+  const key = withFinalNewline(text);
+  const known = healthMemo.get(key);
+  const isLive = applied !== null && withFinalNewline(applied) === key;
+  if (known !== undefined && (known.validationErrors !== null || isLive)) {
+    rememberText(text, known);
+    return { parseErrors: known.parseErrors, validationErrors: known.validationErrors ?? 0 };
+  }
+  const { health, keep } = measureText(text);
+  if (keep) rememberText(text, health);
+  return { parseErrors: health.parseErrors, validationErrors: health.validationErrors ?? 0 };
+}
+
+/**
+ * The load health of the live model, as of now. Costs a parse, a library merge
+ * and a validation of each text not measured since it was written (but not of
+ * the text the model was applied from, while it is unedited), and a validation
+ * of the live model when none ran at this revision: 0.5-1.3 s on a model the
+ * size of the drone swarm, once per text. Runs when a check is, never on an
+ * edit.
+ */
+export function loadHealth(): LoadHealth {
+  flushRecompute();
+  const { model, serializeError } = useAppStore.getState();
+  const savedText = savedTextNow();
+  let exportedText: string | null = null;
+  let exportRefusal: string | null = null;
+  try {
+    exportedText = ioExportModel(model, 'sysml');
+  } catch (err) {
+    console.error('export failed', err);
+    exportRefusal = serializeRefusal(err);
+  }
+  // Save adds the one final newline a file ends in; Export writes none. Not a
+  // difference to a parse, so the two are one text and are measured once.
+  const sameText = savedText !== null && exportedText !== null && withFinalNewline(exportedText) === savedText;
+  const applied = lastAppliedText();
+  const saved = savedText === null ? null : textHealthOf(savedText, applied);
+  const exported = exportedText === null ? null : sameText ? saved : textHealthOf(exportedText, applied);
+  const unwritable = serializeError ?? exportRefusal ?? (savedText === null ? serializeRefusal('') : null);
+
+  let validation = validationHealth;
+  if (validation === null || validation.model.deref() !== model || validation.modelRev !== model.rev) {
+    safeValidate(model);
+    validation = validationHealth;
+  }
+  const validateThrew = validation === null || validation.threw;
+  const validationErrors = Math.max(validation?.errors ?? 0, saved?.validationErrors ?? 0, exported?.validationErrors ?? 0);
+
+  const errors =
+    (saved?.parseErrors ?? 0) +
+    (sameText ? 0 : (exported?.parseErrors ?? 0)) +
+    validationErrors +
+    (validateThrew ? 1 : 0) +
+    (unwritable === null ? 0 : 1);
+  return {
+    errors,
+    saved: saved === null ? null : { parseErrors: saved.parseErrors },
+    exported: exported === null ? null : { parseErrors: exported.parseErrors },
+    sameText,
+    validationErrors,
+    validateThrew,
+    unwritable,
+    libraryPending: libraryLoads.size > 0,
+  };
+}
+
+/**
  * The Text view holds text typed there and not applied: `textDirty`, and not
  * the text the model was last applied from — a faulted apply leaves its text
  * dirty although nobody typed it (see {@link lastAppliedText}).
@@ -4206,6 +4439,7 @@ async function loadStandardLibraryAsync(): Promise<void> {
       // `stdlib-<hash>.json`; a fetch/parse failure throws here and drops us into
       // the curated-subset fallback below.
       await preloadFullLibrary();
+      fullLibraryMerge = loadFullStandardLibrary;
       const { model } = useAppStore.getState();
       mergeLibrary(model, () => {
         loadFullStandardLibrary(model); // idempotent: skips when a library is present
