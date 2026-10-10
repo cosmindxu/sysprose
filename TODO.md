@@ -13,10 +13,31 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       `COOP: same-origin` + `COEP: require-corp` break the optional Google Drive feature's sign-in
       popup and its `docs.google.com` Picker iframe, so in-browser z3 and Google sign-in constrain
       each other.
-- [ ] **Scope the palette's checks to the selection where the CLI takes `--element`.**
-      `where-used` and `check-behaviour` read the selection today; `contracts`, `obligations` and
-      `bounds` take `--element`/`--measure` at the terminal and run whole-model here. Either pass
-      the selection through or say in the row that the result covers the whole model.
+- [ ] **Let the palette's `check-behaviour` check the machine its command names.** Run here, it
+      checks the selected machine, or the model's first machine when the selection is not one;
+      `check-behaviour --element X` takes the one machine inside `X`, and refuses a state inside a
+      machine (naming that machine) or an `X` that holds several. On the drone-swarm v9 model,
+      selecting `PA::SwarmMember::SwarmMemberModes::Nominal` makes the palette answer about
+      `OA::SwarmMemberModes` while the copied command is refused. Pick the machine as
+      `behaviourMachine` (`scripts/sysprose.ts`) does, and name it by qualified name in the summary
+      (v9 has four machines called `SwarmMemberModes`).
+- [ ] **Scope the palette's `reach` to the selection, as its optional `--element` does.** It covers
+      the whole model here, and so does its command, but its summary does not say so. Give it what
+      `contracts` and `obligations` have (`scopedBySelection`, `checkScope`, a `checks/scoped` or
+      `checks/whole-model` row, `src/ui/checks.ts`), with `reachReport` narrowed the way
+      `reachScope` (`scripts/sysprose.ts`) narrows it.
+- [ ] **Name a linked model's file in the palette's commands.** Opened through `?model=`,
+      `examples/views-tour.sysml` shows "Opened views-tour.sysml from its link", but every copied
+      command names `Untitled.sysml`: `checkFileName` (`src/ui/store.drive.ts`) falls back to the
+      project name, `deriveProjectName` (`src/ui/store.ts`) takes it from the first root, and that
+      root is the file's unnamed header comment. Name a linked model after its URL's file name, or
+      skip roots that are not namespaces when deriving the project name.
+- [ ] **Credit the palette's checks in the user guide's terminal table.** In `docs/USER-GUIDE.md`,
+      "The same answers from a terminal" puts "—" in the *In the app* column for `orphans`,
+      `obligations`, `fault-tree` and `reach`, and its † note says `connectivity`, `orphans` and
+      `obligations` exist only in the terminal and the SDK. The palette's Checks section runs all
+      of them (`src/ui/checks.ts`). Name the palette check in that column and drop those names
+      from the note.
 - [ ] **Let a check run off the main thread when it is slow.** Every `model` check is synchronous
       today, which is right for the sample model (each is well under a frame) but not for a large
       one: `reach` and `check-behaviour` walk configuration graphs. Measure first, then move the

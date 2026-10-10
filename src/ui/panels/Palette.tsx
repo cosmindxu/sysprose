@@ -29,7 +29,7 @@ import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
 import { checkFileName, useAppStore } from '../store';
-import { checksFor, commandNote, runCheck, type CheckSpec } from '../checks';
+import { checksFor, commandNote, runCheck, selectionKey, type CheckSpec } from '../checks';
 import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 
 /* ─────────────────────────── Shared tool state ──────────────────────────── */
@@ -336,6 +336,13 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   const model = useAppStore((st) => st.model);
   const rev = useAppStore((st) => st.rev);
   const selectionId = useAppStore((st) => st.selectionId);
+  // Read on every store change rather than once per selection: the model is
+  // edited in place, so a rename of the selected element would otherwise leave
+  // its old name in the command that names it.
+  const selectionName = useAppStore((st) => {
+    const selected = st.selectionId ? st.model.get(st.selectionId) : undefined;
+    return selected ? (st.model.qualifiedName(selected.id) ?? selected.attrs.declaredName ?? null) : null;
+  });
   // The file the terminal commands name: the attached Google Drive file's
   // name, which is what a student downloads from Drive, else the project's.
   const fileName = useAppStore(checkFileName);
@@ -345,23 +352,26 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
 
   // One object per (model, selection, file name), so the callbacks below are
   // stable between renders instead of being rebuilt on each one.
-  const ctx = useMemo(() => {
-    const selected = selectionId ? model.get(selectionId) : undefined;
-    return {
+  const ctx = useMemo(
+    () => ({
       model,
       selectionId,
-      selectionName: selected ? (model.qualifiedName(selected.id) ?? selected.attrs.declaredName ?? null) : null,
+      selectionName,
       isolated: (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true,
       fileName,
-    };
-  }, [model, selectionId, fileName]);
-  const verdict = verdictOf(stored, rev);
+    }),
+    [model, selectionId, selectionName, fileName],
+  );
+  // What of the selection the result read: once that moves, the row shows the
+  // result as stale, since the command beside it names the new selection.
+  const reads = selectionKey(spec, ctx);
+  const verdict = verdictOf(stored, rev, reads);
   // A file or element name the command could not carry as it is (it would be
   // read as code by some terminal): what the stand-in in its place stands for.
   const note = commandNote(spec, ctx);
 
   const onRun = useCallback(() => {
-    record(spec.id, runCheck(spec, ctx), rev);
+    record(spec.id, runCheck(spec, ctx), rev, selectionKey(spec, ctx));
   }, [record, spec, ctx, rev]);
 
   const onCopy = useCallback(() => {

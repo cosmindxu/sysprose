@@ -15,11 +15,23 @@
  *    must never read as one that passed (the Agent Diagnostics Contract's rule
  *    for this project: no silent pass).
  *
+ * Some checks read the selection, and their command names it: `where-used` and
+ * `check-behaviour` as `--element`, `bounds` as `--measure`. `contracts` and
+ * `obligations` take an optional `--element` that narrows the report to an
+ * element and what it contains; run here they narrow to the selection the same
+ * way, so a result and its copied command cover the same elements, and where
+ * the selection cannot scope them ({@link checkScope}) both cover the whole
+ * model and the summary says so. Not yet the same: `check-behaviour` here
+ * checks the selected machine or else the model's first, where its command
+ * takes the one machine inside the selection or is refused; and `reach` covers
+ * the whole model, as its command does, although that subcommand takes an
+ * optional `--element` too.
+ *
  * Every row carries a stable `code`, like every other finding in this project,
  * so automation branches on the code and never on the prose.
  */
 
-import type { Model } from '@core/index';
+import { isAnnotation, isControlNode, isRelationship, type Model } from '@core/index';
 import type { ViewKind } from '@diagram/index';
 import {
   modelMetrics,
@@ -76,6 +88,12 @@ export interface CheckSpec {
   views: readonly ViewKind[];
   /** True when the check reads the selected element. */
   needsSelection?: boolean;
+  /**
+   * True when the check narrows to the selected element and what it contains,
+   * as `--element` narrows it in a terminal, and covers the whole model — and
+   * says so — when there is no selection to narrow to ({@link checkScope}).
+   */
+  scopedBySelection?: boolean;
   /** The terminal command that runs the same check. */
   command(ctx: CheckContext): string;
   /** Runs it here; absent for solver checks, which the runner handles. */
@@ -144,6 +162,77 @@ const selected = (ctx: CheckContext): string =>
   ctx.selectionName && plainQualifiedName(ctx.selectionName) ? ctx.selectionName : QUALIFIED_NAME_PLACEHOLDER;
 
 const element = (ctx: CheckContext): string => `--element ${selected(ctx)}`;
+
+/**
+ * What a check that narrows to the selection covers: the selected element and
+ * what it contains — what `--element` names in a terminal — or the whole model,
+ * with the reason, when there is nothing to narrow to.
+ */
+export type CheckScope = { kind: 'element'; id: string; name: string } | { kind: 'model'; why: string };
+
+/**
+ * The scope the selection gives a {@link CheckSpec.scopedBySelection} check.
+ *
+ * Two kinds of selection are no scope. The check covers the whole model
+ * instead, its command names no element, and its summary says why:
+ *  - A bundled library element. The terminal refuses one as `--element`
+ *    (`verificationScope`, `scripts/sysprose.ts`), because every figure in
+ *    these reports leaves the library out, and an inventory of zero contracts
+ *    would read exactly like a model with none.
+ *  - An element that can contain no contract or obligation: a comment, a
+ *    textual representation, an import or another relationship, a control
+ *    node. The app selects the model's first root on open, and in a file that
+ *    starts with a header comment or an import that root is one of these.
+ *    Scoped to it, a Run nobody narrowed would report zero of everything.
+ */
+export function checkScope(ctx: CheckContext): CheckScope {
+  const el = ctx.selectionId !== null ? ctx.model.get(ctx.selectionId) : undefined;
+  if (el === undefined) return { kind: 'model', why: 'nothing is selected' };
+  const name = ctx.selectionName || el.id;
+  if (el.attrs.isLibrary === true) {
+    return { kind: 'model', why: `${name} is a bundled library element, and these figures leave the library out` };
+  }
+  if (isAnnotation(el.eClass) || isRelationship(el.eClass) || isControlNode(el.eClass)) {
+    return { kind: 'model', why: `${name} contains no contract or obligation` };
+  }
+  return { kind: 'element', id: el.id, name };
+}
+
+/**
+ * What of the selection a check's result depends on: the scope a
+ * {@link CheckSpec.scopedBySelection} check covered, the element a
+ * {@link CheckSpec.needsSelection} check read, and `undefined` for a check that
+ * never reads the selection. The palette shows a result as `stale` once this
+ * moves, because the command beside it then names another element.
+ */
+export function selectionKey(spec: CheckSpec, ctx: CheckContext): string | undefined {
+  if (spec.scopedBySelection === true) {
+    const scope = checkScope(ctx);
+    return scope.kind === 'element' ? `element ${scope.id}` : 'model';
+  }
+  if (spec.needsSelection === true) return ctx.selectionId ?? '';
+  return undefined;
+}
+
+/** `--element` when the selection scopes the check; nothing — the terminal's whole-model default — when it does not. */
+const scopeFlag = (ctx: CheckContext): string => (checkScope(ctx).kind === 'element' ? element(ctx) : '');
+
+/** The words a scoped check's summary ends on: what it covered, so a result never reads wider or narrower than it is. */
+const scopeWords = (scope: CheckScope): string =>
+  scope.kind === 'element' ? `scoped to ${scope.name}` : `covers the whole model: ${scope.why}`;
+
+/**
+ * ` of N` after a scoped figure, N the whole model's: a count narrowed to one
+ * package of several must never read as the model's total. Nothing when the
+ * figure already is the whole model's.
+ */
+const ofWhole = (scope: CheckScope, whole: () => number): string => (scope.kind === 'element' ? ` of ${whole()}` : '');
+
+/** The same, as a row with a code, so automation reads the scope without parsing the summary. */
+const scopeRow = (scope: CheckScope): CheckRow =>
+  scope.kind === 'element'
+    ? { code: 'checks/scoped', message: `${scopeWords(scope)} and what it contains`, elementId: scope.id, severity: 'info' }
+    : { code: 'checks/whole-model', message: scopeWords(scope), severity: 'info' };
 
 const holds = (summary: string, rows: CheckRow[] = []): CheckResult => ({ verdict: 'holds', summary, rows });
 const issues = (summary: string, rows: CheckRow[]): CheckResult =>
@@ -302,13 +391,16 @@ export const CHECKS: readonly CheckSpec[] = [
     question: 'What does each component assume, and what does it guarantee?',
     engine: 'model',
     views: ['contracts', 'requirement', 'general'],
-    command: (ctx) => cli('contracts', ctx),
+    scopedBySelection: true,
+    command: (ctx) => cli('contracts', ctx, scopeFlag(ctx)),
     run: (ctx) => {
-      const r = contractReport(ctx.model);
-      return holds(
-        `${r.contracts.length} contract(s)`,
-        r.contracts.slice(0, 50).map((c) => ({ code: 'contracts/contract', message: `${c.subject?.name ?? c.id}: ${c.assumptions.length} assumption(s), ${c.guarantees.length} guarantee(s)`, elementId: c.id, severity: 'info' })),
-      );
+      const scope = checkScope(ctx);
+      const r = contractReport(ctx.model, scope.kind === 'element' ? { scopeId: scope.id } : {});
+      const of = ofWhole(scope, () => contractReport(ctx.model).contracts.length);
+      return holds(`${r.contracts.length}${of} contract(s) — ${scopeWords(scope)}`, [
+        scopeRow(scope),
+        ...r.contracts.slice(0, 50).map((c): CheckRow => ({ code: 'contracts/contract', message: `${c.subject?.name ?? c.id}: ${c.assumptions.length} assumption(s), ${c.guarantees.length} guarantee(s)`, elementId: c.id, severity: 'info' })),
+      ]);
     },
   },
   {
@@ -317,10 +409,16 @@ export const CHECKS: readonly CheckSpec[] = [
     question: 'What must be proved, and what is assumed without proof?',
     engine: 'model',
     views: ['contracts', 'requirement'],
-    command: (ctx) => cli('obligations', ctx),
+    scopedBySelection: true,
+    command: (ctx) => cli('obligations', ctx, scopeFlag(ctx)),
     run: (ctx) => {
-      const r = obligationsReport(ctx.model);
-      return holds(`${r.total} obligation(s): ${r.byRole.axiom} axiom, ${r.byRole.premise} premise, ${r.byRole.obligation} to prove`);
+      const scope = checkScope(ctx);
+      const r = obligationsReport(ctx.model, scope.kind === 'element' ? { scopeId: scope.id } : {});
+      const of = ofWhole(scope, () => obligationsReport(ctx.model).total);
+      return holds(
+        `${r.total}${of} obligation(s): ${r.byRole.axiom} axiom, ${r.byRole.premise} premise, ${r.byRole.obligation} to prove — ${scopeWords(scope)}`,
+        [scopeRow(scope)],
+      );
     },
   },
   // Solver-backed: z3 in a worker, which needs a cross-origin-isolated page.
@@ -370,7 +468,8 @@ export const CHECKS: readonly CheckSpec[] = [
 /**
  * What a person needs to know beside `spec`'s command when a name had to be
  * left out of it (see {@link commandFileName}): the name to save the file as,
- * and the element `<qualified name>` stands for. Null when the command names
+ * and the element `<qualified name>` stands for — or, with nothing selected,
+ * that it stands for an element still to choose. Null when the command names
  * them as they are.
  */
 export function commandNote(spec: CheckSpec, ctx: CheckContext): string | null {
@@ -381,7 +480,13 @@ export function commandNote(spec: CheckSpec, ctx: CheckContext): string | null {
       `Save the file as ${file} to run this: its name, ${ctx.fileName}, has characters a terminal could read as commands.`,
     );
   }
-  if (spec.needsSelection && ctx.selectionName && !plainQualifiedName(ctx.selectionName)) {
+  if (spec.needsSelection === true && ctx.selectionId === null) {
+    notes.push(
+      `${QUALIFIED_NAME_PLACEHOLDER} stands for the element this check reads, and nothing is selected: select it, or type its qualified name in.`,
+    );
+  }
+  const namesSelection = spec.needsSelection === true || (spec.scopedBySelection === true && checkScope(ctx).kind === 'element');
+  if (namesSelection && ctx.selectionName && !plainQualifiedName(ctx.selectionName)) {
     notes.push(
       `${QUALIFIED_NAME_PLACEHOLDER} stands for ${ctx.selectionName}, which has characters a terminal could read as commands: type it in, quoted the way your terminal quotes.`,
     );
