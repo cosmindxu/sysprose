@@ -1968,6 +1968,9 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
       // exactly the one a fault-tree report would reach for.
       'src/semantics/fault-tree.ts',
       'src/api/verification.ts',
+      // `reach` and `check-behaviour` print what this module composes, so the
+      // words moved here out of the CLI are scanned where they now live.
+      'src/semantics/mc/report-lines.ts',
       'scripts/sysprose.ts',
       'scripts/lib/sysprose-spec.ts',
       'src/text/langium/diagnostic-codes.ts',

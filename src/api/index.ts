@@ -494,6 +494,9 @@ export {
   WALK_ADMITS,
   behaviourReport,
   checkProperty,
+  // The `check-behaviour` lane's exit arithmetic only; not `api/verification`'s
+  // unexported `exitCodeOf(results, toolAbsent)`, which counts something else.
+  exitCodeOf,
   isPropertyCarrier,
   parsePropertyText,
   propertiesOf,
@@ -502,6 +505,7 @@ export {
   STEP_ATOM_REASON,
 } from '../semantics/mc/patterns';
 export type {
+  BehaviourCounts,
   BehaviourOptions,
   BehaviourReport,
   Modality,
@@ -519,6 +523,23 @@ export type {
   ScopeSpec,
   TraceStep,
 } from '../semantics/mc/patterns';
+// The text of `reach` and `check-behaviour`, composed as typed lines: the
+// terminal prints `textOf(lines)`, and a caller that wants the same sentences
+// with the element and the withheld flag beside each takes the lines.
+export {
+  ELEMENT_REQUIRED_LEAD,
+  NO_DEFAULT_MACHINE,
+  behaviourLines,
+  behaviourMachineFor,
+  libraryElementRefusal,
+  noMachineRefusal,
+  propertyVerdictLines,
+  reachLines,
+  reachMachineLines,
+  rowKeyOf,
+  textOf,
+} from '../semantics/mc/report-lines';
+export type { MachineFor, ReportLine, ReportLineKind, RowKind } from '../semantics/mc/report-lines';
 export {
   MALFORMED_PROPERTY_CODE,
   UNKNOWN_ATOM_CODE,

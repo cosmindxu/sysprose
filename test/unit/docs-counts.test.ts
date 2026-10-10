@@ -1289,7 +1289,8 @@ describe("the user guide's transcripts of examples/uav-isr.sysml", () => {
    * claims above cannot see it move — and it moves whenever the modality's
    * sentence, the simulator sentence folded into it, or the avoiding cycle on
    * `FlightModes` changes. The transcript prints the line exactly as
-   * `propertyLines` composes it, so the whole sentence is the claim.
+   * `propertyVerdictLines` (src/semantics/mc/report-lines.ts) composes it, so the
+   * whole sentence is the claim.
    */
   it('the modality line the check-behaviour transcript quotes', () => {
     const machine = model.all().find((e) => e.declaredName === 'FlightModes');

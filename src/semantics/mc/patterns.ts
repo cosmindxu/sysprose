@@ -2408,6 +2408,31 @@ export function coverRequiredRefusal(census: CoverCensus): string {
   return `--cover-required not applied: this cover is inconclusive under verification/guard-undetermined, not \`not covered\`, so there is no decided absence to spend the 1 on — ${states} — exit 2, not 1`;
 }
 
+/** The six counts a `check-behaviour` run reports. */
+export type BehaviourCounts = BehaviourReport['counts'];
+
+/**
+ * §2.2's arithmetic: the exit code a set of counts adds up to.
+ *
+ * A word counted in none of the six buckets would fall through this ternary to
+ * exit 0 — a green run that decided nothing — which is why the suite asserts
+ * the buckets sum to `rows.length`. Exported so the page, which recounts the
+ * words after demoting a row, applies the terminal's arithmetic and not a copy.
+ */
+export function exitCodeOf(
+  counts: BehaviourCounts,
+  rowCount: number,
+  coverRequired: boolean,
+): 0 | 1 | 2 {
+  return counts.failed > 0
+    ? 1
+    : coverRequired && counts.notCovered > 0
+      ? 1
+      : counts.vacuous > 0 || counts.inconclusive > 0 || counts.notCovered > 0 || rowCount === 0
+        ? 2
+        : 0;
+}
+
 /**
  * Does this behaviour pattern hold on every reachable configuration, and can
  * this design reach the situation I name (plan §3.8, model-checking plan §3.1,
@@ -2476,17 +2501,8 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
     covered: rows.filter((r) => r.claim === 'covered').length,
     notCovered: rows.filter((r) => r.claim === 'not-covered').length,
   };
-  // §2.2's arithmetic. A word counted in none of the six buckets would fall
-  // through this ternary to exit 0 — a green run that decided nothing — which
-  // is why the suite asserts the buckets sum to `rows.length`.
-  const exitCode: 0 | 1 | 2 =
-    counts.failed > 0
-      ? 1
-      : coverRequired && counts.notCovered > 0
-        ? 1
-        : counts.vacuous > 0 || counts.inconclusive > 0 || counts.notCovered > 0 || rows.length === 0
-          ? 2
-          : 0;
+  // §2.2's arithmetic, in one place so the page applies the same one.
+  const exitCode = exitCodeOf(counts, rows.length, coverRequired);
 
   const findings: Array<Omit<Diagnostic, 'id' | 'ruleId' | 'source'>> = [];
   for (const row of rows) {

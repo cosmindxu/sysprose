@@ -462,9 +462,9 @@ describe('`acyclic` is three-valued, and reads `null` on a walk that was not exa
     // `--json` and the text block never prints it; the process-level half of
     // that assertion is in the CLI campaign, and the half here is that nothing
     // the report composes for a person carries the word.
-    const rendered = readFileSync(resolve(process.cwd(), 'scripts/sysprose.ts'), 'utf8');
-    const block = /function machineLines\([\s\S]*?\n}\n/.exec(rendered);
-    expect(block, 'scripts/sysprose.ts no longer renders a machine block').not.toBeNull();
+    const rendered = readFileSync(resolve(process.cwd(), 'src/semantics/mc/report-lines.ts'), 'utf8');
+    const block = /function reachMachineLines\([\s\S]*?\n}\n/.exec(rendered);
+    expect(block, 'src/semantics/mc/report-lines.ts no longer renders a machine block').not.toBeNull();
     expect(block![0]).not.toContain('exactness');
     expect(block![0]).not.toContain('acyclic');
     // And the half of the report that DOES print from this commit: the block

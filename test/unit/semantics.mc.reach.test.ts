@@ -22,11 +22,23 @@
  * this file is the last two describes.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { runStateMachine } from '@semantics/index';
 import { loadModelText } from '@text/load';
+import { parseModel, resolveConnectorFeatureChains } from '@text/index';
+import { isKnownCode } from '@text/langium/diagnostic-codes';
+import { preloadFullLibrary, loadFullStandardLibrary } from '../../src/library/full-library';
+import { resolveTypeReferences } from '../../src/library/resolve';
+import { main as sysproseMain } from '../../scripts/sysprose';
+import {
+  reachLines,
+  reachMachineLines,
+  rowKeyOf,
+  textOf,
+  type ReportLine,
+} from '../../src/semantics/mc/report-lines';
 import {
   BEHAVIOUR_CODES,
   BOUND_EXHAUSTED_CODE,
@@ -35,7 +47,9 @@ import {
   DEADLOCK_CODE,
   GUARD_UNDETERMINED_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
+  TRAP_REFUSAL_SENTENCE,
   UNREACHABLE_STATE_CODE,
+  UNRECOVERABLE_MODE_CODE,
   edgeCensus,
   exploreMachine,
   reachReport,
@@ -44,6 +58,7 @@ import {
 } from '../../src/semantics/mc/explore';
 import { ALL_METACLASSES } from '../../src/core/metamodel';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
+import { DWELL_SENTENCE } from '../../src/semantics/mc/publishable';
 import {
   CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
@@ -1591,5 +1606,331 @@ describe('the producer census: every edge is walked, or refused with a code', ()
     expect(census.unaccounted).toEqual([]);
     expect(census.rows.find((r) => r.id === inner.id)!.account).toBe('off-stack');
     expect(reachReport(m).machines[0].exhaustive).toBe(true);
+  });
+});
+
+/* ═════════ the text of `reach` is composed beside the engine, and the terminal prints it ═════════ */
+
+/**
+ * The command in-process with stdout and stderr kept apart (the traps suite's
+ * `cli` merges them, and what is asserted here is stdout alone).
+ */
+async function reachCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const realOut = process.stdout.write;
+  const realErr = process.stderr.write;
+  process.stdout.write = ((c: unknown) => (out.push(String(c)), true)) as typeof process.stdout.write;
+  process.stderr.write = ((c: unknown) => (err.push(String(c)), true)) as typeof process.stderr.write;
+  let code: number;
+  try {
+    code = await sysproseMain(args);
+  } finally {
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+  }
+  return { code, stdout: out.join(''), stderr: err.join('') };
+}
+
+describe('`reach` prints the lines the composer returns, byte for byte', () => {
+  const FIX = 'test/fixtures/verification/models';
+  const FIXTURES = [
+    'trap-probe',
+    'cover-reachable',
+    'deadlock-guarded',
+    'guard-undetermined',
+    'composite-trap',
+    'latch',
+    'sink',
+    'avoiding-sink',
+    'trapguard',
+    'trapguard-typed',
+    'recovery-composite',
+    'cycle-behind-violation',
+    'modality-line',
+    'succession-only',
+  ].map((n) => `${FIX}/${n}.sysml`);
+
+  it('prints through main exactly the lines reachLines composes', async () => {
+    for (const file of FIXTURES) {
+      const loaded = await loadModelText(read(file), { fileName: file, library: 'none' });
+      const want = `${textOf(reachLines(reachReport(loaded.model!), { name: file }))}\n`;
+      const got = await reachCli(['reach', file, '--no-library']);
+      expect(got.stdout, file).toBe(want);
+    }
+  }, 120_000);
+
+  it('prints the shipped example, whole and scoped, exactly as composed', async () => {
+    const file = 'examples/uav-isr.sysml';
+    const loaded = await loadModelText(read(file), { fileName: file });
+    const whole = await reachCli(['reach', file]);
+    expect(whole.stdout).toBe(`${textOf(reachLines(reachReport(loaded.model!), { name: file }))}\n`);
+    // Scoped: the `scoped to` line is the one the composer takes from its caller.
+    const machine = stateMachinesIn(loaded.model!).find((m) => m.declaredName === 'FlightModes')!;
+    const qn = loaded.model!.qualifiedName(machine.id);
+    const scoped = await reachCli(['reach', file, '--element', qn]);
+    const lines = reachLines(reachReport(loaded.model!, { scopeId: machine.id }), {
+      name: file,
+      scopeName: qn,
+    });
+    expect(scoped.stdout).toBe(`${textOf(lines)}\n`);
+    expect(lines.filter((l) => l.kind === 'scope').map((l) => l.text)).toEqual([`  scoped to ${qn}`]);
+  }, 120_000);
+
+  it('the app’s parse and the terminal’s load give the same lines', async () => {
+    // The page parses text and merges the library itself (`applyText`, then the
+    // library merge); the terminal goes through `loadModelText`. A report of
+    // either must read the same, or "the terminal says" is not what the page
+    // shows. Element ids are fresh per load, so lines are compared by what
+    // they say and by whether they name an element, not by which.
+    const shape = (ls: readonly ReportLine[]) =>
+      ls.map((l) => ({ ...l, elementId: l.elementId === null ? null : 'id', rowKey: l.rowKey === null ? null : 'key' }));
+    for (const file of [
+      'examples/uav-isr.sysml',
+      'examples/uav-isr-verification.sysml',
+      'examples/vehicle.sysml',
+      'examples/views-tour.sysml',
+    ]) {
+      const text = read(file);
+      const terminal = (await loadModelText(text, { fileName: file })).model!;
+      const app = parseModel(text).model;
+      await preloadFullLibrary();
+      loadFullStandardLibrary(app);
+      resolveTypeReferences(app);
+      resolveConnectorFeatureChains(app);
+      const a = reachLines(reachReport(app), { name: file });
+      const t = reachLines(reachReport(terminal), { name: file });
+      expect(textOf(a), file).toBe(textOf(t));
+      expect(shape(a), file).toEqual(shape(t));
+    }
+  }, 180_000);
+});
+
+describe('what a line says about itself', () => {
+  const FIX = 'test/fixtures/verification/models';
+  /** Every model the suite ships that `reach` has something to say about, with its report. */
+  const reports: Array<{ file: string; model: Model; report: ReturnType<typeof reachReport> }> = [];
+  beforeAll(async () => {
+    const files = [
+      ...readdirSync(resolve(process.cwd(), FIX))
+        .filter((n) => n.endsWith('.sysml'))
+        .map((n) => `${FIX}/${n}`),
+      'examples/uav-isr.sysml',
+      'examples/vehicle.sysml',
+    ];
+    for (const file of files) {
+      const loaded = await loadModelText(read(file), {
+        fileName: file,
+        library: file.startsWith('examples/') ? 'full' : 'none',
+      });
+      if (loaded.model) reports.push({ file, model: loaded.model, report: reachReport(loaded.model) });
+    }
+  }, 240_000);
+
+  it('covers every fixture with a machine, so the cases below are not vacuous', () => {
+    const withMachines = reports.filter((r) => r.report.machines.length > 0);
+    expect(withMachines.length).toBeGreaterThanOrEqual(15);
+    expect(reports.some((r) => r.report.machines.some((m) => m.suppressed))).toBe(true);
+    expect(reports.some((r) => r.report.machines.some((m) => m.trapCensus.refusedByGate !== null))).toBe(true);
+  });
+
+  it('tags withholding lines by kind: a machine block withholds exactly when its walk was not whole and exact', () => {
+    for (const { file, report } of reports) {
+      report.machines.forEach((m, i) => {
+        const lines = reachMachineLines(m, i + 1);
+        const withholds = lines.some((l) => l.withholds);
+        const gate = !(m.exhaustive && m.exactness.walkIsExact);
+        expect(withholds, `${file} :: ${m.machine.qualifiedName}`).toBe(gate);
+      });
+    }
+  });
+
+  it('each kind carries its own withholding flag, element and code', () => {
+    // The page reads `withholds`, `elementId` and `code` off the line and not off
+    // the wording, so each is pinned per kind against the report's own data. A
+    // machine-level check cannot do it: one withholding line hides another.
+    const ALWAYS = new Set(['not-explored', 'undecided', 'withheld', 'trap-refused', 'suppressed']);
+    const seen = new Set<string>();
+    for (const { file, report } of reports) {
+      for (const m of report.machines) {
+        const at = `${file} :: ${m.machine.qualifiedName}`;
+        const id = m.machine.id;
+        const lines = reachMachineLines(m, 1);
+        for (const l of lines) {
+          seen.add(l.kind);
+          expect(l.withholds, `${at}: ${l.kind}`).toBe(
+            ALWAYS.has(l.kind) || (l.kind === 'counts' && m.suppressed),
+          );
+        }
+        const of = (kind: string) => lines.filter((l) => l.kind === kind).map((l) => [l.elementId, l.code]);
+        const gate = m.trapCensus.refusedByGate !== null;
+        const expected: Record<string, Array<[string, string | null]>> = {
+          machine: [[id, null]],
+          figures: [[id, null]],
+          counts: [[id, null]],
+          'not-explored': m.unsupported.map((): [string, null] => [id, null]),
+          undecided: m.undeterminedGuards.map((g): [string, string] => [g.transition.id, GUARD_UNDETERMINED_CODE]),
+          unreachable: m.states.unreachable.map((s): [string, string] => [s.id, UNREACHABLE_STATE_CODE]),
+          dead: m.transitions.dead.map((t): [string, string] => [t.id, DEAD_TRANSITION_CODE]),
+          'no-way-out': m.deadlocks.map((d): [string, string] => [d.leaf.id, DEADLOCK_CODE]),
+          withheld: m.deadlocksWithheld.map((d): [string, null] => [d.leaf.id, null]),
+          trap: m.traps.map((t): [string, string] => [t.entry[0].id, UNRECOVERABLE_MODE_CODE]),
+          'trap-refused': gate ? [[id, null]] : [],
+          choice: m.nondeterminism.map((n): [string, string] => [n.state.id, NONDETERMINISTIC_CHOICE_CODE]),
+          suppressed: m.suppressed ? [[id, null]] : [],
+        };
+        for (const [kind, rows] of Object.entries(expected)) {
+          expect(of(kind), `${at}: ${kind}`).toEqual(rows);
+        }
+        // No kind outside the table: a new one has to be given its row here.
+        expect(lines.every((l) => l.kind in expected), at).toBe(true);
+      }
+      // The head and the tail say nothing is withheld, whatever the machines did,
+      // and a diagnostic names the code and element of the diagnostic.
+      const ds = reachLines(report, { name: file }).filter((l) => l.block === 0);
+      expect(ds.some((l) => l.withholds), file).toBe(false);
+      expect(
+        ds.filter((l) => l.kind === 'diagnostic').map((l) => [l.code, l.elementId]),
+        file,
+      ).toEqual(report.diagnostics.map((d) => [d.code, d.elementId ?? null]));
+    }
+    // The corpus reaches every machine-block kind but the unsupported-construct
+    // one (no shipped fixture parses to it; the test after this one builds it),
+    // so none of the rows above is vacuous.
+    expect(
+      [...seen].filter((k) => k !== 'not-explored').sort(),
+      'a kind has no case in the corpus',
+    ).toEqual(
+      [
+        'choice',
+        'counts',
+        'dead',
+        'figures',
+        'machine',
+        'no-way-out',
+        'suppressed',
+        'trap',
+        'trap-refused',
+        'unreachable',
+        'undecided',
+        'withheld',
+      ].sort(),
+    );
+  });
+
+  it('prints a construct the walk does not explore as a withheld line naming the machine', () => {
+    // No corpus model parses to an unsupported construct, so the one kind the
+    // table above cannot reach is pinned here, on a parallel machine.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const par = model.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
+    for (const r of ['r1', 'r2']) {
+      const region = f.state(r, par.id);
+      const a = f.state(`${r}a`, region.id);
+      const b = f.state(`${r}b`, region.id);
+      f.transition(a.id, b.id, { ownerId: region.id, trigger: 't' });
+    }
+    const m = reachReport(model, { scopeId: par.id }).machines[0];
+    const lines = reachMachineLines(m, 1).filter((l) => l.kind === 'not-explored');
+    expect(m.unsupported.length).toBeGreaterThan(0);
+    expect(lines.map((l) => l.text)).toEqual(
+      m.unsupported.map((u) => `    not explored: ${u.construct} — ${u.detail}`),
+    );
+    for (const l of lines) {
+      expect(l.withholds).toBe(true);
+      expect(l.elementId).toBe(m.machine.id);
+      expect(l.code).toBeNull();
+    }
+  });
+
+  it('prints the dwell refusal for a machine only a factory can build', () => {
+    // `accept after(n)` is a parse error, so no `.sysml` file reaches this
+    // branch and neither the CLI tests nor the before/after run did. The
+    // sentence is pinned here through the line that prints it.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const sm = f.stateDef('Dwells');
+    const standby = f.state('standby', sm.id);
+    const failsafe = f.state('failsafe', sm.id);
+    const hold = f.state('failsafeHold', sm.id);
+    f.transition(standby.id, failsafe.id, { ownerId: sm.id });
+    f.transition(failsafe.id, hold.id, { ownerId: sm.id, trigger: 'after(5)' });
+    f.transition(failsafe.id, standby.id, { ownerId: sm.id, trigger: 'after(60)' });
+    f.transition(hold.id, failsafe.id, { ownerId: sm.id, trigger: 'after(5)' });
+    const m = reachReport(model).machines[0];
+    expect(m.trapCensus.refusedByGate).toBe('time');
+    const refused = reachMachineLines(m, 1).filter((l) => l.kind === 'trap-refused');
+    expect(refused).toHaveLength(1);
+    expect(refused[0].text).toBe(`    ${TRAP_REFUSAL_SENTENCE.time}; ${DWELL_SENTENCE}`);
+    expect(refused[0].withholds).toBe(true);
+    expect(refused[0].elementId).toBe(sm.id);
+    expect(refused[0].code).toBeNull();
+  });
+
+  it('names only catalogued codes', () => {
+    for (const { file, model, report } of reports) {
+      for (const l of reachLines(report, { name: file })) {
+        if (l.code !== null) expect(isKnownCode(l.code), `${file}: ${l.kind} names ${l.code}`).toBe(true);
+        // A line that names an element names one this model has.
+        if (l.elementId !== null) expect(model.get(l.elementId), `${file}: ${l.text}`).toBeDefined();
+      }
+    }
+  });
+
+  it('a suppressed machine never prints 0 dead', () => {
+    let seen = 0;
+    for (const { file, report } of reports) {
+      for (const m of report.machines.filter((x) => x.suppressed)) {
+        seen++;
+        const lines = reachMachineLines(m, 1);
+        const counts = lines.find((l) => l.kind === 'counts')!;
+        expect(counts.text, `${file} :: ${m.machine.qualifiedName}`).toContain('dead withheld');
+        expect(counts.text).not.toMatch(/\b\d+ dead\b/);
+        expect(counts.withholds).toBe(true);
+        expect(lines.some((l) => l.kind === 'dead')).toBe(false);
+      }
+    }
+    expect(seen, 'no suppressed machine in the corpus').toBeGreaterThan(0);
+  });
+
+  it('row keys sit on exactly the no-way-out, choice and undecided lines', () => {
+    const keyed = new Set(['no-way-out', 'choice', 'undecided']);
+    const seen = new Set<string>();
+    for (const { file, report } of reports) {
+      for (const l of reachLines(report, { name: file })) {
+        expect(l.rowKey !== null, `${file}: ${l.kind} \`${l.text.trim()}\``).toBe(keyed.has(l.kind));
+        if (l.rowKey !== null) seen.add(l.kind);
+      }
+      for (const m of report.machines) {
+        for (const d of m.deadlocks) {
+          expect(reachMachineLines(m, 1).filter((l) => l.rowKey === rowKeyOf('deadlock', d.leaf.id))).toHaveLength(1);
+        }
+        for (const n of m.nondeterminism) {
+          expect(
+            reachMachineLines(m, 1).filter((l) => l.rowKey === rowKeyOf('choice', n.state.id, n.event)),
+          ).toHaveLength(1);
+        }
+        for (const g of m.undeterminedGuards) {
+          expect(reachMachineLines(m, 1).filter((l) => l.rowKey === rowKeyOf('guard', g.transition.id))).toHaveLength(1);
+        }
+      }
+    }
+    // The corpus holds all three, so none of the equivalences above is vacuous.
+    expect([...seen].sort()).toEqual(['choice', 'no-way-out', 'undecided']);
+    expect(rowKeyOf('deadlock', 'x')).toBe('dl:x');
+    expect(rowKeyOf('choice', 'x', 'e')).toBe('nd:x|e');
+    expect(rowKeyOf('choice', 'x', '')).toBe('nd:x|');
+    expect(rowKeyOf('guard', 'x')).toBe('ug:x');
+  });
+
+  it('numbers its blocks: 0 for the head and the tail, one per machine in order between them', () => {
+    for (const { file, report } of reports) {
+      const lines = reachLines(report, { name: file });
+      // The runs of equal block numbers, in order: head, machine 1..M, tail.
+      const runs = lines.map((l) => l.block).filter((b, i, all) => i === 0 || b !== all[i - 1]);
+      const M = report.machines.length;
+      expect(runs, file).toEqual(M === 0 ? [0] : [0, ...report.machines.map((_, i) => i + 1), 0]);
+      expect(lines[0].kind).toBe('head');
+    }
   });
 });
