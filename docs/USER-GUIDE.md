@@ -329,7 +329,8 @@ runs it in a terminal instead of a verdict nobody measured.
 
 Every graph view reads **left to right**: owner before part, first step before
 last, the initial state before the ones it leads to, the root of a tree before
-its leaves. The layout keeps to the readability criteria of the UML-layout
+its leaves (a box that many dependency lines end on may lead its piece instead,
+below). The layout keeps to the readability criteria of the UML-layout
 literature (Sun & Wong, IWPC 2005, after Purchase): no box overlaps another, no
 connector runs through a box it does not connect, connectors run horizontally
 and vertically and cross as little as the graph allows, and labels sit where
@@ -353,6 +354,20 @@ the layout made room for them — never on a box, a line or another label.
   of a single layer package. A file with several top-level packages, or one
   wrapper package around the layers, has no columns in its whole-model view:
   scope the view to the package that holds the layers.
+- **A box that many dependency lines end on leads its piece.** In a General
+  view with no layer columns (a view scoped to one package, or the whole model
+  of a file with several top-level packages), a box that three or more
+  `«allocate»`, `«satisfy»`, `«trace»` or other dependency lines end on — a part
+  that a dozen activities are allocated to, a requirement many things satisfy —
+  is drawn at the left, and those lines fan out of it to the boxes they come
+  from, their arrowheads pointing back at it, instead of each running the width
+  of the diagram to a box at the far right. The layout draws the piece both ways
+  and keeps this one only if it has at least three crossings fewer and reads
+  better overall, so a view that already reads well keeps every line running
+  left to right, as does a whole-model view with its layer columns. Adding or
+  removing a few lines can tip a piece from one drawing to the other, and its
+  hub then moves from one side to the other. Pieces of more than 200 boxes are
+  not tried both ways.
 - **A label that would say the same thing on every line is left off.** When
   every dependency in a view is of one kind — the Requirement view's
   `«satisfy»`, for instance — the keyword is dropped and lines that leave one

@@ -12,7 +12,9 @@
  *  - a label repeated on every line is dropped and the lines joined (C1, C3);
  *  - the tree grows one opened branch at a time;
  *  - a model's layer packages read left to right as columns, each headed by its
- *    package's name.
+ *    package's name;
+ *  - a hub that many dependency lines end on leads its piece, when that clearly
+ *    cuts crossings.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -28,8 +30,13 @@ import {
   svgFromDiagram,
 } from '@diagram/index';
 import {
+  HUB_MAX_NODES,
+  HUB_MIN_CROSSINGS_SAVED,
   TARGET_ASPECT,
   connectedPieces,
+  countCrossings,
+  dependencyHubs,
+  hubEdges,
   intrinsicSize,
   packRows,
   thoroughnessFor,
@@ -503,6 +510,130 @@ describe('general view — each column of a layered model is headed by its packa
       expect(c.x + c.w).toBeLessThanOrEqual(x + w);
       expect(c.y + c.h).toBeLessThanOrEqual(y + h);
     }
+  });
+});
+
+describe('general view — a hub that many dependency lines end on leads its piece', () => {
+  /**
+   * The drone-swarm model's operational layer in small: two members each have an
+   * activity allocated to them per step, the two members' activities share a
+   * definition, and a few hazards and use cases hold the members' type.
+   */
+  function hubText(steps: number, hazards: number, cases: number, wrap = false): string {
+    const each = (n: number, f: (i: number) => string): string => Array.from({ length: n }, (_, i) => f(i)).join('\n    ');
+    const body = `part def Member;
+    part memberA : Member;
+    part memberB : Member;
+    ${each(cases, (i) => `use case def Case${i} { ref holder : Member; }`)}
+    ${each(hazards, (i) => `requirement hazard${i} { ref holder : Member; }`)}
+    ${each(steps, (i) => `action def Step${i};`)}
+    ${each(steps, (i) => `action alpha${i} : Step${i};\n    action bravo${i} : Step${i};`)}
+    ${each(steps, (i) => `allocate alpha${i} to memberA;\n    allocate bravo${i} to memberB;`)}
+    ${each(hazards, (i) => `satisfy hazard${i} by alpha${i};`)}`;
+    return wrap ? `package Layers {\n  package Ops {\n    ${body}\n  }\n  package Logic {\n    part def Controller;\n  }\n}\n` : `package Watch {\n    ${body}\n}\n`;
+  }
+  const generalOf = (text: string): DiagramGraph => buildDiagram(parseModel(text).model, 'general');
+  const crossingsOf = (g: DiagramGraph): number => {
+    const routes = new Map(g.edges.filter((e) => e.route).map((e) => [e.id, e.route!]));
+    return countCrossings(routes, new Map(g.edges.map((e) => [e.id, [e.source, e.target] as [string, string]])));
+  };
+  const box = (g: DiagramGraph, label: string): Box => absoluteBoxes(g).get(g.nodes.find((n) => n.label === label)!.id)!;
+  /** A route point sits on the outline of `b`. */
+  const onOutline = (p: Point, b: Box): boolean => {
+    const inX = p.x >= b.x - 1 && p.x <= b.x + b.w + 1;
+    const inY = p.y >= b.y - 1 && p.y <= b.y + b.h + 1;
+    return inX && inY && (Math.abs(p.x - b.x) < 1 || Math.abs(p.x - b.x - b.w) < 1 || Math.abs(p.y - b.y) < 1 || Math.abs(p.y - b.y - b.h) < 1);
+  };
+
+  it('names the boxes that min or more dependency lines end on, and no other line counts', () => {
+    const into = (target: string, kind: string, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `${kind}:${target}:${i}`, target, kind }));
+    const hubs = dependencyHubs([
+      ...into('memberA', 'allocate', 4),
+      ...into('R', 'satisfy', 2),
+      ...into('Member', 'typed-by', 6),
+      ...into('Owner', 'composite', 5),
+    ]);
+    expect([...hubs.keys()]).toEqual(['memberA']);
+    expect(hubs.get('memberA')).toHaveLength(4);
+    expect([...dependencyHubs(into('R', 'satisfy', 2), 2).keys()]).toEqual(['R']);
+  });
+
+  it('draws the hub first, its lines fanning out to the right, and leaves fewer crossings', async () => {
+    const g0 = generalOf(hubText(8, 3, 6));
+    const g = await layoutDiagram(g0);
+    expectReadable(g);
+    // The hubs sit left of every activity allocated to them; the lines still run source -> hub.
+    for (const [hub, who] of [['memberA', 'alpha'], ['memberB', 'bravo']] as const) {
+      const hubBox = box(g, hub);
+      for (let i = 0; i < 8; i++) expect(box(g, `${who}${i}`).x, `${who}${i} is right of ${hub}`).toBeGreaterThan(hubBox.x + hubBox.w);
+      const hubId = g.nodes.find((n) => n.label === hub)!.id;
+      for (const e of g.edges.filter((x) => x.kind === 'allocate' && x.target === hubId)) {
+        const src = absoluteBoxes(g).get(e.source)!;
+        expect(onOutline(e.route![0]!, src), `${e.id} starts on its source`).toBe(true);
+        expect(onOutline(e.route![e.route!.length - 1]!, hubBox), `${e.id} ends on its hub`).toBe(true);
+      }
+    }
+    // The same graph laid out the usual way, every line source -> target (one layering forced, so no hub leads).
+    const usualWay = await layoutDiagram(g0, { elkOptions: { 'elk.layered.layering.strategy': 'NETWORK_SIMPLEX' } });
+    expect(box(usualWay, 'memberA').x).toBeGreaterThan(box(usualWay, 'alpha0').x);
+    expect(crossingsOf(g)).toBeLessThanOrEqual(crossingsOf(usualWay) - HUB_MIN_CROSSINGS_SAVED);
+  }, 60_000);
+
+  it('keeps the usual direction where drawing from the hub saves too few crossings', async () => {
+    const g = await layoutDiagram(generalOf(hubText(4, 2, 3)));
+    expectReadable(g);
+    for (let i = 0; i < 4; i++) expect(box(g, `alpha${i}`).x).toBeLessThan(box(g, 'memberA').x);
+  }, 30_000);
+
+  it('keeps the usual direction where both drawings cross nothing, though the hub-led one costs less', async () => {
+    // Three parts that three or more lines end on, in a ring of allocations among them. Drawn either way no
+    // line crosses another; drawn from the hubs, many more lines run right to left.
+    const text = `package Y {
+      part h1; part h2; part h3;
+      part a; part b; part c; part d; part e; part f;
+      allocate a to h1; allocate b to h1; allocate c to h1;
+      allocate d to h2; allocate e to h2; allocate f to h2;
+      allocate h1 to h3; allocate h2 to h3; allocate a to h3;
+      allocate h3 to h1;
+      allocate d to a; allocate e to b; allocate f to c;
+      allocate a to d; allocate b to e; allocate c to f;
+    }`;
+    const g0 = generalOf(text);
+    expect(connectedPieces(g0).flatMap((p) => [...hubEdges(g0, p)]).length).toBeGreaterThan(0);
+    const backward = (g: DiagramGraph): number => g.edges.filter((e) => e.route && e.route.at(-1)!.x < e.route[0]!.x - 1).length;
+    const g = await layoutDiagram(g0);
+    const usualWay = await layoutDiagram(g0, { elkOptions: { 'elk.layered.layering.strategy': 'NETWORK_SIMPLEX' } });
+    expectReadable(g);
+    expect(crossingsOf(usualWay)).toBe(0);
+    expect(backward(g)).toBeLessThanOrEqual(backward(usualWay));
+  }, 30_000);
+
+  it('tries the hubs only in a General view with no layer columns, of at most HUB_MAX_NODES boxes', () => {
+    const linesOf = (text: string): { lines: string[]; boxes: number } => {
+      const g = generalOf(text);
+      const pieces = connectedPieces(g);
+      return { lines: pieces.flatMap((p) => [...hubEdges(g, p)]), boxes: Math.max(...pieces.map((p) => p.nodeIds.size)) };
+    };
+    // memberA's and memberB's eight allocations each.
+    expect(linesOf(hubText(8, 3, 6)).lines).toHaveLength(16);
+    expect(linesOf(hubText(8, 3, 6, true)).lines).toEqual([]);
+    // The drone-swarm model's largest layer has about 160 boxes; the cap is 200.
+    expect(HUB_MAX_NODES).toBe(200);
+    const near = linesOf(hubText(59, 3, 6));
+    expect(near.boxes).toBeGreaterThan(160);
+    expect(near.boxes).toBeLessThanOrEqual(HUB_MAX_NODES);
+    expect(near.lines).toHaveLength(118);
+    const over = linesOf(hubText(70, 3, 6));
+    expect(over.boxes).toBeGreaterThan(HUB_MAX_NODES);
+    expect(over.lines).toEqual([]);
+  });
+
+  it('keeps a layered model\'s columns in package order', async () => {
+    const g = await layoutDiagram(generalOf(hubText(8, 3, 6, true)));
+    const lane = (label: string) => g.nodes.find((n) => n.label === label)!.data.layoutPartition;
+    expect([lane('memberA'), lane('Controller')]).toEqual([0, 1]);
+    for (let i = 0; i < 8; i++) expect(box(g, `alpha${i}`).x).toBeLessThan(box(g, 'memberA').x);
   });
 });
 

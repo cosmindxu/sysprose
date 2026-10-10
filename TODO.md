@@ -125,7 +125,10 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       Properties field or the Explorer search opens the browser's "Save page" dialog. Forwarding
       it would save without the field's uncommitted value (Properties writes on Enter or blur):
       commit the field first, or leave the key to the browser and say so in Appendix B.
-- [ ] **Cut the crossings of one-layer General views with hub requirements.** Scoped to the
-      drone-swarm model's `OA`, the General view still has ~110 crossings, most of them long
-      `«trace»` / `«satisfy»` lines converging on a few hubs (`memberA` takes ~20). Try routing
-      those dependency kinds as merged hyperedges of their own, or placing hubs by barycentre.
+- [ ] **Cut the crossings the hub-led layout leaves in the drone-swarm v9 `OA` General view.**
+      The view has 31 crossings in the app (46 in the layout's own count, `countCrossings`),
+      down from 71, with the two members drawn as hubs. Of the 46, 26 are two `«allocate»` lines
+      crossing, 9 an `«allocate»` and a `«satisfy»`, 7 an `«allocate»` and a `«typed-by»`: the two
+      members' activities share one definition per step, so the two fans interleave. Try ordering
+      the activities of the two fans by their shared definition (barycentre), or letting only
+      one member lead.

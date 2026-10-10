@@ -8,6 +8,8 @@
  *    the move and lays the diagram out afresh.
  *  - The tree view grows one branch at a time: "+N" on a box opens what it
  *    owns, "−" closes it again.
+ *  - A box that many dependency lines end on leads a one-layer General view,
+ *    its lines running from the boxes that point at it.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -354,4 +356,57 @@ test('the first screen of a layered General view shows every column header clear
     expect(errors).toEqual([]);
     await context.close();
   }
+});
+
+/** The drone-swarm model's operational layer in small: every step is done by one activity per member, and the two members' activities share a definition. */
+function hubModel(): string {
+  const each = (n: number, f: (i: number) => string): string => Array.from({ length: n }, (_, i) => f(i)).join('\n    ');
+  return `package Watch {
+    part def Member;
+    part memberA : Member;
+    part memberB : Member;
+    ${each(6, (i) => `use case def Case${i} { ref holder : Member; }`)}
+    ${each(3, (i) => `requirement hazard${i} { ref holder : Member; }`)}
+    ${each(8, (i) => `action def Step${i};`)}
+    ${each(8, (i) => `action alpha${i} : Step${i};\n    action bravo${i} : Step${i};`)}
+    ${each(8, (i) => `allocate alpha${i} to memberA;\n    allocate bravo${i} to memberB;`)}
+    ${each(3, (i) => `satisfy hazard${i} by alpha${i};`)}
+}
+`;
+}
+
+test('a hub that many dependency lines end on leads a one-layer General view, its lines running from the boxes that point at it', async ({ page }) => {
+  const errors = captureErrors(page);
+  await page.route('**/layered/Hub.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: hubModel() }));
+  await page.goto('/?model=layered/Hub.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 60_000 });
+  await expect.poll(async () => (await current(page))?.nodes.length, { timeout: 60_000 }).toBe(45);
+  await page.locator('.react-flow__node').first().waitFor({ state: 'visible' });
+  await page.waitForTimeout(500);
+
+  const d = (await page.evaluate(() =>
+    (window as unknown as { sysprose: { diagram: { current: () => unknown } } }).sysprose.diagram.current(),
+  )) as {
+    nodes: { id: string; label: string; position: { x: number; y: number }; size: { w: number; h: number } }[];
+    edges: { kind: string; source: string; target: string; route?: { x: number; y: number }[] }[];
+  };
+  const byLabel = (label: string) => d.nodes.find((n) => n.label === label)!;
+  const onOutline = (p: { x: number; y: number }, n: (typeof d.nodes)[number]): boolean =>
+    p.x >= n.position.x - 1 && p.x <= n.position.x + n.size.w + 1 && p.y >= n.position.y - 1 && p.y <= n.position.y + n.size.h + 1 &&
+    (Math.abs(p.x - n.position.x) < 1 || Math.abs(p.x - n.position.x - n.size.w) < 1 || Math.abs(p.y - n.position.y) < 1 || Math.abs(p.y - n.position.y - n.size.h) < 1);
+
+  // Each member sits left of all eight activities allocated to it, and every line still runs from its activity to the member.
+  for (const [hub, who] of [['memberA', 'alpha'], ['memberB', 'bravo']] as const) {
+    const h = byLabel(hub);
+    for (let i = 0; i < 8; i += 1) expect(byLabel(`${who}${i}`).position.x, `${who}${i} is right of ${hub}`).toBeGreaterThan(h.position.x + h.size.w);
+    const lines = d.edges.filter((e) => e.kind === 'allocate' && e.target === h.id);
+    expect(lines).toHaveLength(8);
+    for (const e of lines) {
+      const src = d.nodes.find((n) => n.id === e.source)!;
+      expect(onOutline(e.route![0]!, src), `a ${who} line starts on its activity`).toBe(true);
+      expect(onOutline(e.route![e.route!.length - 1]!, h), `a ${who} line ends on ${hub}`).toBe(true);
+    }
+  }
+  await expectOrthogonalEdges(page);
+  expect(errors).toEqual([]);
 });
