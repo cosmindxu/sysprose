@@ -165,8 +165,8 @@ with the function that control runs.
 | What was shown, by which tool, over which model — and does it still hold? | **Requirements** view → *Evidence* column (`tb-view-requirements` → `buildRequirementsTable`) † | `npm run sysprose -- evidence-status model.sysml` | `evidenceStatus` — `src/api/evidence.ts` |
 | Write the verdicts of a run into the file, as annotations on what they are about | — no view yet | `npm run sysprose -- evidence-attach model.sysml --from evidence.json` | `attachEvidence` — `src/api/evidence.ts` |
 | Take every record back off the file, and the verdict facets with them | — no view yet | `npm run sysprose -- evidence-detach model.sysml` | `detachEvidence` — `src/api/evidence.ts` |
-| Which states are reachable, which transitions are dead, where did the simulator hide a choice? | — no view yet | `npm run sysprose -- reach model.sysml` | `reachReport` — `src/semantics/mc/explore.ts` |
-| Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? | — no view yet | `npm run sysprose -- check-behaviour model.sysml --element FlightModes --pattern 'pattern=absence, scope=globally, p=state failsafe'` | `behaviourReport` — `src/semantics/mc/patterns.ts` |
+| Which states are reachable, which transitions are dead, where did the simulator hide a choice? | **State**, **Action** or **General** view → palette *Checks* → **Reachability** → **Run** (`palette-check-run` → `reachReport`) — a row the walk found only by taking an event where a trigger-less transition was enabled reads *walk only* and is not counted as a finding | `npm run sysprose -- reach model.sysml` | `reachReport` — `src/semantics/mc/explore.ts` |
+| Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? | **State**, **Action** or **General** view → palette *Checks* → **Behaviour properties** → **Run** (`palette-check-run` → `behaviourReport`) — a witness that takes such a step reads *walk only* and is not counted as a finding | `npm run sysprose -- check-behaviour model.sysml --element FlightModes --pattern 'pattern=absence, scope=globally, p=state failsafe'` | `behaviourReport` — `src/semantics/mc/patterns.ts` |
 
 **† Where the app runs something else, and why its figure can differ.** **Validate** re-runs the
 rule engine over the model already open in the editor (`safeValidate`, `src/ui/store.ts`); `check`
@@ -193,8 +193,10 @@ unlike the view, can be asked about one element. `connectivity`, `orphans`, `pro
 `impactClosure` have no control in the
 app at all — they are the terminal's and the SDK's alone. There is no solver in the browser
 (`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), so no view reaches a
-verdict: the two that read this lane show what a run left behind and print the command that
-produces one.
+solver verdict; the behaviour lane needs none — **Reachability** and **Behaviour properties** run
+`reachReport` and `behaviourReport` in the page with the terminal's default bounds and print the
+terminal's lines. The two views that read the solver lane show what a run left behind and print the
+command that produces one.
 
 **Somebody else's `#keyword` vocabulary is read, kept and never acted on by accident.** A prefix
 keyword is the notation's own extension point (SysML v2 §7.27.1, §7.27.4); Sysprose stores every

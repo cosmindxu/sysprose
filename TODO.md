@@ -14,13 +14,40 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       popup and its `docs.google.com` Picker iframe, so in-browser z3 and Google sign-in constrain
       each other.
 - [ ] **Scope the palette's checks to the selection where the CLI takes `--element`.**
-      `where-used` and `check-behaviour` read the selection today; `contracts`, `obligations` and
+      `where-used` reads the selection today; `contracts`, `obligations` and
       `bounds` take `--element`/`--measure` at the terminal and run whole-model here. Either pass
       the selection through or say in the row that the result covers the whole model.
 - [ ] **Let a check run off the main thread when it is slow.** Every `model` check is synchronous
       today, which is right for the sample model (each is well under a frame) but not for a large
       one: `reach` and `check-behaviour` walk configuration graphs. Measure first, then move the
-      walkers into the worker the solver lane already uses.
+      walkers into the layout worker (`src/ui/elk-worker.ts`), the only Web Worker today — the solver
+      lane has none. Cost ≈ configurations × (|alphabet| + 1) × |region transitions| × stack depth:
+      `stepCandidates` scans every region transition per configuration and input, and
+      `check-behaviour` walks twice per property, so `maxConfigs` does not bound the time.
+- [ ] **Take no event where a completion transition is enabled or undetermined, or reword the
+      run warrant.** `reach` and `check-behaviour` walk every trigger at every configuration while
+      the machine's own semantics fires a completion transition before any event, so a `fail` or
+      `covered` witness, a `no way out`/`choice` row, or an undecided guard can claim a run the
+      profile forbids (`rc/a15`, `rc/a1`, `rev/r8`, the v9 SA `recallWhileTransiting` case, and
+      completion livelocks). Until the engine and the CLI agree, the app's `rtc-gap.ts` demotes the
+      unconfirmed rows to walk-only; delete that confirmation in the same change.
+- [ ] **Walk a `state def` nested inside a machine.** Its states are reported, and marked
+      `unreachable`, in the outer machine's walk, and the nested definition is never walked itself
+      (`stateMachinesIn` returns outermost owners). The guide says the marks refer to the outer
+      walk; walking the nested definition would decide its own states instead.
+- [ ] **Mark dead and undecided transitions on the diagram's edges.** The state-view marks cover
+      states only; a dead transition or an undecided guard stays a clickable Checks-tab row. An edge
+      decoration would put a `dead`/`undecided` mark on the transition itself.
+- [ ] **Catalogue the `checks/*` codes.** They are app status rows — the closed set pinned by
+      `CHECK_META_CODES` — not findings about source text, so they sit outside the Agent Diagnostics
+      Contract's catalogue today. When the contract is extended to app rows, give each a `code` entry
+      and a stable range.
+- [ ] **Audit the README's "no control" sentence against every palette-backed row.** The README
+      says `orphans`, `obligations` and others "have no control in the app at all"; the behaviour
+      lane now has two. Walk every capability row and fix the ones the palette answers.
+- [ ] **Give the store a cheaper raw-value signal than the load-health parse.** `loadHealth` parses
+      each distinct text a file can hold to catch a raw value that does not parse; a serializer-side
+      flag would record that the applied text carried raw value text without re-parsing it.
 - [ ] **Say on screen when the palette column is put away.** The collapsed strip is a 24 px
       chevron with a tooltip; a first-time reader who collapses it has no label telling them what
       it hides.

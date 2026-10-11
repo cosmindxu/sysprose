@@ -38,13 +38,33 @@ import {
   TRAP_REFUSAL_SENTENCE,
   WALK_ADMITS,
   behaviourReport,
+  confirmUnderRunToCompletion,
   coverRequiredRefusal,
   environmentSentence,
+  reachReport,
 } from '../../src/api/index';
 // `CLAUSE_SENTENCE` is not re-exported through the API barrel: it is the gate's
 // own vocabulary, read from the module that owns it.
 import { CLAUSE_SENTENCE } from '../../src/semantics/mc/publishable';
 import { loadModelText } from '../../src/text/load';
+import { parseModel } from '../../src/text/index';
+// The app's own composed sentences — the reach/check-behaviour verdicts and the
+// marks status panel — read through the same guard, so a reserved sentence
+// cannot slip in through the page rather than the terminal.
+import {
+  STALE_MARKS_TEXT,
+  WITNESS_NOT_SIMULATION,
+  behaviourResult,
+  degradedRow,
+  marksStatusLine,
+  marksStatusText,
+  notWalkedRow,
+  reachResult,
+  walkOnlyRow,
+} from '../../src/ui/behaviour-checks';
+import type { MarkSummary } from '../../src/ui/behaviour-checks';
+import { CHECKS } from '../../src/ui/checks';
+import type { LoadHealth } from '../../src/ui/store';
 
 const ROOT = process.cwd();
 
@@ -811,6 +831,79 @@ describe('the sentences the model-checking lane ships pass the guard', () => {
     ];
     expect(shipped.length).toBeGreaterThan(10);
     for (const [name, text] of shipped) {
+      expect(text.length, `${name} is empty`).toBeGreaterThan(0);
+      expect(hitsFor(text), `${name} trips a reserved form:${show(hitsFor(text))}`).toEqual([]);
+    }
+  });
+
+  it('the app-composed reach and check-behaviour sentences: 0 hits', () => {
+    const healthy: LoadHealth = {
+      errors: 0,
+      saved: { parseErrors: 0 },
+      exported: { parseErrors: 0 },
+      sameText: true,
+      validationErrors: 0,
+      validateThrew: false,
+      unwritable: null,
+      libraryPending: false,
+    };
+    const degraded = (over: Partial<LoadHealth>): LoadHealth => ({ ...healthy, ...over });
+    // Every withheld count non-zero, so each status-panel clause prints.
+    const full: MarkSummary = {
+      machines: 4,
+      marked: { choice: 2, 'walk-only': 1 },
+      trapWithheld: 2,
+      notDecidedOn: 3,
+      walkOnly: 1,
+      notWalked: 2,
+    };
+
+    // A terminating machine's reach summary, and a cover property's
+    // check-behaviour summary, as the palette composes them.
+    const term = parseModel(
+      'package P { state def M { state a; state b; state final; transition a then b; transition b then final; } }',
+    ).model;
+    const r = reachReport(term);
+    const reach = reachResult(r, term, {
+      fileName: 'model.sysml',
+      health: healthy,
+      confirmations: r.machines.map((m) => confirmUnderRunToCompletion(term, m)),
+    });
+    const cover = parseModel(
+      'package MissionDag { part def Mission { state def Modes { @SysproseVerification::PropertyPattern { attribute pattern = "cover"; attribute scope = "globally"; attribute p = "state cruise"; } state takeoff; state cruise; state landed; transition takeoff then cruise; transition cruise then landed; } } }',
+    ).model;
+    const machine = cover.all().find((e) => e.eClass === 'StateDefinition');
+    expect(machine, 'no machine in the cover model').toBeDefined();
+    const behaviour = behaviourResult(behaviourReport(cover, { machineId: machine!.id }), cover, {
+      fileName: 'model.sysml',
+      machineName: 'MissionDag::Mission::Modes',
+      health: healthy,
+    });
+    // The summary is the terminal's header, its counts included.
+    expect(behaviour.summary).toContain('1 covered');
+
+    const sentences: Array<[string, string]> = [
+      ['marksStatusLine, all clauses', marksStatusLine(full, 0)],
+      ['marksStatusText, all clauses', marksStatusText(full)],
+      ['STALE_MARKS_TEXT', STALE_MARKS_TEXT],
+      ["WITNESS_NOT_SIMULATION('P::M', 1, 3)", WITNESS_NOT_SIMULATION('P::M', 1, 3)],
+      ['the reach summary', reach.summary],
+      ['the check-behaviour summary', behaviour.summary],
+      ['the walk-only row', walkOnlyRow('x', 'P::M', 3).message],
+      ['the not-walked row', notWalkedRow('Q::Lonely::a', 'x').message],
+      ['degraded reach, unwritable', degradedRow('reach', degraded({ errors: 1, unwritable: 'the note body contains "*/"' })).message],
+      ['degraded check-behaviour, unwritable', degradedRow('check-behaviour', degraded({ errors: 1, unwritable: 'the note body contains "*/"' })).message],
+      ['degraded reach, one syntax error', degradedRow('reach', degraded({ errors: 2, saved: { parseErrors: 2 }, exported: { parseErrors: 2 }, sameText: true })).message],
+      ['degraded check-behaviour, one syntax error', degradedRow('check-behaviour', degraded({ errors: 2, saved: { parseErrors: 2 }, exported: { parseErrors: 2 }, sameText: true })).message],
+      ['degraded reach, two texts', degradedRow('reach', degraded({ errors: 4, saved: { parseErrors: 1 }, exported: { parseErrors: 3 }, sameText: false })).message],
+      ['degraded check-behaviour, two texts', degradedRow('check-behaviour', degraded({ errors: 4, saved: { parseErrors: 1 }, exported: { parseErrors: 3 }, sameText: false })).message],
+      ['degraded reach, export parses', degradedRow('reach', degraded({ errors: 1, saved: { parseErrors: 1 }, exported: { parseErrors: 0 }, sameText: false })).message],
+      ['degraded check-behaviour, export parses', degradedRow('check-behaviour', degraded({ errors: 1, saved: { parseErrors: 1 }, exported: { parseErrors: 0 }, sameText: false })).message],
+      ['degraded reach, validation errors', degradedRow('reach', degraded({ errors: 5, validationErrors: 5 })).message],
+      ['degraded check-behaviour, validation errors', degradedRow('check-behaviour', degraded({ errors: 5, validationErrors: 5 })).message],
+      ['the check-behaviour tooltip', CHECKS.find((c) => c.id === 'check-behaviour')!.question],
+    ];
+    for (const [name, text] of sentences) {
       expect(text.length, `${name} is empty`).toBeGreaterThan(0);
       expect(hitsFor(text), `${name} trips a reserved form:${show(hitsFor(text))}`).toEqual([]);
     }
