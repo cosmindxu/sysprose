@@ -453,9 +453,17 @@ export interface NumericConstraintResult {
   /**
    * Set on a definition's relation read in a context that specialises the
    * definition (`id` is then `<baseId>@<contextId>`): the relation, and the
-   * context it was read in — `instances` of `checkConstraints`.
+   * context it was read in — `instances` of `checkConstraints`. `path` is the
+   * instance path a group row reads through (F7); for a context row without
+   * one it is absent, and `contextId` names the context.
    */
-  context?: { baseId: ElementId; contextId: ElementId };
+  context?: { baseId: ElementId; contextId: ElementId; path?: string };
+  /**
+   * The element the anchor rule re-anchored this row to (F7); absent on a row
+   * anchored at the relation itself. The app's Solve rows point at it, falling
+   * back to `context.baseId`.
+   */
+  anchorId?: ElementId;
   /**
    * Set on a row that is a value the model states twice, not a relation
    * (`ConstraintCheck.conflict` of ./evaluate-model) — a binding connector's

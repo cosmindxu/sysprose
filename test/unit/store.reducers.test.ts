@@ -1425,6 +1425,83 @@ describe('store — Check lists one row per specialisation of a target', () => {
 });
 
 /**
+ * Per-instance presentation (F6): the Check re-anchors a context row that sits
+ * on an implicit element (the anchor rule, H6a) — never leaving a row with no
+ * source span to point at; the Solve words a context row `… in <context>` —
+ * never "(at the boundary)" — and folds rows a binding reads once per instance
+ * so a model with thousands of instance paths stays a short Problems list.
+ */
+describe('store — per-instance Check and Solve rows (F6)', () => {
+  beforeEach(() => {
+    useAppStore.setState({ model: new Model(), undoStack: [], redoStack: [], diagnostics: [] });
+  });
+  const load = (src: string): void => {
+    useAppStore.setState({ model: parseModel(src).model, undoStack: [], redoStack: [], diagnostics: [] });
+  };
+
+  it('re-anchors a context row that sits on an implicit element by the anchor rule', () => {
+    // P's `c` read in Q's `p` is anchored at the implicit `Q::p::load`; the
+    // Check points instead at the outermost non-implicit usage on the path.
+    load(`package H2P {
+    part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; constraint c { load <= 10.0 } }
+    part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+    part q : Q { attribute :>> L = 50.0; }
+}`);
+    st().runConstraintCheck();
+    const rows = st().diagnostics.filter((d) => d.ruleId === 'constraint-check');
+    // The relation's own row is unchanged.
+    expect(rows.some((d) => d.message.startsWith('Constraint satisfied: load <= 10.0'))).toBe(true);
+    // The context row for Q's p is not left on the implicit connector-end copy.
+    const contextRow = rows.find((d) => /constraint-check#\d+\.\d+/.test(d.id));
+    expect(contextRow).toBeDefined();
+    expect(contextRow!.elementId).toBeDefined();
+    expect(st().model.get(contextRow!.elementId!)?.attrs.implicit).not.toBe(true);
+    // The re-anchored element is the usage Q::p, not the implicit end.
+    const anchor = st().model.get(contextRow!.elementId!)!;
+    expect(anchor.eClass).toBe('PartUsage');
+    expect(st().model.qualifiedName(anchor.id)).toBe('H2P::Q::p');
+  });
+
+  it('words a context row `violated … in <context>`, with the relation as its anchor and no amount', () => {
+    load(`package CV {
+    part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+    part p1 : P { attribute :>> load = 50.0; }
+    part p2 : P { attribute :>> load = 70.0; }
+}`);
+    st().solveParametric();
+    const rows = st().diagnostics.filter((d) => d.id.startsWith('solve#viol#'));
+    expect(rows.map((d) => d.message).sort()).toEqual([
+      'violated inequality: load <= 10.0 in CV::p1',
+      'violated inequality: load <= 10.0 in CV::p2',
+    ]);
+    for (const r of rows) {
+      expect(r.message).not.toContain('(at the boundary)');
+      expect(r.message).not.toMatch(/\(by /);
+      expect(r.elementId).toBeDefined();
+      expect(st().model.get(r.elementId!)?.attrs.implicit).not.toBe(true);
+    }
+  });
+
+  it('folds thousands of instance rows into a bounded Solve view', () => {
+    const levels: string[] = [
+      'part def N0 { attribute x : ScalarValues::Real; assert constraint lo { x >= 0.0 } assert constraint hi { x <= 10.0 } attribute s : ScalarValues::Real = x; }',
+    ];
+    for (let i = 1; i <= 9; i++) {
+      levels.push(`part def N${i} { part a : N${i - 1}; part b : N${i - 1}; attribute s : ScalarValues::Real = a.s + b.s; }`);
+    }
+    load(`package Perf9 {\n${levels.join('\n')}\npart top : N9; constraint cT { top.s <= 5120.0 }\n}`);
+    st().solveParametric();
+    const rows = st().diagnostics.filter((d) => d.ruleId === 'solve');
+    // 1024 leaves each leave `x` and `s` free, and every level's `s` too: the
+    // fold caps this at one row per feature, far below the unbounded ~4,600.
+    expect(rows.length).toBeLessThanOrEqual(200);
+    const foldedFree = rows.find((d) => d.id.startsWith('solve#free#') && d.message.includes('instances'));
+    expect(foldedFree).toBeDefined();
+    expect(foldedFree!.message).toMatch(/\d+ instances/);
+  });
+});
+
+/**
  * Google Drive (optional) — what the boot reads, and the model-side helpers a
  * Drive open and save stand on. The boot itself never runs under Vitest (it is
  * gated on the build MODE); `bootDrive` is called here with an injected fetch,

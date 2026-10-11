@@ -119,6 +119,10 @@ import {
   type ActionFlowRun,
   type StateMachineRun,
   type AnalysisReport,
+  type AnalysisViolation,
+  type AnalysisUnknown,
+  type SolvedValue,
+  type ElementRef,
   type Query,
   type QueryResult,
   type Branch,
@@ -195,6 +199,9 @@ import {
   canCarryStatementKind,
   reachesTheFile,
   keywordsOnRecord,
+  instanceRollup,
+  anchorFor,
+  effectiveQualifiedName,
   type RmAttrKey,
   type StatementKind,
   type SimSample,
@@ -1012,10 +1019,233 @@ function stateMachineDiagnostics(model: Model, machine: StateMachineRun): Diagno
 }
 
 /**
+ * The context or instance a Solve row was read in, for the `… in {label}`
+ * wording: the group's instance `path` (F7), else the context's qualified name.
+ * A row whose `context` is set never prints "(at the boundary)" — its `amount`
+ * of 0 is the context-row convention, not a strict ordering at its boundary.
+ */
+function solveContextLabel(
+  model: Model,
+  context: { baseId: ElementId; contextId?: ElementId; path?: string },
+): string {
+  if (context.path !== undefined) return context.path;
+  if (context.contextId !== undefined) return effectiveQualifiedName(model, context.contextId);
+  return effectiveQualifiedName(model, context.baseId);
+}
+
+/** An instance value/free row's ref is a symbol (`<feature>@<its path>`), not the feature's own name. */
+function isInstanceRef(model: Model, element: ElementRef): boolean {
+  return element.qualifiedName !== model.qualifiedName(element.id);
+}
+
+/** `a, b, c, … and N more (N words)` for a folded row's first-few labels. */
+function foldTail(labels: readonly string[], shown: number, word: string): string {
+  const head = labels.slice(0, shown).join(', ');
+  return labels.length > shown
+    ? `${head}, … and ${labels.length - shown} more (${labels.length} ${word})`
+    : `${head} (${labels.length} ${word})`;
+}
+
+/** The violation rows: a context row says where it stands, the rest quote the amount (C.3). */
+function solveViolations(model: Model, violations: AnalysisViolation[]): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  const groups = new Map<string, AnalysisViolation[]>();
+  for (const v of violations) {
+    if (v.context) {
+      const list = groups.get(v.context.baseId);
+      if (list) list.push(v);
+      else groups.set(v.context.baseId, [v]);
+    } else {
+      out.push({
+        id: `solve#viol#${out.length}`,
+        ruleId: 'solve',
+        severity: 'warning',
+        message:
+          v.amount === 0
+            ? `violated ${v.kind}: ${v.expression} (at the boundary)`
+            : `violated ${v.kind}: ${v.expression} (by ${v.amount.toPrecision(4)}${
+                v.unit ? ` [${v.unit}]` : ''
+              })`,
+        elementId: v.element.id,
+      });
+    }
+  }
+  // Context rows of one relation fold past five, keeping the first five paths.
+  for (const group of groups.values()) {
+    if (group.length <= 5) {
+      for (const v of group) {
+        out.push({
+          id: `solve#viol#${out.length}`,
+          ruleId: 'solve',
+          severity: 'warning',
+          message: `violated ${v.kind}: ${v.expression} in ${solveContextLabel(model, v.context!)}`,
+          elementId: v.anchorId ?? v.context!.baseId,
+        });
+      }
+    } else {
+      const labels = group.map((v) => solveContextLabel(model, v.context!));
+      out.push({
+        id: `solve#viol#${out.length}`,
+        ruleId: 'solve',
+        severity: 'warning',
+        message: `violated ${group[0]!.kind}: ${group[0]!.expression} in ${foldTail(labels, 5, 'contexts')}`,
+        elementId: group[0]!.context!.baseId,
+      });
+    }
+  }
+  return out;
+}
+
+/** The unknown rows: a context row says where it stood, the rest the reason (C.3). */
+function solveUnknowns(model: Model, unknowns: AnalysisUnknown[]): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  const groups = new Map<string, AnalysisUnknown[]>();
+  for (const u of unknowns) {
+    if (u.context) {
+      const key = `${u.context.baseId}\u0000${u.reason ?? ''}`;
+      const list = groups.get(key);
+      if (list) list.push(u);
+      else groups.set(key, [u]);
+    } else {
+      out.push({
+        id: `solve#unknown#${out.length}`,
+        ruleId: 'solve',
+        severity: 'info',
+        message: `unjudged ${u.kind}: ${u.expression}${u.reason ? ` — ${u.reason}` : ''}`,
+        elementId: u.element.id,
+      });
+    }
+  }
+  for (const group of groups.values()) {
+    const reason = group[0]!.reason ? ` — ${group[0]!.reason}` : '';
+    if (group.length <= 5) {
+      for (const u of group) {
+        out.push({
+          id: `solve#unknown#${out.length}`,
+          ruleId: 'solve',
+          severity: 'info',
+          message: `unjudged ${u.kind}: ${u.expression} in ${solveContextLabel(model, u.context!)}${reason}`,
+          elementId: u.anchorId ?? u.context!.baseId,
+        });
+      }
+    } else {
+      const labels = group.map((u) => solveContextLabel(model, u.context!));
+      out.push({
+        id: `solve#unknown#${out.length}`,
+        ruleId: 'solve',
+        severity: 'info',
+        message: `unjudged ${group[0]!.kind}: ${group[0]!.expression} in ${foldTail(labels, 5, 'contexts')}${reason}`,
+        elementId: group[0]!.context!.baseId,
+      });
+    }
+  }
+  return out;
+}
+
+/** The value rows: an instance value folds per feature past five, keeping the first three paths. */
+function solveValues(model: Model, values: SolvedValue[]): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  const groups = new Map<string, SolvedValue[]>();
+  for (const v of values) {
+    if (isInstanceRef(model, v.element)) {
+      const list = groups.get(v.element.id);
+      if (list) list.push(v);
+      else groups.set(v.element.id, [v]);
+    } else {
+      out.push({
+        id: `solve#value#${out.length}`,
+        ruleId: 'solve',
+        severity: 'info',
+        message: `value: ${v.element.declaredName || v.element.qualifiedName || v.element.id} = ${v.value}`,
+        elementId: v.element.id,
+      });
+    }
+  }
+  for (const group of groups.values()) {
+    if (group.length <= 5) {
+      for (const v of group) {
+        out.push({
+          id: `solve#value#${out.length}`,
+          ruleId: 'solve',
+          severity: 'info',
+          message: `value: ${v.element.qualifiedName} = ${v.value}`,
+          elementId: v.element.id,
+        });
+      }
+    } else {
+      const feature = model.get(group[0]!.element.id);
+      const name = feature?.declaredName || group[0]!.element.qualifiedName.split('::').pop() || group[0]!.element.id;
+      out.push({
+        id: `solve#value#${out.length}`,
+        ruleId: 'solve',
+        severity: 'info',
+        message: `value: ${name} in ${foldTail(group.map((v) => v.element.qualifiedName), 3, 'instances')}`,
+        elementId: group[0]!.element.id,
+      });
+    }
+  }
+  return out;
+}
+
+/** The free rows: an instance freedom folds per feature past five, keeping the first three paths. */
+function solveFree(model: Model, free: ElementRef[]): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  const groups = new Map<string, ElementRef[]>();
+  for (const f of free) {
+    if (isInstanceRef(model, f)) {
+      const list = groups.get(f.id);
+      if (list) list.push(f);
+      else groups.set(f.id, [f]);
+    } else {
+      out.push({
+        id: `solve#free#${out.length}`,
+        ruleId: 'solve',
+        severity: 'info',
+        message: `free: ${f.declaredName || f.qualifiedName || f.id} — left free by the equations (no value states it, no relation fixes it); its relations are unjudged`,
+        elementId: f.id,
+      });
+    }
+  }
+  for (const group of groups.values()) {
+    if (group.length <= 5) {
+      for (const f of group) {
+        out.push({
+          id: `solve#free#${out.length}`,
+          ruleId: 'solve',
+          severity: 'info',
+          message: `free: ${f.qualifiedName} — left free by the equations (no value states it, no relation fixes it); its relations are unjudged`,
+          elementId: f.id,
+        });
+      }
+    } else {
+      const feature = model.get(group[0]!.id);
+      const name = feature?.declaredName || group[0]!.qualifiedName.split('::').pop() || group[0]!.id;
+      out.push({
+        id: `solve#free#${out.length}`,
+        ruleId: 'solve',
+        severity: 'info',
+        message: `free: ${name} — left free by the equations in ${foldTail(
+          group.map((f) => f.qualifiedName),
+          3,
+          'instances',
+        )}; its relations are unjudged`,
+        elementId: group[0]!.id,
+      });
+    }
+  }
+  return out;
+}
+
+/**
  * Build navigable info rows for a numeric-analysis (Solve) run: a header with the
  * solver convergence, one row per solved feature value, one row per feature the
  * equations leave free, and one row per evaluated measure of effectiveness (each
  * navigable to its underlying feature element).
+ *
+ * Rows a binding or context reads once per instance (`<id>@<instance>`, C.2)
+ * fold: a relation's violations/unknowns fold per (base relation, reason) past
+ * five, and an instance's values/freedoms fold per feature past five. v9 has no
+ * such rows, so its Solve view is byte-identical.
  */
 function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[] {
   const header: Diagnostic = {
@@ -1028,13 +1258,6 @@ function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[]
       report.values.length
     } value(s), ${report.measures.length} measure(s).`,
   };
-  const values: Diagnostic[] = report.values.map((v, i) => ({
-    id: `solve#value#${i}`,
-    ruleId: 'solve',
-    severity: 'info',
-    message: `value: ${v.element.declaredName || v.element.qualifiedName || v.element.id} = ${v.value}`,
-    elementId: v.element.id,
-  }));
   const measures: Diagnostic[] = report.measures.map((mo, i) => ({
     id: `solve#moe#${i}`,
     ruleId: 'solve',
@@ -1056,47 +1279,17 @@ function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[]
       ? `Feasibility: no violated inequality constraint.${unjudgedNote}`
       : `Feasibility: ${report.violations.length} violated constraint(s).${unjudgedNote}`,
   };
-  // A STRICT ordering violated exactly at its boundary has an amount of 0 (the
-  // violation IS the tie), and "by 0.000" reads as no violation at all — so
-  // that row says where it stands instead of quoting the number.
-  const violations: Diagnostic[] = report.violations.map((v, i) => ({
-    id: `solve#viol#${i}`,
-    ruleId: 'solve',
-    severity: 'warning',
-    message:
-      v.amount === 0
-        ? `violated ${v.kind}: ${v.expression} (at the boundary)`
-        : `violated ${v.kind}: ${v.expression} (by ${v.amount.toPrecision(4)}${
-            v.unit ? ` [${v.unit}]` : ''
-          })`,
-    elementId: v.element.id,
-  }));
-  // A relation neither engine could judge is REPORTED, not dropped: an
-  // information row, because an unjudged constraint is not a violated one.
-  const unknowns: Diagnostic[] = (report.unknowns ?? []).map((u, i) => ({
-    id: `solve#unknown#${i}`,
-    ruleId: 'solve',
-    severity: 'info',
-    message: `unjudged ${u.kind}: ${u.expression}${u.reason ? ` — ${u.reason}` : ''}`,
-    elementId: u.element.id,
-  }));
-  // A design freedom has no value row: the point the solve stopped at along it
-  // is a choice, not an answer. Said once per feature, so a model whose every
-  // value is free does not read as an empty one.
-  const free: Diagnostic[] = (report.free ?? []).map((f, i) => ({
-    id: `solve#free#${i}`,
-    ruleId: 'solve',
-    severity: 'info',
-    message: `free: ${f.declaredName || f.qualifiedName || f.id} — left free by the equations (no value states it, no relation fixes it); its relations are unjudged`,
-    elementId: f.id,
-  }));
+  const violations = solveViolations(model, report.violations);
+  const unknowns = solveUnknowns(model, report.unknowns ?? []);
+  const values = solveValues(model, report.values);
+  const free = solveFree(model, report.free ?? []);
   const rows = [header, feasibility, ...violations, ...unknowns, ...values, ...free, ...measures];
   if (
     report.values.length === 0 &&
     report.measures.length === 0 &&
     report.violations.length === 0 &&
-    free.length === 0 &&
-    unknowns.length === 0
+    report.free.length === 0 &&
+    (report.unknowns?.length ?? 0) === 0
   ) {
     header.message = 'Solve: no parametric constraints or measures to evaluate.';
   }
@@ -2759,34 +2952,57 @@ export const useAppStore = create<AppState>((set, get) => {
         console.error('constraint check failed', err);
         report = { total: 0, satisfied: 0, violated: 0, unknown: 0, constraints: [] };
       }
-      const constraintDiags: Diagnostic[] = report.constraints.flatMap((c, i) => [
-        {
-          id: `constraint-check#${i}`,
-          ruleId: 'constraint-check',
-          severity: c.result === 'violated' ? 'warning' : 'info',
-          message:
-            c.result === 'satisfied'
-              ? // An equation that defines a valueless feature (CV-17) says what it
-                // defines and the value it fixes; the bare expression would hide
-                // the one number the user is looking for.
-                c.message.startsWith('Constraint satisfied: defines')
-                ? `${c.message} (${c.expression})`
-                : `Constraint satisfied: ${c.expression}`
-              : c.result === 'violated'
-                ? c.message
-                : `Constraint could not be evaluated ("${c.expression}"): ${c.message}.`,
-          elementId: c.id,
-        } satisfies Diagnostic,
-        ...(c.instances ?? []).map(
-          (inst, j): Diagnostic => ({
+      const constraintDiags: Diagnostic[] = report.constraints.flatMap((c, i) => {
+        const rows: Diagnostic[] = [
+          {
+            id: `constraint-check#${i}`,
+            ruleId: 'constraint-check',
+            severity: c.result === 'violated' ? 'warning' : 'info',
+            message:
+              c.result === 'satisfied'
+                ? // An equation that defines a valueless feature (CV-17) says what it
+                  // defines and the value it fixes; the bare expression would hide
+                  // the one number the user is looking for.
+                  c.message.startsWith('Constraint satisfied: defines')
+                  ? `${c.message} (${c.expression})`
+                  : `Constraint satisfied: ${c.expression}`
+                : c.result === 'violated'
+                  ? c.message
+                  : `Constraint could not be evaluated ("${c.expression}"): ${c.message}.`,
+            elementId: c.id,
+          } satisfies Diagnostic,
+        ];
+        // Non-binding context rows (a target over a measure nothing specialises
+        // in that context) stay one row each, worded as the validator words
+        // them, re-anchored at the anchor rule so an implicit specialiser never
+        // leaves a row with no source span to point at (H6a).
+        const instances = c.instances ?? [];
+        instances.forEach((inst, j) => {
+          if (inst.via === true || inst.instance !== undefined || inst.generic === true) return;
+          rows.push({
             id: `constraint-check#${i}.${j}`,
             ruleId: 'constraint-check',
             severity: inst.result === 'violated' ? 'warning' : 'info',
             message: inst.message,
-            elementId: inst.featureId,
-          }),
-        ),
-      ]);
+            elementId: anchorFor(model, c, inst),
+          });
+        });
+        // Rows read through a binding (`via`) and expanded group rows share the
+        // rule's formatter, so the Check and the validator say the same thing.
+        instanceRollup(model, c).forEach((r, k) => {
+          rows.push({
+            id: `constraint-check#${i}.r${k}`,
+            ruleId: 'constraint-check',
+            severity: r.severity,
+            message: r.message,
+            elementId: r.elementId,
+            ...(r.instances ? { instances: r.instances } : {}),
+            ...(r.instance !== undefined ? { instance: r.instance } : {}),
+            ...(r.relation !== undefined ? { relation: r.relation } : {}),
+          });
+        });
+        return rows;
+      });
       set({ diagnostics: [...base, ...constraintDiags] });
     },
 
