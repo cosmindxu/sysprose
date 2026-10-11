@@ -114,6 +114,7 @@ const MUST_DOCUMENT = [
   'tab-api',
   'tab-simulation',
   'tab-versions',
+  'checks-report',
 ];
 
 describe('the controls the user guide names', () => {

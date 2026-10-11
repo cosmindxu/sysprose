@@ -6,7 +6,9 @@
  * real subcommand, every view offers something, and a check that cannot run
  * here says so instead of returning a verdict it has not earned.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import React from 'react';
+import { fireEvent, render } from '@testing-library/react';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,7 +35,9 @@ import {
   NOT_ISOLATED,
   QUALIFIED_NAME_PLACEHOLDER,
   type CheckContext,
+  type CheckResult,
 } from '../../src/ui/checks';
+import { BehaviourReport } from '../../src/ui/panels/BehaviourReport';
 import {
   behaviourResult,
   degradedRow,
@@ -722,5 +726,139 @@ describe('defaults and questions (I10)', () => {
     expect(reach.question).toBe('Which states are reachable, which transitions are dead, where did the simulator hide a choice?');
     expect(beh.question.startsWith('Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name?')).toBe(true);
     expect(beh.question).toContain('@PropertyPattern');
+  });
+});
+
+describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
+  const reachSpec = CHECKS.find((c) => c.id === 'reach')!;
+  const behSpec = CHECKS.find((c) => c.id === 'check-behaviour')!;
+
+  /** Render `BehaviourReport` over a stored result, with no store and no mocks. */
+  const mount = (checkId: string, result: CheckResult, model: Model) => {
+    const onSelect = vi.fn();
+    const view = render(
+      React.createElement(BehaviourReport, {
+        checkId,
+        stored: { result, rev: 0, at: 0 },
+        exists: (id: string) => model.get(id) !== undefined,
+        onSelect,
+      }),
+    );
+    return { view, onSelect };
+  };
+
+  /** The first (only) machine of a single-machine model, for check-behaviour. */
+  const singleMachine = (model: Model): { id: ElementId; name: string } => {
+    const m = stateMachinesIn(model)[0];
+    expect(m, 'no machine').toBeDefined();
+    return { id: m.id, name: model.qualifiedName(m.id) };
+  };
+
+  it('renders one checks-report-line per line, data-withholds matching', () => {
+    const model = inline(SPURIOUS);
+    const result = runCheck(reachSpec, ctx({ model, loadHealth: healthy }));
+    const { view } = mount('reach', result, model);
+    const lines = result.lines!;
+    const els = [...view.container.querySelectorAll('.checks-report-line')];
+    expect(els).toHaveLength(lines.length);
+    for (let i = 0; i < lines.length; i++) {
+      expect(els[i].getAttribute('data-kind')).toBe(lines[i].kind);
+      expect(els[i].getAttribute('data-withholds')).toBe(lines[i].withholds ? 'true' : 'false');
+    }
+  });
+
+  it('makes a line that names a live element a button that selects it', () => {
+    const model = inline(SPURIOUS);
+    const result = runCheck(reachSpec, ctx({ model, loadHealth: healthy }));
+    const { view, onSelect } = mount('reach', result, model);
+    const lines = result.lines!;
+    const firstClickable = lines.find(
+      (l) => l.elementId !== null && l.kind !== 'witness-step' && model.get(l.elementId!) !== undefined,
+    );
+    expect(firstClickable, 'no line names a live element').toBeDefined();
+    const buttons = [...view.container.querySelectorAll('.checks-report-line button')];
+    expect(buttons.length, 'at least one line is a button').toBeGreaterThan(0);
+    fireEvent.click(buttons[0]);
+    expect(onSelect).toHaveBeenCalledWith(firstClickable!.elementId);
+  });
+
+  it('keeps witness-step lines as plain text, not buttons', () => {
+    const model = inline(mission('absence', 'state landed'));
+    const m = singleMachine(model);
+    const result = runCheck(
+      behSpec,
+      ctx({ model, selectionId: m.id, selectionName: m.name, loadHealth: healthy }),
+    );
+    const { view } = mount('check-behaviour', result, model);
+    const steps = [...view.container.querySelectorAll('.checks-report-line[data-kind="witness-step"]')];
+    expect(steps).toHaveLength(3);
+    for (const el of steps) expect(el.querySelector('button')).toBeNull();
+    expect(view.container.querySelector('[data-claim="fail"]')).not.toBeNull();
+  });
+
+  it('labels a reach machine by qualified name, with its status tokens and chips', () => {
+    const model = inline(SPURIOUS);
+    const result = runCheck(reachSpec, ctx({ model, loadHealth: healthy }));
+    const { view } = mount('reach', result, model);
+    const machine = view.container.querySelector('.checks-report-machine')!;
+    expect(machine.getAttribute('data-machine')).toBe('P::M');
+    expect(machine.getAttribute('data-status')!.split(' ')).toEqual(
+      expect.arrayContaining(['withheld', 'walk-only']),
+    );
+    expect(machine.getAttribute('data-status')).not.toContain('holds');
+  });
+
+  it('shows an inconclusive block\u2019s detail and never reads PASS or holds', () => {
+    const model = inline(MISSION_RESP);
+    const m = singleMachine(model);
+    const result = runCheck(
+      behSpec,
+      ctx({ model, selectionId: m.id, selectionName: m.name, loadHealth: healthy }),
+    );
+    const { view } = mount('check-behaviour', result, model);
+    const block = view.container.querySelector('[data-claim="inconclusive"]')!;
+    expect(block.textContent).toContain('inconclusive: liveness not checked in-process');
+    for (const el of block.querySelectorAll('*')) {
+      expect(el.textContent, 'no element reads PASS').not.toBe('PASS');
+      expect(el.textContent, 'no element reads holds').not.toBe('holds');
+    }
+  });
+
+  it('shows a demoted block\u2019s NOT COUNTED chip and note, never PASS', () => {
+    const model = inline(a15('cover'));
+    const m = singleMachine(model);
+    const result = runCheck(
+      behSpec,
+      ctx({ model, selectionId: m.id, selectionName: m.name, loadHealth: healthy }),
+    );
+    const { view } = mount('check-behaviour', result, model);
+    const block = view.container.querySelector('[data-claim="covered"][data-walk-only="true"]')!;
+    expect(block.textContent).toContain('NOT COUNTED');
+    expect(block.querySelector('[data-testid="checks-report-note"]')).not.toBeNull();
+    expect(block.textContent).toContain('covered — witness trace');
+    for (const el of block.querySelectorAll('*')) {
+      expect(el.textContent, 'no element reads PASS').not.toBe('PASS');
+      expect(el.textContent, 'no element reads holds').not.toBe('holds');
+    }
+  });
+
+  it('flags the spurious no-way-out and choice lines walk-only', () => {
+    const model = inline(SPURIOUS);
+    const result = runCheck(reachSpec, ctx({ model, loadHealth: healthy }));
+    const { view } = mount('reach', result, model);
+    expect(
+      view.container.querySelectorAll('.checks-report-line[data-kind="no-way-out"][data-walk-only="true"]'),
+    ).toHaveLength(2);
+    expect(
+      view.container.querySelectorAll('.checks-report-line[data-kind="choice"][data-walk-only="true"]'),
+    ).toHaveLength(1);
+  });
+
+  it('renders a state named <b>x</b> as text, never as markup (I11)', () => {
+    const model = inline("package P { state def M { state a; state '<b>x</b>'; transition first a then a; } }");
+    const result = runCheck(reachSpec, ctx({ model, loadHealth: healthy }));
+    const { view } = mount('reach', result, model);
+    expect(view.container.textContent).toContain('<b>x</b>');
+    expect(view.container.querySelector('b')).toBeNull();
   });
 });

@@ -6,8 +6,10 @@
  * finding to select the element — and, for a check this page cannot run, get
  * the command instead of a verdict nobody earned.
  */
-import { test, expect } from '@playwright/test';
-import { captureErrors, gotoApp } from './fixtures';
+import { test, expect, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { captureErrors, diagramSettled, gotoApp, openTab, selectElementById } from './fixtures';
+import { modelSize } from './model-helpers';
 
 test('a model check runs here, lands in the Checks tab, and goes stale on an edit', async ({ page }) => {
   const errors = captureErrors(page);
@@ -96,4 +98,101 @@ test('Edit acts on the selection, and is disabled without one', async ({ page })
   await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
   await expect(page.getByTestId('palette-delete')).toBeDisabled();
   await expect(page.getByTestId('palette-duplicate')).toBeDisabled();
+});
+
+/* ════════════ behaviour verification: the report under a result (E7) ══════ */
+
+/** Load a model from text, and wait for the library merge (which bumps `rev`). */
+async function loadText(page: Page, text: string): Promise<void> {
+  await openTab(page, 'tab-text');
+  const editor = page.getByTestId('text-editor');
+  await expect(editor).toBeVisible();
+  await editor.fill(text);
+  await page.getByTestId('text-apply').click();
+  await expect.poll(() => modelSize(page)).toBeGreaterThan(1000);
+  await diagramSettled(page);
+}
+
+/** Select an element by qualified name, through the live SDK and the tree. */
+async function selectByQualifiedName(page: Page, qn: string): Promise<void> {
+  const id = await page.evaluate((q) => {
+    const api = (window as unknown as { sysml: { byName: (q: string) => { id: string } | undefined } }).sysml;
+    return api.byName(q)?.id ?? null;
+  }, qn);
+  if (!id) throw new Error(`no element named ${qn}`);
+  await selectElementById(page, id);
+}
+
+const carrier = (pattern: string, p: string): string =>
+  `@SysproseVerification::PropertyPattern { attribute pattern = "${pattern}"; attribute scope = "globally"; attribute p = "${p}"; }`;
+const MISSION_FAIL = `package MissionDag { part def Mission { state def Modes { ${carrier('absence', 'state landed')} state takeoff; state cruise; state landed; transition takeoff then cruise; transition cruise then landed; } } }`;
+const MISSION_RESP =
+  'package MissionDag { part def Mission { state def Modes { @SysproseVerification::PropertyPattern { attribute pattern = "response"; attribute scope = "globally"; attribute p = "state takeoff"; attribute s = "state landed"; } state takeoff; state cruise; state landed; transition takeoff then cruise; transition cruise then landed; } } }';
+const A15_COVER = `package P { state def M { ${carrier('cover', 'state c')} state a; state b; state c; transition a_b first a then b; transition a_c first a accept e then c; transition b_a first b accept back then a; } }`;
+
+test('the reach report is the terminal lines, machine by machine (latch)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await loadText(page, readFileSync('test/fixtures/verification/models/latch.sysml', 'utf8'));
+  await page
+    .locator('[data-testid="palette-check"][data-check="reach"]')
+    .getByTestId('palette-check-run')
+    .click();
+  const report = page.locator('[data-testid="checks-report"]');
+  await expect(report).toBeVisible();
+  await expect(
+    report.locator('.checks-report-line[data-kind="trap-refused"][data-withholds="true"]').first(),
+  ).toContainText('inconclusive: this machine names triggers');
+  await expect(report.locator('.checks-report-machine[data-status~="withheld"]')).toHaveCount(1);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('an inconclusive property shows its detail in the report (missionResp)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await loadText(page, MISSION_RESP);
+  await page.getByTestId('tb-view-state').click();
+  await selectByQualifiedName(page, 'MissionDag::Mission::Modes');
+  await page
+    .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
+    .getByTestId('palette-check-run')
+    .click();
+  const block = page.locator('[data-testid="checks-report"] [data-claim="inconclusive"]');
+  await expect(block).toBeVisible();
+  await expect(block).toContainText('inconclusive: liveness not checked in-process');
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a fail property shows every run? and its three witness steps (missionFail)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await loadText(page, MISSION_FAIL);
+  await page.getByTestId('tb-view-state').click();
+  await selectByQualifiedName(page, 'MissionDag::Mission::Modes');
+  await page
+    .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
+    .getByTestId('palette-check-run')
+    .click();
+  const block = page.locator('[data-testid="checks-report"] [data-claim="fail"]');
+  await expect(block).toBeVisible();
+  await expect(block).toContainText('every run?');
+  await expect(block.locator('.checks-report-line[data-kind="witness-step"]')).toHaveCount(3);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a walk-only covered property shows NOT COUNTED and its note (a15)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await loadText(page, A15_COVER);
+  await page.getByTestId('tb-view-state').click();
+  await selectByQualifiedName(page, 'P::M');
+  await page
+    .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
+    .getByTestId('palette-check-run')
+    .click();
+  const block = page.locator('[data-testid="checks-report"] [data-claim="covered"][data-walk-only="true"]');
+  await expect(block).toBeVisible();
+  await expect(block).toContainText('NOT COUNTED');
+  await expect(block.getByTestId('checks-report-note')).toBeVisible();
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });

@@ -1529,3 +1529,71 @@ textarea:focus-visible,
 .scenario-diff {
   margin-top: 8px;
 }
+
+/* ── Checks tab: the terminal's report, machine by machine, property by property ── */
+/* The report is the CLI's text, one line per ReportLine, so it must keep the
+ * terminal's own monospace indentation (pre-wrap) and never reinterpret any
+ * character of it — names are rendered as text nodes, so `white-space` is the
+ * only formatting the report applies. */
+.checks-report {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.checks-report-title {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.checks-report-machine,
+.checks-report-property {
+  margin: 6px 0 6px 4px;
+}
+.checks-report-machine-head,
+.checks-report-property-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.checks-report-machine-name {
+  font-weight: 600;
+}
+.checks-report-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.checks-report-line {
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+.checks-report-line button {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent);
+  text-align: left;
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+.checks-report-line button:hover {
+  text-decoration: underline;
+}
+.checks-report-note {
+  margin: 2px 0 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-left: 2px solid var(--border-strong);
+  padding-left: 8px;
+}

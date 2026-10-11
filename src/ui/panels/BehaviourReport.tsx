@@ -82,6 +82,7 @@ function lineNode(
   walkOnlyKeys: ReadonlySet<string>,
   exists: (id: string) => boolean,
   onSelect: (id: string) => void,
+  key: string,
 ): ReactNode {
   const walkOnly = line.rowKey !== null && walkOnlyKeys.has(line.rowKey);
   const clickable = line.elementId !== null && line.kind !== 'witness-step' && exists(line.elementId);
@@ -94,6 +95,7 @@ function lineNode(
   );
   return (
     <div
+      key={key}
       className="checks-report-line"
       data-kind={line.kind}
       data-code={line.code ?? undefined}
@@ -123,7 +125,7 @@ export function BehaviourReport({ checkId, stored, exists, onSelect }: Behaviour
       const machineLine = blockLines.find((l) => l.kind === 'machine');
       const note = machineLine?.elementId != null ? walkOnlyByElement.get(machineLine.elementId) : undefined;
       return (
-        <div className="checks-report-machine" data-machine={name} data-status={status}>
+        <div key={`block-${block}`} className="checks-report-machine" data-machine={name} data-status={status}>
           <div className="checks-report-machine-head">
             <span className="checks-report-machine-name">{name}</span>
             {STATUS_CHIP.filter((c) => status.split(' ').includes(c.token)).map((c) => (
@@ -132,8 +134,12 @@ export function BehaviourReport({ checkId, stored, exists, onSelect }: Behaviour
               </span>
             ))}
           </div>
-          {blockLines.map((l) => lineNode(l, walkOnlyKeys, exists, onSelect))}
-          {note !== undefined && <div className="checks-report-note">{note}</div>}
+          {blockLines.map((l, i) => lineNode(l, walkOnlyKeys, exists, onSelect, `line-${i}`))}
+          {note !== undefined && (
+            <div className="checks-report-note" data-testid="checks-report-note">
+              {note}
+            </div>
+          )}
         </div>
       );
     }
@@ -143,13 +149,17 @@ export function BehaviourReport({ checkId, stored, exists, onSelect }: Behaviour
     const demoted = walkOnlyKeys.has(String(block));
     const note = demoted ? walkOnlyRows[walkOnlyCursor++]?.message : undefined;
     return (
-      <div className="checks-report-property" data-claim={claim} data-walk-only={demoted ? 'true' : undefined}>
+      <div key={`block-${block}`} className="checks-report-property" data-claim={claim} data-walk-only={demoted ? 'true' : undefined}>
         <div className="checks-report-property-head">
           <span className="checks-report-chip">{claim.toUpperCase()}</span>
           {demoted && <span className="checks-report-chip">NOT COUNTED — WALK ONLY</span>}
         </div>
-        {blockLines.map((l) => lineNode(l, walkOnlyKeys, exists, onSelect))}
-        {demoted && note !== undefined && <div className="checks-report-note">{note}</div>}
+        {blockLines.map((l, i) => lineNode(l, walkOnlyKeys, exists, onSelect, `line-${i}`))}
+        {demoted && note !== undefined && (
+          <div className="checks-report-note" data-testid="checks-report-note">
+            {note}
+          </div>
+        )}
       </div>
     );
   };
@@ -171,7 +181,7 @@ export function BehaviourReport({ checkId, stored, exists, onSelect }: Behaviour
       }
     } else {
       flush();
-      body.push(lineNode(line, walkOnlyKeys, exists, onSelect));
+      body.push(lineNode(line, walkOnlyKeys, exists, onSelect, `head-${body.length}`));
     }
   }
   flush();
