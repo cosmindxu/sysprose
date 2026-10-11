@@ -540,6 +540,15 @@ export {
   textOf,
 } from '../semantics/mc/report-lines';
 export type { MachineFor, ReportLine, ReportLineKind, RowKind } from '../semantics/mc/report-lines';
+// Which of the walk's existential answers a run-to-completion run can reach.
+// The terminal still prints them all; a surface that counts findings asks here
+// first (docs/06 §8.5).
+export {
+  confirmUnderRunToCompletion,
+  walkOnlyDiagnostics,
+  witnessRtcGap,
+} from '../semantics/mc/rtc-gap';
+export type { RtcConfirmation, WitnessGap } from '../semantics/mc/rtc-gap';
 export {
   MALFORMED_PROPERTY_CODE,
   UNKNOWN_ATOM_CODE,

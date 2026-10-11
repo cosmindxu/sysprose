@@ -1971,6 +1971,9 @@ describe('L8 — consistency: a requirement set, and the subset that conflicts',
       // `reach` and `check-behaviour` print what this module composes, so the
       // words moved here out of the CLI are scanned where they now live.
       'src/semantics/mc/report-lines.ts',
+      // The module the page's walk-only rows are built on; it prints nothing
+      // itself, but its error text is a string a reader can be shown.
+      'src/semantics/mc/rtc-gap.ts',
       'scripts/sysprose.ts',
       'scripts/lib/sysprose-spec.ts',
       'src/text/langium/diagnostic-codes.ts',
