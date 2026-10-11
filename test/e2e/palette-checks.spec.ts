@@ -321,3 +321,66 @@ test('marks show findings, withheld, not-decided, not-walked and walk-only, besi
 
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
+
+/* ════════════ behaviour verification: the witness stepper (E10) ════════ */
+
+test('witness steps paint the state view and leave a live simulation and the selection alone (E10)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+
+  const selectedId = () =>
+    page.evaluate(() => document.querySelector('.tree-node.is-selected')?.getAttribute('data-elementid') ?? null);
+
+  // missionFail: a no-gap witness whose steps are buttons.
+  await loadText(page, MISSION_FAIL);
+  await page.getByTestId('tb-view-state').click();
+  await selectByQualifiedName(page, 'MissionDag::Mission::Modes');
+  await page
+    .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
+    .getByTestId('palette-check-run')
+    .click();
+  const selectionBefore = await selectedId();
+  expect(selectionBefore).not.toBeNull();
+
+  // Start a live simulation and record its position and glow.
+  await openTab(page, 'tab-simulation');
+  await page.getByTestId('sim-start').click();
+  await expect(page.locator('.react-flow__node.rf-sim-active').first()).toBeVisible();
+  const simIndexBefore = await page.getByTestId('sim-index').textContent();
+  const glowBefore = await page.locator('.react-flow__node.rf-sim-active').count();
+  expect(glowBefore).toBeGreaterThan(0);
+
+  // Step to the third witness step (landed) from the Checks tab.
+  await openTab(page, 'tab-checks');
+  await page.locator('.checks-witness-step[data-step="2"]').click();
+
+  await expect(await nodeByQn(page, 'MissionDag::Mission::Modes::landed')).toHaveAttribute('class', /rf-beh-witness-at/);
+  await expect(await nodeByQn(page, 'MissionDag::Mission::Modes::takeoff')).toHaveAttribute('class', /rf-beh-witness-seen/);
+  await expect(await nodeByQn(page, 'MissionDag::Mission::Modes::cruise')).toHaveAttribute('class', /rf-beh-witness-seen/);
+  await expect(page.locator('.react-flow__node.rf-sim-active')).toHaveCount(0);
+  await expect(page.locator('.react-flow__panel.top.left [data-testid="behaviour-marks"]')).toHaveAttribute(
+    'data-state',
+    'witness',
+  );
+  expect(await selectedId()).toBe(selectionBefore);
+
+  // Close: the simulation position, glow and selection are untouched.
+  await page.locator('.checks-witness-close').click();
+  await expect(page.locator('.react-flow__node.rf-sim-active')).toHaveCount(glowBefore);
+  expect(await page.getByTestId('sim-index').textContent()).toBe(simIndexBefore);
+  expect(await selectedId()).toBe(selectionBefore);
+
+  // a15: a walk-only witness is never stepped — no button, and the caveat text.
+  await loadText(page, A15_COVER);
+  await page.getByTestId('tb-view-state').click();
+  await selectByQualifiedName(page, 'P::M');
+  await page
+    .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
+    .getByTestId('palette-check-run')
+    .click();
+  const a15Block = page.locator('[data-testid="checks-report"] [data-claim="covered"][data-walk-only="true"]');
+  await expect(a15Block.locator('.checks-witness-step')).toHaveCount(0);
+  await expect(a15Block).toContainText('(walk only: not drawn on the diagram)');
+
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});

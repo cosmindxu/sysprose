@@ -2451,6 +2451,15 @@ count it as a finding). A status panel in the canvas's top-left corner
 (`legend-marks`) listing the words present. Every mark names a row in the Checks
 tab except `not decided` and `not walked`.
 
+**In the app, the witness.** A `fail` or `covered` row whose witness the
+run-to-completion replay admits (no step takes an event while a trigger-less
+transition is enabled) turns its witness steps in the Checks tab into buttons
+(`checks-witness-step`, with **Prev** / **Next** / **Close**). A click paints
+the walk's run on the State view — the step's leaf, its stack, and the leaves
+already passed — and hides the reachability marks and the simulation glow until
+it is closed. Only a witness run-to-completion admits is drawn; a walk-only
+witness stays plain text, marked `(walk only: not drawn on the diagram)`.
+
 **Source of truth:** `src/semantics/mc/config.ts` (the step relation the
 interpreter and the walk share), `src/semantics/mc/explore.ts` and
 `src/semantics/mc/profile.ts`.
@@ -3613,7 +3622,7 @@ standard library: see the *Strip · error or note* row.)
 | Fit / zoom to selection / snap / auto-layout | The canvas mini-toolbar | `diagram-fit`, `diagram-fit-selection`, `diagram-snap`, `diagram-autolayout` |
 | Scope diagram to this / Show whole model | Narrow every drawable view to one subtree, and clear it | `node-ctx-scope`, `node-ctx-scope-clear` |
 | Legend | The notation families present in this view, docked bottom-left beside the zoom controls. While reachability marks are painted, a Marks section lists each mark word present (`legend-marks`) — even when the view has no edge kind | `diagram-legend`, `legend-toggle`, `legend-marks` |
-| Reachability marks | The status panel in the canvas's top-left corner, in the State view after a **Reachability** run (`data-state`: `current`, `hidden` or `stale`). One line with the marks on the diagram and the withheld counts, a **details** toggle (`behaviour-marks-details`) for what each mark means, and **Hide marks** / **Show marks** (`behaviour-marks-hide`) | `behaviour-marks`, `behaviour-marks-details`, `behaviour-marks-hide` |
+| Reachability marks | The status panel in the canvas's top-left corner, in the State view after a **Reachability** run (`data-state`: `current`, `hidden` or `stale`). One line with the marks on the diagram and the withheld counts, a **details** toggle (`behaviour-marks-details`) for what each mark means, and **Hide marks** / **Show marks** (`behaviour-marks-hide`). While a witness is open it reads `witness` instead | `behaviour-marks`, `behaviour-marks-details`, `behaviour-marks-hide` |
 | Overview map | The minimap. On a canvas narrower than 1100 px it is a toggle — **▸ Map** — so it cannot cover the legend or the diagram | `minimap-toggle` |
 | Tool hint | While a palette tool is armed, what the next click does, and that Esc cancels | `canvas-tool-hint` |
 
@@ -3625,7 +3634,7 @@ The **▾** at the end of the tab strip folds the panel down to its tabs
 | Tab | What it is | Test id |
 |---|---|---|
 | Problems | One shared list, overwritten by Validate / Check / Simulate / Solve / parse | `tab-problems` |
-| Checks | What each palette check last said: verdict, summary, and each finding with its code — click a finding to select the element it names. A result from before the last edit is marked stale rather than shown as current. A reach or check-behaviour result also carries the terminal's own report under `checks-report`, the same lines the command prints, each one a `checks-report-line` with `data-kind`, `data-code`, `data-withholds` and `data-walk-only`; reach groups them per `checks-report-machine` (`data-machine`, `data-status`), check-behaviour per `checks-report-property` (`data-claim`, `data-walk-only`), and a walk-only answer carries a `checks-report-note` | `tab-checks`, `checks-result`, `checks-row`, `checks-row-select`, `checks-clear`, `checks-report`, `checks-report-note` |
+| Checks | What each palette check last said: verdict, summary, and each finding with its code — click a finding to select the element it names. A result from before the last edit is marked stale rather than shown as current. A reach or check-behaviour result also carries the terminal's own report under `checks-report`, the same lines the command prints, each one a `checks-report-line` with `data-kind`, `data-code`, `data-withholds` and `data-walk-only`; reach groups them per `checks-report-machine` (`data-machine`, `data-status`), check-behaviour per `checks-report-property` (`data-claim`, `data-walk-only`), and a walk-only answer carries a `checks-report-note`. A witness the run-to-completion replay admits is steppable on the diagram: each step is a `checks-witness-step` button, with **Prev** / **Next** / **Close** (`checks-witness-prev`, `checks-witness-next`, `checks-witness-close`) | `tab-checks`, `checks-result`, `checks-row`, `checks-row-select`, `checks-clear`, `checks-report`, `checks-report-note`, `checks-witness-step`, `checks-witness-prev`, `checks-witness-next`, `checks-witness-close` |
 | Text | The model as editable text, with **Apply text → model**; parse warnings fold to one line | `tab-text`, `text-editor`, `text-apply`, `text-editor-diags-toggle` |
 | API Console | A console over the live SDK: queries, metrics, requirement satisfaction, where-used, commit | `tab-api`, `api-query`, `api-run`, `api-metrics` |
 | Simulation | The interactive stepper: target, start, play, step, inject, scrub | `tab-simulation`, `sim-target`, `sim-start`, `sim-step`, `sim-inject` |

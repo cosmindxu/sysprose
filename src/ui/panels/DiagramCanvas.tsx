@@ -53,6 +53,7 @@ import { useBehaviourStore } from './behaviour-store';
 import {
   MARK_ORDER,
   STALE_MARKS_TEXT,
+  WITNESS_NOT_SIMULATION,
   behaviourClassesOf,
   marksStatusLine,
   marksStatusText,
@@ -150,11 +151,33 @@ const NO_MARKS: MarkSummary = { machines: 0, marked: {}, trapWithheld: 0, notDec
  */
 function BehaviourMarks(): JSX.Element | null {
   const reach = useChecksStore((s) => s.results.reach);
+  const beh = useChecksStore((s) => s.results['check-behaviour']);
   const rev = useAppStore((s) => s.rev);
+  const model = useAppStore((s) => s.model);
   const marksHidden = useBehaviourStore((s) => s.marksHidden);
   const detailsOpen = useBehaviourStore((s) => s.detailsOpen);
   const setMarksHidden = useBehaviourStore((s) => s.setMarksHidden);
   const setDetailsOpen = useBehaviourStore((s) => s.setDetailsOpen);
+  const witness = useBehaviourStore((s) => s.witness);
+
+  // An open, gap-free witness reads `witness` (A.5), before any reach marks.
+  if (
+    witness !== null &&
+    beh !== undefined &&
+    beh.rev === rev &&
+    beh.at === witness.resultAt &&
+    model.get(witness.machineId) !== undefined
+  ) {
+    const view = beh.result.witnesses?.find((v) => v.block === witness.block && v.gap === null);
+    if (view !== undefined) {
+      const qn = model.qualifiedName(witness.machineId) ?? witness.machineId;
+      return (
+        <div className="behaviour-marks" data-testid="behaviour-marks" role="status" data-state="witness">
+          <span className="behaviour-marks-line">{WITNESS_NOT_SIMULATION(qn, witness.step + 1, view.steps.length)}</span>
+        </div>
+      );
+    }
+  }
 
   if (reach === undefined) return null;
   const summary = reach.result.markSummary ?? NO_MARKS;

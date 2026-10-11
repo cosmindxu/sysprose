@@ -1598,6 +1598,37 @@ textarea:focus-visible,
   padding-left: 8px;
 }
 
+/* ── Witness stepper (step 6): the step buttons and the prev/next/close row ── */
+.checks-witness-step {
+  color: var(--accent);
+  cursor: pointer;
+}
+.checks-witness-controls {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0 4px;
+  padding-left: 6px;
+}
+.checks-witness-controls button {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.checks-witness-controls button:hover {
+  text-decoration: underline;
+}
+.checks-witness-gap {
+  margin: 2px 0 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* ── Reachability marks (A.4): a ring and a badge on the state view ──────────
    A mark is a `::before` ring at `inset: -8px` (clearing the 2px outline at
    offset 2–3px that `rf-reparent-target` and `rf-sim-active` use) and a

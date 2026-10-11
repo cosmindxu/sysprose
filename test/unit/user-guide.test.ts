@@ -116,6 +116,10 @@ const MUST_DOCUMENT = [
   'tab-versions',
   'checks-report',
   'behaviour-marks',
+  'checks-witness-step',
+  'checks-witness-prev',
+  'checks-witness-next',
+  'checks-witness-close',
 ];
 
 describe('the controls the user guide names', () => {

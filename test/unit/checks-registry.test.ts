@@ -17,11 +17,12 @@ import { buildSampleModel, type ElementId, type Model } from '@core/index';
 import { isKnownCode, parseModel } from '@text/index';
 import { loadModelText } from '@text/load';
 import { reachReport, stateMachinesIn } from '@semantics/mc/explore';
-import { behaviourReport, exitCodeOf } from '@semantics/mc/patterns';
+import { behaviourReport, exitCodeOf, traceLine } from '@semantics/mc/patterns';
 import { confirmUnderRunToCompletion } from '@semantics/mc/rtc-gap';
 import {
   ELEMENT_REQUIRED_LEAD,
   NO_DEFAULT_MACHINE,
+  behaviourLines,
   libraryElementRefusal,
   reachLines,
 } from '@semantics/mc/report-lines';
@@ -41,6 +42,7 @@ import { BehaviourReport } from '../../src/ui/panels/BehaviourReport';
 import {
   behaviourClassesOf,
   behaviourResult,
+  compactWitnesses,
   degradedRow,
   marksStatusLine,
   marksStatusText,
@@ -819,8 +821,8 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
     expect(onSelect).toHaveBeenCalledWith(firstClickable!.elementId);
   });
 
-  it('keeps witness-step lines as plain text, not buttons', () => {
-    const model = inline(mission('absence', 'state landed'));
+  it('keeps a walk-only witness as plain text, with the gap note (a15)', () => {
+    const model = inline(a15('cover'));
     const m = singleMachine(model);
     const result = runCheck(
       behSpec,
@@ -828,9 +830,10 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
     );
     const { view } = mount('check-behaviour', result, model);
     const steps = [...view.container.querySelectorAll('.checks-report-line[data-kind="witness-step"]')];
-    expect(steps).toHaveLength(3);
+    expect(steps.length).toBeGreaterThan(0);
     for (const el of steps) expect(el.querySelector('button')).toBeNull();
-    expect(view.container.querySelector('[data-claim="fail"]')).not.toBeNull();
+    expect(view.container.textContent).toContain('(walk only: not drawn on the diagram)');
+    expect(view.container.querySelector('[data-claim="covered"][data-walk-only="true"]')).not.toBeNull();
   });
 
   it('labels a reach machine by qualified name, with its status tokens and chips', () => {
@@ -1022,5 +1025,79 @@ describe('the state-view marks and the status panel (D.5 step 5)', () => {
       expect(unmarked, 'an unmarked state').toBeDefined();
       expect(a.classes.has(unmarked!.id)).toBe(false);
     });
+  });
+});
+
+describe('the witness stepper (D.5 step 6)', () => {
+  const machineOf = (model: Model) => {
+    const m = stateMachinesIn(model)[0];
+    expect(m, 'no machine').toBeDefined();
+    return { id: m!.id, name: model.qualifiedName(m!.id) };
+  };
+  /** `compactWitnesses` over the report, the way `behaviourResult` stores it. */
+  const witnessViews = (model: Model) => {
+    const m = machineOf(model);
+    const b = behaviourReport(model, { machineId: m.id });
+    const lines = behaviourLines(b, { name: 'model.sysml', machineName: m.name });
+    return { b, views: compactWitnesses(b, model, lines) };
+  };
+
+  it('compacts the missionFail witness to the CLI traceLine rows, no gap', () => {
+    const model = inline(mission('absence', 'state landed'));
+    const { b, views } = witnessViews(model);
+    expect(views).toHaveLength(1);
+    expect(views[0].gap).toBeNull();
+    expect(views[0].machineId).not.toBeNull();
+    expect(views[0].steps).toHaveLength(3);
+    expect(views[0].steps.map((s) => s.text)).toEqual(b.properties[0].witness.map((s) => traceLine(s)));
+    // The opening step carries no transition, and the leaf ids match the witness.
+    expect(views[0].steps[0].index).toBe(0);
+    expect(views[0].steps[0].transitionId).toBeNull();
+    expect(views[0].steps[2].leafId).toBe(idOf(model, 'MissionDag::Mission::Modes::landed'));
+  });
+
+  it('flags the a15 cover witness gap at step 1', () => {
+    const model = inline(a15('cover'));
+    const { views } = witnessViews(model);
+    expect(views).toHaveLength(1);
+    expect(views[0].gap).not.toBeNull();
+    expect(views[0].gap!.step).toBe(1);
+  });
+
+  it('renders a no-gap witness as step buttons with prev/next/close, and never selects', () => {
+    const model = inline(mission('absence', 'state landed'));
+    const m = machineOf(model);
+    const result = runCheck(
+      CHECKS.find((c) => c.id === 'check-behaviour')!,
+      ctx({ model, selectionId: m.id, selectionName: m.name, loadHealth: healthy }),
+    );
+    const onSelect = vi.fn();
+    const view = render(
+      React.createElement(BehaviourReport, {
+        checkId: 'check-behaviour',
+        stored: { result, rev: 0, at: 0 },
+        exists: (id: string) => model.get(id) !== undefined,
+        onSelect,
+      }),
+    );
+    const steps = [...view.container.querySelectorAll('.checks-witness-step')];
+    expect(steps).toHaveLength(3);
+    expect(steps[2].getAttribute('data-step')).toBe('2');
+    expect(view.container.querySelector('.checks-witness-prev')).not.toBeNull();
+    expect(view.container.querySelector('.checks-witness-next')).not.toBeNull();
+    expect(view.container.querySelector('.checks-witness-close')).not.toBeNull();
+    fireEvent.click(steps[2]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('never constructs a SimulationSession or calls select on the witness path (I12, I19)', () => {
+    for (const file of ['src/ui/behaviour-checks.ts', 'src/ui/panels/BehaviourReport.tsx', 'src/ui/panels/behaviour-store.ts']) {
+      const src = readFileSync(root(file), 'utf8');
+      expect(src, `${file} constructs a SimulationSession`).not.toContain('SimulationSession');
+      expect(src, `${file} calls simStart`).not.toContain('simStart');
+      expect(src, `${file} calls simInject`).not.toContain('simInject');
+      expect(src, `${file} calls simAdvance`).not.toContain('simAdvance');
+      expect(src, `${file} calls select(`).not.toContain('select(');
+    }
   });
 });

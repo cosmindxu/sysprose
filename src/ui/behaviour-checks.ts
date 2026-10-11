@@ -24,6 +24,7 @@ import {
   rowKeyOf,
   ELEMENT_REQUIRED_LEAD,
   NO_DEFAULT_MACHINE,
+  type ReportLine,
 } from '@semantics/mc/report-lines';
 import {
   confirmUnderRunToCompletion,
@@ -35,6 +36,7 @@ import {
 import {
   exitCodeOf,
   propertiesOf,
+  traceLine,
   type BehaviourReport,
   type PropertyVerdict,
 } from '@semantics/mc/patterns';
@@ -331,7 +333,7 @@ export function behaviourResult(
   if (G > 0) summary += ` — ${G} of them rest on a witness run-to-completion does not take, so they are not counted as decided`;
   if (D) summary += ` — the model did not load cleanly, so nothing is judged over it`;
 
-  return { verdict, summary, rows, lines, walkOnlyKeys };
+  return { verdict, summary, rows, lines, walkOnlyKeys, witnesses: compactWitnesses(b, model, lines) };
 }
 
 /** The check-behaviour entry: the machine pick, the report, the witness replays. */
@@ -453,6 +455,11 @@ const MARK_CLASS: Record<ReachMark, string> = {
   choice: 'rf-beh rf-beh-choice',
   'walk-only': 'rf-beh rf-beh-walk-only',
 };
+
+/** The witness node classes, interned so two calls give the same string. */
+const WITNESS_AT_CLASS = 'rf-beh-witness-at';
+const WITNESS_STACK_CLASS = 'rf-beh-witness-stack';
+const WITNESS_SEEN_CLASS = 'rf-beh-witness-seen';
 
 /**
  * What the status panel says about a reach run, apart from the marks
@@ -617,6 +624,75 @@ export const STALE_MARKS_TEXT =
   'The model changed after this Reachability run, so nothing is marked — run it again from the palette.';
 
 /**
+ * What the status panel says while a witness is open (A.5): each step is a run
+ * the run-to-completion replay admits, but it is the walk's run, never a
+ * simulation. The sentence names no cause — the interpreter may take it, or it
+ * may not, and this page is not claiming which.
+ */
+export const WITNESS_NOT_SIMULATION = (qn: string, k: number, n: number): string =>
+  `Step ${k} of ${n} of a witness for \`${qn}\` from Behaviour properties. Each step is one run-to-completion allows — no event is taken while a trigger-less transition is enabled — but this is the run the checker's walk found, not a simulation: the Simulation tab runs the interpreter, which may never take it. Reachability marks and the simulation highlight are hidden until it is closed.`;
+
+/* ──────────────────────────────── the witnesses ──────────────────────────── */
+
+/** One step of a compact witness, as the canvas paints it. */
+export interface WitnessStep {
+  /** The `TraceStep` index: 0 is the opening configuration. */
+  readonly index: number;
+  /** The CLI's `traceLine` row, verbatim. */
+  readonly text: string;
+  readonly leafId: ElementId | null;
+  readonly stackIds: ElementId[];
+  readonly transitionId: ElementId | null;
+}
+
+/**
+ * A property's witness, compacted for the stepper: the block it belongs to,
+ * the machine it is about, the steps, and the run-to-completion gap (null when
+ * the replay admits the witness, so it may be drawn and stepped).
+ */
+export interface WitnessView {
+  readonly block: number;
+  readonly machineId: ElementId | null;
+  /** The property line, as the terminal prints it. */
+  readonly header: string;
+  readonly gap: WitnessGap | null;
+  readonly steps: readonly WitnessStep[];
+}
+
+/**
+ * The witnesses of a check-behaviour run, one per property whose witness is
+ * non-empty, each with the run-to-completion gap the replay found (step 6).
+ *
+ * The steps' texts are the CLI's `traceLine` rows — the same strings the report
+ * prints — so a step's `text` and the report's `witness-step` line agree. A
+ * `gap !== null` witness is walk-only: it is not drawn on the diagram, and its
+ * lines stay plain text.
+ */
+export function compactWitnesses(
+  b: BehaviourReport,
+  model: Model,
+  lines: readonly ReportLine[],
+): WitnessView[] {
+  const machineId = b.machine?.id ?? null;
+  const views: WitnessView[] = [];
+  b.properties.forEach((p, i) => {
+    if (p.witness.length === 0) return;
+    const block = i + 1;
+    const header = lines.find((l) => l.block === block && l.kind === 'property')?.text ?? '';
+    const gap = machineId !== null ? witnessRtcGap(model, machineId, p.witness) : null;
+    const steps: WitnessStep[] = p.witness.map((s) => ({
+      index: s.index,
+      text: traceLine(s),
+      leafId: s.leaf?.id ?? null,
+      stackIds: s.stack.map((x) => x.id),
+      transitionId: s.transition?.id ?? null,
+    }));
+    views.push({ block, machineId, header, gap, steps });
+  });
+  return views;
+}
+
+/**
  * A witness the canvas is stepping through, named by the run it came from and
  * the step it is on (step 6; nothing opens one before then).
  */
@@ -645,18 +721,45 @@ export function behaviourClassesOf(i: {
   witness: WitnessAt | null;
   machineExists: (id: ElementId) => boolean;
 }): { classes: ReadonlyMap<ElementId, string>; witnessOpen: boolean } {
+  const witness = i.witness;
+  const beh = i.beh;
   const witnessOpen =
-    i.witness !== null &&
-    i.beh !== undefined &&
-    i.beh.rev === i.rev &&
-    i.beh.at === i.witness.resultAt &&
-    i.machineExists(i.witness.machineId);
+    witness !== null &&
+    beh !== undefined &&
+    beh.rev === i.rev &&
+    beh.at === witness.resultAt &&
+    i.machineExists(witness.machineId);
+
+  // An open witness that run-to-completion admits paints the walk's run: the
+  // step's leaf, its stack ancestors, and the leaves already passed. Only a
+  // gap-free witness is drawn (A.5); a gap-flagged one is never opened.
+  if (witnessOpen && witness !== null && beh !== undefined) {
+    const view = beh.result.witnesses?.find((v) => v.block === witness.block);
+    if (view !== undefined && view.gap === null) {
+      const step = view.steps.find((s) => s.index === witness.step);
+      if (step !== undefined) {
+        const classes = new Map<ElementId, string>();
+        // Earlier leaves first, so a later override wins where two share an id.
+        for (const s of view.steps) {
+          if (s.index < witness.step && s.leafId !== null && s.leafId !== step.leafId) {
+            classes.set(s.leafId, WITNESS_SEEN_CLASS);
+          }
+        }
+        for (const id of step.stackIds) {
+          if (id !== step.leafId) classes.set(id, WITNESS_STACK_CLASS);
+        }
+        if (step.leafId !== null) classes.set(step.leafId, WITNESS_AT_CLASS);
+        return { classes, witnessOpen };
+      }
+    }
+    return { classes: new Map(), witnessOpen };
+  }
+
   if (
     i.reach === undefined ||
     i.reach.rev !== i.rev ||
     i.activeView !== 'state' ||
-    i.marksHidden ||
-    witnessOpen
+    i.marksHidden
   ) {
     return { classes: new Map(), witnessOpen };
   }

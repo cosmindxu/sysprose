@@ -81,6 +81,7 @@ function ChecksTab(): JSX.Element {
   const rev = useAppStore((s) => s.rev);
   const model = useAppStore((s) => s.model);
   const select = useAppStore((s) => s.select);
+  const setActiveView = useAppStore((s) => s.setActiveView);
   const entries = Object.entries(results).sort((a, b) => b[1].at - a[1].at);
 
   if (entries.length === 0) {
@@ -143,6 +144,7 @@ function ChecksTab(): JSX.Element {
                 stored={stored}
                 exists={(x) => model.get(x) !== undefined}
                 onSelect={select}
+                onStep={() => setActiveView('state')}
               />
             )}
           </div>
