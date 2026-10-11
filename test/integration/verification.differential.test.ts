@@ -3118,19 +3118,19 @@ describe('a redefinition is the feature in its context, and a value written with
       ['p.m2 >= 0.0', 'proved'],
       ['p.m2 >= 0.0', 'refuted'],
     ]);
-    // P's own constraint read in Q's p is read for Q's own p alone: q's p,
-    // whose load Q's binding joins to q's L of 50, is an instance no context
-    // names, and that reading was PROVED for every Q's p (h2p).
+    // P's own constraint read in Q's p is now read per instance (F7): Q's own
+    // p (the generic row) proves it, and q's p — whose load Q's binding joins
+    // to q's L of 50 — refutes it.
     const h2p = `package H2P {
     part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
     part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
     part q : Q { attribute :>> L = 50.0; } }`;
     const inP = (await verifyModel(await contextModel(h2p, 'H2P'), { sourceText: h2p, engine: 'smt' })).results;
-    expect(inP.map((r) => [r.claim, r.code])).toEqual([
-      ['proved', null],
-      ['inconclusive', 'verification/not-evaluable'],
+    expect(inP.map((r) => [r.clause.qualifiedName, r.claim])).toEqual([
+      ['H2P::P::c', 'proved'],
+      ['H2P::P::c in H2P::Q::p (H2P::Q\u0027s own)', 'proved'],
+      ['H2P::P::c in H2P::q::p', 'refuted'],
     ]);
-    expect(inP[1]!.detail).toMatch(/a binding above it joins what it reads to another value in H2P::q/);
   });
 
   withZ3('calls a binding a value written with `=` contradicts a contradiction on every surface (h2f, h2g)', async () => {
@@ -3304,6 +3304,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       const [base, ctx] = id.split('@');
       return ctx === undefined ? qn(base!) : `${qn(base!)} in ${qn(ctx)}`;
     };
+    // A group's generic row is named `{Rel} in {U} ({D}'s own)` on the verify
+    // surface; the other surfaces file it `{Rel} in {U}` (its id is `${id}@${U}`).
+    // Strip the suffix so one row is one row across all four surfaces.
+    const norm = (q: string) => q.replace(/ \([^()]*'s own\)$/, '');
     const rows = new Map<string, SurfaceRow>();
     const put = (k: string, s: number, letter: Letter, id: string, why: string) => {
       let row = rows.get(k);
@@ -3335,7 +3339,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ] as const) {
       const report = await verifyModel(m, { engine, sourceText: text });
       for (const r of report.results) {
-        put(r.clause.qualifiedName, s, engineLetter(r), r.clause.id, r.detail);
+        put(norm(r.clause.qualifiedName), s, engineLetter(r), r.clause.id, r.detail);
         // I6: each side of the relation, where it is one bare path the row prints a value for — in the
         // row's bindings and in its evidence record. A value printed with a unit is compared as a quantity
         // (its SI value, as `bound.si` holds the compared sides); one printed with NO value is recorded,
@@ -3344,7 +3348,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         const split = /^(.*?)(?:<=|>=|==|!=|<|>)(.*)$/s.exec(r.expression);
         if (si2 === undefined || split === null) continue;
         const bare = (side: string) => /^\s*([A-Za-z_][\w.]*)\s*$/.exec(side)?.[1];
-        const row = rows.get(r.clause.qualifiedName)!;
+        const row = rows.get(norm(r.clause.qualifiedName))!;
         const record = report.records.find(
           (x) => x.obligation.clause === r.clause.qualifiedName && x.obligation.expression === r.expression,
         );
@@ -3499,7 +3503,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q { attribute :>> L = 50.0; }
       }`, {
       'H2P::P::c': ['T/T/T/T', 'T'],
-      'H2P::P::c in H2P::Q::p': ['?/?/?/?', 'T'],
+      'H2P::P::c in H2P::Q::p': ['T/T/T/T', 'T'],
+      'H2P::P::c in H2P::q::p': ['F/F/F/F', 'F'],
     }),
     k1: probe(`package K1 {
         attribute L : ScalarValues::Real = 50.0;
@@ -3759,7 +3764,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part r2 : R;
       }`, {
       'S2::P::c': ['T/T/T/T', 'T'],
-      'S2::P::c in S2::Q::p': ['?/?/?/?', 'T'],
+      'S2::P::c in S2::Q::p': ['T/T/T/T', 'T'],
+      'S2::P::c in S2::R::a::p': ['T/T/T/T', 'T'],
+      'S2::P::c in S2::R::b::p': ['T/T/T/?', 'T'],
+      'S2::P::c in S2::r1::a::p': ['F/F/F/F', 'F'],
+      'S2::P::c in S2::r2::a::p': ['T/T/T/?', 'T'],
+      'S2::P::c in S2::r1::b::p': ['T/T/T/?', 'T'],
+      'S2::P::c in S2::r2::b::p': ['T/T/T/?', 'T'],
     }),
     'mapper-s3': probe(`package S3 {
         part def P { attribute x : ScalarValues::Real; constraint c { x >= 40.0 } }
@@ -3779,7 +3790,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p0 : P;
       }`, {
       'S1::P::c': ['T/T/T/T', 'T'],
-      'S1::P::c in S1::Q::p': ['?/?/?/?', 'T'],
+      'S1::P::c in S1::Q::p': ['T/T/T/T', 'T'],
+      'S1::P::c in S1::q1::p': ['F/F/F/F', 'F'],
+      'S1::P::c in S1::q2::p': ['T/T/T/T', 'T'],
+      'S1::P::c in S1::q3::p': ['T/T/T/?', 'T'],
     }),
     M1: probe(`package M1 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3928,7 +3942,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q { attribute :>> K = 25.0; }
       }`, {
       'M8::P::c': ['T/T/T/T', 'T'],
-      'M8::P::c in M8::Q::p': ['?/?/?/?', 'T'],
+      'M8::P::c in M8::Q::p': ['T/T/T/T', 'T'],
+      'M8::P::c in M8::q::p': ['F/F/F/F', 'F'],
     }),
     M9: probe(`package M9 {
         part def P {
@@ -3940,6 +3955,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'M9::P::c': ['T/T/T/T', 'T'],
       'M9::P::c in M9::Q::p': ['?/?/?/?', '?'],
+      'M9::P::c in M9::q::p': ['F/F/F/F', 'F'],
     }),
     // Found by F1: a derived DEFAULT partner a usage overrides. Q's c read in q2 read Q's L of 1 for q2's
     // load, which is q2's own L of 50 (T/T/T/? before F1, and a false `#bind` in q2).
@@ -3961,11 +3977,16 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     }),
     bigBind5: probe(bigBind(5), {
       'Big::P::c': ['T/T/T/T', 'T'],
-      'Big::P::c in Big::Q0::p': ['?/?/?/?', 'T'],
-      'Big::P::c in Big::Q1::p': ['?/?/?/?', 'T'],
-      'Big::P::c in Big::Q2::p': ['?/?/?/?', 'T'],
-      'Big::P::c in Big::Q3::p': ['?/?/?/?', 'T'],
-      'Big::P::c in Big::Q4::p': ['?/?/?/?', 'T'],
+      'Big::P::c in Big::Q0::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::Q1::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::Q2::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::Q3::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::Q4::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::q0::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::q1::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::q2::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::q3::p': ['T/T/T/T', 'T'],
+      'Big::P::c in Big::q4::p': ['T/T/T/T', 'T'],
       'Big::k0': ['F/F/F/F', 'F'],
       'Big::k1': ['F/F/F/F', 'F'],
       'Big::k2': ['F/F/F/F', 'F'],
@@ -3984,7 +4005,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top1 { q1.p.load + q1.p.x <= 10.0 }
       }`, {
       'R1::P::c': ['T/T/T/X', 'T'],
-      'R1::P::c in R1::Q::p': ['?/?/?/?', 'T'],
+      'R1::P::c in R1::Q::p': ['T/T/T/X', 'T'],
+      'R1::P::c in R1::q1::p': ['T/T/T/X', 'T'],
+      'R1::P::c in R1::q2::p': ['T/T/T/X', 'T'],
       'R1::q1::tie': ['F/-/F/-', null],
       'R1::top1': ['?/?/T/X', null],
     }),
@@ -4202,7 +4225,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q2 : Q;
       }`, {
       'R14b::P::c': ['T/T/T/T', 'T'],
-      'R14b::P::c in R14b::Q::p': ['?/?/?/?', 'T'],
+      'R14b::P::c in R14b::Q::p': ['T/T/T/T', 'T'],
+      'R14b::P::c in R14b::Q2::p': ['F/F/F/F', 'F'],
+      'R14b::P::c in R14b::q2::p': ['T/T/T/?', 'T'],
     }),
     'refute-r14c': probe(`package R14c {
         part def P {
@@ -4221,7 +4246,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q2 : Q;
       }`, {
       'R14c::P::c': ['T/T/T/T', 'T'],
-      'R14c::P::c in R14c::Q::p': ['?/?/?/?', 'T'],
+      'R14c::P::c in R14c::Q::p': ['T/T/T/T', 'T'],
+      'R14c::P::c in R14c::R::q::p': ['F/F/F/F', 'F'],
+      'R14c::P::c in R14c::Q2::p': ['F/F/F/F', 'F'],
+      'R14c::P::c in R14c::q2::p': ['T/T/T/?', 'T'],
       'R14c::Q2::inQ2': ['F/F/F/F', 'F'],
       'R14c::R::inR': ['F/F/F/F', 'F'],
     }),
@@ -4239,7 +4267,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R14d::Inner::inInner': ['F/F/F/F', 'F'],
       'R14d::P::c': ['T/T/T/T', 'T'],
-      'R14d::P::c in R14d::Q::p': ['?/?/?/?', 'T'],
+      'R14d::P::c in R14d::Q::p': ['T/T/T/T', 'T'],
+      'R14d::P::c in R14d::q2::p': ['T/T/T/?', 'T'],
+      'R14d::P::c in R14d::Inner::q9::p': ['F/F/F/F', 'F'],
     }),
     'refute-r14e': probe(`package R14eLib {
         part def P {
@@ -4254,7 +4284,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint inUse { q9.p.load <= 10.0 }
       }`, {
       'R14eLib::P::c': ['T/T/T/T', 'T'],
-      'R14eLib::P::c in R14eLib::Q::p': ['?/?/?/?', 'T'],
+      'R14eLib::P::c in R14eLib::Q::p': ['T/T/T/T', 'T'],
+      'R14eLib::P::c in R14eLib::q2::p': ['T/T/T/?', 'T'],
+      'R14eLib::P::c in R14eUse::q9::p': ['F/F/F/F', 'F'],
       'R14eUse::inUse': ['F/F/F/F', 'F'],
     }),
     'refute-r15': probe(`package R15 {
@@ -4271,7 +4303,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint qsT { qs.p.m2 >= 0.0 }
       }`, {
       'R15::P::c': ['T/T/T/T', 'T'],
-      'R15::P::c in R15::Q::p': ['?/?/?/?', 'T'],
+      'R15::P::c in R15::Q::p': ['T/T/T/T', 'T'],
+      'R15::P::c in R15::q::p': ['F/F/F/F', 'F'],
+      'R15::P::c in R15::qs::p': ['T/T/T/T', 'T'],
       'R15::m2NegT': ['T/T/T/T', 'T'],
       'R15::m2PosF': ['F/F/F/F', 'F'],
       'R15::qsT': ['T/T/T/T', 'T'],
@@ -4341,7 +4375,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part r2 : R;
         constraint top { r1.q.p.load <= 10.0 }
       }`, {
-      'R17::R::q::c': ['?/?/?/?', 'T'],
+      'R17::R::q::c': ['T/T/T/T', 'T'],
+      'R17::R::q::c in R17::r1::q': ['F/F/F/F', 'F'],
+      'R17::R::q::c in R17::r2::q': ['T/T/T/?', 'T'],
       'R17::top': ['F/F/F/F', 'F'],
     }),
     'refute-r17c': probe(`package R17c {
@@ -4356,7 +4392,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q { attribute :>> L = 50.0; }
         constraint top { q.p.load <= 10.0 }
       }`, {
-      'R17c::Q::p::c2': ['?/?/?/?', 'T'],
+      'R17c::Q::p::c2': ['T/T/T/T', 'T'],
+      'R17c::Q::p::c2 in R17c::q::p': ['F/F/F/F', 'F'],
       'R17c::top': ['F/F/F/F', 'F'],
     }),
     'refute-r18': probe(`package R18 {
@@ -4392,6 +4429,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R19::P::c': ['T/T/T/T', 'T'],
       'R19::P::c in R19::P2': ['T/T/T/T', 'T'],
       'R19::P::c in R19::Q::p': ['?/?/?/?', '?'],
+      'R19::P::c in R19::q1::p': ['F/F/F/F', 'F'],
+      'R19::P::c in R19::q2::p': ['?/?/?/?', '?'],
       'R19::P::c in R19::solo': ['T/T/T/T', 'T'],
       'R19::q2T': ['?/?/?/?', '?'],
       'R19::soloT': ['T/T/T/T', 'T'],
@@ -5063,6 +5102,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['n2 | N2::lim', 'two asserts give x two values; the check reads one'],
     ['refute-r1 | R1::P::c', 'q1’s asserted `p.x == 50.0` against x’s default: the default-vs-assert semantics is open (H5)'],
     ['refute-r1 | R1::top1', 'the same; the check abstains (an enclosing assert, F5)'],
+    ['refute-r1 | R1::P::c in R1::Q::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
+    ['refute-r1 | R1::P::c in R1::q1::p', 'the same q1 assert beside the group row read in q1’s p'],
+    ['refute-r1 | R1::P::c in R1::q2::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
     ...[
       ['assert-min', 'AM::ctlT'],
       ['assert-min', 'AM::ctlF'],

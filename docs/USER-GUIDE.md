@@ -846,15 +846,17 @@ booleans or expressions that read no name, compared exactly (`1000.0 [g]` and
 reads a name, however alike the text (`bind a1.v = a2.v` over A's `v default =
 2.0 * K` joins two values where a2 sets K). The model states neither, and no
 surface calls it a contradiction. A definition's constraint over a value read
-through a binding is read anew in every context that joins the binding to
-another value, as a constraint over a redefined value is. One read in a usage
-(P's `load <= 10.0` in `Q::p`) whose value a binding of Q joins to another in a
-context of Q (q's L) is read there for Q's own p alone — q's p is named by no
-context — so the solver lane does not carry it (*not evaluable*), and the
-check reads it as *could not be evaluated* there. A relation written in such a
-usage (`part p : P { constraint c2 { load <= 10.0 } }` in Q) holds of every Q's
-p, so no surface decides it while a binding above the usage reads what it
-reads otherwise; an `assert` there stays an axiom. A value the partner of a
+through a binding is read anew in every usage a binding above joins to another
+value, once per instance, as a constraint over a redefined value is. One read in
+a usage (P's `load <= 10.0` in `Q::p`) whose value a binding of Q joins to
+another in a context of Q (q's L) is read for Q's own p — the usage's own
+instance, named `P::c in Q::p (Q's own)` on the verify lane — and again for each
+other instance, q's p included, whose load the binding carries q's L into. The
+rows are read apart, each at the value of the instance it names, so an instance
+that breaks the relation is reported against that instance and the check rolls
+them up into one finding. A relation written in such a usage (`part p : P {
+constraint c2 { load <= 10.0 } }` in Q) is read the same way; an `assert` there
+stays an axiom, read for the usage's own instance. A value the partner of a
 binding derives (Q's `L = 2.0 * K`) is read for the bound feature only where
 every instance it stands for reads the partner alike — not for q's p, whose K q
 sets. A binding written in a usage's body to a feature of the definition around
@@ -3115,7 +3117,7 @@ not there.
 **Source of truth:** `src/semantics/statement-kind.ts` (the vocabulary, the
 keyword, what can carry one), `src/api/analytics.ts` (`promptsFor`, and the
 `nonNormativeExcluded` figure in `requirementSatisfaction`),
-`src/validation/rules.ts:554-571`, `966-989` (the two rules that ask),
+`src/validation/rules.ts:557-574`, `969-992` (the two rules that ask),
 `scripts/sysprose.ts` (`requirements --kind`, `prompts`),
 `test/unit/semantics.statement-kind.test.ts`.
 

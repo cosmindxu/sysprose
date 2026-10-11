@@ -2855,10 +2855,13 @@ export interface InstanceGroup {
 }
 
 /** Past this many instances of one usage, its group is not expanded (A.7, E). */
-const MAX_INSTANCE_READS = 4096;
+export const MAX_INSTANCE_READS = 4096;
 
 /** Past this many instance readings in one sweep, later groups are not expanded (A.7, E). */
-const MAX_INSTANCE_RELATIONS = 16384;
+export const MAX_INSTANCE_RELATIONS = 16384;
+
+/** Past this many instance goal rows in one verify run, a group keeps its single refusal (A.7, E). */
+export const MAX_INSTANCE_GOALS = 256;
 
 /**
  * The contexts a definition (or a usage at the top of a usage chain) is read
@@ -3149,12 +3152,12 @@ export function instancesOfDefinition(definitions: DefiningEquations, definition
       continue;
     }
     const d = definitions.denote(root.id).get(prefix);
-    if (d) add(definitions.instanceNameOf(d.feature.id));
+    if (d) add(`${d.instance}::${definitions.nameOf(d.feature) ?? ''}`);
   }
   for (const pkg of userPackages(definitions.model)) {
     for (const d of definitions.denote(pkg.id).values()) {
       if (d.feature.id === definition.id || definitions.specialisersOf(definition.id).some((s) => s.id === d.feature.id)) {
-        add(definitions.instanceNameOf(d.feature.id));
+        add(`${d.instance}::${definitions.nameOf(d.feature) ?? ''}`);
       }
     }
   }
@@ -3186,10 +3189,17 @@ export function instanceGroups(model: Model): InstanceGroup[] {
     const definition = model.get(el.ownerId);
     if (!definition || definition.attrs.isLibrary === true) continue;
     const names = relationNamesOf(expr);
+    const usages: ElementRecord[] = [];
     for (const usage of definitions.readingContexts(el, names)) {
-      if (!isUsage(usage.eClass) || definitions.boundAbove(usage.id, names) === undefined) continue;
+      if (isUsage(usage.eClass) && definitions.boundAbove(usage.id, names) !== undefined) usages.push(usage);
+    }
+    // A relation OWNED by a usage U (R17c/R17, R1-M2): U is itself a group —
+    // its own row is U's generic reading, and each other instance gets a row
+    // of its own. `readingContexts` never lists the owner, so this is added.
+    if (isUsage(definition.eClass) && definitions.boundAbove(definition.id, names) !== undefined) usages.push(definition);
+    for (const usage of usages) {
       const instances = instancesOfUsage(definitions, usage);
-      const { truncated } = bindingFrames(definitions, definition);
+      const { truncated } = bindingFrames(definitions, usage);
       const group: InstanceGroup = { relationId: el.id, usageId: usage.id, definitionId: definition.id, instances, expanded: false };
       if (truncated) {
         group.refusal = {

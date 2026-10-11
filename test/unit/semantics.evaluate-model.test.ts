@@ -2192,17 +2192,16 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(checks.filter((c) => c.conflict === 'bind').map((c) => c.ownerId)).toEqual([named(m!, 'FanS::Q2').id]);
   });
 
-  it('says why a context a binding above reads otherwise is not read (the obligations sentence, M8)', async () => {
+  it('expands a shared usage into its generic row and one row per instance (M8, F7)', async () => {
     const { model: m } = await loadModelText(`package M8 {
       part def P { attribute load : ScalarValues::Real default = 3.0; constraint c { load <= 10.0 } }
       part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L; }
       part q : Q { attribute :>> K = 25.0; }
     }`);
-    const definitions = sharedDefinitions(m!);
     const c = checkConstraints(m!).find((x) => m!.qualifiedName(x.id) === 'M8::P::c')!;
-    const p = named(m!, 'M8::Q::p');
-    expect(c.instances!.map((i) => [m!.qualifiedName(i.contextId), i.result, i.detail])).toEqual([
-      ['M8::Q::p', 'unknown', `Could not evaluate: ${boundAboveSentence(definitions, p.id, named(m!, 'M8::q'))}`],
+    expect(c.instances!.map((i) => [m!.qualifiedName(i.contextId), i.result, i.instance, i.generic])).toEqual([
+      ['M8::Q::p', 'satisfied', undefined, true],
+      ['M8::Q::p', 'violated', 'M8::q::p', undefined],
     ]);
   });
 });

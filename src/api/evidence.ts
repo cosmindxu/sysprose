@@ -1649,6 +1649,19 @@ export function attachEvidence(
     }
     const target = resolveByQualifiedName(model, qn);
     if (!target) {
+      // A record of a per-instance or per-context row (`R in q::p`, `R in Q::p
+      // (Q's own)`) names no element: its requirement is the part before the
+      // last ` in `. Skip it truthfully — a requirement's facet reads the
+      // requirement's own row, never a row read in one instance (F7, C.8).
+      const sep = qn.lastIndexOf(' in ');
+      const requirement = sep > 0 ? qn.slice(0, sep) : undefined;
+      if (requirement !== undefined && resolveByQualifiedName(model, requirement)) {
+        report.skipped.push({
+          clause: record.obligation.clause,
+          reason: 'a per-instance or per-context claim; a requirement\u2019s facet reads the requirement\u2019s own row',
+        });
+        continue;
+      }
       report.skipped.push({
         clause: record.obligation.clause,
         reason: `no element of this model is called \`${qn}\` — the record was produced against a different file`,

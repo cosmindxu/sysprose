@@ -67,6 +67,7 @@ import {
 import { parseExpr, evaluate, type ExprNode } from './expr';
 import { isBindingEdge, propagateValues } from './connectors';
 import {
+  anchorFor,
   checkConstraints,
   checksByRow,
   evaluateFeatureValue,
@@ -78,8 +79,10 @@ import {
   baseIdOf,
   defaultGivesWay,
   hasStatedValue,
+  instanceGroups,
   isAsserted,
   isParameterisedCalculation,
+  MAX_INSTANCE_RELATIONS,
   relationNamesOf,
   shadowedNamesOf,
   shadowedSentence,
@@ -1095,9 +1098,6 @@ function valueEquation(
   const lhs: ExprNode = { kind: 'ref', path: [name] };
   return makeEquation(model, lhs, body.node, s, nameToId, body, memo, identity, readBy, false, onRefused, instance);
 }
-
-/** How many relations {@link instanceSystem} reads for instances before it stops (a type that contains itself has an instance at every depth). */
-const MAX_INSTANCE_RELATIONS = 16384;
 
 const INSTANCE_SYSTEMS = new WeakMap<Model, Map<string, { rev: number; system: InstanceSystem }>>();
 
@@ -3963,6 +3963,20 @@ function numericRows(
     verdicts ??= new Map(sweep().map((c) => [c.id, c]));
     return verdicts.get(id);
   };
+  // The relations a usage owns whose group F7 expands per instance: their own
+  // row is the usage's generic reading, not the refusal (F1) the other
+  // surfaces kept before F7.
+  let ownedExpanded: Set<ElementId> | undefined;
+  const ownedGroupExpanded = (el: ElementRecord): boolean => {
+    if (ownedExpanded === undefined) {
+      ownedExpanded = new Set();
+      for (const g of instanceGroups(model)) {
+        const rel = model.get(g.relationId);
+        if (g.expanded && rel && g.usageId === rel.ownerId) ownedExpanded.add(g.relationId);
+      }
+    }
+    return ownedExpanded.has(el.id);
+  };
 
   for (const el of model.all()) {
     if (only && !only.has(el.id)) continue;
@@ -4118,8 +4132,9 @@ function numericRows(
     // it reads otherwise (usageOwnedRefusal): no verdict for any one of them,
     // in the sentence the other surfaces give — the solve reads the usage's
     // generic instance alone, and q's p, whose load the binding sets, breaks
-    // what Q's own p meets.
-    const shared = usageOwnedRefusal(model, el, relationNamesOf(raw));
+    // what Q's own p meets. An expanded group (F7) reads the generic row here
+    // and the instances in {@link contextRows}.
+    const shared = ownedGroupExpanded(el) ? undefined : usageOwnedRefusal(model, el, relationNamesOf(raw));
     if (shared) {
       row.reason = shared;
       out.push(row);
@@ -4452,7 +4467,7 @@ function contextRows(model: Model, checks: readonly ConstraintCheck[]): NumericC
     const name = model.get(c.id)?.declaredName ?? '';
     for (const i of instances) {
       out.push({
-        id: `${c.id}@${i.contextId}`,
+        id: i.instance !== undefined ? `${c.id}@${i.instance}` : `${c.id}@${i.contextId}`,
         name,
         raw: c.expression,
         kind,
@@ -4460,7 +4475,8 @@ function contextRows(model: Model, checks: readonly ConstraintCheck[]): NumericC
         result: i.result,
         slack: null,
         amount: 0,
-        context: { baseId: c.id, contextId: i.contextId },
+        context: { baseId: c.id, contextId: i.contextId, ...(i.instance !== undefined ? { path: i.instance } : {}) },
+        ...(i.instance !== undefined ? { anchorId: anchorFor(model, c, i) } : {}),
         ...(i.result !== 'satisfied' ? { reason: reason(i.detail ?? i.message) } : {}),
       });
     }

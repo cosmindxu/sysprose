@@ -36,6 +36,7 @@ import {
   hasUserBindings,
   instanceGroups,
   rebaseInstance,
+  type InstanceGroup,
   hasStatedValue,
   isAsserted,
   isBindingConnector,
@@ -989,20 +990,32 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
   // One pass for the sweep — its derivations, scalar and unit-aware, are
   // settled once; every constraint reads the same features.
   const pass = newPass(model);
-  // The shared usages F7 expands into per-instance rows: a context that is
-  // one of them keeps today's refusal here (F5 reads only the element-context
-  // rows, h2c/M7; the shared-usage rows are F7's).
-  const sharedUsages = new Set(instanceGroups(model).map((g) => g.usageId));
+  // The shared-usage and usage-owned groups F7 expands into per-instance rows,
+  // keyed by relation for the loop below.
+  const groupsByRelation = new Map<ElementId, InstanceGroup[]>();
+  for (const g of instanceGroups(model)) {
+    const list = groupsByRelation.get(g.relationId);
+    if (list) list.push(g);
+    else groupsByRelation.set(g.relationId, [g]);
+  }
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     const expr = el.attrs.expression;
     if (typeof expr !== 'string' || expr.trim() === '') continue;
 
-    // Written in a usage that stands for instances a binding above it reads
-    // otherwise: no verdict, in the sentence every surface gives.
+    const groups = groupsByRelation.get(el.id) ?? [];
+    // A relation OWNED by a usage U (R17c/R17, R1-M2): its own row is U's
+    // generic reading; each other instance gets a row of its own (F7). Unexpanded
+    // (past a cap) it keeps today's refusal, in the group's sentence.
+    const owned = groups.find((g) => g.usageId === el.ownerId);
     const shared = usageOwnedRefusal(model, el, relationNamesOf(expr));
-    const judged: Judgement = shared
-      ? { result: 'unknown', message: `Could not evaluate: ${shared}`, gap: false }
-      : judgeConstraint(model, el, expr, pass);
+    const judged: Judgement =
+      owned !== undefined
+        ? owned.expanded
+          ? judgeConstraint(model, el, expr, pass)
+          : { result: 'unknown', message: `Could not evaluate: ${owned.refusal!.sentence}`, gap: false }
+        : shared
+          ? { result: 'unknown', message: `Could not evaluate: ${shared}`, gap: false }
+          : judgeConstraint(model, el, expr, pass);
     const check: ConstraintCheck = {
       id: el.id,
       ownerId: el.ownerId,
@@ -1013,7 +1026,14 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
       ...(judged.reads ? { reads: judged.reads } : {}),
     };
     if (judged.gap) readThroughSpecialisers(model, el, expr, check, pass);
-    readInContexts(model, el, expr, check, pass, sharedUsages);
+    readInContexts(model, el, expr, check, pass, groups);
+    // A usage-owned relation's own row is its generic row; file each other
+    // instance beside it (F7), no separate generic row.
+    if (owned !== undefined && owned.expanded) {
+      const rows = check.instances ?? [];
+      rows.push(...groupInstanceRows(model, el, expr, pass, owned, false));
+      check.instances = rows;
+    }
     out.push(check);
   }
   out.push(...contradictions(model, pass));
@@ -1025,20 +1045,23 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
  * The checks of a sweep by the id a worklist row carries: a constraint's own
  * by its element id, and its reading in a context ({@link readInContexts}) by
  * `<id>@<context id>` — the id of the worklist row that reads it there
- * (`Obligation.instance` of ./obligations). What the literal and SMT engines
- * look a row's numeric reading up in.
+ * (`Obligation.instance` of ./obligations) — and a group's instance row (F7)
+ * by `<id>@<instance path>`. What the literal and SMT engines look a row's
+ * numeric reading up in.
  */
 export function checksByRow(checks: readonly ConstraintCheck[]): Map<ElementId, ConstraintCheck> {
   const out = new Map<ElementId, ConstraintCheck>();
   for (const c of checks) {
     out.set(c.id, c);
     for (const i of c.instances ?? []) {
-      out.set(`${c.id}@${i.contextId}`, {
-        id: `${c.id}@${i.contextId}`,
+      const at = i.instance ?? i.contextId;
+      out.set(`${c.id}@${at}`, {
+        id: `${c.id}@${at}`,
         ownerId: i.contextId,
         expression: c.expression,
         result: i.result,
         message: i.detail ?? i.message,
+        ...(i.reads ? { reads: i.reads } : {}),
       });
     }
   }
@@ -1126,7 +1149,10 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
     const listed = violated.slice(0, 5).map(instanceLabel);
     const generic = group.find((i) => i.generic === true);
     const usage = generic?.context ?? '';
-    const definition = generic ? effectiveQualifiedName(model, generic.contextId) : '';
+    // The generic row is the usage's own instance: `({D}'s own)` names the
+    // element that OWNS the usage (Q, not its part p), so "Q's own p".
+    const genericOwner = generic ? model.get(generic.contextId)?.ownerId : undefined;
+    const definition = genericOwner != null ? effectiveQualifiedName(model, genericOwner) : '';
     out.push({
       elementId: check.id,
       severity: counts.violated > 0 ? 'warning' : 'info',
@@ -1303,7 +1329,7 @@ function readInContexts(
   expr: string,
   check: ConstraintCheck,
   pass: ScalarPass,
-  sharedUsages?: ReadonlySet<ElementId>,
+  groups?: readonly InstanceGroup[],
 ): void {
   if (el.ownerId == null) return;
   const names = namesIn(expr);
@@ -1315,19 +1341,40 @@ function readInContexts(
   const target = targetName(model, el);
   const instances = check.instances ?? [];
   const bodyNames = relationNamesOf(expr);
+  const groupFor = new Map((groups ?? []).map((g) => [g.usageId, g] as const));
   for (const x of contexts) {
+    // A shared usage U (F7) whose group {@link instanceGroups} expanded: read
+    // per instance — the generic (U's own) row and one per other instance. An
+    // unexpanded group keeps today's refusal, in its sentence.
+    const group = groupFor.get(x.id);
+    if (group !== undefined) {
+      if (group.expanded) {
+        instances.push(...groupInstanceRows(model, el, expr, pass, group));
+      } else {
+        instances.push({
+          contextId: x.id,
+          context: effectiveNameOf(model, x) ?? pass.definitions.contextName(x.id),
+          featureId: x.id,
+          qualifiedName: effectiveQualifiedName(model, x.id),
+          bindings: [],
+          result: 'unknown',
+          message: `Could not evaluate: ${group.refusal!.sentence}`,
+          detail: `Could not evaluate: ${group.refusal!.sentence}`,
+          abstention: group.refusal!.kind,
+        });
+      }
+      continue;
+    }
     const reading: ElementRecord = { ...el, ownerId: x.id };
     // A context whose reading met a binding (F5) is read per instance — at the
     // context's own instance — instead of being refused: h2c's `Q::c in q`, M7's
-    // `Q::c in q2`. Past a cap, a shared usage (F7's), or a context listed only
-    // because a member reads its own value there (the G340 family), the refusal
-    // is kept in its sentence.
+    // `Q::c in q2`. Past a cap, or a context listed only because a member reads
+    // its own value there (the G340 family), the refusal is kept in its sentence.
     const above = pass.definitions.boundAbove(x.id, bodyNames);
     const cap = above !== undefined && 'pastCap' in above;
-    const shared = sharedUsages?.has(x.id) === true;
-    const via = !cap && !shared && above !== undefined;
+    const via = !cap && above !== undefined;
     const why =
-      cap || shared
+      cap
         ? boundAboveSentence(pass.definitions, x.id, above!)
         : !via && pass.definitions.readsBoundOnly(el, names, x.id)
           ? boundHereSentence(pass.definitions, x.id)
@@ -1381,6 +1428,58 @@ function readInContexts(
     });
   }
   if (instances.length > 0) check.instances = instances;
+}
+
+/**
+ * The rows of one expanded group (F7, A.7): a relation read in the shared
+ * usage `group.usageId` once per instance — the generic row (the usage's own
+ * instance, `{Rel} in {U} ({D}'s own)`), then one row per other instance
+ * (`{Rel} in {I}`). Each is judged by the one pipeline at that instance, so a
+ * binding that gives one instance its own value reads that value there.
+ */
+function groupInstanceRows(
+  model: Model,
+  el: ElementRecord,
+  expr: string,
+  pass: ScalarPass,
+  group: InstanceGroup,
+  withGeneric = true,
+): SpecialisationInstance[] {
+  const definitions = pass.definitions;
+  const usage = model.get(group.usageId);
+  if (!usage) return [];
+  const reading: ElementRecord = { ...el, ownerId: usage.id };
+  const ids = definitions.scope(usage.id, 'all');
+  const shown: SpecialisationBinding[] = namesIn(expr).map((n) => {
+    const featureId = ids.get(n);
+    return {
+      name: n,
+      featureId: featureId ?? el.id,
+      qualifiedName: featureId !== undefined ? effectiveQualifiedName(model, featureId) : `${definitions.contextName(usage.id)}::${n}`,
+    };
+  });
+  const contextName = definitions.contextName(usage.id);
+  const rows: SpecialisationInstance[] = [];
+  const push = (inst: string | undefined, judged: Judgement): void => {
+    rows.push({
+      contextId: usage.id,
+      context: contextName,
+      featureId: shown[0]?.featureId ?? usage.id,
+      qualifiedName: effectiveQualifiedName(model, shown[0]?.featureId ?? usage.id),
+      bindings: shown,
+      result: judged.result,
+      message: judged.message,
+      detail: judged.message,
+      ...(inst === undefined ? { generic: true as const } : { instance: inst }),
+      ...(judged.abstention !== undefined ? { abstention: judged.abstention } : {}),
+      ...(judged.reads ? { reads: judged.reads } : {}),
+    });
+  };
+  if (withGeneric) push(undefined, judgeConstraint(model, reading, expr, pass));
+  for (const inst of group.instances.slice(1)) {
+    push(inst, judgeConstraint(model, reading, expr, pass, undefined, inst));
+  }
+  return rows;
 }
 
 /** A name a target is read through: the specialiser standing for a measure. */
@@ -1439,6 +1538,7 @@ function judgeConstraint(
   expr: string,
   pass: ScalarPass,
   bindings?: ReadonlyMap<string, Bound>,
+  inst?: string,
 ): Judgement {
   // A body that reads a name its own element declares, which the owner's scope
   // answers with another feature, is read by no surface (shadowedNamesOf).
@@ -1457,11 +1557,11 @@ function judgeConstraint(
   // / power`, `capacity2` itself fixed by one) an `unresolved` the bare-literal
   // refusal then read as a bare number: the definition refused by its input.
   const all = local.bindings.size === 0 ? bindings : new Map([...(bindings ?? []), ...local.bindings]);
-  const judged = judgeBound(model, el, expr, pass, all);
+  const judged = judgeBound(model, el, expr, pass, all, inst);
   // The scalar path above records the values it read per instance; a body the
   // unit-aware reader alone decides (a unit literal applied to a computed
   // operand) has none, so the witness is filled from the unit-aware reading.
-  const ur = judged.reads === undefined ? unitReads(model, el, pass, namesIn(expr)) : undefined;
+  const ur = judged.reads === undefined ? unitReads(model, el, pass, namesIn(expr), inst) : undefined;
   const withReads = ur !== undefined ? { ...judged, reads: ur } : judged;
   // An equation that fixes a valueless feature is not a check that passed
   // but a definition that was read: say what it fixed the feature to — as
@@ -1480,16 +1580,18 @@ function judgeBound(
   expr: string,
   pass: ScalarPass,
   bindings?: ReadonlyMap<string, Bound>,
+  inst?: string,
 ): Judgement {
   const { memo } = pass;
   // The instance the relation is read in (A.2.7): the owner's own, when the
-  // model writes bindings. The unit-aware path reads per instance only then
-  // (`instances`), as the scalar scope does ({@link combinedAnswer}).
-  const inst = hasUserBindings(model) && el.ownerId != null ? pass.definitions.instanceNameOf(el.ownerId) : undefined;
+  // model writes bindings — or the instance a group row names (F7). The
+  // unit-aware path reads per instance only then (`instances`), as the scalar
+  // scope does ({@link combinedAnswer}).
+  const at = inst ?? (hasUserBindings(model) && el.ownerId != null ? pass.definitions.instanceNameOf(el.ownerId) : undefined);
   const uaOpts: ConstraintQuantityOptions = {
     memo,
     ...(bindings ? { bind: (name: string) => bindings.get(name)?.quantity } : {}),
-    ...(inst !== undefined ? { instances: true, instance: inst } : {}),
+    ...(at !== undefined ? { instances: true, instance: at } : {}),
   };
 
   let node;
@@ -1534,7 +1636,7 @@ function judgeBound(
       // A name it lacks is a feature chain: say why, as the scalar branch below
       // says it of the same chain in a body without a `[unit]` — one reason
       // for one chain, which the solver lane refuses it by too.
-      const own = combinedAnswer(model, el, pass);
+      const own = combinedAnswer(model, el, pass, at);
       const scope: Scope = (name) => {
         const bound = bindings?.get(name);
         return bound !== undefined ? bound.value : own(name)?.value;
@@ -1597,7 +1699,7 @@ function judgeBound(
   if (refusal) return { result: 'unknown', message: refusal, gap: false };
 
   // Scope from the owner (subject context) merged with the constraint itself.
-  const combined = combinedAnswer(model, el, pass);
+  const combined = combinedAnswer(model, el, pass, at);
   const answered = new Map<string, ScalarAnswer | undefined>();
   const own = (name: string): ScalarAnswer | undefined => {
     if (!answered.has(name)) answered.set(name, combined(name));
@@ -1632,7 +1734,7 @@ function judgeBound(
       ...(abstain ? { abstentionSentence: abstain } : {}),
     };
   }
-  const reads = collectReads(model, el, pass, referencedNames(node), own);
+  const reads = collectReads(model, el, pass, referencedNames(node), own, at);
   if (r.value === true) {
     return { result: 'satisfied', message: `Constraint satisfied${readsClause(reads)}`, gap: false, ...(reads ? { reads } : {}) };
   }
@@ -1659,19 +1761,23 @@ function unitReads(
   el: ElementRecord,
   pass: ScalarPass,
   names: readonly string[],
+  inst?: string,
 ): InstanceRead[] | undefined {
   const definitions = pass.definitions;
   const root = el.ownerId ?? el.id;
-  const inst = el.ownerId != null ? definitions.instanceNameOf(el.ownerId) : undefined;
-  if (inst === undefined) return undefined;
+  const at = inst ?? (el.ownerId != null ? definitions.instanceNameOf(el.ownerId) : undefined);
+  if (at === undefined) return undefined;
+  // Rebased as {@link collectReads} does, so a unit-only witness names the same
+  // instance symbol the SMT gate checks ({@link DefiningEquations.instanceReadings}).
+  const rebased = definitions.instanceReadings(el, names, at);
   const out: InstanceRead[] = [];
   for (const name of names) {
     const d = definitions.denote(root).get(name);
     if (!d) continue;
     const target = definitions.carrier(d.reader, d.feature);
-    const symbol = definitions.symbolOf(d);
+    const symbol = rebased.get(name)?.symbol ?? definitions.symbolOf(d);
     if (symbol === definitions.qualifiedNameOf(target.id)) continue;
-    const child = rebaseInstance(definitions, root, inst, d.instance);
+    const child = rebaseInstance(definitions, root, at, d.instance);
     const q = quantityAtInstance(model, target.id, pass.memo, child, definitions.readAt(root, name));
     if (!q) continue;
     const exact = siExact(q);
@@ -1707,22 +1813,27 @@ function collectReads(
   pass: ScalarPass,
   names: readonly string[],
   answer: (name: string) => ScalarAnswer | undefined,
+  inst?: string,
 ): InstanceRead[] | undefined {
   const definitions = pass.definitions;
   const root = el.ownerId ?? el.id;
-  const inst = hasUserBindings(model) && el.ownerId != null ? definitions.instanceNameOf(el.ownerId) : undefined;
+  const at = inst ?? (hasUserBindings(model) && el.ownerId != null ? definitions.instanceNameOf(el.ownerId) : undefined);
+  // The symbol a name is read by at the instance: the same rebase the
+  // obligation's vars take ({@link DefiningEquations.instanceReadings}), so the
+  // SMT same-point gate compares one spelling, not the owner's generic one.
+  const rebased = at !== undefined ? definitions.instanceReadings(el, names, at) : undefined;
   const out: InstanceRead[] = [];
   for (const name of names) {
     const d = definitions.denote(root).get(name);
     if (!d) continue;
     const target = definitions.carrier(d.reader, d.feature);
-    const symbol = definitions.symbolOf(d);
+    const symbol = rebased?.get(name)?.symbol ?? definitions.symbolOf(d);
     if (symbol === definitions.qualifiedNameOf(target.id)) continue;
     const a = answer(name);
-    if (a && a.value === undefined && a.via === undefined && inst !== undefined) {
+    if (a && a.value === undefined && a.via === undefined && at !== undefined) {
       // A value the scalar reader cannot read but the unit-aware reader can
       // (a unit literal applied to a computed operand): the witness's point.
-      const child = rebaseInstance(definitions, root, inst, d.instance);
+      const child = rebaseInstance(definitions, root, at, d.instance);
       const q = quantityAtInstance(model, target.id, pass.memo, child, definitions.readAt(root, name));
       if (q) {
         const exact = siExact(q);

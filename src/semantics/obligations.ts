@@ -90,11 +90,15 @@ import {
   defaultGivesWay,
   hasStatedValue,
   isAsserted,
+  instanceGroups,
   isParameterisedCalculation,
+  MAX_INSTANCE_GOALS,
+  MAX_INSTANCE_RELATIONS,
   relationNamesOf,
   sharedDefinitions,
   statedValueOf,
   usageOwnedRefusal,
+  type InstanceGroup,
 } from './defining-equation';
 import { DOUBLE_DIGITS, significantDigitsOf, type ExprNode } from './expr';
 import { effectiveNameOf, effectiveQualifiedName, generalizationsOf } from './inheritance';
@@ -345,6 +349,12 @@ export interface ObligationOptions {
    * {@link Obligation.provenance} and the spelling that moved it.
    */
   fromKeywords?: boolean;
+  /**
+   * The per-run budget of instance GOAL rows a group may file (F7,
+   * {@link MAX_INSTANCE_GOALS}): a group is filed per instance all-or-nothing,
+   * and over the budget it keeps today's single refusal. Tests lower it.
+   */
+  maxInstanceGoals?: number;
 }
 
 /** The metaclasses whose `attrs.expression` carries a relation body. */
@@ -567,6 +577,15 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
   const withClause = new Set<ElementId>();
   /** Every relation read, as it was filed: what {@link satisfierRows} reads again at a satisfier. */
   const read = new Map<ElementId, FiledRelation>();
+  // The shared-usage and usage-owned groups F7 expands into per-instance GOAL
+  // rows, keyed by relation, and the all-or-nothing goal budget they draw on.
+  const groupsByRelation = new Map<ElementId, InstanceGroup[]>();
+  for (const g of instanceGroups(model)) {
+    const list = groupsByRelation.get(g.relationId);
+    if (list) list.push(g);
+    else groupsByRelation.set(g.relationId, [g]);
+  }
+  const goalBudget = { left: opts.maxInstanceGoals ?? MAX_INSTANCE_GOALS, max: opts.maxInstanceGoals ?? MAX_INSTANCE_GOALS };
 
   for (const el of model.all()) {
     if (!isUserModelElement(model, el) || !inScope(el)) continue;
@@ -592,17 +611,31 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
     );
     const contract = owningContract(model, el, byId);
     if (contract) withClause.add(contract.id);
+    // A relation OWNED by a usage U (R17c/R17): its own row is U's generic
+    // reading, and each other instance gets a row of its own (F7).
+    const owned = groupsByRelation.get(el.id)?.find((g) => g.usageId === el.ownerId);
+    const unread = unreadAxiom(filed.role, reading.encodable, reading.unread);
+    // Take the owned group's rows from the run's goal budget BEFORE its own row
+    // is filed: over budget, that row is the group's refusal, never a generic
+    // row with no instances beside it (A.7, all-or-nothing). `undefined` means
+    // the row is not budgeted at all — an asserted relation keeps its axiom.
+    const ownedFits =
+      owned !== undefined && owned.expanded && filed.role !== 'axiom'
+        ? takeGoalBudget(owned, goalBudget, false)
+        : undefined;
     const encodable =
       filed.source === 'calculation' && isParameterisedCalculation(model, el)
         ? parameterisedCalculation(reading.encodable)
-        : usageOwnedGoal(
-            model,
-            el,
-            filed.role,
-            relationNamesOf(raw),
-            unreadAxiom(filed.role, reading.encodable, reading.unread),
-          );
-    const instances = filed.source !== 'calculation' ? instanceRows(model, el, raw, filed, memo, contract) : undefined;
+        : owned !== undefined && owned.expanded
+          ? ownedFits === false
+            ? goalBudgetRefusal(model, el, owned, goalBudget.max)
+            : unread
+          : owned !== undefined && filed.role !== 'axiom'
+            ? { reason: 'unread-definition' as const, detail: owned.refusal!.sentence }
+            : usageOwnedGoal(model, el, filed.role, relationNamesOf(raw), unread);
+    const instances = filed.source !== 'calculation'
+      ? instanceRows(model, el, raw, filed, memo, contract, undefined, groupsByRelation.get(el.id), goalBudget)
+      : undefined;
     if (filed.source !== 'calculation') read.set(el.id, { el, raw, filed, ...(contract ? { contract } : {}) });
     const sharedWith = instances?.shared[0];
     out.push({
@@ -630,6 +663,13 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
       ...readFields(reading),
     });
     if (instances) out.push(...instances.rows);
+    // A usage-owned relation's own row is its generic row; file each other
+    // instance beside it (F7), no separate generic row. An asserted relation
+    // keeps its axiom and files no per-instance rows (A.7), and a group over the
+    // run's goal budget keeps the refusal its own row now carries.
+    if (owned !== undefined && owned.expanded && filed.role !== 'axiom' && ownedFits === true) {
+      out.push(...groupGoalRows(model, el, raw, filed, memo, contract, owned, false));
+    }
   }
 
   for (const el of model.all()) {
@@ -859,6 +899,8 @@ function instanceRows(
   memo: DerivationMemo,
   contract?: Contract,
   only?: readonly ElementRecord[],
+  groups?: readonly InstanceGroup[],
+  goalBudget?: { left: number; max: number },
 ): { rows: Obligation[]; shared: Array<{ context: ElementRecord; vars: ContractVariable[] }> } {
   const body = parseRelationBody(raw);
   if (!body) return { rows: [], shared: [] };
@@ -866,7 +908,29 @@ function instanceRows(
   const out: Obligation[] = [];
   const sharedOut: Array<{ context: ElementRecord; vars: ContractVariable[] }> = [];
   const definitions = sharedDefinitions(model);
+  const groupFor = new Map((groups ?? []).map((g) => [g.usageId, g] as const));
   for (const context of only ?? definitions.readingContexts(el, names)) {
+    // A shared usage (F7): an expanded group files per-instance GOAL rows; an
+    // asserted relation and an unexpanded group keep today's refusal, and a
+    // group past the run's goal budget keeps its generic row as the refusal.
+    const group = groupFor.get(context.id);
+    if (group !== undefined && group.expanded && filed.role !== 'axiom' && goalBudget) {
+      const fits = takeGoalBudget(group, goalBudget, true);
+      out.push(
+        ...groupGoalRows(
+          model,
+          el,
+          raw,
+          filed,
+          memo,
+          contract,
+          group,
+          true,
+          fits ? undefined : goalBudgetRefusal(model, el, group, goalBudget.max),
+        ),
+      );
+      continue;
+    }
     // A context listed only because a binding member reads its own value there
     // (M7's q2) is read by no surface yet: its goal is refused in the sentence
     // the check gives it, and an assert adds no axiom there.
@@ -880,16 +944,18 @@ function instanceRows(
     const own = unreadAxiom(filed.role, reading.encodable, reading.unread);
     const shared = filed.role === 'axiom' && own === true ? sharedSymbolsOf(model, context, reading) : [];
     if (shared.length > 0) sharedOut.push({ context, vars: shared });
-    const encodable: Encodable = boundOnly
-      ? reading.encodable === true
-        ? { reason: 'unread-definition', detail: boundHereSentence(definitions, context.id) }
-        : reading.encodable
-      : boundAbove(
-          model,
-          context,
-          names,
-          filed.role === 'axiom' ? sharedSymbolAxiom(model, context, reading, own) : reading.encodable,
-        );
+    const encodable: Encodable = group?.refusal
+      ? { reason: 'unread-definition', detail: group.refusal.sentence }
+      : boundOnly
+        ? reading.encodable === true
+          ? { reason: 'unread-definition', detail: boundHereSentence(definitions, context.id) }
+          : reading.encodable
+        : boundAbove(
+            model,
+            context,
+            names,
+            filed.role === 'axiom' ? sharedSymbolAxiom(model, context, reading, own) : reading.encodable,
+          );
     out.push({
       // A requirement's clauses read in one context are a requirement of their
       // own there: its assumptions are the premises of its goals, never of
@@ -916,6 +982,116 @@ function instanceRows(
     });
   }
   return { rows: out, shared: sharedOut };
+}
+
+/**
+ * Take a group's rows from the run's goal budget, all-or-nothing (A.7): the
+ * generic row and the instance rows together, or neither. Returns false (and
+ * subtracts nothing) when they would not all fit into what remains.
+ */
+function takeGoalBudget(group: InstanceGroup, budget: { left: number }, withGeneric: boolean): boolean {
+  const needed = withGeneric ? group.instances.length : group.instances.length - 1;
+  if (needed > budget.left) return false;
+  budget.left -= needed;
+  return true;
+}
+
+/**
+ * The refusal a group's generic row keeps when the run's goal budget cannot
+ * carry it (A.7). The point evaluation still reads the instances; this run's
+ * solver lane spends too many goal rows on them and files none.
+ */
+function goalBudgetRefusal(model: Model, el: ElementRecord, group: InstanceGroup, max: number): Encodable {
+  const definitions = sharedDefinitions(model);
+  return {
+    reason: 'unread-definition',
+    detail: `${effectiveQualifiedName(model, el.id)} is not read per instance in ${definitions.contextName(group.usageId)}: its ${group.instances.length} instance rows exceed this run's ${max}; the point evaluation reads them (see the check), the solver lane does not`,
+  };
+}
+
+/**
+ * The per-instance GOAL rows of one expanded group (F7, A.7): the relation
+ * read in the shared usage `group.usageId` at each instance, filed all-or-
+ * nothing against the run's goal budget — the generic row (`{Rel} in {U}
+ * ({D}'s own)`, `withGeneric`) and one row per other instance (`{Rel} in
+ * {I}`). Each carries the instance's own symbols, so the SMT lane can refute
+ * the one instance a binding breaks. An asserted relation files no row here.
+ *
+ * `refuse` is the group's generic row over the run's budget: it files that one
+ * row with the refusal and no instance rows. The caller decides all-or-nothing
+ * with {@link takeGoalBudget}, so a group is never filed in part.
+ */
+function groupGoalRows(
+  model: Model,
+  el: ElementRecord,
+  raw: string,
+  filed: FiledRole,
+  memo: DerivationMemo,
+  contract: Contract | undefined,
+  group: InstanceGroup,
+  withGeneric: boolean,
+  refuse?: Encodable,
+): Obligation[] {
+  if (filed.role === 'axiom') return [];
+  const definitions = sharedDefinitions(model);
+  const usage = model.get(group.usageId);
+  if (!usage) return [];
+  const owner = usage.ownerId != null ? model.get(usage.ownerId) : undefined;
+  const ownerName = owner ? effectiveQualifiedName(model, owner.id) : '';
+  const relationName = effectiveQualifiedName(model, el.id);
+  const out: Obligation[] = [];
+  const make = (instance: string, generic: boolean): Obligation | undefined => {
+    const reading = readRelation(model, { ...el, ownerId: usage.id }, raw, memo, undefined, undefined, instance);
+    const encodable = refuse !== undefined && generic ? refuse : unreadAxiom(filed.role, reading.encodable, reading.unread);
+    const element: ContractRef = generic
+      ? {
+          ...ref(model, el),
+          id: `${el.id}@${usage.id}`,
+          qualifiedName: `${relationName} in ${definitions.contextName(usage.id)} (${ownerName}'s own)`,
+        }
+      : {
+          ...ref(model, el),
+          id: `${el.id}@${instance}`,
+          qualifiedName: `${relationName} in ${instance}`,
+        };
+    return {
+      requirement: contract ? instanceRef(model, contractRef(contract), usage) : null,
+      shortId: contract?.shortId ?? '',
+      subject: contract?.subject ?? null,
+      role: filed.role,
+      source: filed.source,
+      element,
+      expression: reading.expression,
+      node: reading.node,
+      vars: reading.variables,
+      sortPerVar: reading.sortPerVar,
+      scaled: reading.scale !== undefined,
+      encodable,
+      nonlinear: reading.nonlinear,
+      verifiedBy: [],
+      method: null,
+      evidence: [],
+      status: statusOf(encodable),
+      ...readFields(reading),
+      instance: {
+        baseId: el.id,
+        contextId: usage.id,
+        ...(generic ? {} : { path: instance }),
+        ...(contract ? { requirementId: contract.id } : {}),
+      },
+    };
+  };
+  if (withGeneric) {
+    const generic = make(definitions.instanceNameOf(usage.id), true);
+    if (generic) out.push(generic);
+  }
+  if (refuse === undefined) {
+    for (const inst of group.instances.slice(1)) {
+      const row = make(inst, false);
+      if (row) out.push(row);
+    }
+  }
+  return out;
 }
 
 /**
@@ -1590,14 +1766,6 @@ function redefinedValueAxiom(model: Model, el: ElementRecord, memo: DerivationMe
     instance: { baseId: read.target.id, contextId: el.ownerId, featureId: el.id },
   };
 }
-
-/**
- * How many relations {@link instanceRelationRows} reads for instances before
- * it stops: a type that contains itself (`part def T { part sub : T; }`) has
- * an instance at every depth. Every row that reads an instance it did not
- * reach is refused, never left over a symbol nothing constrains.
- */
-const MAX_INSTANCE_RELATIONS = 16384;
 
 /**
  * The relations an INSTANCE with symbols of its own holds

@@ -1857,7 +1857,11 @@ function quantities(
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
   const el = rowElement(model, row);
   if (!el) return {};
-  const q = evaluateConstraintQuantityDetailed(model, el, { memo, instances: true });
+  const q = evaluateConstraintQuantityDetailed(model, el, {
+    memo,
+    instances: true,
+    ...(row.instance?.path !== undefined ? { instance: row.instance.path } : {}),
+  });
   return {
     ...(q.lhsSI !== undefined ? { lhsSI: q.lhsSI } : {}),
     ...(q.rhsSI !== undefined ? { rhsSI: q.rhsSI } : {}),
