@@ -1965,8 +1965,8 @@ describe('checkConstraints — a bound partner is read only where every instance
     const [load] = endsOf(m!, 'M2::Q');
     expect(boundPartnerSafe(m!, named(m!, 'M2::Q::p').id, 'load', load)).toBe(false);
     const checks = checkConstraints(m!);
-    // m2 is −40 in q: never the 9 Q's own p reads, whichever way the constraint is written.
-    expect([resultOf(checks, m!, 'M2::m2NegT'), resultOf(checks, m!, 'M2::m2PosF')]).toEqual(['unknown', 'unknown']);
+    // m2 is −40 in q, read per instance (F5): never the 9 Q's own p reads.
+    expect([resultOf(checks, m!, 'M2::m2NegT'), resultOf(checks, m!, 'M2::m2PosF')]).toEqual(['satisfied', 'violated']);
     // Nor is the binding a contradiction in q: its bound end states no value of its own.
     expect(checks.filter((c) => c.conflict === 'bind')).toEqual([]);
   });
@@ -1989,8 +1989,8 @@ describe('checkConstraints — a bound partner is read only where every instance
     const checks = checkConstraints(m!);
     const c = checks.find((x) => m!.qualifiedName(x.id) === 'M7F::Q::c')!;
     expect(c.result).toBe('satisfied');
-    // Read as Q's 1, `load <= 5.0` held in q2, where load is 50; and the binding read as a contradiction.
-    expect(c.instances!.map((i) => [i.context, i.result])).toEqual([['q2', 'unknown']]);
+    // Read per instance (F5): q2's load is its own L of 50, so `load <= 5.0` is violated there.
+    expect(c.instances!.map((i) => [i.context, i.result])).toEqual([['q2', 'violated']]);
     expect(checks.filter((x) => x.conflict === 'bind')).toEqual([]);
   });
 
@@ -2339,11 +2339,10 @@ describe('checkConstraints — defaults a binding joins stand only as one consta
       const feasible = solveFeasible(m!);
       expect([feasible.feasible, feasible.decided], holder).toEqual([false, true]);
     }
-    // The check's sentence on a held default still says it is declared without one — a placeholder
-    // until the plan's F5 names the defaults that differ.
+    // F5 names the defaults that differ (A.9 `defaults-differ`), not "declared without one".
     const { model: r } = await loadModelText(R3A);
     expect(checkConstraints(r!).find((c) => r!.qualifiedName(c.id) === 'R3a::c1')!.message).toMatch(
-      /^Could not evaluate: a1\.v has no value: a1::v is declared without one and nothing specialises it/,
+      /^Could not evaluate: v has no value in R3a::a1: .*defaults that differ or are not constants/,
     );
   });
 });
@@ -2389,8 +2388,9 @@ describe('valueAtPath — a path has the value the relation reads it at', () => 
       constraint c { q.p.m2 <= 0.0 }
     }`);
     const c = named(m!, 'M2::c');
-    expect(checkConstraints(m!).find((x) => x.id === c.id)!.result).toBe('unknown');
-    expect(valueAtPath(m!, c, 'q.p.m2')).toBeUndefined();
+    // Read per instance (F5): q's p's m2 is −40, so `<= 0.0` holds.
+    expect(checkConstraints(m!).find((x) => x.id === c.id)!.result).toBe('satisfied');
+    expect(valueAtPath(m!, c, 'q.p.m2')).toBe(-40);
     expect(evaluateFeatureValue(m!, named(m!, 'M2::P::m2').id)).toEqual({ value: 9 });
   });
 

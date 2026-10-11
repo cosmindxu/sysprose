@@ -45,6 +45,7 @@ import {
   MAX_DERIVATION_DEPTH,
   baseIdOf,
   boundPartnerSafe,
+  boundSourceIn,
   chooseDefinition,
   definitionKey,
   definitionsInFlight,
@@ -56,12 +57,14 @@ import {
   contradictionSentence,
   defaultGivesWay,
   namesDefinedBy,
+  rebaseInstance,
   returnTo,
   shadowedEquation,
   shadowedNamesOf,
   shadowedSentence,
   sharedDefinitions,
   statedValueOf,
+  type BoundSource,
   type Contact,
   type DefiningEquation,
   type InFlight,
@@ -1427,6 +1430,7 @@ function quantityScopeFor(
   inFlight: InFlight,
   memo: DerivationMemo,
   reads?: Reads,
+  inst?: string,
 ): QScope {
   const ids = quantityIdsOf(model, contextId, memo);
   const { definitions } = passOf(model, memo);
@@ -1434,10 +1438,22 @@ function quantityScopeFor(
     const id = ids.get(name);
     if (id === undefined) {
       if (!reads) return undefined;
-      const defined = definedQuantity(model, contextId, name, inFlight, memo, reads);
+      const defined = definedQuantity(model, contextId, name, inFlight, memo, reads, inst);
       return defined ?? (memo.everyPath === true ? standIn(model, contextId, name, memo) : undefined);
     }
-    const d = deriveFeature(model, id, inFlight, memo, definitions.readAt(contextId, name));
+    // Rebase the instance per name, as the scalar twin does ({@link
+    // answerFor}): two names read in the same context at different instances
+    // (M3R's `q.m2` and `q2.m2`) are each their own value.
+    const child =
+      inst !== undefined
+        ? rebaseInstance(
+            definitions,
+            contextId,
+            inst,
+            definitions.denote(contextId).get(name)?.instance ?? definitions.instanceNameOf(contextId),
+          )
+        : undefined;
+    const d = deriveFeature(model, id, inFlight, memo, definitions.readAt(contextId, name), child);
     if (reads) note(reads, d);
     return derivationEval(d, name);
   };
@@ -1724,11 +1740,12 @@ function deriveFeature(
   inFlight: InFlight,
   memo: DerivationMemo,
   at?: ElementId,
+  inst?: string,
 ): FeatureDerivation {
-  const key = at !== undefined ? instanceKey(id, at) : id;
+  const key = inst !== undefined ? `${id}@${inst}` : at !== undefined ? instanceKey(id, at) : id;
   const hit = memo.get(key);
   if (hit) return hit;
-  const d = deriveFeatureUncached(model, id, inFlight, memo, at);
+  const d = deriveFeatureUncached(model, id, inFlight, memo, at, inst);
   if (!d.contact) memo.set(key, d);
   return d;
 }
@@ -1739,6 +1756,7 @@ function deriveFeatureUncached(
   inFlight: InFlight,
   memo: DerivationMemo,
   at?: ElementId,
+  inst?: string,
 ): FeatureDerivation {
   const feat = model.get(id);
   if (!feat) return claimOnly('unknown', 'unresolved');
@@ -1757,7 +1775,7 @@ function deriveFeatureUncached(
   // value it redefines reads: that value, read there.
   if (at === undefined) {
     const inherited = passOf(model, memo).definitions.redefinedValueOf(feat);
-    if (inherited) return deriveFeature(model, inherited.target.id, inFlight, memo, inherited.at);
+    if (inherited) return deriveFeature(model, inherited.target.id, inFlight, memo, inherited.at, inst);
   }
 
   const raw = statedValueOf(model, feat);
@@ -1769,7 +1787,7 @@ function deriveFeatureUncached(
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
     return claimOnly('unknown', 'not-quantity');
   }
-  const flight = at !== undefined ? instanceKey(id, at) : id;
+  const flight = inst !== undefined ? `${id}@${inst}` : at !== undefined ? instanceKey(id, at) : id;
   if (inFlight.has(flight)) return backTo(model, flight, inFlight);
 
   let node: QNode;
@@ -1790,7 +1808,7 @@ function deriveFeatureUncached(
   let r: QEval;
   try {
     const where = at ?? feat.ownerId;
-    const owner: QScope = where != null ? quantityScopeFor(model, where, inFlight, memo, reads) : () => undefined;
+    const owner: QScope = where != null ? quantityScopeFor(model, where, inFlight, memo, reads, inst) : () => undefined;
     r = evalQ(node, owner, EXACT, memo.everyPath === true);
   } finally {
     inFlight.delete(flight);
@@ -2130,6 +2148,7 @@ function definedQuantity(
   inFlight: InFlight,
   memo: DerivationMemo,
   reads: Reads,
+  inst?: string,
 ): QEval | undefined {
   const { definitions } = passOf(model, memo);
   // The definitions written in `site`, read in `at` — over the names there,
@@ -2149,6 +2168,9 @@ function definedQuantity(
   if (candidates.length === 0) {
     const inherited = definitions.definitionReadIn(contextId, name);
     if (inherited !== undefined) return read(feature.id, name, inherited.site, inherited.at);
+    // Read per instance (A.2): the value a binding carries into `inst`, the
+    // unit-aware twin of `valueBoundInInstance` of ./evaluate-model.
+    if (inst !== undefined) return boundInInstanceQ(model, contextId, name, memo, inst);
     // No equation: a binding may hold it to a derived value ({@link
     // boundDerivation}) — read where the partner is written, so only where
     // that is every instance's value the context stands for (the guard the
@@ -2163,6 +2185,36 @@ function definedQuantity(
   const d = definitionOf(model, feature.id, name, candidates, memo, contextId, inFlight);
   note(reads, d);
   return derivationEval(d, name);
+}
+
+/**
+ * The quantity a name no stated reading answers gets through a BINDING, read in
+ * one instance (A.2) — the unit-aware twin of `valueBoundInInstance` of
+ * ./evaluate-model: the OUTERMOST frame root whose component joins the name's
+ * instance symbol, read at its valued member in the root's generic instance.
+ * `undefined` where no binding holds the symbol or its component abstains.
+ */
+function boundInInstanceQ(
+  model: Model,
+  contextId: ElementId,
+  name: string,
+  memo: DerivationMemo,
+  inst: string,
+): QEval | undefined {
+  const definitions = passOf(model, memo).definitions;
+  const d = definitions.denote(contextId).get(name);
+  const sep = name.lastIndexOf('.');
+  const ownName = sep >= 0 ? name.slice(sep + 1) : name;
+  const child = d ? rebaseInstance(definitions, contextId, inst, d.instance) : `${inst}::${ownName}`;
+  const symbol = `${child}::${ownName}`;
+  let src: BoundSource | undefined;
+  try {
+    src = boundSourceIn(model, symbol);
+  } catch {
+    return undefined;
+  }
+  if (!src || 'abstain' in src) return undefined;
+  return quantityScopeFor(model, src.root, new Map(), memo, undefined, definitions.instanceNameOf(src.root))(src.via.source);
 }
 
 /**
@@ -2185,6 +2237,24 @@ function backTo(model: Model, id: ElementId, inFlight: InFlight): FeatureDerivat
 /** The {@link DimensionClaim} of a feature's value. */
 export function dimensionClaim(model: Model, featureId: ElementId, memo: DerivationMemo = new Map()): DimensionClaim {
   return deriveFeature(model, featureId, new Map(), dimensionsMemo(model, memo)).claim;
+}
+
+/**
+ * The quantity a feature's value reads in one INSTANCE (F5) — the unit-aware
+ * twin of the scalar scope's per-instance value, for the witness: a value the
+ * scalar reader cannot read (a unit literal applied to a computed operand,
+ * xtrack's `r.total`) but the unit-aware reader can. `at` is the context the
+ * value is read in (`DefiningEquations.readAt`), `inst` the instance it is
+ * re-rooted to (`rebaseInstance`).
+ */
+export function quantityAtInstance(
+  model: Model,
+  featureId: ElementId,
+  memo: DerivationMemo,
+  inst?: string,
+  at?: ElementId,
+): Quantity | undefined {
+  return deriveFeature(model, featureId, new Map(), memo, at, inst).q;
 }
 
 /**
@@ -2487,6 +2557,15 @@ export interface ConstraintQuantityOptions {
   searched?: boolean;
   /** A derivation cache shared across the constraints of one sweep. */
   memo?: DerivationMemo;
+  /**
+   * Read the body's names per instance (A.2), under `instance`: the unit-aware
+   * twin of the scalar scope's per-instance reading. Set only by the check's
+   * `judgeBound` and the literal and SMT `quantities`, and only on a model that
+   * writes bindings.
+   */
+  instances?: boolean;
+  /** The instance the body is read at, when `instances` (defaults to the owner's own). */
+  instance?: string;
 }
 
 /** The detailed outcome of a unit-aware constraint evaluation. */
@@ -2530,8 +2609,9 @@ export function evaluateConstraintQuantityDetailed(
 
   const inFlight: InFlight = new Map();
   const memo = opts.memo ?? new Map();
-  const ownerScope = el.ownerId != null ? quantityScopeFor(model, el.ownerId, inFlight, memo) : undefined;
-  const selfScope = quantityScopeFor(model, el.id, inFlight, memo);
+  const inst = opts.instances === true ? (opts.instance ?? (el.ownerId != null ? sharedDefinitions(model).instanceNameOf(el.ownerId) : undefined)) : undefined;
+  const ownerScope = el.ownerId != null ? quantityScopeFor(model, el.ownerId, inFlight, memo, undefined, inst) : undefined;
+  const selfScope = quantityScopeFor(model, el.id, inFlight, memo, undefined, inst);
   const scope: QScope = (name) => {
     const bound = opts.bind?.(name);
     if (bound !== undefined) return { q: bound };

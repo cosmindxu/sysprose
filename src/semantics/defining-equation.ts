@@ -3037,7 +3037,7 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
   if (!hasUserBindings(model)) return undefined;
   const definitions = sharedDefinitions(model);
   const { readings } = bindingEnds(model);
-  let best: { root: ElementId; component: string } | undefined;
+  let best: { root: ElementId; component: string; feature: ElementId } | undefined;
   let bestSegments = Number.POSITIVE_INFINITY;
   for (const [root, reading] of readings) {
     const inst = definitions.instanceNameOf(root);
@@ -3047,11 +3047,47 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
     if (!r) continue;
     const segments = inst.split('::').length;
     if (best === undefined || segments < bestSegments) {
-      best = { root, component: r.component };
+      best = { root, component: r.component, feature: r.feature };
       bestSegments = segments;
     }
   }
   if (!best) return undefined;
+  // A name defined by an asserted equation in a general definition — the G340
+  // family, where the binding's implicit end copy masks the assert: the value
+  // is the equation's, not the binding's, and no per-instance value is read
+  // here (today's reading abstains).
+  const member = model.get(best.feature);
+  if (
+    member &&
+    [member, ...redefinedClosure(model, member)].some(
+      (g) => definitions.of(g.ownerId ?? best.root, definitions.nameOf(g) ?? '').length > 0,
+    )
+  ) {
+    return undefined;
+  }
+  // A binding read nowhere this tool finds an instance of one of its ends
+  // ({@link BindingEnds.unread}) reads no value per instance (A.3).
+  const { unread } = bindingEnds(model);
+  if (member && (unread.has(member.id) || unread.has(definitions.carrier(best.root, member).id))) return undefined;
+  // Past a cap, no bound value is read for any one instance (A.3): the frame
+  // that carries the value may be one the cap dropped.
+  const cap = bindingCapOf(model);
+  if (cap !== undefined) {
+    const sentence =
+      cap === 'frames'
+        ? `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
+        : `a binding of this model is read deeper than ${MAX_BINDING_SEGMENTS} usages`;
+    return { abstain: 'past-cap', sentence };
+  }
+  // A binding whose end is a feature of an instance ENCLOSING where it is
+  // written (R's `L` in `part q : Q { bind p.load = L; }`) is read by that
+  // feature's own id, for every such instance alike ({@link
+  // BindingEnds.enclosed}) — not per instance. No per-instance value is read
+  // here (A.3's F1 conditions; encl-W1/W3/W5 stay abstaining).
+  const { readings: rds, enclosed } = bindingEnds(model);
+  if ([...componentPaths(model, best.root, best.component)].some((p) => enclosed.has(rds.get(best.root)?.get(p)?.feature ?? ('' as ElementId)))) {
+    return undefined;
+  }
   const cls = classified(model, best.root, best.component);
   const source = (valuePath: string): BoundSource => ({
     root: best!.root,
@@ -3068,7 +3104,12 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
     if (memberInstance(definitions, best.root, cls.valued[0]!) === symbol) return undefined;
     return source(cls.valued[0]!);
   }
-  if (cls.readable.length > 0) return source(cls.readable[0]!);
+  // A readable default: the one that is not the name's own path (a binding
+  // INTO a feature with nothing of its own carries the source's default, K's
+  // `bind w = x` over `x default = 5.0`). The name's own default is no value
+  // the binding gives it — the partner supplies none either (the G340 family).
+  const readable = cls.readable.find((p) => memberInstance(definitions, best.root, p) !== symbol);
+  if (readable !== undefined) return source(readable);
   if (cls.heldDefaults.length > 0) {
     return {
       abstain: 'defaults-differ',
@@ -3176,27 +3217,46 @@ export function instanceGroups(model: Model): InstanceGroup[] {
 }
 
 /**
- * Whether a name read at `instance` lies below a frame among `enclosing` whose
- * reader asserts a relation referencing the remaining `path` — the read then
- * abstains with `enclosing-assert` (A.2.4, R1-S5): the enclosing assert
+ * Whether a name read at an instance lies below a frame among `enclosing` whose
+ * reader asserts a relation referencing the remaining dotted path — the read
+ * then abstains with `enclosing-assert` (A.2.4, R1-S5): the enclosing assert
  * constrains the value, and this tool reads no value an enclosing assert
- * constrains. `{ frame, expr }` names the first such frame and its expression;
- * `undefined` where none does.
+ * constrains. Each frame is checked against the name as it is spelled below
+ * that frame (`q1.p.x` read in R1, q1's `assert { p.x == 50.0 }` references the
+ * remaining `p.x`). `{ frame, expr }` names the first such frame and its
+ * expression; `undefined` where none does.
  */
 export function enclosingAssertOn(
   model: Model,
+  contextId: ElementId,
   enclosing: readonly InstanceFrame[],
-  path: string,
+  name: string,
 ): { frame: ElementId; expr: string } | undefined {
+  const definitions = sharedDefinitions(model);
+  const root = definitions.instanceNameOf(contextId);
+  const segments = name.split('.');
   for (const frame of enclosing) {
     const reader = model.get(frame.reader);
     if (!reader || reader.attrs.isLibrary === true) continue;
+    const rel =
+      frame.instance === root
+        ? 0
+        : frame.instance.startsWith(`${root}::`)
+          ? frame.instance.slice(root.length + 2).split('::').length
+          : segments.length;
+    // The row's own context is read as today (A.2.4); only the frames strictly
+    // between it and the instance constrain the read.
+    if (rel === 0) continue;
+    const remaining = segments.slice(rel).join('.');
+    if (remaining === '') continue;
     for (const child of model.children(reader.id)) {
       if (child.attrs.isLibrary === true || !isAsserted(child)) continue;
       const expr = child.attrs.expression;
       if (typeof expr !== 'string' || expr.trim() === '') continue;
       for (const n of relationNamesOf(expr)) {
-        if (n === path || n.startsWith(`${path}.`) || path.startsWith(`${n}.`)) return { frame: reader.id, expr };
+        if (n === remaining || n.startsWith(`${remaining}.`) || remaining.startsWith(`${n}.`)) {
+          return { frame: reader.id, expr };
+        }
       }
     }
   }

@@ -2018,20 +2018,18 @@ describe('0.1 + 0.2 is 0.3 over plain numbers, on every command', () => {
     });
   }
 
-  // A value a solve produced, or a binding carried, is known to the solve's
-  // tolerance and no closer: a strict ordering or a `!=` inside it turns on a
-  // difference the solve does not know. Read as a tie there, `p.x < 0.1000005`
-  // at a solved 0.1 was violated and infeasible beside an SMT proof.
+  // A value a solve produced is known to the solve's tolerance and no closer:
+  // a strict ordering or a `!=` inside it turns on a difference the solve does
+  // not know. Read as a tie there, `p.x < 0.1000005` at a solved 0.1 was
+  // violated and infeasible beside an SMT proof. (A value a BINDING carries —
+  // `bind b = a` over `a = 0.1` — is read exactly by F5's per-instance reading,
+  // so its strict ordering is decided, not a tie.)
   const SOLVED = 'attribute x : ScalarValues::Real; assert constraint { x * 3.0 == 0.3 }';
   const SOLVED_SMALL = 'attribute x : ScalarValues::Real; assert constraint { x * 10000000.0 == 1.0 }';
-  const CARRIED =
-    'attribute a : ScalarValues::Real = 0.1; attribute b : ScalarValues::Real; ' +
-    'attribute c : ScalarValues::Real = b + 0.2; bind b = a;';
   const UNDECIDED: Array<[string, string]> = [
     [SOLVED, 'p.x < 0.1000005'],
     [SOLVED, 'p.x != 0.1000005'],
     [SOLVED_SMALL, 'p.x < 0.0000005'],
-    [CARRIED, 'p.c > 0.29999999'],
   ];
   for (const [i, [attrs, goal]] of UNDECIDED.entries()) {
     withZ3(`verify: \`${goal}\` over a value the solve gives is proved, and no surface reads it violated`, async () => {
@@ -3088,17 +3086,16 @@ describe('a redefinition is the feature in its context, and a value written with
       const smt = await verifyOne(text, { engine: 'smt' });
       expect(smt.by(`${m2} <= ${bound}`).claim, name).toBe('proved');
       expect([smt.by(`${m2} >= ${bound}`).claim, smt.by(`${m2} >= ${bound}`).code], name).toEqual([
-        'inconclusive',
-        'verification/not-evaluable',
+        'refuted',
+        'verification/refuted',
       ]);
-      // The check and the literal engine read a value a binding gives as they
-      // read any feature a binding holds: not the default, and here no value.
+      // The check and the literal engine read a value a binding gives per
+      // instance (F5): q's p's m2 is −40, so `<= 0.0` holds and `>= 0.0` fails.
       const literal = await verifyOne(text, { engine: 'literal' });
-      for (const goal of [`${m2} <= ${bound}`, `${m2} >= ${bound}`]) {
-        expect(literal.by(goal).claim, `${name}: ${goal}`).toBe('inconclusive');
-      }
+      expect(literal.by(`${m2} <= ${bound}`).claim, `${name}`).toBe('holds-at-values');
+      expect(literal.by(`${m2} >= ${bound}`).claim, `${name}`).toBe('refuted');
       const m = await contextModel(text, name);
-      expect(checkConstraints(m).map((c) => c.result), name).toEqual(['unknown', 'unknown']);
+      expect(checkConstraints(m).map((c) => c.result), name).toEqual(['satisfied', 'violated']);
       expect(checkConstraintsNumeric(m).map((r) => [r.name, r.result]), name).toEqual([
         ['m2NegT', 'satisfied'],
         ['m2PosF', 'violated'],
@@ -3107,20 +3104,19 @@ describe('a redefinition is the feature in its context, and a value written with
       expect([f.violations.map((v) => v.name), f.decided], name).toEqual([['m2PosF'], true]);
     }
     // A definition's constraint over a value read through its binding is
-    // read anew in a context that joins the binding to another value: Q's `c`
-    // was proved at Q's L of 1, and q — whose L of 50 makes p's m2 −40 —
-    // was no context of it, on any surface.
+    // read per instance (F5): Q's `c` is proved at Q's L of 1, and q — whose
+    // L of 50 makes p's m2 −40 — is read in q and violated there.
     const h2c = `package H2C {
     part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
     part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c { p.m2 >= 0.0 } }
     part q : Q { attribute :>> L = 50.0; } }`;
     const mc = await contextModel(h2c, 'H2C');
     const c = checkConstraints(mc).find((r) => r.expression === 'p.m2 >= 0.0')!;
-    expect(c.instances?.map((i) => [i.context, i.result])).toEqual([['q', 'unknown']]);
+    expect(c.instances?.map((i) => [i.context, i.result])).toEqual([['q', 'violated']]);
     const inQ = (await verifyModel(mc, { sourceText: h2c, engine: 'smt' })).results;
     expect(inQ.map((r) => [r.expression.trim(), r.claim])).toEqual([
       ['p.m2 >= 0.0', 'proved'],
-      ['p.m2 >= 0.0', 'inconclusive'],
+      ['p.m2 >= 0.0', 'refuted'],
     ]);
     // P's own constraint read in Q's p is read for Q's own p alone: q's p,
     // whose load Q's binding joins to q's L of 50, is an instance no context
@@ -3456,8 +3452,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'H2::m2NegT': ['?/?/T/T', 'T'],
-      'H2::m2PosF': ['?/?/F/?', 'F'],
+      'H2::m2NegT': ['T/T/T/T', 'T'],
+      'H2::m2PosF': ['F/F/F/F', 'F'],
     }),
     h2h: probe(`package H2H {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3467,8 +3463,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { p.m2 <= 0.0 }
         constraint m2PosF { p.m2 >= 0.0 }
       }`, {
-      'H2H::m2NegT': ['?/?/T/T', 'T'],
-      'H2H::m2PosF': ['?/?/F/?', 'F'],
+      'H2H::m2NegT': ['T/T/T/T', 'T'],
+      'H2H::m2PosF': ['F/F/F/F', 'F'],
     }),
     h2i: probe(`package H2I {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3477,8 +3473,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'H2I::m2NegT': ['?/?/T/T', 'T'],
-      'H2I::m2PosF': ['?/?/F/?', 'F'],
+      'H2I::m2NegT': ['T/T/T/T', 'T'],
+      'H2I::m2PosF': ['F/F/F/F', 'F'],
     }),
     h2c: probe(`package H2C {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3490,8 +3486,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         }
         part q : Q { attribute :>> L = 50.0; }
       }`, {
-      'H2C::Q::c': ['?/?/T/T', 'T'],
-      'H2C::Q::c in H2C::q': ['?/?/?/?', 'F'],
+      'H2C::Q::c': ['T/T/T/T', 'T'],
+      'H2C::Q::c in H2C::q': ['F/F/F/F', 'F'],
     }),
     h2p: probe(`package H2P {
         part def P {
@@ -3511,7 +3507,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         bind x = L;
         constraint c { x >= 40.0 }
       }`, {
-      'K1::c': ['?/?/T/T', 'T'],
+      'K1::c': ['T/T/T/T', 'T'],
     }),
     k2: probe(`package K2 {
         part def P { attribute x : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - x; }
@@ -3519,9 +3515,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q { attribute :>> L = 50.0; }
         constraint d { q.p.m2 <= 0.0 }
       }`, {
-      'K2::Q::c': ['?/?/T/T', 'T'],
-      'K2::Q::c in K2::q': ['?/?/?/?', 'F'],
-      'K2::d': ['?/?/T/T', 'T'],
+      'K2::Q::c': ['T/T/T/T', 'T'],
+      'K2::Q::c in K2::q': ['F/F/F/F', 'F'],
+      'K2::d': ['T/T/T/T', 'T'],
     }),
     k2p: probe(`package K2P {
         part def P {
@@ -3543,7 +3539,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q { attribute :>> L = 50.0; }
         constraint dNegT { q.m2 <= 0.0 }
       }`, {
-      'K3::dNegT': ['?/?/T/T', 'T'],
+      'K3::dNegT': ['T/T/T/T', 'T'],
     }),
     k3b: probe(`package K3 {
           part def Q {
@@ -3555,8 +3551,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           part q : Q { attribute :>> L = 50.0; }
           constraint m2NegT { q.m2 <= 0.0 }
           constraint m2PosF { q.m2 >= 0.0 } }`, {
-      'K3::m2NegT': ['?/?/T/T', 'T'],
-      'K3::m2PosF': ['?/?/F/?', 'F'],
+      'K3::m2NegT': ['T/T/T/T', 'T'],
+      'K3::m2PosF': ['F/F/F/F', 'F'],
     }),
     k5: probe(`package K5 {
         attribute L : ScalarValues::Real = 50.0;
@@ -3566,8 +3562,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint k { load == 7.0 }
         constraint n { m2 <= -30.0 }
       }`, {
-      'K5::k': ['?/?/F/?', 'F'],
-      'K5::n': ['?/?/T/T', 'T'],
+      'K5::k': ['F/F/F/F', 'F'],
+      'K5::n': ['T/T/T/T', 'T'],
     }),
     c2: probe(`package C2 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3577,8 +3573,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { r.q.p.m2 <= 0.0 }
         constraint m2PosF { r.q.p.m2 >= 0.0 }
       }`, {
-      'C2::m2NegT': ['?/?/T/T', 'T'],
-      'C2::m2PosF': ['?/?/F/?', 'F'],
+      'C2::m2NegT': ['T/T/T/T', 'T'],
+      'C2::m2PosF': ['F/F/F/F', 'F'],
     }),
     c3: probe(`package C3 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3588,8 +3584,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { r.q.p.m2 <= 0.0 }
         constraint m2PosF { r.q.p.m2 >= 0.0 }
       }`, {
-      'C3::m2NegT': ['?/?/T/T', 'T'],
-      'C3::m2PosF': ['?/?/F/?', 'F'],
+      'C3::m2NegT': ['T/T/T/T', 'T'],
+      'C3::m2PosF': ['F/F/F/F', 'F'],
     }),
     c4: probe(`package C4 {
         part def Q {
@@ -3604,8 +3600,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.m2 <= 0.0 }
         constraint m2PosF { q.m2 >= 0.0 }
       }`, {
-      'C4::m2NegT': ['?/?/T/T', 'T'],
-      'C4::m2PosF': ['?/?/F/?', 'F'],
+      'C4::m2NegT': ['T/T/T/T', 'T'],
+      'C4::m2PosF': ['F/F/F/F', 'F'],
     }),
     d1: probe(`package D1 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3614,8 +3610,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'D1::m2NegT': ['?/?/T/T', 'T'],
-      'D1::m2PosF': ['?/?/F/?', 'F'],
+      'D1::m2NegT': ['T/T/T/T', 'T'],
+      'D1::m2PosF': ['F/F/F/F', 'F'],
     }),
     d1b: probe(`package D1b {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3624,8 +3620,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint atL { q.p.m2 <= -30.0 }
         constraint at30 { q.p.m2 >= -30.0 }
       }`, {
-      'D1b::at30': ['?/?/F/?', 'F'],
-      'D1b::atL': ['?/?/T/T', 'T'],
+      'D1b::at30': ['F/F/F/F', 'F'],
+      'D1b::atL': ['T/T/T/T', 'T'],
     }),
     d3: probe(`package D3 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3635,8 +3631,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'D3::m2NegT': ['?/?/T/T', 'T'],
-      'D3::m2PosF': ['?/?/F/?', 'F'],
+      'D3::m2NegT': ['T/T/T/T', 'T'],
+      'D3::m2PosF': ['F/F/F/F', 'F'],
     }),
     d4: probe(`package D4 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3649,8 +3645,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'D4::m2NegT': ['?/?/T/T', 'T'],
-      'D4::m2PosF': ['?/?/F/?', 'F'],
+      'D4::m2NegT': ['T/T/T/T', 'T'],
+      'D4::m2PosF': ['F/F/F/F', 'F'],
     }),
     g2: probe(`package G2 {
         part def P { attribute load : ScalarValues::Real = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3664,8 +3660,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint dlT { q.dL <= 2.0 }
         constraint dlF { q.dL >= 10.0 }
       }`, {
-      'G2::dlF': ['?/?/F/?', 'F'],
-      'G2::dlT': ['?/?/T/T', 'T'],
+      'G2::dlF': ['F/F/F/F', 'F'],
+      'G2::dlT': ['T/T/T/T', 'T'],
     }),
     w2: probe(`package W2 {
         part def P { attribute load : ScalarValues::Real default = 5.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3676,7 +3672,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c2 { q2.p.m2 >= 0.0 }
         constraint c3 { q2.p.m2 <= 2.0 }
       }`, {
-      'W2::c1': ['?/?/T/T', 'T'],
+      'W2::c1': ['T/T/T/T', 'T'],
       'W2::c2': ['?/?/?/?', 'T'],
       'W2::c3': ['?/?/?/?', 'F'],
     }),
@@ -3689,7 +3685,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c2 { q2.p.m2 >= 0.0 }
         constraint c3 { q2.p.m2 <= 5.0 }
       }`, {
-      'W3::c1': ['?/?/T/T', 'T'],
+      'W3::c1': ['T/T/T/T', 'T'],
       'W3::c2': ['T/T/T/T', 'T'],
       'W3::c3': ['F/F/F/F', 'F'],
     }),
@@ -3718,7 +3714,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           constraint w2F { w2 >= 0.0 }
       }`, {
       'R14::w2F': ['F/F/F/F', 'F'],
-      'R14::wF': ['?/?/F/?', 'F'],
+      'R14::wF': ['F/F/F/F', 'F'],
     }),
     'xtrack-c3c': probe(`package C3C {
           part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; attribute m3 : ScalarValues::Real = m2 * 2.0; }
@@ -3727,7 +3723,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           bind w = p.m3;
           constraint wF { w == 5.0 }
       }`, {
-      'C3C::wF': ['?/?/F/?', 'F'],
+      'C3C::wF': ['F/F/F/F', 'F'],
     }),
     'xtrack-c5': probe(`package C5 {
           part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3735,7 +3731,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           part t : Top { part :>> p { attribute :>> load = 50.0; } }
           constraint wF { t.w == 18.0 }
       }`, {
-      'C5::wF': ['?/?/F/?', 'F'],
+      'C5::wF': ['F/F/F/F', 'F'],
     }),
     'mapper-s1': probe(`package S1 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3749,7 +3745,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'S1::inOther': ['T/T/T/T', 'T'],
       'S1::inP': ['T/T/T/T', 'T'],
-      'S1::inQ2': ['?/?/T/T', 'T'],
+      'S1::inQ2': ['T/T/T/T', 'T'],
     }),
     'mapper-s2': probe(`package S2 {
         part def P {
@@ -3772,7 +3768,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.p.x >= 40.0 }
       }`, {
       'S3::P::c': ['?/?/?/?', '?'],
-      'S3::top': ['?/?/T/T', 'T'],
+      'S3::top': ['T/T/T/T', 'T'],
     }),
     S1: probe(`package S1 {
         part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
@@ -3797,8 +3793,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'M1::m2NegT': ['?/?/T/T', 'T'],
-      'M1::m2PosF': ['?/?/F/?', 'F'],
+      'M1::m2NegT': ['T/T/T/T', 'T'],
+      'M1::m2PosF': ['F/F/F/F', 'F'],
     }),
     M2: probe(`package M2 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3812,8 +3808,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'M2::m2NegT': ['?/?/T/T', 'T'],
-      'M2::m2PosF': ['?/?/F/?', 'F'],
+      'M2::m2NegT': ['T/T/T/T', 'T'],
+      'M2::m2PosF': ['F/F/F/F', 'F'],
     }),
     M2b: probe(`package M2b {
         part def P { attribute load : ScalarValues::Real default = 3.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3827,8 +3823,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'M2b::m2NegT': ['?/?/T/T', 'T'],
-      'M2b::m2PosF': ['?/?/F/?', 'F'],
+      'M2b::m2NegT': ['T/T/T/T', 'T'],
+      'M2b::m2PosF': ['F/F/F/F', 'F'],
     }),
     M3: probe(`package M3 {
         part def Q {
@@ -3875,8 +3871,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'M4::m2NegT': ['?/?/T/T', 'T'],
-      'M4::m2PosF': ['?/?/F/?', 'F'],
+      'M4::m2NegT': ['T/T/T/T', 'T'],
+      'M4::m2PosF': ['F/F/F/F', 'F'],
     }),
     M5: probe(`package M5 {
         part def Q {
@@ -3890,8 +3886,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.m2 <= 0.0 }
         constraint m2PosF { q.m2 >= 0.0 }
       }`, {
-      'M5::m2NegT': ['?/?/T/T', 'T'],
-      'M5::m2PosF': ['?/?/F/?', 'F'],
+      'M5::m2NegT': ['T/T/T/T', 'T'],
+      'M5::m2PosF': ['F/F/F/F', 'F'],
     }),
     M6: probe(`package M6 {
         attribute K : ScalarValues::Real default = 0.5;
@@ -3960,8 +3956,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q2.load <= 5.0 }
       }`, {
       'M7F::Q::c': ['T/T/T/T', 'T'],
-      'M7F::Q::c in M7F::q2': ['?/?/?/?', 'F'],
-      'M7F::top': ['?/?/F/?', 'F'],
+      'M7F::Q::c in M7F::q2': ['F/F/F/F', 'F'],
+      'M7F::top': ['F/F/F/F', 'F'],
     }),
     bigBind5: probe(bigBind(5), {
       'Big::P::c': ['T/T/T/T', 'T'],
@@ -3970,11 +3966,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Big::P::c in Big::Q2::p': ['?/?/?/?', 'T'],
       'Big::P::c in Big::Q3::p': ['?/?/?/?', 'T'],
       'Big::P::c in Big::Q4::p': ['?/?/?/?', 'T'],
-      'Big::k0': ['?/?/F/?', 'F'],
-      'Big::k1': ['?/?/F/?', 'F'],
-      'Big::k2': ['?/?/F/?', 'F'],
-      'Big::k3': ['?/?/F/?', 'F'],
-      'Big::k4': ['?/?/F/?', 'F'],
+      'Big::k0': ['F/F/F/F', 'F'],
+      'Big::k1': ['F/F/F/F', 'F'],
+      'Big::k2': ['F/F/F/F', 'F'],
+      'Big::k3': ['F/F/F/F', 'F'],
+      'Big::k4': ['F/F/F/F', 'F'],
     }),
     'refute-r1': probe(`package R1 {
         part def P {
@@ -4147,8 +4143,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint wNegT { q1.w >= 40.0 }
         constraint wPosF { q1.w <= 2.0 }
       }`, {
-      'R6::wNegT': ['?/?/T/T', 'T'],
-      'R6::wPosF': ['?/?/F/?', 'F'],
+      'R6::wNegT': ['T/T/T/T', 'T'],
+      'R6::wPosF': ['F/F/F/F', 'F'],
     }),
     'refute-r8': probe(`package R8 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4163,8 +4159,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'R8::m2NegT': ['?/?/T/T', 'T'],
-      'R8::m2PosF': ['?/?/F/?', 'F'],
+      'R8::m2NegT': ['T/T/T/T', 'T'],
+      'R8::m2PosF': ['F/F/F/F', 'F'],
     }),
     'refute-r13': probe(`package R13 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4193,8 +4189,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'R13c::m2NegT': ['?/?/T/T', 'T'],
-      'R13c::m2PosF': ['?/?/F/?', 'F'],
+      'R13c::m2NegT': ['T/T/T/T', 'T'],
+      'R13c::m2PosF': ['F/F/F/F', 'F'],
     }),
     'refute-r14b': probe(`package R14b {
         part def P {
@@ -4226,8 +4222,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R14c::P::c': ['T/T/T/T', 'T'],
       'R14c::P::c in R14c::Q::p': ['?/?/?/?', 'T'],
-      'R14c::Q2::inQ2': ['?/?/F/?', 'F'],
-      'R14c::R::inR': ['?/?/F/?', 'F'],
+      'R14c::Q2::inQ2': ['F/F/F/F', 'F'],
+      'R14c::R::inR': ['F/F/F/F', 'F'],
     }),
     'refute-r14d': probe(`package R14d {
         part def P {
@@ -4241,7 +4237,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           constraint inInner { q9.p.load <= 10.0 }
         }
       }`, {
-      'R14d::Inner::inInner': ['?/?/F/?', 'F'],
+      'R14d::Inner::inInner': ['F/F/F/F', 'F'],
       'R14d::P::c': ['T/T/T/T', 'T'],
       'R14d::P::c in R14d::Q::p': ['?/?/?/?', 'T'],
     }),
@@ -4259,7 +4255,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R14eLib::P::c': ['T/T/T/T', 'T'],
       'R14eLib::P::c in R14eLib::Q::p': ['?/?/?/?', 'T'],
-      'R14eUse::inUse': ['?/?/F/?', 'F'],
+      'R14eUse::inUse': ['F/F/F/F', 'F'],
     }),
     'refute-r15': probe(`package R15 {
         part def P {
@@ -4276,9 +4272,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R15::P::c': ['T/T/T/T', 'T'],
       'R15::P::c in R15::Q::p': ['?/?/?/?', 'T'],
-      'R15::m2NegT': ['?/?/T/T', 'T'],
-      'R15::m2PosF': ['?/?/F/?', 'F'],
-      'R15::qsT': ['?/?/T/T', 'T'],
+      'R15::m2NegT': ['T/T/T/T', 'T'],
+      'R15::m2PosF': ['F/F/F/F', 'F'],
+      'R15::qsT': ['T/T/T/T', 'T'],
     }),
     'refute-r16': probe(`package R16 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4295,8 +4291,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'R16::m2NegT': ['?/?/T/T', 'T'],
-      'R16::m2PosF': ['?/?/F/?', 'F'],
+      'R16::m2NegT': ['T/T/T/T', 'T'],
+      'R16::m2PosF': ['F/F/F/F', 'F'],
     }),
     'refute-r16b': probe(`package R16b {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4313,8 +4309,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'R16b::m2NegT': ['?/?/T/T', 'T'],
-      'R16b::m2PosF': ['?/?/F/?', 'F'],
+      'R16b::m2NegT': ['T/T/T/T', 'T'],
+      'R16b::m2PosF': ['F/F/F/F', 'F'],
     }),
     'refute-r16c': probe(`package R16c {
         part def Q {
@@ -4328,8 +4324,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.m2 <= 0.0 }
         constraint m2PosF { q.m2 >= 0.0 }
       }`, {
-      'R16c::m2NegT': ['?/?/T/T', 'T'],
-      'R16c::m2PosF': ['?/?/F/?', 'F'],
+      'R16c::m2NegT': ['T/T/T/T', 'T'],
+      'R16c::m2PosF': ['F/F/F/F', 'F'],
     }),
     'refute-r17': probe(`package R17 {
         part def P { attribute load : ScalarValues::Real default = 1.0; }
@@ -4346,7 +4342,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { r1.q.p.load <= 10.0 }
       }`, {
       'R17::R::q::c': ['?/?/?/?', 'T'],
-      'R17::top': ['?/?/F/?', 'F'],
+      'R17::top': ['F/F/F/F', 'F'],
     }),
     'refute-r17c': probe(`package R17c {
         part def P { attribute load : ScalarValues::Real default = 1.0; }
@@ -4361,7 +4357,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q.p.load <= 10.0 }
       }`, {
       'R17c::Q::p::c2': ['?/?/?/?', 'T'],
-      'R17c::top': ['?/?/F/?', 'F'],
+      'R17c::top': ['F/F/F/F', 'F'],
     }),
     'refute-r18': probe(`package R18 {
         calc def Twice { in x : ScalarValues::Real; return r : ScalarValues::Real = 2.0 * x; }
@@ -4410,8 +4406,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'DP33::posF': ['?/?/F/?', 'F'],
     }),
     chainPkg32: probe(bindingChainPkg(32), {
-      'DP32::negT': ['?/?/T/T', 'T'],
-      'DP32::posF': ['?/?/F/?', 'F'],
+      'DP32::negT': ['T/T/T/T', 'T'],
+      'DP32::posF': ['F/F/F/F', 'F'],
     }),
     'h2-bodyspec-plain': probe(`package H2BP {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4508,9 +4504,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'M2a::Q::defL': ['T/-/T/-', 'T'],
       'M2a::Q::defL in M2a::q': ['T/-/T/-', 'T'],
-      'M2a::ctlA': ['?/?/T/T', 'T'],
-      'M2a::negT': ['?/?/T/T', 'T'],
-      'M2a::posF': ['?/?/F/?', 'F'],
+      'M2a::ctlA': ['T/T/T/T', 'T'],
+      'M2a::negT': ['T/T/T/T', 'T'],
+      'M2a::posF': ['F/F/F/F', 'F'],
     }),
     G340: probe(`package G340 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4544,8 +4540,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 [SI::kg] }
         constraint m2PosF { q.p.m2 >= 0.0 [SI::kg] }
       }`, {
-      'UM2::m2NegT': ['?/?/T/?', 'T'],
-      'UM2::m2PosF': ['?/?/F/?', 'F'],
+      'UM2::m2NegT': ['T/T/T/?', 'T'],
+      'UM2::m2PosF': ['F/F/F/?', 'F'],
     }),
     // I6 on quantities: p's witness 2000 [g] IS the compared 2 kg; p2's k prints its own 10 (unit-less), as
     // the row compared 10 kg — not P's 4000 (grams, F2).
@@ -4576,8 +4572,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.p.m2 <= 0.0 }
         constraint m2PosF { q.p.m2 >= 0.0 }
       }`, {
-      'SM2::m2NegT': ['?/?/T/T', 'T'],
-      'SM2::m2PosF': ['?/?/F/?', 'F'],
+      'SM2::m2NegT': ['T/T/T/T', 'T'],
+      'SM2::m2PosF': ['F/F/F/F', 'F'],
     }),
     'm2-dup': probe(`package M2D {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4588,9 +4584,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint bT { q2.p.m2 >= 9.7 }
         constraint cF { q2.p.m2 >= 9.9 }
       }`, {
-      'M2D::aT': ['?/?/T/T', 'T'],
-      'M2D::bT': ['?/?/T/T', 'T'],
-      'M2D::cF': ['?/?/F/?', 'F'],
+      'M2D::aT': ['T/T/T/T', 'T'],
+      'M2D::bT': ['T/T/T/T', 'T'],
+      'M2D::cF': ['F/F/F/F', 'F'],
     }),
     d1plain: probe(`package D1P {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4654,8 +4650,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint ctlA { r0.q.p.m2 >= 8.5 }
       }`, {
       'EnclW5::ctlA': ['?/?/?/?', 'T'],
-      'EnclW5::negT': ['?/?/?/?', 'T'],
-      'EnclW5::posF': ['?/?/?/?', 'F'],
+      'EnclW5::negT': ['T/T/?/?', 'T'],
+      'EnclW5::posF': ['F/F/?/?', 'F'],
     }),
     // R's own constraint over the bound path, and the context row r gains (q's m2 is −40 there).
     'encl-W4': probe(`package EnclW4 {
@@ -4684,7 +4680,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint ctlT { q.p.m2 >= 8.5 }
         constraint ctlF { q.p.m2 <= 8.0 }
       }`, {
-      'GlobW10::ctlF': ['F/F/F/F', 'F'],
+      'GlobW10::ctlF': ['F/F/F/?', 'F'],
       'GlobW10::ctlT': ['T/T/T/?', 'T'],
     }),
     // An asserted partner a specialised definition's usages share: q0 and q1 change nothing Q2 does not,
@@ -4722,8 +4718,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint ctlA { r0.q.p.m2 >= 8.5 [SI::kg] }
       }`, {
       'G271::ctlA': ['F/F/F/F', 'F'],
-      'G271::negT': ['?/?/T/T', 'T'],
-      'G271::posF': ['?/?/F/?', 'F'],
+      'G271::negT': ['T/T/T/T', 'T'],
+      'G271::posF': ['F/F/F/F', 'F'],
     }),
     // A partner read through a reference feature's value (q's r is r1, whose K makes L 50): the check
     // abstains, the numeric surface and the SMT engine read the referenced definition's value (see
@@ -4738,8 +4734,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint negT { q.p.m2 <= 0.0 }
         constraint posF { q.p.m2 >= 0.0 }
       }`, {
-      'RefW9::negT': ['?/?/F/?', 'T'],
-      'RefW9::posF': ['?/?/T/T', 'F'],
+      'RefW9::negT': ['F/F/F/F', 'T'],
+      'RefW9::posF': ['T/T/T/T', 'F'],
     }),
     k4: probe(`package K4 {
         part def Q {
@@ -5053,7 +5049,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * decides those rows no longer where the witness was printed; G271's control r0's `q.p.m2` (kg) is
    * such a quantity too, beside its correct refutation.
    */
-  const WITNESS_UNPRINTED = new Set(['G271 | G271::ctlA']);
+  const WITNESS_UNPRINTED = new Set(['G271 | G271::ctlA', 'k5 | K5::n']);
   /**
    * I7's exceptions: an SMT `inconsistent-axioms` beside a T or F elsewhere, `probe | row` → reason.
    * Checked on every probe, not only those with `bind` or `default`: three of the reviewed entries (n4,
@@ -5238,24 +5234,23 @@ describe('a witness is the value at the path the row read, not the feature’s o
     close(p.record, { 'q.m2': -40, 'q2.m2': 9.8 });
   });
 
-  it('literal: prints no value where the check reads none at the path (M2 until F5), never the definition’s 9', async () => {
+  it('literal: prints the value the check read per instance (F5): q.p.m2 is −40, never the definition’s 9', async () => {
     const p = await printed(M2, 'W3', 'literal', 'W3::m2NegT');
-    expect(p.claim).toBe('inconclusive');
-    expect(p.row).toEqual({ 'q.p.m2': null });
-    expect(p.record).toEqual({ 'q.p.m2': null });
+    expect(p.claim).toBe('holds-at-values');
+    expect(p.row).toEqual({ 'q.p.m2': -40 });
+    expect(p.record).toEqual({ 'q.p.m2': -40 });
   });
 
-  withZ3('smt: a proof that stands on no point the check read prints no value for the path either', async () => {
+  withZ3('smt: the same point, read per instance, in the row and in its record', async () => {
     const p = await printed(M2, 'W3', 'smt', 'W3::m2NegT');
     expect(p.claim).toBe('proved');
-    expect(p.row).toEqual({ 'q.p.m2': null });
-    expect(p.record).toEqual({ 'q.p.m2': null });
+    expect(p.row).toEqual({ 'q.p.m2': -40 });
+    expect(p.record).toEqual({ 'q.p.m2': -40 });
   });
 
   // xtrack iu1: a unit literal applied to a computed operand. The scalar reading `valueAtPath` does not
-  // read r's total (4 GiB), though the unit-aware reading the row is judged by does — so the row is decided and
-  // the witness has no value. F5's `check.reads` replaces valueAtPath: these two pins must then print
-  // r.total = 4 GiB, and the two M2 pins above -40 — rewrite the four with it.
+  // read r's total (4 GiB), though the unit-aware reading the row is judged by does — so the row is decided
+  // and F5's `check.reads` prints r.total = 4 GiB.
   const IU1 = `package IU1 {
       part def P {
         attribute cap : ISQ::StorageCapacityValue default = 2.0 [GiB];
@@ -5266,18 +5261,18 @@ describe('a witness is the value at the path the row read, not the feature’s o
       constraint rT { r.total == 4.0 [GiB] }
     }`;
 
-  it('literal: a decided row whose value is a unit-literal expression prints no value (until F5), never a false one', async () => {
+  it('literal: a decided row whose value is a unit-literal expression prints it (F5): r.total = 4 GiB', async () => {
     const p = await printed(IU1, 'IU1', 'literal', 'IU1::rT');
     expect(p.claim).toBe('holds-at-values');
-    expect(p.row).toEqual({ 'r.total': null });
-    expect(p.record).toEqual({ 'r.total': null });
+    expect(p.row).toEqual({ 'r.total': 4 });
+    expect(p.record).toEqual({ 'r.total': 4 });
   });
 
   withZ3('smt: the same, proved', async () => {
     const p = await printed(IU1, 'IU1', 'smt', 'IU1::rT');
     expect(p.claim).toBe('proved');
-    expect(p.row).toEqual({ 'r.total': null });
-    expect(p.record).toEqual({ 'r.total': null });
+    expect(p.row).toEqual({ 'r.total': 4 });
+    expect(p.record).toEqual({ 'r.total': 4 });
   });
 
   it('keeps the feature’s own value, in its declared unit, for a path read through no instance of its own', async () => {
