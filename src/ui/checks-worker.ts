@@ -1,6 +1,6 @@
 /**
  * Browser only: the worker the palette runs a state-machine check in, so a walk
- * that takes a second leaves the page usable (`CheckSpec.offThread`). The page
+ * that takes a good part of a second leaves the page usable (`CheckSpec.offThread`). The page
  * starts it from `./panels/checks-runner.ts`; every decision is in
  * `./checks-offthread.ts`, and this file only carries messages.
  *

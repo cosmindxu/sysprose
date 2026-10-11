@@ -27,7 +27,9 @@
  * reference a user element holds into that library resolves differently in a
  * worker that holds the bundled one, so a request carries {@link libraryKey} of
  * the page's, and a worker whose own differs answers that it cannot — which the
- * page answers by running the check itself, on the library it has.
+ * page answers by running the check itself, on the library it has, and by not
+ * asking a worker again about that library: it would be told the same, after
+ * the cost of a start and a load.
  */
 
 import { FORMAT_VERSION, Model, type ElementRecord, type SerializedModel } from '@core/index';
@@ -57,10 +59,14 @@ export interface CheckRequest {
  */
 export const NO_REQUEST = 0;
 
-/** What comes back: the result, or why there is none. */
+/**
+ * What comes back: the result, or why there is none. `libraryMismatch` marks the
+ * one reason that holds for every later request about the same library: the
+ * worker's own is not the page's.
+ */
 export type CheckReply =
   | { id: number; ok: true; result: CheckResult }
-  | { id: number; ok: false; message: string };
+  | { id: number; ok: false; message: string; libraryMismatch?: true };
 
 const isLibraryElement = (el: ElementRecord): boolean => el.attrs.isLibrary === true;
 
@@ -165,7 +171,7 @@ export class CheckHost {
       const model = await this.base();
       if (req.library !== this.held) {
         // Not an error in the check: the page's references point into a library this worker does not hold.
-        return { id: req.id, ok: false, message: 'the standard library the page holds is not the one this worker holds' };
+        return { id: req.id, ok: false, message: 'the standard library the page holds is not the one this worker holds', libraryMismatch: true };
       }
       // Everything but the library is replaced by what the request carries.
       model.resetPreserving(req.model, isLibraryElement);

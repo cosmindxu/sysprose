@@ -390,13 +390,16 @@ before any `await`, and before `applyText`) remain the guard for that; Chromium'
 
 ### 2.15 The palette's checks — how long they hold the page, and the worker
 
-Every `model` check in the palette's Checks section runs on the page's own thread
-and holds it for as long as it takes. **Measured 2026-10-10 in the built app**
-(headless Chromium, a 16-core Linux machine with a load average under one),
-clicking **Run** on the drone-swarm v9 model as it opens — 3,457 elements, 17 state
-machines, its first root selected — and timing the click to the next macrotask, so
-the figure includes drawing the result. Median of 7 to 9 runs, the first run in
-parentheses:
+Before the worker below, every `model` check in the palette's Checks section ran on
+the page's own thread and held it for as long as it took, and this first table is
+that path for all of them, `reach` and `check-behaviour` included (taken before
+the worker existed; a re-run with `window.Worker` removed, which puts them back
+on the page, gives the same: 4.9 ms and 2.8 ms). **Measured 2026-10-10 in the
+built app** (headless Chromium, a 16-core Linux machine with a load average under
+one), clicking **Run** on the drone-swarm v9 model as it opens — 3,457 elements, 17
+state machines, its first root selected — and timing the click to the next
+macrotask, so the figure includes drawing the result. Median of 7 to 9 runs, the
+first run in parentheses:
 
 | Check | Held the page (ms) | | Check | Held the page (ms) |
 |---|---|---|---|---|
@@ -411,6 +414,12 @@ found and removed on the way: scoped to the root the app selects on open,
 `contracts` and `obligations` made a second pass over the model for the *of N*
 beside their figure (`obligations` 54 ms, 76 cold). When the scope is the only root
 there is, its figure is the whole model's, and the second pass is not made.
+
+Through the worker, which is what the app does on v9, `reach` held the page 5.4 ms
+(6.5 cold) and answered after 59 ms (300 cold, while the worker starts), and
+`check-behaviour` on one machine held it 5.6 ms and answered after 31 ms: the same
+walks of a few milliseconds, with the model sent and rebuilt there around them. On
+this model the worker only adds its round trip; the machines below are what it is for.
 
 The same two checks on a hand-written state machine, the shape of a flight
 controller's modes: 24 states, five of them composite with 3 to 4 substates each,
@@ -438,12 +447,13 @@ asked for in any other way.
 |---|---|---|
 | The worker's answer is the page's: the same function over a model rebuilt from the user's part and the library, for every kind of machine (none, a chain, an undecided guard, a machine nothing leaves, the UAV example, composites with properties), with and without a selection; a machine at the walk's bound gives the same undecided answer; the library the worker loads equals the page's; and where the page holds another library (the curated subset after a failed fetch, none yet, a saved project's from another build) the worker declines and the page runs the check on the library it has | `U checks-registry` (*the checks that run in a worker*) | PASS |
 | In the built app, the worker's answer equals the page's on all 18 runs on v9 (`reach`, and `check-behaviour` on each of the 17 machines), and on the flight controller, the UAV example, a machine nothing leaves and the vehicle example | a probe of the built app, with and without `window.Worker` — **not an automated test**; the unit cases above and `E palette-checks` are what stay | run once, 2026-10-10 |
-| A walk is `running` from the click, the Checks tab comes forward at the click and lists it, the person can Cancel it, the page keeps drawing, and the answer lands in the Checks tab; the row says it was worked out in the worker (`data-ran-in`), so a worker that started and failed cannot pass for one that answered | `E palette-checks` (*a state-machine check runs in a worker…*) | PASS |
+| A walk is `running` from the click, the Checks tab comes forward at the click and lists it, the person can Cancel it, the page keeps drawing (the longest wait between two frames is under half the same walk's on a page with no worker), and the answer lands in the Checks tab; the row says it was worked out in the worker (`data-ran-in`), so a worker that started and failed cannot pass for one that answered | `E palette-checks` (*a state-machine check runs in a worker…*) | PASS |
 | An answer that lands while the person is in another tab, typing, leaves the tab and the cursor alone | `E palette-checks` (*an answer that lands while the person is typing in another tab…*, the worker's reply held until the test lets it go) | PASS |
 | Cancel ends the run, the check keeps what it said before, nothing lands later, and the next run starts again; the focus moves to Run, so a Backspace or Delete after it does not delete the selected model (also when the answer lands while Cancel has the keyboard focus) | `E palette-checks` (*Cancel ends a running check…*, *an answer that lands while Cancel has the keyboard focus…*); `U checks-registry` (*running a check from the palette*) | PASS |
 | A model with no state machine is answered on the spot — "No state machine in this model" — and no worker is started for it | `E palette-checks` (*a model with no state machine is told so at once…*); `U checks-registry` | PASS |
 | A walk that finishes after the model was edited, or another element selected, is `stale`, not current; a reply of a cancelled run lands nothing; two walks take turns in one worker; an idle worker is ended | `E palette-checks` (*a walk that finishes after the model was edited…*); `U checks-registry` | PASS |
 | With no worker (or one that fails to start, dies, cannot be sent the model, cannot read the request, says it cannot run or says nothing for a minute) the check runs on the page, as every check did before | `E palette-checks` (*on a page with no worker…*); `U checks-registry` | PASS |
+| A worker that says the page's library is not its own is not asked about that library again: the runs after it go to the page and start no worker, until the page holds another library; any other refusal leaves the next run to ask | `U checks-registry` (*does not ask a worker about a library that one declined…*) | PASS |
 | One pass, not two, for the *of N* when the scope is the only root | `U checks-registry` (*makes one pass, not two…*) | PASS |
 
 The fallback to the page holds the page for the walk, as it always did, so the

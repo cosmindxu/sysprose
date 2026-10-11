@@ -58,9 +58,9 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       still hits the bound: `test/unit/checks-registry.test.ts` (*give a machine at the walk's
       bound…* asserts `reach` is `undecided` on five composites), `test/e2e/palette-checks.spec.ts`
       (*a state-machine check runs in a worker…* waits for `undecided`, *hit a bound* and
-      `verification/bound-hit` on `heavyMachine(6, 4)`, and for the page-held frame gap to mean
-      anything the walk must take a good fraction of a second), and the §2.15 timings of
-      `docs/TEST-REPORT.md`.
+      `verification/bound-hit` on `heavyMachine(6, 4)`, and sets its longest frame gap against the
+      same walk on a page with no worker, which says something only while that walk holds the
+      page for a good fraction of a second), and the §2.15 timings of `docs/TEST-REPORT.md`.
 - [ ] **Keep the toolbar's `More` menu honest as commands are added.** The overflow order lives in
       `COLLAPSE_ORDER` (`src/ui/panels/Toolbar.tsx`) and the guard is one e2e assertion that
       nothing collapses at the Playwright viewport. A new command added ahead of that list without
@@ -126,9 +126,16 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       it would save without the field's uncommitted value (Properties writes on Enter or blur):
       commit the field first, or leave the key to the browser and say so in Appendix B.
 - [ ] **Cut the crossings the hub-led layout leaves in the drone-swarm v9 `OA` General view.**
-      The view has 31 crossings in the app (46 in the layout's own count, `countCrossings`),
-      down from 71, with the two members drawn as hubs. Of the 46, 26 are two `«allocate»` lines
-      crossing, 9 an `«allocate»` and a `«satisfy»`, 7 an `«allocate»` and a `«typed-by»`: the two
-      members' activities share one definition per step, so the two fans interleave. Try ordering
-      the activities of the two fans by their shared definition (barycentre), or letting only
-      one member lead.
+      The view has 31 crossings in the app's readability count (46 in the layout's own count,
+      `countCrossings`), down from 71 and 88 in those two counts, with the two members drawn as
+      hubs. Of the 46, 26 are two `«allocate»` lines crossing, 9 an `«allocate»` and a `«satisfy»`,
+      7 an `«allocate»` and a `«typed-by»`: the two members' activities share one definition per
+      step, so the two fans interleave. Try ordering the activities of the two fans by their
+      shared definition (barycentre), or letting only one member lead.
+- [ ] **Give tied centrality scores one rank.** Properties shows `Centrality … #N of 1373`
+      (`elementCentrality`, `src/diagram/centrality.ts`). It orders equal scores by element id, and
+      ids are random UUIDs (`newId`, `src/core/ids.ts`), so a tied element's rank changes with
+      every load: the drone-swarm v9 root package (score 0.0004) read #973, #852, #1188 and #1067
+      in four loads of the same file, so tutorial stills that show a tied element's rank differ
+      from one recording to the next. Give tied scores the best rank they share (competition
+      ranking), or show *tied*, or break the tie by qualified name, which a load does not change.

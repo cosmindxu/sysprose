@@ -134,7 +134,7 @@ flowchart TB
   `src/ui/store.ts:612-620`) so a burst of edits triggers one ELK layout. A single
   `setAttr` (e.g. typing in Properties) still re-validates and re-serializes the
   whole model.
-- **ELK is the synchronous bundled build** (`src/diagram/layout.ts:32`), so the
+- **ELK is the synchronous bundled build** (`src/diagram/layout.ts:33`), so the
   `await` only defers a microtask; the layout CPU is on the main thread.
 - **`pushUndo` retains up to 50 full deep clones** (`UNDO_LIMIT = 50`) → memory
   wall on large models.

@@ -266,11 +266,11 @@ test('Edit acts on the selection, and is disabled without one', async ({ page })
 /*
  * The checks that walk a state machine run in a worker. A walk is bounded by
  * configurations, not by time: a machine of a few composite states, each with a
- * few substates, reaches the 10,000-configuration bound and holds a page for
- * seconds if it runs there. These tests use such a machine and check what a
- * person is promised: the check says it is running, the page stays usable, Cancel
- * ends it, and an answer that arrives after the model changed is not passed off
- * as current.
+ * few substates, reaches the 10,000-configuration bound and holds a page for a
+ * good part of a second if it runs there. These tests use such a machine and
+ * check what a person is promised: the check says it is running, the page stays
+ * usable, Cancel ends it, and an answer that arrives after the model changed is
+ * not passed off as current.
  */
 
 /**
@@ -363,7 +363,7 @@ const userRoots = (page: Page): Promise<string[]> =>
 const focusedTestId = (page: Page): Promise<string | null> =>
   page.evaluate(() => `${document.activeElement?.tagName}:${document.activeElement?.getAttribute('data-testid') ?? ''}`);
 
-test('a state-machine check runs in a worker: it says so, the page stays usable, and the answer lands', async ({ page }) => {
+test('a state-machine check runs in a worker: it says so, the page stays usable, and the answer lands', async ({ page, browser }) => {
   const errors = captureErrors(page);
   const workers: string[] = [];
   page.on('worker', (w) => workers.push(w.url()));
@@ -397,10 +397,32 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toContainText('verification/bound-hit');
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', 'undecided');
 
-  // Run on this page's thread, the walk holds it for seconds; in the worker no frame waited long for it.
   expect(workers.some((u) => u.includes('checks-worker')), `the worker started: ${workers.join(', ')}`).toBe(true);
-  expect(await longestFrameGap(page), 'the longest wait between two frames, in ms').toBeLessThan(500);
+  const workerGap = await longestFrameGap(page);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+
+  // The same walk on a page with no worker holds the page for a good part of a second; in the worker
+  // no frame waited anything like as long. Compared with the page's own run, not a figure of ours: a
+  // loaded machine slows both, and an absolute bound the page's run also meets proves nothing. A
+  // context of its own: the app's service worker, installed by the first page, would answer the second
+  // one's request for the model before the test's route could.
+  const context = await browser.newContext();
+  try {
+    const plain = await context.newPage();
+    await plain.addInitScript(() => {
+      delete (window as unknown as { Worker?: unknown }).Worker;
+    });
+    await openMachine(plain, heavyMachine(6, 4));
+    await watchFrames(plain);
+    const pageReach = checkRow(plain, 'reach');
+    await pageReach.getByTestId('palette-check-run').click();
+    await expect(pageReach).toHaveAttribute('data-verdict', 'undecided', { timeout: 60_000 });
+    await expect(pageReach).toHaveAttribute('data-ran-in', 'page');
+    const pageGap = await longestFrameGap(plain);
+    expect(workerGap, `the longest wait between two frames, in ms: worker ${workerGap.toFixed(0)}, page ${pageGap.toFixed(0)}`).toBeLessThan(pageGap / 2);
+  } finally {
+    await context.close();
+  }
 });
 
 test('Cancel ends a running check, which keeps what it said before, and the next run starts again', async ({ page }) => {

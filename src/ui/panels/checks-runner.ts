@@ -4,7 +4,7 @@
  * Most checks answer in a few milliseconds and are run on the spot. The two that
  * walk a state machine (`CheckSpec.offThread`) are not guaranteed to: the walk
  * is bounded by configurations, not by time, and a machine of two dozen states
- * with several composites among them takes seconds' worth of the page. Those go
+ * with several composites among them takes up to about a second of the page. Those go
  * to a worker (`../checks-worker.ts`), so the page stays usable, with the three
  * things a wait asks for:
  *  - a busy state: the check is `running` in the store from the click until it
@@ -34,6 +34,13 @@
  * (`../checks-offthread.ts`), so the fallback costs time and nothing else — the
  * time being the page held for the walk, which the row's "stays usable" is not
  * true of while it lasts.
+ *
+ * A LIBRARY THE WORKER DECLINED IS NOT ASKED ABOUT TWICE. A worker that says the
+ * page's library is not its own (`libraryMismatch`) will say so again for every
+ * run against that library, so the runs after the first go straight to the page
+ * and start no worker: each would pay for a start, a load and a reply, then the
+ * walk. The page's library changing (it finishes loading, a project from another
+ * build is opened) lifts it.
  */
 
 import { hasStateMachine, runCheck, selectionKey, type CheckContext, type CheckResult, type CheckSpec } from '../checks';
@@ -91,6 +98,8 @@ interface Job {
   rev: number;
   /** What of the selection the check reads, at the click. */
   selection: string | undefined;
+  /** {@link libraryKey} of the page's model when the run was sent to the worker. */
+  library?: string;
 }
 
 let nextToken = 1;
@@ -99,6 +108,8 @@ let active: Job | null = null;
 let worker: CheckWorker | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let watchdog: ReturnType<typeof setTimeout> | null = null;
+/** {@link libraryKey} of the library a worker declined: runs against it go to the page. */
+let declined: string | null = null;
 
 function stopWatchdog(): void {
   if (watchdog !== null) clearTimeout(watchdog);
@@ -147,7 +158,10 @@ function onReply(from: CheckWorker, reply: CheckReply): void {
   // A reply that cannot name its request (`NO_REQUEST`) can only be for the one being waited for.
   if (from !== worker || active === null || (reply.id !== active.token && reply.id !== NO_REQUEST)) return;
   if (reply.ok) settle(active, reply.result, 'worker');
-  else runHere(active);
+  else {
+    if (reply.libraryMismatch === true && active.library !== undefined) declined = active.library;
+    runHere(active);
+  }
 }
 
 function pump(): void {
@@ -156,6 +170,12 @@ function pump(): void {
   active = job;
   if (idleTimer !== null) clearTimeout(idleTimer);
   idleTimer = null;
+  const library = libraryKey(job.ctx.model);
+  if (library === declined) {
+    // A worker has said this page's library is not its own: do not start one to be told again.
+    settle(job, runCheck(job.spec, job.ctx), 'page');
+    return;
+  }
   try {
     if (worker === null) {
       const make = factory();
@@ -169,11 +189,12 @@ function pump(): void {
       worker = w;
     }
     const { ctx } = job;
+    job.library = library;
     worker.postMessage({
       id: job.token,
       check: job.spec.id,
       model: userPart(ctx.model),
-      library: libraryKey(ctx.model),
+      library,
       selectionId: ctx.selectionId,
       selectionName: ctx.selectionName,
       isolated: ctx.isolated,
@@ -228,6 +249,7 @@ export function cancelChecked(id: string): void {
 export function resetCheckRunner(): void {
   queue.length = 0;
   active = null;
+  declined = null;
   endWorker();
   useChecksStore.setState({ running: {} });
 }

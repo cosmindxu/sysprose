@@ -694,7 +694,7 @@ describe('the checks that run in a worker', () => {
     for (const [what, model] of [['the curated subset', curated], ['no library', none], ['another build\'s', older]] as const) {
       const reply = await answer(model);
       expect(reply.ok, what).toBe(false);
-      expect(reply, what).toMatchObject({ id: 1, message: expect.stringContaining('standard library') });
+      expect(reply, what).toMatchObject({ id: 1, message: expect.stringContaining('standard library'), libraryMismatch: true });
     }
   });
 
@@ -929,6 +929,41 @@ describe('running a check from the palette', () => {
     expect(running('check-behaviour')).toBe(false);
     expect(dying.terminated).toBe(true);
     expect(stored('check-behaviour')?.result).toEqual(runCheck(behaviour, walkable()));
+  });
+
+  it('does not ask a worker about a library that one declined, until the page holds another', () => {
+    withFakeWorker();
+    const c = walkable();
+    runChecked(reach, c, 1);
+    const first = FakeWorker.made[0];
+    first.onmessage?.({ data: { id: first.posted[0].id, ok: false, message: 'not the library this worker holds', libraryMismatch: true } });
+    expect(first.terminated).toBe(true);
+    expect(stored('reach')).toMatchObject({ rev: 1, ranIn: 'page', result: runCheck(reach, c) });
+
+    // Every run after it, of either walker, is answered on the page, and no worker is started to be told the same.
+    runChecked(reach, c, 2);
+    runChecked(behaviour, c, 2);
+    expect(FakeWorker.made).toHaveLength(1);
+    expect([running('reach'), running('check-behaviour')]).toEqual([false, false]);
+    expect(stored('reach')).toMatchObject({ rev: 2, ranIn: 'page', result: runCheck(reach, c) });
+    expect(stored('check-behaviour')).toMatchObject({ rev: 2, ranIn: 'page', result: runCheck(behaviour, c) });
+
+    // A page holding another library (here, one package) is a new question, and a worker is asked.
+    const other = Model.fromJSON(JSON.parse(JSON.stringify(machine.toJSON())));
+    other.create('Package', { declaredName: 'OtherLibrary', attrs: { isLibrary: true } });
+    expect(libraryKey(other)).not.toBe(libraryKey(machine));
+    runChecked(reach, ctx({ model: other }), 3);
+    expect(FakeWorker.made).toHaveLength(2);
+    expect(running('reach')).toBe(true);
+
+    // A reply that is not about the library does not close the door on it.
+    resetCheckRunner();
+    FakeWorker.made = [];
+    runChecked(reach, c, 4);
+    const w = FakeWorker.made[0];
+    w.onmessage?.({ data: { id: w.posted[0].id, ok: false, message: 'library data not found' } });
+    runChecked(reach, c, 5);
+    expect(FakeWorker.made).toHaveLength(2);
   });
 
   it('runs the check here when the model cannot be sent', () => {

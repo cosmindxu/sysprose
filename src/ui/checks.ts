@@ -221,6 +221,11 @@ export function checkScope(ctx: CheckContext): CheckScope {
  * {@link CheckSpec.needsSelection} check read, and `undefined` for a check that
  * never reads the selection. The palette shows a result as `stale` once this
  * moves, because the command beside it then names another element.
+ *
+ * Every whole-model scope is one key, whatever its reason: it covers the same
+ * elements and its command names none, so a result stays current while the
+ * selection moves between them. The reason in its summary is the one at the
+ * click (`docs/USER-GUIDE.md`, the palette's Checks row).
  */
 export function selectionKey(spec: CheckSpec, ctx: CheckContext): string | undefined {
   if (spec.scopedBySelection === true) {
