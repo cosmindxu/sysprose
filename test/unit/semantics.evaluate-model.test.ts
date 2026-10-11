@@ -13,11 +13,15 @@ import { featureIdsFor, valueAtPath } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
   bindingCapOf,
+  bindingFrames,
   boundAboveSentence,
   boundHereSentence,
   boundPartnerSafe,
+  boundSourceIn,
+  classified,
   defaultGivesWay,
   hasUserBindings,
+  instancesOfDefinition,
   isBindingConnector,
   readsOtherwise,
   shadowedNamesOf,
@@ -2403,5 +2407,156 @@ describe('valueAtPath — a path has the value the relation reads it at', () => 
     expect(valueAtPath(m!, c, 'p.free')).toBeUndefined();
     expect(valueAtPath(m!, c, 'p.nothing')).toBeUndefined();
     expect(valueAtPath(m!, c, 'nothing')).toBeUndefined();
+  });
+});
+
+/*
+ * THE INSTANCE INDEX (plan per-instance-check, step F3): the frames a binding
+ * holds in, the component each instance reads through, and the source of the
+ * value it gives there. F3 has no consumer, so these tests exercise the index
+ * itself: `boundSourceIn` on each A.3 case, the outermost-root component as the
+ * global union-find of what the connectors join, and every instance the full
+ * `denote` walk finds being in the frame enumeration (frames ⊇ denote).
+ */
+describe('the instance index — frames, components, and bound sources', () => {
+  const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+  const P = 'part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }';
+
+  it('finds the outermost frame root and the valued member a bound load reads (M2)', async () => {
+    const { model: m } = await loadModelText(`package M2 {
+      ${P}
+      part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> K = 25.0; }
+    }`);
+    const src = boundSourceIn(m!, 'M2::q::p::load');
+    expect(src && !('abstain' in src)).toBe(true);
+    if (!src || 'abstain' in src) return;
+    // The outermost root is the package, not q (whose own instance is a prefix too).
+    expect(m!.qualifiedName(src.root)).toBe('M2');
+    expect([...src.paths].sort()).toEqual(['q.L', 'q.p.load']);
+    // L states the value; p's load is a default the binding holds.
+    expect(src.via.source).toBe('q.L');
+    const cls = classified(m!, src.root, src.component);
+    expect(cls.valued).toEqual(['q.L']);
+    expect(cls.heldDefaults).toEqual(['q.p.load']);
+  });
+
+  it('reads one valued member, and abstains free / two-values / defaults-differ as A.3 does', async () => {
+    // A single valued member: the default carried into a valueless feature stands.
+    const { model: k } = await loadModelText(`package K {
+      attribute x : ScalarValues::Real default = 5.0;
+      attribute w : ScalarValues::Real;
+      bind w = x;
+    }`);
+    const carried = boundSourceIn(k!, 'K::w');
+    expect(carried && !('abstain' in carried) && carried.via.source).toBe('x');
+    // No value anywhere: free.
+    const { model: f } = await loadModelText(`package F {
+      attribute x : ScalarValues::Real;
+      attribute y : ScalarValues::Real;
+      bind x = y;
+    }`);
+    const free = boundSourceIn(f!, 'F::x');
+    expect(free && 'abstain' in free && free.abstain).toBe('free');
+    // Two stated values the binding joins: a contradiction the binding's own row reports.
+    const { model: t } = await loadModelText(`package T {
+      attribute a : ScalarValues::Real = 1.0;
+      attribute b : ScalarValues::Real = 2.0;
+      bind a = b;
+    }`);
+    const two = boundSourceIn(t!, 'T::a');
+    expect(two && 'abstain' in two && two.abstain).toBe('two-values');
+    // Two defaults that read a name and differ: defaults-differ.
+    const { model: r } = await loadModelText(`package R3a {
+      part def A { attribute K : ScalarValues::Real default = 1.0; attribute v : ScalarValues::Real default = 2.0 * K; }
+      part a1 : A;
+      part a2 : A { attribute :>> K = 5.0; }
+      bind a1.v = a2.v;
+    }`);
+    const differ = boundSourceIn(r!, 'R3a::a1::v');
+    expect(differ && 'abstain' in differ && differ.abstain).toBe('defaults-differ');
+    // A name no binding holds: nothing.
+    expect(boundSourceIn(r!, 'R3a::a1::K')).toBeUndefined();
+  });
+
+  it('reads the outermost frame root as the global union-find of what the connectors join', async () => {
+    const { model: m } = await loadModelText(`package U {
+      attribute a : ScalarValues::Real = 1.0;
+      attribute b : ScalarValues::Real;
+      attribute c : ScalarValues::Real;
+      bind a = b;
+      bind b = c;
+    }`);
+    // An independent global union-find over the connectors' ends.
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
+      let root = x;
+      while (parent.get(root) !== root) root = parent.get(root)!;
+      while (parent.get(x) !== root) {
+        const next = parent.get(x)!;
+        parent.set(x, root);
+        x = next;
+      }
+      return root;
+    };
+    const connectors = m!.all().filter((e) => isBindingConnector(e) && e.attrs.isLibrary !== true);
+    for (const e of connectors) {
+      for (const id of [e.source?.[0], e.target?.[0]]) if (id !== undefined) parent.set(id, id);
+    }
+    for (const e of connectors) {
+      const [a, b] = [e.source![0]!, e.target![0]!];
+      const [ra, rb] = [find(a), find(b)];
+      if (ra !== rb) parent.set(ra, rb);
+    }
+    const bId = named(m!, 'U::b').id;
+    const unionClass = [...new Set(parent.keys())]
+      .filter((id) => find(id) === find(bId))
+      .map((id) => m!.get(id)!.declaredName)
+      .sort();
+    // The component at the outermost root holds exactly that class.
+    const src = boundSourceIn(m!, 'U::b');
+    expect(src && !('abstain' in src)).toBe(true);
+    if (!src || 'abstain' in src) return;
+    expect([...src.paths].sort()).toEqual(unionClass);
+  });
+
+  it('enumerates every instance the full denote walk finds: frames cover denote', async () => {
+    const { model: m } = await loadModelText(`package N {
+      ${P}
+      part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> K = 25.0; }
+      part r : Q;
+      part def R { part qq : Q; part pp : P; }
+      part s : R;
+    }`);
+    const definitions = sharedDefinitions(m!);
+    const D = named(m!, 'N::P');
+    // The frame enumeration alone.
+    const frameInstances = new Set<string>();
+    const { frames } = bindingFrames(definitions, D);
+    for (const { root, prefix } of frames) {
+      if (prefix === '') {
+        frameInstances.add(definitions.instanceNameOf(root.id));
+        continue;
+      }
+      const d = definitions.denote(root.id).get(prefix);
+      if (d) frameInstances.add(definitions.instanceNameOf(d.feature.id));
+    }
+    // The generic instance and the two direct usages of P reach every frame.
+    expect(frameInstances.has('N::P')).toBe(true);
+    expect(frameInstances.has('N::Q::p')).toBe(true);
+    expect(frameInstances.has('N::R::pp')).toBe(true);
+    // Every instance the full denote walk over every user package finds is in the frames.
+    for (const pkg of m!.all().filter((e) => e.eClass === 'Package' && e.attrs.isLibrary !== true)) {
+      for (const d of definitions.denote(pkg.id).values()) {
+        if (d.feature.id === D.id || definitions.specialisersOf(D.id).some((s) => s.id === d.feature.id)) {
+          expect(frameInstances.has(definitions.instanceNameOf(d.feature.id)), definitions.instanceNameOf(d.feature.id)).toBe(true);
+        }
+      }
+    }
+    // The full index (frames ∪ denote) agrees, deduplicated, generic first.
+    const all = instancesOfDefinition(definitions, D);
+    expect(all[0]).toBe('N::P');
+    expect(new Set(all).size).toBe(all.length);
   });
 });
