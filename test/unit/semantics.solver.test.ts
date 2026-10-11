@@ -10,6 +10,7 @@ import {
   obligationsOf,
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
+import { defaultStandsIn } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -442,5 +443,51 @@ describe('optimize', () => {
     expect(res.sense).toBe('max');
     expect(res.best.get(x.id)).toBeCloseTo(5, 2);
     expect(res.value).toBeCloseTo(10, 3);
+  });
+});
+
+/* ═══════════════ F8 — a default standing in one instance (H2) ═══════════════ */
+
+/**
+ * A `default` a binding holds per FEATURE gives way where the bindings joined
+ * to it reach a value of its own. In an instance whose own component states
+ * none, and whose every default is a literal agreeing exactly, it STANDS
+ * (plan A.4 Part 2, F8): `w2`'s `q2 : Q` leaves `L` unset, so `q2.p.load` is
+ * P's 5.0 and `q2.p.m2` is 5.0, while `q1` sets `L` to 50.
+ */
+describe('solve — a default a binding holds per feature stands in the instance that leaves it unset (F8)', () => {
+  const W2 = `package W2 {
+    part def P { attribute load : ScalarValues::Real default = 5.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+    part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
+    part q1 : Q { attribute :>> L = 50.0; }
+    part q2 : Q;
+    constraint c1 { q1.p.m2 <= 0.0 }
+    constraint c2 { q2.p.m2 >= 0.0 }
+    constraint c3 { q2.p.m2 <= 2.0 }
+  }`;
+
+  it('names P’s default as standing in q2 and no value in q1', async () => {
+    const { model: m } = await loadModelText(W2);
+    expect(defaultStandsIn(m!, 'W2::q2::p::load')?.declaredName).toBe('load');
+    expect(defaultStandsIn(m!, 'W2::q2::p::load')?.attrs.value).toBe(5);
+    expect(defaultStandsIn(m!, 'W2::q1::p::load')).toBeUndefined();
+  });
+
+  it('decides the relation at 5.0 in q2 and −40 in q1, on the check and the numeric surface', async () => {
+    const { model: m } = await loadModelText(W2);
+    const check = (n: string) => checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === `W2::${n}`)!;
+    expect([check('c1').result, check('c2').result, check('c3').result]).toEqual(['satisfied', 'satisfied', 'violated']);
+    expect(check('c2').reads?.map((r) => [r.path, r.value])).toEqual([['q2.p.m2', 5]]);
+    const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `W2::${n}`)!;
+    expect([numeric('c1').result, numeric('c2').result, numeric('c3').result]).toEqual(['satisfied', 'satisfied', 'violated']);
+  });
+
+  it('files the instance literal equation the solver and the SMT lane read (F8)', async () => {
+    const { model: m } = await loadModelText(W2);
+    const load = obligationsOf(m!).find((o) => o.element.qualifiedName === 'W2::Q::p::load in W2::q2::p');
+    expect(load?.expression).toBe('load == 5');
+    expect(load?.role).toBe('axiom');
+    // q1's L is 50: no standing-default row, the binding carries the value.
+    expect(obligationsOf(m!).find((o) => o.element.qualifiedName === 'W2::Q::p::load in W2::q1::p')).toBeUndefined();
   });
 });

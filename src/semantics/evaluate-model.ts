@@ -32,6 +32,7 @@ import {
   boundPartnerSafe,
   boundSourceIn,
   defaultGivesWay,
+  defaultStandsIn,
   enclosingAssertOn,
   hasUserBindings,
   instanceGroups,
@@ -744,6 +745,16 @@ function valueBoundInInstance(
   }
   if (!src) return undefined;
   if ('abstain' in src) {
+    // A `default` the binding holds per FEATURE, which this instance reads as
+    // its value (F8, A.4 Part 2): the outermost component states none and its
+    // every default is a literal agreeing exactly, so the default stands.
+    if (src.abstain === 'defaults-differ') {
+      const stand = defaultStandsIn(model, symbol);
+      const value = stand?.attrs.value;
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return typeof value === 'number' ? literalAnswer(value, stand!) : { value, depth: 0 };
+      }
+    }
     const sentence =
       src.abstain === 'past-cap' ? `${ownName} is not read in ${child}: ${src.sentence}` : src.sentence;
     return { value: undefined, depth: 0, abstention: { kind: src.abstain, sentence } };

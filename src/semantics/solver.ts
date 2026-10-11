@@ -78,6 +78,7 @@ import {
 import {
   baseIdOf,
   defaultGivesWay,
+  defaultStandsIn,
   hasStatedValue,
   instanceGroups,
   isAsserted,
@@ -1099,6 +1100,41 @@ function valueEquation(
   return makeEquation(model, lhs, body.node, s, nameToId, body, memo, identity, readBy, false, onRefused, instance);
 }
 
+/**
+ * The instance variable `feature@instance` of a `default` a binding holds per
+ * FEATURE but which this one instance reads as its value (F8, A.4 Part 2):
+ * the literal equation `feature@instance = <value>`, beside
+ * {@link valueEquation}. `defaultStandsIn` names the standing default's
+ * feature; a value carrying a unit is left out (the instance variable would
+ * need the gates' scale map — a gap, never a false verdict).
+ */
+function instanceStandingDefaultEquation(
+  model: Model,
+  feature: ElementRecord,
+  reading: InstanceReading,
+  name: string,
+): Equation | undefined {
+  const source = defaultStandsIn(model, reading.symbol);
+  if (!source) return undefined;
+  const raw = source.attrs.value;
+  if (typeof raw !== 'number') return undefined;
+  if (expressionValueUnitOf(source) !== undefined) return undefined;
+  const key = `${feature.id}@${reading.symbol}`;
+  const lhs: ExprNode = { kind: 'ref', path: [name] };
+  const rhs: ExprNode = { kind: 'num', value: raw };
+  const eq: Equation = {
+    vars: [key],
+    lhs,
+    rhs,
+    expr: { kind: 'binary', op: '-', left: lhs, right: rhs },
+    raw: `${name} = ${String(raw)} (${reading.symbol})`,
+    nameToId: new Map<string, ElementId>([[name, key]]),
+  };
+  eq.states = key;
+  eq.defines = [key];
+  return eq;
+}
+
 const INSTANCE_SYSTEMS = new WeakMap<Model, Map<string, { rev: number; system: InstanceSystem }>>();
 
 /** The relations of the instances read through variables of their own ({@link instanceSystem}). */
@@ -1229,6 +1265,16 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
           eq.defines = [key];
           system.eqs.push(eq);
           enqueue(eq);
+        }
+      }
+      // A `default` a binding holds per FEATURE, which this instance's own
+      // component reads as its value (F8, {@link defaultStandsIn}): the
+      // instance variable is the literal there.
+      if (name !== undefined) {
+        const stand = instanceStandingDefaultEquation(model, feature, reading, name);
+        if (stand) {
+          system.eqs.push(stand);
+          enqueue(stand);
         }
       }
     }

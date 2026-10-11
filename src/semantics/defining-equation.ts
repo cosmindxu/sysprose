@@ -916,6 +916,9 @@ export class DefiningEquations {
   }
 
   private pinnedUncached(contextId: ElementId, f: ElementRecord): boolean {
+    // A `default` a binding holds ({@link defaultGivesWay}) is another value
+    // in each instance it reads (F8): its symbol is the instance's own.
+    if (bindingEnds(this.model).held.has(f.id)) return false;
     // A literal is the one value in every instance — one a binding it
     // contradicts contradicts in every instance too.
     const v = this.statedValue(f);
@@ -3120,6 +3123,100 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
     };
   }
   return { abstain: 'free', sentence: abstentionSentence(model, symbol, best.root, best.component, 'free') };
+}
+
+/**
+ * The member of the component at `root` whose `default` STANDS for the
+ * instance that root's reading serves (F8, A.4 Part 2) — its path and the
+ * feature that writes it — or `undefined`. A `default` a binding holds only
+ * per FEATURE ({@link heldDefaults}) gives way where the bindings joined to it
+ * reach a value of its own; in an instance whose outermost component states
+ * none, and whose every default is a literal agreeing exactly, it stands there
+ * (P's `load default = 5.0` beside Q's `bind p.load = L`: q1 sets L, q2 leaves
+ * it, and q2's load is 5.0). A component with a stated member has a value the
+ * binding gives; a default that reads a name, or two that do not compare the
+ * same exactly, may be another value in each instance and gives way.
+ */
+function standingDefaultPath(
+  model: Model,
+  root: ElementId,
+  component: string,
+): { path: string; source: ElementRecord } | undefined {
+  const { readings } = bindingEnds(model);
+  const rootEl = model.get(root);
+  const reading = readings.get(root);
+  if (!rootEl || !reading) return undefined;
+  const definitions = sharedDefinitions(model);
+  // A member DEFINED by an asserted equation — its own, or one inherited from
+  // a general definition, which {@link endValue} does not see — is a stated
+  // value: the default does not stand (the open default-vs-assert semantics,
+  // H5). `equationsByName` is direct, so the generalisations are walked.
+  const asserted = (ownerId: ElementId | null | undefined, name: string | undefined): boolean => {
+    if (name === undefined || ownerId == null) return false;
+    for (const o of [model.get(ownerId), ...generalizationsOf(model, ownerId)]) {
+      if (o && definitions.of(o.id, name).length > 0) return true;
+    }
+    return false;
+  };
+  let first: { path: string; source: ElementRecord } | undefined;
+  for (const [path, r] of reading) {
+    if (r.component !== component) continue;
+    const f = model.get(r.feature);
+    if (!f) continue;
+    const name = effectiveNameOf(model, f);
+    if (asserted(f.ownerId, name) || asserted(root, path)) return undefined;
+    const v = endValue(model, f, rootEl, path);
+    if (v.kind === 'value') return undefined;
+    if (v.kind !== 'default') continue;
+    const literal = v.source.attrs.value;
+    if (typeof literal !== 'number' && typeof literal !== 'boolean') return undefined;
+    if (first === undefined) {
+      first = { path, source: v.source };
+      continue;
+    }
+    if (!sameConstant(first.source, v.source)) return undefined;
+  }
+  return first;
+}
+
+/**
+ * The feature whose `default` STANDS for the name read at the instance
+ * `symbol` (F8, A.4 Part 2) — the default a binding holds per feature but
+ * which this instance's outermost component reads as its value — or
+ * `undefined`. `symbol` is the spelling {@link boundSourceIn} reads
+ * (`W2::q2::p::load`). Past a binding cap, or where an end has no instance,
+ * no bound value is read for any one instance ({@link defaultGivesWay} stays
+ * the per-feature answer). The solver and the SMT lane read this to give the
+ * instance the literal value the check reads there.
+ */
+export function defaultStandsIn(model: Model, symbol: string): ElementRecord | undefined {
+  if (!hasUserBindings(model)) return undefined;
+  const definitions = sharedDefinitions(model);
+  const { readings } = bindingEnds(model);
+  let best: { root: ElementId; component: string; feature: ElementId } | undefined;
+  let bestSegments = Number.POSITIVE_INFINITY;
+  for (const [root, reading] of readings) {
+    const inst = definitions.instanceNameOf(root);
+    if (symbol !== inst && !symbol.startsWith(`${inst}::`)) continue;
+    const rest = symbol === inst ? '' : symbol.slice(inst.length + 2);
+    const r = reading.get(rest.split('::').join('.'));
+    if (!r) continue;
+    const segments = inst.split('::').length;
+    if (best === undefined || segments < bestSegments) {
+      best = { root, component: r.component, feature: r.feature };
+      bestSegments = segments;
+    }
+  }
+  if (!best) return undefined;
+  if (bindingCapOf(model) !== undefined) return undefined;
+  const member = model.get(best.feature);
+  if (
+    member &&
+    (bindingEnds(model).unread.has(member.id) || bindingEnds(model).unread.has(definitions.carrier(best.root, member).id))
+  ) {
+    return undefined;
+  }
+  return standingDefaultPath(model, best.root, best.component)?.source;
 }
 
 /** The user packages of a model — `package` elements, nested ones included. */

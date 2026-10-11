@@ -835,9 +835,11 @@ bindings: `bind B = A; bind C = B;` reads C as A, and R's `bind q.M = N` over
 Q's `bind p.m = M` reads `r.q.p.m` as r's N. Bindings are read in every context
 they hold in, each end the feature at its path there, and a `default` gives
 way where the bindings joined to it reach a value of its own — in that
-context, which is read per feature: a default that gives way in one context
-is read in none (where `q1 : Q` sets an M that Q leaves valueless, a `q2 : Q`
-that leaves it unset reads no m at all, not P's 18.5 kg). A binding to a
+context. Whether it gives way is decided for each instance: a LITERAL default
+still stands in an instance whose own component states no value and whose
+every default is a literal agreeing exactly (where `q1 : Q` sets an M that Q
+leaves valueless, a `q2 : Q` that leaves it unset reads P's 18.5 kg; a default
+that reads a name, or two defaults that differ, stand nowhere). A binding to a
 feature nothing gives a value (`attribute w; bind w = p.m;`) carries the
 default into it instead: `w` is 18.5 kg. Two defaults bound to each other with
 no value beside them stand where they state one constant value — numbers,

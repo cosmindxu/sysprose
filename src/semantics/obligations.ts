@@ -88,6 +88,7 @@ import {
   boundHereSentence,
   contradictedBindingOf,
   defaultGivesWay,
+  defaultStandsIn,
   hasStatedValue,
   isAsserted,
   instanceGroups,
@@ -1884,14 +1885,23 @@ function instanceValueRow(
   const definitions = sharedDefinitions(model);
   const name = definitions.nameOf(target);
   if (name === undefined) return undefined;
+  // A `default` a binding holds per FEATURE but which this instance reads as
+  // its value (F8, A.4 Part 2): the literal the instance variable stands on.
+  const stand = defaultStandsIn(model, symbol);
   const d = definitions.denote(context.id).get(name);
   const read = d ? definitions.valueRef(d) : undefined;
-  const source = read?.target ?? (hasStatedValue(model, target) ? target : undefined);
+  const source = read?.target ?? (hasStatedValue(model, target) ? target : undefined) ?? stand;
   if (!source) return undefined;
   if (source.eClass === 'CalculationUsage' && isParameterisedCalculation(model, source)) return undefined;
-  const text = statedValueOf(model, source);
-  if (typeof text !== 'string' || text.trim() === '' || /^(["']).*\1$/s.test(text.trim())) return undefined;
-  const reading = readRelation(model, { ...source, id: target.id, ownerId: context.id }, text.trim(), memo, name, source, path);
+  let valueSource = source;
+  let text = statedValueOf(model, source);
+  if (typeof text !== 'string' || text.trim() === '' || /^(["']).*\1$/s.test(text.trim())) {
+    const literal = stand?.attrs.value;
+    if (typeof literal !== 'number') return undefined;
+    valueSource = stand!;
+    text = String(literal);
+  }
+  const reading = readRelation(model, { ...valueSource, id: target.id, ownerId: context.id }, text.trim(), memo, name, valueSource, path);
   const encodable = unreadAxiom('axiom', reading.encodable, reading.unread);
   return {
     requirement: null,
@@ -1912,7 +1922,7 @@ function instanceValueRow(
     evidence: [],
     status: statusOf(encodable),
     ...readFields(reading),
-    instance: { baseId: source.id, contextId: context.id, featureId: target.id, path, symbol },
+    instance: { baseId: valueSource.id, contextId: context.id, featureId: target.id, path, symbol },
   };
 }
 

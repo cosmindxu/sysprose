@@ -3678,8 +3678,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c3 { q2.p.m2 <= 2.0 }
       }`, {
       'W2::c1': ['T/T/T/T', 'T'],
-      'W2::c2': ['?/?/?/?', 'T'],
-      'W2::c3': ['?/?/?/?', 'F'],
+      'W2::c2': ['T/T/T/T', 'T'],
+      'W2::c3': ['F/F/F/F', 'F'],
     }),
     w3: probe(`package W3 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -3766,11 +3766,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'S2::P::c': ['T/T/T/T', 'T'],
       'S2::P::c in S2::Q::p': ['T/T/T/T', 'T'],
       'S2::P::c in S2::R::a::p': ['T/T/T/T', 'T'],
-      'S2::P::c in S2::R::b::p': ['T/T/T/?', 'T'],
+      'S2::P::c in S2::R::b::p': ['T/T/T/T', 'T'],
       'S2::P::c in S2::r1::a::p': ['F/F/F/F', 'F'],
-      'S2::P::c in S2::r2::a::p': ['T/T/T/?', 'T'],
-      'S2::P::c in S2::r1::b::p': ['T/T/T/?', 'T'],
-      'S2::P::c in S2::r2::b::p': ['T/T/T/?', 'T'],
+      'S2::P::c in S2::r2::a::p': ['T/T/T/T', 'T'],
+      'S2::P::c in S2::r1::b::p': ['T/T/T/T', 'T'],
+      'S2::P::c in S2::r2::b::p': ['T/T/T/T', 'T'],
     }),
     'mapper-s3': probe(`package S3 {
         part def P { attribute x : ScalarValues::Real; constraint c { x >= 40.0 } }
@@ -3793,7 +3793,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'S1::P::c in S1::Q::p': ['T/T/T/T', 'T'],
       'S1::P::c in S1::q1::p': ['F/F/F/F', 'F'],
       'S1::P::c in S1::q2::p': ['T/T/T/T', 'T'],
-      'S1::P::c in S1::q3::p': ['T/T/T/?', 'T'],
+      'S1::P::c in S1::q3::p': ['T/T/T/T', 'T'],
     }),
     M1: probe(`package M1 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4227,7 +4227,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R14b::P::c': ['T/T/T/T', 'T'],
       'R14b::P::c in R14b::Q::p': ['T/T/T/T', 'T'],
       'R14b::P::c in R14b::Q2::p': ['F/F/F/F', 'F'],
-      'R14b::P::c in R14b::q2::p': ['T/T/T/?', 'T'],
+      'R14b::P::c in R14b::q2::p': ['T/T/T/T', 'T'],
     }),
     'refute-r14c': probe(`package R14c {
         part def P {
@@ -4249,7 +4249,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R14c::P::c in R14c::Q::p': ['T/T/T/T', 'T'],
       'R14c::P::c in R14c::R::q::p': ['F/F/F/F', 'F'],
       'R14c::P::c in R14c::Q2::p': ['F/F/F/F', 'F'],
-      'R14c::P::c in R14c::q2::p': ['T/T/T/?', 'T'],
+      'R14c::P::c in R14c::q2::p': ['T/T/T/T', 'T'],
       'R14c::Q2::inQ2': ['F/F/F/F', 'F'],
       'R14c::R::inR': ['F/F/F/F', 'F'],
     }),
@@ -4268,7 +4268,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R14d::Inner::inInner': ['F/F/F/F', 'F'],
       'R14d::P::c': ['T/T/T/T', 'T'],
       'R14d::P::c in R14d::Q::p': ['T/T/T/T', 'T'],
-      'R14d::P::c in R14d::q2::p': ['T/T/T/?', 'T'],
+      'R14d::P::c in R14d::q2::p': ['T/T/T/T', 'T'],
       'R14d::P::c in R14d::Inner::q9::p': ['F/F/F/F', 'F'],
     }),
     'refute-r14e': probe(`package R14eLib {
@@ -4285,7 +4285,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R14eLib::P::c': ['T/T/T/T', 'T'],
       'R14eLib::P::c in R14eLib::Q::p': ['T/T/T/T', 'T'],
-      'R14eLib::P::c in R14eLib::q2::p': ['T/T/T/?', 'T'],
+      'R14eLib::P::c in R14eLib::q2::p': ['T/T/T/T', 'T'],
       'R14eLib::P::c in R14eUse::q9::p': ['F/F/F/F', 'F'],
       'R14eUse::inUse': ['F/F/F/F', 'F'],
     }),
@@ -4377,7 +4377,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R17::R::q::c': ['T/T/T/T', 'T'],
       'R17::R::q::c in R17::r1::q': ['F/F/F/F', 'F'],
-      'R17::R::q::c in R17::r2::q': ['T/T/T/?', 'T'],
+      'R17::R::q::c in R17::r2::q': ['T/T/T/T', 'T'],
       'R17::top': ['F/F/F/F', 'F'],
     }),
     'refute-r17c': probe(`package R17c {
@@ -4688,7 +4688,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint posF { r.q.p.m2 >= 0.0 }
         constraint ctlA { r0.q.p.m2 >= 8.5 }
       }`, {
-      'EnclW5::ctlA': ['?/?/?/?', 'T'],
+      'EnclW5::ctlA': ['?/?/T/T', 'T'],
       'EnclW5::negT': ['T/T/?/?', 'T'],
       'EnclW5::posF': ['F/F/?/?', 'F'],
     }),
