@@ -357,7 +357,7 @@ export function offsetFaultIn(node: ExprNode, isPoint: (path: string) => boolean
 export function absoluteOperandFault(
   model: Model,
   node: ExprNode,
-  nameToId: Map<string, ElementId>,
+  nameToId: ReadonlyMap<string, ElementId>,
   markers: MarkerDimensions,
   memo: DerivationMemo,
   skip: ReadonlySet<string> = NO_NAMES,
@@ -517,7 +517,7 @@ export function derivedBareLiteral(
   model: Model,
   node: ExprNode,
   vars: ElementId[],
-  nameToId: Map<string, ElementId>,
+  nameToId: ReadonlyMap<string, ElementId>,
   markers: MarkerDimensions,
   memo: DerivationMemo,
   unreadNames: ReadonlySet<string> = NO_NAMES,
@@ -647,10 +647,7 @@ function valueBodyOf(
   if (typeof raw === 'string') {
     const body = parseRelationBody(raw.trim());
     if (!body || (body.hadUnit && !body.resolved)) return undefined;
-    const nameToId = mergeMaps(
-      el.ownerId != null ? idScopeFor(model, el.ownerId) : new Map<string, ElementId>(),
-      idScopeFor(model, el.id),
-    );
+    const nameToId = mergedScope(model, el.ownerId ?? undefined, el.id);
     return { node: body.node, nameToId, markers: body.literals };
   }
   const constraint = derivation.definedBy !== undefined ? model.get(derivation.definedBy) : undefined;
@@ -686,7 +683,7 @@ function valueBodyOf(
 export function operandRefusal(
   model: Model,
   node: ExprNode,
-  nameToId: Map<string, ElementId>,
+  nameToId: ReadonlyMap<string, ElementId>,
   markers: MarkerDimensions,
   memo: DerivationMemo,
   unread: ReadonlySet<string> = NO_NAMES,
@@ -881,7 +878,7 @@ export function nodeDimension(
 /** The dimension each name of a relation reads carries under its scale map: {@link nodeDimension}'s reading of a `ref`. */
 function refDimensionIn(
   scale: ScaleMap,
-  nameToId: Map<string, ElementId>,
+  nameToId: ReadonlyMap<string, ElementId>,
   markers: MarkerDimensions,
 ): (path: string) => Dimension {
   return (path) => {
@@ -995,14 +992,14 @@ export {
  * So the construction is published with the gates it feeds, and both surfaces
  * of {@link ./solver} call it rather than keeping a private copy.
  */
-export function relationVarsOf(node: ExprNode, nameToId: Map<string, ElementId>): ElementId[] {
+export function relationVarsOf(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>): ElementId[] {
   const out = new Set<ElementId>();
   collectVarIds(node, nameToId, out);
   return [...out];
 }
 
 /** Collect the feature ids referenced by an expression, via `nameToId`. */
-function collectVarIds(node: ExprNode, nameToId: Map<string, ElementId>, out: Set<ElementId>): void {
+function collectVarIds(node: ExprNode, nameToId: ReadonlyMap<string, ElementId>, out: Set<ElementId>): void {
   switch (node.kind) {
     case 'ref': {
       const id = nameToId.get(node.path.join('.'));
@@ -1028,9 +1025,22 @@ function collectVarIds(node: ExprNode, nameToId: Map<string, ElementId>, out: Se
 
 /** Name→id scope for a relation: its owner (subject) merged with itself. */
 export function relationScope(model: Model, el: ElementRecord): Map<string, ElementId> {
-  const owner = el.ownerId != null ? idScopeFor(model, el.ownerId) : new Map<string, ElementId>();
-  const self = idScopeFor(model, el.id);
-  return mergeMaps(owner, self);
+  return mergedScope(model, el.ownerId ?? undefined, el.id);
+}
+
+/**
+ * `mergeMaps(idScopeFor(model, outer), idScopeFor(model, inner))` — the outer
+ * context's names, then the inner's it does not answer, in that order — built
+ * as ONE fresh map: copying both shared scopes first and merging the copies
+ * was three copies of a scope per relation (5.8 million entries for a model
+ * of 600 bindings). No `outer` reads the inner scope alone. The caller may
+ * change the map.
+ */
+export function mergedScope(model: Model, outer: ElementId | undefined, inner: ElementId): Map<string, ElementId> {
+  const definitions = sharedDefinitions(model);
+  const out = outer !== undefined ? new Map(definitions.scope(outer, 'all')) : new Map<string, ElementId>();
+  for (const [k, v] of definitions.scope(inner, 'all')) if (!out.has(k)) out.set(k, v);
+  return out;
 }
 
 /**

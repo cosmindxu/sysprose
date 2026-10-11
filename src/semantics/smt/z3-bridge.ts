@@ -1312,6 +1312,19 @@ function witnessOf(
 ): { witness: WitnessValue[]; completion: WitnessValue[] } {
   const found = new Map<string, string>();
   const declared = declaredConstants(script);
+  // With the caller's list, nothing below reads `found` beyond its symbols and
+  // the script's declarations: the rest of the model goes unprinted. Among it
+  // are the `:named` labels of every script the shared context has asserted,
+  // each valued at its whole formula — six thousand of them, 0.7 s of
+  // printing, for a check whose script declares one symbol.
+  //
+  // Every entry is still READ (`m.get`), printed or not: the shared context's
+  // later answers depend on which of its terms a wrapper holds and when it is
+  // let go. A first version of this skipped the read of the labels as well, and
+  // moved the order of later unsat cores — the element a core finding names —
+  // on eight models of the differential corpus; skipping only the printing
+  // moved nothing.
+  const needed = wanted !== undefined ? new Set<string>([...wanted, ...declared.map((d) => d.symbol)]) : undefined;
   let completed = new Map<string, string>();
   // The one holder of the model: released here, once read, on every path. A
   // trap out of that release escapes, to be counted a death (`safeRelease`).
@@ -1321,7 +1334,11 @@ function witnessOf(
     try {
       m = solver.model();
       model = m;
-      for (const decl of m) found.set(decl.name().toString(), m.get(decl).toString());
+      for (const decl of m) {
+        const name = decl.name().toString();
+        const value = m.get(decl);
+        if (needed === undefined || needed.has(name)) found.set(name, value.toString());
+      }
     } catch {
       return { witness: [], completion: [] };
     }

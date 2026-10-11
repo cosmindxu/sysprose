@@ -238,6 +238,55 @@ describe('solveFeasible', () => {
     expect([feasible.violations, feasible.decided]).toEqual([[], false]);
   });
 
+  /**
+   * The search moves one freedom at a time and re-reads only the relations
+   * that read it, from terms kept for that one search: nothing of a call
+   * outlives it. Each leaf of an instance tree is a freedom of its own; with
+   * every relation re-read per step, a depth-8 tree took 48 s.
+   */
+  it('searches the model as it stands at each call, over an instance tree of freedoms', () => {
+    const { model: m } = parseModel(`package F {
+    part def N0 { attribute x : Real; attribute s : Real = x; }
+    part def N1 { part a : N0; part b : N0; attribute s : Real = a.s + b.s; }
+    part def N2 { part a : N1; part b : N1; attribute s : Real = a.s + b.s; }
+    part top : N2;
+    constraint lo { top.s >= 4.0 }
+    constraint hi { top.s <= 6.0 }
+}
+`);
+    const named = (ids: ReadonlyArray<{ id: string }>) => ids.map((v) => m.qualifiedName(v.id)).sort();
+    const first = solveFeasible(m);
+    expect([first.feasible, first.decided, named(first.unresolved)]).toEqual([true, true, []]);
+    const hi = m.all().find((el) => el.declaredName === 'hi')!;
+    m.setAttrs(hi.id, { expression: 'top.s <= 3.0' });
+    const edited = solveFeasible(m);
+    expect([edited.feasible, edited.decided, named(edited.unresolved)]).toEqual([false, false, ['F::hi', 'F::lo']]);
+    m.setAttrs(hi.id, { expression: 'top.s <= 6.0' });
+    const restored = solveFeasible(m);
+    expect([restored.feasible, restored.decided]).toEqual([true, true]);
+    expect([...restored.values]).toEqual([...first.values]);
+  });
+
+  /**
+   * Within one sweep, the search for a freedom reads every relation at the
+   * values the moves before it left: the terms of a moved freedom are kept at
+   * the value it was moved to, never at the one the sweep began with. Read at
+   * the start of the sweep, `far` still weighed 10¹² while y was searched,
+   * which drowned `near`'s slope in rounding: y stopped short of 3, and the
+   * search ended without a witness for either.
+   */
+  it('searches each freedom at the point the moves before it left', () => {
+    const { model: m } = parseModel(`package L {
+    attribute x : Real;
+    attribute y : Real;
+    constraint far { x >= 1000000.0 }
+    constraint near { y >= 3.0 }
+}
+`);
+    const feasible = solveFeasible(m);
+    expect([feasible.feasible, feasible.decided, feasible.unresolved, feasible.iterations]).toEqual([true, true, [], 1]);
+  });
+
   it('a point off the model’s own equations is no witness (n2, n3, x1, x3)', () => {
     const model = (exprs: Array<[string, boolean]>): Model => {
       const m = new Model();

@@ -1874,7 +1874,7 @@ export function readRefusalOf(
   model: Model,
   el: ElementRecord,
   node: ExprNode,
-  nameToId: Map<string, ElementId>,
+  nameToId: ReadonlyMap<string, ElementId>,
   markers: MarkerDimensions,
   memo: DerivationMemo,
   opts: ReadOptions = {},
