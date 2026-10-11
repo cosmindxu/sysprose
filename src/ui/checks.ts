@@ -27,13 +27,13 @@ import {
   connectivityReport,
   requirementSatisfaction,
   whereUsed,
-  reachReport,
-  behaviourReport,
-  stateMachinesIn,
   contractReport,
   obligationsReport,
   traceabilityMatrix,
 } from '@api/index';
+import type { ReportLine } from '@semantics/mc/report-lines';
+import { reachCheck, behaviourCheck } from './behaviour-checks';
+import type { LoadHealth } from './store';
 
 /** What a check says about the model when it has run. */
 export type CheckVerdict = 'not-run' | 'running' | 'holds' | 'issues' | 'undecided' | 'unavailable' | 'stale';
@@ -44,6 +44,8 @@ export interface CheckRow {
   message: string;
   elementId?: string;
   severity: 'info' | 'warning' | 'error';
+  /** True when the row's claim was found by the walk only, and is not counted as a finding. */
+  walkOnly?: true;
 }
 
 export interface CheckResult {
@@ -51,6 +53,10 @@ export interface CheckResult {
   /** One line a person reads first. */
   summary: string;
   rows: CheckRow[];
+  /** The terminal's report lines, for the Checks tab's `<details>` report. */
+  lines?: readonly ReportLine[];
+  /** The row keys flagged walk-only, for the report's per-line walk-only flag. */
+  walkOnlyKeys?: ReadonlySet<string>;
 }
 
 export interface CheckContext {
@@ -62,6 +68,8 @@ export interface CheckContext {
   isolated: boolean;
   /** The model's file name, for the copyable command. */
   fileName: string;
+  /** The load health, for a check judged over what a file of the model holds. */
+  loadHealth?: LoadHealth;
 }
 
 export interface CheckSpec {
@@ -76,6 +84,8 @@ export interface CheckSpec {
   views: readonly ViewKind[];
   /** True when the check reads the selected element. */
   needsSelection?: boolean;
+  /** True when the check is judged over the load health (the runner passes it). */
+  readsLoadHealth?: true;
   /** The terminal command that runs the same check. */
   command(ctx: CheckContext): string;
   /** Runs it here; absent for solver checks, which the runner handles. */
@@ -250,51 +260,24 @@ export const CHECKS: readonly CheckSpec[] = [
   {
     id: 'reach',
     label: 'Reachability',
-    question: 'Can every state be reached, and does every transition fire?',
+    question: 'Which states are reachable, which transitions are dead, where did the simulator hide a choice?',
     engine: 'model',
     views: ['state', 'action', 'general'],
+    readsLoadHealth: true,
     command: (ctx) => cli('reach', ctx),
-    run: (ctx) => {
-      const r = reachReport(ctx.model);
-      const rows: CheckRow[] = [];
-      for (const m of r.machines) {
-        for (const s of m.states.unreachable) rows.push({ code: 'verification/unreachable-state', message: `${m.machine.name ?? m.machine.id}: state ${s.name ?? s.id} is never reached`, elementId: s.id, severity: 'error' });
-        for (const t of m.transitions.dead) rows.push({ code: 'verification/dead-transition', message: `${m.machine.name ?? m.machine.id}: a transition never fires`, elementId: t.id, severity: 'warning' });
-      }
-      if (r.machines.length === 0) return { verdict: 'not-run', summary: 'No state machine in this model.', rows: [] };
-      const partial = r.machines.filter((m) => !m.exhaustive).length;
-      if (rows.length === 0 && partial > 0)
-        return { verdict: 'undecided', summary: `${partial} machine(s) hit a bound — nothing is claimed about them`, rows: r.machines.filter((m) => !m.exhaustive).map((m) => ({ code: 'verification/bound-hit', message: `${m.machine.name ?? m.machine.id}: ${m.qualification}`, elementId: m.machine.id, severity: 'info' })) };
-      return issues(`${r.machines.length} machine(s), ${r.totals.unreachable} unreachable state(s), ${r.totals.dead} dead transition(s)`, rows);
-    },
+    run: (ctx) => reachCheck(ctx, ctx.fileName),
   },
   {
     id: 'check-behaviour',
     label: 'Behaviour properties',
-    question: 'Do the properties this machine states hold on every run?',
+    question:
+      'Does this behaviour pattern hold on every reachable configuration, and can this design reach the situation I name? Run here, it checks the properties this machine\u2019s @PropertyPattern carriers state.',
     engine: 'model',
     views: ['state', 'action'],
     needsSelection: true,
+    readsLoadHealth: true,
     command: (ctx) => cli('check-behaviour', ctx, element(ctx)),
-    run: (ctx) => {
-      const machines = stateMachinesIn(ctx.model);
-      if (machines.length === 0) return { verdict: 'not-run', summary: 'No state machine in this model.', rows: [] };
-      const picked = machines.find((m) => m.id === ctx.selectionId) ?? machines[0];
-      const r = behaviourReport(ctx.model, { machineId: picked.id });
-      if (r.properties.length === 0)
-        return { verdict: 'not-run', summary: `${picked.declaredName ?? picked.id} states no property to check.`, rows: [] };
-      const rows: CheckRow[] = r.properties.map((p) => ({
-        code: p.code ?? 'verification/property',
-        message: `${p.sentence ?? 'property'} — ${p.claim}`,
-        elementId: picked.id,
-        severity: p.claim === 'fail' ? 'error' : p.claim === 'pass' ? 'info' : 'warning',
-      }));
-      const failed = r.properties.filter((p) => p.claim === 'fail').length;
-      const undecided = r.properties.filter((p) => p.claim !== 'pass' && p.claim !== 'fail').length;
-      if (failed > 0) return { verdict: 'issues', summary: `${failed} of ${r.properties.length} properties refuted on ${picked.declaredName ?? picked.id}`, rows };
-      if (undecided > 0) return { verdict: 'undecided', summary: `${undecided} property(ies) could not be decided`, rows };
-      return holds(`${r.properties.length} property(ies) hold on ${picked.declaredName ?? picked.id}`, rows);
-    },
+    run: (ctx) => behaviourCheck(ctx, ctx.fileName),
   },
   {
     id: 'contracts',
@@ -397,6 +380,21 @@ export function checksFor(view: ViewKind): CheckSpec[] {
 /** Why a solver check cannot run here — the sentence the palette shows instead of a verdict. */
 export const NOT_ISOLATED =
   'z3 needs a cross-origin-isolated page, which this one is not. Copy the command and run it in a terminal.';
+
+/**
+ * The app's own status codes — everything a palette row prints that is not a
+ * `verification/*` finding the engine produced. Pinned by a test so a new one
+ * cannot be introduced uncatalogued (I9).
+ */
+export const CHECK_META_CODES: readonly string[] = [
+  'checks/command-note',
+  'checks/degraded',
+  'checks/internal-error',
+  'checks/not-here',
+  'checks/not-walked',
+  'checks/pick-machine',
+  'checks/walk-only',
+];
 
 /**
  * Runs one check. A `model` check runs here; a `solver` check reports

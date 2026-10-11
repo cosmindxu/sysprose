@@ -28,7 +28,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
-import { checkFileName, useAppStore } from '../store';
+import { checkFileName, flushRecompute, loadHealth, useAppStore } from '../store';
 import { checksFor, commandNote, runCheck, type CheckSpec } from '../checks';
 import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 
@@ -361,8 +361,12 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   const note = commandNote(spec, ctx);
 
   const onRun = useCallback(() => {
-    record(spec.id, runCheck(spec, ctx), rev);
-  }, [record, spec, ctx, rev]);
+    flushRecompute();
+    const st = useAppStore.getState();
+    const runCtx = { ...ctx, model: st.model, ...(spec.readsLoadHealth ? { loadHealth: loadHealth() } : {}) };
+    // `st.rev` is read in the same synchronous turn as the walk (I8).
+    record(spec.id, runCheck(spec, runCtx), st.rev);
+  }, [record, spec, ctx]);
 
   const onCopy = useCallback(() => {
     void navigator.clipboard?.writeText(spec.command(ctx)).then(
