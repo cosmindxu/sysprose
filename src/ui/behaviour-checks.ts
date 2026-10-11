@@ -15,11 +15,13 @@ import type { ElementId, ElementRecord, Model } from '@core/index';
 import { behaviourReport, reachReport, stateMachinesIn } from '@api/index';
 import type { CheckContext, CheckResult, CheckRow } from './checks';
 import { commandFileName } from './checks';
+import type { ViewKind } from '@diagram/index';
 import {
   behaviourLines,
   behaviourMachineFor,
   libraryElementRefusal,
   reachLines,
+  rowKeyOf,
   ELEMENT_REQUIRED_LEAD,
   NO_DEFAULT_MACHINE,
 } from '@semantics/mc/report-lines';
@@ -38,6 +40,7 @@ import {
 } from '@semantics/mc/patterns';
 import { transitionLabel, type MachineReach, type ReachReport } from '@semantics/mc/explore';
 import type { LoadHealth } from './store';
+import type { StoredResult } from './panels/checks-store';
 
 /* ────────────────────────────── reach, judged ───────────────────────────── */
 
@@ -137,16 +140,19 @@ export function reachResult(
   // Row 4: the report's diagnostics, one to one.
   rows.push(...diagnosticRows(r, flags));
 
+  // The per-state marks and the status-panel summary they feed (A.4).
+  const { marks, summary: markSummary } = reachMarks(model, r, o.confirmations);
+
   if (M === 0 && !D) {
     const summary = `${noMachine}${N.length > 0 ? `; ${N.length} state(s) belong to no walked machine` : ''}`;
-    return { verdict: 'not-run', summary, rows, lines, walkOnlyKeys };
+    return { verdict: 'not-run', summary, rows, lines, walkOnlyKeys, marks, markSummary };
   }
   if (M === 0 && D) {
     const summary = `${noMachine} — the model did not load cleanly, so a machine may be missing from what parsed`;
-    return { verdict: 'undecided', summary, rows, lines, walkOnlyKeys };
+    return { verdict: 'undecided', summary, rows, lines, walkOnlyKeys, marks, markSummary };
   }
   if (F > 0) {
-    return { verdict: 'issues', summary: `${head} — ${F} finding(s)${clauseText}`, rows, lines, walkOnlyKeys };
+    return { verdict: 'issues', summary: `${head} — ${F} finding(s)${clauseText}`, rows, lines, walkOnlyKeys, marks, markSummary };
   }
   if (W > 0 || K > 0 || N.length > 0 || D) {
     return {
@@ -155,6 +161,8 @@ export function reachResult(
       rows,
       lines,
       walkOnlyKeys,
+      marks,
+      markSummary,
     };
   }
   return {
@@ -163,6 +171,8 @@ export function reachResult(
     rows,
     lines,
     walkOnlyKeys,
+    marks,
+    markSummary,
   };
 }
 
@@ -390,4 +400,271 @@ export function notWalkedRow(qualifiedName: string, elementId: string): CheckRow
     elementId,
     severity: 'info',
   };
+}
+
+/* ──────────────────────────── the state-view marks ───────────────────────── */
+
+/**
+ * The one mark a node may carry, by the A.4 precedence. Precisely one word
+ * each, so an agent branches on the class and a reader on the badge.
+ */
+export type ReachMark =
+  | 'unreachable'
+  | 'not-decided'
+  | 'not-walked'
+  | 'withheld'
+  | 'no-way-out'
+  | 'trap'
+  | 'choice'
+  | 'walk-only';
+
+/** The marks in painting precedence: a node takes the first that applies (A.4). */
+export const MARK_ORDER: readonly ReachMark[] = [
+  'unreachable',
+  'not-decided',
+  'not-walked',
+  'withheld',
+  'no-way-out',
+  'trap',
+  'choice',
+  'walk-only',
+];
+
+/** The badge word of each mark, as the CLI prints the row. */
+export const MARK_WORD: Record<ReachMark, string> = {
+  unreachable: 'unreachable',
+  'not-decided': 'not decided',
+  'not-walked': 'not walked',
+  withheld: 'withheld',
+  'no-way-out': 'no way out',
+  trap: 'trap',
+  choice: 'choice',
+  'walk-only': 'walk only',
+};
+
+/** The node class of each mark, interned so two calls give the same string. */
+const MARK_CLASS: Record<ReachMark, string> = {
+  unreachable: 'rf-beh rf-beh-unreachable',
+  'not-decided': 'rf-beh rf-beh-not-decided',
+  'not-walked': 'rf-beh rf-beh-not-walked',
+  withheld: 'rf-beh rf-beh-withheld',
+  'no-way-out': 'rf-beh rf-beh-no-way-out',
+  trap: 'rf-beh rf-beh-trap',
+  choice: 'rf-beh rf-beh-choice',
+  'walk-only': 'rf-beh rf-beh-walk-only',
+};
+
+/**
+ * What the status panel says about a reach run, apart from the marks
+ * themselves: how many machines, how many of each mark, and the four withheld
+ * counts (trap answer, not-decided machines, walk-only, not-walked).
+ */
+export interface MarkSummary {
+  /** Machines walked (`r.machines.length`). */
+  machines: number;
+  /** States marked, per mark word. */
+  marked: Partial<Record<ReachMark, number>>;
+  /** Machines whose trap answer was refused by the gate (a machine-level fact, never a state mark). */
+  trapWithheld: number;
+  /** Machines that are suppressed or unsupported: whether a state is reachable was not decided. */
+  notDecidedOn: number;
+  /** States marked `walk only`. */
+  walkOnly: number;
+  /** States marked `not walked`. */
+  notWalked: number;
+}
+
+/**
+ * The mark per state, by the A.4 precedence, plus the {@link MarkSummary} the
+ * status panel reads. A deadlock or choice row is a finding only where the
+ * run-to-completion confirmation reached it; an unconfirmed one is `walk only`.
+ */
+export function reachMarks(
+  model: Model,
+  r: ReachReport,
+  cs: readonly RtcConfirmation[],
+): { marks: Record<ElementId, ReachMark>; summary: MarkSummary } {
+  const marks: Record<ElementId, ReachMark> = {};
+  const marked: Partial<Record<ReachMark, number>> = {};
+  const confirmationOf = new Map(cs.map((c) => [c.machineId, c]));
+  const unconfirmedOf = (m: MachineReach): ReadonlySet<string> => {
+    const c = confirmationOf.get(m.machine.id);
+    return c?.unconfirmed ?? new Set<string>();
+  };
+  let trapWithheld = 0;
+  let notDecidedOn = 0;
+
+  // First mark wins: the A.4 precedence is the call order below.
+  const put = (id: ElementId, mark: ReachMark): void => {
+    if (marks[id] !== undefined) return;
+    marks[id] = mark;
+    marked[mark] = (marked[mark] ?? 0) + 1;
+  };
+
+  for (const m of r.machines) {
+    if (m.trapCensus.refusedByGate !== null) trapWithheld += 1;
+    if (m.suppressed || m.unsupported.length > 0) notDecidedOn += 1;
+
+    // 1. `unreachable` — the published list only (empty when not exhaustive).
+    for (const s of m.states.unreachable) put(s.id, 'unreachable');
+
+    // 2. `not decided` — unreached descendants of a suppressed or unsupported machine.
+    if (m.suppressed || m.unsupported.length > 0) {
+      const reached = new Set(m.states.reachable.map((s) => s.id));
+      for (const d of model.descendants(m.machine.id)) {
+        if (d.eClass !== 'StateUsage' && d.eClass !== 'ExhibitStateUsage') continue;
+        if (reached.has(d.id)) continue;
+        put(d.id, 'not-decided');
+      }
+    }
+
+    // 4. `withheld` — the leaf of a `deadlocksWithheld` row.
+    for (const d of m.deadlocksWithheld) put(d.leaf.id, 'withheld');
+
+    // 5. `no way out` — a deadlock the confirmation reached.
+    for (const d of m.deadlocks) {
+      if (!unconfirmedOf(m).has(rowKeyOf('deadlock', d.leaf.id))) put(d.leaf.id, 'no-way-out');
+    }
+
+    // 6. `trap` — the states of every published trap, composites included.
+    for (const t of m.traps) for (const s of t.states) put(s.id, 'trap');
+
+    // 7. `choice` — a choice the confirmation reached.
+    for (const n of m.nondeterminism) {
+      if (!unconfirmedOf(m).has(rowKeyOf('choice', n.state.id, n.event))) put(n.state.id, 'choice');
+    }
+
+    // 8. `walk only` — an unconfirmed deadlock or choice row.
+    for (const d of m.deadlocks) {
+      if (unconfirmedOf(m).has(rowKeyOf('deadlock', d.leaf.id))) put(d.leaf.id, 'walk-only');
+    }
+    for (const n of m.nondeterminism) {
+      if (unconfirmedOf(m).has(rowKeyOf('choice', n.state.id, n.event))) put(n.state.id, 'walk-only');
+    }
+  }
+
+  // 3. `not walked` — the N states of A.1, under no walked machine at all.
+  const unwalked = unwalkedStates(model, r);
+  for (const id of unwalked) put(id, 'not-walked');
+
+  const walkOnly = marked['walk-only'] ?? 0;
+  const notWalked = marked['not-walked'] ?? 0;
+  return {
+    marks,
+    summary: {
+      machines: r.machines.length,
+      marked,
+      trapWithheld,
+      notDecidedOn,
+      walkOnly,
+      notWalked,
+    },
+  };
+}
+
+/** `HH:MM` of a timestamp, in the user's own clock. */
+function clock(at: number): string {
+  const d = new Date(at);
+  if (Number.isNaN(d.getTime())) return '';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+/**
+ * The collapsed status line: the marks on the diagram, then the withheld
+ * counts — a count is printed only when it is non-zero (A.6: never `0`).
+ */
+export function marksStatusLine(s: MarkSummary, at: number): string {
+  const words = MARK_ORDER.filter((m) => (s.marked[m] ?? 0) > 0).map(
+    (m) => `${s.marked[m]} ${MARK_WORD[m]}`,
+  );
+  const line = `Reachability, ${clock(at)} — ${words.length > 0 ? words.join(', ') : 'no state marked'}`;
+  const clauses: string[] = [];
+  if (s.trapWithheld > 0) clauses.push(`trap answer withheld on ${s.trapWithheld} of ${s.machines}`);
+  if (s.notDecidedOn > 0) clauses.push(`not decided on ${s.notDecidedOn} machine(s)`);
+  if (s.walkOnly > 0) clauses.push(`${s.walkOnly} walk only`);
+  if (s.notWalked > 0) clauses.push(`${s.notWalked} not walked`);
+  return clauses.length > 0 ? `${line} · ${clauses.join(' · ')}` : line;
+}
+
+/**
+ * The expanded status text: what each mark means, plus one clause per withheld
+ * count. The details toggle shows it; nothing here is ever folded away.
+ */
+export function marksStatusText(s: MarkSummary): string {
+  const base =
+    'Each mark except "not decided" and "not walked" names a row in the Checks tab; "not decided" marks the unreached states of a machine whose lists were withheld — that machine\u2019s SUPPRESSED or not-explored line says why — and "not walked" marks a state that belongs to no machine the walk covered. An unmarked state of a walked machine is one this walk reached; the walk offers every trigger at every step, so that is not a claim that a simulation run gets there.';
+  const clauses: string[] = [];
+  if (s.trapWithheld > 0) {
+    clauses.push(
+      `The trap answer was withheld on ${s.trapWithheld} of ${s.machines} machine(s) (the Checks tab says why): an unmarked state there has not been shown to lie outside a trap.`,
+    );
+  }
+  if (s.notDecidedOn > 0) {
+    clauses.push(`Whether a state is reachable was not decided on ${s.notDecidedOn} machine(s).`);
+  }
+  if (s.walkOnly > 0) {
+    clauses.push(
+      `${s.walkOnly} mark(s) read "walk only": the walk reached them by taking an event where a trigger-less transition was enabled, which run-to-completion does not do.`,
+    );
+  }
+  return clauses.length > 0 ? `${base} ${clauses.join(' ')}` : base;
+}
+
+/** What the status panel says once the model has changed under a run. */
+export const STALE_MARKS_TEXT =
+  'The model changed after this Reachability run, so nothing is marked — run it again from the palette.';
+
+/**
+ * A witness the canvas is stepping through, named by the run it came from and
+ * the step it is on (step 6; nothing opens one before then).
+ */
+export interface WitnessAt {
+  resultAt: number;
+  machineId: ElementId;
+  block: number;
+  step: number;
+}
+
+/**
+ * The mark/witness classes for each node, and whether a witness is open.
+ *
+ * Marks paint only for a stored reach result at the current revision, in the
+ * state view, not hidden, and with no witness open (I5). The class strings are
+ * interned ({@link MARK_CLASS}), so two calls over the same input return the
+ * same strings by reference — the value-stability that replaces an identity
+ * test on the memoized nodes (H5-b).
+ */
+export function behaviourClassesOf(i: {
+  reach?: StoredResult;
+  beh?: StoredResult;
+  rev: number;
+  activeView: ViewKind;
+  marksHidden: boolean;
+  witness: WitnessAt | null;
+  machineExists: (id: ElementId) => boolean;
+}): { classes: ReadonlyMap<ElementId, string>; witnessOpen: boolean } {
+  const witnessOpen =
+    i.witness !== null &&
+    i.beh !== undefined &&
+    i.beh.rev === i.rev &&
+    i.beh.at === i.witness.resultAt &&
+    i.machineExists(i.witness.machineId);
+  if (
+    i.reach === undefined ||
+    i.reach.rev !== i.rev ||
+    i.activeView !== 'state' ||
+    i.marksHidden ||
+    witnessOpen
+  ) {
+    return { classes: new Map(), witnessOpen };
+  }
+  const classes = new Map<ElementId, string>();
+  const marks = i.reach.result.marks ?? {};
+  for (const [id, mark] of Object.entries(marks)) {
+    const cls = MARK_CLASS[mark];
+    if (cls !== undefined && i.machineExists(id)) classes.set(id, cls);
+  }
+  return { classes, witnessOpen };
 }

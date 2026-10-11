@@ -2438,6 +2438,19 @@ declares no machine at all exits 0 too and says so — nothing was misused and
 nothing failed to load. Exit 2 is for the command line: a `--max-configs` that
 is not a bound, or an `--element` that names something holding no machine.
 
+**In the app, the marks.** Run **Reachability** on the State view and each state
+that answers a question carries one badge, in this precedence: `unreachable`
+(the published unreachable list), `not decided` (an unreached state of a machine
+whose lists were withheld — the SUPPRESSED or not-explored line says why), `not
+walked` (a state under no machine the walk covered), `withheld` (the leaf of a
+withheld no-way-out row), `no way out` (a confirmed deadlock), `trap` (a member
+of a published trap), `choice` (a confirmed choice), and `walk only` (a deadlock
+or choice row the run-to-completion walk did not reach, so the page does not
+count it as a finding). A status panel in the canvas's top-left corner
+(`behaviour-marks`) says which, and the legend gains a Marks section
+(`legend-marks`) listing the words present. Every mark names a row in the Checks
+tab except `not decided` and `not walked`.
+
 **Source of truth:** `src/semantics/mc/config.ts` (the step relation the
 interpreter and the walk share), `src/semantics/mc/explore.ts` and
 `src/semantics/mc/profile.ts`.
@@ -3599,7 +3612,8 @@ standard library: see the *Strip · error or note* row.)
 | Canvas | The diagram itself | `diagram-canvas` |
 | Fit / zoom to selection / snap / auto-layout | The canvas mini-toolbar | `diagram-fit`, `diagram-fit-selection`, `diagram-snap`, `diagram-autolayout` |
 | Scope diagram to this / Show whole model | Narrow every drawable view to one subtree, and clear it | `node-ctx-scope`, `node-ctx-scope-clear` |
-| Legend | The notation families present in this view, docked bottom-left beside the zoom controls | `diagram-legend`, `legend-toggle` |
+| Legend | The notation families present in this view, docked bottom-left beside the zoom controls. While reachability marks are painted, a Marks section lists each mark word present (`legend-marks`) — even when the view has no edge kind | `diagram-legend`, `legend-toggle`, `legend-marks` |
+| Reachability marks | The status panel in the canvas's top-left corner, in the State view after a **Reachability** run (`data-state`: `current`, `hidden` or `stale`). One line with the marks on the diagram and the withheld counts, a **details** toggle (`behaviour-marks-details`) for what each mark means, and **Hide marks** / **Show marks** (`behaviour-marks-hide`) | `behaviour-marks`, `behaviour-marks-details`, `behaviour-marks-hide` |
 | Overview map | The minimap. On a canvas narrower than 1100 px it is a toggle — **▸ Map** — so it cannot cover the legend or the diagram | `minimap-toggle` |
 | Tool hint | While a palette tool is armed, what the next click does, and that Esc cancels | `canvas-tool-hint` |
 

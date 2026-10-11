@@ -39,13 +39,19 @@ import {
 } from '../../src/ui/checks';
 import { BehaviourReport } from '../../src/ui/panels/BehaviourReport';
 import {
+  behaviourClassesOf,
   behaviourResult,
   degradedRow,
+  marksStatusLine,
+  marksStatusText,
   pickBehaviourMachine,
+  reachMarks,
   reachResult,
   unwalkedStates,
   withholds,
+  type ReachMark,
 } from '../../src/ui/behaviour-checks';
+import type { StoredResult } from '../../src/ui/panels/checks-store';
 import type { LoadHealth } from '../../src/ui/store';
 import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 import { main as sysproseMain } from '../../scripts/sysprose';
@@ -539,6 +545,37 @@ describe('the reach rows project the report\u2019s diagnostics one to one', () =
       expect(result.lines?.some((l) => l.withholds), file).toBe(false);
     }
   });
+
+  it('marks every withheld leaf, unreached suppressed state, and unwalked state (I6)', () => {
+    for (const { file, model } of corpus) {
+      const r = reachReport(model);
+      const cs = r.machines.map((m) => confirmUnderRunToCompletion(model, m));
+      const { marks } = reachMarks(model, r, cs);
+      for (const m of r.machines) {
+        const states = model
+          .descendants(m.machine.id)
+          .filter((d) => d.eClass === 'StateUsage' || d.eClass === 'ExhibitStateUsage');
+        expect(m.states.total, `${file} :: ${m.machine.qualifiedName}`).toBe(states.length);
+        for (const d of m.deadlocksWithheld) {
+          expect(marks[d.leaf.id], `${file} :: ${d.leaf.qualifiedName}`).toBe('withheld');
+        }
+        if (m.suppressed || m.unsupported.length > 0) {
+          const reached = new Set(m.states.reachable.map((s) => s.id));
+          for (const d of states) {
+            if (!reached.has(d.id)) {
+              expect(marks[d.id], `${file} :: ${m.machine.qualifiedName} :: ${d.id}`).toBe('not-decided');
+            }
+          }
+        }
+        if (m.trapCensus.refusedByGate !== null) {
+          for (const s of m.states.reachable) expect(marks[s.id]).not.toBe('trap');
+        }
+      }
+      for (const id of unwalkedStates(model, r)) {
+        expect(marks[id], `${file} :: ${id}`).toBe('not-walked');
+      }
+    }
+  });
 });
 
 describe('the degraded row against the terminal (P14)', () => {
@@ -860,5 +897,130 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
     const { view } = mount('reach', result, model);
     expect(view.container.textContent).toContain('<b>x</b>');
     expect(view.container.querySelector('b')).toBeNull();
+  });
+});
+
+describe('the state-view marks and the status panel (D.5 step 5)', () => {
+  const marksOf = (model: Model) => {
+    const r = reachReport(model);
+    const cs = r.machines.map((m) => confirmUnderRunToCompletion(model, m));
+    return reachMarks(model, r, cs);
+  };
+  const mark = (marks: Record<string, ReachMark>, model: Model, qn: string): ReachMark => marks[idOf(model, qn)];
+
+  it('marks guard-undetermined by the A.4 precedence', async () => {
+    const model = await load(`${FIX}/guard-undetermined.sysml`);
+    const { marks } = marksOf(model);
+    expect(mark(marks, model, 'GuardProbe::Ctrl::Modes::idle')).toBe('withheld');
+    expect(mark(marks, model, 'GuardProbe::Ctrl::Modes::hazard')).toBe('not-decided');
+    expect(mark(marks, model, 'GuardProbe::Decided::Modes::hazard')).toBe('unreachable');
+    expect(mark(marks, model, 'GuardProbe::Decided::Modes::idle')).toBe('no-way-out');
+    expect(mark(marks, model, 'GuardProbe::Fires::Modes::hazard')).toBe('no-way-out');
+  });
+
+  it('marks trap-probe traps and its choice', async () => {
+    const model = await load(`${FIX}/trap-probe.sysml`);
+    const { marks } = marksOf(model);
+    expect(mark(marks, model, 'TrapProbe::Probe::Modes::failsafe')).toBe('trap');
+    expect(mark(marks, model, 'TrapProbe::Probe::Modes::failsafeHold')).toBe('trap');
+    expect(mark(marks, model, 'TrapProbe::Probe::Modes::beta')).toBe('choice');
+  });
+
+  it('marks nothing on latch, and counts its trap refusal (never a state mark)', async () => {
+    const model = await load(`${FIX}/latch.sysml`);
+    const { marks, summary } = marksOf(model);
+    expect(marks).toEqual({});
+    expect(summary.trapWithheld).toBe(1);
+  });
+
+  it('marks the spurious walk-only rows', () => {
+    const model = inline(SPURIOUS);
+    const { marks } = marksOf(model);
+    expect(mark(marks, model, 'P::M::a')).toBe('walk-only');
+    expect(mark(marks, model, 'P::M::c')).toBe('walk-only');
+    expect(mark(marks, model, 'P::M::d')).toBe('walk-only');
+  });
+
+  it('marks the lonely not-walked states', () => {
+    const model = inline(LONELY);
+    const { marks } = marksOf(model);
+    expect(mark(marks, model, 'Q::Lonely::a')).toBe('not-walked');
+    expect(mark(marks, model, 'Q::Lonely::b')).toBe('not-walked');
+    expect(mark(marks, model, 'Q::Drone::modes')).toBe('not-walked');
+  });
+
+  it('states the withheld counts only when non-zero (I7)', async () => {
+    const term = marksOf(inline(TERM)).summary;
+    const line = marksStatusLine(term, 0);
+    expect(line).toContain('no state marked');
+    expect(line).not.toContain('trap answer withheld');
+    expect(line).not.toContain('not decided on');
+    expect(line).not.toContain('walk only');
+    expect(line).not.toContain('not walked');
+
+    expect(marksStatusLine(marksOf(await load(`${FIX}/latch.sysml`)).summary, 0)).toContain(
+      'trap answer withheld on 1 of 1',
+    );
+    expect(marksStatusLine(marksOf(inline(SPURIOUS)).summary, 0)).toContain('3 walk only');
+    expect(marksStatusLine(marksOf(inline(LONELY)).summary, 0)).toContain('3 not walked');
+  });
+
+  it('expands to the full meaning, naming a row', async () => {
+    const text = marksStatusText(marksOf(await load(`${FIX}/trap-probe.sysml`)).summary);
+    expect(text).toContain('names a row');
+    // The walk-only clause explains the run-to-completion gap, only when it applies.
+    expect(marksStatusText(marksOf(inline(SPURIOUS)).summary)).toContain('run-to-completion');
+  });
+
+  describe('behaviourClassesOf', () => {
+    const storedOf = (model: Model): StoredResult => ({ result: reachOf(model, healthy), rev: 0, at: 0 });
+    const baseInput = (model: Model, stored: StoredResult) => ({
+      reach: stored,
+      beh: undefined,
+      rev: 0,
+      activeView: 'state' as ViewKind,
+      marksHidden: false,
+      witness: null as null,
+      machineExists: (id: string) => model.get(id) !== undefined,
+    });
+
+    it('paints nothing on a stale rev, off the state view, or with marks hidden', () => {
+      const model = inline(SPURIOUS);
+      const base = baseInput(model, storedOf(model));
+      expect(behaviourClassesOf(base).classes.size).toBeGreaterThan(0);
+      expect(behaviourClassesOf({ ...base, rev: 1 }).classes.size).toBe(0);
+      expect(behaviourClassesOf({ ...base, activeView: 'general' }).classes.size).toBe(0);
+      expect(behaviourClassesOf({ ...base, marksHidden: true }).classes.size).toBe(0);
+    });
+
+    it('paints nothing for a witness at a non-current resultAt, and nothing beside an open witness', () => {
+      const model = inline(SPURIOUS);
+      const stored = storedOf(model);
+      const machineId = idOf(model, 'P::M');
+      const base = { ...baseInput(model, stored), beh: stored };
+      // A witness whose resultAt no longer matches the stored run paints nothing.
+      const stale = behaviourClassesOf({ ...base, witness: { resultAt: 999, machineId, block: 0, step: 0 } });
+      expect(stale.witnessOpen).toBe(false);
+      expect(stale.classes.size).toBeGreaterThan(0);
+      // An open witness at the current resultAt suppresses the marks.
+      const open = behaviourClassesOf({ ...base, witness: { resultAt: 0, machineId, block: 0, step: 0 } });
+      expect(open.witnessOpen).toBe(true);
+      expect(open.classes.size).toBe(0);
+    });
+
+    it('returns interned mark classes from the closed set, stable across calls', () => {
+      const model = inline(SPURIOUS);
+      const input = baseInput(model, storedOf(model));
+      const a = behaviourClassesOf(input);
+      const b = behaviourClassesOf(input);
+      expect(a.classes.size).toBeGreaterThan(0);
+      for (const [id, cls] of a.classes) {
+        expect(b.classes.get(id), id).toBe(cls);
+        expect(cls).toMatch(/^rf-beh rf-beh-[a-z-]+$/);
+      }
+      const unmarked = model.all().find((el) => el.eClass === 'StateUsage' && !a.classes.has(el.id));
+      expect(unmarked, 'an unmarked state').toBeDefined();
+      expect(a.classes.has(unmarked!.id)).toBe(false);
+    });
   });
 });

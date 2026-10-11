@@ -196,3 +196,128 @@ test('a walk-only covered property shows NOT COUNTED and its note (a15)', async 
   await expect(block.getByTestId('checks-report-note')).toBeVisible();
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
+
+/* ════════════ behaviour verification: the state-view marks (E8, E9) ════════ */
+
+const TERM = 'package Q { state def Term { state a; state b; state final; transition a then b; transition b then final; } }';
+const SPURIOUS = 'package P { state def M { state a; state b; state c; state d; transition a_b first a then b; transition a_c first a accept e then c; transition a_d first a accept e then d; transition b_a first b accept e then a; } }';
+const LONELY = 'package Q { state def Lonely { state a; state b; } state def M { state x; state y; transition first x then y; transition first y then x; } part def Drone { exhibit state modes : M; } }';
+
+/** The node of an element, by qualified name, through the live SDK. */
+async function nodeByQn(page: Page, qn: string) {
+  const id = await page.evaluate((q) => {
+    const api = (window as unknown as { sysml: { byName: (q: string) => { id: string } | undefined } }).sysml;
+    return api.byName(q)?.id ?? null;
+  }, qn);
+  if (!id) throw new Error(`no element named ${qn}`);
+  return page.locator(`.react-flow__node[data-id="${id}"]`);
+}
+
+/** Run Reachability from the state view's palette. */
+async function runReach(page: Page): Promise<void> {
+  await page.getByTestId('tb-view-state').click();
+  await page
+    .locator('[data-testid="palette-check"][data-check="reach"]')
+    .getByTestId('palette-check-run')
+    .click();
+}
+
+test('nothing is marked before Run (E8)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await page.getByTestId('tb-view-state').click();
+  await expect(page.locator('.react-flow__node[class*="rf-beh"]')).toHaveCount(0);
+  await expect(page.getByTestId('behaviour-marks')).toHaveCount(0);
+  // A non-behaviour check paints no marks either.
+  const orphans = page.locator('[data-testid="palette-check"][data-check="orphans"]');
+  await orphans.getByTestId('palette-check-run').click();
+  await expect(page.locator('.react-flow__node[class*="rf-beh"]')).toHaveCount(0);
+  await expect(page.getByTestId('behaviour-marks')).toHaveCount(0);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('marks show findings, withheld, not-decided, not-walked and walk-only, beside the simulation glow (E9)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+
+  const marksPanel = page.locator('.react-flow__panel.top.left [data-testid="behaviour-marks"]');
+
+  // guard-undetermined: the five A.4 marks, by qualified name.
+  await loadText(page, readFileSync('test/fixtures/verification/models/guard-undetermined.sysml', 'utf8'));
+  await runReach(page);
+  await expect(marksPanel).toBeVisible();
+  await expect(marksPanel).toHaveAttribute('data-state', 'current');
+  await expect(await nodeByQn(page, 'GuardProbe::Ctrl::Modes::idle')).toHaveAttribute('class', /rf-beh-withheld/);
+  await expect(await nodeByQn(page, 'GuardProbe::Ctrl::Modes::hazard')).toHaveAttribute('class', /rf-beh-not-decided/);
+  await expect(await nodeByQn(page, 'GuardProbe::Decided::Modes::hazard')).toHaveAttribute('class', /rf-beh-unreachable/);
+  await expect(await nodeByQn(page, 'GuardProbe::Decided::Modes::idle')).toHaveAttribute('class', /rf-beh-no-way-out/);
+  await expect(await nodeByQn(page, 'GuardProbe::Fires::Modes::hazard')).toHaveAttribute('class', /rf-beh-no-way-out/);
+
+  // trap-probe: two traps and one choice, and the badge word in the ::after.
+  await loadText(page, readFileSync('test/fixtures/verification/models/trap-probe.sysml', 'utf8'));
+  await runReach(page);
+  await expect(page.locator('.react-flow__node.rf-beh-trap')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node.rf-beh-choice')).toHaveCount(1);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const el = document.querySelector('.react-flow__node.rf-beh-trap') as HTMLElement | null;
+        return el ? getComputedStyle(el, '::after').content : null;
+      }),
+    )
+    .toBe('"trap"');
+
+  // latch: no marks, but the trap answer is withheld on 1 of 1.
+  await loadText(page, readFileSync('test/fixtures/verification/models/latch.sysml', 'utf8'));
+  await runReach(page);
+  await expect(page.locator('.react-flow__node[class*="rf-beh"]')).toHaveCount(0);
+  await expect(marksPanel).toContainText('trap answer withheld on 1 of 1');
+
+  // term: no marks at all.
+  await loadText(page, TERM);
+  await runReach(page);
+  await expect(marksPanel).toContainText('no state marked');
+
+  // spurious: three walk-only marks.
+  await loadText(page, SPURIOUS);
+  await runReach(page);
+  await expect(page.locator('.react-flow__node.rf-beh-walk-only')).toHaveCount(3);
+  await expect(marksPanel).toContainText('3 walk only');
+
+  // lonely: three not-walked marks.
+  await loadText(page, LONELY);
+  await runReach(page);
+  await expect(page.locator('.react-flow__node.rf-beh-not-walked')).toHaveCount(3);
+  await expect(marksPanel).toContainText('3 not walked');
+
+  // The details toggle names a row; Hide marks removes the marks and reads hidden.
+  await loadText(page, readFileSync('test/fixtures/verification/models/trap-probe.sysml', 'utf8'));
+  await runReach(page);
+  await page.getByTestId('behaviour-marks-details').click();
+  await expect(marksPanel).toContainText('names a row');
+  await page.getByTestId('behaviour-marks-hide').click();
+  await expect(marksPanel).toHaveAttribute('data-state', 'hidden');
+  await expect(page.locator('.react-flow__node[class*="rf-beh"]')).toHaveCount(0);
+
+  // Both visible: a simulation glow and a mark on one node, with no outline stolen.
+  await loadText(page, readFileSync('test/fixtures/verification/models/trap-probe.sysml', 'utf8'));
+  await runReach(page);
+  await openTab(page, 'tab-simulation');
+  await page.getByTestId('sim-start').click();
+  const both = page.locator('.react-flow__node.rf-sim-active.rf-beh-choice, .react-flow__node.rf-sim-active.rf-beh-trap');
+  await expect(both.first()).toBeVisible();
+  await expect
+    .poll(() => both.first().evaluate((n) => getComputedStyle(n).outlineStyle))
+    .toBe('solid');
+  await expect
+    .poll(() => both.first().evaluate((n) => getComputedStyle(n, '::before').borderTopStyle))
+    .toMatch(/dashed|dotted/);
+
+  // Re-applying changed text makes the marks stale, not current.
+  await loadText(page, `${TERM}\npackage Extra;`);
+  await runReach(page);
+  await expect(marksPanel).toHaveAttribute('data-state', 'stale');
+  await expect(page.locator('.react-flow__node[class*="rf-beh"]')).toHaveCount(0);
+
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});

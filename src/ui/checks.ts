@@ -33,6 +33,7 @@ import {
 } from '@api/index';
 import type { ReportLine } from '@semantics/mc/report-lines';
 import { reachCheck, behaviourCheck } from './behaviour-checks';
+import type { MarkSummary, ReachMark } from './behaviour-checks';
 import type { LoadHealth } from './store';
 
 /** What a check says about the model when it has run. */
@@ -57,6 +58,10 @@ export interface CheckResult {
   lines?: readonly ReportLine[];
   /** The row keys flagged walk-only, for the report's per-line walk-only flag. */
   walkOnlyKeys?: ReadonlySet<string>;
+  /** The mark per state, for the state view (reach only). */
+  marks?: Record<string, ReachMark>;
+  /** The mark summary the status panel reads (reach only). */
+  markSummary?: MarkSummary;
 }
 
 export interface CheckContext {
