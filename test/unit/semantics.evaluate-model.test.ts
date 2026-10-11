@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
-import { scopeFor, evaluateFeatureValue, checkConstraints } from '../../src/semantics/index';
+import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, anchorFor } from '../../src/semantics/index';
 import { featureIdsFor, valueAtPath } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
@@ -2558,5 +2558,110 @@ describe('the instance index — frames, components, and bound sources', () => {
     const all = instancesOfDefinition(definitions, D);
     expect(all[0]).toBe('N::P');
     expect(new Set(all).size).toBe(all.length);
+  });
+});
+
+describe('instanceRollup — the reporting formatter (F4)', () => {
+  const m = parseModel(`package R {
+    part def P { attribute load : ScalarValues::Real; constraint c { load <= 10.0 } }
+    part q : P;
+    part p2 : P;
+  }`).model;
+  const rel = m.all().find((e) => m.qualifiedName(e.id) === 'R::P::c')!;
+
+  const groupRow = (
+    i: number,
+    result: 'satisfied' | 'violated' | 'unknown',
+    generic = false,
+  ) => ({
+    contextId: rel.id,
+    context: 'R::q',
+    featureId: rel.id,
+    qualifiedName: 'R::P::c',
+    result,
+    bindings: [] as unknown[],
+    message: '',
+    ...(generic ? { generic: true as const } : { instance: `R::q${i}` }),
+  });
+
+  const check = (instances: unknown[]): ConstraintCheck => ({
+    id: rel.id,
+    ownerId: rel.ownerId,
+    expression: 'load <= 10.0',
+    result: 'unknown',
+    message: '',
+    instances: instances as ConstraintCheck['instances'],
+  });
+
+  it('counts a group, caps violated findings at five, and warns only when one is violated', () => {
+    const rows = instanceRollup(
+      m,
+      check([
+        groupRow(0, 'satisfied', true),
+        groupRow(1, 'violated'),
+        groupRow(2, 'violated'),
+        groupRow(3, 'violated'),
+        groupRow(4, 'violated'),
+        groupRow(5, 'violated'),
+        groupRow(6, 'violated'),
+        groupRow(7, 'satisfied'),
+      ]),
+    );
+    const rollup = rows.find((r) => r.instances);
+    expect(rollup).toBeDefined();
+    expect(rollup!.instances).toMatchObject({ total: 8, generic: 1, satisfied: 2, violated: 6, unknown: 0, unread: 0 });
+    expect(rollup!.severity).toBe('warning');
+    // At most five violated-instance findings, in instance order.
+    const violated = rows.filter((r) => r.instance !== undefined);
+    expect(violated.map((r) => r.instance)).toEqual(['R::q1', 'R::q2', 'R::q3', 'R::q4', 'R::q5']);
+  });
+
+  it('is info when every instance holds, and never says "all" when some are unread', () => {
+    const clean = instanceRollup(m, check([groupRow(0, 'satisfied', true), groupRow(1, 'satisfied')]));
+    expect(clean.find((r) => r.instances)!.severity).toBe('info');
+    const unread = instanceRollup(
+      m,
+      check([
+        groupRow(0, 'satisfied', true),
+        groupRow(1, 'satisfied'),
+        { ...groupRow(2, 'unknown'), abstention: 'past-cap' as const },
+      ]),
+    );
+    const rollup = unread.find((r) => r.instances)!;
+    expect(rollup.instances!.unread).toBe(1);
+    expect(rollup.message).not.toMatch(/\ball\b/i);
+  });
+});
+
+describe('anchorFor — the anchor rule (F4)', () => {
+  const m = parseModel(`package A {
+    part def P { attribute load : ScalarValues::Real; constraint c { load <= 10.0 } }
+    part q : P;
+  }`).model;
+  const rel = m.all().find((e) => m.qualifiedName(e.id) === 'A::P::c')!;
+  const q = m.all().find((e) => m.qualifiedName(e.id) === 'A::q')!;
+  const check: ConstraintCheck = {
+    id: rel.id,
+    ownerId: rel.ownerId,
+    expression: 'load <= 10.0',
+    result: 'unknown',
+    message: '',
+  };
+  const inst = (featureId: string, contextId: string) => ({
+    contextId,
+    context: 'A::q',
+    featureId,
+    qualifiedName: 'A::P::c',
+    result: 'violated' as const,
+    bindings: [],
+    message: '',
+  });
+
+  it('keeps a user, non-implicit feature and falls back off an implicit one', () => {
+    expect(anchorFor(m, check, inst(rel.id, q.id))).toBe(rel.id);
+    // A missing (implicit) feature re-anchors to the context's user usage.
+    expect(anchorFor(m, check, inst('missing', q.id))).toBe(q.id);
+    // Nothing at all: the relation itself.
+    expect(anchorFor(m, check, inst('missing', 'missing'))).toBe(rel.id);
   });
 });

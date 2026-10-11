@@ -50,6 +50,7 @@ import {
   type Contact,
   type DefiningEquation,
   type InFlight,
+  type InstanceAbstention,
   type NameClash,
 } from './defining-equation';
 import { effectiveFeatures, effectiveNameOf, effectiveQualifiedName, redefinedClosure } from './inheritance';
@@ -757,6 +758,24 @@ export interface SpecialisationInstance {
    * evaluate: …`), as the verification lane reads it.
    */
   detail?: string;
+  /**
+   * The instance this reading is read AS (F5): for an element-context row it is
+   * `instanceNameOf(contextId)`; a group's rows spell the full instance path
+   * (`{@link instance}`) or the generic `({D}'s own)`.
+   */
+  readAs?: string;
+  /** The instance path the row names, for an expanded group (F7 only). */
+  instance?: string;
+  /** Set on the generic (definition's own) row of an expanded group (F7). */
+  generic?: true;
+  /** Set when the reading met a binding ({@link readInContexts}, F5). */
+  via?: true;
+  /** The element the anchor rule re-anchored this row to (H6a). */
+  anchorId?: ElementId;
+  /** Why the reading abstained, when it did (A.9). */
+  abstention?: InstanceAbstention;
+  /** The values the row read, for the value-source message and the witness (F5). */
+  reads?: InstanceRead[];
 }
 
 /** One measure of a {@link SpecialisationInstance}, bound to its specialiser. */
@@ -768,6 +787,34 @@ export interface SpecialisationBinding {
   value?: number | boolean | string;
   /** The unit the value is written in, when it carries one. */
   unit?: string;
+}
+
+/**
+ * One value a per-instance reading read, for the value-source message and the
+ * literal/SMT witness (F5): the path in the row's scope, the feature it
+ * resolves to, the symbol the witness prints, and the value itself.
+ */
+export interface InstanceRead {
+  path: string;
+  featureId: ElementId;
+  symbol: string;
+  value?: number | boolean | string;
+  exact?: string;
+  via?: { bindingId: ElementId; sourcePath: string; sourceSymbol: string };
+}
+
+/**
+ * The counts an instance roll-up carries: how many instances a relation was
+ * read in, and how they split by verdict (C.2). `listed` (on the diagnostic) is
+ * the first few violated paths, `generic` the definition's own row count.
+ */
+export interface InstanceCounts {
+  total: number;
+  generic: number;
+  satisfied: number;
+  violated: number;
+  unknown: number;
+  unread: number;
 }
 
 /**
@@ -834,6 +881,134 @@ export function checksByRow(checks: readonly ConstraintCheck[]): Map<ElementId, 
     }
   }
   return out;
+}
+
+/**
+ * The element a per-instance finding is anchored at (C.1's anchor rule; H6a):
+ * the instance's own anchor when F7 set one, else its feature when that is
+ * user-written and not implicit, else the outermost non-generic user usage on
+ * the feature's owner chain, else the relation itself. Never an implicit
+ * element (validate.ts drops them) and never a library one (load.ts drops
+ * them): both leave a finding with no source span to point at.
+ */
+export function anchorFor(model: Model, check: ConstraintCheck, inst: SpecialisationInstance): ElementId {
+  if (inst.anchorId !== undefined) return inst.anchorId;
+  const f = model.get(inst.featureId);
+  if (f && f.attrs.isLibrary !== true && f.attrs.implicit !== true) return inst.featureId;
+  let cur = f ?? model.get(inst.contextId);
+  while (cur && (cur.attrs.isLibrary === true || cur.attrs.implicit === true)) {
+    cur = cur.ownerId != null ? model.get(cur.ownerId) : undefined;
+  }
+  return cur ? cur.id : check.id;
+}
+
+/** One row of {@link instanceRollup}: a finding the rule and the app's Check format identically. */
+export interface InstanceRollupRow {
+  /** Where the row points — the relation for a roll-up, the anchor rule otherwise. */
+  elementId: ElementId;
+  severity: 'warning' | 'info';
+  message: string;
+  /** On the roll-up row: the counts, with the first few violated paths listed. */
+  instances?: InstanceCounts & { listed: string[] };
+  /** On a single-instance row: the instance it names. */
+  instance?: string;
+  /** The relation this row is about (its qualified name). */
+  relation?: string;
+}
+
+/** Split a group's instances into the four C.2 counts, `unread` being the past-cap tail. */
+function countInstances(insts: readonly SpecialisationInstance[]): InstanceCounts {
+  const c: InstanceCounts = { total: insts.length, generic: 0, satisfied: 0, violated: 0, unknown: 0, unread: 0 };
+  for (const i of insts) {
+    if (i.generic === true) c.generic += 1;
+    if (i.result === 'satisfied') c.satisfied += 1;
+    else if (i.result === 'violated') c.violated += 1;
+    else if (i.abstention === 'past-cap' || i.abstention === 'not-enumerated') c.unread += 1;
+    else c.unknown += 1;
+  }
+  return c;
+}
+
+/** The instance an instance row names, in the order the messages print it. */
+function instanceLabel(inst: SpecialisationInstance): string {
+  return inst.instance ?? inst.readAs ?? inst.context;
+}
+
+/**
+ * The per-instance findings of one check (C.2/C.3), shared by the 27th rule
+ * and the app's Check (F6): element-context rows read through a binding
+ * (`via`) are one finding each in their own words; an expanded group (F7) is
+ * one roll-up finding — a warning when any instance is violated, else info —
+ * plus at most five violated-instance findings, in instance order. Satisfied
+ * instances are counted, never listed.
+ */
+export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRollupRow[] {
+  const insts = check.instances ?? [];
+  if (insts.length === 0) return [];
+  const relation = effectiveQualifiedName(model, check.id);
+  const via = insts.filter((i) => i.via === true && i.instance === undefined);
+  const group = insts.filter((i) => i.instance !== undefined || i.generic === true);
+  const out: InstanceRollupRow[] = [];
+  for (const inst of via) {
+    out.push({
+      elementId: anchorFor(model, check, inst),
+      severity: inst.result === 'violated' ? 'warning' : 'info',
+      message: inst.message,
+      instance: instanceLabel(inst),
+      relation,
+    });
+  }
+  if (group.length >= 2) {
+    const counts = countInstances(group);
+    const violated = group.filter((i) => i.result === 'violated');
+    const listed = violated.slice(0, 5).map(instanceLabel);
+    const generic = group.find((i) => i.generic === true);
+    const usage = generic?.context ?? '';
+    const definition = generic ? effectiveQualifiedName(model, generic.contextId) : '';
+    out.push({
+      elementId: check.id,
+      severity: counts.violated > 0 ? 'warning' : 'info',
+      message: rollupMessage(relation, check.expression, usage, definition, counts, listed),
+      instances: { ...counts, listed },
+      relation,
+    });
+    for (const inst of violated.slice(0, 5)) {
+      out.push({
+        elementId: anchorFor(model, check, inst),
+        severity: 'warning',
+        message: violatedInstanceMessage(relation, check.expression, inst),
+        instance: instanceLabel(inst),
+        relation,
+      });
+    }
+  }
+  return out;
+}
+
+/** The C.3 roll-up sentence: one finding counting a relation's instances. */
+function rollupMessage(
+  relation: string,
+  expr: string,
+  usage: string,
+  definition: string,
+  counts: InstanceCounts,
+  listed: string[],
+): string {
+  const head = `${relation} (${expr}) read in each of ${counts.total} instances${usage ? ` of ${usage}` : ''}`;
+  const parts: string[] = [];
+  if (counts.violated > 0) parts.push(`violated in ${counts.violated} (${listed.join(', ')})`);
+  if (counts.satisfied > 0) parts.push(`holds in ${counts.satisfied}`);
+  if (counts.unknown > 0) parts.push(`could not be read in ${counts.unknown}`);
+  if (counts.unread > 0) parts.push(`not read in ${counts.unread}`);
+  const tail = counts.generic > 0 ? ` — ${counts.generic} of them generic (${definition}'s own)` : '';
+  return `${head}: ${parts.join(', ')}${tail}`;
+}
+
+/** The C.3 violated-instance sentence; F5 appends the value-source clause from {@link InstanceRead}. */
+function violatedInstanceMessage(relation: string, expr: string, inst: SpecialisationInstance): string {
+  const read = inst.reads?.find((r) => r.via !== undefined);
+  const detail = read?.via ? `: ${read.path} = ${String(read.value)} — ${read.via.sourcePath} through a \`bind\`` : '';
+  return `${relation} (${expr}) is violated in ${instanceLabel(inst)}${detail}`;
 }
 
 /**

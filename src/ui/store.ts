@@ -1329,7 +1329,7 @@ const initialServer = new SysmlApiServer(initialModel);
 /** The sample's text: the Text view's first contents, and the text the session starts saved at. */
 const initialText = textView(initialModel, '');
 
-// Coalesce the per-mutation RECOMPUTE — validation (26 rules), textual
+// Coalesce the per-mutation RECOMPUTE — validation (27 rules), textual
 // re-serialization, and the ELK diagram rebuild — into a single pass after a
 // burst of edits settles, instead of running all three synchronously on every
 // edit (findings C4, C5, L6 — the dominant large-model cost). `rev` is bumped
@@ -2747,7 +2747,10 @@ export const useAppStore = create<AppState>((set, get) => {
       flushRecompute(); // the edit's text first, as `runValidation`
       const { model } = get();
       const base = safeValidate(model).filter(
-        (d) => d.ruleId !== 'constraint-violation' && d.ruleId !== 'target-by-specialisation',
+        (d) =>
+          d.ruleId !== 'constraint-violation' &&
+          d.ruleId !== 'target-by-specialisation' &&
+          d.ruleId !== 'constraint-by-instance',
       );
       let report;
       try {
