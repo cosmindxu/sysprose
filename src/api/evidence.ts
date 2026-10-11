@@ -697,22 +697,64 @@ function scopeAxiom(row: Obligation): ScopeAxiom {
 export function proofScopeOf(
   model: Model,
   obligation: Obligation,
-  opts: { rows?: readonly Obligation[]; free?: ReadonlySet<string> } = {},
+  opts: { rows?: readonly Obligation[]; free?: ReadonlySet<string>; pass?: ProofScopePass } = {},
 ): ProofScope {
   const rows = opts.rows ?? obligationsOf(model);
   const free = opts.free ?? new Set<string>();
+  const pass = opts.pass;
+  const digest = (row: Obligation): ScopeAxiom => {
+    if (pass === undefined) return scopeAxiom(row);
+    let d = pass.digests.get(row);
+    if (d === undefined) {
+      d = scopeAxiom(row);
+      pass.digests.set(row, d);
+    }
+    return d;
+  };
+  // The axiom rows and their set's digest are the same for every obligation
+  // of one worklist and one `free`: within a pass, computed for the first.
+  const freeKey = [...free].sort().join('\n');
+  let set = pass?.set !== undefined && pass.set.rows === rows && pass.set.free === freeKey ? pass.set : undefined;
+  if (set === undefined) {
+    const axioms = axiomsOf(rows, free);
+    set = { rows, free: freeKey, axioms, axiomSet: rowSetDigest(axioms.map(digest)) };
+    if (pass !== undefined) pass.set = set;
+  }
   const inFootprint = footprintOf(model, obligation, { rows, free });
-  const footprint = axiomsOf(rows, free)
+  const footprint = set.axioms
     .filter((r) => inFootprint.has(r.element.id))
-    .map(scopeAxiom)
+    .map((r) => ({ ...digest(r) }))
     .sort((a, b) => (a.axiom < b.axiom ? -1 : a.axiom > b.axiom ? 1 : 0));
   return {
     footprint,
-    axiomSet: rowSetDigest(axiomsOf(rows, free).map(scopeAxiom)),
-    premises: rowSetDigest(premisesOf(obligation, rows).map(scopeAxiom)),
+    axiomSet: set.axiomSet,
+    premises: rowSetDigest(premisesOf(obligation, rows).map(digest)),
     goal: scopeRowDigest(obligation),
     free: [...free].sort(),
   };
+}
+
+/**
+ * What {@link proofScopeOf} computes once for every obligation of ONE pass
+ * over one run's worklist: each row's digest, and the axiom set's. Every
+ * obligation's scope digests the same axiom rows, and recomputing them per
+ * obligation was 0.9 s of a 4098-row model's verify run (83 million rounds of
+ * the hash).
+ *
+ * It caches no model state. A row's digest is a function of the row object
+ * alone, and the axiom set's of the worklist array and the `free` names it
+ * was computed for, which it checks on every use; it lives exactly as long as
+ * the caller holds it — one synchronous pass, over rows nothing changes while
+ * it runs — and is never stored beyond it.
+ */
+export interface ProofScopePass {
+  digests: Map<Obligation, ScopeAxiom>;
+  set?: { rows: readonly Obligation[]; free: string; axioms: Obligation[]; axiomSet: string };
+}
+
+/** A fresh {@link ProofScopePass}, for one pass over one run's rows. */
+export function proofScopePass(): ProofScopePass {
+  return { digests: new Map() };
 }
 
 /**

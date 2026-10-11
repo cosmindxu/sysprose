@@ -195,6 +195,28 @@ describe('the three probe checks, re-pinned', () => {
     );
     expect(r.witness.map((w) => w.symbol)).toEqual(['UAV::uav::mtow']);
   });
+
+  /**
+   * A caller that reads only the answer — the model-wide axiom check, a goal
+   * asked alone — says so (`witness: false`): the model is read and nothing of
+   * it printed. The answer, its reason and an unsat core are what they are
+   * printed or not, and the next check prints its model as before.
+   */
+  withZ3('witness: false answers as a printed check does, with no model', async (z3) => {
+    const refute = script([{ kind: 'goal', name: 'R-UAV-002', term: notTerm(GUARANTEE) }]);
+    const quiet = await z3.check(refute, { variables: ['UAV::uav::mtow'], witness: false });
+    expect([quiet.status, quiet.reason, quiet.witness, quiet.completion]).toEqual(['sat', '', [], []]);
+    const printed = await z3.check(refute, { variables: ['UAV::uav::mtow'] });
+    expect(printed.status).toBe('sat');
+    expect(printed.witness.map((w) => w.symbol)).toEqual(['UAV::uav::mtow']);
+
+    const clash = script([
+      { kind: 'axiom', name: 'UAV::uav::mtow', term: AXIOM },
+      { kind: 'goal', name: 'R-UAV-002', term: `(>= ${MTOW} 30.0)` },
+    ]);
+    const unsat = await z3.check(clash, { witness: false });
+    expect([unsat.status, unsat.core]).toEqual(['unsat', ['axiom:UAV::uav::mtow', 'goal:R-UAV-002']]);
+  });
 });
 
 describe('every check is bounded, and an unknown says so', () => {

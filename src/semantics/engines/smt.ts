@@ -523,10 +523,11 @@ export async function judgeBySmt(
   const axiomVars = variablesOf(axioms);
   const axiomsRefused = axioms.filter((e) => e.encoded === undefined);
 
-  // STEP 0, once per run. Every obligation below stands on this answer.
+  // STEP 0, once per run. Every obligation below stands on this answer — its
+  // status, reason and core: its model is read and never printed.
   const consistency = await backend.check(
     scriptOf(axiomVars, axiomAssertions, axioms).text,
-    { timeoutMs },
+    { timeoutMs, witness: false },
   );
 
   const memo: DerivationMemo = new Map();
@@ -1118,7 +1119,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     // STEP 3: is the goal true of every model, whatever the context says?
     const alone = await input.backend.check(
       scriptOf(row.vars, [{ kind: 'goal', name: nameOf(row.row), term: notTerm(goal.term) }], [row]).text,
-      { timeoutMs: input.timeoutMs },
+      { timeoutMs: input.timeoutMs, witness: false },
     );
     checks += 1;
     const tautology = alone.status === 'unsat';
@@ -1688,7 +1689,7 @@ async function unboundedSide(
       [...assumed, { kind: 'goal', name: `free-domain:${v.qualifiedName}`, term }],
       rows,
     );
-    const outcome = await backend.check(probe.text, { timeoutMs });
+    const outcome = await backend.check(probe.text, { timeoutMs, witness: false });
     checks += 1;
     // `unknown` is treated as escaping the bound: the safe direction is to
     // decline the verdict, never to assume a confinement nobody proved.

@@ -963,7 +963,8 @@ export async function checkConsistency(
   let axiomOutcome: CheckOutcome | null = null;
   if (axiomUnits.length > 0) {
     const script = scriptOf(axiomUnits);
-    axiomOutcome = await opts.backend.check(script.text, { timeoutMs });
+    // Its status, reason and core are read; its model never is.
+    axiomOutcome = await opts.backend.check(script.text, { timeoutMs, witness: false });
     checks += 1;
     axiomsConsistent = axiomOutcome.status === 'sat';
     if (axiomOutcome.status === 'unsat') {

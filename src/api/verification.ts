@@ -143,6 +143,7 @@ import {
   modelVersionOf,
   obligationDigest,
   proofScopeOf,
+  proofScopePass,
   recordEvidence,
   verdictFor,
   type EvidenceBound,
@@ -151,6 +152,7 @@ import {
   type EvidenceVerdict,
   type ModelVersion,
   type ProofScope,
+  type ProofScopePass,
 } from './evidence';
 // The gate codes, so the whole lane's vocabulary is one set. `./property`
 // imports nothing from here, so the edge is one-way.
@@ -1420,6 +1422,9 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
   const vacuous = results.filter((r) => r.claim === 'vacuous').length;
   const inconclusive = results.length - discharged - violated;
   const forgiven = results.filter((r) => r.forgiven).length;
+  // One pass over the judged rows writes every record's proof scope: the
+  // rows' digests are computed once for all of them, and dropped after.
+  const scopePass = proofScopePass();
 
   return {
     engineAsked,
@@ -1449,7 +1454,7 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
         // case. The row is found by clause id in the worklist this run judged,
         // so the footprint is the one the run carried, `--free` included.
         ...(engine === 'smt' && !toolAbsent
-          ? scopeFor(model, rows, r.clause.id, freed?.qualifiedNames)
+          ? scopeFor(model, rows, r.clause.id, freed?.qualifiedNames, scopePass)
           : {}),
         obligation: {
           requirement: r.requirement?.qualifiedName ?? null,
@@ -1666,11 +1671,12 @@ function scopeFor(
   rows: readonly Obligation[],
   clauseId: ElementId,
   free: ReadonlySet<string> | undefined,
+  pass: ProofScopePass,
 ): { proofScope?: ProofScope } {
   const row = rows.find((r) => r.role === 'obligation' && r.element.id === clauseId);
   if (row === undefined) return {};
   return {
-    proofScope: proofScopeOf(model, row, { rows, ...(free !== undefined ? { free } : {}) }),
+    proofScope: proofScopeOf(model, row, { rows, pass, ...(free !== undefined ? { free } : {}) }),
   };
 }
 
@@ -2588,6 +2594,9 @@ export async function boundsReport(
   const modelVersion = modelVersionOf(model, opts.sourceText);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const rows = obligationsOf(model);
+  // The revision `rows` was read at: the bound below reuses them only while
+  // the model is still there (the solver's load is awaited in between).
+  const rowsRev = model.rev;
 
   // THE MEASURE AND EVERY `--free` SPELLING ARE RESOLVED BEFORE ANYTHING RUNS,
   // through the resolver `--free` already uses: a spelling that named nothing
@@ -2668,6 +2677,8 @@ export async function boundsReport(
       free: freed.qualifiedNames,
       ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
       withRequirements,
+      rows,
+      rowsRev,
     });
     const detail =
       `no solver ran, so nothing was bounded: solver absent — ${load.reason}. ` +
@@ -2720,6 +2731,8 @@ export async function boundsReport(
     ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
     withRequirements,
     timeoutMs,
+    rows,
+    rowsRev,
   });
 
   return {

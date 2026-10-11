@@ -185,6 +185,13 @@ export interface BoundsOptions {
   withRequirements?: boolean;
   /** The per-check budget in ms. Every check in this lane is bounded. */
   timeoutMs?: number;
+  /**
+   * The model's worklist (`obligationsOf(model)`) where the caller already
+   * read it, at the model's revision `rowsRev`: used only while the model is
+   * still at that revision, and read afresh otherwise.
+   */
+  rows?: readonly Obligation[];
+  rowsRev?: number;
 }
 
 /** What one optimisation came to. */
@@ -502,9 +509,12 @@ export function prepareBounds(
     free?: ReadonlySet<string>;
     freeAll?: boolean;
     withRequirements?: boolean;
+    /** The worklist read at revision `rowsRev`, as {@link BoundsOptions.rows}. */
+    rows?: readonly Obligation[];
+    rowsRev?: number;
   },
 ): Prepared {
-  const rows = obligationsOf(model);
+  const rows = opts.rows !== undefined && opts.rowsRev === model.rev ? opts.rows : obligationsOf(model);
   const measureName = opts.measureSymbol ?? model.qualifiedName(opts.measureId);
 
   // THE RELEASE. `--free F` drops the axiom that PINS F, exactly as it does in
@@ -782,6 +792,7 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
     ...(opts.free !== undefined ? { free: opts.free } : {}),
     ...(opts.freeAll !== undefined ? { freeAll: opts.freeAll } : {}),
     withRequirements,
+    ...(opts.rows !== undefined ? { rows: opts.rows, rowsRev: opts.rowsRev } : {}),
   });
   const census = axiomSentence(prepared, withRequirements);
   const base = {
@@ -852,10 +863,11 @@ export async function checkBounds(model: Model, opts: BoundsOptions): Promise<Bo
   let checks = 0;
   // STEP 0: can the axioms hold together at all? A bound over an unsatisfiable
   // set is entailed by a contradiction, exactly as a refinement obligation is,
-  // and the core is what makes the row actionable.
+  // and the core is what makes the row actionable. Its model is never read.
   const consistency = await opts.backend.check(script.text, {
     timeoutMs: opts.timeoutMs,
     variables: script.symbols,
+    witness: false,
   });
   checks += 1;
 

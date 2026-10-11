@@ -245,6 +245,7 @@ export {
   modelVersionOf,
   obligationDigest,
   proofScopeOf,
+  proofScopePass,
   recordEvidence,
   scopedStaleness,
   sha256Hex,

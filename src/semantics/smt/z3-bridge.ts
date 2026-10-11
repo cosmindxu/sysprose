@@ -218,6 +218,20 @@ export interface CheckOptions {
    * variables should say so; the encoder's script names them.
    */
   variables?: readonly string[];
+  /**
+   * `false` where the caller reads the status, the reason and the core of a
+   * `sat` answer and never its model: the model is READ as every check reads
+   * it — each entry fetched, the completion's evaluations made — and nothing
+   * of it is printed, so `witness` and `completion` come back empty.
+   *
+   * Only the printing is skipped. Which entries a check fetches moves what the
+   * shared context answers later ({@link witnessOf}); the printing moves
+   * nothing, and on a model-wide check it is most of the check's cost — the
+   * `:named` labels of every script the context has asserted, each printed at
+   * its whole formula: 1.4 of 1.7 s of one such check on a model of 4098
+   * instance rows.
+   */
+  witness?: boolean;
 }
 
 /**
@@ -985,7 +999,7 @@ async function runCheck(
   calls += 1;
   return serially(entry, async () => {
     try {
-      return await checkOn(entry, script, timeoutMs, opts.variables);
+      return await checkOn(entry, script, timeoutMs, opts.variables, opts.witness !== false);
     } catch (err) {
       return classify(entry, err);
     }
@@ -1004,6 +1018,7 @@ async function checkOn(
   script: string,
   timeoutMs: number,
   variables: readonly string[] | undefined,
+  print = true,
 ): Promise<CheckOutcome> {
   enter(entry);
   let settled = false;
@@ -1052,7 +1067,7 @@ async function checkOn(
         reason: '',
         timedOut: false,
         elapsedMs,
-        ...witnessOf(solver, variables, entry.ctx, script),
+        ...witnessOf(solver, variables, entry.ctx, script, print),
       };
     }
     if (status === 'unsat') {
@@ -1303,12 +1318,17 @@ function boundOf(ms: number | undefined): number {
  * Typed on the one method it uses rather than on `Z3Solver`, because the
  * optimiser answers with a model too and a second copy of this function is how
  * the two surfaces would come to filter their witnesses differently.
+ *
+ * `print` false ({@link CheckOptions.witness}): the model is read exactly as
+ * below — every entry fetched, the completion evaluated — and nothing is
+ * printed; both lists come back empty.
  */
 function witnessOf(
   solver: { model(): Z3Model },
   wanted: readonly string[] | undefined,
   ctx: Z3Context,
   script: string,
+  print = true,
 ): { witness: WitnessValue[]; completion: WitnessValue[] } {
   const found = new Map<string, string>();
   const declared = declaredConstants(script);
@@ -1325,6 +1345,8 @@ function witnessOf(
   // on eight models of the differential corpus; skipping only the printing
   // moved nothing.
   const needed = wanted !== undefined ? new Set<string>([...wanted, ...declared.map((d) => d.symbol)]) : undefined;
+  // Unprinted, an entry is only KNOWN to be assigned: the completion asks no more.
+  const assigned = new Set<string>();
   let completed = new Map<string, string>();
   // The one holder of the model: released here, once read, on every path. A
   // trap out of that release escapes, to be counted a death (`safeRelease`).
@@ -1337,16 +1359,18 @@ function witnessOf(
       for (const decl of m) {
         const name = decl.name().toString();
         const value = m.get(decl);
-        if (needed === undefined || needed.has(name)) found.set(name, value.toString());
+        if (!print) assigned.add(name);
+        else if (needed === undefined || needed.has(name)) found.set(name, value.toString());
       }
     } catch {
       return { witness: [], completion: [] };
     }
     // Read while the model is still held: `eval` is a call into it.
-    completed = completionOf(m, ctx, declared, found);
+    completed = completionOf(m, ctx, declared, print ? found : assigned, print);
   } finally {
     safeRelease(model);
   }
+  if (!print) return { witness: [], completion: [] };
   const symbols = wanted ?? [...found.keys()].sort();
   const witness: WitnessValue[] = [];
   for (const symbol of symbols) {
@@ -1374,13 +1398,15 @@ function witnessOf(
  * A constant z3 will not evaluate stays out, and its re-read fails as it did
  * before this existed: unread, never confirmed. A TRAP is not a refusal and is
  * rethrown, to be counted a death — `eval` is a call into the module like any
- * other.
+ * other. `print` false makes every evaluation and prints none of them: each
+ * completed constant maps to `''`.
  */
 function completionOf(
   model: Z3Model,
   ctx: Z3Context,
   declared: ReadonlyArray<{ symbol: string; sort: 'Real' | 'Int' | 'Bool' }>,
-  assigned: ReadonlyMap<string, string>,
+  assigned: { has(symbol: string): boolean },
+  print = true,
 ): Map<string, string> {
   const out = new Map<string, string>();
   if (typeof model.eval !== 'function') return out;
@@ -1389,7 +1415,8 @@ function completionOf(
     const make = ctx[sort];
     if (make === undefined) continue;
     try {
-      out.set(symbol, model.eval(make.const(symbol), true).toString());
+      const value = model.eval(make.const(symbol), true);
+      out.set(symbol, print ? value.toString() : '');
     } catch (err) {
       if (isZ3ModuleDeath(err)) throw err;
     }
