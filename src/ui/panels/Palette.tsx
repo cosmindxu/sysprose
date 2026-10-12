@@ -28,7 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
-import { checkFileName, useAppStore } from '../store';
+import { checkFileName, flushRecompute, loadHealth, useAppStore } from '../store';
 import { checksFor, commandNote, selectionKey, type CheckSpec } from '../checks';
 import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 import { cancelChecked, runChecked } from './checks-runner';
@@ -373,8 +373,14 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   const note = commandNote(spec, ctx);
 
   const onRun = useCallback(() => {
-    runChecked(spec, ctx, rev);
-  }, [spec, ctx, rev]);
+    flushRecompute();
+    const st = useAppStore.getState();
+    // The load health (a parse + validation of the model's text) is read here, in
+    // the same turn as `st.rev` (I8), and travels with the request so an
+    // off-thread walk judges the same health the page would.
+    const runCtx = { ...ctx, model: st.model, ...(spec.readsLoadHealth ? { loadHealth: loadHealth() } : {}) };
+    runChecked(spec, runCtx, st.rev);
+  }, [spec, ctx]);
   const onCancel = useCallback(() => cancelChecked(spec.id), [spec.id]);
 
   // Cancel goes when the check stops, whether the person pressed it or the answer

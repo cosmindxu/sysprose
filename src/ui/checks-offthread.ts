@@ -35,6 +35,7 @@
 import { FORMAT_VERSION, Model, type ElementRecord, type SerializedModel } from '@core/index';
 import { loadFullStandardLibrary } from '@library/full-library';
 import { CHECKS, runCheck, type CheckResult } from './checks';
+import type { LoadHealth } from './store';
 
 /** One run, as it crosses to the worker. */
 export interface CheckRequest {
@@ -50,6 +51,13 @@ export interface CheckRequest {
   selectionName: string | null;
   isolated: boolean;
   fileName: string;
+  /**
+   * The load health the page judged the run under, for a `readsLoadHealth` check
+   * ({@link CheckSpec.readsLoadHealth}). Carried across so an off-thread walk
+   * judges the same health the page would, rather than reading it undefined and
+   * failing closed.
+   */
+  loadHealth?: LoadHealth;
 }
 
 /**
@@ -181,6 +189,7 @@ export class CheckHost {
         selectionName: req.selectionName,
         isolated: req.isolated,
         fileName: req.fileName,
+        loadHealth: req.loadHealth,
       });
       return { id: req.id, ok: true, result };
     } catch (err) {

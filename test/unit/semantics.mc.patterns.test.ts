@@ -28,9 +28,10 @@
  * provenance that compiles is not the same as a reading that holds, and the
  * profile is printed under every verdict this command reaches.
  */
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { runStateMachine } from '@semantics/index';
 import { loadModelText } from '@text/load';
@@ -47,11 +48,14 @@ import {
   behaviourReport,
   checkProperty,
   coverRequiredRefusal,
+  exitCodeOf,
   parsePropertyText,
   propertiesOf,
+  traceLine,
   type BehaviourOptions,
   type BehaviourReport,
   type PropertyText,
+  type TraceStep,
 } from '../../src/semantics/mc/patterns';
 import {
   DWELL_SENTENCE,
@@ -68,6 +72,17 @@ import {
 } from '../../src/semantics/mc/explore';
 import { MAX_COMPLETION } from '../../src/semantics/mc/config';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
+import {
+  ELEMENT_REQUIRED_LEAD,
+  NO_DEFAULT_MACHINE,
+  behaviourLines,
+  behaviourMachineFor,
+  libraryElementRefusal,
+  propertyVerdictLines,
+  textOf,
+} from '../../src/semantics/mc/report-lines';
+import { witnessRtcGap } from '../../src/semantics/mc/rtc-gap';
+import { main as sysproseMain } from '../../scripts/sysprose';
 
 /** `A -a→ B -b→ C -c→ D`, and an orphan `E` no run reaches. */
 function buildChain(): { model: Model; machineId: ElementId } {
@@ -1813,5 +1828,434 @@ describe('`cover` — a positive reachability intent gets a claim word of its ow
       'response',
     ]);
     expect(PATTERNS.find((p) => p.name === 'cover')!.kind).toBe('guarantee');
+  });
+});
+
+/* ═════════ the text of `check-behaviour` is composed beside the engine, and the terminal prints it ═════════ */
+
+/** The command in-process with stdout and stderr kept apart. */
+async function behaviourCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const realOut = process.stdout.write;
+  const realErr = process.stderr.write;
+  process.stdout.write = ((c: unknown) => (out.push(String(c)), true)) as typeof process.stdout.write;
+  process.stderr.write = ((c: unknown) => (err.push(String(c)), true)) as typeof process.stderr.write;
+  let code: number;
+  try {
+    code = await sysproseMain(args);
+  } finally {
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+  }
+  return { code, stdout: out.join(''), stderr: err.join('') };
+}
+
+describe('`check-behaviour` prints the lines the composer returns, byte for byte', () => {
+  interface GoldenRow {
+    file: string;
+    machine: string;
+    pattern: string;
+  }
+  const golden: GoldenRow[] = JSON.parse(
+    readFileSync(resolve(process.cwd(), 'test/fixtures/verification/behaviour-golden-b97f391.json'), 'utf8'),
+  );
+  const models = new Map<string, Model>();
+  async function modelOf(file: string): Promise<Model> {
+    const have = models.get(file);
+    if (have) return have;
+    const loaded = await loadModelText(readFileSync(resolve(process.cwd(), file), 'utf8'), { fileName: file });
+    expect(loaded.model, `${file} did not load`).toBeDefined();
+    models.set(file, loaded.model!);
+    return loaded.model!;
+  }
+  const machineIn = (model: Model, qn: string): ElementId => {
+    const el = model.all().find((e) => model.qualifiedName(e.id) === qn);
+    expect(el, `no element named ${qn}`).toBeDefined();
+    return el!.id;
+  };
+
+  it('prints every golden row exactly as behaviourLines composes it', async () => {
+    expect(golden).toHaveLength(84);
+    for (const want of golden) {
+      const model = await modelOf(want.file);
+      const r = behaviourReport(model, { machineId: machineIn(model, want.machine), pattern: want.pattern });
+      const got = await behaviourCli([
+        'check-behaviour',
+        want.file,
+        '--element',
+        want.machine,
+        '--pattern',
+        want.pattern,
+      ]);
+      const label = `${want.file} :: ${want.machine} :: ${want.pattern}`;
+      expect(got.stdout, label).toBe(`${textOf(behaviourLines(r, { name: want.file, machineName: want.machine }))}\n`);
+      expect(got.code, label).toBe(r.exitCode);
+    }
+  }, 300_000);
+
+  it('prints the flag trailers and the cover-required disclosure exactly as composed', async () => {
+    const file = 'test/fixtures/verification/models/guard-undetermined.sysml';
+    const text = readFileSync(resolve(process.cwd(), file), 'utf8');
+    const model = (await loadModelText(text, { fileName: file, library: 'none' })).model!;
+    const qn = 'GuardProbe::Ctrl::Modes';
+    const machineId = model.all().find((e) => model.qualifiedName(e.id) === qn)!.id;
+    const pattern = 'pattern=cover, scope=globally, p=state hazard';
+    const r = behaviourReport(model, { machineId, pattern, coverRequired: true, strictVacuity: true });
+    const lines = behaviourLines(r, { name: file, machineName: qn });
+    const got = await behaviourCli([
+      'check-behaviour', file, '--no-library', '--element', qn, '--pattern', pattern, '--cover-required', '--strict-vacuity',
+    ]);
+    expect(got.stdout).toBe(`${textOf(lines)}\n`);
+    // Both trailers and the withheld-cover sentence are lines of their own, and
+    // the last of them says an answer was withheld.
+    expect(lines.filter((l) => l.kind === 'flag-note').map((l) => l.text.trim().split(':')[0])).toEqual([
+      '--strict-vacuity',
+      '--cover-required',
+    ]);
+    const disclosure = lines.find((l) => l.kind === 'cover-required');
+    expect(disclosure, 'no --cover-required disclosure on a cover withheld under an undecided guard').toBeDefined();
+    expect(disclosure!.text).toBe(`    ${coverRequiredRefusal(r.properties[0].cover!)}`);
+    expect(disclosure!.withholds).toBe(true);
+  });
+
+  it('the witness head is the CLI’s: the warrant the detail names, one line, then one line per step', async () => {
+    const uav = await modelOf('examples/uav-isr.sysml');
+    // A machine whose only way into `B` is a dwell the walk offers as an event:
+    // factory-built, because no `.sysml` spelling exists (see the `cover` cases).
+    const dwell = new Model();
+    const f = new ModelFactory(dwell);
+    const sm = f.stateDef('Dwells');
+    const idle = f.state('idle', sm.id);
+    f.transition(idle.id, f.state('B', sm.id).id, { ownerId: sm.id, trigger: 'after(10)' });
+    const cases: Array<{ model: Model; machineId: ElementId; pattern: string }> = [
+      { model: uav, machineId: machineIn(uav, 'UAVSurveillanceSystem::FlightModes'), pattern: 'pattern=absence, scope=globally, p=state failsafe' },
+      { model: uav, machineId: machineIn(uav, 'UAVSurveillanceSystem::FlightModes'), pattern: 'pattern=cover, scope=globally, p=state failsafe' },
+      { model: dwell, machineId: sm.id, pattern: 'pattern=cover, scope=globally, p=state B' },
+    ];
+    const seen = new Set<string>();
+    for (const { model, machineId, pattern } of cases) {
+      const v = behaviourReport(model, { machineId, pattern }).properties[0];
+      expect(v.witness.length, pattern).toBeGreaterThan(0);
+      const lines = propertyVerdictLines(v, false, 1);
+      const head = lines.filter((l) => l.kind === 'witness-head');
+      const warrant = v.detail.includes(WALK_ADMITS) ? WALK_ADMITS : SEMANTICS_ADMITS;
+      seen.add(warrant);
+      expect(head.map((l) => l.text), pattern).toEqual([`    witness — ${warrant}:`]);
+      const steps = lines.filter((l) => l.kind === 'witness-step');
+      expect(steps.map((l) => l.text), pattern).toEqual(v.witness.map((w) => `      ${traceLine(w)}`));
+      expect(steps.map((l) => l.step), pattern).toEqual(v.witness.map((w) => w.index));
+      expect(steps.map((l) => l.elementId), pattern).toEqual(v.witness.map((w) => w.leaf?.id ?? null));
+      // The head sits immediately before the first step.
+      expect(lines.indexOf(steps[0]) - lines.indexOf(head[0])).toBe(1);
+    }
+    // One run per warrant, so neither branch of the choice is unexercised.
+    expect([...seen].sort()).toEqual([SEMANTICS_ADMITS, WALK_ADMITS].sort());
+  });
+
+  it('tags a line as withholding exactly where the claim says nothing was decided', async () => {
+    const seen = new Set<string>();
+    for (const want of golden) {
+      const model = await modelOf(want.file);
+      const r = behaviourReport(model, { machineId: machineIn(model, want.machine), pattern: want.pattern });
+      const v = r.properties[0];
+      const lines = propertyVerdictLines(v, false, 1);
+      const undecided = v.claim === 'inconclusive' || v.claim === 'vacuous';
+      seen.add(v.claim);
+      for (const l of lines.filter((x) => x.kind === 'property' || x.kind === 'detail')) {
+        expect(l.withholds, `${want.pattern} :: ${l.kind}`).toBe(undecided);
+      }
+      expect(lines[0].code).toBe(v.code);
+      for (const l of lines.filter((x) => x.kind === 'every-run')) {
+        expect(l.withholds).toBe(v.modality!.value === 'not-decided');
+      }
+      // Nothing else on a property block withholds, but the cover-required line.
+      for (const l of lines.filter((x) => !['property', 'detail', 'every-run', 'cover-required'].includes(x.kind))) {
+        expect(l.withholds, `${want.pattern} :: ${l.kind}`).toBe(false);
+      }
+      expect(new Set(lines.map((l) => l.block))).toEqual(new Set([1]));
+    }
+    // The corpus carries a decided and an undecided word, so the equivalence is not vacuous.
+    expect(seen.has('inconclusive') && (seen.has('fail') || seen.has('pass'))).toBe(true);
+  });
+
+  it('exitCodeOf is the report’s arithmetic, with the flag both ways', async () => {
+    const inline = [
+      'test/fixtures/verification/models/cover-sealed.sysml',
+      'test/fixtures/verification/models/cover-reachable.sysml',
+      'test/fixtures/verification/models/guard-undetermined.sysml',
+    ];
+    for (const want of golden) {
+      const model = await modelOf(want.file);
+      for (const coverRequired of [false, true]) {
+        const b = behaviourReport(model, { machineId: machineIn(model, want.machine), pattern: want.pattern, coverRequired });
+        expect(exitCodeOf(b.counts, b.properties.length, coverRequired), `${want.pattern} cr=${coverRequired}`).toBe(
+          b.exitCode,
+        );
+      }
+    }
+    // The inline models of this file: a carrier that is covered, and a run
+    // that states nothing at all.
+    const none = 'package Bare { state def M { state a; state b; transition a -> b; } }';
+    const carried = `package Modes { state def M {
+      @SysproseVerification::PropertyPattern { attribute pattern = "cover"; attribute scope = "globally"; attribute p = "state b"; }
+      state a; state b; transition a -> b; } }`;
+    for (const src of [none, carried]) {
+      const loaded = await loadModelText(src, { fileName: 'x.sysml', library: 'none' });
+      const machineId = stateMachinesIn(loaded.model!)[0].id;
+      for (const coverRequired of [false, true]) {
+        const b = behaviourReport(loaded.model!, { machineId, coverRequired });
+        expect(exitCodeOf(b.counts, b.properties.length, coverRequired)).toBe(b.exitCode);
+      }
+    }
+    for (const file of inline) {
+      const loaded = await loadModelText(readFileSync(resolve(process.cwd(), file), 'utf8'), { fileName: file, library: 'none' });
+      for (const m of stateMachinesIn(loaded.model!)) {
+        for (const coverRequired of [false, true]) {
+          const b = behaviourReport(loaded.model!, {
+            machineId: m.id,
+            pattern: 'pattern=cover, scope=globally, p=state failsafe',
+            coverRequired,
+          });
+          expect(exitCodeOf(b.counts, b.properties.length, coverRequired), `${file} cr=${coverRequired}`).toBe(b.exitCode);
+        }
+      }
+    }
+    // And the table itself, so a re-ordered ternary is red without a model.
+    const zero = { passed: 0, failed: 0, vacuous: 0, inconclusive: 0, covered: 0, notCovered: 0 };
+    expect(exitCodeOf({ ...zero, passed: 2, covered: 1 }, 3, false)).toBe(0);
+    expect(exitCodeOf({ ...zero, failed: 1, inconclusive: 3 }, 4, false)).toBe(1);
+    expect(exitCodeOf({ ...zero, vacuous: 1, passed: 1 }, 2, false)).toBe(2);
+    expect(exitCodeOf({ ...zero, inconclusive: 1 }, 1, false)).toBe(2);
+    expect(exitCodeOf({ ...zero, notCovered: 1 }, 1, false)).toBe(2);
+    expect(exitCodeOf({ ...zero, notCovered: 1 }, 1, true)).toBe(1);
+    expect(exitCodeOf({ ...zero, passed: 1 }, 1, true)).toBe(0);
+    expect(exitCodeOf(zero, 0, false), 'a run that checked nothing has not passed').toBe(2);
+    expect(exitCodeOf(zero, 0, true)).toBe(2);
+  }, 300_000);
+
+  describe('the inline carrier models and the refusals', () => {
+    let dir: string;
+    const file = (name: string) => join(dir, name);
+    beforeAll(() => {
+      dir = mkdtempSync(join(tmpdir(), 'sysprose-lines-'));
+    });
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+    const ABSENCE = `package Modes {
+    state def FlightModes {
+        @SysproseVerification::PropertyPattern {
+            attribute pattern = "absence";
+            attribute scope = "globally";
+            attribute p = "state failsafe";
+        }
+        state standby;
+        state manual;
+        state failsafe;
+        transition standby -> manual;
+        transition manual -> standby;
+    }
+}
+`;
+    const COVER = ABSENCE.replace('"absence"', '"cover"').replace('transition manual -> standby;', 'transition manual -> failsafe;');
+    const NO_PROPERTY = 'package Bare {\n    state def M { state a; state b; transition a -> b; }\n}\n';
+
+    it('prints the carrier models, the bare machine and the vacuous run as composed', async () => {
+      const cases: Array<{ name: string; text: string; machine: string; extra: string[]; opts: Partial<BehaviourOptions> }> = [
+        { name: 'absence.sysml', text: ABSENCE, machine: 'Modes::FlightModes', extra: [], opts: {} },
+        { name: 'cover.sysml', text: COVER, machine: 'Modes::FlightModes', extra: [], opts: {} },
+        { name: 'bare.sysml', text: NO_PROPERTY, machine: 'Bare::M', extra: [], opts: {} },
+        {
+          name: 'vacuous.sysml',
+          text: ABSENCE,
+          machine: 'Modes::FlightModes',
+          extra: ['--pattern', 'pattern=absence, scope=after, p=state manual, q=state failsafe', '--strict-vacuity'],
+          opts: { pattern: 'pattern=absence, scope=after, p=state manual, q=state failsafe', strictVacuity: true },
+        },
+      ];
+      for (const c of cases) {
+        writeFileSync(file(c.name), c.text);
+        const loaded = await loadModelText(c.text, { fileName: file(c.name), library: 'none' });
+        const machineId = stateMachinesIn(loaded.model!)[0].id;
+        const r = behaviourReport(loaded.model!, { machineId, ...c.opts });
+        const got = await behaviourCli(['check-behaviour', file(c.name), '--no-library', '--element', c.machine, ...c.extra]);
+        const lines = behaviourLines(r, { name: file(c.name), machineName: c.machine });
+        expect(got.stdout, c.name).toBe(`${textOf(lines)}\n`);
+        expect(got.code, c.name).toBe(r.exitCode);
+      }
+      // A machine that states nothing prints its two sentences as `empty` lines.
+      const bare = behaviourLines(
+        behaviourReport(
+          (await loadModelText(NO_PROPERTY, { fileName: 'b.sysml', library: 'none' })).model!,
+          { machineId: stateMachinesIn((await loadModelText(NO_PROPERTY, { fileName: 'b.sysml', library: 'none' })).model!)[0].id },
+        ),
+        { name: 'b.sysml', machineName: 'Bare::M' },
+      );
+      expect(bare.filter((l) => l.kind === 'empty')).toHaveLength(2);
+    }, 120_000);
+
+    it('refusals are the CLI’s: the composer’s message appears in stderr as one block', async () => {
+      const MODEL = `package Refusals {
+    part def Holder;
+    state def Alpha { state a; state b; transition a -> b; }
+    state def Beta { state c; state d; transition c -> d; }
+}
+`;
+      writeFileSync(file('refusals.sysml'), MODEL);
+      const model = (await loadModelText(MODEL, { fileName: file('refusals.sysml') })).model!;
+      const idOf = (qn: string) => model.all().find((e) => model.qualifiedName(e.id) === qn)!.id;
+      const cases: Array<{ element: string; message: string; holder: ElementId | null; candidates: number }> = [];
+      for (const element of ['Refusals::Alpha::a', 'Refusals', 'Refusals::Holder']) {
+        const found = behaviourMachineFor(model, idOf(element));
+        expect(found.ok, element).toBe(false);
+        if (!found.ok) cases.push({ element, message: found.message, holder: found.holder, candidates: found.candidates.length });
+      }
+      // The three refusals the composer makes, with what each carries.
+      expect(cases[0].message).toBe('`Refusals::Alpha::a` holds no state machine — it is inside `Refusals::Alpha`, which is one');
+      expect(cases[0].holder).toBe(idOf('Refusals::Alpha'));
+      expect(cases[1].message.split('\n')).toEqual([
+        '`Refusals` holds 2 state machines:',
+        '    Refusals::Alpha [StateDefinition]',
+        '    Refusals::Beta [StateDefinition]',
+        '  name one of them — a property is a claim about one machine.',
+      ]);
+      expect(cases[1].candidates).toBe(2);
+      expect(cases[2]).toMatchObject({ message: '`Refusals::Holder` holds no state machine', holder: null });
+      // And the terminal says exactly those words, as one block, exit 2.
+      for (const c of cases) {
+        const got = await behaviourCli(['check-behaviour', file('refusals.sysml'), '--element', c.element]);
+        expect(got.code, c.element).toBe(2);
+        expect(got.stdout, c.element).toBe('');
+        expect(got.stderr, c.element).toContain(`sysprose check-behaviour: ${c.message}\n`);
+      }
+      // A library element is refused with the library sentence.
+      const lib = await behaviourCli(['check-behaviour', file('refusals.sysml'), '--element', 'ScalarValues']);
+      expect(lib.code).toBe(2);
+      expect(lib.stderr).toContain(`sysprose check-behaviour: ${libraryElementRefusal('ScalarValues')}\n`);
+      // No `--element` at all: the lead and the reason, in the words the composer exports.
+      const none = await behaviourCli(['check-behaviour', file('refusals.sysml')]);
+      expect(none.code).toBe(2);
+      expect(none.stderr).toContain(`sysprose check-behaviour: ${ELEMENT_REQUIRED_LEAD}${NO_DEFAULT_MACHINE}\n`);
+      // One machine is the positive control: the composer accepts it.
+      expect(behaviourMachineFor(model, idOf('Refusals::Alpha')).ok).toBe(true);
+    }, 120_000);
+  });
+});
+
+/* ═════════ a witness, replayed under run-to-completion ═════════ */
+
+/**
+ * A `fail` or `covered` witness is a run the WALK found, and the walk offers a
+ * trigger at configurations where a trigger-less transition is due. The replay
+ * re-takes the witness with the engine's own step functions and names the first
+ * step that leaves run-to-completion; the terminal prints the witness either way.
+ */
+describe('`witnessRtcGap` — does the witness take an event where a completion transition is due?', () => {
+  const carrier = (pattern: string, p: string) =>
+    `@SysproseVerification::PropertyPattern { attribute pattern = "${pattern}"; attribute scope = "globally"; attribute p = "${p}"; }`;
+  /** `a_b` is due at `a`, yet the witness for `c` takes `e` there. */
+  const gapOn = (pattern: string, guard = '') =>
+    `package P { state def M { ${carrier(pattern, 'state c')} state a; state b; state c; ` +
+    `transition a_b first a ${guard}then b; transition a_c first a accept e then c; transition b_a first b accept back then a; } }`;
+  const mission = (pattern: string, p: string) =>
+    `package MissionDag { part def Mission { state def Modes { ${carrier(pattern, p)} state takeoff; state cruise; state landed; ` +
+    'transition takeoff then cruise; transition cruise then landed; } } }';
+
+  async function witnessOf(src: string, claim: string, opts: { pattern?: string; file?: string } = {}) {
+    const loaded = await loadModelText(src, { fileName: opts.file ?? 'x.sysml', ...(opts.file ? {} : { library: 'none' as const }) });
+    const model = loaded.model!;
+    const machine = stateMachinesIn(model).find((m) => !opts.pattern || model.qualifiedName(m.id).endsWith('FlightModes'))!;
+    const v = behaviourReport(model, { machineId: machine.id, ...(opts.pattern ? { pattern: opts.pattern } : {}) }).properties[0];
+    expect(v.claim, src.slice(0, 60)).toBe(claim);
+    return { model, machineId: machine.id, v };
+  }
+
+  it('flags a witness that takes a trigger where a completion transition is enabled', async () => {
+    for (const [pattern, claim] of [['cover', 'covered'], ['absence', 'fail']] as const) {
+      const { model, machineId, v } = await witnessOf(gapOn(pattern), claim);
+      const gap = witnessRtcGap(model, machineId, v.witness);
+      expect(gap, pattern).not.toBeNull();
+      expect(gap!.step, pattern).toBe(1);
+      expect(gap!.lost, pattern).toBe(false);
+      expect(gap!.completion).toMatchObject({ name: 'a_b', label: '', from: { name: 'a' }, to: { name: 'b' } });
+    }
+  });
+
+  it('fails closed on a completion transition whose guard decided nothing', async () => {
+    // `k` has no value, so `a_b` is neither enabled nor disabled at `a`. Nothing
+    // says the interpreter would not have fired it, so the witness is a gap.
+    const { model, machineId, v } = await witnessOf(gapOn('cover', 'if k > 0 '), 'covered');
+    expect(witnessRtcGap(model, machineId, v.witness)).toMatchObject({ step: 1, lost: false, completion: { name: 'a_b' } });
+  });
+
+  it('passes a witness no completion transition is due in', async () => {
+    const cases: Array<[string, string, string]> = [
+      // A completion whose guard is FALSE is no gap: the replay evaluates it.
+      [
+        'falseGuard',
+        'package P { state def M { ' + carrier('cover', 'state c') +
+          ' attribute k = 0; state a; state b; state c; transition a_b first a if k > 0 then b; transition a_c first a accept e then c; } }',
+        'covered',
+      ],
+      [
+        'triggered-clean',
+        'package P { state def M { ' + carrier('cover', 'state c') +
+          ' state a; state c; transition a accept e then c; transition c accept back then a; } }',
+        'covered',
+      ],
+      ['missionFail', mission('absence', 'state landed'), 'fail'],
+      ['missionCover', mission('cover', 'state cruise'), 'covered'],
+    ];
+    for (const [name, src, claim] of cases) {
+      const { model, machineId, v } = await witnessOf(src, claim);
+      expect(v.witness.length, name).toBeGreaterThan(1);
+      expect(witnessRtcGap(model, machineId, v.witness), name).toBeNull();
+    }
+    // The shipped example's golden witness is all completion transitions.
+    const uav = await witnessOf(readFileSync(resolve(process.cwd(), 'examples/uav-isr.sysml'), 'utf8'), 'fail', {
+      file: 'examples/uav-isr.sysml',
+      pattern: 'pattern=absence, scope=globally, p=state failsafe',
+    });
+    expect(uav.v.witness.length).toBeGreaterThan(1);
+    expect(witnessRtcGap(uav.model, uav.machineId, uav.v.witness)).toBeNull();
+  }, 120_000);
+
+  it('fails closed on a step it cannot find', async () => {
+    const { model, machineId, v } = await witnessOf(mission('absence', 'state landed'), 'fail');
+    expect(v.witness).toHaveLength(3);
+    const lost = v.witness.map((w) => (w.index === 2 ? { ...w, transition: { ...w.transition!, id: 'no-such-transition' } } : w));
+    expect(witnessRtcGap(model, machineId, lost)).toEqual({ step: 2, completion: null, lost: true });
+    // And a step with no transition at all (only the opening has none).
+    const bare = v.witness.map((w) => (w.index === 1 ? { ...w, transition: null } : w));
+    expect(witnessRtcGap(model, machineId, bare)).toEqual({ step: 1, completion: null, lost: true });
+    // The opening alone, or nothing, takes no step.
+    expect(witnessRtcGap(model, machineId, v.witness.slice(0, 1))).toBeNull();
+    expect(witnessRtcGap(model, machineId, [])).toBeNull();
+  });
+
+  it('fails closed on a step that is not at the innermost level, as the walk fires', async () => {
+    // Inside `K`, an inner `e` always beats the outer `o`, so no run of this
+    // semantics takes `o`: a witness that does is lost, though `o` is enabled.
+    const loaded = await loadModelText(
+      'package P { state def M { state K { state k0; state k1; transition kk first k0 accept e then k1; ' +
+        'transition kk2 first k0 accept e then k0; transition kb first k1 accept e then k0; } state z; ' +
+        'transition o first K accept e then z; } }',
+      { fileName: 'x.sysml', library: 'none' },
+    );
+    const model = loaded.model!;
+    const [machine] = stateMachinesIn(model);
+    const idOf = (name: string) => model.all().find((e) => e.declaredName === name)!.id;
+    const opening: TraceStep = { index: 0, event: '-', transition: null, leaf: null, stack: [], holds: [] };
+    const via = (name: string): TraceStep => ({
+      index: 1,
+      event: 'e',
+      transition: { id: idOf(name), name, qualifiedName: name, from: null, to: null, label: 'e' },
+      leaf: null,
+      stack: [],
+      holds: [],
+    });
+    expect(witnessRtcGap(model, machine.id, [opening, via('o')])).toEqual({ step: 1, completion: null, lost: true });
+    // The inner transition on the same trigger is found, so the level is what decides.
+    expect(witnessRtcGap(model, machine.id, [opening, via('kk')])).toBeNull();
   });
 });

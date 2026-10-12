@@ -50,6 +50,17 @@ import {
 } from '@diagram/index';
 import { useAppStore, type PortEnd } from '../store';
 import { usePaletteStore } from './Palette';
+import { useChecksStore } from './checks-store';
+import { useBehaviourStore } from './behaviour-store';
+import {
+  MARK_ORDER,
+  STALE_MARKS_TEXT,
+  WITNESS_NOT_SIMULATION,
+  behaviourClassesOf,
+  marksStatusLine,
+  marksStatusText,
+  type MarkSummary,
+} from '../behaviour-checks';
 import { NodeContextMenu } from './NodeContextMenu';
 import { PaneContextMenu } from './PaneContextMenu';
 import { Legend } from './Legend';
@@ -133,6 +144,92 @@ function pointerXY(evt: MouseEvent | TouchEvent): { x: number; y: number } | nul
 
 /* ──────────────────────────────── Inner ─────────────────────────────────── */
 
+/** A mark summary with nothing in it, for a reach result from before step 5. */
+const NO_MARKS: MarkSummary = { machines: 0, marked: {}, trapWithheld: 0, notDecidedOn: 0, walkOnly: 0, notWalked: 0 };
+
+/**
+ * The status panel in the canvas's top-left corner (A.4). It exists while a
+ * reach result is stored, and reads the store itself: the panel is the one
+ * place the K/S/W/N withheld counts can never be folded away.
+ */
+function BehaviourMarks(): JSX.Element | null {
+  const reach = useChecksStore((s) => s.results.reach);
+  const beh = useChecksStore((s) => s.results['check-behaviour']);
+  const rev = useAppStore((s) => s.rev);
+  const model = useAppStore((s) => s.model);
+  const marksHidden = useBehaviourStore((s) => s.marksHidden);
+  const detailsOpen = useBehaviourStore((s) => s.detailsOpen);
+  const setMarksHidden = useBehaviourStore((s) => s.setMarksHidden);
+  const setDetailsOpen = useBehaviourStore((s) => s.setDetailsOpen);
+  const witness = useBehaviourStore((s) => s.witness);
+
+  // An open, gap-free witness reads `witness` (A.5), before any reach marks.
+  if (
+    witness !== null &&
+    beh !== undefined &&
+    beh.rev === rev &&
+    beh.at === witness.resultAt &&
+    model.get(witness.machineId) !== undefined
+  ) {
+    const view = beh.result.witnesses?.find((v) => v.block === witness.block && v.gap === null);
+    if (view !== undefined) {
+      const qn = model.qualifiedName(witness.machineId) ?? witness.machineId;
+      return (
+        <div className="behaviour-marks" data-testid="behaviour-marks" role="status" data-state="witness">
+          <span className="behaviour-marks-line">{WITNESS_NOT_SIMULATION(qn, witness.step + 1, view.steps.length)}</span>
+        </div>
+      );
+    }
+  }
+
+  if (reach === undefined) return null;
+  const summary = reach.result.markSummary ?? NO_MARKS;
+  const state: 'current' | 'hidden' | 'stale' =
+    reach.rev !== rev ? 'stale' : marksHidden ? 'hidden' : 'current';
+
+  return (
+    <div className="behaviour-marks" data-testid="behaviour-marks" role="status" data-state={state}>
+      {state === 'stale' ? (
+        <span className="behaviour-marks-line">{STALE_MARKS_TEXT}</span>
+      ) : state === 'hidden' ? (
+        <>
+          <span className="behaviour-marks-line">Reachability marks are hidden.</span>
+          <button
+            type="button"
+            className="behaviour-marks-hide"
+            data-testid="behaviour-marks-hide"
+            onClick={() => setMarksHidden(false)}
+          >
+            Show marks
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="behaviour-marks-line">{marksStatusLine(summary, reach.at)}</span>
+          <button
+            type="button"
+            className="behaviour-marks-details"
+            data-testid="behaviour-marks-details"
+            aria-expanded={detailsOpen}
+            onClick={() => setDetailsOpen(!detailsOpen)}
+          >
+            {detailsOpen ? 'Hide details' : 'details'}
+          </button>
+          <button
+            type="button"
+            className="behaviour-marks-hide"
+            data-testid="behaviour-marks-hide"
+            onClick={() => setMarksHidden(true)}
+          >
+            Hide marks
+          </button>
+          {detailsOpen && <span className="behaviour-marks-details-text">{marksStatusText(summary)}</span>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function DiagramCanvasInner(): JSX.Element {
   const diagram = useAppStore((s) => s.diagram);
   const model = useAppStore((s) => s.model);
@@ -159,6 +256,38 @@ function DiagramCanvasInner(): JSX.Element {
   const updateElement = useAppStore((s) => s.updateElement);
   const reparentMany = useAppStore((s) => s.reparentMany);
   const simActiveStates = useAppStore((s) => s.simActiveStates);
+  const rev = useAppStore((s) => s.rev);
+
+  // The behaviour lanes: the reach result paints the state-view marks, and an
+  // open witness (step 6) suppresses the simulation glow.
+  const reachStored = useChecksStore((s) => s.results.reach);
+  const behStored = useChecksStore((s) => s.results['check-behaviour']);
+  const marksHidden = useBehaviourStore((s) => s.marksHidden);
+  const witness = useBehaviourStore((s) => s.witness);
+  const behaviour = useMemo(
+    () =>
+      behaviourClassesOf({
+        reach: reachStored,
+        beh: behStored,
+        rev,
+        activeView,
+        marksHidden,
+        witness,
+        machineExists: (id) => model.get(id) !== undefined,
+      }),
+    [reachStored, behStored, rev, activeView, marksHidden, witness, model],
+  );
+  const behaviourClasses = behaviour.classes;
+  const witnessOpen = behaviour.witnessOpen;
+  // The mark words painted now, for the Legend's Marks section (only while the
+  // marks are actually on the diagram, and never for zero of a kind).
+  const marksPresent = useMemo(() => {
+    if (reachStored === undefined || reachStored.rev !== rev || activeView !== 'state' || marksHidden || witnessOpen) {
+      return [];
+    }
+    const marked = reachStored.result.markSummary?.marked ?? {};
+    return MARK_ORDER.filter((m) => (marked[m] ?? 0) > 0);
+  }, [reachStored, rev, activeView, marksHidden, witnessOpen]);
 
   const tool = usePaletteStore((s) => s.tool);
   const pendingSource = usePaletteStore((s) => s.pendingSource);
@@ -336,8 +465,12 @@ function DiagramCanvasInner(): JSX.Element {
       const isPending = elementId != null && elementId === pendingSource;
       const isDropTarget = elementId != null && elementId === dropTargetId;
       // Only the state view renders state machines; other views may reuse the
-      // same elementIds as node ids, so gate the sim glow to the state view.
-      const isSimActive = activeView === 'state' && elementId != null && simActiveSet.has(elementId);
+      // same elementIds as node ids, so gate the sim glow to the state view. An
+      // open witness (step 6) hides the glow without touching the session.
+      const isSimActive = activeView === 'state' && !witnessOpen && elementId != null && simActiveSet.has(elementId);
+      // The reach mark, appended LAST so the decoration is one token and the
+      // H5-b cache can compare the class string by value.
+      const behClass = elementId != null ? behaviourClasses.get(elementId) : undefined;
       // Compose (not choose) so a node that is both the pending connect-source and
       // the resolved drop target (or an active sim state) shows every marker.
       const className =
@@ -345,6 +478,7 @@ function DiagramCanvasInner(): JSX.Element {
           isPending && 'rf-pending-source',
           isDropTarget && 'rf-reparent-target',
           isSimActive && 'rf-sim-active',
+          behClass,
         ]
           .filter(Boolean)
           .join(' ') || undefined;
@@ -369,7 +503,7 @@ function DiagramCanvasInner(): JSX.Element {
     });
     decoCache.current = next;
     return out;
-  }, [nodes, selectionSet, pendingSource, dropTargetId, simActiveSet, activeView]);
+  }, [nodes, selectionSet, pendingSource, dropTargetId, simActiveSet, activeView, witnessOpen, behaviourClasses]);
 
   /* ── connection: shared resolution for handle-drag and click-to-connect ── */
 
@@ -732,8 +866,13 @@ function DiagramCanvasInner(): JSX.Element {
           </Panel>
         )}
         <Panel position="bottom-left" className="diagram-legend-panel">
-          <Legend edges={diagram?.edges ?? []} />
+          <Legend edges={diagram?.edges ?? []} marks={marksPresent} />
         </Panel>
+        {activeView === 'state' && (reachStored !== undefined || witness !== null) && (
+          <Panel position="top-left" className="behaviour-marks-panel">
+            <BehaviourMarks />
+          </Panel>
+        )}
         {tool.mode !== 'select' && (
           <Panel position="top-center" className="canvas-tool-hint-panel">
             <div className="canvas-tool-hint" data-testid="canvas-tool-hint" role="status">

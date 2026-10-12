@@ -22,11 +22,24 @@
  * this file is the last two describes.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { runStateMachine } from '@semantics/index';
 import { loadModelText } from '@text/load';
+import { parseModel, resolveConnectorFeatureChains } from '@text/index';
+import { isKnownCode } from '@text/langium/diagnostic-codes';
+import { preloadFullLibrary, loadFullStandardLibrary } from '../../src/library/full-library';
+import { resolveTypeReferences } from '../../src/library/resolve';
+import { main as sysproseMain } from '../../scripts/sysprose';
+import {
+  reachLines,
+  reachMachineLines,
+  rowKeyOf,
+  textOf,
+  type ReportLine,
+} from '../../src/semantics/mc/report-lines';
+import { confirmUnderRunToCompletion, walkOnlyDiagnostics } from '../../src/semantics/mc/rtc-gap';
 import {
   BEHAVIOUR_CODES,
   BOUND_EXHAUSTED_CODE,
@@ -35,7 +48,9 @@ import {
   DEADLOCK_CODE,
   GUARD_UNDETERMINED_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
+  TRAP_REFUSAL_SENTENCE,
   UNREACHABLE_STATE_CODE,
+  UNRECOVERABLE_MODE_CODE,
   edgeCensus,
   exploreMachine,
   reachReport,
@@ -44,6 +59,7 @@ import {
 } from '../../src/semantics/mc/explore';
 import { ALL_METACLASSES } from '../../src/core/metamodel';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
+import { DWELL_SENTENCE } from '../../src/semantics/mc/publishable';
 import {
   CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
@@ -1591,5 +1607,587 @@ describe('the producer census: every edge is walked, or refused with a code', ()
     expect(census.unaccounted).toEqual([]);
     expect(census.rows.find((r) => r.id === inner.id)!.account).toBe('off-stack');
     expect(reachReport(m).machines[0].exhaustive).toBe(true);
+  });
+});
+
+/* ═════════ the text of `reach` is composed beside the engine, and the terminal prints it ═════════ */
+
+/**
+ * The command in-process with stdout and stderr kept apart (the traps suite's
+ * `cli` merges them, and what is asserted here is stdout alone).
+ */
+async function reachCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const realOut = process.stdout.write;
+  const realErr = process.stderr.write;
+  process.stdout.write = ((c: unknown) => (out.push(String(c)), true)) as typeof process.stdout.write;
+  process.stderr.write = ((c: unknown) => (err.push(String(c)), true)) as typeof process.stderr.write;
+  let code: number;
+  try {
+    code = await sysproseMain(args);
+  } finally {
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+  }
+  return { code, stdout: out.join(''), stderr: err.join('') };
+}
+
+describe('`reach` prints the lines the composer returns, byte for byte', () => {
+  const FIX = 'test/fixtures/verification/models';
+  const FIXTURES = [
+    'trap-probe',
+    'cover-reachable',
+    'deadlock-guarded',
+    'guard-undetermined',
+    'composite-trap',
+    'latch',
+    'sink',
+    'avoiding-sink',
+    'trapguard',
+    'trapguard-typed',
+    'recovery-composite',
+    'cycle-behind-violation',
+    'modality-line',
+    'succession-only',
+  ].map((n) => `${FIX}/${n}.sysml`);
+
+  it('prints through main exactly the lines reachLines composes', async () => {
+    for (const file of FIXTURES) {
+      const loaded = await loadModelText(read(file), { fileName: file, library: 'none' });
+      const want = `${textOf(reachLines(reachReport(loaded.model!), { name: file }))}\n`;
+      const got = await reachCli(['reach', file, '--no-library']);
+      expect(got.stdout, file).toBe(want);
+    }
+  }, 120_000);
+
+  it('prints the shipped example, whole and scoped, exactly as composed', async () => {
+    const file = 'examples/uav-isr.sysml';
+    const loaded = await loadModelText(read(file), { fileName: file });
+    const whole = await reachCli(['reach', file]);
+    expect(whole.stdout).toBe(`${textOf(reachLines(reachReport(loaded.model!), { name: file }))}\n`);
+    // Scoped: the `scoped to` line is the one the composer takes from its caller.
+    const machine = stateMachinesIn(loaded.model!).find((m) => m.declaredName === 'FlightModes')!;
+    const qn = loaded.model!.qualifiedName(machine.id);
+    const scoped = await reachCli(['reach', file, '--element', qn]);
+    const lines = reachLines(reachReport(loaded.model!, { scopeId: machine.id }), {
+      name: file,
+      scopeName: qn,
+    });
+    expect(scoped.stdout).toBe(`${textOf(lines)}\n`);
+    expect(lines.filter((l) => l.kind === 'scope').map((l) => l.text)).toEqual([`  scoped to ${qn}`]);
+  }, 120_000);
+
+  it('the app’s parse and the terminal’s load give the same lines', async () => {
+    // The page parses text and merges the library itself (`applyText`, then the
+    // library merge); the terminal goes through `loadModelText`. A report of
+    // either must read the same, or "the terminal says" is not what the page
+    // shows. Element ids are fresh per load, so lines are compared by what
+    // they say and by whether they name an element, not by which.
+    const shape = (ls: readonly ReportLine[]) =>
+      ls.map((l) => ({ ...l, elementId: l.elementId === null ? null : 'id', rowKey: l.rowKey === null ? null : 'key' }));
+    for (const file of [
+      'examples/uav-isr.sysml',
+      'examples/uav-isr-verification.sysml',
+      'examples/vehicle.sysml',
+      'examples/views-tour.sysml',
+    ]) {
+      const text = read(file);
+      const terminal = (await loadModelText(text, { fileName: file })).model!;
+      const app = parseModel(text).model;
+      await preloadFullLibrary();
+      loadFullStandardLibrary(app);
+      resolveTypeReferences(app);
+      resolveConnectorFeatureChains(app);
+      const a = reachLines(reachReport(app), { name: file });
+      const t = reachLines(reachReport(terminal), { name: file });
+      expect(textOf(a), file).toBe(textOf(t));
+      expect(shape(a), file).toEqual(shape(t));
+    }
+  }, 180_000);
+});
+
+describe('what a line says about itself', () => {
+  const FIX = 'test/fixtures/verification/models';
+  /** Every model the suite ships that `reach` has something to say about, with its report. */
+  const reports: Array<{ file: string; model: Model; report: ReturnType<typeof reachReport> }> = [];
+  beforeAll(async () => {
+    const files = [
+      ...readdirSync(resolve(process.cwd(), FIX))
+        .filter((n) => n.endsWith('.sysml'))
+        .map((n) => `${FIX}/${n}`),
+      'examples/uav-isr.sysml',
+      'examples/vehicle.sysml',
+    ];
+    for (const file of files) {
+      const loaded = await loadModelText(read(file), {
+        fileName: file,
+        library: file.startsWith('examples/') ? 'full' : 'none',
+      });
+      if (loaded.model) reports.push({ file, model: loaded.model, report: reachReport(loaded.model) });
+    }
+  }, 240_000);
+
+  it('covers every fixture with a machine, so the cases below are not vacuous', () => {
+    const withMachines = reports.filter((r) => r.report.machines.length > 0);
+    expect(withMachines.length).toBeGreaterThanOrEqual(15);
+    expect(reports.some((r) => r.report.machines.some((m) => m.suppressed))).toBe(true);
+    expect(reports.some((r) => r.report.machines.some((m) => m.trapCensus.refusedByGate !== null))).toBe(true);
+  });
+
+  it('tags withholding lines by kind: a machine block withholds exactly when its walk was not whole and exact', () => {
+    for (const { file, report } of reports) {
+      report.machines.forEach((m, i) => {
+        const lines = reachMachineLines(m, i + 1);
+        const withholds = lines.some((l) => l.withholds);
+        const gate = !(m.exhaustive && m.exactness.walkIsExact);
+        expect(withholds, `${file} :: ${m.machine.qualifiedName}`).toBe(gate);
+      });
+    }
+  });
+
+  it('each kind carries its own withholding flag, element and code', () => {
+    // The page reads `withholds`, `elementId` and `code` off the line and not off
+    // the wording, so each is pinned per kind against the report's own data. A
+    // machine-level check cannot do it: one withholding line hides another.
+    const ALWAYS = new Set(['not-explored', 'undecided', 'withheld', 'trap-refused', 'suppressed']);
+    const seen = new Set<string>();
+    for (const { file, report } of reports) {
+      for (const m of report.machines) {
+        const at = `${file} :: ${m.machine.qualifiedName}`;
+        const id = m.machine.id;
+        const lines = reachMachineLines(m, 1);
+        for (const l of lines) {
+          seen.add(l.kind);
+          expect(l.withholds, `${at}: ${l.kind}`).toBe(
+            ALWAYS.has(l.kind) || (l.kind === 'counts' && m.suppressed),
+          );
+        }
+        const of = (kind: string) => lines.filter((l) => l.kind === kind).map((l) => [l.elementId, l.code]);
+        const gate = m.trapCensus.refusedByGate !== null;
+        const expected: Record<string, Array<[string, string | null]>> = {
+          machine: [[id, null]],
+          figures: [[id, null]],
+          counts: [[id, null]],
+          'not-explored': m.unsupported.map((): [string, null] => [id, null]),
+          undecided: m.undeterminedGuards.map((g): [string, string] => [g.transition.id, GUARD_UNDETERMINED_CODE]),
+          unreachable: m.states.unreachable.map((s): [string, string] => [s.id, UNREACHABLE_STATE_CODE]),
+          dead: m.transitions.dead.map((t): [string, string] => [t.id, DEAD_TRANSITION_CODE]),
+          'no-way-out': m.deadlocks.map((d): [string, string] => [d.leaf.id, DEADLOCK_CODE]),
+          withheld: m.deadlocksWithheld.map((d): [string, null] => [d.leaf.id, null]),
+          trap: m.traps.map((t): [string, string] => [t.entry[0].id, UNRECOVERABLE_MODE_CODE]),
+          'trap-refused': gate ? [[id, null]] : [],
+          choice: m.nondeterminism.map((n): [string, string] => [n.state.id, NONDETERMINISTIC_CHOICE_CODE]),
+          suppressed: m.suppressed ? [[id, null]] : [],
+        };
+        for (const [kind, rows] of Object.entries(expected)) {
+          expect(of(kind), `${at}: ${kind}`).toEqual(rows);
+        }
+        // No kind outside the table: a new one has to be given its row here.
+        expect(lines.every((l) => l.kind in expected), at).toBe(true);
+      }
+      // The head and the tail say nothing is withheld, whatever the machines did,
+      // and a diagnostic names the code and element of the diagnostic.
+      const ds = reachLines(report, { name: file }).filter((l) => l.block === 0);
+      expect(ds.some((l) => l.withholds), file).toBe(false);
+      expect(
+        ds.filter((l) => l.kind === 'diagnostic').map((l) => [l.code, l.elementId]),
+        file,
+      ).toEqual(report.diagnostics.map((d) => [d.code, d.elementId ?? null]));
+    }
+    // The corpus reaches every machine-block kind but the unsupported-construct
+    // one (no shipped fixture parses to it; the test after this one builds it),
+    // so none of the rows above is vacuous.
+    expect(
+      [...seen].filter((k) => k !== 'not-explored').sort(),
+      'a kind has no case in the corpus',
+    ).toEqual(
+      [
+        'choice',
+        'counts',
+        'dead',
+        'figures',
+        'machine',
+        'no-way-out',
+        'suppressed',
+        'trap',
+        'trap-refused',
+        'unreachable',
+        'undecided',
+        'withheld',
+      ].sort(),
+    );
+  });
+
+  it('prints a construct the walk does not explore as a withheld line naming the machine', () => {
+    // No corpus model parses to an unsupported construct, so the one kind the
+    // table above cannot reach is pinned here, on a parallel machine.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const par = model.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
+    for (const r of ['r1', 'r2']) {
+      const region = f.state(r, par.id);
+      const a = f.state(`${r}a`, region.id);
+      const b = f.state(`${r}b`, region.id);
+      f.transition(a.id, b.id, { ownerId: region.id, trigger: 't' });
+    }
+    const m = reachReport(model, { scopeId: par.id }).machines[0];
+    const lines = reachMachineLines(m, 1).filter((l) => l.kind === 'not-explored');
+    expect(m.unsupported.length).toBeGreaterThan(0);
+    expect(lines.map((l) => l.text)).toEqual(
+      m.unsupported.map((u) => `    not explored: ${u.construct} — ${u.detail}`),
+    );
+    for (const l of lines) {
+      expect(l.withholds).toBe(true);
+      expect(l.elementId).toBe(m.machine.id);
+      expect(l.code).toBeNull();
+    }
+  });
+
+  it('prints the dwell refusal for a machine only a factory can build', () => {
+    // `accept after(n)` is a parse error, so no `.sysml` file reaches this
+    // branch and neither the CLI tests nor the before/after run did. The
+    // sentence is pinned here through the line that prints it.
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const sm = f.stateDef('Dwells');
+    const standby = f.state('standby', sm.id);
+    const failsafe = f.state('failsafe', sm.id);
+    const hold = f.state('failsafeHold', sm.id);
+    f.transition(standby.id, failsafe.id, { ownerId: sm.id });
+    f.transition(failsafe.id, hold.id, { ownerId: sm.id, trigger: 'after(5)' });
+    f.transition(failsafe.id, standby.id, { ownerId: sm.id, trigger: 'after(60)' });
+    f.transition(hold.id, failsafe.id, { ownerId: sm.id, trigger: 'after(5)' });
+    const m = reachReport(model).machines[0];
+    expect(m.trapCensus.refusedByGate).toBe('time');
+    const refused = reachMachineLines(m, 1).filter((l) => l.kind === 'trap-refused');
+    expect(refused).toHaveLength(1);
+    expect(refused[0].text).toBe(`    ${TRAP_REFUSAL_SENTENCE.time}; ${DWELL_SENTENCE}`);
+    expect(refused[0].withholds).toBe(true);
+    expect(refused[0].elementId).toBe(sm.id);
+    expect(refused[0].code).toBeNull();
+  });
+
+  it('names only catalogued codes', () => {
+    for (const { file, model, report } of reports) {
+      for (const l of reachLines(report, { name: file })) {
+        if (l.code !== null) expect(isKnownCode(l.code), `${file}: ${l.kind} names ${l.code}`).toBe(true);
+        // A line that names an element names one this model has.
+        if (l.elementId !== null) expect(model.get(l.elementId), `${file}: ${l.text}`).toBeDefined();
+      }
+    }
+  });
+
+  it('a suppressed machine never prints 0 dead', () => {
+    let seen = 0;
+    for (const { file, report } of reports) {
+      for (const m of report.machines.filter((x) => x.suppressed)) {
+        seen++;
+        const lines = reachMachineLines(m, 1);
+        const counts = lines.find((l) => l.kind === 'counts')!;
+        expect(counts.text, `${file} :: ${m.machine.qualifiedName}`).toContain('dead withheld');
+        expect(counts.text).not.toMatch(/\b\d+ dead\b/);
+        expect(counts.withholds).toBe(true);
+        expect(lines.some((l) => l.kind === 'dead')).toBe(false);
+      }
+    }
+    expect(seen, 'no suppressed machine in the corpus').toBeGreaterThan(0);
+  });
+
+  it('row keys sit on exactly the no-way-out, choice and undecided lines', () => {
+    const keyed = new Set(['no-way-out', 'choice', 'undecided']);
+    const seen = new Set<string>();
+    for (const { file, report } of reports) {
+      for (const l of reachLines(report, { name: file })) {
+        expect(l.rowKey !== null, `${file}: ${l.kind} \`${l.text.trim()}\``).toBe(keyed.has(l.kind));
+        if (l.rowKey !== null) seen.add(l.kind);
+      }
+      for (const m of report.machines) {
+        for (const d of m.deadlocks) {
+          expect(reachMachineLines(m, 1).filter((l) => l.rowKey === rowKeyOf('deadlock', d.leaf.id))).toHaveLength(1);
+        }
+        for (const n of m.nondeterminism) {
+          expect(
+            reachMachineLines(m, 1).filter((l) => l.rowKey === rowKeyOf('choice', n.state.id, n.event)),
+          ).toHaveLength(1);
+        }
+        for (const g of m.undeterminedGuards) {
+          expect(reachMachineLines(m, 1).filter((l) => l.rowKey === rowKeyOf('guard', g.transition.id))).toHaveLength(1);
+        }
+      }
+    }
+    // The corpus holds all three, so none of the equivalences above is vacuous.
+    expect([...seen].sort()).toEqual(['choice', 'no-way-out', 'undecided']);
+    expect(rowKeyOf('deadlock', 'x')).toBe('dl:x');
+    expect(rowKeyOf('choice', 'x', 'e')).toBe('nd:x|e');
+    expect(rowKeyOf('choice', 'x', '')).toBe('nd:x|');
+    expect(rowKeyOf('guard', 'x')).toBe('ug:x');
+  });
+
+  it('numbers its blocks: 0 for the head and the tail, one per machine in order between them', () => {
+    for (const { file, report } of reports) {
+      const lines = reachLines(report, { name: file });
+      // The runs of equal block numbers, in order: head, machine 1..M, tail.
+      const runs = lines.map((l) => l.block).filter((b, i, all) => i === 0 || b !== all[i - 1]);
+      const M = report.machines.length;
+      expect(runs, file).toEqual(M === 0 ? [0] : [0, ...report.machines.map((_, i) => i + 1), 0]);
+      expect(lines[0].kind).toBe('head');
+    }
+  });
+});
+
+/* ═════════ the walk's existential rows, confirmed under run-to-completion ═════════ */
+
+/**
+ * The walk offers every trigger at every configuration, including the ones where
+ * a completion transition is enabled and the interpreter would have fired it
+ * first. A deadlock, a choice and an undetermined guard each say "some run gets
+ * here", so each is asked again of a walk that takes no event there. A row that
+ * walk reaches is a row a run the profile admits reaches; a row it does not is
+ * the walk's alone. The CLI keeps printing both.
+ */
+describe('the run-to-completion confirmation of the walk’s deadlock, choice and guard rows', () => {
+  const FIX = 'test/fixtures/verification/models';
+  const inline = (src: string): Model => parseModel(src).model;
+  const idOf = (model: Model, qn: string): ElementId => {
+    const el = model.all().find((e) => model.qualifiedName(e.id) === qn);
+    expect(el, `no element named ${qn}`).toBeDefined();
+    return el!.id;
+  };
+  /** `a_b` fires first, so `e` is never taken at `a`: `c` and `d` are the walk's alone. */
+  const SPURIOUS =
+    'package P { state def M { state a; state b; state c; state d; transition a_b first a then b; ' +
+    'transition a_c first a accept e then c; transition a_d first a accept e then d; transition b_a first b accept e then a; } }';
+  /** `x` has no value, so `a_c` is only ever consulted where `e` is offered — and `a_b` is due there. */
+  const GUARD_TRANSIENT =
+    'package P { state def M { state a; state b; state c; transition a_b first a then b; ' +
+    'transition a_c first a accept e if x > 0 then c; } }';
+  /** `a_b` is undetermined at `a` (`x` has no value), so no event is taken there: `c` is the walk's alone. */
+  const UNDETERMINED_COMPLETION =
+    'package P { state def M { state a; state b; state c; transition a_b first a if x > 0 then b; ' +
+    'transition a_c first a accept e then c; } }';
+  /** An inner `e` always beats the outer one, so `o` never fires and `z` is never reached. */
+  const NESTED_BEATEN =
+    'package P { state def M { state K { state k0; state k1; transition kk first k0 accept e then k1; ' +
+    'transition kk2 first k0 accept e then k0; transition kb first k1 accept e then k0; } state z; ' +
+    'transition o first K accept e then z; } }';
+  /** Two transitions on one trigger, and nothing trigger-less: the walk and run-to-completion are one. */
+  const TRIGGER_CHOICE =
+    'package P { state def M { state a; state b; state c; transition a_b first a accept e then b; ' +
+    'transition a_c first a accept e then c; } }';
+  /** A completion choice on a machine that names a trigger: the shape of six of v9's twelve choices. */
+  const COMPLETION_CHOICE =
+    'package P { state def M { state idle; state a; state b; state c; transition i_a first idle then a; ' +
+    'transition a_b first a then b; transition a_c first a then c; transition b_i first b accept go then idle; ' +
+    'transition c_i first c accept go then idle; } }';
+  /** A choice and a sink at the opening, then a chain of triggers: three bounds have something to stop. */
+  const TRIGGER_CHAIN =
+    'package P { state def M { state a; state b1; state b2; state b3; state b4; state b5; ' +
+    'transition a_b1 first a accept e then b1; transition a_b2 first a accept e then b2; ' +
+    'transition b1_b3 first b1 accept go then b3; transition b3_b4 first b3 accept go then b4; ' +
+    'transition b4_b5 first b4 accept go then b5; } }';
+  /** A completion choice at the opening, then a completion chain, then a trigger back. */
+  const COMPLETION_CHAIN =
+    'package P { state def M { state a; state b; state c; state d; state e1; transition a_b first a then b; ' +
+    'transition a_e first a then e1; transition b_c first b then c; transition c_d first c then d; ' +
+    'transition d_a first d accept go then a; } }';
+
+  /** Every model the suite ships that `reach` has something to say about. */
+  const corpus: Array<{ file: string; model: Model }> = [];
+  beforeAll(async () => {
+    const files = [
+      ...readdirSync(resolve(process.cwd(), FIX))
+        .filter((n) => n.endsWith('.sysml'))
+        .map((n) => `${FIX}/${n}`),
+      'examples/uav-isr.sysml',
+      'examples/vehicle.sysml',
+    ];
+    for (const file of files) {
+      const loaded = await loadModelText(read(file), { fileName: file, library: file.startsWith('examples/') ? 'full' : 'none' });
+      if (loaded.model) corpus.push({ file, model: loaded.model });
+    }
+  }, 240_000);
+
+  const rowCount = (m: ReturnType<typeof reachReport>['machines'][number]) =>
+    m.deadlocks.length + m.nondeterminism.length + m.undeterminedGuards.length;
+
+  it('confirms every deadlock, choice and guard row a run-to-completion walk reaches', () => {
+    let rows = 0;
+    let ranRows = 0;
+    for (const { file, model } of corpus) {
+      for (const m of reachReport(model).machines) {
+        const c = confirmUnderRunToCompletion(model, m);
+        expect([...c.unconfirmed], `${file} :: ${m.machine.qualifiedName}`).toEqual([]);
+        rows += rowCount(m);
+        if (c.ran) ranRows += rowCount(m);
+      }
+    }
+    // The corpus has rows, and some of them sit where the second walk really ran.
+    expect(rows).toBeGreaterThanOrEqual(16);
+    expect(ranRows).toBeGreaterThanOrEqual(1);
+    // Positive controls the corpus lacks: a choice on a trigger, a sink behind
+    // it, and a completion choice beside a trigger the machine names.
+    for (const src of [TRIGGER_CHOICE, COMPLETION_CHOICE]) {
+      const model = inline(src);
+      const [m] = reachReport(model).machines;
+      const c = confirmUnderRunToCompletion(model, m);
+      expect(rowCount(m), src).toBeGreaterThanOrEqual(1);
+      expect(c.ran, src).toBe(true);
+      expect([...c.unconfirmed], src).toEqual([]);
+    }
+    expect(reachReport(inline(COMPLETION_CHOICE)).machines[0].nondeterminism.map((n) => n.event)).toEqual(['']);
+  });
+
+  it('leaves unconfirmed what only a gap step reaches', () => {
+    const spurious = inline(SPURIOUS);
+    const [sm] = reachReport(spurious).machines;
+    expect(rowCount(sm)).toBe(3);
+    expect([...confirmUnderRunToCompletion(spurious, sm).unconfirmed].sort()).toEqual(
+      [
+        rowKeyOf('choice', idOf(spurious, 'P::M::a'), 'e'),
+        rowKeyOf('deadlock', idOf(spurious, 'P::M::c')),
+        rowKeyOf('deadlock', idOf(spurious, 'P::M::d')),
+      ].sort(),
+    );
+    // Two rows, one reached: the sink `b` is, the guard consulted only where
+    // `a_b` is due is not.
+    const transient = inline(GUARD_TRANSIENT);
+    const [tm] = reachReport(transient).machines;
+    expect(rowCount(tm)).toBe(2);
+    expect([...confirmUnderRunToCompletion(transient, tm).unconfirmed]).toEqual([
+      rowKeyOf('guard', idOf(transient, 'P::M::a_c')),
+    ]);
+    // An UNDETERMINED completion guard withholds the event too, the way an
+    // enabled one does: `e` is not taken at `a`, so the sink `c` behind it is
+    // the walk's alone, and the guard row itself is reached (as undetermined).
+    const undetermined = inline(UNDETERMINED_COMPLETION);
+    const [um] = reachReport(undetermined).machines;
+    expect(rowCount(um)).toBe(2);
+    expect([...confirmUnderRunToCompletion(undetermined, um).unconfirmed]).toEqual([
+      rowKeyOf('deadlock', idOf(undetermined, 'P::M::c')),
+    ]);
+  });
+
+  it('never runs where the walk already is run-to-completion', () => {
+    let emptyAlphabetWithRows = 0;
+    let ran = 0;
+    for (const { file, model } of corpus) {
+      for (const m of reachReport(model).machines) {
+        const c = confirmUnderRunToCompletion(model, m);
+        const at = `${file} :: ${m.machine.qualifiedName}`;
+        if (m.bounds.alphabet.length === 0) {
+          // It names no trigger, so the walk offers only completion.
+          expect(c.ran, at).toBe(false);
+          expect(c.configs, at).toBe(0);
+          if (rowCount(m) > 0) emptyAlphabetWithRows++;
+        } else if (rowCount(m) === 0) {
+          expect(c.ran, at).toBe(false);
+        }
+        if (c.ran) ran++;
+        expect(c.machineId).toBe(m.machine.id);
+      }
+    }
+    expect(emptyAlphabetWithRows, 'no trigger-free machine with a row in the corpus').toBeGreaterThanOrEqual(1);
+    expect(ran, 'the second walk never ran in the corpus').toBeGreaterThanOrEqual(1);
+  });
+
+  it('discovers no more configurations than the walk, and stops at the walk’s own three bounds', () => {
+    for (const { file, model } of corpus) {
+      for (const m of reachReport(model).machines) {
+        const c = confirmUnderRunToCompletion(model, m);
+        if (c.ran) expect(c.configs, `${file} :: ${m.machine.qualifiedName}`).toBeLessThanOrEqual(m.configs);
+      }
+    }
+    // Nothing trigger-less, so nothing is withheld and the two walks are one:
+    // the same configurations, hence the same count. A nested machine whose
+    // outer transition is always beaten by an inner one is the case a second
+    // walk that fired at every level, not the innermost, would get wrong.
+    for (const [name, src] of [['TRIGGER_CHOICE', TRIGGER_CHOICE], ['TRIGGER_CHAIN', TRIGGER_CHAIN], ['NESTED_BEATEN', NESTED_BEATEN]]) {
+      const model = inline(src);
+      const [m] = reachReport(model).machines;
+      const c = confirmUnderRunToCompletion(model, m);
+      expect(rowCount(m), name).toBeGreaterThanOrEqual(1);
+      expect(c.ran, name).toBe(true);
+      expect(c.configs, name).toBe(m.configs);
+      expect([...c.unconfirmed], name).toEqual([]);
+    }
+    // Each bound, on a machine whose rows sit before it and whose far end sits
+    // beyond: a second walk that ignored the gate would keep going.
+    const bounded: Array<[string, string, Parameters<typeof reachReport>[1], 'configs' | 'depth' | 'completion']> = [
+      ['maxConfigs', TRIGGER_CHAIN, { maxConfigs: 3 }, 'configs'],
+      ['maxDepth', TRIGGER_CHAIN, { maxDepth: 1 }, 'depth'],
+      ['maxCompletion', COMPLETION_CHAIN, { maxCompletion: 1 }, 'completion'],
+    ];
+    for (const [name, src, opts, hit] of bounded) {
+      const model = inline(src);
+      const [m] = reachReport(model, opts).machines;
+      expect(m.boundHit, name).toBe(hit);
+      expect(rowCount(m), `${name}: a row before the bound`).toBeGreaterThanOrEqual(1);
+      const c = confirmUnderRunToCompletion(model, m);
+      expect(c.ran, name).toBe(true);
+      expect(c.boundHit, name).toBe(true);
+      expect(c.configs, name).toBeLessThanOrEqual(m.configs);
+      // The same machine without the bound is where the walk goes on.
+      expect(reachReport(model).machines[0].configs, name).toBeGreaterThan(m.configs);
+      // And the rows reached before the bound are still confirmed.
+      expect([...c.unconfirmed], name).toEqual([]);
+    }
+  });
+
+  it('walkOnlyDiagnostics aligns with reachReport’s emission order, and flags exactly the unconfirmed rows', () => {
+    const seen = new Set<string>();
+    const check = (label: string, model: Model, report: ReturnType<typeof reachReport>) => {
+      const cs = report.machines.map((m) => confirmUnderRunToCompletion(model, m));
+      const flags = walkOnlyDiagnostics(report, cs);
+      expect(flags, label).toHaveLength(report.diagnostics.length);
+      for (const d of report.diagnostics) seen.add(d.code!);
+      return flags;
+    };
+    for (const { file, model } of corpus) {
+      const report = reachReport(model);
+      expect(
+        check(file, model, report).some(Boolean),
+        `${file}: nothing in the corpus is walk-only`,
+      ).toBe(false);
+    }
+    // The two models whose rows are the walk's alone: flagged, and only those.
+    const flagged = (src: string) => {
+      const model = inline(src);
+      const report = reachReport(model);
+      const flags = check(src, model, report);
+      return report.diagnostics
+        .filter((_, i) => flags[i])
+        .map((d) => `${d.code!.replace('verification/', '')}@${model.qualifiedName(d.elementId!)}`)
+        .sort();
+    };
+    expect(flagged(SPURIOUS)).toEqual(['deadlock@P::M::c', 'deadlock@P::M::d', 'nondeterministic-choice@P::M::a']);
+    expect(flagged(GUARD_TRANSIENT)).toEqual(['guard-undetermined@P::M::a_c']);
+    // The bound row, and the unsupported-construct row no `.sysml` reaches.
+    const chain = inline(TRIGGER_CHAIN);
+    check('bound', chain, reachReport(chain, { maxConfigs: 3 }));
+    const model = new Model();
+    const f = new ModelFactory(model);
+    const par = model.create('StateDefinition', { declaredName: 'Par', attrs: { parallel: true } });
+    for (const r of ['r1', 'r2']) {
+      const region = f.state(r, par.id);
+      f.transition(f.state(`${r}a`, region.id).id, f.state(`${r}b`, region.id).id, { ownerId: region.id, trigger: 't' });
+    }
+    check('unsupported', model, reachReport(model, { scopeId: par.id }));
+    // Every code the engine puts in `reach`'s diagnostics went through the alignment.
+    expect(seen).toEqual(new Set(BEHAVIOUR_CODES));
+    // A machine with no confirmation has no unconfirmed row.
+    expect(walkOnlyDiagnostics(reachReport(inline(SPURIOUS)), []).some(Boolean)).toBe(false);
+  });
+
+  it('refuses to flag diagnostics that are not in the order reachReport emits them', () => {
+    const trapProbe = corpus.find((c) => c.file.endsWith('/trap-probe.sysml'))!;
+    const report = reachReport(trapProbe.model);
+    expect(report.diagnostics.length).toBeGreaterThanOrEqual(2);
+    const cs = report.machines.map((m) => confirmUnderRunToCompletion(trapProbe.model, m));
+    expect(() => walkOnlyDiagnostics(report, cs)).not.toThrow();
+    const swapped = [...report.diagnostics];
+    [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
+    expect(() => walkOnlyDiagnostics({ ...report, diagnostics: swapped }, cs)).toThrow(/order reachReport emits/);
+    expect(() => walkOnlyDiagnostics({ ...report, diagnostics: report.diagnostics.slice(1) }, cs)).toThrow();
   });
 });

@@ -27,6 +27,7 @@ function isFullQueryElement(el: ElementRecord | ProjectedRow): el is ElementReco
 import { TextEditor } from './TextEditor';
 import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 import { CHECKS } from '../checks';
+import { BehaviourReport } from './BehaviourReport';
 import { SimulationTab } from './SimulationTab';
 import {
   modelMetrics,
@@ -81,7 +82,9 @@ function ChecksTab(): JSX.Element {
   const running = useChecksStore((s) => s.running);
   const clear = useChecksStore((s) => s.clear);
   const rev = useAppStore((s) => s.rev);
+  const model = useAppStore((s) => s.model);
   const select = useAppStore((s) => s.select);
+  const setActiveView = useAppStore((s) => s.setActiveView);
   // A check running now is shown as running in place of what it said before: that
   // result describes a run the person has asked to replace, and comes back if the
   // new one is cancelled.
@@ -132,7 +135,13 @@ function ChecksTab(): JSX.Element {
             {stored.result.rows.length > 0 && (
               <ul className="checks-rows">
                 {stored.result.rows.map((row, i) => (
-                  <li key={`${row.code}:${row.elementId ?? i}`} data-testid="checks-row" data-severity={row.severity}>
+                  <li
+                    key={i}
+                    data-testid="checks-row"
+                    data-code={row.code}
+                    data-severity={row.severity}
+                    data-walk-only={row.walkOnly ? 'true' : undefined}
+                  >
                     <code className="checks-row-code">{row.code}</code>
                     {row.elementId ? (
                       <button
@@ -150,6 +159,15 @@ function ChecksTab(): JSX.Element {
                   </li>
                 ))}
               </ul>
+            )}
+            {stored.result.lines && (
+              <BehaviourReport
+                checkId={id}
+                stored={stored}
+                exists={(x) => model.get(x) !== undefined}
+                onSelect={select}
+                onStep={() => setActiveView('state')}
+              />
             )}
           </div>
         );

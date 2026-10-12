@@ -1556,3 +1556,232 @@ textarea:focus-visible,
 .scenario-diff {
   margin-top: 8px;
 }
+
+/* ── Checks tab: the terminal's report, machine by machine, property by property ── */
+/* The report is the CLI's text, one line per ReportLine, so it must keep the
+ * terminal's own monospace indentation (pre-wrap) and never reinterpret any
+ * character of it — names are rendered as text nodes, so `white-space` is the
+ * only formatting the report applies. */
+.checks-report {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.checks-report-title {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.checks-report-machine,
+.checks-report-property {
+  margin: 6px 0 6px 4px;
+}
+.checks-report-machine-head,
+.checks-report-property-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.checks-report-machine-name {
+  font-weight: 600;
+}
+.checks-report-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.checks-report-line {
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+.checks-report-line button {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent);
+  text-align: left;
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+.checks-report-line button:hover {
+  text-decoration: underline;
+}
+.checks-report-note {
+  margin: 2px 0 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-left: 2px solid var(--border-strong);
+  padding-left: 8px;
+}
+
+/* ── Witness stepper (step 6): the step buttons and the prev/next/close row ── */
+.checks-witness-step {
+  color: var(--accent);
+  cursor: pointer;
+}
+.checks-witness-controls {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0 4px;
+  padding-left: 6px;
+}
+.checks-witness-controls button {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.checks-witness-controls button:hover {
+  text-decoration: underline;
+}
+.checks-witness-gap {
+  margin: 2px 0 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Reachability marks (A.4): a ring and a badge on the state view ──────────
+   A mark is a `::before` ring at `inset: -8px` (clearing the 2px outline at
+   offset 2–3px that `rf-reparent-target` and `rf-sim-active` use) and a
+   `::after` badge with the CLI row word. Marks never use `outline` or
+   `box-shadow` (those are the simulation glow's and the drop-target's), none is
+   green (`--dgm-green` is the sim glow), and none animates. */
+
+:root {
+  --beh-mark-unreachable: #b45309;
+  --beh-mark-not-decided: #718096;
+  --beh-mark-not-walked: #718096;
+  --beh-mark-withheld: #b45309;
+  --beh-mark-no-way-out: #d92d20;
+  --beh-mark-trap: #6b46c1;
+  --beh-mark-choice: #c05621;
+  --beh-mark-walk-only: #2b6cb0;
+}
+:root[data-theme='dark'] {
+  --beh-mark-unreachable: #fbbf24;
+  --beh-mark-not-decided: #94a3b8;
+  --beh-mark-not-walked: #94a3b8;
+  --beh-mark-withheld: #fbbf24;
+  --beh-mark-no-way-out: #f87171;
+  --beh-mark-trap: #a78bfa;
+  --beh-mark-choice: #fb923c;
+  --beh-mark-walk-only: #60a5fa;
+}
+
+/* The ring: findings are dashed, the withheld/undecided words dotted. */
+.react-flow__node.rf-beh-unreachable::before,
+.react-flow__node.rf-beh-not-decided::before,
+.react-flow__node.rf-beh-not-walked::before,
+.react-flow__node.rf-beh-withheld::before,
+.react-flow__node.rf-beh-no-way-out::before,
+.react-flow__node.rf-beh-trap::before,
+.react-flow__node.rf-beh-choice::before,
+.react-flow__node.rf-beh-walk-only::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border: 2px dashed transparent;
+  border-radius: 8px;
+  pointer-events: none;
+}
+.react-flow__node.rf-beh-unreachable::before { border-color: var(--beh-mark-unreachable); }
+.react-flow__node.rf-beh-not-decided::before { border-color: var(--beh-mark-not-decided); border-style: dotted; }
+.react-flow__node.rf-beh-not-walked::before { border-color: var(--beh-mark-not-walked); border-style: dotted; }
+.react-flow__node.rf-beh-withheld::before { border-color: var(--beh-mark-withheld); border-style: dotted; }
+.react-flow__node.rf-beh-no-way-out::before { border-color: var(--beh-mark-no-way-out); }
+.react-flow__node.rf-beh-trap::before { border-color: var(--beh-mark-trap); }
+.react-flow__node.rf-beh-choice::before { border-color: var(--beh-mark-choice); }
+.react-flow__node.rf-beh-walk-only::before { border-color: var(--beh-mark-walk-only); border-style: dotted; }
+
+/* The badge: the CLI row word, top-right of the node. */
+.react-flow__node.rf-beh-unreachable::after,
+.react-flow__node.rf-beh-not-decided::after,
+.react-flow__node.rf-beh-not-walked::after,
+.react-flow__node.rf-beh-withheld::after,
+.react-flow__node.rf-beh-no-way-out::after,
+.react-flow__node.rf-beh-trap::after,
+.react-flow__node.rf-beh-choice::after,
+.react-flow__node.rf-beh-walk-only::after {
+  position: absolute;
+  top: -13px;
+  right: -4px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.6;
+  font-weight: 600;
+  color: #fff;
+  background: var(--text-muted);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.react-flow__node.rf-beh-unreachable::after { content: 'unreachable'; background: var(--beh-mark-unreachable); }
+.react-flow__node.rf-beh-not-decided::after { content: 'not decided'; background: var(--beh-mark-not-decided); }
+.react-flow__node.rf-beh-not-walked::after { content: 'not walked'; background: var(--beh-mark-not-walked); }
+.react-flow__node.rf-beh-withheld::after { content: 'withheld'; background: var(--beh-mark-withheld); }
+.react-flow__node.rf-beh-no-way-out::after { content: 'no way out'; background: var(--beh-mark-no-way-out); }
+.react-flow__node.rf-beh-trap::after { content: 'trap'; background: var(--beh-mark-trap); }
+.react-flow__node.rf-beh-choice::after { content: 'choice'; background: var(--beh-mark-choice); }
+.react-flow__node.rf-beh-walk-only::after { content: 'walk only'; background: var(--beh-mark-walk-only); }
+
+/* Witness stepper (step 6): the step's leaf, its stack, and earlier leaves. */
+.react-flow__node.rf-beh-witness-at { outline: 2px solid var(--dgm-purple); outline-offset: 3px; border-radius: 6px; }
+.react-flow__node.rf-beh-witness-stack { outline: 1px dashed var(--dgm-purple); outline-offset: 3px; border-radius: 6px; }
+.react-flow__node.rf-beh-witness-seen { outline: 1px dotted var(--node-muted); outline-offset: 3px; border-radius: 6px; }
+
+/* The status panel (top-left of the canvas), one line with a details toggle. */
+.behaviour-marks {
+  max-width: min(52ch, 45%);
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.behaviour-marks-line {
+  white-space: normal;
+}
+.behaviour-marks-details,
+.behaviour-marks-hide {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+}
+.behaviour-marks-details:hover,
+.behaviour-marks-hide:hover {
+  text-decoration: underline;
+}
+.behaviour-marks-details-text {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.legend-mark-word {
+  font-variant-numeric: tabular-nums;
+}

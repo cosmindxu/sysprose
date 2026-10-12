@@ -114,6 +114,12 @@ const MUST_DOCUMENT = [
   'tab-api',
   'tab-simulation',
   'tab-versions',
+  'checks-report',
+  'behaviour-marks',
+  'checks-witness-step',
+  'checks-witness-prev',
+  'checks-witness-next',
+  'checks-witness-close',
 ];
 
 describe('the controls the user guide names', () => {
@@ -849,8 +855,10 @@ describe('the transcripts the closing commit pinned', () => {
     expect(GUIDE, 'the cover transcript no longer quotes the detail line the row composes').toContain(`    ${row.detail}\n`);
     // The `--cover-required` line under the sealed twin, read out of the CLI
     // source as `cliLiteral` reads the requirements notes.
-    const flagLine = /'( {2}--cover-required: every not-covered row above[^']*)'/.exec(read('scripts/sysprose.ts'));
-    expect(flagLine, 'scripts/sysprose.ts no longer prints the --cover-required line').not.toBeNull();
+    const flagLine = /'( {2}--cover-required: every not-covered row above[^']*)'/.exec(
+      read('src/semantics/mc/report-lines.ts'),
+    );
+    expect(flagLine, 'src/semantics/mc/report-lines.ts no longer prints the --cover-required line').not.toBeNull();
     expect(GUIDE).toContain(`${flagLine![1]}\n`);
     expect(CAMPAIGN).toContain('--cover-required: every not-covered row above is also an error below and spends the 1');
   }, 60_000);

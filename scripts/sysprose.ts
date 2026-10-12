@@ -87,48 +87,43 @@ import type { ElementRecord, Model } from '../src/core/index';
 import Ajv from 'ajv';
 import {
   attachEvidence,
+  behaviourLines,
+  behaviourMachineFor,
   boundsReport,
   connectivityReport,
   signatureCensus,
   CONTRACT_LEVEL_NOTE,
   consistencyReport,
-  coverRequiredRefusal,
-  DEADLOCK_WITHHELD_SENTENCE,
-  DWELL_SENTENCE,
-  environmentSentence,
-  environmentTriggers,
-  TRAP_REFUSAL_SENTENCE,
-  GUARD_UNDETERMINED_CODE,
   contractReport,
   CORE_SUFFICIENCY_NOTE,
   coreCount,
   coreLabelParts,
   countUnfollowedTypings,
   detachEvidence,
+  ELEMENT_REQUIRED_LEAD,
   evidenceStatus,
   faultTreeReport,
   impactClosure,
   isBehaviouralElement,
   isUserElement,
+  libraryElementRefusal,
   machineRouteRefusal,
   modelMetrics,
+  NO_DEFAULT_MACHINE,
+  noMachineRefusal,
   obligationsReport,
   orphanReport,
   refinementReport,
-  profileLines,
   promptsFor,
   propertyCheck,
   propertyDraft,
   PropertyRefError,
   READING,
+  reachLines,
   reachReport,
   behaviourReport,
-  SEMANTICS_ADMITS,
-  stateMachinesIn,
-  traceLine,
-  WALK_ADMITS,
-  transitionLabel,
   requirementSatisfaction,
+  textOf,
   traceabilityMatrix,
   verdictFor,
   verifyModel,
@@ -153,9 +148,7 @@ import {
   type RefinementReport,
   type PropertyDraftReport,
   type BehaviourReport,
-  type MachineReach,
   type PortEnd,
-  type PropertyVerdict,
   type ReachReport,
   type VerificationCaseVerdict,
   type VerifyEngineOption,
@@ -1185,9 +1178,7 @@ function verificationScope(model: Model, args: ParsedArgs): ElementRecord | unde
   if (ref === undefined) return undefined;
   const el = resolveElementRef(model, ref);
   if (el.attrs.isLibrary === true) {
-    throw new UsageError(
-      `\`${ref}\` is a bundled standard-library element — this report is of your model, and every figure in it excludes the library`,
-    );
+    throw new UsageError(libraryElementRefusal(ref));
   }
   return el;
 }
@@ -2186,9 +2177,7 @@ function consistencySubject(model: Model, args: ParsedArgs): ElementRecord | und
   if (ref === undefined) return undefined;
   const el = resolveElementRef(model, ref);
   if (el.attrs.isLibrary === true) {
-    throw new UsageError(
-      `\`${ref}\` is a bundled standard-library element — this report is of your model, and every figure in it excludes the library`,
-    );
+    throw new UsageError(libraryElementRefusal(ref));
   }
   return el;
 }
@@ -3380,122 +3369,9 @@ function reachMaxConfigs(args: ParsedArgs): number | undefined {
 function reachScope(model: Model, args: ParsedArgs): ElementRecord | undefined {
   const scope = verificationScope(model, args);
   if (scope === undefined) return scope;
-  if (stateMachinesIn(model, scope.id).length === 0) {
-    // Name the machine that CONTAINS the element when there is one: the
-    // commonest mistake is naming a state rather than the machine it is in.
-    const holder = stateMachinesIn(model).find((m) =>
-      model.descendants(m.id).some((d) => d.id === scope.id),
-    );
-    throw new UsageError(
-      `\`${qname(model, scope.id)}\` holds no state machine` +
-        (holder ? ` — it is inside \`${qname(model, holder.id)}\`, which is one` : ''),
-    );
-  }
+  const refusal = noMachineRefusal(model, scope.id);
+  if (refusal !== null) throw new UsageError(refusal.message);
   return scope;
-}
-
-/** One machine's block: the figures, then the rows that qualify them. */
-function machineLines(m: MachineReach): string[] {
-  const out: string[] = [
-    `  ${m.machine.qualifiedName} [${m.machine.eClass}]`,
-    `    ${m.configs} configuration(s) explored, depth ${m.depth} \u2014 ${m.qualification}`,
-    // NOT `dead.length` when the list was withheld. The count is derived from a
-    // list this report has just declined to publish, so `0 dead` on a
-    // suppressed machine is the good-news reading of a short list — the exact
-    // misreading the withholding exists to prevent — printed one line above the
-    // sentence that says the list is withheld.
-    `    ${m.states.reachable.length} of ${m.states.total} state(s) reachable; ` +
-      `${m.transitions.fired} of ${m.transitions.total} transition(s) fired, ` +
-      `${m.suppressed ? 'dead withheld' : `${m.transitions.dead.length} dead`}`,
-  ];
-  for (const u of m.unsupported) out.push(`    not explored: ${u.construct} \u2014 ${u.detail}`);
-  // Printed FIRST among the rows, because it is why the rows below it are
-  // short. The unresolved names are named: an author who is told a guard could
-  // not be evaluated and not which name was missing has to guess.
-  for (const g of m.undeterminedGuards) {
-    const names =
-      g.unresolved.length > 0 ? `no value for ${g.unresolved.join(', ')}` : 'not readable as a value';
-    out.push(`    undecided    ${transitionLabel(g.transition)} \u2014 guard \`${g.guard}\`: ${names}`);
-  }
-  for (const s of m.states.unreachable) out.push(`    unreachable  ${s.qualifiedName}`);
-  for (const t of m.transitions.dead) out.push(`    dead         ${transitionLabel(t)}`);
-  for (const d of m.deadlocks) {
-    out.push(`    no way out   ${d.leaf.qualifiedName} \u2014 reached in ${d.steps} step(s), not marked final`);
-  }
-  // A0's `otherwise` cell, printed. A row withheld because an undecided guard
-  // is an edge out of the very configuration it is about leaves a LINE behind,
-  // not a silence: the walk found the configuration and cannot say what a
-  // reader would take the row to mean, and saying so is the difference between
-  // a withheld claim and a claim nobody made.
-  for (const d of m.deadlocksWithheld) {
-    out.push(`    withheld     ${d.leaf.qualifiedName} \u2014 ${DEADLOCK_WITHHELD_SENTENCE}`);
-  }
-  // A set of configurations nothing leaves (register row A6). The list is
-  // gated on `walkIsExact` and is EMPTY on every walk that gate refuses, so a
-  // row here is a row over the relation the model states. The states are
-  // declared names inside the braces — the finding beneath carries the
-  // qualified one — and the opening is named because a trap is a claim about
-  // where a run CAN get to, not only about where it cannot leave.
-  for (const t of m.traps) {
-    out.push(
-      `    trap         {${t.states.map((s) => s.name).join(', ')}} \u2014 ${t.configs} configuration(s) ` +
-        `nothing leaves; entered in ${t.steps} step(s) from ${t.entry[0].name}`,
-    );
-  }
-  // Where the gate refused a walk that FINISHED, the reason is printed here in
-  // place of the list — the sentence opens with `inconclusive:` and is its own
-  // row label — followed by the standing sentence for the mechanism. A
-  // bound and an unsupported construct print nothing extra — the SUPPRESSED
-  // and not-explored lines already say why every list is short. The no-trap
-  // sentence is `--json` only and is NEVER a text row: a bare all-clear in a
-  // report is the reading every gate in this lane exists to withhold.
-  switch (m.trapCensus.refusedByGate) {
-    case 'environment':
-      // The standing sentence names the triggers THIS machine names, in the
-      // order the bounds line above already printed them — never the plan's
-      // example trigger: `reach` once said *consumes `abort`* of a file whose
-      // only trigger is `unlatch`.
-      out.push(
-        `    ${TRAP_REFUSAL_SENTENCE.environment}; ${environmentSentence(environmentTriggers(m.bounds.alphabet))}`,
-      );
-      break;
-    case 'time':
-      out.push(`    ${TRAP_REFUSAL_SENTENCE.time}; ${DWELL_SENTENCE}`);
-      break;
-    case 'store':
-      // The store's standing sentence is already inside the bounds line above
-      // (`boundsSentence`), so nothing is appended here.
-      out.push(`    ${TRAP_REFUSAL_SENTENCE.store}`);
-      break;
-    default:
-      break;
-  }
-  for (const n of m.nondeterminism) {
-    const on = n.event === '' ? 'as completion transitions (no trigger)' : `on \`${n.event}\``;
-    out.push(
-      `    choice       ${n.state.qualifiedName}: ${n.enabled.length} enabled ${on}; ` +
-        `the simulator takes ${transitionLabel(n.taken)}, never ` +
-        `${n.notTaken.map(transitionLabel).join(', ')}`,
-    );
-  }
-  if (m.suppressed) {
-    // Two different reasons for the same short lists, and a reader acts on them
-    // differently: a bound is raised with `--max-configs`, an undecided guard is
-    // fixed in the model. Printing the bound sentence over a walk that finished
-    // would send them to the wrong one.
-    // And it names the no-way-out list only where a row of it actually went:
-    // after A0 that list is withheld per configuration, so on a machine whose
-    // every deadlocked configuration was fully decided this line would
-    // otherwise say a published row above it was not reported.
-    out.push(
-      m.undeterminedGuards.length > 0
-        ? `    the unreachable and dead lists are WITHHELD${
-            m.deadlocksWithheld.length === 0 ? '' : ', and the no-way-out rows marked `withheld` above'
-          }: a guard this walk could not evaluate is not a guard that is false`
-        : '    the unreachable and dead lists are SUPPRESSED: a walk that did not finish cannot say what it never reached',
-    );
-  }
-  return out;
 }
 
 function reportReach(model: Model, name: string, args: ParsedArgs): Report {
@@ -3505,49 +3381,21 @@ function reportReach(model: Model, name: string, args: ParsedArgs): Report {
     ...(scope ? { scopeId: scope.id } : {}),
     ...(maxConfigs !== undefined ? { maxConfigs } : {}),
   });
-  const text = [
-    `${name}: ${r.totals.machines} state machine(s), ${r.totals.exhaustive} walked to exhaustion; ` +
-      `${r.totals.configs} configuration(s) explored`,
-    ...(scope ? [`  scoped to ${qname(model, scope.id)}`] : []),
-    // The sentence that keeps the command inside its remit: it decides the
-    // finite abstraction it walked, and nothing beyond it.
-    '  a bounded walk of what the interpreter would do \u2014 every figure below holds under the bounds printed beside it',
-    // Said in words rather than left as a bare zero: a reader who asked for a
-    // walk and got no rows needs to know the file has nothing to walk, not
-    // wonder whether the command failed to find it.
-    ...(r.machines.length === 0
-      ? ['  this file declares no element that owns a transition, so there is no configuration graph to walk']
-      : []),
-    ...r.machines.flatMap(machineLines),
-    '  semantic profile (the reading every figure above holds under):',
-    ...profileLines('    '),
-    ...r.diagnostics.map((d) => `  ${d.code}  ${d.message}`),
-  ].join('\n');
+  // Composed beside the engine (`src/semantics/mc/report-lines.ts`), so the
+  // page prints the same sentences this command does.
+  const text = textOf(
+    reachLines(r, { name, ...(scope ? { scopeName: qname(model, scope.id) } : {}) }),
+  );
   return { json: r, text };
 }
 
 /* ─────────────────────────── check-behaviour ────────────────────────────── */
 
-/**
- * `--element REF`, which this command cannot do without.
- *
- * `reach` defaults to every machine in the file and this one has no default at
- * all, and the difference is not an oversight: `reach` REPORTS on machines, so
- * "all of them" is a coherent answer, while a property is a CLAIM about one
- * machine. A run that checked every property in the file against every machine
- * in it would answer a question nobody asked and would report failures against
- * machines the property was never about.
- */
+/** `--element REF`, which this command cannot do without (the reason is `NO_DEFAULT_MACHINE`'s). */
 function behaviourElement(args: ParsedArgs): string {
   const ref = flagValue(args, 'element');
   if (ref === undefined || ref === '') {
-    throw new UsageError(
-      '--element REF is required: it names the state machine the property is about. ' +
-        'There is no default — a property is a claim about one machine, and checking every ' +
-        'property in the file against every machine in it would report failures against machines ' +
-        'the property was never about.',
-      true,
-    );
+    throw new UsageError(ELEMENT_REQUIRED_LEAD + NO_DEFAULT_MACHINE, true);
   }
   return ref;
 }
@@ -3556,69 +3404,9 @@ function behaviourElement(args: ParsedArgs): string {
 function behaviourMachine(model: Model, args: ParsedArgs): ElementRecord {
   behaviourElement(args);
   const scope = verificationScope(model, args)!;
-  const machines = stateMachinesIn(model, scope.id);
-  if (machines.length === 0) {
-    const holder = stateMachinesIn(model).find((m) =>
-      model.descendants(m.id).some((d) => d.id === scope.id),
-    );
-    throw new UsageError(
-      `\`${qname(model, scope.id)}\` holds no state machine` +
-        (holder ? ` — it is inside \`${qname(model, holder.id)}\`, which is one` : ''),
-    );
-  }
-  if (machines.length > 1) {
-    // Refused rather than answered over all of them, for `behaviourElement`'s
-    // reason: a verdict is about one machine, and a `REF` that holds several is
-    // a reference the reader has to narrow.
-    throw new UsageError(
-      [
-        `\`${qname(model, scope.id)}\` holds ${machines.length} state machines:`,
-        ...machines.map((m) => `    ${qname(model, m.id)} [${m.eClass}]`),
-        '  name one of them — a property is a claim about one machine.',
-      ].join('\n'),
-    );
-  }
-  return machines[0];
-}
-
-/** One property's block: the verdict, then the trace that stands behind it. */
-function propertyLines(v: PropertyVerdict, coverRequired: boolean): string[] {
-  const from = v.property.source === 'flag' ? '--pattern' : `@PropertyPattern on ${v.property.carrier}`;
-  const out: string[] = [
-    `  ${v.claim.toUpperCase().padEnd(12)} ${v.sentence}`,
-    `    from ${from}`,
-    `    ${v.detail}`,
-  ];
-  if (v.code !== null) out.push(`    ${v.code}`);
-  // Some run or every run? One line, on a `fail` row only, with the value word
-  // first — `guaranteed`, `potential`, `not decided` — and the simulator
-  // sentence folded into the same line where the walk recorded a choice.
-  if (v.modality !== null) out.push(`    every run? ${v.modality.sentence}`);
-  if (v.claim !== 'inconclusive' || v.configs > 0) {
-    // A `recovery` row never ran the product search: its count is the
-    // machine's configurations, and "product state(s)" would label it as a
-    // number nothing computed.
-    const unit = v.patternClass === 'branching' ? 'configuration(s)' : 'product state(s)';
-    out.push(`    ${v.configs} ${unit} explored — ${v.qualification}`);
-  }
-  // CORRECTION 23's disclosure. A cover withheld under an undecided guard is
-  // not `not covered` and the flag has no 1 to spend on it, so the row says
-  // so on EVERY such cover — the census may be 0 (the undecided edge leads
-  // somewhere the walk reached anyway) and the flag declined on that row all
-  // the same — quoting the census as a fraction rather than leaving a reader
-  // to wonder why the flag did nothing, or telling them "every" about states
-  // nothing counted.
-  if (coverRequired && v.cover !== undefined && v.code === GUARD_UNDETERMINED_CODE) {
-    out.push(`    ${coverRequiredRefusal(v.cover)}`);
-  }
-  if (v.witness.length > 0) {
-    // ONE STRING, TWO READERS: the header repeats the warrant `checkProperty`
-    // composed into the detail, so a `covered` row re-worded to the walk's
-    // warrant cannot print a header claiming the semantics'.
-    out.push(`    witness — ${v.detail.includes(WALK_ADMITS) ? WALK_ADMITS : SEMANTICS_ADMITS}:`);
-    for (const step of v.witness) out.push(`      ${traceLine(step)}`);
-  }
-  return out;
+  const found = behaviourMachineFor(model, scope.id);
+  if (!found.ok) throw new UsageError(found.message);
+  return found.machine;
 }
 
 function reportCheckBehaviour(model: Model, name: string, args: ParsedArgs): Report {
@@ -3632,36 +3420,7 @@ function reportCheckBehaviour(model: Model, name: string, args: ParsedArgs): Rep
     strictVacuity: flagGiven(args, 'strict-vacuity'),
     coverRequired: flagGiven(args, 'cover-required'),
   });
-  const text = [
-    `${name}: ${qname(model, machine.id)} — ${r.properties.length} propert${r.properties.length === 1 ? 'y' : 'ies'}: ` +
-      `${r.counts.passed} pass, ${r.counts.failed} fail, ${r.counts.vacuous} vacuous, ` +
-      // APPENDED after the four, never reordered: the campaign pins the
-      // four-bucket prefix as a substring on every transcript.
-      `${r.counts.inconclusive} inconclusive, ${r.counts.covered} covered, ${r.counts.notCovered} not covered`,
-    // The two sentences that keep the command inside its remit: what a pass is
-    // a claim about, and what this engine does not decide at all. It reaches
-    // six words and no others — and the three louder ones a reader might
-    // expect are not among them, which is said by their absence and by the
-    // claims guard rather than by naming them here.
-    '  a pass is a claim about every configuration this walk reached, under the bounds printed beside it, and about nothing outside them; a covered is a claim that ONE run this walk saw reaches the situation named, and not covered that none it saw whole does: pass, fail, vacuous, inconclusive, covered, not covered are the six words this command reaches',
-    '  liveness (`existence`, `response`) is NOT decided here: a bad-prefix search finds no bad prefix for either, so both report inconclusive',
-    ...(r.properties.length === 0
-      ? [
-          '  this machine states no property and none was given: nothing was decided, which is exit 2 — a run that checked nothing has not passed',
-          '  write one with `--pattern "pattern=absence, scope=globally, p=state failsafe"`, or carry it in the model as `@SysproseVerification::PropertyPattern { attribute pattern = "absence"; … }`',
-        ]
-      : []),
-    ...r.properties.flatMap((v) => propertyLines(v, r.coverRequired)),
-    '  semantic profile (the reading every verdict above holds under):',
-    ...profileLines('    '),
-    ...(r.strictVacuity
-      ? ['  --strict-vacuity: every vacuous row above is also an error below; the exit code is the same with the flag and without it']
-      : []),
-    ...(r.coverRequired
-      ? ['  --cover-required: every not-covered row above is also an error below and spends the 1; the claim word is the same with the flag and without it']
-      : []),
-    ...r.diagnostics.map((d) => `  ${d.severity} ${d.code}  ${d.message}`),
-  ].join('\n');
+  const text = textOf(behaviourLines(r, { name, machineName: qname(model, machine.id) }));
   return { json: r, text, behaviour: r };
 }
 

@@ -194,17 +194,21 @@ const APP_DOORS: ReadonlyArray<{
   // not an affordance this plan ships.
   { command: 'evidence-attach', controls: [] },
   { command: 'evidence-detach', controls: [] },
-  // The behaviour lane opens where the rest of this one did: in a terminal. The
-  // app runs state machines (the Simulate affordance) but nothing in it walks a
-  // configuration graph, so the row credits no control rather than crediting
-  // the simulator with an answer it does not compute — the two are different
-  // questions, which is the whole point of the command.
-  { command: 'reach', controls: [] },
-  // And its judging half, for the same reason twice over: nothing in the app
-  // walks a configuration graph, and nothing in it reads a `@PropertyPattern`
-  // carrier either. The Simulate affordance runs ONE run of a machine, which is
-  // the question this command exists to be different from.
-  { command: 'check-behaviour', controls: [] },
+  // The behaviour lane now runs in the app: the palette's Reachability and
+  // Behaviour properties rows walk the configuration graph in the page (the
+  // Simulate affordance stays a different question — one run, not the walk).
+  // Both rows share the Run button `palette-check-run`, and each calls the same
+  // function the command is a shell over, so neither is daggered.
+  {
+    command: 'reach',
+    controls: [{ id: 'palette-check-run', fn: 'reachReport', file: 'src/ui/behaviour-checks.ts' }],
+  },
+  // And its judging half: `behaviourReport` over the machine `--element` names,
+  // refused with the CLI's words when the selection is not one machine.
+  {
+    command: 'check-behaviour',
+    controls: [{ id: 'palette-check-run', fn: 'behaviourReport', file: 'src/ui/behaviour-checks.ts' }],
+  },
 ];
 
 interface Row {

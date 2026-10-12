@@ -199,6 +199,9 @@ function pump(): void {
       selectionName: ctx.selectionName,
       isolated: ctx.isolated,
       fileName: ctx.fileName,
+      // A `readsLoadHealth` check is judged over it; it travels with the request
+      // so the worker's run reads the health the page read, not undefined.
+      loadHealth: ctx.loadHealth,
     });
     stopWatchdog();
     watchdog = setTimeout(() => (active === job ? runHere(job) : undefined), WATCHDOG_MS);

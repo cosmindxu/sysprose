@@ -494,7 +494,8 @@ export interface ExploreResult {
 
 /* ───────────────────────── refs and small readers ───────────────────────── */
 
-function stateRef(model: Model, id: ElementId): StateRef {
+// Exported for `./rtc-gap`, whose gap names a transition the way `reach` does.
+export function stateRef(model: Model, id: ElementId): StateRef {
   const el = model.get(id);
   return {
     id,
@@ -503,7 +504,7 @@ function stateRef(model: Model, id: ElementId): StateRef {
   };
 }
 
-function transitionRef(model: Model, tr: ElementRecord): TransitionRef {
+export function transitionRef(model: Model, tr: ElementRecord): TransitionRef {
   const from = tr.source?.[0];
   const to = tr.target?.[0];
   return {
