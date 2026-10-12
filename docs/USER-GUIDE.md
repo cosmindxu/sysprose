@@ -2942,7 +2942,7 @@ its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:2723-2876` (the four buttons), `1635-1715`
+**Source of truth:** `src/ui/store.ts:2771-2924` (the four buttons), `1635-1715`
 (an SDK edit),
 `src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:46-92`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
