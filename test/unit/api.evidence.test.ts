@@ -19,6 +19,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import Ajv from 'ajv';
 import {
   attachEvidence,
   canonicalElements,
@@ -105,6 +107,84 @@ describe('sha256Hex — the published known answers', () => {
     for (const s of ['', 'abc', 'a'.repeat(64), '日本語']) {
       expect(sha256Hex(s), s).toMatch(/^[0-9a-f]{64}$/);
     }
+  });
+});
+
+/* ═══════════════ sysprose-evidence/2: the version discriminator ═════════════ */
+
+/**
+ * THE ONE PROPERTY A SCHEMA TEST CAN CHECK THAT A TYPE CANNOT. `sysprose-evidence/2`
+ * adds the per-instance facet and nothing else, and the two versions must be
+ * read side by side: a v1 record written by an older build has to keep
+ * validating, and a record cannot claim to be v2 without naming the reading it
+ * is about. The `allOf`/`if`/`then`/`else` in the schema draws that line; this
+ * compiles the same schema `evidence-attach` compiles and checks all four
+ * combinations.
+ */
+describe('the evidence schema discriminates v1 from v2 and still accepts old records', () => {
+  const ajv = new Ajv({ allErrors: true, allowUnionTypes: true, strict: false });
+  const validate = ajv.compile(
+    JSON.parse(readFileSync('docs/schemas/evidence-record.schema.json', 'utf8')) as object,
+  );
+
+  /** The least a record can be and validate: every required field, nothing else. */
+  function minimal(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      schema: 'sysprose-evidence/1',
+      obligation: {
+        requirement: 'P::massLimit',
+        shortId: 'R1',
+        clause: 'P::massLimit::«ConstraintUsage»',
+        obligationDigest: `sha256:${'0'.repeat(64)}`,
+        expression: 'vehicle.mass <= 2000.0',
+      },
+      verdict: 'inconclusive',
+      claim: 'holds-at-values',
+      engine: 'literal',
+      tool: { name: 'sysprose', version: '0.0.0' },
+      bound: { kind: 'model-values', detail: 'the model’s own values' },
+      modelVersion: {
+        graph: `sha256:${'0'.repeat(64)}`,
+        library: 0,
+        sysprose: { name: 'sysprose', version: '0.0.0' },
+      },
+      producedBy: 'test',
+      flags: {},
+      detail: 'holds at the model’s values',
+      ...over,
+    };
+  }
+
+  it('accepts a v1 record — an old carrier keeps validating', () => {
+    expect(validate(minimal())).toBe(true);
+  });
+
+  it('accepts a v2 record that names its reading', () => {
+    const record = minimal({
+      schema: 'sysprose-evidence/2',
+      obligation: {
+        requirement: 'P::massLimit in Q::p',
+        shortId: 'R1',
+        clause: 'P::massLimit::«ConstraintUsage»',
+        obligationDigest: `sha256:${'0'.repeat(64)}`,
+        expression: 'vehicle.mass <= 2000.0',
+      },
+      instance: { requirement: 'P::massLimit', reading: 'Q::p' },
+    });
+    expect(validate(record)).toBe(true);
+  });
+
+  it('refuses a v2 record with no reading to be about', () => {
+    // The version and the shape must agree: a `…/2` record that carried no
+    // facet would be indistinguishable from a v1 record that had merely been
+    // relabelled.
+    expect(validate(minimal({ schema: 'sysprose-evidence/2' }))).toBe(false);
+  });
+
+  it('refuses a v1 record that carries the v2 facet', () => {
+    expect(
+      validate(minimal({ instance: { requirement: 'P::massLimit', reading: 'Q::p' } })),
+    ).toBe(false);
   });
 });
 
@@ -332,20 +412,53 @@ describe('attachEvidence — what goes into the file comes back out of it', () =
     expect(report.skipped[0].reason).toMatch(/no requirement to annotate/);
   }, 60_000);
 
-  it('skips a per-instance row with a true reason, never the wrong-file one (F7, R2-S7)', async () => {
+  it('records a per-instance row as sysprose-evidence/2 — the facet v1 could not carry (H4)', async () => {
     // A `verify --record` row for a relation read in one instance is named
-    // `<requirement> in <instance>`. That name resolves to no element, but its
-    // requirement — the part before the last ` in ` — does, so the honest reason
-    // is a per-instance claim, not "produced against a different file".
+    // `<requirement> in <instance>`. That name resolves to no element, so a
+    // `sysprose-evidence/1` record carrying it had nowhere to be attached and
+    // was skipped. `…/2` names the requirement element AND the reading, so the
+    // record is kept and the requirement's facet takes the MINIMUM over the
+    // readings instead of never seeing them.
+    const model = await parse(SUBJECT);
+    const [base] = await literalRecords(model);
+    const requirement = base.obligation.requirement as string;
+    const refuted: EvidenceRecord = {
+      ...base,
+      claim: 'refuted',
+      verdict: 'fail',
+      obligation: { ...base.obligation, requirement: `${requirement} in Q::p` },
+    };
+    // The requirement's own row (inconclusive) BESIDE the one refuted reading:
+    // the facet must be the worst of them, not the last one attached.
+    const report = attachEvidence(model, [base, refuted]);
+    expect(report.attached).toBe(2);
+    expect(report.skipped).toEqual([]);
+    expect(report.elements).toEqual(['P::massLimit']);
+
+    const records = evidenceOf(model, requirementId(model));
+    expect(records).toHaveLength(2);
+    const perInstance = records.find((r) => r.schema === 'sysprose-evidence/2');
+    expect(perInstance, 'the per-instance record was not upgraded to v2').toBeDefined();
+    expect(perInstance!.instance).toEqual({ requirement: 'P::massLimit', reading: 'Q::p' });
+    // And the two readings are two live obligations, not one that supersedes
+    // the other: the facet is `fail`, taken from the refuted instance.
+    expect(getRequirementAttr(model, requirementId(model), 'verdict')).toBe('fail');
+    expect(
+      evidenceStatus(model).rows.find((r) => r.qualifiedName === 'P::massLimit')?.verdict,
+    ).toBe('fail');
+  }, 60_000);
+
+  it('still skips a name that resolves to nothing, with the true wrong-file reason', async () => {
+    // WHAT v2 STILL CANNOT CARRY: `R in X` whose `R` is no element of this
+    // model names nothing to attach to, so it is a record of a different file.
     const model = await parse(SUBJECT);
     const [base] = await literalRecords(model);
     const report = attachEvidence(model, [
-      { ...base, obligation: { ...base.obligation, requirement: `${base.obligation.requirement} in Q::p` } },
+      { ...base, obligation: { ...base.obligation, requirement: 'P::noSuchRequirement in Q::p' } },
     ]);
     expect(report.attached).toBe(0);
     expect(report.skipped).toHaveLength(1);
-    expect(report.skipped[0].reason).toMatch(/a per-instance or per-context claim/);
-    expect(report.skipped[0].reason).not.toMatch(/different file/);
+    expect(report.skipped[0].reason).toMatch(/different file/);
   }, 60_000);
 });
 

@@ -1211,9 +1211,50 @@ export interface EvidenceBound {
   si?: { lhs: number; rhs: number; dimension?: string };
 }
 
+/**
+ * The version of the record shape a carrier holds.
+ *
+ * A VERSION DISCRIMINATOR, not a format bump for its own sake. `…/1` is the
+ * shape a per-obligation record has had since the lane began. `…/2` adds
+ * {@link EvidenceInstanceFacet} and nothing else, and the two are read side by
+ * side: {@link recordOfCarrier} accepts both, so a file written by an older
+ * build still validates, and the schema (`docs/schemas/evidence-record.schema.json`)
+ * draws the line with an `if schema = /1 then no instance else instance required`
+ * so a v2 record always names the reading it is about.
+ */
+export type EvidenceSchemaVersion = 'sysprose-evidence/1' | 'sysprose-evidence/2';
+
+/**
+ * The per-instance facet a `sysprose-evidence/2` record carries.
+ *
+ * WHY A SECOND SCHEMA WAS NEEDED. `verify --record` names a relation read in
+ * one instance or context `<requirement> in <reading>` (`R in H2P::q::p`,
+ * `Q::c in q`). That name resolves to no element — the relation and the reading
+ * are elements, the pair is not — so a `…/1` record carrying it could not be
+ * attached anywhere, and {@link attachEvidence} skipped it. But the requirement
+ * it belongs to is right there in the name, and a requirement whose relation is
+ * refuted in ONE instance must not carry a `pass` facet: the facet is the
+ * MINIMUM over the readings, which is what {@link summariseEvidence} computes
+ * once each reading is a record of its own. This facet is what makes the record
+ * attachable and each reading distinct:
+ *
+ *  - `requirement` — the element that carries the facet, i.e. the part of
+ *    `obligation.requirement` before the last ` in `. This is the attach target.
+ *  - `reading` — the context or instance the relation was read in, i.e. the part
+ *    after the last ` in `. It enters {@link obligationKey}, so two readings of
+ *    one clause are two live obligations rather than one that supersedes the
+ *    other.
+ */
+export interface EvidenceInstanceFacet {
+  /** The requirement element's qualified name — what the facet is written on. */
+  requirement: string;
+  /** The context or instance the relation was read in. */
+  reading: string;
+}
+
 /** One record: one claim, about one obligation, by one engine, over one model. */
 export interface EvidenceRecord {
-  schema: 'sysprose-evidence/1';
+  schema: EvidenceSchemaVersion;
   obligation: {
     /** The requirement's qualified name, or `null` for a model-level relation. */
     requirement: string | null;
@@ -1282,6 +1323,15 @@ export interface EvidenceRecord {
    * one-directional and permanent, and it is recorded in `docs/CONFORMANCE.md`.
    */
   proofScope?: ProofScope;
+  /**
+   * Present iff this is a `sysprose-evidence/2` per-instance record.
+   *
+   * The record is ONE reading of a requirement's relation in a context or
+   * instance; the requirement's verdict facet is the minimum over its readings
+   * ({@link summariseEvidence}). Absent on every `…/1` record, and required by
+   * the schema on every `…/2` one. See {@link EvidenceInstanceFacet}.
+   */
+  instance?: EvidenceInstanceFacet;
 }
 
 /**
@@ -1299,7 +1349,13 @@ export function recordEvidence(input: {
   flags: Record<string, string | number | boolean | string[]>;
 }): EvidenceRecord[] {
   return input.rows.map((row) => ({
-    schema: 'sysprose-evidence/1' as const,
+    // A row that carries the per-instance facet is a `…/2` record; every other
+    // row is the shape this lane has always written. The two are a deliberate
+    // pair — the schema refuses a `…/2` without the facet and a `…/1` with it —
+    // so the version is derived here rather than accepted from the caller.
+    schema: (row.instance !== undefined
+      ? 'sysprose-evidence/2'
+      : 'sysprose-evidence/1') as EvidenceSchemaVersion,
     ...row,
     // Derived here rather than accepted from the caller — the input type has no
     // `verdict` field at all. This is the rule the plan states twice, and a rule
@@ -1414,7 +1470,17 @@ export function recordOfCarrier(model: Model, carrier: ElementRecord): EvidenceR
     const parsed: unknown = JSON.parse(text);
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
     const rec = parsed as EvidenceRecord;
-    return rec.schema === 'sysprose-evidence/1' ? rec : undefined;
+    // BOTH VERSIONS READ, and the schema property is the discriminator. A `…/2`
+    // record that does not carry the facet it was added for is unreadable rather
+    // than silently treated as `…/1` — the version and the shape must agree.
+    if (rec.schema === 'sysprose-evidence/1') return rec;
+    if (rec.schema === 'sysprose-evidence/2') {
+      const facet: Partial<EvidenceInstanceFacet> | undefined = rec.instance;
+      return typeof facet?.requirement === 'string' && typeof facet.reading === 'string'
+        ? rec
+        : undefined;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -1488,13 +1554,23 @@ export function evidenceHolders(model: Model): EvidenceHolder[] {
  * would take `npm run check` down over a line somebody typed. A record with no
  * readable obligation gets a key of its own, so it supersedes nothing and
  * nothing supersedes it.
+ *
+ * THE READING IS PART OF THE KEY, and it has to be. A `sysprose-evidence/2`
+ * record is one reading of a clause, and `verify --record` writes the same
+ * clause and the same digest for the generic row and for a per-instance row
+ * whose variables happen to canonicalise alike. Without the reading, the
+ * second would be read as having REPLACED the first — and a requirement
+ * refuted in one instance could then be shown `pass` because a later reading
+ * was discharged, which is the exact upgrade {@link summariseEvidence} exists
+ * to refuse.
  */
 function obligationKey(record: EvidenceRecord, index = 0): string {
   const ob: Partial<EvidenceRecord['obligation']> | undefined = record.obligation;
   if (typeof ob?.clause !== 'string' || typeof ob.obligationDigest !== 'string') {
     return `unkeyed record ${index}`;
   }
-  return `${ob.clause} :: ${ob.obligationDigest}`;
+  const reading = typeof record.instance?.reading === 'string' ? record.instance.reading : '';
+  return `${ob.clause} :: ${ob.obligationDigest}${reading !== '' ? ` @ ${reading}` : ''}`;
 }
 
 /**
@@ -1649,7 +1725,14 @@ export interface AttachReport {
  * AND A REQUIREMENT WITH SEVERAL OBLIGATIONS CARRIES THE WORST OF THEM
  * ({@link summariseEvidence}), not the last one written: a facet taken from the
  * last record would depend on the order the clauses happen to be written in,
- * and would let one clause's `pass` overwrite another clause's `fail`.
+ * and would let one clause's `pass` overwrite another clause's `fail`. A
+ * PER-INSTANCE reading is one of those obligations: a `sysprose-evidence/2`
+ * record names the requirement it belongs to and the instance it was read in,
+ * so a requirement whose relation holds in every instance but one carries the
+ * one refutation's `fail` rather than a `pass` taken from the requirement's own
+ * row. A `…/1` record of such a reading — the shape `verify --record` writes
+ * today — is upgraded to `…/2` here; only a name that resolves to nothing is
+ * skipped (see {@link targetOfRecord}).
  *
  * NOTHING IS WRITTEN UNTIL EVERY TARGET HAS BEEN CHECKED. The two refusals
  * below are raised in a pass of their own, before the first carrier goes in,
@@ -1689,27 +1772,20 @@ export function attachEvidence(
       });
       continue;
     }
-    const target = resolveByQualifiedName(model, qn);
-    if (!target) {
-      // A record of a per-instance or per-context row (`R in q::p`, `R in Q::p
-      // (Q's own)`) names no element: its requirement is the part before the
-      // last ` in `. Skip it truthfully — a requirement's facet reads the
-      // requirement's own row, never a row read in one instance (F7, C.8).
-      const sep = qn.lastIndexOf(' in ');
-      const requirement = sep > 0 ? qn.slice(0, sep) : undefined;
-      if (requirement !== undefined && resolveByQualifiedName(model, requirement)) {
-        report.skipped.push({
-          clause: record.obligation.clause,
-          reason: 'a per-instance or per-context claim; a requirement\u2019s facet reads the requirement\u2019s own row',
-        });
-        continue;
-      }
+    const resolved = targetOfRecord(model, record);
+    if (resolved === undefined) {
+      // WHAT IS STILL SKIPPED, now that a per-instance or per-context claim is
+      // not: a name that resolves to nothing at all. `R in X` whose `R` is a
+      // requirement of this model is carried (as `…/2`); `R in X` whose `R`
+      // names nothing here is a record of a different file, and the model-level
+      // case is skipped above. Nothing else reaches this branch.
       report.skipped.push({
         clause: record.obligation.clause,
         reason: `no element of this model is called \`${qn}\` — the record was produced against a different file`,
       });
       continue;
     }
+    const [stored, target] = resolved;
     if (!isUserElement(model, target)) {
       throw new Error(
         `attachEvidence: ${qn} is a bundled standard-library element. A carrier written onto the ` +
@@ -1720,7 +1796,7 @@ export function attachEvidence(
     if (!carriesItsOwnText(model, target.id)) {
       throw new Error(`attachEvidence: ${qn} — ${FAULTED_DECLARATION_REFUSAL}`);
     }
-    targets.push([record, target]);
+    targets.push([stored, target]);
   }
 
   // Elements whose facet has to be recomputed. WIDER than the set that gained a
@@ -1734,7 +1810,10 @@ export function attachEvidence(
 
   // PASS TWO — write.
   for (const [record, target] of targets) {
-    const qn = record.obligation.requirement as string;
+    // The element the carrier lands on, not the record's `obligation.requirement`:
+    // a `…/2` per-instance record names `<requirement> in <reading>` there, and
+    // the report has always named elements.
+    const element = model.qualifiedName(target.id);
     // Stored with its verdict DERIVED, so the carrier's payload can never
     // disagree with its own claim whatever the `--from` file said.
     const stored: EvidenceRecord = { ...record, verdict: verdictFor(record.claim) };
@@ -1755,7 +1834,7 @@ export function attachEvidence(
     const prior = [...existing].reverse().find((r) => obligationKey(r) === key);
     if (prior && verdictFor(prior.claim) !== stored.verdict) {
       report.changes.push({
-        element: qn,
+        element,
         clause: record.obligation.clause,
         from: verdictFor(prior.claim),
         to: stored.verdict,
@@ -1769,7 +1848,7 @@ export function attachEvidence(
     report.attached++;
     if (!gained.has(target.id)) {
       gained.add(target.id);
-      report.elements.push(qn);
+      report.elements.push(element);
     }
   }
 
@@ -1789,6 +1868,46 @@ export function attachEvidence(
     });
   }
   return report;
+}
+
+/**
+ * The element a record annotates, and the record as it will be stored.
+ *
+ * THREE SHAPES, one job. A `sysprose-evidence/2` record carries its target in
+ * {@link EvidenceInstanceFacet.requirement}. A `sysprose-evidence/1` record
+ * whose `obligation.requirement` is an element's qualified name attaches there
+ * directly. And a `…/1` record of a relation read in one instance or context —
+ * `verify --record` names it `<requirement> in <reading>` — is UPGRADED to
+ * `…/2` here rather than skipped: the split names the requirement that carries
+ * the facet and the reading the record was taken in, which is the whole of what
+ * `…/2` adds, and the requirement's facet must take the MINIMUM over those
+ * readings rather than never see them.
+ *
+ * `undefined` back means no element of this model is named: the record is about
+ * a different file. That is the only skip left on this path.
+ */
+function targetOfRecord(
+  model: Model,
+  record: EvidenceRecord,
+): [EvidenceRecord, ElementRecord] | undefined {
+  if (record.instance !== undefined) {
+    const target = resolveByQualifiedName(model, record.instance.requirement);
+    return target !== undefined ? [record, target] : undefined;
+  }
+  const qn = record.obligation.requirement;
+  if (typeof qn !== 'string' || qn === '') return undefined;
+  const direct = resolveByQualifiedName(model, qn);
+  if (direct !== undefined) return [record, direct];
+  const sep = qn.lastIndexOf(' in ');
+  if (sep <= 0) return undefined;
+  const requirement = qn.slice(0, sep);
+  const reading = qn.slice(sep + 4);
+  const target = resolveByQualifiedName(model, requirement);
+  if (target === undefined || reading === '') return undefined;
+  return [
+    { ...record, schema: 'sysprose-evidence/2', instance: { requirement, reading } },
+    target,
+  ];
 }
 
 /** One carrier, written in the shape the notation reads back unchanged. */

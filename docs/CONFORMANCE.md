@@ -544,9 +544,12 @@ something moved and no proof in it could have read what moved.
 
 **One-directional forward incompatibility, stated as the measured fact it is.**
 `docs/schemas/evidence-record.schema.json` gains `proofScope` as an **optional**
-property; the `schema` const stays `sysprose-evidence/1`, so every record written
-before this build still validates and `recordOfCarrier` still reads every carrier
-in the wild. The other direction does not hold: the schema is compiled with
+property; a record carrying no per-instance facet keeps `schema =
+"sysprose-evidence/1"`, so every record written before this build still validates
+and `recordOfCarrier` still reads every carrier in the wild. (A later change adds
+`sysprose-evidence/2`, which carries an optional per-instance facet and nothing
+else; both versions are read side by side, and the schema discriminates them.)
+The other direction does not hold: the schema is compiled with
 `additionalProperties: false` at every level in two places — the corpus test and
 `loadRecords` in `scripts/sysprose.ts`, which refuses the **whole** attach if any
 record fails — so a record written by this build is refused by `evidence-attach`

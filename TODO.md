@@ -257,9 +257,6 @@ them.
       32 path segments, `partial` is set and every bound read in the model abstains (`past-cap`) —
       coarse but sound. Narrow the flag to the bindings actually past the cap, so a model with one
       deep binding does not abstain elsewhere (A.3, E).
-- [ ] **Give per-instance evidence a schema of its own (`sysprose-evidence/2`).** A facet that takes
-      the minimum over instances (H4) cannot be recorded under `sysprose-evidence/1`; today such a
-      record is skipped with a true reason (`attachEvidence`). A second schema would let it be kept.
 - [ ] **Split the Problems tab label (H6b).** The Problems view lists the Check and the Solve rows
       together under one label; naming the producer a row came from was deferred, so the tab label is
       unchanged (H6b).

@@ -19,7 +19,10 @@
     "detail"
   ],
   "properties": {
-    "schema": { "const": "sysprose-evidence/1" },
+    "schema": {
+      "enum": ["sysprose-evidence/1", "sysprose-evidence/2"],
+      "description": "The record's version. `…/1` is the per-obligation shape this lane has always written. `…/2` adds `instance` and nothing else: a record of ONE reading of a requirement's relation in a context or instance, whose `obligation.requirement` is `<requirement> in <reading>` and which therefore names no element. Both are read side by side — an old carrier still validates — and the `allOf` at the end of this schema requires `instance` for `…/2` and forbids it for `…/1`."
+    },
     "obligation": {
       "type": "object",
       "additionalProperties": false,
@@ -190,8 +193,31 @@
           "description": "The features `--free` released, resolved to qualified names and sorted — the set every part above was computed under, and `[]` when nothing was released. `flags.free` cannot stand in for it: that records the spellings a person typed (a dotted path, or a bare name), and a recomputation that re-read them would drop different rows and call an unedited file stale."
         }
       }
+    },
+    "instance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requirement", "reading"],
+      "description": "The per-instance facet a `sysprose-evidence/2` record carries, and the reason the version exists. `verify --record` names a relation read in one instance or context `<requirement> in <reading>`; that name resolves to no element, so a `…/1` record carrying it could not be attached anywhere. This facet names the element that carries the verdict facet and the reading the record was taken in, so the requirement's facet can take the MINIMUM over its readings rather than never see them. Present iff `schema` is `sysprose-evidence/2`.",
+      "properties": {
+        "requirement": {
+          "type": "string",
+          "description": "Qualified name of the requirement element whose facet this reading contributes to — the part of `obligation.requirement` before the last ` in `."
+        },
+        "reading": {
+          "type": "string",
+          "description": "The context or instance the relation was read in — the part after the last ` in `. It is part of the obligation's identity, so two readings of one clause are two live obligations and neither supersedes the other."
+        }
+      }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schema": { "const": "sysprose-evidence/1" } } },
+      "then": { "not": { "required": ["instance"] } },
+      "else": { "required": ["instance"] }
+    }
+  ],
   "definitions": {
     "modelVersion": {
       "type": "object",
