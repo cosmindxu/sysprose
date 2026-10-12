@@ -298,6 +298,10 @@ test('marks show findings, withheld, not-decided, not-walked and walk-only, besi
   await page.getByTestId('behaviour-marks-hide').click();
   await expect(marksPanel).toHaveAttribute('data-state', 'hidden');
   await expect(page.locator('.react-flow__node[class*="rf-beh"]')).toHaveCount(0);
+  // The hide toggle is UI state that survives a reload: show the marks again
+  // before the both-visible check, which needs them painted.
+  await page.getByTestId('behaviour-marks-hide').click();
+  await expect(marksPanel).toHaveAttribute('data-state', 'current');
 
   // Both visible: a simulation glow and a mark on one node, with no outline stolen.
   await loadText(page, readFileSync('test/fixtures/verification/models/trap-probe.sysml', 'utf8'));
@@ -313,9 +317,10 @@ test('marks show findings, withheld, not-decided, not-walked and walk-only, besi
     .poll(() => both.first().evaluate((n) => getComputedStyle(n, '::before').borderTopStyle))
     .toMatch(/dashed|dotted/);
 
-  // Re-applying changed text makes the marks stale, not current.
+  // Re-applying changed text moves rev under the stored trap-probe run: the
+  // marks go stale without a new run, not current.
   await loadText(page, `${TERM}\npackage Extra;`);
-  await runReach(page);
+  await page.getByTestId('tb-view-state').click();
   await expect(marksPanel).toHaveAttribute('data-state', 'stale');
   await expect(page.locator('.react-flow__node[class*="rf-beh"]')).toHaveCount(0);
 
@@ -367,6 +372,9 @@ test('witness steps paint the state view and leave a live simulation and the sel
   // Close: the simulation position, glow and selection are untouched.
   await page.locator('.checks-witness-close').click();
   await expect(page.locator('.react-flow__node.rf-sim-active')).toHaveCount(glowBefore);
+  // The stepper lives on the Checks tab; the Simulation panel (and its index)
+  // is only rendered on its own tab, so read it from there.
+  await openTab(page, 'tab-simulation');
   expect(await page.getByTestId('sim-index').textContent()).toBe(simIndexBefore);
   expect(await selectedId()).toBe(selectionBefore);
 
