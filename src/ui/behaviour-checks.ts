@@ -4,11 +4,11 @@
  *
  * The reach and check-behaviour palette rows are the CLI's answers, never an
  * app-invented verdict. `reachResult` and `behaviourResult` are pure over the
- * engine's reports plus the run-to-completion confirmation, so the unit tests
- * can pin them against the terminal's exact words; `reachCheck` and
- * `behaviourCheck` are the thin entries the registry calls, and only they touch
- * the engine. Everything here reads `@api` and `@core` for values, `./checks`
- * for types only, and no store (the load health is handed in).
+ * engine's reports, so the unit tests can pin them against the terminal's exact
+ * words; `reachCheck` and `behaviourCheck` are the thin entries the registry
+ * calls, and only they touch the engine. Everything here reads `@api` and
+ * `@core` for values, `./checks` for types only, and no store (the load health
+ * is handed in).
  */
 
 import type { ElementId, ElementRecord, Model } from '@core/index';
@@ -21,26 +21,16 @@ import {
   behaviourMachineFor,
   libraryElementRefusal,
   reachLines,
-  rowKeyOf,
   ELEMENT_REQUIRED_LEAD,
   NO_DEFAULT_MACHINE,
   type ReportLine,
 } from '@semantics/mc/report-lines';
 import {
-  confirmUnderRunToCompletion,
-  walkOnlyDiagnostics,
-  witnessRtcGap,
-  type RtcConfirmation,
-  type WitnessGap,
-} from '@semantics/mc/rtc-gap';
-import {
-  exitCodeOf,
   propertiesOf,
   traceLine,
   type BehaviourReport,
-  type PropertyVerdict,
 } from '@semantics/mc/patterns';
-import { transitionLabel, type MachineReach, type ReachReport } from '@semantics/mc/explore';
+import type { MachineReach, ReachReport } from '@semantics/mc/explore';
 import type { LoadHealth } from './store';
 import type { StoredResult } from './panels/checks-store';
 
@@ -82,40 +72,34 @@ export function unwalkedStates(model: Model, r: ReachReport): ElementId[] {
     .map((el) => el.id);
 }
 
-/** The report's diagnostics, one row each, with the walk-only flag. */
-function diagnosticRows(r: ReachReport, flags: readonly boolean[]): CheckRow[] {
-  return r.diagnostics.map((d, i) => ({
+/** The report's diagnostics, one row each. */
+function diagnosticRows(r: ReachReport): CheckRow[] {
+  return r.diagnostics.map((d) => ({
     code: d.code ?? 'verification/internal',
     message: d.message,
     elementId: d.elementId,
     severity: d.severity,
-    ...(flags[i] ? { walkOnly: true as const } : {}),
   }));
 }
 
 /**
- * The reach verdict, judged exactly as the CLI would: findings over
- * diagnostics the walk stands behind, `undecided` over anything withheld, and
- * `holds` only when every machine was walked to exhaustion with nothing
- * withheld and no finding. The load health demotes a pass, never promotes one.
+ * The reach verdict, judged exactly as the CLI would: findings over the
+ * diagnostics, `undecided` over anything withheld, and `holds` only when every
+ * machine was walked to exhaustion with nothing withheld and no finding. The
+ * load health demotes a pass, never promotes one.
  */
 export function reachResult(
   r: ReachReport,
   model: Model,
-  o: { fileName: string; health?: LoadHealth; confirmations: readonly RtcConfirmation[] },
+  o: { fileName: string; health?: LoadHealth },
 ): CheckResult {
   const M = r.machines.length;
   const K = r.machines.filter(withholds).length;
   const N = unwalkedStates(model, r);
-  const flags = walkOnlyDiagnostics(r, o.confirmations);
-  const walkOnlyKeys = new Set<string>();
-  for (const c of o.confirmations) for (const k of c.unconfirmed) walkOnlyKeys.add(k);
-  const F = r.diagnostics.filter((d, i) => (d.severity === 'error' || d.severity === 'warning') && !flags[i]).length;
-  const W = r.diagnostics.filter((d, i) => (d.severity === 'error' || d.severity === 'warning') && flags[i]).length;
+  const F = r.diagnostics.filter((d) => d.severity === 'error' || d.severity === 'warning').length;
   const D = o.health === undefined || o.health.errors !== 0;
 
   const clauses: string[] = [];
-  if (W > 0) clauses.push(`${W} more found by the walk only`);
   if (K > 0) clauses.push(`an answer withheld on ${K} of ${M} machine(s)`);
   if (N.length > 0) clauses.push(`${N.length} state(s) in no walked machine`);
   if (D) clauses.push('the model did not load cleanly');
@@ -128,41 +112,33 @@ export function reachResult(
   const rows: CheckRow[] = [];
   // Row 1: a degraded model is reported as such, first.
   if (D && o.health !== undefined) rows.push(degradedRow('reach', o.health));
-  // Row 2: one walk-only row per machine with unconfirmed rows.
-  for (const c of o.confirmations) {
-    if (c.unconfirmed.size === 0) continue;
-    const m = r.machines.find((mm) => mm.machine.id === c.machineId);
-    if (!m) continue;
-    rows.push(walkOnlyRow(m.machine.id, m.machine.qualifiedName, c.unconfirmed.size));
-  }
-  // Row 3: one not-walked row per unwalked state.
+  // Row 2: one not-walked row per unwalked state.
   for (const id of N) {
     rows.push(notWalkedRow(model.qualifiedName(id) || id, id));
   }
-  // Row 4: the report's diagnostics, one to one.
-  rows.push(...diagnosticRows(r, flags));
+  // Row 3: the report's diagnostics, one to one.
+  rows.push(...diagnosticRows(r));
 
   // The per-state marks and the status-panel summary they feed (A.4).
-  const { marks, summary: markSummary } = reachMarks(model, r, o.confirmations);
+  const { marks, summary: markSummary } = reachMarks(model, r);
 
   if (M === 0 && !D) {
     const summary = `${noMachine}${N.length > 0 ? `; ${N.length} state(s) belong to no walked machine` : ''}`;
-    return { verdict: 'not-run', summary, rows, lines, walkOnlyKeys, marks, markSummary };
+    return { verdict: 'not-run', summary, rows, lines, marks, markSummary };
   }
   if (M === 0 && D) {
     const summary = `${noMachine} — the model did not load cleanly, so a machine may be missing from what parsed`;
-    return { verdict: 'undecided', summary, rows, lines, walkOnlyKeys, marks, markSummary };
+    return { verdict: 'undecided', summary, rows, lines, marks, markSummary };
   }
   if (F > 0) {
-    return { verdict: 'issues', summary: `${head} — ${F} finding(s)${clauseText}`, rows, lines, walkOnlyKeys, marks, markSummary };
+    return { verdict: 'issues', summary: `${head} — ${F} finding(s)${clauseText}`, rows, lines, marks, markSummary };
   }
-  if (W > 0 || K > 0 || N.length > 0 || D) {
+  if (K > 0 || N.length > 0 || D) {
     return {
       verdict: 'undecided',
       summary: `${head} — no finding${clauseText}: the Checks tab says which, and why`,
       rows,
       lines,
-      walkOnlyKeys,
       marks,
       markSummary,
     };
@@ -172,17 +148,15 @@ export function reachResult(
     summary: `${head} — no finding and nothing withheld, under the bounds each machine prints`,
     rows,
     lines,
-    walkOnlyKeys,
     marks,
     markSummary,
   };
 }
 
-/** The reach entry: the report, then the run-to-completion confirmation per machine. */
+/** The reach entry: the report, judged. */
 export function reachCheck(ctx: CheckContext, fileName: string): CheckResult {
   const r = reachReport(ctx.model);
-  const confirmations = r.machines.map((m) => confirmUnderRunToCompletion(ctx.model, m));
-  return reachResult(r, ctx.model, { fileName, health: ctx.loadHealth, confirmations });
+  return reachResult(r, ctx.model, { fileName, health: ctx.loadHealth });
 }
 
 /* ──────────────────────────── check-behaviour, judged ───────────────────── */
@@ -262,32 +236,10 @@ export function pickBehaviourMachine(model: Model, selectionId: string | null): 
   };
 }
 
-/** Re-count the six words after demoting each gap-flagged `fail`/`covered` to `inconclusive`. */
-function demotedCounts(b: BehaviourReport, gaps: readonly (WitnessGap | null)[]): BehaviourReport['counts'] {
-  const counts = { ...b.counts };
-  b.properties.forEach((p, i) => {
-    if (gaps[i] === null) return;
-    if (p.claim === 'fail') counts.failed -= 1;
-    if (p.claim === 'covered') counts.covered -= 1;
-    counts.inconclusive += 1;
-  });
-  return counts;
-}
-
-/** One walk-only row for a property whose witness takes a run-to-completion gap. */
-function walkOnlyPropertyRow(b: BehaviourReport, p: PropertyVerdict, gap: WitnessGap): CheckRow {
-  const step = p.witness.find((s) => s.index === gap.step);
-  const event = step?.event ?? '';
-  const message =
-    gap.lost || gap.completion === null
-      ? `step ${gap.step} of its witness could not be replayed with the walk's own steps`
-      : `${p.sentence}: step ${gap.step} of its witness takes \`${event}\` while ${transitionLabel(gap.completion)} is enabled — run-to-completion fires that transition first, so this run may not be one the profile admits. The terminal reports ${p.claim} and exits ${b.exitCode}; this page does not count it as decided.`;
-  return { code: 'checks/walk-only', message, elementId: b.machine?.id, severity: 'info' };
-}
-
 /**
- * The verdict of check-behaviour: the exit code mapped, demoted by walk-only
- * witnesses, and `undecided` on a degraded model.
+ * The verdict of check-behaviour: the exit code mapped, and `undecided` on a
+ * degraded model. The engine's walk obeys run-to-completion, so no witness
+ * needs demoting.
  */
 export function behaviourResult(
   b: BehaviourReport,
@@ -295,26 +247,13 @@ export function behaviourResult(
   o: { fileName: string; machineName: string; health?: LoadHealth },
 ): CheckResult {
   const D = o.health === undefined || o.health.errors !== 0;
-  const machineId = b.machine?.id ?? null;
-  const gaps: (WitnessGap | null)[] = b.properties.map((p) =>
-    (p.claim === 'fail' || p.claim === 'covered') && machineId !== null
-      ? witnessRtcGap(model, machineId, p.witness)
-      : null,
-  );
-  const G = gaps.filter((g) => g !== null).length;
-  const counts = demotedCounts(b, gaps);
-  const n = b.properties.length;
 
-  const code = D ? 2 : exitCodeOf(counts, n, false);
+  const code = D ? 2 : b.exitCode;
   const verdict = (['holds', 'issues', 'undecided'] as const)[code];
 
   const lines = behaviourLines(b, { name: commandFileName(o.fileName), machineName: o.machineName });
   const rows: CheckRow[] = [];
   if (D && o.health !== undefined) rows.push(degradedRow('check-behaviour', o.health));
-  b.properties.forEach((p, i) => {
-    const gap = gaps[i];
-    if (gap !== null) rows.push(walkOnlyPropertyRow(b, p, gap));
-  });
   rows.push(
     ...b.diagnostics.map((d) => ({
       code: d.code ?? 'verification/internal',
@@ -324,19 +263,13 @@ export function behaviourResult(
     })),
   );
 
-  const walkOnlyKeys = new Set<string>();
-  b.properties.forEach((_p, i) => {
-    if (gaps[i] !== null) walkOnlyKeys.add(String(i + 1));
-  });
-
   let summary = lines[0]?.text ?? '';
-  if (G > 0) summary += ` — ${G} of them rest on a witness run-to-completion does not take, so they are not counted as decided`;
   if (D) summary += ` — the model did not load cleanly, so nothing is judged over it`;
 
-  return { verdict, summary, rows, lines, walkOnlyKeys, witnesses: compactWitnesses(b, model, lines) };
+  return { verdict, summary, rows, lines, witnesses: compactWitnesses(b, lines) };
 }
 
-/** The check-behaviour entry: the machine pick, the report, the witness replays. */
+/** The check-behaviour entry: the machine pick, the report. */
 export function behaviourCheck(ctx: CheckContext, fileName: string): CheckResult {
   const pick = pickBehaviourMachine(ctx.model, ctx.selectionId);
   if (pick.kind === 'refused') {
@@ -384,16 +317,6 @@ export function degradedRow(cmd: 'reach' | 'check-behaviour', health: LoadHealth
   return { code: 'checks/degraded', message: text, severity: 'warning' };
 }
 
-/** The `checks/walk-only` row, one per machine with unconfirmed rows. */
-export function walkOnlyRow(elementId: string, qualifiedName: string, count: number): CheckRow {
-  return {
-    code: 'checks/walk-only',
-    message: `\`${qualifiedName}\`: ${count} of its rows were found by this walk only — it takes events where a trigger-less transition is enabled, which run-to-completion does not, and a walk that does not (run here, under the same bounds) did not reach them. They are listed below and not counted as findings; whether a run reaches them is not decided here.`,
-    elementId,
-    severity: 'info',
-  };
-}
-
 /** The `checks/not-walked` row, one per unwalked state. */
 export function notWalkedRow(qualifiedName: string, elementId: string): CheckRow {
   return {
@@ -417,8 +340,7 @@ export type ReachMark =
   | 'withheld'
   | 'no-way-out'
   | 'trap'
-  | 'choice'
-  | 'walk-only';
+  | 'choice';
 
 /** The marks in painting precedence: a node takes the first that applies (A.4). */
 export const MARK_ORDER: readonly ReachMark[] = [
@@ -429,7 +351,6 @@ export const MARK_ORDER: readonly ReachMark[] = [
   'no-way-out',
   'trap',
   'choice',
-  'walk-only',
 ];
 
 /** The badge word of each mark, as the CLI prints the row. */
@@ -441,7 +362,6 @@ export const MARK_WORD: Record<ReachMark, string> = {
   'no-way-out': 'no way out',
   trap: 'trap',
   choice: 'choice',
-  'walk-only': 'walk only',
 };
 
 /** The node class of each mark, interned so two calls give the same string. */
@@ -453,7 +373,6 @@ const MARK_CLASS: Record<ReachMark, string> = {
   'no-way-out': 'rf-beh rf-beh-no-way-out',
   trap: 'rf-beh rf-beh-trap',
   choice: 'rf-beh rf-beh-choice',
-  'walk-only': 'rf-beh rf-beh-walk-only',
 };
 
 /** The witness node classes, interned so two calls give the same string. */
@@ -463,8 +382,8 @@ const WITNESS_SEEN_CLASS = 'rf-beh-witness-seen';
 
 /**
  * What the status panel says about a reach run, apart from the marks
- * themselves: how many machines, how many of each mark, and the four withheld
- * counts (trap answer, not-decided machines, walk-only, not-walked).
+ * themselves: how many machines, how many of each mark, and the three withheld
+ * counts (trap answer, not-decided machines, not-walked).
  */
 export interface MarkSummary {
   /** Machines walked (`r.machines.length`). */
@@ -475,29 +394,21 @@ export interface MarkSummary {
   trapWithheld: number;
   /** Machines that are suppressed or unsupported: whether a state is reachable was not decided. */
   notDecidedOn: number;
-  /** States marked `walk only`. */
-  walkOnly: number;
   /** States marked `not walked`. */
   notWalked: number;
 }
 
 /**
  * The mark per state, by the A.4 precedence, plus the {@link MarkSummary} the
- * status panel reads. A deadlock or choice row is a finding only where the
- * run-to-completion confirmation reached it; an unconfirmed one is `walk only`.
+ * status panel reads. The walk obeys run-to-completion, so every deadlock and
+ * choice row it published stands as a finding.
  */
 export function reachMarks(
   model: Model,
   r: ReachReport,
-  cs: readonly RtcConfirmation[],
 ): { marks: Record<ElementId, ReachMark>; summary: MarkSummary } {
   const marks: Record<ElementId, ReachMark> = {};
   const marked: Partial<Record<ReachMark, number>> = {};
-  const confirmationOf = new Map(cs.map((c) => [c.machineId, c]));
-  const unconfirmedOf = (m: MachineReach): ReadonlySet<string> => {
-    const c = confirmationOf.get(m.machine.id);
-    return c?.unconfirmed ?? new Set<string>();
-  };
   let trapWithheld = 0;
   let notDecidedOn = 0;
 
@@ -528,34 +439,20 @@ export function reachMarks(
     // 4. `withheld` — the leaf of a `deadlocksWithheld` row.
     for (const d of m.deadlocksWithheld) put(d.leaf.id, 'withheld');
 
-    // 5. `no way out` — a deadlock the confirmation reached.
-    for (const d of m.deadlocks) {
-      if (!unconfirmedOf(m).has(rowKeyOf('deadlock', d.leaf.id))) put(d.leaf.id, 'no-way-out');
-    }
+    // 5. `no way out` — a published deadlock.
+    for (const d of m.deadlocks) put(d.leaf.id, 'no-way-out');
 
     // 6. `trap` — the states of every published trap, composites included.
     for (const t of m.traps) for (const s of t.states) put(s.id, 'trap');
 
-    // 7. `choice` — a choice the confirmation reached.
-    for (const n of m.nondeterminism) {
-      if (!unconfirmedOf(m).has(rowKeyOf('choice', n.state.id, n.event))) put(n.state.id, 'choice');
-    }
-
-    // 8. `walk only` — an unconfirmed deadlock or choice row.
-    for (const d of m.deadlocks) {
-      if (unconfirmedOf(m).has(rowKeyOf('deadlock', d.leaf.id))) put(d.leaf.id, 'walk-only');
-    }
-    for (const n of m.nondeterminism) {
-      if (unconfirmedOf(m).has(rowKeyOf('choice', n.state.id, n.event))) put(n.state.id, 'walk-only');
-    }
+    // 7. `choice` — a published nondeterministic choice.
+    for (const n of m.nondeterminism) put(n.state.id, 'choice');
   }
 
   // 3. `not walked` — the N states of A.1, under no walked machine at all.
   const unwalked = unwalkedStates(model, r);
   for (const id of unwalked) put(id, 'not-walked');
 
-  const walkOnly = marked['walk-only'] ?? 0;
-  const notWalked = marked['not-walked'] ?? 0;
   return {
     marks,
     summary: {
@@ -563,8 +460,7 @@ export function reachMarks(
       marked,
       trapWithheld,
       notDecidedOn,
-      walkOnly,
-      notWalked,
+      notWalked: marked['not-walked'] ?? 0,
     },
   };
 }
@@ -590,7 +486,6 @@ export function marksStatusLine(s: MarkSummary, at: number): string {
   const clauses: string[] = [];
   if (s.trapWithheld > 0) clauses.push(`trap answer withheld on ${s.trapWithheld} of ${s.machines}`);
   if (s.notDecidedOn > 0) clauses.push(`not decided on ${s.notDecidedOn} machine(s)`);
-  if (s.walkOnly > 0) clauses.push(`${s.walkOnly} walk only`);
   if (s.notWalked > 0) clauses.push(`${s.notWalked} not walked`);
   return clauses.length > 0 ? `${line} · ${clauses.join(' · ')}` : line;
 }
@@ -601,7 +496,7 @@ export function marksStatusLine(s: MarkSummary, at: number): string {
  */
 export function marksStatusText(s: MarkSummary): string {
   const base =
-    'Each mark except "not decided" and "not walked" names a row in the Checks tab; "not decided" marks the unreached states of a machine whose lists were withheld — that machine\u2019s SUPPRESSED or not-explored line says why — and "not walked" marks a state that belongs to no machine the walk covered. An unmarked state of a walked machine is one this walk reached; the walk offers every trigger at every step, so that is not a claim that a simulation run gets there.';
+    'Each mark except "not decided" and "not walked" names a row in the Checks tab; "not decided" marks the unreached states of a machine whose lists were withheld — that machine\u2019s SUPPRESSED or not-explored line says why — and "not walked" marks a state that belongs to no machine the walk covered. An unmarked state of a walked machine is one this walk reached — it obeys run-to-completion, so it takes no event while a trigger-less transition is due — but it explores both branches of a nondeterministic choice and advances no clock, so that is not a claim that a simulation run gets there.';
   const clauses: string[] = [];
   if (s.trapWithheld > 0) {
     clauses.push(
@@ -610,11 +505,6 @@ export function marksStatusText(s: MarkSummary): string {
   }
   if (s.notDecidedOn > 0) {
     clauses.push(`Whether a state is reachable was not decided on ${s.notDecidedOn} machine(s).`);
-  }
-  if (s.walkOnly > 0) {
-    clauses.push(
-      `${s.walkOnly} mark(s) read "walk only": the walk reached them by taking an event where a trigger-less transition was enabled, which run-to-completion does not do.`,
-    );
   }
   return clauses.length > 0 ? `${base} ${clauses.join(' ')}` : base;
 }
@@ -647,30 +537,26 @@ export interface WitnessStep {
 
 /**
  * A property's witness, compacted for the stepper: the block it belongs to,
- * the machine it is about, the steps, and the run-to-completion gap (null when
- * the replay admits the witness, so it may be drawn and stepped).
+ * the machine it is about, and the steps. The engine's walk obeys
+ * run-to-completion, so every witness it produced may be drawn and stepped.
  */
 export interface WitnessView {
   readonly block: number;
   readonly machineId: ElementId | null;
   /** The property line, as the terminal prints it. */
   readonly header: string;
-  readonly gap: WitnessGap | null;
   readonly steps: readonly WitnessStep[];
 }
 
 /**
  * The witnesses of a check-behaviour run, one per property whose witness is
- * non-empty, each with the run-to-completion gap the replay found (step 6).
+ * non-empty (step 6).
  *
  * The steps' texts are the CLI's `traceLine` rows — the same strings the report
- * prints — so a step's `text` and the report's `witness-step` line agree. A
- * `gap !== null` witness is walk-only: it is not drawn on the diagram, and its
- * lines stay plain text.
+ * prints — so a step's `text` and the report's `witness-step` line agree.
  */
 export function compactWitnesses(
   b: BehaviourReport,
-  model: Model,
   lines: readonly ReportLine[],
 ): WitnessView[] {
   const machineId = b.machine?.id ?? null;
@@ -679,7 +565,6 @@ export function compactWitnesses(
     if (p.witness.length === 0) return;
     const block = i + 1;
     const header = lines.find((l) => l.block === block && l.kind === 'property')?.text ?? '';
-    const gap = machineId !== null ? witnessRtcGap(model, machineId, p.witness) : null;
     const steps: WitnessStep[] = p.witness.map((s) => ({
       index: s.index,
       text: traceLine(s),
@@ -687,7 +572,7 @@ export function compactWitnesses(
       stackIds: s.stack.map((x) => x.id),
       transitionId: s.transition?.id ?? null,
     }));
-    views.push({ block, machineId, header, gap, steps });
+    views.push({ block, machineId, header, steps });
   });
   return views;
 }
@@ -730,12 +615,11 @@ export function behaviourClassesOf(i: {
     beh.at === witness.resultAt &&
     i.machineExists(witness.machineId);
 
-  // An open witness that run-to-completion admits paints the walk's run: the
-  // step's leaf, its stack ancestors, and the leaves already passed. Only a
-  // gap-free witness is drawn (A.5); a gap-flagged one is never opened.
+  // An open witness paints the walk's run: the step's leaf, its stack
+  // ancestors, and the leaves already passed (A.5).
   if (witnessOpen && witness !== null && beh !== undefined) {
     const view = beh.result.witnesses?.find((v) => v.block === witness.block);
-    if (view !== undefined && view.gap === null) {
+    if (view !== undefined) {
       const step = view.steps.find((s) => s.index === witness.step);
       if (step !== undefined) {
         const classes = new Map<ElementId, string>();

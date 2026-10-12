@@ -38,7 +38,6 @@ import {
   TRAP_REFUSAL_SENTENCE,
   WALK_ADMITS,
   behaviourReport,
-  confirmUnderRunToCompletion,
   coverRequiredRefusal,
   environmentSentence,
   reachReport,
@@ -60,7 +59,6 @@ import {
   marksStatusText,
   notWalkedRow,
   reachResult,
-  walkOnlyRow,
 } from '../../src/ui/behaviour-checks';
 import type { MarkSummary } from '../../src/ui/behaviour-checks';
 import { CHECKS } from '../../src/ui/checks';
@@ -851,10 +849,9 @@ describe('the sentences the model-checking lane ships pass the guard', () => {
     // Every withheld count non-zero, so each status-panel clause prints.
     const full: MarkSummary = {
       machines: 4,
-      marked: { choice: 2, 'walk-only': 1 },
+      marked: { choice: 2, unreachable: 1 },
       trapWithheld: 2,
       notDecidedOn: 3,
-      walkOnly: 1,
       notWalked: 2,
     };
 
@@ -867,7 +864,6 @@ describe('the sentences the model-checking lane ships pass the guard', () => {
     const reach = reachResult(r, term, {
       fileName: 'model.sysml',
       health: healthy,
-      confirmations: r.machines.map((m) => confirmUnderRunToCompletion(term, m)),
     });
     const cover = parseModel(
       'package MissionDag { part def Mission { state def Modes { @SysproseVerification::PropertyPattern { attribute pattern = "cover"; attribute scope = "globally"; attribute p = "state cruise"; } state takeoff; state cruise; state landed; transition takeoff then cruise; transition cruise then landed; } } }',
@@ -889,7 +885,6 @@ describe('the sentences the model-checking lane ships pass the guard', () => {
       ["WITNESS_NOT_SIMULATION('P::M', 1, 3)", WITNESS_NOT_SIMULATION('P::M', 1, 3)],
       ['the reach summary', reach.summary],
       ['the check-behaviour summary', behaviour.summary],
-      ['the walk-only row', walkOnlyRow('x', 'P::M', 3).message],
       ['the not-walked row', notWalkedRow('Q::Lonely::a', 'x').message],
       ['degraded reach, unwritable', degradedRow('reach', degraded({ errors: 1, unwritable: 'the note body contains "*/"' })).message],
       ['degraded check-behaviour, unwritable', degradedRow('check-behaviour', degraded({ errors: 1, unwritable: 'the note body contains "*/"' })).message],

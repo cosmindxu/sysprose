@@ -55,7 +55,6 @@ import {
   type BehaviourOptions,
   type BehaviourReport,
   type PropertyText,
-  type TraceStep,
 } from '../../src/semantics/mc/patterns';
 import {
   DWELL_SENTENCE,
@@ -81,7 +80,6 @@ import {
   propertyVerdictLines,
   textOf,
 } from '../../src/semantics/mc/report-lines';
-import { witnessRtcGap } from '../../src/semantics/mc/rtc-gap';
 import { main as sysproseMain } from '../../scripts/sysprose';
 
 /** `A -a→ B -b→ C -c→ D`, and an orphan `E` no run reaches. */
@@ -2142,120 +2140,3 @@ describe('`check-behaviour` prints the lines the composer returns, byte for byte
   });
 });
 
-/* ═════════ a witness, replayed under run-to-completion ═════════ */
-
-/**
- * A `fail` or `covered` witness is a run the WALK found, and the walk offers a
- * trigger at configurations where a trigger-less transition is due. The replay
- * re-takes the witness with the engine's own step functions and names the first
- * step that leaves run-to-completion; the terminal prints the witness either way.
- */
-describe('`witnessRtcGap` — does the witness take an event where a completion transition is due?', () => {
-  const carrier = (pattern: string, p: string) =>
-    `@SysproseVerification::PropertyPattern { attribute pattern = "${pattern}"; attribute scope = "globally"; attribute p = "${p}"; }`;
-  /** `a_b` is due at `a`, yet the witness for `c` takes `e` there. */
-  const gapOn = (pattern: string, guard = '') =>
-    `package P { state def M { ${carrier(pattern, 'state c')} state a; state b; state c; ` +
-    `transition a_b first a ${guard}then b; transition a_c first a accept e then c; transition b_a first b accept back then a; } }`;
-  const mission = (pattern: string, p: string) =>
-    `package MissionDag { part def Mission { state def Modes { ${carrier(pattern, p)} state takeoff; state cruise; state landed; ` +
-    'transition takeoff then cruise; transition cruise then landed; } } }';
-
-  async function witnessOf(src: string, claim: string, opts: { pattern?: string; file?: string } = {}) {
-    const loaded = await loadModelText(src, { fileName: opts.file ?? 'x.sysml', ...(opts.file ? {} : { library: 'none' as const }) });
-    const model = loaded.model!;
-    const machine = stateMachinesIn(model).find((m) => !opts.pattern || model.qualifiedName(m.id).endsWith('FlightModes'))!;
-    const v = behaviourReport(model, { machineId: machine.id, ...(opts.pattern ? { pattern: opts.pattern } : {}) }).properties[0];
-    expect(v.claim, src.slice(0, 60)).toBe(claim);
-    return { model, machineId: machine.id, v };
-  }
-
-  it('flags a witness that takes a trigger where a completion transition is enabled', async () => {
-    for (const [pattern, claim] of [['cover', 'covered'], ['absence', 'fail']] as const) {
-      const { model, machineId, v } = await witnessOf(gapOn(pattern), claim);
-      const gap = witnessRtcGap(model, machineId, v.witness);
-      expect(gap, pattern).not.toBeNull();
-      expect(gap!.step, pattern).toBe(1);
-      expect(gap!.lost, pattern).toBe(false);
-      expect(gap!.completion).toMatchObject({ name: 'a_b', label: '', from: { name: 'a' }, to: { name: 'b' } });
-    }
-  });
-
-  it('fails closed on a completion transition whose guard decided nothing', async () => {
-    // `k` has no value, so `a_b` is neither enabled nor disabled at `a`. Nothing
-    // says the interpreter would not have fired it, so the witness is a gap.
-    const { model, machineId, v } = await witnessOf(gapOn('cover', 'if k > 0 '), 'covered');
-    expect(witnessRtcGap(model, machineId, v.witness)).toMatchObject({ step: 1, lost: false, completion: { name: 'a_b' } });
-  });
-
-  it('passes a witness no completion transition is due in', async () => {
-    const cases: Array<[string, string, string]> = [
-      // A completion whose guard is FALSE is no gap: the replay evaluates it.
-      [
-        'falseGuard',
-        'package P { state def M { ' + carrier('cover', 'state c') +
-          ' attribute k = 0; state a; state b; state c; transition a_b first a if k > 0 then b; transition a_c first a accept e then c; } }',
-        'covered',
-      ],
-      [
-        'triggered-clean',
-        'package P { state def M { ' + carrier('cover', 'state c') +
-          ' state a; state c; transition a accept e then c; transition c accept back then a; } }',
-        'covered',
-      ],
-      ['missionFail', mission('absence', 'state landed'), 'fail'],
-      ['missionCover', mission('cover', 'state cruise'), 'covered'],
-    ];
-    for (const [name, src, claim] of cases) {
-      const { model, machineId, v } = await witnessOf(src, claim);
-      expect(v.witness.length, name).toBeGreaterThan(1);
-      expect(witnessRtcGap(model, machineId, v.witness), name).toBeNull();
-    }
-    // The shipped example's golden witness is all completion transitions.
-    const uav = await witnessOf(readFileSync(resolve(process.cwd(), 'examples/uav-isr.sysml'), 'utf8'), 'fail', {
-      file: 'examples/uav-isr.sysml',
-      pattern: 'pattern=absence, scope=globally, p=state failsafe',
-    });
-    expect(uav.v.witness.length).toBeGreaterThan(1);
-    expect(witnessRtcGap(uav.model, uav.machineId, uav.v.witness)).toBeNull();
-  }, 120_000);
-
-  it('fails closed on a step it cannot find', async () => {
-    const { model, machineId, v } = await witnessOf(mission('absence', 'state landed'), 'fail');
-    expect(v.witness).toHaveLength(3);
-    const lost = v.witness.map((w) => (w.index === 2 ? { ...w, transition: { ...w.transition!, id: 'no-such-transition' } } : w));
-    expect(witnessRtcGap(model, machineId, lost)).toEqual({ step: 2, completion: null, lost: true });
-    // And a step with no transition at all (only the opening has none).
-    const bare = v.witness.map((w) => (w.index === 1 ? { ...w, transition: null } : w));
-    expect(witnessRtcGap(model, machineId, bare)).toEqual({ step: 1, completion: null, lost: true });
-    // The opening alone, or nothing, takes no step.
-    expect(witnessRtcGap(model, machineId, v.witness.slice(0, 1))).toBeNull();
-    expect(witnessRtcGap(model, machineId, [])).toBeNull();
-  });
-
-  it('fails closed on a step that is not at the innermost level, as the walk fires', async () => {
-    // Inside `K`, an inner `e` always beats the outer `o`, so no run of this
-    // semantics takes `o`: a witness that does is lost, though `o` is enabled.
-    const loaded = await loadModelText(
-      'package P { state def M { state K { state k0; state k1; transition kk first k0 accept e then k1; ' +
-        'transition kk2 first k0 accept e then k0; transition kb first k1 accept e then k0; } state z; ' +
-        'transition o first K accept e then z; } }',
-      { fileName: 'x.sysml', library: 'none' },
-    );
-    const model = loaded.model!;
-    const [machine] = stateMachinesIn(model);
-    const idOf = (name: string) => model.all().find((e) => e.declaredName === name)!.id;
-    const opening: TraceStep = { index: 0, event: '-', transition: null, leaf: null, stack: [], holds: [] };
-    const via = (name: string): TraceStep => ({
-      index: 1,
-      event: 'e',
-      transition: { id: idOf(name), name, qualifiedName: name, from: null, to: null, label: 'e' },
-      leaf: null,
-      stack: [],
-      holds: [],
-    });
-    expect(witnessRtcGap(model, machine.id, [opening, via('o')])).toEqual({ step: 1, completion: null, lost: true });
-    // The inner transition on the same trigger is found, so the level is what decides.
-    expect(witnessRtcGap(model, machine.id, [opening, via('kk')])).toBeNull();
-  });
-});

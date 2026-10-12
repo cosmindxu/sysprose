@@ -631,7 +631,7 @@ test('a fail property shows every run? and its three witness steps (missionFail)
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
-test('a walk-only covered property shows NOT COUNTED and its note (a15)', async ({ page }) => {
+test('a15 cover reads not-covered, with no witness and no walk-only note (a15)', async ({ page }) => {
   const errors = captureErrors(page);
   await gotoApp(page);
   await loadText(page, A15_COVER);
@@ -641,10 +641,11 @@ test('a walk-only covered property shows NOT COUNTED and its note (a15)', async 
     .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
     .getByTestId('palette-check-run')
     .click();
-  const block = page.locator('[data-testid="checks-report"] [data-claim="covered"][data-walk-only="true"]');
+  const block = page.locator('[data-testid="checks-report"] [data-claim="not-covered"]');
   await expect(block).toBeVisible();
-  await expect(block).toContainText('NOT COUNTED');
-  await expect(block.getByTestId('checks-report-note')).toBeVisible();
+  await expect(block.locator('.checks-witness-step')).toHaveCount(0);
+  await expect(block).not.toContainText('walk only');
+  await expect(page.getByTestId('checks-report-note')).toHaveCount(0);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
@@ -687,7 +688,7 @@ test('nothing is marked before Run (E8)', async ({ page }) => {
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
-test('marks show findings, withheld, not-decided, not-walked and walk-only, beside the simulation glow (E9)', async ({ page }) => {
+test('marks show findings, withheld, not-decided and not-walked, beside the simulation glow (E9)', async ({ page }) => {
   const errors = captureErrors(page);
   await gotoApp(page);
 
@@ -729,11 +730,11 @@ test('marks show findings, withheld, not-decided, not-walked and walk-only, besi
   await runReach(page);
   await expect(marksPanel).toContainText('no state marked');
 
-  // spurious: three walk-only marks.
+  // spurious: two unreachable marks (the walk is exact, so no walk-only mark).
   await loadText(page, SPURIOUS);
   await runReach(page);
-  await expect(page.locator('.react-flow__node.rf-beh-walk-only')).toHaveCount(3);
-  await expect(marksPanel).toContainText('3 walk only');
+  await expect(page.locator('.react-flow__node.rf-beh-unreachable')).toHaveCount(2);
+  await expect(marksPanel).toContainText('2 unreachable');
 
   // lonely: three not-walked marks.
   await loadText(page, LONELY);
@@ -829,7 +830,7 @@ test('witness steps paint the state view and leave a live simulation and the sel
   expect(await page.getByTestId('sim-index').textContent()).toBe(simIndexBefore);
   expect(await selectedId()).toBe(selectionBefore);
 
-  // a15: a walk-only witness is never stepped — no button, and the caveat text.
+  // a15: the walk is exact, so cover reads not-covered and there is no witness to step.
   await loadText(page, A15_COVER);
   await page.getByTestId('tb-view-state').click();
   await selectByQualifiedName(page, 'P::M');
@@ -837,9 +838,10 @@ test('witness steps paint the state view and leave a live simulation and the sel
     .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
     .getByTestId('palette-check-run')
     .click();
-  const a15Block = page.locator('[data-testid="checks-report"] [data-claim="covered"][data-walk-only="true"]');
+  const a15Block = page.locator('[data-testid="checks-report"] [data-claim="not-covered"]');
+  await expect(a15Block).toBeVisible();
   await expect(a15Block.locator('.checks-witness-step')).toHaveCount(0);
-  await expect(a15Block).toContainText('(walk only: not drawn on the diagram)');
+  await expect(a15Block).not.toContainText('walk only');
 
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });

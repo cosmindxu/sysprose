@@ -145,12 +145,12 @@ function pointerXY(evt: MouseEvent | TouchEvent): { x: number; y: number } | nul
 /* ──────────────────────────────── Inner ─────────────────────────────────── */
 
 /** A mark summary with nothing in it, for a reach result from before step 5. */
-const NO_MARKS: MarkSummary = { machines: 0, marked: {}, trapWithheld: 0, notDecidedOn: 0, walkOnly: 0, notWalked: 0 };
+const NO_MARKS: MarkSummary = { machines: 0, marked: {}, trapWithheld: 0, notDecidedOn: 0, notWalked: 0 };
 
 /**
  * The status panel in the canvas's top-left corner (A.4). It exists while a
  * reach result is stored, and reads the store itself: the panel is the one
- * place the K/S/W/N withheld counts can never be folded away.
+ * place the K/S/N withheld counts can never be folded away.
  */
 function BehaviourMarks(): JSX.Element | null {
   const reach = useChecksStore((s) => s.results.reach);
@@ -163,7 +163,7 @@ function BehaviourMarks(): JSX.Element | null {
   const setDetailsOpen = useBehaviourStore((s) => s.setDetailsOpen);
   const witness = useBehaviourStore((s) => s.witness);
 
-  // An open, gap-free witness reads `witness` (A.5), before any reach marks.
+  // An open witness reads `witness` (A.5), before any reach marks.
   if (
     witness !== null &&
     beh !== undefined &&
@@ -171,7 +171,7 @@ function BehaviourMarks(): JSX.Element | null {
     beh.at === witness.resultAt &&
     model.get(witness.machineId) !== undefined
   ) {
-    const view = beh.result.witnesses?.find((v) => v.block === witness.block && v.gap === null);
+    const view = beh.result.witnesses?.find((v) => v.block === witness.block);
     if (view !== undefined) {
       const qn = model.qualifiedName(witness.machineId) ?? witness.machineId;
       return (

@@ -89,11 +89,11 @@ import {
 import {
   MAX_COMPLETION,
   afterDuration,
-  enabledTransitions,
   hashConfig,
   initialConfig,
   leafOf,
   seedStore,
+  stepCandidates,
   stepConfig,
   triggerLabelOf,
   type MachineConfig,
@@ -1105,8 +1105,9 @@ function search(
   property: ResolvedProperty,
   bounds: ExploreBounds,
 ): SearchResult {
+  const COMPLETION: StepInput = { kind: 'completion' };
   const inputs: StepInput[] = [
-    { kind: 'completion' },
+    COMPLETION,
     ...bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger })),
   ];
   const seeded = new Map<string, unknown>();
@@ -1150,8 +1151,19 @@ function search(
 
   while (queue.length > 0) {
     const here = queue.shift()!;
-    for (const input of inputs) {
-      const enabled = enabledTransitions(model, here.config, input);
+    // RUN-TO-COMPLETION IS THE PROFILE'S OWN RULE, SO THE SEARCH OBEYS IT TOO.
+    // The interpreter fires a trigger-less (completion) transition before it
+    // accepts any event, so at a configuration where one is enabled — or where
+    // its guard is undetermined, which fails closed — no event is offered here
+    // either. Without this the search takes runs the profile forbids, and a
+    // `fail` or `covered` witness can stand on a configuration no run reaches
+    // (the over-approximation `./explore` no longer makes).
+    const completion = stepCandidates(model, here.config, COMPLETION);
+    const offeredInputs: StepInput[] =
+      completion.enabled.length > 0 || completion.undetermined.length > 0 ? [COMPLETION] : inputs;
+    for (const input of offeredInputs) {
+      const enabled =
+        input.kind === 'completion' ? completion.enabled : stepCandidates(model, here.config, input).enabled;
       if (enabled.length === 0) continue;
       const innermost = enabled[0].level;
       for (const choice of enabled) {

@@ -478,7 +478,10 @@ describe('the rows are a dispatch, top to bottom', () => {
     // relation clause fails and the graph holds a cycle, so rows 5, 6, 7 and 8
     // all apply. The sentence is row 5's — an author whose machine names
     // `abort` has something to do about it — and the order is pinned here
-    // rather than inferred from the gate's own test.
+    // rather than inferred from the gate's own test. The walk obeys
+    // run-to-completion, so `nominal → hold` is a completion: at `nominal` a
+    // completion is always due and `abort` is never offered, but the named
+    // trigger still fails the environment clause.
     const m = new Model();
     const f = new ModelFactory(m);
     const sm = f.stateDef('Everything');
@@ -488,8 +491,9 @@ describe('the rows are a dispatch, top to bottom', () => {
     const safe = f.state('safe', sm.id);
     f.attribute('resetOk', sm.id, { type: 'Boolean' });
     f.transition(nominal.id, hazard.id, { ownerId: sm.id });
-    f.transition(nominal.id, hold.id, { ownerId: sm.id, trigger: 'abort' });
+    f.transition(nominal.id, hold.id, { ownerId: sm.id });
     f.transition(hold.id, nominal.id, { ownerId: sm.id });
+    f.transition(nominal.id, safe.id, { ownerId: sm.id, trigger: 'abort' });
     f.transition(hold.id, hazard.id, { ownerId: sm.id, trigger: 'after(5)' });
     f.transition(nominal.id, safe.id, { ownerId: sm.id, guard: 'resetOk' });
     // The four producers, asserted so the case cannot pass on a machine that

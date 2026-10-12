@@ -66,8 +66,6 @@ export interface CheckRow {
   message: string;
   elementId?: string;
   severity: 'info' | 'warning' | 'error';
-  /** True when the row's claim was found by the walk only, and is not counted as a finding. */
-  walkOnly?: true;
 }
 
 export interface CheckResult {
@@ -77,8 +75,6 @@ export interface CheckResult {
   rows: CheckRow[];
   /** The terminal's report lines, for the Checks tab's `<details>` report. */
   lines?: readonly ReportLine[];
-  /** The row keys flagged walk-only, for the report's per-line walk-only flag. */
-  walkOnlyKeys?: ReadonlySet<string>;
   /** The mark per state, for the state view (reach only). */
   marks?: Record<string, ReachMark>;
   /** The mark summary the status panel reads (reach only). */
@@ -549,7 +545,6 @@ export const CHECK_META_CODES: readonly string[] = [
   'checks/not-walked',
   'checks/pick-machine',
   'checks/scoped',
-  'checks/walk-only',
   'checks/whole-model',
 ];
 

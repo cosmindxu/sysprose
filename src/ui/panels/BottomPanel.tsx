@@ -140,7 +140,6 @@ function ChecksTab(): JSX.Element {
                     data-testid="checks-row"
                     data-code={row.code}
                     data-severity={row.severity}
-                    data-walk-only={row.walkOnly ? 'true' : undefined}
                   >
                     <code className="checks-row-code">{row.code}</code>
                     {row.elementId ? (

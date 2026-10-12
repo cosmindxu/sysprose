@@ -494,7 +494,8 @@ export interface ExploreResult {
 
 /* ───────────────────────── refs and small readers ───────────────────────── */
 
-// Exported for `./rtc-gap`, whose gap names a transition the way `reach` does.
+// A state named the way `reach` names one: never bare ids, which are fresh on
+// every load.
 export function stateRef(model: Model, id: ElementId): StateRef {
   const el = model.get(id);
   return {
@@ -1093,9 +1094,20 @@ export function exploreMachine(
     depth = Math.max(depth, here.depth);
     let anyEnabled = false;
 
-    for (const input of inputs) {
+    // RUN-TO-COMPLETION IS THE PROFILE'S OWN RULE, SO THE WALK OBEYS IT. The
+    // interpreter fires a trigger-less (completion) transition before it accepts
+    // any event, so at a configuration where one is enabled — or where its guard
+    // is undetermined, which fails closed — no event is offered here either.
+    // Without this the walk takes runs the profile forbids, and its existential
+    // answers (`fail`, `covered`, `no way out`, `choice`, an undecided guard)
+    // can sit on a configuration no run reaches.
+    const completion = stepCandidates(model, here.config, { kind: 'completion' }, true);
+    const offeredInputs: StepInput[] =
+      completion.enabled.length > 0 || completion.undetermined.length > 0 ? [{ kind: 'completion' }] : inputs;
+    for (const input of offeredInputs) {
       if (input.kind === 'trigger') offered.add(input.trigger);
-      const { enabled, undetermined } = stepCandidates(model, here.config, input, true);
+      const { enabled, undetermined } =
+        input.kind === 'completion' ? completion : stepCandidates(model, here.config, input, true);
       // Recorded whether or not anything was enabled, and BEFORE the early
       // `continue` below: a configuration where the only outgoing edge is an
       // undetermined guard has nothing enabled, and it is exactly the one whose

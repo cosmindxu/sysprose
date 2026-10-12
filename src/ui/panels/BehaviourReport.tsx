@@ -23,7 +23,7 @@ import type { WitnessAt, WitnessView } from '../behaviour-checks';
 interface BehaviourReportProps {
   /** The check id — `reach` or `check-behaviour` — deciding machine vs property blocks. */
   checkId: string;
-  /** The stored check result, with its `lines`, `walkOnlyKeys` and `witnesses`. */
+  /** The stored check result, with its `lines` and `witnesses`. */
   stored: StoredResult;
   /** Does an element id still name a live element? Guards the selection button. */
   exists: (id: string) => boolean;
@@ -47,7 +47,6 @@ const FINDING_KINDS = new Set<ReportLine['kind']>([
 const STATUS_CHIP: ReadonlyArray<{ token: string; label: string }> = [
   { token: 'findings', label: 'findings' },
   { token: 'withheld', label: 'an answer withheld' },
-  { token: 'walk-only', label: 'walk only' },
   { token: 'nothing-to-report', label: 'nothing to report' },
 ];
 
@@ -63,32 +62,27 @@ function machineNameOf(lines: readonly ReportLine[]): string {
 }
 
 /** The `data-status` tokens of a reach machine block. */
-function machineStatusOf(lines: readonly ReportLine[], walkOnlyKeys: ReadonlySet<string>): string {
+function machineStatusOf(lines: readonly ReportLine[]): string {
   let findings = false;
   let withheld = false;
-  let walkOnly = false;
   for (const l of lines) {
     if (l.withholds) withheld = true;
-    if (l.rowKey !== null && walkOnlyKeys.has(l.rowKey)) walkOnly = true;
     else if (FINDING_KINDS.has(l.kind)) findings = true;
   }
   const tokens: string[] = [];
   if (findings) tokens.push('findings');
   if (withheld) tokens.push('withheld');
-  if (walkOnly) tokens.push('walk-only');
-  if (!findings && !withheld && !walkOnly) tokens.push('nothing-to-report');
+  if (!findings && !withheld) tokens.push('nothing-to-report');
   return tokens.join(' ');
 }
 
 /** One report line: text only, a button when it names an existing element (and is not a witness step). */
 function lineNode(
   line: ReportLine,
-  walkOnlyKeys: ReadonlySet<string>,
   exists: (id: string) => boolean,
   onSelect: (id: string) => void,
   key: string,
 ): ReactNode {
-  const walkOnly = line.rowKey !== null && walkOnlyKeys.has(line.rowKey);
   const clickable = line.elementId !== null && line.kind !== 'witness-step' && exists(line.elementId);
   const body: ReactNode = clickable ? (
     <button type="button" onClick={() => onSelect(line.elementId as string)}>
@@ -104,7 +98,6 @@ function lineNode(
       data-kind={line.kind}
       data-code={line.code ?? undefined}
       data-withholds={line.withholds ? 'true' : 'false'}
-      data-walk-only={walkOnly ? 'true' : undefined}
     >
       {body}
     </div>
@@ -114,13 +107,6 @@ function lineNode(
 /** The whole report: the terminal's lines, grouped into machine or property blocks. */
 export function BehaviourReport({ checkId, stored, exists, onSelect, onStep }: BehaviourReportProps): JSX.Element {
   const lines = stored.result.lines ?? [];
-  const walkOnlyKeys = stored.result.walkOnlyKeys ?? new Set<string>();
-  const walkOnlyRows = stored.result.rows.filter((r) => r.code === 'checks/walk-only');
-  const walkOnlyByElement = new Map<string, string>();
-  for (const row of walkOnlyRows) {
-    if (row.elementId !== undefined) walkOnlyByElement.set(row.elementId, row.message);
-  }
-  let walkOnlyCursor = 0;
 
   // The witness stepper (step 6). The report reads the behaviour store directly
   // — it imports no `store.ts` — and the host switches the view through `onStep`.
@@ -141,9 +127,7 @@ export function BehaviourReport({ checkId, stored, exists, onSelect, onStep }: B
   const renderBlock = (block: number, blockLines: readonly ReportLine[]): ReactNode => {
     if (checkId === 'reach') {
       const name = machineNameOf(blockLines);
-      const status = machineStatusOf(blockLines, walkOnlyKeys);
-      const machineLine = blockLines.find((l) => l.kind === 'machine');
-      const note = machineLine?.elementId != null ? walkOnlyByElement.get(machineLine.elementId) : undefined;
+      const status = machineStatusOf(blockLines);
       return (
         <div key={`block-${block}`} className="checks-report-machine" data-machine={name} data-status={status}>
           <div className="checks-report-machine-head">
@@ -154,24 +138,16 @@ export function BehaviourReport({ checkId, stored, exists, onSelect, onStep }: B
               </span>
             ))}
           </div>
-          {blockLines.map((l, i) => lineNode(l, walkOnlyKeys, exists, onSelect, `line-${i}`))}
-          {note !== undefined && (
-            <div className="checks-report-note" data-testid="checks-report-note">
-              {note}
-            </div>
-          )}
+          {blockLines.map((l, i) => lineNode(l, exists, onSelect, `line-${i}`))}
         </div>
       );
     }
-    // check-behaviour: one property block, with its claim word and demotion.
+    // check-behaviour: one property block, with its claim word.
     const first = blockLines[0];
     const claim = first !== undefined ? claimOf(first) : '';
-    const demoted = walkOnlyKeys.has(String(block));
-    const note = demoted ? walkOnlyRows[walkOnlyCursor++]?.message : undefined;
     const view = viewOf.get(block);
-    const steppable = view !== undefined && view.gap === null && view.machineId !== null;
-    const gapped = view !== undefined && view.gap !== null;
-    // The witness steps of a gap-free witness are buttons; the others stay text.
+    const steppable = view !== undefined && view.machineId !== null;
+    // The witness steps are buttons when the block has a drawable witness.
     const stepNode = (line: ReportLine, key: string): ReactNode => {
       if (steppable && view !== undefined) {
         return (
@@ -194,19 +170,18 @@ export function BehaviourReport({ checkId, stored, exists, onSelect, onStep }: B
           </div>
         );
       }
-      return lineNode(line, walkOnlyKeys, exists, onSelect, key);
+      return lineNode(line, exists, onSelect, key);
     };
     const current = witnessAt !== null && witnessAt.block === block && witnessAt.resultAt === stored.at ? witnessAt.step : 0;
     const prev = (): void => open(view!, Math.max(0, current - 1));
     const next = (): void => open(view!, Math.min(view!.steps.length - 1, current + 1));
     return (
-      <div key={`block-${block}`} className="checks-report-property" data-claim={claim} data-walk-only={demoted ? 'true' : undefined}>
+      <div key={`block-${block}`} className="checks-report-property" data-claim={claim}>
         <div className="checks-report-property-head">
           <span className="checks-report-chip">{claim.toUpperCase()}</span>
-          {demoted && <span className="checks-report-chip">NOT COUNTED — WALK ONLY</span>}
         </div>
         {blockLines.map((l, i) =>
-          l.kind === 'witness-step' ? stepNode(l, `line-${i}`) : lineNode(l, walkOnlyKeys, exists, onSelect, `line-${i}`),
+          l.kind === 'witness-step' ? stepNode(l, `line-${i}`) : lineNode(l, exists, onSelect, `line-${i}`),
         )}
         {steppable && view !== undefined && (
           <div className="checks-witness-controls">
@@ -219,12 +194,6 @@ export function BehaviourReport({ checkId, stored, exists, onSelect, onStep }: B
             <button type="button" className="checks-witness-close" data-testid="checks-witness-close" onClick={closeWitness}>
               Close
             </button>
-          </div>
-        )}
-        {gapped && <div className="checks-witness-gap">(walk only: not drawn on the diagram)</div>}
-        {demoted && note !== undefined && (
-          <div className="checks-report-note" data-testid="checks-report-note">
-            {note}
           </div>
         )}
       </div>
@@ -248,7 +217,7 @@ export function BehaviourReport({ checkId, stored, exists, onSelect, onStep }: B
       }
     } else {
       flush();
-      body.push(lineNode(line, walkOnlyKeys, exists, onSelect, `head-${body.length}`));
+      body.push(lineNode(line, exists, onSelect, `head-${body.length}`));
     }
   }
   flush();

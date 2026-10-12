@@ -24,13 +24,6 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       lane has none. Cost ≈ configurations × (|alphabet| + 1) × |region transitions| × stack depth:
       `stepCandidates` scans every region transition per configuration and input, and
       `check-behaviour` walks twice per property, so `maxConfigs` does not bound the time.
-- [ ] **Take no event where a completion transition is enabled or undetermined, or reword the
-      run warrant.** `reach` and `check-behaviour` walk every trigger at every configuration while
-      the machine's own semantics fires a completion transition before any event, so a `fail` or
-      `covered` witness, a `no way out`/`choice` row, or an undecided guard can claim a run the
-      profile forbids (`rc/a15`, `rc/a1`, `rev/r8`, the v9 SA `recallWhileTransiting` case, and
-      completion livelocks). Until the engine and the CLI agree, the app's `rtc-gap.ts` demotes the
-      unconfirmed rows to walk-only; delete that confirmation in the same change.
 - [ ] **Walk a `state def` nested inside a machine.** Its states are reported, and marked
       `unreachable`, in the outer machine's walk, and the nested definition is never walked itself
       (`stateMachinesIn` returns outermost owners). The guide says the marks refer to the outer

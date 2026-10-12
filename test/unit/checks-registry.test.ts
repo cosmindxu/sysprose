@@ -22,7 +22,6 @@ import { loadFullStandardLibrary } from '@library/full-library';
 import { loadCuratedLibrary } from '@library/standard-library';
 import { reachReport, stateMachinesIn } from '@semantics/mc/explore';
 import { behaviourReport, exitCodeOf, traceLine } from '@semantics/mc/patterns';
-import { confirmUnderRunToCompletion } from '@semantics/mc/rtc-gap';
 import {
   ELEMENT_REQUIRED_LEAD,
   NO_DEFAULT_MACHINE,
@@ -1141,8 +1140,7 @@ async function load(file: string): Promise<Model> {
 /** The reach result over a model, judged under a health (fails closed when absent). */
 const reachOf = (model: Model, health?: LoadHealth) => {
   const r = reachReport(model);
-  const confirmations = r.machines.map((m) => confirmUnderRunToCompletion(model, m));
-  return reachResult(r, model, { fileName: 'model.sysml', health, confirmations });
+  return reachResult(r, model, { fileName: 'model.sysml', health });
 };
 
 /** The check-behaviour result over one machine, judged under a health. */
@@ -1242,17 +1240,24 @@ describe('the reach verdict table', () => {
     expect(reachOf(model, healthy).verdict).toBe('issues');
   });
 
-  it('demotes the walk-only rows of `spurious` to undecided, flagged walk-only', () => {
+  it('reports `spurious`\u2019s unreachable states and dead transitions as findings (the walk is exact)', () => {
     const result = reachOf(inline(SPURIOUS), healthy);
-    expect(result.verdict).toBe('undecided');
-    expect(result.rows.filter((r) => r.code === 'checks/walk-only')).toHaveLength(1);
-    expect(result.rows.filter((r) => r.code.startsWith('verification/') && r.walkOnly)).toHaveLength(3);
+    expect(result.verdict).toBe('issues');
+    expect(result.rows.map((r) => r.code)).toEqual([
+      'verification/unreachable-state',
+      'verification/unreachable-state',
+      'verification/dead-transition',
+      'verification/dead-transition',
+    ]);
   });
 
-  it('demotes an undecided guard consulted only where a completion is due (guardTransient)', () => {
+  it('reports `guardTransient`\u2019s dead transition as a finding (the walk is exact)', () => {
     const result = reachOf(inline(GUARD_TRANSIENT), healthy);
-    expect(result.verdict).toBe('undecided');
-    expect(result.rows.filter((r) => r.code === 'verification/guard-undetermined' && r.walkOnly)).toHaveLength(1);
+    expect(result.verdict).toBe('issues');
+    expect(result.rows.map((r) => r.code)).toEqual([
+      'verification/unreachable-state',
+      'verification/dead-transition',
+    ]);
   });
 
   it('marks states under no walked machine (lonely) as not-walked', () => {
@@ -1277,8 +1282,7 @@ describe('the reach verdict table', () => {
   it('reads undecided when a bound stops the walk', async () => {
     const model = await load('examples/views-tour.sysml');
     const r = reachReport(model, { maxConfigs: 1 });
-    const confirmations = r.machines.map((m) => confirmUnderRunToCompletion(model, m));
-    const result = reachResult(r, model, { fileName: 'model.sysml', health: healthy, confirmations });
+    const result = reachResult(r, model, { fileName: 'model.sysml', health: healthy });
     expect(result.verdict).toBe('undecided');
   });
 
@@ -1343,16 +1347,20 @@ describe('the check-behaviour verdicts', () => {
     expect(behaviourOf(fail, failMachine.id, failMachine.name, degradedHealth()).verdict).toBe('undecided');
   });
 
-  it('does not count a witness that takes a run-to-completion gap (a15)', () => {
-    for (const [pattern, expectedExit] of [['cover', 0], ['absence', 1]] as const) {
-      const model = inline(a15(pattern));
-      const m = machine(model, 'P::M');
-      // The terminal still reports the witness and its exit; the page demotes it.
-      expect(behaviourReport(model, { machineId: m.id }).exitCode, pattern).toBe(expectedExit);
-      const result = behaviourOf(model, m.id, m.name, healthy);
-      expect(result.verdict, pattern).toBe('undecided');
-      expect(result.rows.filter((r) => r.code === 'checks/walk-only'), pattern).toHaveLength(1);
-    }
+  it('reads a15 by the exact walk: cover is not-covered, absence passes', () => {
+    const cover = inline(a15('cover'));
+    const cm = machine(cover, 'P::M');
+    // The exact walk never takes `e` while the completion `a_b` is due, so `c`
+    // is unreachable: `cover state c` is `not covered`, and no witness is drawn.
+    expect(behaviourReport(cover, { machineId: cm.id }).exitCode).toBe(2);
+    const coverResult = behaviourOf(cover, cm.id, cm.name, healthy);
+    expect(coverResult.verdict).toBe('undecided');
+    expect(coverResult.rows.filter((r) => r.code === 'checks/walk-only')).toHaveLength(0);
+
+    const absence = inline(a15('absence'));
+    const am = machine(absence, 'P::M');
+    expect(behaviourReport(absence, { machineId: am.id }).exitCode).toBe(0);
+    expect(behaviourOf(absence, am.id, am.name, healthy).verdict).toBe('holds');
   });
 
   it('holds when the completion guard is false (falseGuard)', () => {
@@ -1362,7 +1370,7 @@ describe('the check-behaviour verdicts', () => {
     expect(result.verdict).toBe('holds');
   });
 
-  it('applies the terminal\u2019s exit arithmetic before demotion', () => {
+  it('applies the terminal\u2019s exit arithmetic', () => {
     const fail = inline(mission('absence', 'state landed'));
     const fm = machine(fail, 'MissionDag::Mission::Modes');
     const b = behaviourReport(fail, { machineId: fm.id });
@@ -1436,8 +1444,7 @@ describe('the reach rows project the report\u2019s diagnostics one to one', () =
   it('marks every withheld leaf, unreached suppressed state, and unwalked state (I6)', () => {
     for (const { file, model } of corpus) {
       const r = reachReport(model);
-      const cs = r.machines.map((m) => confirmUnderRunToCompletion(model, m));
-      const { marks } = reachMarks(model, r, cs);
+      const { marks } = reachMarks(model, r);
       for (const m of r.machines) {
         const states = model
           .descendants(m.machine.id)
@@ -1706,7 +1713,7 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
     expect(onSelect).toHaveBeenCalledWith(firstClickable!.elementId);
   });
 
-  it('keeps a walk-only witness as plain text, with the gap note (a15)', () => {
+  it('renders a15 cover as not-covered, with no witness (the walk is exact)', () => {
     const model = inline(a15('cover'));
     const m = singleMachine(model);
     const result = runCheck(
@@ -1714,11 +1721,9 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
       ctx({ model, selectionId: m.id, selectionName: m.name, loadHealth: healthy }),
     );
     const { view } = mount('check-behaviour', result, model);
-    const steps = [...view.container.querySelectorAll('.checks-report-line[data-kind="witness-step"]')];
-    expect(steps.length).toBeGreaterThan(0);
-    for (const el of steps) expect(el.querySelector('button')).toBeNull();
-    expect(view.container.textContent).toContain('(walk only: not drawn on the diagram)');
-    expect(view.container.querySelector('[data-claim="covered"][data-walk-only="true"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-claim="not-covered"]')).not.toBeNull();
+    expect(view.container.querySelectorAll('.checks-report-line[data-kind="witness-step"]')).toHaveLength(0);
+    expect(view.container.textContent).not.toContain('walk only');
   });
 
   it('labels a reach machine by qualified name, with its status tokens and chips', () => {
@@ -1728,7 +1733,7 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
     const machine = view.container.querySelector('.checks-report-machine')!;
     expect(machine.getAttribute('data-machine')).toBe('P::M');
     expect(machine.getAttribute('data-status')!.split(' ')).toEqual(
-      expect.arrayContaining(['withheld', 'walk-only']),
+      expect.arrayContaining(['findings']),
     );
     expect(machine.getAttribute('data-status')).not.toContain('holds');
   });
@@ -1749,7 +1754,7 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
     }
   });
 
-  it('shows a demoted block\u2019s NOT COUNTED chip and note, never PASS', () => {
+  it('shows a not-covered block\u2019s chip, never PASS or holds (a15)', () => {
     const model = inline(a15('cover'));
     const m = singleMachine(model);
     const result = runCheck(
@@ -1757,26 +1762,20 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
       ctx({ model, selectionId: m.id, selectionName: m.name, loadHealth: healthy }),
     );
     const { view } = mount('check-behaviour', result, model);
-    const block = view.container.querySelector('[data-claim="covered"][data-walk-only="true"]')!;
-    expect(block.textContent).toContain('NOT COUNTED');
-    expect(block.querySelector('[data-testid="checks-report-note"]')).not.toBeNull();
-    expect(block.textContent).toContain('covered — witness trace');
+    const block = view.container.querySelector('[data-claim="not-covered"]')!;
+    expect(block.textContent).toContain('NOT-COVERED');
     for (const el of block.querySelectorAll('*')) {
       expect(el.textContent, 'no element reads PASS').not.toBe('PASS');
       expect(el.textContent, 'no element reads holds').not.toBe('holds');
     }
   });
 
-  it('flags the spurious no-way-out and choice lines walk-only', () => {
+  it('does not flag the spurious lines walk-only (the walk is exact)', () => {
     const model = inline(SPURIOUS);
     const result = runCheck(reachSpec, ctx({ model, loadHealth: healthy }));
     const { view } = mount('reach', result, model);
-    expect(
-      view.container.querySelectorAll('.checks-report-line[data-kind="no-way-out"][data-walk-only="true"]'),
-    ).toHaveLength(2);
-    expect(
-      view.container.querySelectorAll('.checks-report-line[data-kind="choice"][data-walk-only="true"]'),
-    ).toHaveLength(1);
+    expect(view.container.querySelectorAll('.checks-report-line[data-walk-only="true"]')).toHaveLength(0);
+    expect(view.container.querySelectorAll('.checks-report-line[data-kind="unreachable"]').length).toBeGreaterThan(0);
   });
 
   it('renders a state named <b>x</b> as text, never as markup (I11)', () => {
@@ -1791,8 +1790,7 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
 describe('the state-view marks and the status panel (D.5 step 5)', () => {
   const marksOf = (model: Model) => {
     const r = reachReport(model);
-    const cs = r.machines.map((m) => confirmUnderRunToCompletion(model, m));
-    return reachMarks(model, r, cs);
+    return reachMarks(model, r);
   };
   const mark = (marks: Record<string, ReachMark>, model: Model, qn: string): ReachMark => marks[idOf(model, qn)];
 
@@ -1821,12 +1819,12 @@ describe('the state-view marks and the status panel (D.5 step 5)', () => {
     expect(summary.trapWithheld).toBe(1);
   });
 
-  it('marks the spurious walk-only rows', () => {
+  it('marks the spurious unreachable states (the walk is exact)', () => {
     const model = inline(SPURIOUS);
     const { marks } = marksOf(model);
-    expect(mark(marks, model, 'P::M::a')).toBe('walk-only');
-    expect(mark(marks, model, 'P::M::c')).toBe('walk-only');
-    expect(mark(marks, model, 'P::M::d')).toBe('walk-only');
+    expect(mark(marks, model, 'P::M::c')).toBe('unreachable');
+    expect(mark(marks, model, 'P::M::d')).toBe('unreachable');
+    expect(marks[idOf(model, 'P::M::a')]).toBeUndefined();
   });
 
   it('marks the lonely not-walked states', () => {
@@ -1849,14 +1847,14 @@ describe('the state-view marks and the status panel (D.5 step 5)', () => {
     expect(marksStatusLine(marksOf(await load(`${FIX}/latch.sysml`)).summary, 0)).toContain(
       'trap answer withheld on 1 of 1',
     );
-    expect(marksStatusLine(marksOf(inline(SPURIOUS)).summary, 0)).toContain('3 walk only');
+    expect(marksStatusLine(marksOf(inline(SPURIOUS)).summary, 0)).toContain('2 unreachable');
     expect(marksStatusLine(marksOf(inline(LONELY)).summary, 0)).toContain('3 not walked');
   });
 
   it('expands to the full meaning, naming a row', async () => {
     const text = marksStatusText(marksOf(await load(`${FIX}/trap-probe.sysml`)).summary);
     expect(text).toContain('names a row');
-    // The walk-only clause explains the run-to-completion gap, only when it applies.
+    // The base sentence states the walk's run-to-completion rule.
     expect(marksStatusText(marksOf(inline(SPURIOUS)).summary)).toContain('run-to-completion');
   });
 
@@ -1924,14 +1922,13 @@ describe('the witness stepper (D.5 step 6)', () => {
     const m = machineOf(model);
     const b = behaviourReport(model, { machineId: m.id });
     const lines = behaviourLines(b, { name: 'model.sysml', machineName: m.name });
-    return { b, views: compactWitnesses(b, model, lines) };
+    return { b, views: compactWitnesses(b, lines) };
   };
 
-  it('compacts the missionFail witness to the CLI traceLine rows, no gap', () => {
+  it('compacts the missionFail witness to the CLI traceLine rows', () => {
     const model = inline(mission('absence', 'state landed'));
     const { b, views } = witnessViews(model);
     expect(views).toHaveLength(1);
-    expect(views[0].gap).toBeNull();
     expect(views[0].machineId).not.toBeNull();
     expect(views[0].steps).toHaveLength(3);
     expect(views[0].steps.map((s) => s.text)).toEqual(b.properties[0].witness.map((s) => traceLine(s)));
@@ -1941,15 +1938,13 @@ describe('the witness stepper (D.5 step 6)', () => {
     expect(views[0].steps[2].leafId).toBe(idOf(model, 'MissionDag::Mission::Modes::landed'));
   });
 
-  it('flags the a15 cover witness gap at step 1', () => {
+  it('compacts no witness for a15 cover (the walk is exact, so there is none)', () => {
     const model = inline(a15('cover'));
     const { views } = witnessViews(model);
-    expect(views).toHaveLength(1);
-    expect(views[0].gap).not.toBeNull();
-    expect(views[0].gap!.step).toBe(1);
+    expect(views).toHaveLength(0);
   });
 
-  it('renders a no-gap witness as step buttons with prev/next/close, and never selects', () => {
+  it('renders a witness as step buttons with prev/next/close, and never selects', () => {
     const model = inline(mission('absence', 'state landed'));
     const m = machineOf(model);
     const result = runCheck(

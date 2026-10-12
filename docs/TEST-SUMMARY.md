@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4445 total — 4445 passed, 0 failed, 0 skipped
+- **Tests:** 4434 total — 4434 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -122,9 +122,9 @@
 | test/unit/semantics.keywords.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 23 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 21 | 0 | 0 |
-| test/unit/semantics.mc.patterns.test.ts | 70 | 0 | 0 |
+| test/unit/semantics.mc.patterns.test.ts | 65 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 43 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 81 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 75 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 25 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 31 | 0 | 0 |
