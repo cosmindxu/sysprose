@@ -8,16 +8,20 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory } from '@core/index';
-import { scopeFor, evaluateFeatureValue, checkConstraints } from '../../src/semantics/index';
+import { scopeFor, evaluateFeatureValue, checkConstraints, instanceRollup, anchorFor } from '../../src/semantics/index';
 import { featureIdsFor, valueAtPath } from '../../src/semantics/evaluate-model';
 import { idScopeFor } from '../../src/semantics/relations';
 import {
   bindingCapOf,
+  bindingFrames,
   boundAboveSentence,
   boundHereSentence,
   boundPartnerSafe,
+  boundSourceIn,
+  classified,
   defaultGivesWay,
   hasUserBindings,
+  instancesOfDefinition,
   isBindingConnector,
   readsOtherwise,
   shadowedNamesOf,
@@ -1961,8 +1965,8 @@ describe('checkConstraints — a bound partner is read only where every instance
     const [load] = endsOf(m!, 'M2::Q');
     expect(boundPartnerSafe(m!, named(m!, 'M2::Q::p').id, 'load', load)).toBe(false);
     const checks = checkConstraints(m!);
-    // m2 is −40 in q: never the 9 Q's own p reads, whichever way the constraint is written.
-    expect([resultOf(checks, m!, 'M2::m2NegT'), resultOf(checks, m!, 'M2::m2PosF')]).toEqual(['unknown', 'unknown']);
+    // m2 is −40 in q, read per instance (F5): never the 9 Q's own p reads.
+    expect([resultOf(checks, m!, 'M2::m2NegT'), resultOf(checks, m!, 'M2::m2PosF')]).toEqual(['satisfied', 'violated']);
     // Nor is the binding a contradiction in q: its bound end states no value of its own.
     expect(checks.filter((c) => c.conflict === 'bind')).toEqual([]);
   });
@@ -1985,8 +1989,8 @@ describe('checkConstraints — a bound partner is read only where every instance
     const checks = checkConstraints(m!);
     const c = checks.find((x) => m!.qualifiedName(x.id) === 'M7F::Q::c')!;
     expect(c.result).toBe('satisfied');
-    // Read as Q's 1, `load <= 5.0` held in q2, where load is 50; and the binding read as a contradiction.
-    expect(c.instances!.map((i) => [i.context, i.result])).toEqual([['q2', 'unknown']]);
+    // Read per instance (F5): q2's load is its own L of 50, so `load <= 5.0` is violated there.
+    expect(c.instances!.map((i) => [i.context, i.result])).toEqual([['q2', 'violated']]);
     expect(checks.filter((x) => x.conflict === 'bind')).toEqual([]);
   });
 
@@ -2188,17 +2192,16 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect(checks.filter((c) => c.conflict === 'bind').map((c) => c.ownerId)).toEqual([named(m!, 'FanS::Q2').id]);
   });
 
-  it('says why a context a binding above reads otherwise is not read (the obligations sentence, M8)', async () => {
+  it('expands a shared usage into its generic row and one row per instance (M8, F7)', async () => {
     const { model: m } = await loadModelText(`package M8 {
       part def P { attribute load : ScalarValues::Real default = 3.0; constraint c { load <= 10.0 } }
       part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L; }
       part q : Q { attribute :>> K = 25.0; }
     }`);
-    const definitions = sharedDefinitions(m!);
     const c = checkConstraints(m!).find((x) => m!.qualifiedName(x.id) === 'M8::P::c')!;
-    const p = named(m!, 'M8::Q::p');
-    expect(c.instances!.map((i) => [m!.qualifiedName(i.contextId), i.result, i.detail])).toEqual([
-      ['M8::Q::p', 'unknown', `Could not evaluate: ${boundAboveSentence(definitions, p.id, named(m!, 'M8::q'))}`],
+    expect(c.instances!.map((i) => [m!.qualifiedName(i.contextId), i.result, i.instance, i.generic])).toEqual([
+      ['M8::Q::p', 'satisfied', undefined, true],
+      ['M8::Q::p', 'violated', 'M8::q::p', undefined],
     ]);
   });
 });
@@ -2335,11 +2338,10 @@ describe('checkConstraints — defaults a binding joins stand only as one consta
       const feasible = solveFeasible(m!);
       expect([feasible.feasible, feasible.decided], holder).toEqual([false, true]);
     }
-    // The check's sentence on a held default still says it is declared without one — a placeholder
-    // until the plan's F5 names the defaults that differ.
+    // F5 names the defaults that differ (A.9 `defaults-differ`), not "declared without one".
     const { model: r } = await loadModelText(R3A);
     expect(checkConstraints(r!).find((c) => r!.qualifiedName(c.id) === 'R3a::c1')!.message).toMatch(
-      /^Could not evaluate: a1\.v has no value: a1::v is declared without one and nothing specialises it/,
+      /^Could not evaluate: v has no value in R3a::a1: .*defaults that differ or are not constants/,
     );
   });
 });
@@ -2385,8 +2387,9 @@ describe('valueAtPath — a path has the value the relation reads it at', () => 
       constraint c { q.p.m2 <= 0.0 }
     }`);
     const c = named(m!, 'M2::c');
-    expect(checkConstraints(m!).find((x) => x.id === c.id)!.result).toBe('unknown');
-    expect(valueAtPath(m!, c, 'q.p.m2')).toBeUndefined();
+    // Read per instance (F5): q's p's m2 is −40, so `<= 0.0` holds.
+    expect(checkConstraints(m!).find((x) => x.id === c.id)!.result).toBe('satisfied');
+    expect(valueAtPath(m!, c, 'q.p.m2')).toBe(-40);
     expect(evaluateFeatureValue(m!, named(m!, 'M2::P::m2').id)).toEqual({ value: 9 });
   });
 
@@ -2403,5 +2406,261 @@ describe('valueAtPath — a path has the value the relation reads it at', () => 
     expect(valueAtPath(m!, c, 'p.free')).toBeUndefined();
     expect(valueAtPath(m!, c, 'p.nothing')).toBeUndefined();
     expect(valueAtPath(m!, c, 'nothing')).toBeUndefined();
+  });
+});
+
+/*
+ * THE INSTANCE INDEX (plan per-instance-check, step F3): the frames a binding
+ * holds in, the component each instance reads through, and the source of the
+ * value it gives there. F3 has no consumer, so these tests exercise the index
+ * itself: `boundSourceIn` on each A.3 case, the outermost-root component as the
+ * global union-find of what the connectors join, and every instance the full
+ * `denote` walk finds being in the frame enumeration (frames ⊇ denote).
+ */
+describe('the instance index — frames, components, and bound sources', () => {
+  const named = (m: Model, qualified: string) => m.all().find((e) => m.qualifiedName(e.id) === qualified)!;
+  const P = 'part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }';
+
+  it('finds the outermost frame root and the valued member a bound load reads (M2)', async () => {
+    const { model: m } = await loadModelText(`package M2 {
+      ${P}
+      part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> K = 25.0; }
+    }`);
+    const src = boundSourceIn(m!, 'M2::q::p::load');
+    expect(src && !('abstain' in src)).toBe(true);
+    if (!src || 'abstain' in src) return;
+    // The outermost root is the package, not q (whose own instance is a prefix too).
+    expect(m!.qualifiedName(src.root)).toBe('M2');
+    expect([...src.paths].sort()).toEqual(['q.L', 'q.p.load']);
+    // L states the value; p's load is a default the binding holds.
+    expect(src.via.source).toBe('q.L');
+    const cls = classified(m!, src.root, src.component);
+    expect(cls.valued).toEqual(['q.L']);
+    expect(cls.heldDefaults).toEqual(['q.p.load']);
+  });
+
+  it('reads one valued member, and abstains free / two-values / defaults-differ as A.3 does', async () => {
+    // A single valued member: the default carried into a valueless feature stands.
+    const { model: k } = await loadModelText(`package K {
+      attribute x : ScalarValues::Real default = 5.0;
+      attribute w : ScalarValues::Real;
+      bind w = x;
+    }`);
+    const carried = boundSourceIn(k!, 'K::w');
+    expect(carried && !('abstain' in carried) && carried.via.source).toBe('x');
+    // No value anywhere: free.
+    const { model: f } = await loadModelText(`package F {
+      attribute x : ScalarValues::Real;
+      attribute y : ScalarValues::Real;
+      bind x = y;
+    }`);
+    const free = boundSourceIn(f!, 'F::x');
+    expect(free && 'abstain' in free && free.abstain).toBe('free');
+    // Two stated values the binding joins: a contradiction the binding's own row reports.
+    const { model: t } = await loadModelText(`package T {
+      attribute a : ScalarValues::Real = 1.0;
+      attribute b : ScalarValues::Real = 2.0;
+      bind a = b;
+    }`);
+    const two = boundSourceIn(t!, 'T::a');
+    expect(two && 'abstain' in two && two.abstain).toBe('two-values');
+    // Two defaults that read a name and differ: defaults-differ.
+    const { model: r } = await loadModelText(`package R3a {
+      part def A { attribute K : ScalarValues::Real default = 1.0; attribute v : ScalarValues::Real default = 2.0 * K; }
+      part a1 : A;
+      part a2 : A { attribute :>> K = 5.0; }
+      bind a1.v = a2.v;
+    }`);
+    const differ = boundSourceIn(r!, 'R3a::a1::v');
+    expect(differ && 'abstain' in differ && differ.abstain).toBe('defaults-differ');
+    // A name no binding holds: nothing.
+    expect(boundSourceIn(r!, 'R3a::a1::K')).toBeUndefined();
+  });
+
+  it('reads the outermost frame root as the global union-find of what the connectors join', async () => {
+    const { model: m } = await loadModelText(`package U {
+      attribute a : ScalarValues::Real = 1.0;
+      attribute b : ScalarValues::Real;
+      attribute c : ScalarValues::Real;
+      bind a = b;
+      bind b = c;
+    }`);
+    // An independent global union-find over the connectors' ends.
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
+      let root = x;
+      while (parent.get(root) !== root) root = parent.get(root)!;
+      while (parent.get(x) !== root) {
+        const next = parent.get(x)!;
+        parent.set(x, root);
+        x = next;
+      }
+      return root;
+    };
+    const connectors = m!.all().filter((e) => isBindingConnector(e) && e.attrs.isLibrary !== true);
+    for (const e of connectors) {
+      for (const id of [e.source?.[0], e.target?.[0]]) if (id !== undefined) parent.set(id, id);
+    }
+    for (const e of connectors) {
+      const [a, b] = [e.source![0]!, e.target![0]!];
+      const [ra, rb] = [find(a), find(b)];
+      if (ra !== rb) parent.set(ra, rb);
+    }
+    const bId = named(m!, 'U::b').id;
+    const unionClass = [...new Set(parent.keys())]
+      .filter((id) => find(id) === find(bId))
+      .map((id) => m!.get(id)!.declaredName)
+      .sort();
+    // The component at the outermost root holds exactly that class.
+    const src = boundSourceIn(m!, 'U::b');
+    expect(src && !('abstain' in src)).toBe(true);
+    if (!src || 'abstain' in src) return;
+    expect([...src.paths].sort()).toEqual(unionClass);
+  });
+
+  it('enumerates every instance the full denote walk finds: frames cover denote', async () => {
+    const { model: m } = await loadModelText(`package N {
+      ${P}
+      part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> K = 25.0; }
+      part r : Q;
+      part def R { part qq : Q; part pp : P; }
+      part s : R;
+    }`);
+    const definitions = sharedDefinitions(m!);
+    const D = named(m!, 'N::P');
+    // The frame enumeration alone.
+    const frameInstances = new Set<string>();
+    const { frames } = bindingFrames(definitions, D);
+    for (const { root, prefix } of frames) {
+      if (prefix === '') {
+        frameInstances.add(definitions.instanceNameOf(root.id));
+        continue;
+      }
+      const d = definitions.denote(root.id).get(prefix);
+      if (d) frameInstances.add(definitions.instanceNameOf(d.feature.id));
+    }
+    // The generic instance and the two direct usages of P reach every frame.
+    expect(frameInstances.has('N::P')).toBe(true);
+    expect(frameInstances.has('N::Q::p')).toBe(true);
+    expect(frameInstances.has('N::R::pp')).toBe(true);
+    // Every instance the full denote walk over every user package finds is in the frames.
+    for (const pkg of m!.all().filter((e) => e.eClass === 'Package' && e.attrs.isLibrary !== true)) {
+      for (const d of definitions.denote(pkg.id).values()) {
+        if (d.feature.id === D.id || definitions.specialisersOf(D.id).some((s) => s.id === d.feature.id)) {
+          expect(frameInstances.has(definitions.instanceNameOf(d.feature.id)), definitions.instanceNameOf(d.feature.id)).toBe(true);
+        }
+      }
+    }
+    // The full index (frames ∪ denote) agrees, deduplicated, generic first.
+    const all = instancesOfDefinition(definitions, D);
+    expect(all[0]).toBe('N::P');
+    expect(new Set(all).size).toBe(all.length);
+  });
+});
+
+describe('instanceRollup — the reporting formatter (F4)', () => {
+  const m = parseModel(`package R {
+    part def P { attribute load : ScalarValues::Real; constraint c { load <= 10.0 } }
+    part q : P;
+    part p2 : P;
+  }`).model;
+  const rel = m.all().find((e) => m.qualifiedName(e.id) === 'R::P::c')!;
+
+  const groupRow = (
+    i: number,
+    result: 'satisfied' | 'violated' | 'unknown',
+    generic = false,
+  ) => ({
+    contextId: rel.id,
+    context: 'R::q',
+    featureId: rel.id,
+    qualifiedName: 'R::P::c',
+    result,
+    bindings: [] as unknown[],
+    message: '',
+    ...(generic ? { generic: true as const } : { instance: `R::q${i}` }),
+  });
+
+  const check = (instances: unknown[]): ConstraintCheck => ({
+    id: rel.id,
+    ownerId: rel.ownerId,
+    expression: 'load <= 10.0',
+    result: 'unknown',
+    message: '',
+    instances: instances as ConstraintCheck['instances'],
+  });
+
+  it('counts a group, caps violated findings at five, and warns only when one is violated', () => {
+    const rows = instanceRollup(
+      m,
+      check([
+        groupRow(0, 'satisfied', true),
+        groupRow(1, 'violated'),
+        groupRow(2, 'violated'),
+        groupRow(3, 'violated'),
+        groupRow(4, 'violated'),
+        groupRow(5, 'violated'),
+        groupRow(6, 'violated'),
+        groupRow(7, 'satisfied'),
+      ]),
+    );
+    const rollup = rows.find((r) => r.instances);
+    expect(rollup).toBeDefined();
+    expect(rollup!.instances).toMatchObject({ total: 8, generic: 1, satisfied: 2, violated: 6, unknown: 0, unread: 0 });
+    expect(rollup!.severity).toBe('warning');
+    // At most five violated-instance findings, in instance order.
+    const violated = rows.filter((r) => r.instance !== undefined);
+    expect(violated.map((r) => r.instance)).toEqual(['R::q1', 'R::q2', 'R::q3', 'R::q4', 'R::q5']);
+  });
+
+  it('is info when every instance holds, and never says "all" when some are unread', () => {
+    const clean = instanceRollup(m, check([groupRow(0, 'satisfied', true), groupRow(1, 'satisfied')]));
+    expect(clean.find((r) => r.instances)!.severity).toBe('info');
+    const unread = instanceRollup(
+      m,
+      check([
+        groupRow(0, 'satisfied', true),
+        groupRow(1, 'satisfied'),
+        { ...groupRow(2, 'unknown'), abstention: 'past-cap' as const },
+      ]),
+    );
+    const rollup = unread.find((r) => r.instances)!;
+    expect(rollup.instances!.unread).toBe(1);
+    expect(rollup.message).not.toMatch(/\ball\b/i);
+  });
+});
+
+describe('anchorFor — the anchor rule (F4)', () => {
+  const m = parseModel(`package A {
+    part def P { attribute load : ScalarValues::Real; constraint c { load <= 10.0 } }
+    part q : P;
+  }`).model;
+  const rel = m.all().find((e) => m.qualifiedName(e.id) === 'A::P::c')!;
+  const q = m.all().find((e) => m.qualifiedName(e.id) === 'A::q')!;
+  const check: ConstraintCheck = {
+    id: rel.id,
+    ownerId: rel.ownerId,
+    expression: 'load <= 10.0',
+    result: 'unknown',
+    message: '',
+  };
+  const inst = (featureId: string, contextId: string) => ({
+    contextId,
+    context: 'A::q',
+    featureId,
+    qualifiedName: 'A::P::c',
+    result: 'violated' as const,
+    bindings: [],
+    message: '',
+  });
+
+  it('keeps a user, non-implicit feature and falls back off an implicit one', () => {
+    expect(anchorFor(m, check, inst(rel.id, q.id))).toBe(rel.id);
+    // A missing (implicit) feature re-anchors to the context's user usage.
+    expect(anchorFor(m, check, inst('missing', q.id))).toBe(q.id);
+    // Nothing at all: the relation itself.
+    expect(anchorFor(m, check, inst('missing', 'missing'))).toBe(rel.id);
   });
 });

@@ -431,8 +431,19 @@ const CODES = [
     code: 'validation/target-by-specialisation',
     source: 'validation',
     severity: 'warning',
-    when: 'A target written over a measure that has no value where it is stated (`Common::m >= 0.9`) is read through a feature that subsets or redefines the measure in another context (`LA::m :> Common::m`): one finding per context, at that feature — a warning when its value misses the target, info when it meets it or cannot be read.',
+    when: 'A target written over a measure that has no value where it is stated (`Common::m >= 0.9`) is read through a feature that subsets or redefines the measure in another context (`LA::m :> Common::m`): one finding per context, at that feature — a warning when its value misses the target, info when it meets it or cannot be read; past twenty contexts of one relation, one finding per verdict and cause, at the first context\'s feature, counting the rest.',
     hint: 'A miss is a fact about the estimate, not a fault in the model: change the design if the target must be met, not the number to meet it. An info that could not be read names why — a context with two features that specialise the measure, a body that names a measure the context does not specialise, or a specialiser with no value and no asserted equation (the same equation `require`d, or as a plain `constraint`, is a check of a value given elsewhere, not a definition).',
+  },
+  {
+    // The 27th rule (R2-S2), and its own code: a binding overrides a
+    // definition's default in its context, so a per-instance violation is a
+    // fact about the instance the finding points at, never a contradiction the
+    // `constraint-violation` warning would gate on.
+    code: 'validation/constraint-by-instance',
+    source: 'validation',
+    severity: 'warning',
+    when: 'A relation whose reading a binding makes differ between instances — a definition\u2019s constraint read in a usage several instances share (P\u2019s `load <= 10.0` in `Q::p`, read for Q\u2019s own p and for q\u2019s p), one written in such a usage, or one read in a context whose value reaches it through a binding — read once per instance: one finding per relation and usage counting the instances it holds in, is violated in and could not be read in (a warning when any is violated), and one warning per violated instance, at most five, at the value that makes that instance differ.',
+    hint: 'Change the value the binding carries into the named instance (the line the finding points at), or the relation — not the definition\u2019s default, which a binding overrides in its context. Counts are in `instances`; an instance finding names its `instance` and `relation`. One that could not be read says why: no bound feature has a value, defaults differ, an enclosing assert constrains it, or more instances than the tool reads.',
   },
   {
     code: 'validation/dimensional-consistency',

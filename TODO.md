@@ -241,3 +241,52 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
       in four loads of the same file, so tutorial stills that show a tied element's rank differ
       from one recording to the next. Give tied scores the best rank they share (competition
       ranking), or show *tied*, or break the tie by qualified name, which a load does not change.
+
+## Per-instance readings — follow-ups and known-false rows
+
+Opened by the per-instance readings feature (ROADMAP item removed at step F9). The seven follow-ups
+below are the abstaining shapes and refinements the plan deliberately left for later (H5, H6b, I, A.3);
+the three after them are rows the F1/F2 reviews found false on some surface with no plan step to fix
+them.
+
+- [ ] **Read a value an enclosing assert constrains.** When a per-instance read reaches an instance
+      under an enclosing assert, the check abstains with the `enclosing-assert` cause rather than
+      reading the value there (`enclosingAssertOn`). Deciding it needs the default-vs-assert
+      semantics settled first (H5); until then the abstention is sound but weaker than it could be.
+- [ ] **Read a package-level or definition-feature binding.** A `bind` written at package level or
+      between two definition features (probe `w4`) is left unread per instance — every surface
+      abstains — so the value it carries never decides a row; the connector is outside the
+      per-instance frame walk (H5).
+- [ ] **Read `h2p0` and `h2c0`.** The two per-instance probes that have no binding to read still
+      abstain: with no user binding in the frame, the fallback has nothing to read. The classes D/E
+      shapes (`b4c`, `n4`–`n6`, `s2-usage-assert-leak`) abstain for the same reason (H5).
+- [ ] **Refine the frame cap per binding.** Past 4,096 frames for a binding, or a frame dropped past
+      32 path segments, `partial` is set and every bound read in the model abstains (`past-cap`) —
+      coarse but sound. Narrow the flag to the bindings actually past the cap, so a model with one
+      deep binding does not abstain elsewhere (A.3, E).
+- [ ] **Give per-instance evidence a schema of its own (`sysprose-evidence/2`).** A facet that takes
+      the minimum over instances (H4) cannot be recorded under `sysprose-evidence/1`; today such a
+      record is skipped with a true reason (`attachEvidence`). A second schema would let it be kept.
+- [ ] **Split the Problems tab label (H6b).** The Problems view lists the Check and the Solve rows
+      together under one label; naming the producer a row came from was deferred, so the tab label is
+      unchanged (H6b).
+- [ ] **Name the own row of a usage-owned relation by its instance.** A relation owned by a usage
+      (`R17c` `Q::p::c2`) keeps the relation's own name, while a shared usage's generic row is renamed
+      `… ({D}'s own)`. Renaming the own row too would rename verify rows and evidence records on models
+      this feature does not touch (R1-S6, declined in I).
+- [ ] **Correct the held-redefinition defect (`held-redef`, `held-redef-derived`,
+      `held-redef-spec`).** A bound partner's default restated in a redefinition at the same value as
+      the partner definition's own is held, yet `boundPartnerSafe` reads it as alike and reads `p.b`
+      at `P::b` over `P::a`'s default, although the binding gives `a` another value in every instance.
+      A held redefinition's fall-through to the redefined feature's default must count as unsafe;
+      found by F2's review, pinned in `KNOWN_FALSE` with no plan step yet.
+- [ ] **Correct the implicit-end-copy `endValue` defect (FanS2's `#bind`, `G340`, `assert-min`).**
+      `endValue` checks `defines(f.ownerId, name)` on the implicit end copy's owner, so an assert
+      inherited from a general definition is missed, P's default stands beside the binding, and the
+      binding is filed as a contradiction (`G340::«BindingConnectorAsUsage»#bind`,
+      `FanS2::QB::«BindingConnectorAsUsage» in FanS2::Q2#bind`). `heldDefaults` must see an asserted
+      definition through the copy's redefinition closure; found by F1's review, no plan step yet.
+- [ ] **Read a binding through a reference feature (`ref-W9`).** A binding to `r.L` where `r` is a
+      reference feature (`ref part :>> r = r1`) is read by the numeric surface and the SMT engine at
+      R's own `L` of 1 rather than r1's 50, so those two surfaces decide a row the check and the
+      literal engine abstain on; outside the plan's surfaces, no step takes it on.

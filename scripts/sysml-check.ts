@@ -89,6 +89,12 @@ function renderText(report: CheckReport): string {
   for (const d of report.diagnostics) {
     const at = d.range ? `${d.range.start.line}:${d.range.start.column}` : '-';
     lines.push(`${name}:${at}: ${d.severity} ${d.code ?? d.ruleId}  ${d.message}`);
+    if (d.instances) {
+      const { total, satisfied, violated, unknown, unread, listed } = d.instances;
+      lines.push(
+        `    instances: ${total} (${satisfied} hold \u00b7 ${violated} violated \u00b7 ${unknown} unknown \u00b7 ${unread} unread); listed: ${listed.join(', ')}`,
+      );
+    }
     if (d.expected && d.expected.length > 0) {
       lines.push(`    expected: ${d.expected.join(' | ')}${d.found ? `   found: ${d.found}` : ''}`);
     }

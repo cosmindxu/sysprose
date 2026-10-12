@@ -64,10 +64,15 @@ export {
   scopeFor,
   evaluateFeatureValue,
   checkConstraints,
+  instanceRollup,
+  anchorFor,
   type Scope,
   type ConstraintCheck,
   type SpecialisationInstance,
   type SpecialisationBinding,
+  type InstanceRead,
+  type InstanceCounts,
+  type InstanceRollupRow,
 } from './evaluate-model';
 export {
   runActionFlow,

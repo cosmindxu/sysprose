@@ -2357,6 +2357,16 @@ export interface AnalysisViolation {
    * the raw magnitudes the model declares.
    */
   unit?: string;
+  /**
+   * Set on a definition's relation read in a context or instance of its own
+   * (`NumericConstraintResult.context`): the relation (`baseId`) and the
+   * context it was read in — `path` the instance path a group row reads
+   * through, else `contextId` the context. The app's Solve rows word such a
+   * row `… in {path or context}`, never "(at the boundary)".
+   */
+  context?: { baseId: ElementId; contextId?: ElementId; path?: string };
+  /** The element the anchor rule re-anchored the row to, when it did. */
+  anchorId?: ElementId;
 }
 
 /**
@@ -2371,6 +2381,10 @@ export interface AnalysisUnknown {
   expression: string;
   /** Why it could not be judged, in the author's terms. */
   reason?: string;
+  /** As on {@link AnalysisViolation.context}: a context/instance reading. */
+  context?: { baseId: ElementId; contextId?: ElementId; path?: string };
+  /** The element the anchor rule re-anchored the row to, when it did. */
+  anchorId?: ElementId;
 }
 
 export interface AnalysisReport {
@@ -2439,6 +2453,8 @@ export function analysisReport(model: Model): AnalysisReport {
         expression: c.raw,
         amount: c.amount,
         ...(c.slackUnit ? { unit: c.slackUnit } : {}),
+        ...(c.context ? { context: c.context } : {}),
+        ...(c.anchorId !== undefined ? { anchorId: c.anchorId } : {}),
       });
     } else if (c.result === 'unknown') {
       unknowns.push({
@@ -2446,6 +2462,8 @@ export function analysisReport(model: Model): AnalysisReport {
         kind: c.kind,
         expression: c.raw,
         ...(c.reason ? { reason: c.reason } : {}),
+        ...(c.context ? { context: c.context } : {}),
+        ...(c.anchorId !== undefined ? { anchorId: c.anchorId } : {}),
       });
     }
   }
@@ -2483,16 +2501,23 @@ export function analysisReport(model: Model): AnalysisReport {
  * context, the relation, named `<relation> in <context>`; for a value the model
  * states twice, the feature, named in the context it is stated twice in.
  */
-function numericRef(model: Model, c: { id: ElementId; context?: { baseId: ElementId; contextId: ElementId } }): ElementRef {
+function numericRef(
+  model: Model,
+  c: { id: ElementId; context?: { baseId: ElementId; contextId?: ElementId; path?: string } },
+): ElementRef {
   const el = model.get(c.id);
   if (el) return ref(model, el);
-  const [baseId, contextId] = c.context ? [c.context.baseId, c.context.contextId] : c.id.split('@');
+  const [splitBase, splitContext] = c.id.split('@');
+  const baseId = c.context?.baseId ?? splitBase;
+  const contextId = c.context?.contextId ?? splitContext;
+  const path = c.context?.path;
   const base = baseId !== undefined ? model.get(baseId) : undefined;
-  if (!base || contextId === undefined) return { id: c.id, eClass: '«unknown»', qualifiedName: '' };
+  const label = path ?? (contextId !== undefined ? effectiveQualifiedName(model, contextId) : undefined);
+  if (!base || label === undefined) return { id: c.id, eClass: '«unknown»', qualifiedName: '' };
   return {
     ...ref(model, base),
     id: c.id,
-    qualifiedName: `${effectiveQualifiedName(model, base.id)} in ${effectiveQualifiedName(model, contextId)}`,
+    qualifiedName: `${effectiveQualifiedName(model, base.id)} in ${label}`,
   };
 }
 

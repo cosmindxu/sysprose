@@ -14,6 +14,7 @@
  */
 
 import type { Model } from '@core/index';
+import type { InstanceCounts } from '@semantics/evaluate-model';
 
 /** Diagnostic severities, ordered most→least severe for sorting. */
 export type Severity = 'error' | 'warning' | 'info';
@@ -88,6 +89,15 @@ export interface Diagnostic {
   hint?: string;
   /** Producing stage. */
   source?: DiagnosticSource;
+
+  /* ── per-instance findings (see C.2/C.3 and DIAGNOSTIC-CODES.md) ── */
+
+  /** On a roll-up finding: how the relation's instances split, with the first few violated paths. */
+  instances?: InstanceCounts & { listed: string[] };
+  /** On a single-instance finding: the instance it names. */
+  instance?: string;
+  /** The relation a per-instance finding is about (its qualified name). */
+  relation?: string;
 }
 
 /**

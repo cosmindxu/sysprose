@@ -71,13 +71,21 @@ that uses it is in [\`AGENT-AUTHORING-CAMPAIGN.md\`](AGENT-AUTHORING-CAMPAIGN.md
   "found": "def",                      // what was written instead
   "hint": "Expected \`}\` here, found \`def\`. …",
   "elementId": "…",                    // validation findings: the offending element
-  "elementName": "Vehicle"
+  "elementName": "Vehicle",
+  "instances": {                       // per-instance roll-up findings: the counts
+    "total": 12, "generic": 1, "satisfied": 10, "violated": 1, "unknown": 0, "unread": 0,
+    "listed": ["H2P::q::p"]
+  },
+  "instance": "H2P::q::p",             // a single-instance finding names its instance
+  "relation": "H2P::P::c"              // and the relation it is about
 }
 \`\`\`
 
 \`range\` is present on every finding derived from the source text. \`elementId\`
 and \`elementName\` appear on validation findings. \`expected\`/\`found\` appear on
-lexer and parser errors.
+lexer and parser errors. \`instances\`, \`instance\` and \`relation\` appear on
+per-instance findings: a roll-up carries the counts in \`instances\`, and a
+finding about one instance names it in \`instance\`.
 
 ## Severity means
 

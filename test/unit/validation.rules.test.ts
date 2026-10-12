@@ -24,8 +24,8 @@ function runRule(model: Model, ruleId: string) {
 }
 
 describe('validation registry', () => {
-  it('exposes all 26 documented rules with unique ids', () => {
-    expect(RULES.length).toBe(26);
+  it('exposes all 27 documented rules with unique ids', () => {
+    expect(RULES.length).toBe(27);
     expect(new Set(RULE_IDS).size).toBe(RULES.length);
   });
 
@@ -1442,5 +1442,57 @@ describe('validation — target-by-specialisation', () => {
     expect(ours.map((d) => d.severity)).toEqual(['warning', 'info']);
     // Anchored at the estimate's line, not the target's.
     expect(ours.map((d) => d.range?.start.line)).toEqual([9, 13]);
+  });
+
+  it('re-anchors a context row sitting on an implicit specialiser (H6a)', () => {
+    const m = parsed(`package H2P {
+      part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute m2 : ScalarValues::Real = 10.0 - load;
+        constraint c { load <= 10.0 }
+      }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q : Q { attribute :>> L = 50.0; }
+    }`);
+    const diags = runRule(m, 'target-by-specialisation');
+    expect(diags.length).toBeGreaterThan(0);
+    for (const d of diags) {
+      expect(d.elementId, d.message).toBeDefined();
+      expect(m.get(d.elementId!)?.attrs.implicit, d.message).not.toBe(true);
+    }
+  });
+
+  it('folds more than 20 contexts of one relation into one finding per result', () => {
+    const pkgs = Array.from({ length: 25 }, (_, i) => `package P${i} { attribute m :> Common::m = ${((i % 8) + 1) / 10}; }`).join('\n');
+    const m = parsed(`package Common { attribute m : Real; constraint t { m >= 0.9 } }\n${pkgs}`);
+    const diags = runRule(m, 'target-by-specialisation');
+    // One folded finding per result — every P<i> misses (0.x < 0.9), so one warning.
+    expect(diags).toHaveLength(1);
+    expect(diags[0]!.severity).toBe('warning');
+    expect(diags[0]!.message).toMatch(/25 of 25 contexts miss the target/);
+    expect(diags[0]!.message).toMatch(/P0/);
+  });
+});
+
+describe('validation — constraint-by-instance (the 27th rule)', () => {
+  const parsed = (src: string): Model => parseModel(src).model;
+
+  it('is registered with its own id and code suffix', () => {
+    expect(RULES_BY_ID.has('constraint-by-instance')).toBe(true);
+    expect(RULES.map((r) => r.id)).toContain('constraint-by-instance');
+    expect(RULES.findIndex((r) => r.id === 'target-by-specialisation')).toBeLessThan(
+      RULES.findIndex((r) => r.id === 'constraint-by-instance'),
+    );
+  });
+
+  it('takes the sweep constraint-violation swept, after target-by-specialisation', () => {
+    const m = parsed(BRIEF_TARGETS);
+    const own = runRule(m, 'constraint-violation');
+    const bySpec = runRule(m, 'target-by-specialisation');
+    const byInstance = runRule(m, 'constraint-by-instance');
+    expect(own.length).toBeGreaterThan(0);
+    expect(bySpec.length).toBeGreaterThan(0);
+    // F4: no reading carries `via` or `instance` yet, so the 27th rule is quiet.
+    expect(byInstance).toEqual([]);
   });
 });

@@ -292,7 +292,8 @@ function judgeOne(
 ): LiteralJudgement {
   const premises = (row.requirement ? premisesByRequirement.get(row.requirement.id) : undefined) ?? [];
   const readings = premises.map((p) => readPremise(p, checks));
-  const bindings = modelBindings(model, row);
+  const check = checks.get(row.element.id);
+  const bindings = modelBindings(model, row, check);
   const base = { premises: readings, bindings };
 
   if (row.status === 'no-formal-clause') {
@@ -329,7 +330,6 @@ function judgeOne(
     };
   }
 
-  const check = checks.get(row.element.id);
   const detailed =
     row.node !== null ? quantities(model, row, memo) : {};
 
@@ -421,7 +421,11 @@ function quantities(
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
   const el = rowElement(model, row);
   if (!el) return {};
-  const q = evaluateConstraintQuantityDetailed(model, el, { memo });
+  const q = evaluateConstraintQuantityDetailed(model, el, {
+    memo,
+    instances: true,
+    ...(row.instance?.path !== undefined ? { instance: row.instance.path } : {}),
+  });
   return {
     ...(q.lhsSI !== undefined ? { lhsSI: q.lhsSI } : {}),
     ...(q.rhsSI !== undefined ? { rhsSI: q.rhsSI } : {}),
@@ -453,19 +457,21 @@ function quantities(
  * model's own values, and a record that showed a solver's rendering of them
  * instead would be a different artefact for the same fact.
  */
-export function modelBindings(model: Model, row: Obligation): ValueBinding[] {
+export function modelBindings(model: Model, row: Obligation, check?: ConstraintCheck): ValueBinding[] {
   const out: ValueBinding[] = [];
   const el = rowElement(model, row);
   for (const v of row.vars) {
     // A path read through an instance of its own (`q.m2`, ContractVariable.instance) is THAT instance's
-    // value, read where the relation reads it: the feature's own value is the definition's (9 beside the
-    // −40 the row compared). Every other path is its feature's, the same wherever it is read.
+    // value, read where the relation reads it — the check's own reading (`check.reads`, F5), else the
+    // feature's own value is the definition's (9 beside the −40 the row compared). Every other path is
+    // its feature's, the same wherever it is read.
     let raw: unknown = null;
     if (!v.instance) {
       const r = evaluateFeatureValue(model, v.featureId);
       raw = 'value' in r ? r.value : null;
-    } else if (el) {
-      raw = valueAtPath(model, el, v.path);
+    } else {
+      const read = check?.reads?.find((x) => x.path === v.path);
+      raw = read !== undefined && read.value !== undefined ? read.value : el ? valueAtPath(model, el, v.path) : null;
     }
     out.push({
       path: v.path,

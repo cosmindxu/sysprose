@@ -36,6 +36,9 @@ import {
   valueConformsToType,
   isWritableNoteBody,
   NOTE_BODY_TERMINATOR,
+  anchorFor,
+  instanceRollup,
+  type SpecialisationInstance,
 } from '../semantics/index';
 import { dimEqual, dimToString } from '../semantics/units';
 import {
@@ -1020,8 +1023,93 @@ const targetBySpecialisation: ValidationRule = {
       const el = model.get(check.id);
       if (!el || isLibraryElement(el)) continue;
       if (isNonNormativeStatement(model, el.id)) continue;
-      for (const inst of check.instances) {
-        out.push(mk(inst.message, inst.featureId, inst.result === 'violated' ? 'warning' : 'info'));
+      // Only the non-binding context rows: a reading that met a binding (`via`)
+      // or an expanded group row (`instance`) is constraint-by-instance's.
+      const rows = check.instances.filter((i) => i.via !== true && i.instance === undefined);
+      if (rows.length === 0) continue;
+      if (rows.length <= TARGET_CONTEXT_FOLD) {
+        for (const inst of rows) {
+          out.push(mk(inst.message, anchorFor(model, check, inst), inst.result === 'violated' ? 'warning' : 'info'));
+        }
+      } else {
+        out.push(...foldTargetRows(model, check, rows));
+      }
+    }
+    return out;
+  },
+};
+
+/** Past this many non-binding context rows of one relation, they fold into one finding per result. */
+const TARGET_CONTEXT_FOLD = 20;
+
+/** The source order of an element — its index in the model's parse-order walk. */
+function sourceOrder(model: Model): Map<ElementId, number> {
+  const order = new Map<ElementId, number>();
+  let i = 0;
+  for (const el of model.all()) order.set(el.id, i++);
+  return order;
+}
+
+/** One `target-by-specialisation` finding per result, counting the rest (C.2). */
+function foldTargetRows(model: Model, check: ReturnType<typeof checkConstraints>[number], rows: readonly SpecialisationInstance[]): Diagnostic[] {
+  const mk = diagBuilder('target-by-specialisation', 'warning');
+  const order = sourceOrder(model);
+  const byResult = new Map<'satisfied' | 'violated' | 'unknown', SpecialisationInstance[]>();
+  for (const r of rows) {
+    const list = byResult.get(r.result);
+    if (list) list.push(r);
+    else byResult.set(r.result, [r]);
+  }
+  const out: Diagnostic[] = [];
+  for (const [result, group] of byResult) {
+    const first = group.reduce((a, b) => ((order.get(a.featureId) ?? Infinity) <= (order.get(b.featureId) ?? Infinity) ? a : b));
+    const listed = group.slice(0, 5).map((i) => i.context);
+    const word = result === 'violated' ? 'miss the target' : result === 'satisfied' ? 'meet the target' : 'could not be read';
+    const more = group.length > 5 ? `, \u2026 and ${group.length - 5} more` : '';
+    out.push(
+      mk(
+        `${check.expression}: ${group.length} of ${rows.length} contexts ${word} (${listed.join(', ')}${more})`,
+        anchorFor(model, check, first),
+        result === 'violated' ? 'warning' : 'info',
+      ),
+    );
+  }
+  return out;
+}
+
+/**
+ * (15c) A relation a binding reads differently per instance — read once per
+ * instance through the 27th rule, `validation/constraint-by-instance` (R2-S2).
+ *
+ * Element-context rows that met a binding (`via`, F5: h2c `Q::c in q`, M7
+ * `Q::c in q2`) are one finding each, in the pipeline's own words. An expanded
+ * group (F7: h2p, S1, big-bind) is one roll-up finding — a warning when any
+ * instance is violated, else info — plus at most five violated-instance
+ * findings, in instance order, at the value that makes each differ. Satisfied
+ * instances are counted, never listed, so thousands of instance paths stay one
+ * short list. It is its own rule, not a `constraint-violation` warning, because
+ * a binding overrides a definition's default in its context: the violation is a
+ * fact about the instance the line points at, not a contradiction in the
+ * definition. The `#prose` / `#prompt` exemption is the same as that rule's.
+ */
+const constraintByInstance: ValidationRule = {
+  id: 'constraint-by-instance',
+  description: 'A relation a binding reads differently per instance, read once per instance.',
+  severity: 'warning',
+  run(model) {
+    const mk = diagBuilder(this.id, this.severity);
+    const out: Diagnostic[] = [];
+    for (const check of takeSweep(model)) {
+      const el = model.get(check.id);
+      if (!el || isLibraryElement(el)) continue;
+      if (isNonNormativeStatement(model, el.id)) continue;
+      for (const row of instanceRollup(model, check)) {
+        out.push({
+          ...mk(row.message, row.elementId, row.severity),
+          ...(row.instances ? { instances: row.instances } : {}),
+          ...(row.instance !== undefined ? { instance: row.instance } : {}),
+          ...(row.relation !== undefined ? { relation: row.relation } : {}),
+        });
       }
     }
     return out;
@@ -1029,24 +1117,30 @@ const targetBySpecialisation: ValidationRule = {
 };
 
 /**
- * One {@link checkConstraints} sweep for the two rules that read it. The UI
- * validates on every edit, so `target-by-specialisation` (which runs right
- * after `constraint-violation`) TAKES the sweep the first rule left rather
- * than walking every constraint and every specialiser again. Taken, not
- * shared: an entry is used once and only at the revision it was made at, so a
- * later run never reads a sweep of a model that has moved on.
+ * One {@link checkConstraints} sweep for the three rules that read it. The UI
+ * validates on every edit, so `target-by-specialisation` and
+ * `constraint-by-instance` (which run right after `constraint-violation`) TAKE
+ * the sweep the first rule left rather than walking every constraint and every
+ * specialiser again. Taken, not shared: an entry is used once and only at the
+ * revision it was made at, so a later run never reads a sweep of a model that
+ * has moved on. `left` counts the two takers; the entry is dropped when the
+ * second one has taken it.
  */
 type Sweep = ReturnType<typeof checkConstraints>;
-const lastSweep = new WeakMap<Model, { rev: number; checks: Sweep }>();
+const lastSweep = new WeakMap<Model, { rev: number; checks: Sweep; left: number }>();
 function sweepConstraints(model: Model): Sweep {
   const checks = checkConstraints(model);
-  lastSweep.set(model, { rev: model.rev, checks });
+  lastSweep.set(model, { rev: model.rev, checks, left: 2 });
   return checks;
 }
 function takeSweep(model: Model): Sweep {
   const hit = lastSweep.get(model);
-  lastSweep.delete(model);
-  return hit && hit.rev === model.rev ? hit.checks : checkConstraints(model);
+  if (hit && hit.rev === model.rev) {
+    hit.left -= 1;
+    if (hit.left <= 0) lastSweep.delete(model);
+    return hit.checks;
+  }
+  return checkConstraints(model);
 }
 
 /**
@@ -1447,6 +1541,7 @@ export const RULES: ValidationRule[] = [
   redefinitionConformance,
   constraintViolation,
   targetBySpecialisation,
+  constraintByInstance,
   dimensionalConsistency,
   unknownUnit,
   derivedDimensionMismatch,

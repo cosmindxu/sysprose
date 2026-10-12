@@ -10,6 +10,7 @@ import {
   obligationsOf,
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
+import { defaultStandsIn } from '../../src/semantics/defining-equation';
 
 /* ─────────────────────────── constraint chain ────────────────────────── */
 
@@ -77,9 +78,9 @@ describe('solve — binding equalities', () => {
  * A relation written in a USAGE is a feature of every instance the usage stands
  * for: R17c's `part p : P { constraint c2 { load <= 10.0 } }` in Q holds of Q's
  * own p AND of q's p, which Q's `bind p.load = L` gives q's L of 50. Read at Q's
- * L of 1, c2 was PROVED on the numeric surface and by the SMT engine. Every
- * surface now reads it as no verdict, in one sentence, while a binding above
- * the usage reads what it reads otherwise; an asserted one keeps its axiom.
+ * L of 1, c2 was PROVED on the numeric surface and by the SMT engine. F1 refused
+ * it on every surface; F7 reads it per instance — the usage's own generic row
+ * holds, and q's p violates it — while an asserted one keeps its axiom.
  */
 describe('solve — a relation a usage owns, read otherwise in an instance a binding above it reaches', () => {
   const R17C = (role: 'constraint' | 'assert constraint') => `package R17c {
@@ -91,25 +92,25 @@ describe('solve — a relation a usage owns, read otherwise in an instance a bin
     }
     part q : Q { attribute :>> L = 50.0; }
   }`;
-  const SENTENCE =
-    'the relation is read in R17c::Q::p, and a binding above it joins what it reads to another value in R17c::q: ' +
-    'each instance reads it otherwise, and this tool reads it for one alone, so it is not carried';
 
-  it('is undecided on the check and the numeric surface, and refused as a goal, in one sentence', async () => {
+  it('reads it per instance: the generic row holds and the named instance violates (F7)', async () => {
     const { model: m } = await loadModelText(R17C('constraint'));
     const own = (id: string) => m!.qualifiedName(id) === 'R17c::Q::p::c2';
     const check = checkConstraints(m!).find((c) => own(c.id))!;
-    expect([check.result, check.message]).toEqual(['unknown', `Could not evaluate: ${SENTENCE}`]);
+    expect(check.result).toBe('satisfied');
+    expect(check.instances!.map((i) => [i.instance, i.result])).toEqual([['R17c::q::p', 'violated']]);
     const row = checkConstraintsNumeric(m!).find((r) => own(r.id))!;
-    expect([row.result, row.reason]).toEqual(['unknown', SENTENCE]);
+    expect(row.result).toBe('satisfied');
     const goal = obligationsOf(m!).find((o) => o.element.qualifiedName === 'R17c::Q::p::c2')!;
-    expect([goal.role, goal.encodable]).toEqual(['obligation', { reason: 'unread-definition', detail: SENTENCE }]);
+    expect([goal.role, goal.encodable]).toEqual(['obligation', true]);
+    const inst = obligationsOf(m!).find((o) => o.element.qualifiedName === 'R17c::Q::p::c2 in R17c::q::p')!;
+    expect(inst.role).toBe('obligation');
   });
 
-  it('keeps an asserted one as an axiom, read for the usage generic instance, with no verdict of its own', async () => {
+  it('keeps an asserted one as an axiom, read for the usage generic instance (F7)', async () => {
     const { model: m } = await loadModelText(R17C('assert constraint'));
     const check = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'R17c::Q::p::c2')!;
-    expect(check.result).toBe('unknown');
+    expect(check.result).toBe('satisfied');
     const axiom = obligationsOf(m!).find((o) => o.element.qualifiedName === 'R17c::Q::p::c2')!;
     expect([axiom.role, axiom.encodable]).toEqual(['axiom', true]);
   });
@@ -165,6 +166,64 @@ describe('solve — a relation a usage owns, read otherwise in an instance a bin
       constraint ctlA { r0.q.p.m2 >= 8.5 [SI::kg] }
     }`);
     expect(obligationsOf(m!).filter((o) => o.encodable !== true).map((o) => o.element.qualifiedName)).toEqual([]);
+  });
+});
+
+/* ══════════════ the verify goal budget (F7, A.7; P18) ══════════════════════ */
+
+/**
+ * A relation read per instance costs the verify lane one goal row per
+ * instance, and a run caps them (`MAX_INSTANCE_GOALS`, lowered here). A group
+ * is taken all-or-nothing: the usage's own (generic) row and the instance rows
+ * together, or — over the budget — the generic row alone as the refusal, never
+ * part of a group with the instances dropped.
+ */
+describe('solve — the verify goal budget files a group all-or-nothing', () => {
+  /** big-bind-N: N definitions Qk binding their p's load to their L, qk setting L to k. */
+  const bigBind = (n: number): string =>
+    [
+      'package Big {',
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; constraint c { m2 <= 100.0 } }',
+      ...Array.from({ length: n }, (_, k) => [
+        `  part def Q${k} { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }`,
+        `  part q${k} : Q${k} { attribute :>> L = ${k}.0; }`,
+      ]).flat(),
+      '}',
+    ].join('\n');
+
+  it('files every group whole or refuses it whole, never part of one (P18)', async () => {
+    const { model: m } = await loadModelText(bigBind(5));
+    const rows = obligationsOf(m!, { maxInstanceGoals: 3 }).filter((o) =>
+      o.element.qualifiedName.startsWith('Big::P::c '),
+    );
+    const byGroup = new Map<string, Array<{ path: string | undefined; encodable: unknown }>>();
+    for (const o of rows) {
+      const key = o.instance?.contextId ?? o.element.id;
+      const list = byGroup.get(key) ?? [];
+      list.push({ path: o.instance?.path, encodable: o.encodable });
+      byGroup.set(key, list);
+    }
+    expect(byGroup.size, 'one group per Qk usage').toBe(5);
+    const filed: string[] = [];
+    const refused: string[] = [];
+    for (const [key, list] of byGroup) {
+      const instances = list.filter((r) => r.path !== undefined);
+      if (instances.length > 0) {
+        // Filed per instance: the generic row AND every instance row, all encodable.
+        expect(list).toHaveLength(2);
+        expect(list.filter((r) => r.path === undefined)).toHaveLength(1);
+        expect(list.every((r) => r.encodable === true)).toBe(true);
+        filed.push(key);
+      } else {
+        // Refused whole: ONE generic row carrying the budget sentence.
+        expect(list).toHaveLength(1);
+        expect(list[0].encodable).toMatchObject({ reason: 'unread-definition' });
+        expect((list[0].encodable as { detail: string }).detail).toMatch(/exceed this run's 3/);
+        refused.push(key);
+      }
+    }
+    // Two rows per group and a budget of 3 carries exactly the first group.
+    expect([filed.length, refused.length]).toEqual([1, 4]);
   });
 });
 
@@ -384,5 +443,51 @@ describe('optimize', () => {
     expect(res.sense).toBe('max');
     expect(res.best.get(x.id)).toBeCloseTo(5, 2);
     expect(res.value).toBeCloseTo(10, 3);
+  });
+});
+
+/* ═══════════════ F8 — a default standing in one instance (H2) ═══════════════ */
+
+/**
+ * A `default` a binding holds per FEATURE gives way where the bindings joined
+ * to it reach a value of its own. In an instance whose own component states
+ * none, and whose every default is a literal agreeing exactly, it STANDS
+ * (plan A.4 Part 2, F8): `w2`'s `q2 : Q` leaves `L` unset, so `q2.p.load` is
+ * P's 5.0 and `q2.p.m2` is 5.0, while `q1` sets `L` to 50.
+ */
+describe('solve — a default a binding holds per feature stands in the instance that leaves it unset (F8)', () => {
+  const W2 = `package W2 {
+    part def P { attribute load : ScalarValues::Real default = 5.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+    part def Q { attribute L : ScalarValues::Real; part p : P; bind p.load = L; }
+    part q1 : Q { attribute :>> L = 50.0; }
+    part q2 : Q;
+    constraint c1 { q1.p.m2 <= 0.0 }
+    constraint c2 { q2.p.m2 >= 0.0 }
+    constraint c3 { q2.p.m2 <= 2.0 }
+  }`;
+
+  it('names P’s default as standing in q2 and no value in q1', async () => {
+    const { model: m } = await loadModelText(W2);
+    expect(defaultStandsIn(m!, 'W2::q2::p::load')?.declaredName).toBe('load');
+    expect(defaultStandsIn(m!, 'W2::q2::p::load')?.attrs.value).toBe(5);
+    expect(defaultStandsIn(m!, 'W2::q1::p::load')).toBeUndefined();
+  });
+
+  it('decides the relation at 5.0 in q2 and −40 in q1, on the check and the numeric surface', async () => {
+    const { model: m } = await loadModelText(W2);
+    const check = (n: string) => checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === `W2::${n}`)!;
+    expect([check('c1').result, check('c2').result, check('c3').result]).toEqual(['satisfied', 'satisfied', 'violated']);
+    expect(check('c2').reads?.map((r) => [r.path, r.value])).toEqual([['q2.p.m2', 5]]);
+    const numeric = (n: string) => checkConstraintsNumeric(m!).find((r) => m!.qualifiedName(r.id) === `W2::${n}`)!;
+    expect([numeric('c1').result, numeric('c2').result, numeric('c3').result]).toEqual(['satisfied', 'satisfied', 'violated']);
+  });
+
+  it('files the instance literal equation the solver and the SMT lane read (F8)', async () => {
+    const { model: m } = await loadModelText(W2);
+    const load = obligationsOf(m!).find((o) => o.element.qualifiedName === 'W2::Q::p::load in W2::q2::p');
+    expect(load?.expression).toBe('load == 5');
+    expect(load?.role).toBe('axiom');
+    // q1's L is 50: no standing-default row, the binding carries the value.
+    expect(obligationsOf(m!).find((o) => o.element.qualifiedName === 'W2::Q::p::load in W2::q1::p')).toBeUndefined();
   });
 });

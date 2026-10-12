@@ -331,6 +331,22 @@ describe('attachEvidence — what goes into the file comes back out of it', () =
     expect(report.skipped).toHaveLength(1);
     expect(report.skipped[0].reason).toMatch(/no requirement to annotate/);
   }, 60_000);
+
+  it('skips a per-instance row with a true reason, never the wrong-file one (F7, R2-S7)', async () => {
+    // A `verify --record` row for a relation read in one instance is named
+    // `<requirement> in <instance>`. That name resolves to no element, but its
+    // requirement — the part before the last ` in ` — does, so the honest reason
+    // is a per-instance claim, not "produced against a different file".
+    const model = await parse(SUBJECT);
+    const [base] = await literalRecords(model);
+    const report = attachEvidence(model, [
+      { ...base, obligation: { ...base.obligation, requirement: `${base.obligation.requirement} in Q::p` } },
+    ]);
+    expect(report.attached).toBe(0);
+    expect(report.skipped).toHaveLength(1);
+    expect(report.skipped[0].reason).toMatch(/a per-instance or per-context claim/);
+    expect(report.skipped[0].reason).not.toMatch(/different file/);
+  }, 60_000);
 });
 
 /* ─────────── a requirement with MORE THAN ONE obligation (the worst wins) ──── */

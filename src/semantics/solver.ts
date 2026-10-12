@@ -67,6 +67,7 @@ import {
 import { parseExpr, evaluate, type ExprNode } from './expr';
 import { isBindingEdge, propagateValues } from './connectors';
 import {
+  anchorFor,
   checkConstraints,
   checksByRow,
   evaluateFeatureValue,
@@ -77,9 +78,12 @@ import {
 import {
   baseIdOf,
   defaultGivesWay,
+  defaultStandsIn,
   hasStatedValue,
+  instanceGroups,
   isAsserted,
   isParameterisedCalculation,
+  MAX_INSTANCE_RELATIONS,
   relationNamesOf,
   shadowedNamesOf,
   shadowedSentence,
@@ -452,9 +456,17 @@ export interface NumericConstraintResult {
   /**
    * Set on a definition's relation read in a context that specialises the
    * definition (`id` is then `<baseId>@<contextId>`): the relation, and the
-   * context it was read in — `instances` of `checkConstraints`.
+   * context it was read in — `instances` of `checkConstraints`. `path` is the
+   * instance path a group row reads through (F7); for a context row without
+   * one it is absent, and `contextId` names the context.
    */
-  context?: { baseId: ElementId; contextId: ElementId };
+  context?: { baseId: ElementId; contextId: ElementId; path?: string };
+  /**
+   * The element the anchor rule re-anchored this row to (F7); absent on a row
+   * anchored at the relation itself. The app's Solve rows point at it, falling
+   * back to `context.baseId`.
+   */
+  anchorId?: ElementId;
   /**
    * Set on a row that is a value the model states twice, not a relation
    * (`ConstraintCheck.conflict` of ./evaluate-model) — a binding connector's
@@ -1084,8 +1096,40 @@ function valueEquation(
   return makeEquation(model, lhs, body.node, s, nameToId, body, memo, identity, readBy, false, onRefused, instance);
 }
 
-/** How many relations {@link instanceSystem} reads for instances before it stops (a type that contains itself has an instance at every depth). */
-const MAX_INSTANCE_RELATIONS = 16384;
+/**
+ * The instance variable `feature@instance` of a `default` a binding holds per
+ * FEATURE but which this one instance reads as its value (F8, A.4 Part 2):
+ * the literal equation `feature@instance = <value>`, beside
+ * {@link valueEquation}. `defaultStandsIn` names the standing default's
+ * feature; a value carrying a unit is left out (the instance variable would
+ * need the gates' scale map — a gap, never a false verdict).
+ */
+function instanceStandingDefaultEquation(
+  model: Model,
+  feature: ElementRecord,
+  reading: InstanceReading,
+  name: string,
+): Equation | undefined {
+  const source = defaultStandsIn(model, reading.symbol);
+  if (!source) return undefined;
+  const raw = source.attrs.value;
+  if (typeof raw !== 'number') return undefined;
+  if (expressionValueUnitOf(source) !== undefined) return undefined;
+  const key = `${feature.id}@${reading.symbol}`;
+  const lhs: ExprNode = { kind: 'ref', path: [name] };
+  const rhs: ExprNode = { kind: 'num', value: raw };
+  const eq: Equation = {
+    vars: [key],
+    lhs,
+    rhs,
+    expr: { kind: 'binary', op: '-', left: lhs, right: rhs },
+    raw: `${name} = ${String(raw)} (${reading.symbol})`,
+    nameToId: new Map<string, ElementId>([[name, key]]),
+  };
+  eq.states = key;
+  eq.defines = [key];
+  return eq;
+}
 
 const INSTANCE_SYSTEMS = new WeakMap<Model, Map<string, { rev: number; system: InstanceSystem }>>();
 
@@ -1217,6 +1261,16 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
           eq.defines = [key];
           system.eqs.push(eq);
           enqueue(eq);
+        }
+      }
+      // A `default` a binding holds per FEATURE, which this instance's own
+      // component reads as its value (F8, {@link defaultStandsIn}): the
+      // instance variable is the literal there.
+      if (name !== undefined) {
+        const stand = instanceStandingDefaultEquation(model, feature, reading, name);
+        if (stand) {
+          system.eqs.push(stand);
+          enqueue(stand);
         }
       }
     }
@@ -4196,6 +4250,20 @@ function numericRows(
     verdicts ??= new Map(sweep().map((c) => [c.id, c]));
     return verdicts.get(id);
   };
+  // The relations a usage owns whose group F7 expands per instance: their own
+  // row is the usage's generic reading, not the refusal (F1) the other
+  // surfaces kept before F7.
+  let ownedExpanded: Set<ElementId> | undefined;
+  const ownedGroupExpanded = (el: ElementRecord): boolean => {
+    if (ownedExpanded === undefined) {
+      ownedExpanded = new Set();
+      for (const g of instanceGroups(model)) {
+        const rel = model.get(g.relationId);
+        if (g.expanded && rel && g.usageId === rel.ownerId) ownedExpanded.add(g.relationId);
+      }
+    }
+    return ownedExpanded.has(el.id);
+  };
 
   for (const el of model.all()) {
     if (only && !only.has(el.id)) continue;
@@ -4353,8 +4421,9 @@ function numericRows(
     // it reads otherwise (usageOwnedRefusal): no verdict for any one of them,
     // in the sentence the other surfaces give — the solve reads the usage's
     // generic instance alone, and q's p, whose load the binding sets, breaks
-    // what Q's own p meets.
-    const shared = usageOwnedRefusal(model, el, relationNamesOf(raw));
+    // what Q's own p meets. An expanded group (F7) reads the generic row here
+    // and the instances in {@link contextRows}.
+    const shared = ownedGroupExpanded(el) ? undefined : usageOwnedRefusal(model, el, relationNamesOf(raw));
     if (shared) {
       row.reason = shared;
       out.push(row);
@@ -4687,7 +4756,7 @@ function contextRows(model: Model, checks: readonly ConstraintCheck[]): NumericC
     const name = model.get(c.id)?.declaredName ?? '';
     for (const i of instances) {
       out.push({
-        id: `${c.id}@${i.contextId}`,
+        id: i.instance !== undefined ? `${c.id}@${i.instance}` : `${c.id}@${i.contextId}`,
         name,
         raw: c.expression,
         kind,
@@ -4695,7 +4764,8 @@ function contextRows(model: Model, checks: readonly ConstraintCheck[]): NumericC
         result: i.result,
         slack: null,
         amount: 0,
-        context: { baseId: c.id, contextId: i.contextId },
+        context: { baseId: c.id, contextId: i.contextId, ...(i.instance !== undefined ? { path: i.instance } : {}) },
+        ...(i.instance !== undefined ? { anchorId: anchorFor(model, c, i) } : {}),
         ...(i.result !== 'satisfied' ? { reason: reason(i.detail ?? i.message) } : {}),
       });
     }

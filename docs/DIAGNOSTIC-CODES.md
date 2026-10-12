@@ -27,13 +27,21 @@ that uses it is in [`AGENT-AUTHORING-CAMPAIGN.md`](AGENT-AUTHORING-CAMPAIGN.md).
   "found": "def",                      // what was written instead
   "hint": "Expected `}` here, found `def`. …",
   "elementId": "…",                    // validation findings: the offending element
-  "elementName": "Vehicle"
+  "elementName": "Vehicle",
+  "instances": {                       // per-instance roll-up findings: the counts
+    "total": 12, "generic": 1, "satisfied": 10, "violated": 1, "unknown": 0, "unread": 0,
+    "listed": ["H2P::q::p"]
+  },
+  "instance": "H2P::q::p",             // a single-instance finding names its instance
+  "relation": "H2P::P::c"              // and the relation it is about
 }
 ```
 
 `range` is present on every finding derived from the source text. `elementId`
 and `elementName` appear on validation findings. `expected`/`found` appear on
-lexer and parser errors.
+lexer and parser errors. `instances`, `instance` and `relation` appear on
+per-instance findings: a roll-up carries the counts in `instances`, and a
+finding about one instance names it in `instance`.
 
 ## Severity means
 
@@ -403,8 +411,15 @@ The file parsed, but the model it describes breaks a rule. Each code matches a r
 
 - **Severity:** warning
 - **Source:** validation
-- **Fires when:** A target written over a measure that has no value where it is stated (`Common::m >= 0.9`) is read through a feature that subsets or redefines the measure in another context (`LA::m :> Common::m`): one finding per context, at that feature — a warning when its value misses the target, info when it meets it or cannot be read.
+- **Fires when:** A target written over a measure that has no value where it is stated (`Common::m >= 0.9`) is read through a feature that subsets or redefines the measure in another context (`LA::m :> Common::m`): one finding per context, at that feature — a warning when its value misses the target, info when it meets it or cannot be read; past twenty contexts of one relation, one finding per verdict and cause, at the first context's feature, counting the rest.
 - **Hint given:** A miss is a fact about the estimate, not a fault in the model: change the design if the target must be met, not the number to meet it. An info that could not be read names why — a context with two features that specialise the measure, a body that names a measure the context does not specialise, or a specialiser with no value and no asserted equation (the same equation `require`d, or as a plain `constraint`, is a check of a value given elsewhere, not a definition).
+
+### `validation/constraint-by-instance`
+
+- **Severity:** warning
+- **Source:** validation
+- **Fires when:** A relation whose reading a binding makes differ between instances — a definition’s constraint read in a usage several instances share (P’s `load <= 10.0` in `Q::p`, read for Q’s own p and for q’s p), one written in such a usage, or one read in a context whose value reaches it through a binding — read once per instance: one finding per relation and usage counting the instances it holds in, is violated in and could not be read in (a warning when any is violated), and one warning per violated instance, at most five, at the value that makes that instance differ.
+- **Hint given:** Change the value the binding carries into the named instance (the line the finding points at), or the relation — not the definition’s default, which a binding overrides in its context. Counts are in `instances`; an instance finding names its `instance` and `relation`. One that could not be read says why: no bound feature has a value, defaults differ, an enclosing assert constrains it, or more instances than the tool reads.
 
 ### `validation/dimensional-consistency`
 
@@ -805,4 +820,4 @@ Guards against the tool producing notation it cannot read back.
 
 ---
 
-*104 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*105 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

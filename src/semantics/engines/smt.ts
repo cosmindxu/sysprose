@@ -743,7 +743,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
     // The unit-aware pair, on the same precondition the literal engine reads it
     // under: a row with no readable body has no comparison to print.
     const refusedSI = row.row.node !== null ? quantities(model, row.row, input.memo) : {};
-    const refusedPoint = rowFreed ? {} : { bindings: modelBindings(model, row.row), ...refusedSI };
+    const refusedPoint = rowFreed ? {} : { bindings: modelBindings(model, row.row, input.checks.get(row.row.element.id)), ...refusedSI };
     if (row.row.status === 'no-formal-clause') {
       return {
         ...base,
@@ -878,7 +878,7 @@ async function judgeOne(model: Model, input: JudgeInput): Promise<SmtJudgement> 
   // single point to name and none is offered.
   const si: { lhsSI?: number; rhsSI?: number; dimension?: string } =
     countFree(variables) === 0 ? quantities(model, row.row, input.memo) : {};
-  const point = countFree(variables) === 0 ? { bindings: modelBindings(model, row.row), ...si } : {};
+  const point = countFree(variables) === 0 ? { bindings: modelBindings(model, row.row, input.checks.get(row.row.element.id)), ...si } : {};
   const axiomAssertions = assertionsOf(axioms, 'axiom');
   const premiseAssertions = assertionsOf(input.premises, 'premise');
   const goalSides: ScriptAssertion[] = goal.sideConditions.map((s: SideCondition) => ({
@@ -1783,6 +1783,37 @@ function confirm(
       };
     }
   }
+
+  // The same-point gate (F5): where the check read a name per instance, the
+  // witness this independent evaluator answered for it must be the check's own
+  // point — the same symbol, and the same value exactly. A witness that is
+  // another point confirms nothing about this relation.
+  const checkReads = input.checks.get(row.row.element.id)?.reads;
+  if (checkReads && checkReads.length > 0) {
+    for (const v of row.row.vars) {
+      if (!v.instance) continue;
+      const read = checkReads.find((x) => x.path === v.path);
+      if (!read) {
+        return { ok: false, why: `the check reads no value at \`${v.path}\`` };
+      }
+      if (read.symbol !== v.qualifiedName) {
+        return {
+          ok: false,
+          why: `the witness is not the model's point at \`${v.path}\` (${v.qualifiedName} vs ${read.symbol})`,
+        };
+      }
+      if (read.exact !== undefined) {
+        const witness = values.exact?.get(v.qualifiedName);
+        const witnessText = witness !== undefined ? `${witness.num}/${witness.den}` : undefined;
+        if (witnessText !== read.exact) {
+          return {
+            ok: false,
+            why: `the witness is not the model's point at \`${v.path}\` (${witnessText ?? 'no exact value'} vs ${read.exact})`,
+          };
+        }
+      }
+    }
+  }
   return { ok: true };
 }
 
@@ -1827,7 +1858,11 @@ function quantities(
 ): { lhsSI?: number; rhsSI?: number; dimension?: string } {
   const el = rowElement(model, row);
   if (!el) return {};
-  const q = evaluateConstraintQuantityDetailed(model, el, { memo });
+  const q = evaluateConstraintQuantityDetailed(model, el, {
+    memo,
+    instances: true,
+    ...(row.instance?.path !== undefined ? { instance: row.instance.path } : {}),
+  });
   return {
     ...(q.lhsSI !== undefined ? { lhsSI: q.lhsSI } : {}),
     ...(q.rhsSI !== undefined ? { rhsSI: q.rhsSI } : {}),
