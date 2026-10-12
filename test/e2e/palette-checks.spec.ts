@@ -389,13 +389,13 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
 
   // A walk to the bound says nothing about the machine it did not finish, and says so.
   await expect(reach).toHaveAttribute('data-verdict', 'undecided', { timeout: 60_000 });
-  await expect(reach.locator('.palette-check-summary')).toContainText('hit a bound');
+  await expect(reach.locator('.palette-check-summary')).toContainText('withheld');
   // The worker walked it: a worker that started and failed would have left the page to run it.
   await expect(reach).toHaveAttribute('data-ran-in', 'worker');
   await expect(reach.getByTestId('palette-check-cancel')).toHaveCount(0);
   await expect(reach.getByTestId('palette-check-run')).not.toHaveAttribute('aria-disabled', 'true');
   await expect(page.locator('.bottom-tab.is-active')).toContainText('Checks');
-  await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toContainText('verification/bound-hit');
+  await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toContainText('SUPPRESSED');
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', 'undecided');
 
   expect(workers.some((u) => u.includes('checks-worker')), `the worker started: ${workers.join(', ')}`).toBe(true);
@@ -497,7 +497,7 @@ test('a model with no state machine is told so at once, with no worker started',
   const reach = checkRow(page, 'reach');
   await reach.getByTestId('palette-check-run').click();
   await expect(reach).toHaveAttribute('data-verdict', 'not-run');
-  await expect(reach.locator('.palette-check-summary')).toHaveText('No state machine in this model.');
+  await expect(reach.locator('.palette-check-summary')).toHaveText('this file declares no element that owns a transition, so there is no configuration graph to walk');
   await expect(reach).toHaveAttribute('data-ran-in', 'page');
   await expect(reach.getByTestId('palette-check-cancel')).toHaveCount(0);
   expect(workers.filter((u) => u.includes('checks-worker')), 'nothing to walk, nothing to start a worker for').toEqual([]);
