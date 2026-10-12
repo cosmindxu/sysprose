@@ -346,14 +346,25 @@ function answerFor(
             pass.definitions.denote(contextId).get(name)?.instance ?? pass.definitions.instanceNameOf(contextId),
           )
         : undefined;
-    answer = valueOfFeature(model, id, pass, at, child);
-    // A feature the scope resolves a bare name to may state nothing and be
-    // fixed by an asserted equation the context inherits through a
-    // redefinition the reading masks (the implicit end copy of a binding,
-    // `assert-min`/`G340`): read the equation's value, never replacing a
-    // decided answer (A.2.1).
-    if (answer.value === undefined) {
-      answer = valueDefinedByEquation(model, contextId, name, pass) ?? valueThroughChain(model, contextId, name, pass) ?? answer;
+    // H5: an asserted equation that defines the name in this context stands
+    // OVER a `default` the feature writes — `assert constraint { L == 5.0 }`
+    // beside `attribute L default = 2.0`, or `part q1 : Q { assert { p.x ==
+    // 50.0 } }` reading `p.x`. A plain `=` value against an assert is the
+    // strict-KerML contradiction another guard reports, and keeps its own
+    // precedence here.
+    const byEquation = valueDefinedByEquation(model, contextId, name, pass);
+    if (byEquation?.value !== undefined && model.get(id)?.attrs.defaultValue === true) {
+      answer = byEquation;
+    } else {
+      answer = valueOfFeature(model, id, pass, at, child);
+      // A feature the scope resolves a bare name to may state nothing and be
+      // fixed by an asserted equation the context inherits through a
+      // redefinition the reading masks (the implicit end copy of a binding,
+      // `assert-min`/`G340`): read the equation's value, never replacing a
+      // decided answer (A.2.1).
+      if (answer.value === undefined) {
+        answer = byEquation ?? valueThroughChain(model, contextId, name, pass) ?? answer;
+      }
     }
   } else {
     answer =
@@ -456,19 +467,34 @@ function valueDefinedByEquation(
   name: string,
   pass: ScalarPass,
 ): ScalarAnswer | undefined {
-  if (name.includes('.')) return undefined;
-  const feature = pass.definitions.feature(contextId, name);
+  // A dotted name (`p.x`) resolves through the scope walk — the feature a
+  // binding or an asserted equation reads there (`of(contextId, 'p.x')`, H5) —
+  // and a `default` an asserted equation overrides (H5) is no stated value to
+  // `feature`, so it is taken here; a feature with a plain `=` value is left to
+  // its own reading.
+  const denoted = pass.definitions.denote(contextId).get(name)?.feature;
+  const feature =
+    pass.definitions.feature(contextId, name) ?? (denoted?.attrs.defaultValue === true ? denoted : undefined);
   if (!feature) return undefined;
   const candidates = pass.definitions.of(contextId, name);
   if (candidates.length === 0) {
     const read = pass.definitions.definitionReadIn(contextId, name);
-    if (!read) return undefined;
-    // Where the context changes what the definition reads, it is read here,
-    // over the context's own names: the definition holds of every instance.
-    if (read.at !== read.site) {
-      return defineIn(model, read.at, feature, name, pass.definitions.of(read.site, name), pass, true);
+    if (read) {
+      // Where the context changes what the definition reads, it is read here,
+      // over the context's own names: the definition holds of every instance.
+      if (read.at !== read.site) {
+        return defineIn(model, read.at, feature, name, pass.definitions.of(read.site, name), pass, true);
+      }
+      return valueDefinedByEquation(model, read.site, name, pass);
     }
-    return valueDefinedByEquation(model, read.site, name, pass);
+    // H5: an asserted equation of an ENCLOSING context, written on the path
+    // from that context to this feature (`assert { p.x == 3.0 }` at the package
+    // over `part p : P`), defines it here, over this context's names.
+    const reaching = pass.definitions.reachingAssert(contextId, name);
+    if (reaching) {
+      return defineIn(model, reaching.at, feature, name, pass.definitions.of(reaching.site, reaching.path), pass, true);
+    }
+    return undefined;
   }
   return defineIn(model, contextId, feature, name, candidates, pass);
 }

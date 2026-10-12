@@ -4008,7 +4008,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R1::P::c in R1::Q::p': ['T/T/T/X', 'T'],
       'R1::P::c in R1::q1::p': ['T/T/T/X', 'T'],
       'R1::P::c in R1::q2::p': ['T/T/T/X', 'T'],
-      'R1::q1::tie': ['F/-/F/-', null],
+      'R1::q1::tie': ['T/-/T/-', null],
       'R1::top1': ['?/?/T/X', null],
     }),
     // Two defaults a binding joins with no value beside them stand only as one CONSTANT (A.4 Part 0): R3a's
@@ -4072,7 +4072,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q;
       }`, {
       'GA6::P::pa': ['T/-/T/-', null],
-      'GA6::Q::qa': ['T/-/?/-', null],
+      'GA6::P::pa in GA6::Q::p': ['T/-/T/-', null],
+      'GA6::Q::qa': ['T/-/T/-', null],
       'GA6::Q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
     }),
     'ga12-asserted-ends-usage': probe(`package GA12 {
@@ -4082,6 +4083,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'GA12::P::pa': ['T/-/T/-', null],
       'GA12::Q::qa': ['T/-/T/-', null],
+      'GA12::Q::qa in GA12::q': ['T/-/T/-', null],
       'GA12::q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
     }),
     'ga5b-asserted-held-source': probe(`package GA5B {
@@ -4092,8 +4094,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c { a1.v <= 3.5 }
       }`, {
       'GA5B::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
-      'GA5B::a1::x1': ['T/-/?/-', null],
-      'GA5B::a2::x2': ['T/-/?/-', null],
+      'GA5B::a1::x1': ['T/-/T/-', null],
+      'GA5B::a2::x2': ['T/-/T/-', null],
       'GA5B::c': ['T/T/?/?', null],
     }),
     // F1b's reading beyond R3a–c, put to the user under H1 (plan J). (1) Two defaults alike in text that read
@@ -4157,7 +4159,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q;
       }`, {
       'GA7::Q::qa': ['T/-/T/-', null],
-      'GA7::Q::pl': ['?/?/?/?', null],
+      'GA7::Q::pl': ['F/F/?/F', null],
     }),
     'refute-r6': probe(`package R6 {
         part def P { attribute k : ScalarValues::Real default = 0.5; attribute load : ScalarValues::Real default = 2.0 * k; }
@@ -4192,8 +4194,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.pp.m2 <= 0.0 }
         constraint m2PosF { q.pp.m2 >= 0.0 }
       }`, {
-      'R13::m2NegT': ['?/?/?/?', 'T'],
-      'R13::m2PosF': ['?/?/?/?', 'F'],
+      'R13::m2NegT': ['T/T/T/?', 'T'],
+      'R13::m2PosF': ['F/F/F/?', 'F'],
     }),
     'refute-r13b': probe(`package R13b {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4202,8 +4204,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint m2NegT { q.pp.m2 <= 0.0 }
         constraint m2PosF { q.pp.m2 >= 0.0 }
       }`, {
-      'R13b::m2NegT': ['?/?/?/?', 'T'],
-      'R13b::m2PosF': ['?/?/?/?', 'F'],
+      'R13b::m2NegT': ['T/T/T/?', 'T'],
+      'R13b::m2PosF': ['F/F/F/?', 'F'],
     }),
     'refute-r13c': probe(`package R13c {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4793,7 +4795,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part p2 : P;
         constraint c2 { p2.m2 >= 0.0 }
       }`, {
-      'W4::c2': ['?/?/?/?', null],
+      'W4::c2': ['F/F/F/?', 'F'],
     }),
     h2p0: probe(`package H2P0 {
         part def P {
@@ -4846,6 +4848,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q1 : Q { attribute :>> L = 50.0; }
       }`, {
       'S5::P::c': ['?/?/?/?', '?'],
+      'S5::P::c in S5::Q::p': ['?/?/?/?', null],
       'S5::Q::tie': ['?/-/T/-', null],
       'S5::Q::tie in S5::q1': ['?/-/?/-', null],
     }),
@@ -4856,9 +4859,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           constraint g1 { p.y == 6.0 }
           constraint g2 { p.y <= 6.0 }
       }`, {
-      'B1::g1': ['?/?/T/T', 'T'],
-      'B1::g2': ['?/?/T/T', 'T'],
-      'B1::px': ['?/-/T/-', 'T'],
+      'B1::g1': ['T/T/T/T', 'T'],
+      'B1::g2': ['T/T/T/T', 'T'],
+      'B1::px': ['T/-/T/-', 'T'],
     }),
     'xtrack-b2': probe(`package B2 {
           part def P { attribute x : ScalarValues::Real; attribute y : ScalarValues::Real = x * 2.0; }
@@ -4875,8 +4878,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           assert constraint px { p.x == 3.0 }
           constraint gF { p.y == 7.0 }
       }`, {
-      'B3::gF': ['?/?/F/?', 'F'],
-      'B3::px': ['?/-/T/-', 'T'],
+      'B3::gF': ['F/F/F/F', 'F'],
+      'B3::px': ['T/-/T/-', 'T'],
     }),
     'xtrack-s2-usage-assert-leak': probe(`package S2 {
           part def C { attribute v : ScalarValues::Real; attribute u : ScalarValues::Real default = 1.0; }
@@ -4944,7 +4947,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R8::P::dl': ['T/-/T/-', null],
       'R8::P::dl in R8::p': ['F/-/F/-', null],
-      'R8::p::d50': ['T/-/?/-', null],
+      'R8::p::d50': ['T/-/T/-', null],
       'R8::pLoad': ['T/T/?/X', null],
       'R8::pM2': ['F/F/F/X', null],
     }),
@@ -4956,10 +4959,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint c { y == x + 1.0 }
         constraint lim { x >= 5.0 }
       }`, {
-      'N2::a1': ['T/-/?/-', null],
-      'N2::a2': ['F/-/?/-', null],
+      'N2::a1': ['T/-/T/-', null],
+      'N2::a2': ['F/-/F/-', null],
       'N2::c': ['?/?/?/X', null],
-      'N2::lim': ['F/F/?/X', null],
+      'N2::lim': ['F/F/F/X', null],
     }),
     fx4: probe(`package Fx4 {
           attribute x = 9.0;
