@@ -329,7 +329,8 @@ runs it in a terminal instead of a verdict nobody measured.
 
 Every graph view reads **left to right**: owner before part, first step before
 last, the initial state before the ones it leads to, the root of a tree before
-its leaves. The layout keeps to the readability criteria of the UML-layout
+its leaves (a box that many dependency lines end on may lead its piece instead,
+below). The layout keeps to the readability criteria of the UML-layout
 literature (Sun & Wong, IWPC 2005, after Purchase): no box overlaps another, no
 connector runs through a box it does not connect, connectors run horizontally
 and vertically and cross as little as the graph allows, and labels sit where
@@ -338,9 +339,35 @@ the layout made room for them — never on a box, a line or another label.
 - **Many pieces become rows, not a strip.** A view's disconnected pieces are
   laid out one by one and packed row by row to about the screen's proportions:
   the largest piece top-left, then single boxes grouped by kind.
-- **A layered model reads layer by layer.** When a General view spans a
-  model's top-level packages (Kinds, Common, OA, SA, LA, PA, EPBS, say), they
-  become columns in that order.
+- **A layered model reads layer by layer.** When the boxes of a General view
+  all lie in two or more packages that sit directly in one package — the
+  model's single top-level package, or the package the view is scoped to (Kinds,
+  Common, OA, SA, LA, PA, EPBS, say) — those packages become columns in that
+  order, and the boxes of each connected piece that reaches across them get a
+  header over each column naming its package. The header is a band the layout
+  keeps above the boxes, so as laid out it lies over none (a box moved by hand
+  can cover it). Its label is sized for the zoom, so it still reads when the
+  whole model is fitted — and **Fit** frames the headers with the boxes, below
+  the canvas's toolbar — and a package name wider than its column is shrunk to
+  fit, then ends in an ellipsis. The headers are drawn into the SVG and PNG
+  exports. A piece inside one package has no header, and neither does a view
+  of a single layer package. A file with several top-level packages, or one
+  wrapper package around the layers, has no columns in its whole-model view:
+  scope the view to the package that holds the layers.
+- **A box that many dependency lines end on leads its piece.** In a General
+  view with no layer columns (a view scoped to one package, or the whole model
+  of a file with several top-level packages), a box that three or more
+  `«allocate»`, `«satisfy»`, `«trace»` or other dependency lines end on — a part
+  that a dozen activities are allocated to, a requirement many things satisfy —
+  is drawn at the left, and those lines fan out of it to the boxes they come
+  from, their arrowheads pointing back at it, instead of each running the width
+  of the diagram to a box at the far right. The layout draws the piece both ways
+  and keeps this one only if it has at least three crossings fewer and reads
+  better overall, so a view that already reads well keeps every line running
+  left to right, as does a whole-model view with its layer columns. Adding or
+  removing a few lines can tip a piece from one drawing to the other, and its
+  hub then moves from one side to the other. Pieces of more than 200 boxes are
+  not tried both ways.
 - **A label that would say the same thing on every line is left off.** When
   every dependency in a view is of one kind — the Requirement view's
   `«satisfy»`, for instance — the keyword is dropped and lines that leave one
@@ -3593,10 +3620,11 @@ standard library: see the *Strip · error or note* row.)
 | Where-used list | Everything that references the selection, click to navigate | `prop-used-by` |
 | Impact graph | The 1-hop reference neighbourhood, drawn | `prop-impact` |
 | Breadcrumb | The containment path of the **selection** (not the diagram scope) | `breadcrumb` |
-| Palette | Three sections for the active view — **Tools** (what to draw, including an explicit Select), **Edit** (what to do to the selection), **Checks** (what to verify). Every view has one: a table view draws nothing, so it has Edit and Checks only. The column can be put away and comes back where you left it | `palette`, `palette-tools`, `palette-select`, `palette-edit`, `palette-checks`, `palette-collapse`, `palette-expand` |
+| Palette | Three sections for the active view — **Tools** (what to draw, including an explicit Select), **Edit** (what to do to the selection), **Checks** (what to verify). Every view has one: a table view draws nothing, so it has Edit and Checks only. The column can be put away (**‹**): it shrinks to a slim strip at the canvas's left edge, with a **›** and a label that names what it hides — *Palette: Tools, Edit, Checks* (the first word in capitals), or *Palette: Edit, Checks* on a table view — and a click anywhere on the strip brings the column back where you left it. From the keyboard, **Enter** on either control leaves the focus on the one that replaces it, and the strip shows a focus ring. On a window too short for the whole label, the label ends in an ellipsis (**…**) and the strip's accessible name still reads whole | `palette`, `palette-tools`, `palette-select`, `palette-edit`, `palette-checks`, `palette-collapse`, `palette-expand`, `palette-collapsed-label` |
 | Palette · Edit | Rename (opens the explorer's inline rename), Duplicate, Delete — each disabled with the reason when nothing is selected. Reparenting stays a drag onto the new owner | `palette-rename`, `palette-duplicate`, `palette-delete` |
-| Palette · Checks | One row per verification command that fits this view: the question it answers, **Run** (runs it here, against the model on screen), **Copy command** (the same check for a terminal), and a verdict — `not run`, `holds`, `findings`, `undecided`, `stale` after an edit, or `not here` for a check that needs the z3 solver, which needs a cross-origin-isolated page. A file or element name that some terminal could read as a command — a Drive file named `R&D (copy).sysml`, say — never goes into the command: a stand-in of plain characters does (`R_D__copy_.sysml`), or `<qualified name>` for an element, and a note under the row says what each stands for | `palette-check`, `palette-check-run`, `palette-check-copy`, `palette-check-verdict`, `palette-check-note` |
+| Palette · Checks | One row per verification command that fits this view: the question it answers, **Run** (runs it here, against the model on screen), **Copy command** (the same check for a terminal), and a verdict — `not run`, `holds`, `findings`, `undecided`, `stale` after an edit (and, for a check that reads the selection, once the selection moves off what it read: the command beside it then names something else), or `not here` for a check that needs the z3 solver, which needs a cross-origin-isolated page. `reach` and `check-behaviour` walk a state machine's configurations, which can take a good part of a second on a machine with several composite states, so they run in the background: the Checks tab comes forward at the click and lists the check as `running…`, the row reads `running…` with a **Cancel** button beside Run, the page stays usable meanwhile (an answer that arrives while you are in another tab leaves you there), and the answer lands in the Checks tab (marked `stale`, like any result, if the model was edited while it ran). Cancel keeps the result the check had before, and the keyboard focus moves to Run. The first Run in a while — after the page opens, or after a minute unused — takes a fraction of a second longer, as the background worker starts. A model with no state machine is answered on the spot, with no worker. A page that cannot start a worker, or a worker that fails, holds another standard library than the page's, or says nothing for a minute, has the check run where it stands, which holds the page for the walk. A check reads the selection where its terminal command does: `where-used` and `check-behaviour` name it as `--element`, `bounds` as `--measure`, and `contracts` and `obligations` cover the selected element and what it contains, as their optional `--element` does — the summary gives the figure beside the whole model's (*1 of 5 contract(s)*) and ends *scoped to* its name, and **Copy command** names it too. With nothing selected, a bundled library element (which the terminal refuses as a scope), or an element that can hold no contract — a comment, an import, a relationship, such as the header comment the app selects on opening a file that starts with one — those two cover the whole model, their command names no element, and the summary ends *covers the whole model:* and why — the reason at the click: selecting a different comment, import or library element afterwards leaves the result current, since it covers the same elements, and the reason keeps what it said. A file or element name that some terminal could read as a command — a Drive file named `R&D (copy).sysml`, say — never goes into the command: a stand-in of plain characters does (`R_D__copy_.sysml`), or `<qualified name>` for an element (also when a check needs one and nothing is selected), and a note under the row says what each stands for | `palette-check`, `palette-check-run`, `palette-check-cancel`, `palette-check-copy`, `palette-check-verdict`, `palette-check-note` |
 | Canvas | The diagram itself | `diagram-canvas` |
+| Column header | The package's name over one column of a layered General view — a band above the boxes of a connected piece that spans several packages; a click goes through it to the canvas | `column-header` |
 | Fit / zoom to selection / snap / auto-layout | The canvas mini-toolbar | `diagram-fit`, `diagram-fit-selection`, `diagram-snap`, `diagram-autolayout` |
 | Scope diagram to this / Show whole model | Narrow every drawable view to one subtree, and clear it | `node-ctx-scope`, `node-ctx-scope-clear` |
 | Legend | The notation families present in this view, docked bottom-left beside the zoom controls | `diagram-legend`, `legend-toggle` |
@@ -3611,7 +3639,7 @@ The **▾** at the end of the tab strip folds the panel down to its tabs
 | Tab | What it is | Test id |
 |---|---|---|
 | Problems | One shared list, overwritten by Validate / Check / Simulate / Solve / parse | `tab-problems` |
-| Checks | What each palette check last said: verdict, summary, and each finding with its code — click a finding to select the element it names. A result from before the last edit is marked stale rather than shown as current | `tab-checks`, `checks-result`, `checks-row`, `checks-row-select`, `checks-clear` |
+| Checks | What each palette check last said: verdict, summary, and each finding with its code — click a finding to select the element it names. A check scoped to the selection says so in its summary (*scoped to* its name, or *covers the whole model:* and why). A check running in the background is listed at once as `running…`, in place of what it said before, which comes back if the run is cancelled. A result from before the last edit is marked stale rather than shown as current | `tab-checks`, `checks-result`, `checks-row`, `checks-row-select`, `checks-clear` |
 | Text | The model as editable text, with **Apply text → model**; parse warnings fold to one line | `tab-text`, `text-editor`, `text-apply`, `text-editor-diags-toggle` |
 | API Console | A console over the live SDK: queries, metrics, requirement satisfaction, where-used, commit | `tab-api`, `api-query`, `api-run`, `api-metrics` |
 | Simulation | The interactive stepper: target, start, play, step, inject, scrub | `tab-simulation`, `sim-target`, `sim-start`, `sim-step`, `sim-inject` |

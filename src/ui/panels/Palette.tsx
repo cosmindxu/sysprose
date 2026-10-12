@@ -24,13 +24,14 @@
  * only two files this surface owns.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
 import { checkFileName, useAppStore } from '../store';
-import { checksFor, commandNote, runCheck, type CheckSpec } from '../checks';
+import { checksFor, commandNote, selectionKey, type CheckSpec } from '../checks';
 import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
+import { cancelChecked, runChecked } from './checks-runner';
 
 /* ─────────────────────────── Shared tool state ──────────────────────────── */
 
@@ -336,33 +337,60 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   const model = useAppStore((st) => st.model);
   const rev = useAppStore((st) => st.rev);
   const selectionId = useAppStore((st) => st.selectionId);
+  // Read on every store change rather than once per selection: the model is
+  // edited in place, so a rename of the selected element would otherwise leave
+  // its old name in the command that names it.
+  const selectionName = useAppStore((st) => {
+    const selected = st.selectionId ? st.model.get(st.selectionId) : undefined;
+    return selected ? (st.model.qualifiedName(selected.id) ?? selected.attrs.declaredName ?? null) : null;
+  });
   // The file the terminal commands name: the attached Google Drive file's
   // name, which is what a student downloads from Drive, else the project's.
   const fileName = useAppStore(checkFileName);
   const stored = useChecksStore((st) => st.results[spec.id]);
-  const record = useChecksStore((st) => st.record);
+  const running = useChecksStore((st) => st.running[spec.id] !== undefined);
   const [copied, setCopied] = useState(false);
 
   // One object per (model, selection, file name), so the callbacks below are
   // stable between renders instead of being rebuilt on each one.
-  const ctx = useMemo(() => {
-    const selected = selectionId ? model.get(selectionId) : undefined;
-    return {
+  const ctx = useMemo(
+    () => ({
       model,
       selectionId,
-      selectionName: selected ? (model.qualifiedName(selected.id) ?? selected.attrs.declaredName ?? null) : null,
+      selectionName,
       isolated: (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true,
       fileName,
-    };
-  }, [model, selectionId, fileName]);
-  const verdict = verdictOf(stored, rev);
+    }),
+    [model, selectionId, selectionName, fileName],
+  );
+  // What of the selection the result read: once that moves, the row shows the
+  // result as stale, since the command beside it names the new selection.
+  const reads = selectionKey(spec, ctx);
+  // A check in a worker is running until it settles, whatever it said before.
+  const verdict = running ? 'running' : verdictOf(stored, rev, reads);
   // A file or element name the command could not carry as it is (it would be
   // read as code by some terminal): what the stand-in in its place stands for.
   const note = commandNote(spec, ctx);
 
   const onRun = useCallback(() => {
-    record(spec.id, runCheck(spec, ctx), rev);
-  }, [record, spec, ctx, rev]);
+    runChecked(spec, ctx, rev);
+  }, [spec, ctx, rev]);
+  const onCancel = useCallback(() => cancelChecked(spec.id), [spec.id]);
+
+  // Cancel goes when the check stops, whether the person pressed it or the answer
+  // came while it had the focus. A focused button that leaves the page leaves the
+  // focus on <body>, and there the Backspace guard (`handleShortcut` refuses
+  // Delete/Backspace only on a button or link) no longer holds: a reflex Backspace
+  // would delete the selection. So the focus goes to Run, which stays. A ref
+  // callback runs with null before the node leaves the page, while it still has it.
+  const runButton = useRef<HTMLButtonElement>(null);
+  const cancelNode = useRef<HTMLButtonElement | null>(null);
+  const cancelRef = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null && cancelNode.current !== null && document.activeElement === cancelNode.current) {
+      runButton.current?.focus();
+    }
+    cancelNode.current = node;
+  }, []);
 
   const onCopy = useCallback(() => {
     void navigator.clipboard?.writeText(spec.command(ctx)).then(
@@ -375,7 +403,13 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   }, [spec, ctx]);
 
   return (
-    <div className="palette-check" data-testid="palette-check" data-check={spec.id} data-verdict={verdict}>
+    <div
+      className="palette-check"
+      data-testid="palette-check"
+      data-check={spec.id}
+      data-verdict={verdict}
+      data-ran-in={stored?.ranIn}
+    >
       <div className="palette-check-head">
         <span className="palette-check-label" title={`${spec.question}\n\n${spec.command(ctx)}`}>
           {spec.label}
@@ -385,9 +419,22 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
         </span>
       </div>
       <div className="palette-check-actions">
-        <button type="button" data-testid="palette-check-run" onClick={onRun} title={`Run ${spec.id} on the model as it is now`}>
+        {/* aria-disabled, not disabled: the button keeps the focus the click gave it while the check runs. */}
+        <button
+          ref={runButton}
+          type="button"
+          data-testid="palette-check-run"
+          aria-disabled={running}
+          onClick={running ? undefined : onRun}
+          title={running ? `${spec.id} is running` : `Run ${spec.id} on the model as it is now`}
+        >
           Run
         </button>
+        {running && (
+          <button ref={cancelRef} type="button" data-testid="palette-check-cancel" onClick={onCancel} title={`Stop ${spec.id}; it keeps the result it had`}>
+            Cancel
+          </button>
+        )}
         <button type="button" data-testid="palette-check-copy" onClick={onCopy} title={spec.command(ctx)}>
           {copied ? 'Copied' : 'Copy command'}
         </button>
@@ -398,7 +445,13 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
           {note}
         </div>
       )}
-      {stored && <div className="palette-check-summary">{stored.result.summary}</div>}
+      {running ? (
+        <div className="palette-check-summary" role="status">
+          Running in the background — the page stays usable. Cancel stops it.
+        </div>
+      ) : (
+        stored && <div className="palette-check-summary">{stored.result.summary}</div>
+      )}
     </div>
   );
 }
@@ -431,7 +484,16 @@ function initiallyCollapsed(): boolean {
 export function Palette(): JSX.Element {
   const activeView = useAppStore((s) => s.activeView);
   const [collapsed, setCollapsed] = useState(initiallyCollapsed);
-  const toggleCollapsed = useCallback(() => {
+  // Put away or brought back, the control pressed is replaced by its opposite (two
+  // different trees). A focused button that leaves the page leaves the focus on
+  // <body>, where a reflex Backspace would delete the selection (the guard refuses
+  // it only on a button), so the keyboard goes to the control that took its place.
+  // Only when the pressed one held the focus: a mouse click that gave none stays put.
+  const hideButton = useRef<HTMLButtonElement>(null);
+  const showButton = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  const toggleCollapsed = useCallback((e: ReactMouseEvent<HTMLButtonElement>) => {
+    refocus.current = document.activeElement === e.currentTarget;
     setCollapsed((c) => {
       try {
         localStorage.setItem(COLLAPSE_KEY, c ? '0' : '1');
@@ -441,6 +503,11 @@ export function Palette(): JSX.Element {
       return !c;
     });
   }, []);
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    (collapsed ? showButton : hideButton).current?.focus();
+  }, [collapsed]);
   const tool = usePaletteStore((s) => s.tool);
   const setTool = usePaletteStore((s) => s.setTool);
 
@@ -474,17 +541,26 @@ export function Palette(): JSX.Element {
           ?.label ?? (tool as { eClass: string }).eClass);
 
   if (collapsed) {
+    // What the column hides, named in its own section words (a table view draws
+    // nothing, so it has no Tools). The accessible name holds the visible label
+    // whole, then says what the click does.
+    const sections = groups.length > 0 ? 'Tools, Edit, Checks' : 'Edit, Checks';
     return (
       <div className="palette is-collapsed" data-testid="palette" data-collapsed="true">
         <button
+          ref={showButton}
           type="button"
-          className="palette-collapse"
+          className="app-rail app-rail-left palette-rail"
           data-testid="palette-expand"
-          title="Show the palette (tools, edit, checks)"
+          title={`Show the palette (${sections.toLowerCase()})`}
+          aria-label={`Show Palette: ${sections}`}
           aria-expanded={false}
           onClick={toggleCollapsed}
         >
-          ›
+          <span className="app-rail-chev">›</span>
+          <span className="app-rail-label" data-testid="palette-collapsed-label">
+            Palette:<span className="palette-rail-sections"> {sections}</span>
+          </span>
         </button>
       </div>
     );
@@ -495,10 +571,12 @@ export function Palette(): JSX.Element {
       <div className="palette-head">
         <span className="palette-group-title">Palette · {activeView}</span>
         <button
+          ref={hideButton}
           type="button"
           className="palette-collapse"
           data-testid="palette-collapse"
           title="Hide the palette"
+          aria-label="Hide the palette"
           aria-expanded
           onClick={toggleCollapsed}
         >

@@ -6,7 +6,8 @@
  * ("On Evaluating the Layout of UML Class Diagrams for Program Comprehension",
  * IWPC 2005, building on Purchase's graph-drawing aesthetics):
  *
- * - every view flows LEFT → RIGHT (C11, C14: horizontal relationships);
+ * - every view flows LEFT → RIGHT (C11, C14: horizontal relationships) — except
+ *   a hub that many dependency lines end on, which may lead its piece;
  * - edges are routed ORTHOGONALLY around the boxes by ELK and drawn along that
  *   route, so no connector crosses a box it does not touch (C9, C12), with
  *   crossings and bends minimised by the layered algorithm (C5);
@@ -32,11 +33,15 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ELK as ElkInstance, ElkExtendedEdge, ElkNode, ElkPort } from 'elkjs/lib/elk-api';
 import { isControlNode } from '@core/index';
-import { edgeLabelText, keywordLabelsAreRepetition } from './edge-labels';
+import { edgeKeywordFor, edgeLabelText, keywordLabelsAreRepetition } from './edge-labels';
+import { COLUMN_HEADER_GAP, columnHeaderHeight, columnLabelSize, columnSpans } from './column-headers';
 import { textWidth } from './text-measure';
 
 export { textWidth } from './text-measure';
-import type { DiagramEdge, DiagramGraph, DiagramNode, Point, ViewKind } from './types';
+import type { DiagramColumn, DiagramEdge, DiagramGraph, DiagramNode, Point, ViewKind } from './types';
+
+/** No edge — the default of an orientation that reverses nothing. */
+const NO_EDGES: ReadonlySet<string> = new Set();
 
 /** Fallback box size when a node has no measurable content. */
 const DEFAULT_NODE_W = 180;
@@ -82,8 +87,9 @@ export function elkPortSide(side: string): string {
  * Primary layout direction per view. Every view reads left → right, the way
  * its reader reads text (Sun & Wong C11): structure from owner to part, flows
  * from first step to last, state machines from initial state onward, trees from
- * root to leaf, requirements from the satisfier to the requirement. Exposed for
- * unit tests.
+ * root to leaf, requirements from the satisfier to the requirement — except a
+ * hub that many dependency lines end on, which leads its piece when that
+ * clearly cuts crossings (see {@link dependencyHubs}). Exposed for unit tests.
  */
 export function layoutDirectionFor(_viewKind: ViewKind): 'RIGHT' {
   return 'RIGHT';
@@ -342,8 +348,26 @@ export function packRows(
 
 /* ───────────────────────────────── ELK run ───────────────────────────────── */
 
-/** Build the ELK tree of one piece from the diagram's parent/child relationships. */
-function toElkTree(graph: DiagramGraph, piece: Piece, overrides: Record<string, string> = {}): ElkNode {
+/** Does the piece belong to a layered model's columns — some box carries a numeric `layoutPartition`? */
+function isPartitioned(graph: DiagramGraph, piece: Piece): boolean {
+  return graph.nodes.some((n) => {
+    const lane = (n.data as Record<string, unknown> | undefined)?.layoutPartition;
+    return piece.nodeIds.has(n.id) && typeof lane === 'number';
+  });
+}
+
+/**
+ * Build the ELK tree of one piece from the diagram's parent/child relationships.
+ * An edge named in `reversed` is handed to ELK from its target to its source —
+ * a hub then leads its layer order instead of closing it — and
+ * {@link readGeometry} turns its route back.
+ */
+function toElkTree(
+  graph: DiagramGraph,
+  piece: Piece,
+  overrides: Record<string, string> = {},
+  reversed: ReadonlySet<string> = NO_EDGES,
+): ElkNode {
   const childrenOf = new Map<string | undefined, DiagramNode[]>();
   for (const n of graph.nodes) {
     if (!piece.nodeIds.has(n.id)) continue;
@@ -395,15 +419,14 @@ function toElkTree(graph: DiagramGraph, piece: Piece, overrides: Record<string, 
   // C1, "join arcs"): far fewer lines to cross. Labelled ones keep their own
   // line, so each label stays with its edge.
   const unlabelled = piece.edges.every((e) => !edgeLabelText(e));
-  const partitioned = graph.nodes.some(
-    (n) => piece.nodeIds.has(n.id) && typeof (n.data as Record<string, unknown> | undefined)?.layoutPartition === 'number',
-  );
+  const partitioned = isPartitioned(graph, piece);
   const edges: ElkExtendedEdge[] = piece.edges.map((e) => {
     const text = edgeLabelText(e);
+    const back = reversed.has(e.id);
     return {
       id: e.id,
-      sources: [e.source],
-      targets: [e.target],
+      sources: [back ? e.target : e.source],
+      targets: [back ? e.source : e.target],
       ...(text ? { labels: [{ id: `${e.id}#label`, text, ...edgeLabelSize(text) }] } : {}),
     };
   });
@@ -432,8 +455,8 @@ interface PieceGeometry {
   height: number;
 }
 
-/** Read positions and edge routes out of a laid-out ELK tree. */
-function readGeometry(laidOut: ElkNode): PieceGeometry {
+/** Read positions and edge routes out of a laid-out ELK tree; a `reversed` edge's route runs source to target again. */
+function readGeometry(laidOut: ElkNode, reversed: ReadonlySet<string> = NO_EDGES): PieceGeometry {
   const nodes: PieceGeometry['nodes'] = new Map();
   const abs = new Map<string, Point>([['root', { x: 0, y: 0 }]]);
   const routes = new Map<string, Point[]>();
@@ -475,6 +498,7 @@ function readGeometry(laidOut: ElkNode): PieceGeometry {
         if (!last || Math.abs(last.x - q.x) > 0.01 || Math.abs(last.y - q.y) > 0.01) pts.push(q);
       }
     }
+    if (reversed.has(edge.id)) pts.reverse();
     if (pts.length >= 2) routes.set(edge.id, pts);
     const l = edge.labels?.[0];
     if (l && l.x !== undefined && l.y !== undefined) {
@@ -555,28 +579,101 @@ export function readabilityCost(g: PieceGeometry, ends: Map<string, [string, str
   return countCrossings(g.routes, ends) + 0.1 * bends + length / 2000;
 }
 
-/** Lay out one piece — every candidate layering where it pays, keeping the most readable. */
-async function layoutPiece(graph: DiagramGraph, piece: Piece, overrides: Record<string, string> = {}): Promise<PieceGeometry> {
+/**
+ * A box that this many dependency lines (`«allocate»`, `«satisfy»`, `«trace»`…)
+ * point at is a hub: `memberA`, which fourteen activities are allocated to.
+ */
+export const HUB_MIN_EDGES = 3;
+/**
+ * A layout that draws a hub's lines from the hub outwards is kept only if it
+ * has this many crossings fewer than the usual one (and costs less): a clear
+ * gain, never a tie, so a diagram that already reads well keeps its direction.
+ */
+export const HUB_MIN_CROSSINGS_SAVED = 3;
+/**
+ * Drawing from the hubs is one more full layout run, which on a big piece with
+ * a hub of a hundred lines costs as much as all the layering candidates
+ * together. Pieces of more boxes than this keep the usual direction; every
+ * layer of the drone-swarm models is well under it.
+ */
+export const HUB_MAX_NODES = 200;
+
+/**
+ * The boxes `min` or more dependency-family lines end on, mapped to those
+ * lines. Pure; exported for tests.
+ */
+export function dependencyHubs(
+  edges: readonly Pick<DiagramEdge, 'id' | 'kind' | 'target'>[],
+  min = HUB_MIN_EDGES,
+): Map<string, string[]> {
+  const into = new Map<string, string[]>();
+  for (const e of edges) {
+    if (edgeKeywordFor(e.kind) === undefined) continue;
+    const list = into.get(e.target);
+    if (list) list.push(e.id);
+    else into.set(e.target, [e.id]);
+  }
+  for (const [box, ids] of into) if (ids.length < min) into.delete(box);
+  return into;
+}
+
+/**
+ * The dependency lines a piece of a General view could be laid out from their
+ * hub instead of towards it. Laid out source → target, a hub closes its piece
+ * in the last layer and the lines into it run across the width of the diagram,
+ * over everything else on the way (the drone-swarm model's `memberA`, which
+ * fourteen activities are allocated to). Laid out from the hub they fan out of
+ * it. Only a piece that is not split into layer columns qualifies — the columns
+ * fix which box comes first — and only up to {@link HUB_MAX_NODES} boxes. Empty
+ * when the piece has no hub. Exported for tests.
+ */
+export function hubEdges(graph: DiagramGraph, piece: Piece): ReadonlySet<string> {
+  if (graph.viewKind !== 'general' || piece.nodeIds.size > HUB_MAX_NODES || isPartitioned(graph, piece)) return NO_EDGES;
+  const ids = new Set<string>();
+  for (const list of dependencyHubs(piece.edges).values()) for (const id of list) ids.add(id);
+  return ids;
+}
+
+/**
+ * Lay out one piece — every candidate layering where it pays, keeping the most
+ * readable. A piece with a hub is also laid out with the hub's dependency lines
+ * drawn from the hub, and that layout wins only when it is clearly more readable.
+ */
+async function layoutPiece(
+  graph: DiagramGraph,
+  piece: Piece,
+  overrides: Record<string, string> = {},
+): Promise<PieceGeometry> {
   const n = piece.nodeIds.size;
-  const tryCandidates =
-    n >= CANDIDATE_MIN_NODES && n <= CANDIDATE_MAX_NODES && piece.edges.length >= 10 &&
-    overrides['elk.layered.layering.strategy'] === undefined;
-  if (!tryCandidates) return readGeometry(await runElk(toElkTree(graph, piece, overrides)));
+  const forced = overrides['elk.layered.layering.strategy'] !== undefined;
+  const tryCandidates = n >= CANDIDATE_MIN_NODES && n <= CANDIDATE_MAX_NODES && piece.edges.length >= 10 && !forced;
+  const fromHubs = forced ? NO_EDGES : hubEdges(graph, piece);
+  if (!tryCandidates && fromHubs.size === 0) return readGeometry(await runElk(toElkTree(graph, piece, overrides)));
   const portOwner = new Map<string, string>();
   for (const node of graph.nodes) for (const p of node.ports ?? []) portOwner.set(p.id, node.id);
   const ends = new Map<string, [string, string]>(
     piece.edges.map((e) => [e.id, [portOwner.get(e.source) ?? e.source, portOwner.get(e.target) ?? e.target]]),
   );
-  let best: { g: PieceGeometry; cost: number } | null = null;
-  for (const { layering, maxNodes } of LAYERING_CANDIDATES) {
-    if (n > maxNodes) continue;
-    const g = readGeometry(
-      await runElk(toElkTree(graph, piece, { 'elk.layered.layering.strategy': layering, ...overrides })),
-    );
-    const cost = readabilityCost(g, ends);
-    if (!best || cost < best.cost) best = { g, cost };
+  type Laid = { g: PieceGeometry; cost: number };
+  const run = async (reversed: ReadonlySet<string>, layering: string | undefined): Promise<Laid> => {
+    const options = layering ? { 'elk.layered.layering.strategy': layering, ...overrides } : overrides;
+    const g = readGeometry(await runElk(toElkTree(graph, piece, options, reversed)), reversed);
+    return { g, cost: readabilityCost(g, ends) };
+  };
+  let usual: (Laid & { layering: string | undefined }) | null = null;
+  const layerings = tryCandidates
+    ? LAYERING_CANDIDATES.filter((c) => n <= c.maxNodes).map((c) => c.layering)
+    : [undefined];
+  for (const layering of layerings) {
+    const r = await run(NO_EDGES, layering);
+    if (!usual || r.cost < usual.cost) usual = { ...r, layering };
   }
-  return best!.g;
+  if (fromHubs.size === 0) return usual!.g;
+  // The layering that read best source → target also read best from the hubs on
+  // every layer of the drone-swarm model, so the hub-led layout costs one more run.
+  const hubLed = await run(fromHubs, usual!.layering);
+  const saved = countCrossings(usual!.g.routes, ends) - countCrossings(hubLed.g.routes, ends);
+  return saved >= HUB_MIN_CROSSINGS_SAVED && hubLed.cost < usual!.cost ? hubLed.g : usual!.g;
 }
 
 let elkInstance: ElkInstance | null = null;
@@ -629,6 +726,46 @@ export function thoroughnessFor(nodes: number): string {
 }
 
 /**
+ * The header columns of a laid-out piece, in the piece's own coordinates: one per
+ * package it spans, over that package's boxes, `band` px tall (see
+ * `column-headers.ts`). Undefined unless the graph names its packages
+ * (`partitions`) and the piece spans two or more of them.
+ */
+function columnHeads(
+  partitions: DiagramGraph['partitions'],
+  partitionOf: ReadonlyMap<string, unknown>,
+  piece: Piece,
+  g: PieceGeometry,
+): { band: number; columns: DiagramColumn[] } | undefined {
+  if (!partitions) return undefined;
+  const boxes: { partition: number; x: number; w: number }[] = [];
+  for (const id of piece.tops) {
+    const partition = partitionOf.get(id);
+    const n = g.nodes.get(id);
+    if (typeof partition === 'number' && n) boxes.push({ partition, x: n.absX, w: n.w });
+  }
+  const spans = columnSpans(boxes);
+  if (spans.length === 0) return undefined;
+  const band = columnHeaderHeight(g.width);
+  return {
+    band,
+    columns: spans.map((s) => {
+      const lane = partitions[s.partition]!;
+      return {
+        id: `col:${lane.elementId}:${piece.tops[0]}`,
+        elementId: lane.elementId,
+        label: lane.label,
+        x: s.x0,
+        y: 0,
+        w: s.x1 - s.x0,
+        h: band,
+        fontSize: columnLabelSize(band),
+      };
+    }),
+  };
+}
+
+/**
  * Lay out `graph` and return a new graph with `position` and `size` set on every
  * node and a `route` on every edge ELK routed. Positions of nested nodes are
  * relative to their parent (React Flow semantics); top-level nodes and routes
@@ -652,29 +789,38 @@ export async function layoutDiagram(
   for (const piece of pieces) {
     geoms.push(await layoutPiece(graph, piece, opts.elkOptions));
   }
+  // A piece that spans several packages is headed by a band naming each column;
+  // its room is reserved here, above the piece, so no box is ever under one.
+  const partitionOf = new Map(graph.nodes.map((n) => [n.id, (n.data as Record<string, unknown> | undefined)?.layoutPartition]));
+  const heads = pieces.map((piece, i) => columnHeads(graph.partitions, partitionOf, piece, geoms[i]!));
   const packed = packRows(
-    geoms.map((g) => ({ w: g.width, h: g.height })),
+    geoms.map((g, i) => ({ w: g.width, h: g.height + (heads[i] ? heads[i]!.band + COLUMN_HEADER_GAP : 0) })),
     opts.aspect ?? TARGET_ASPECT,
   );
 
   const place = new Map<string, { x: number; y: number; w: number; h: number; absX: number; absY: number }>();
   const routes = new Map<string, Point[]>();
   const labels = new Map<string, Point>();
+  const columns: DiagramColumn[] = [];
   geoms.forEach((g, i) => {
     const off = packed.offsets[i]!;
+    const head = heads[i];
+    // Everything of the piece sits under its header band, when it has one.
+    const dy = off.y + (head ? head.band + COLUMN_HEADER_GAP : 0);
     const tops = new Set(pieces[i]!.tops);
     for (const [id, n] of g.nodes) {
       place.set(id, {
         ...n,
         // Top-level boxes move with their piece; nested ones stay parent-relative.
         x: tops.has(id) ? n.x + off.x : n.x,
-        y: tops.has(id) ? n.y + off.y : n.y,
+        y: tops.has(id) ? n.y + dy : n.y,
         absX: n.absX + off.x,
-        absY: n.absY + off.y,
+        absY: n.absY + dy,
       });
     }
-    for (const [id, pts] of g.routes) routes.set(id, pts.map((p) => ({ x: p.x + off.x, y: p.y + off.y })));
-    for (const [id, p] of g.labels) labels.set(id, { x: p.x + off.x, y: p.y + off.y });
+    for (const [id, pts] of g.routes) routes.set(id, pts.map((p) => ({ x: p.x + off.x, y: p.y + dy })));
+    for (const [id, p] of g.labels) labels.set(id, { x: p.x + off.x, y: p.y + dy });
+    for (const c of head?.columns ?? []) columns.push({ ...c, x: c.x + off.x, y: off.y });
   });
 
   const nodes: DiagramNode[] = graph.nodes.map((n) => {
@@ -701,5 +847,5 @@ export async function layoutDiagram(
     };
   });
 
-  return { nodes, edges, viewKind: graph.viewKind };
+  return { nodes, edges, viewKind: graph.viewKind, ...(columns.length ? { columns } : {}) };
 }

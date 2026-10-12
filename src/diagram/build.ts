@@ -32,7 +32,7 @@ import {
   isSpecialization,
   isUsage,
 } from '@core/index';
-import type { DiagramEdge, DiagramGraph, DiagramNode, DiagramPort, ViewKind } from './types';
+import type { DiagramEdge, DiagramGraph, DiagramNode, DiagramPartition, DiagramPort, ViewKind } from './types';
 
 /* ───────────────────────────── classification ──────────────────────────── */
 
@@ -157,14 +157,15 @@ function isStructuralNode(eClass: string): boolean {
  * left to right, as columns. A reader then meets the model in the order it was
  * written; measured on the drone-swarm model's general view, it also removes a
  * third of the crossings. Nothing is tagged unless at least two packages hold
- * boxes and no box sits outside them.
+ * boxes and no box sits outside them. Returns the packages in column order, so
+ * the layout can name each column (`DiagramColumn`); undefined when nothing is tagged.
  */
-function assignPackagePartitions(model: Model, nodes: DiagramNode[], rootId?: ElementId): void {
+function assignPackagePartitions(model: Model, nodes: DiagramNode[], rootId?: ElementId): DiagramPartition[] | undefined {
   const roots = rootId ? [rootId] : model.all().filter((e) => e.ownerId === null && e.attrs.isLibrary !== true).map((e) => e.id);
-  if (roots.length !== 1) return;
+  if (roots.length !== 1) return undefined;
   const root = roots[0]!;
   const lanes = model.children(root).filter((c) => CONTAINER_KINDS.has(c.eClass)).map((c) => c.id);
-  if (lanes.length < 2) return;
+  if (lanes.length < 2) return undefined;
   const laneOf = (id: ElementId): number => {
     let cur: ElementId | null = id;
     let prev: ElementId | null = null;
@@ -175,10 +176,11 @@ function assignPackagePartitions(model: Model, nodes: DiagramNode[], rootId?: El
     return cur === root && prev ? lanes.indexOf(prev) : -1;
   };
   const assigned = nodes.map((n) => laneOf(n.elementId));
-  if (assigned.some((l) => l < 0) || new Set(assigned).size < 2) return;
+  if (assigned.some((l) => l < 0) || new Set(assigned).size < 2) return undefined;
   nodes.forEach((n, i) => {
     n.data = { ...n.data, layoutPartition: assigned[i] };
   });
+  return lanes.map((id) => ({ elementId: id, label: labelOf(model.get(id)!) }));
 }
 
 function buildGeneral(model: Model, scope: Set<ElementId>, rootId?: ElementId): DiagramGraph {
@@ -239,8 +241,8 @@ function buildGeneral(model: Model, scope: Set<ElementId>, rootId?: ElementId): 
     }
   }
 
-  assignPackagePartitions(model, nodes, rootId);
-  return { nodes, edges, viewKind: 'general' };
+  const partitions = assignPackagePartitions(model, nodes, rootId);
+  return { nodes, edges, viewKind: 'general', ...(partitions ? { partitions } : {}) };
 }
 
 /* ──────────────────────────── interconnection ──────────────────────────── */

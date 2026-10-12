@@ -199,3 +199,42 @@ describe('svgFromDiagram — determinism + edge cases', () => {
     expect(svg).toContain('viewBox="');
   });
 });
+
+describe('svgFromDiagram — column headers', () => {
+  const withColumns = (): DiagramGraph => ({
+    ...fixture(),
+    columns: [
+      { id: 'c1', elementId: 'pkg1', label: 'OA & <SA>', x: 0, y: -40, w: 360, h: 32, fontSize: 18 },
+      { id: 'c2', elementId: 'pkg2', label: 'SurveillanceDroneSwarm', x: 400, y: -40, w: 48, h: 32, fontSize: 18 },
+    ],
+  });
+
+  it('draws one band per column, under the edges and the boxes, with its label escaped', () => {
+    const svg = svgFromDiagram(withColumns());
+    expect(svg.match(/data-column-id="/g)!.length).toBe(2);
+    expect(svg).toContain('data-elementid="pkg1"');
+    expect(svg).toContain('>OA &amp; &lt;SA&gt;</text>');
+    expect(svg.indexOf('data-layer="column-headers"')).toBeLessThan(svg.indexOf('data-layer="edges"'));
+    expect(svg).not.toContain('OA & <SA>');
+  });
+
+  it('widens the viewBox to the headers above the boxes', () => {
+    // Boxes span y:[0,250]; the headers start at y:-40.
+    expect(svgFromDiagram(withColumns())).toContain('viewBox="-24 -64 496 338"');
+  });
+
+  it('cuts a label that does not fit its column, and omits the text with labels off', () => {
+    const svg = svgFromDiagram(withColumns());
+    expect(svg).not.toContain('>SurveillanceDroneSwarm<');
+    expect(svg).toMatch(/>S[A-Za-z]*…<\/text>/);
+    const bare = svgFromDiagram(withColumns(), { labels: false });
+    expect(bare).toContain('data-column-id="c1"');
+    expect(bare).not.toContain('>OA &amp;');
+  });
+
+  it('adds nothing to a graph without columns', () => {
+    const svg = svgFromDiagram(fixture());
+    expect(svg).not.toContain('column-headers');
+    expect(svg).not.toContain('data-column-id');
+  });
+});

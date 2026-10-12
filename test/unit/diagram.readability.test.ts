@@ -11,7 +11,10 @@
  *  - boxes are wide enough for their text;
  *  - a label repeated on every line is dropped and the lines joined (C1, C3);
  *  - the tree grows one opened branch at a time;
- *  - a model's layer packages read left to right as columns.
+ *  - a model's layer packages read left to right as columns, each headed by its
+ *    package's name;
+ *  - a hub that many dependency lines end on leads its piece, when that clearly
+ *    cuts crossings.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -27,13 +30,29 @@ import {
   svgFromDiagram,
 } from '@diagram/index';
 import {
+  HUB_MAX_NODES,
+  HUB_MIN_CROSSINGS_SAVED,
   TARGET_ASPECT,
   connectedPieces,
+  countCrossings,
+  dependencyHubs,
+  hubEdges,
   intrinsicSize,
   packRows,
   thoroughnessFor,
 } from '@diagram/layout';
 import { keywordLabelsAreRepetition, REPEATED_KEYWORD_MIN } from '@diagram/edge-labels';
+import {
+  COLUMN_HEADER_MAX_H,
+  COLUMN_HEADER_MIN_H,
+  COLUMN_LABEL_SCREEN_PX,
+  columnHeaderHeight,
+  columnLabelSize,
+  columnLabelSizeAt,
+  columnLabelSizeFor,
+  columnSpans,
+  fitColumnLabel,
+} from '@diagram/column-headers';
 import { fitRouteToEnds, roundedPath, routeIsCurrent, routeLabelPoint } from '@diagram/edges';
 import type { DiagramGraph, DiagramNode, Point, ViewKind } from '@diagram/types';
 
@@ -362,6 +381,305 @@ describe('general view — a layered model reads layer by layer, left to right',
     const sa = model.all().find((e) => e.declaredName === 'SA')!;
     const g = buildDiagram(model, 'general', sa.id);
     expect(g.nodes.every((n) => n.data.layoutPartition === undefined)).toBe(true);
+    expect(g.partitions).toBeUndefined();
+  });
+
+  it('names the packages in the order the boxes are tagged', () => {
+    const g = buildDiagram(model, 'general');
+    expect(g.partitions!.map((p) => p.label)).toEqual(['OA', 'SA', 'PA']);
+    for (const n of g.nodes) {
+      const p = g.partitions![n.data.layoutPartition as number]!;
+      expect(model.qualifiedName(n.elementId).startsWith(`System::${p.label}::`)).toBe(true);
+    }
+  });
+});
+
+describe('general view — each column of a layered model is headed by its package', () => {
+  // Chains across the packages make connected pieces that span two or three
+  // of them; Loner has no edge and is packed with the loose boxes.
+  const { model } = parseModel(`package System {
+    package OA {
+        part def Operator;
+        part def Mission;
+    }
+    package SA {
+        part def Swarm :> OA::Operator;
+        part def Drone;
+        part def Relay :> OA::Mission;
+    }
+    package PA {
+        part def Airframe :> SA::Drone;
+        part def Radio;
+        part def Dish :> SA::Relay;
+        part def Loner;
+    }
+}`);
+
+  it('puts one header over each package of a piece that spans several, in column order', async () => {
+    const g = await layoutDiagram(buildDiagram(model, 'general'));
+    const cols = g.columns!;
+    // Three pieces span packages: Mission-Relay-Dish (OA, SA, PA), Operator-Swarm
+    // (OA, SA) and Drone-Airframe (SA, PA).
+    expect(cols.map((c) => c.label).sort()).toEqual(['OA', 'OA', 'PA', 'PA', 'SA', 'SA', 'SA']);
+    // One piece's headers (the id ends with the piece's first box) read left to
+    // right in package order.
+    const pieces = new Map<string, string[]>();
+    for (const c of [...cols].sort((a, b) => a.x - b.x)) {
+      const piece = c.id.split(':')[2]!;
+      pieces.set(piece, [...(pieces.get(piece) ?? []), c.label]);
+    }
+    expect([...pieces.values()].sort()).toEqual([['OA', 'SA'], ['OA', 'SA', 'PA'], ['SA', 'PA']]);
+    for (const c of cols) {
+      expect(c.w).toBeGreaterThan(0);
+      expect(c.h).toBeGreaterThanOrEqual(32);
+      expect(c.fontSize).toBeLessThanOrEqual(c.h);
+    }
+  });
+
+  it('spans exactly its package\'s boxes, and sits above them', async () => {
+    const g = await layoutDiagram(buildDiagram(model, 'general'));
+    const boxes = absoluteBoxes(g);
+    for (const c of g.columns!) {
+      // The boxes under this header: the package's, in the header's piece, whose x-range is its own.
+      const under = g.nodes.filter((n) => {
+        const b = boxes.get(n.id)!;
+        return n.elementId && model.qualifiedName(n.elementId).includes(`::${c.label}::`) && b.x >= c.x - 0.5 && b.x + b.w <= c.x + c.w + 0.5 && b.y >= c.y + c.h;
+      });
+      expect(under.length, `${c.label} header has boxes under it`).toBeGreaterThan(0);
+      expect(Math.min(...under.map((n) => boxes.get(n.id)!.x))).toBeCloseTo(c.x, 0);
+      expect(Math.max(...under.map((n) => boxes.get(n.id)!.x + boxes.get(n.id)!.w))).toBeCloseTo(c.x + c.w, 0);
+    }
+  });
+
+  it('overlaps no box and no other header', async () => {
+    const g = await layoutDiagram(buildDiagram(model, 'general'));
+    const boxes = [...absoluteBoxes(g).values()];
+    const cols = g.columns!;
+    for (const c of cols) {
+      for (const b of boxes) expect(overlap(c, b), `header ${c.label} overlaps a box`).toBe(false);
+    }
+    for (let i = 0; i < cols.length; i++) {
+      for (let j = i + 1; j < cols.length; j++) expect(overlap(cols[i]!, cols[j]!), `headers ${i} and ${j} overlap`).toBe(false);
+    }
+    expectReadable(g);
+  });
+
+  it('gives a piece inside one package, and loose boxes, no header', async () => {
+    // Every box of this model is alone, or in a pair inside one package.
+    const { model: apart } = parseModel(`package System {
+    package OA { part def A; part def B :> A; }
+    package SA { part def C; part def D :> C; }
+}`);
+    const g = await layoutDiagram(buildDiagram(apart, 'general'));
+    expect(g.nodes.every((n) => typeof n.data.layoutPartition === 'number')).toBe(true);
+    expect(g.columns).toBeUndefined();
+    // And an unpartitioned view has none.
+    const sa = model.all().find((e) => e.declaredName === 'SA')!;
+    expect((await layoutDiagram(buildDiagram(model, 'general', sa.id))).columns).toBeUndefined();
+  });
+
+  it('heads a view scoped to a package that holds several, not a wrapper or several top-level packages', async () => {
+    const layers = 'package Layers { package OA { part def X; } package SA { part def Y :> OA::X; } }';
+    const { model: wrapped } = parseModel(`package Top { ${layers} }`);
+    const headsOf = async (m: typeof wrapped, scope?: string): Promise<string[]> => {
+      const root = scope ? m.all().find((e) => e.declaredName === scope)!.id : undefined;
+      return ((await layoutDiagram(buildDiagram(m, 'general', root))).columns ?? []).map((c) => c.label);
+    };
+    // One wrapper package around the layers: its only child is Layers, so the whole model is not layered.
+    expect(await headsOf(wrapped)).toEqual([]);
+    expect(await headsOf(wrapped, 'Top')).toEqual([]);
+    // Scoped to the package that holds the layers, it is, and is headed.
+    expect(await headsOf(wrapped, 'Layers')).toEqual(['OA', 'SA']);
+    // A single layer package is not layered.
+    expect(await headsOf(wrapped, 'OA')).toEqual([]);
+    // Nor are two top-level packages: the view has no single root to take the columns from.
+    const { model: roots } = parseModel('package OA { part def X; } package SA { part def Y :> OA::X; }');
+    expect(await headsOf(roots)).toEqual([]);
+  });
+
+  it('draws them in the SVG export, inside its viewBox', async () => {
+    const g = await layoutDiagram(buildDiagram(model, 'general'));
+    const svg = svgFromDiagram(g);
+    expect(svg).toContain('<g data-layer="column-headers">');
+    expect(svg.match(/data-column-id=/g)!.length).toBe(g.columns!.length);
+    for (const label of ['OA', 'SA', 'PA']) expect(svg).toContain(`>${label}</text>`);
+    const [x, y, w, h] = /viewBox="([^"]+)"/.exec(svg)![1]!.split(' ').map(Number) as [number, number, number, number];
+    for (const c of g.columns!) {
+      expect(c.x).toBeGreaterThanOrEqual(x);
+      expect(c.y).toBeGreaterThanOrEqual(y);
+      expect(c.x + c.w).toBeLessThanOrEqual(x + w);
+      expect(c.y + c.h).toBeLessThanOrEqual(y + h);
+    }
+  });
+});
+
+describe('general view — a hub that many dependency lines end on leads its piece', () => {
+  /**
+   * The drone-swarm model's operational layer in small: two members each have an
+   * activity allocated to them per step, the two members' activities share a
+   * definition, and a few hazards and use cases hold the members' type.
+   */
+  function hubText(steps: number, hazards: number, cases: number, wrap = false): string {
+    const each = (n: number, f: (i: number) => string): string => Array.from({ length: n }, (_, i) => f(i)).join('\n    ');
+    const body = `part def Member;
+    part memberA : Member;
+    part memberB : Member;
+    ${each(cases, (i) => `use case def Case${i} { ref holder : Member; }`)}
+    ${each(hazards, (i) => `requirement hazard${i} { ref holder : Member; }`)}
+    ${each(steps, (i) => `action def Step${i};`)}
+    ${each(steps, (i) => `action alpha${i} : Step${i};\n    action bravo${i} : Step${i};`)}
+    ${each(steps, (i) => `allocate alpha${i} to memberA;\n    allocate bravo${i} to memberB;`)}
+    ${each(hazards, (i) => `satisfy hazard${i} by alpha${i};`)}`;
+    return wrap ? `package Layers {\n  package Ops {\n    ${body}\n  }\n  package Logic {\n    part def Controller;\n  }\n}\n` : `package Watch {\n    ${body}\n}\n`;
+  }
+  const generalOf = (text: string): DiagramGraph => buildDiagram(parseModel(text).model, 'general');
+  const crossingsOf = (g: DiagramGraph): number => {
+    const routes = new Map(g.edges.filter((e) => e.route).map((e) => [e.id, e.route!]));
+    return countCrossings(routes, new Map(g.edges.map((e) => [e.id, [e.source, e.target] as [string, string]])));
+  };
+  const box = (g: DiagramGraph, label: string): Box => absoluteBoxes(g).get(g.nodes.find((n) => n.label === label)!.id)!;
+  /** A route point sits on the outline of `b`. */
+  const onOutline = (p: Point, b: Box): boolean => {
+    const inX = p.x >= b.x - 1 && p.x <= b.x + b.w + 1;
+    const inY = p.y >= b.y - 1 && p.y <= b.y + b.h + 1;
+    return inX && inY && (Math.abs(p.x - b.x) < 1 || Math.abs(p.x - b.x - b.w) < 1 || Math.abs(p.y - b.y) < 1 || Math.abs(p.y - b.y - b.h) < 1);
+  };
+
+  it('names the boxes that min or more dependency lines end on, and no other line counts', () => {
+    const into = (target: string, kind: string, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `${kind}:${target}:${i}`, target, kind }));
+    const hubs = dependencyHubs([
+      ...into('memberA', 'allocate', 4),
+      ...into('R', 'satisfy', 2),
+      ...into('Member', 'typed-by', 6),
+      ...into('Owner', 'composite', 5),
+    ]);
+    expect([...hubs.keys()]).toEqual(['memberA']);
+    expect(hubs.get('memberA')).toHaveLength(4);
+    expect([...dependencyHubs(into('R', 'satisfy', 2), 2).keys()]).toEqual(['R']);
+  });
+
+  it('draws the hub first, its lines fanning out to the right, and leaves fewer crossings', async () => {
+    const g0 = generalOf(hubText(8, 3, 6));
+    const g = await layoutDiagram(g0);
+    expectReadable(g);
+    // The hubs sit left of every activity allocated to them; the lines still run source -> hub.
+    for (const [hub, who] of [['memberA', 'alpha'], ['memberB', 'bravo']] as const) {
+      const hubBox = box(g, hub);
+      for (let i = 0; i < 8; i++) expect(box(g, `${who}${i}`).x, `${who}${i} is right of ${hub}`).toBeGreaterThan(hubBox.x + hubBox.w);
+      const hubId = g.nodes.find((n) => n.label === hub)!.id;
+      for (const e of g.edges.filter((x) => x.kind === 'allocate' && x.target === hubId)) {
+        const src = absoluteBoxes(g).get(e.source)!;
+        expect(onOutline(e.route![0]!, src), `${e.id} starts on its source`).toBe(true);
+        expect(onOutline(e.route![e.route!.length - 1]!, hubBox), `${e.id} ends on its hub`).toBe(true);
+      }
+    }
+    // The same graph laid out the usual way, every line source -> target (one layering forced, so no hub leads).
+    const usualWay = await layoutDiagram(g0, { elkOptions: { 'elk.layered.layering.strategy': 'NETWORK_SIMPLEX' } });
+    expect(box(usualWay, 'memberA').x).toBeGreaterThan(box(usualWay, 'alpha0').x);
+    expect(crossingsOf(g)).toBeLessThanOrEqual(crossingsOf(usualWay) - HUB_MIN_CROSSINGS_SAVED);
+  }, 60_000);
+
+  it('keeps the usual direction where drawing from the hub saves too few crossings', async () => {
+    const g = await layoutDiagram(generalOf(hubText(4, 2, 3)));
+    expectReadable(g);
+    for (let i = 0; i < 4; i++) expect(box(g, `alpha${i}`).x).toBeLessThan(box(g, 'memberA').x);
+  }, 30_000);
+
+  it('keeps the usual direction where both drawings cross nothing, though the hub-led one costs less', async () => {
+    // Three parts that three or more lines end on, in a ring of allocations among them. Drawn either way no
+    // line crosses another; drawn from the hubs, many more lines run right to left.
+    const text = `package Y {
+      part h1; part h2; part h3;
+      part a; part b; part c; part d; part e; part f;
+      allocate a to h1; allocate b to h1; allocate c to h1;
+      allocate d to h2; allocate e to h2; allocate f to h2;
+      allocate h1 to h3; allocate h2 to h3; allocate a to h3;
+      allocate h3 to h1;
+      allocate d to a; allocate e to b; allocate f to c;
+      allocate a to d; allocate b to e; allocate c to f;
+    }`;
+    const g0 = generalOf(text);
+    expect(connectedPieces(g0).flatMap((p) => [...hubEdges(g0, p)]).length).toBeGreaterThan(0);
+    const backward = (g: DiagramGraph): number => g.edges.filter((e) => e.route && e.route.at(-1)!.x < e.route[0]!.x - 1).length;
+    const g = await layoutDiagram(g0);
+    const usualWay = await layoutDiagram(g0, { elkOptions: { 'elk.layered.layering.strategy': 'NETWORK_SIMPLEX' } });
+    expectReadable(g);
+    expect(crossingsOf(usualWay)).toBe(0);
+    expect(backward(g)).toBeLessThanOrEqual(backward(usualWay));
+  }, 30_000);
+
+  it('tries the hubs only in a General view with no layer columns, of at most HUB_MAX_NODES boxes', () => {
+    const linesOf = (text: string): { lines: string[]; boxes: number } => {
+      const g = generalOf(text);
+      const pieces = connectedPieces(g);
+      return { lines: pieces.flatMap((p) => [...hubEdges(g, p)]), boxes: Math.max(...pieces.map((p) => p.nodeIds.size)) };
+    };
+    // memberA's and memberB's eight allocations each.
+    expect(linesOf(hubText(8, 3, 6)).lines).toHaveLength(16);
+    expect(linesOf(hubText(8, 3, 6, true)).lines).toEqual([]);
+    // The drone-swarm model's largest layer has about 160 boxes; the cap is 200.
+    expect(HUB_MAX_NODES).toBe(200);
+    const near = linesOf(hubText(59, 3, 6));
+    expect(near.boxes).toBeGreaterThan(160);
+    expect(near.boxes).toBeLessThanOrEqual(HUB_MAX_NODES);
+    expect(near.lines).toHaveLength(118);
+    const over = linesOf(hubText(70, 3, 6));
+    expect(over.boxes).toBeGreaterThan(HUB_MAX_NODES);
+    expect(over.lines).toEqual([]);
+  });
+
+  it('keeps a layered model\'s columns in package order', async () => {
+    const g = await layoutDiagram(generalOf(hubText(8, 3, 6, true)));
+    const lane = (label: string) => g.nodes.find((n) => n.label === label)!.data.layoutPartition;
+    expect([lane('memberA'), lane('Controller')]).toEqual([0, 1]);
+    for (let i = 0; i < 8; i++) expect(box(g, `alpha${i}`).x).toBeLessThan(box(g, 'memberA').x);
+  });
+});
+
+describe('column headers — size', () => {
+  it('grows with the piece, between a floor and a ceiling', () => {
+    expect(columnHeaderHeight(300)).toBe(COLUMN_HEADER_MIN_H);
+    expect(columnHeaderHeight(5000)).toBe(200);
+    expect(columnHeaderHeight(1_000_000)).toBe(COLUMN_HEADER_MAX_H);
+  });
+
+  it('keeps the label readable from far out, within its band', () => {
+    const col = { fontSize: columnLabelSize(COLUMN_HEADER_MAX_H) };
+    expect(columnLabelSizeAt(col, 1)).toBe(COLUMN_LABEL_SCREEN_PX);
+    expect(columnLabelSizeAt(col, 2)).toBe(COLUMN_LABEL_SCREEN_PX);
+    expect(columnLabelSizeAt(col, 0.1) * 0.1).toBeCloseTo(COLUMN_LABEL_SCREEN_PX, 5);
+    expect(columnLabelSizeAt(col, 0.001)).toBe(col.fontSize);
+  });
+
+  it('cuts a label that cannot fit its column with an ellipsis', () => {
+    expect(fitColumnLabel('OA', 100, 18)).toBe('OA');
+    const cut = fitColumnLabel('SurveillanceDroneSwarm', 100, 18);
+    expect(cut.endsWith('…')).toBe(true);
+    expect(cut.length).toBeLessThan('SurveillanceDroneSwarm'.length);
+  });
+
+  it('shrinks a name wider than its column before cutting it, to a floor', () => {
+    const name = 'SurveillanceDroneSwarm';
+    expect(columnLabelSizeFor('OA', 300, 18)).toBe(18);
+    const snug = columnLabelSizeFor(name, 200, 18);
+    expect(snug).toBeLessThan(18);
+    expect(snug).toBeGreaterThan(18 * 0.6);
+    expect(columnLabelSizeFor(name, 20, 18)).toBeCloseTo(18 * 0.6, 5);
+  });
+
+  it('names a column only where a piece spans two packages or more', () => {
+    expect(columnSpans([{ partition: 1, x: 0, w: 100 }, { partition: 1, x: 200, w: 100 }])).toEqual([]);
+    expect(
+      columnSpans([
+        { partition: 2, x: 400, w: 100 },
+        { partition: 0, x: 0, w: 100 },
+        { partition: 0, x: 20, w: 150 },
+      ]),
+    ).toEqual([
+      { partition: 0, x0: 0, x1: 170 },
+      { partition: 2, x0: 400, x1: 500 },
+    ]);
   });
 });
 

@@ -8,6 +8,8 @@
  *    the move and lays the diagram out afresh.
  *  - The tree view grows one branch at a time: "+N" on a box opens what it
  *    owns, "−" closes it again.
+ *  - A box that many dependency lines end on leads a one-layer General view,
+ *    its lines running from the boxes that point at it.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -194,3 +196,217 @@ test('scoping to one package opens it fitted, says so, and can be undone', async
   expect(errors).toEqual([]);
 });
 
+
+/** Three layer packages linked by chains, so connected pieces span two or three of them. */
+function chainedModel(): string {
+  return `package Chained {
+    package OA {
+        part def Operator;
+        part def Mission;
+    }
+    package SA {
+        part def Swarm :> OA::Operator;
+        part def Drone;
+        part def Relay :> OA::Mission;
+    }
+    package PA {
+        part def Airframe :> SA::Drone;
+        part def Radio;
+        part def Dish :> SA::Relay;
+        part def Loner;
+    }
+}
+`;
+}
+
+test('a layered General view names each column above its boxes, and the export carries the names', async ({ page }) => {
+  const errors = captureErrors(page);
+  await page.route('**/layered/Chained.sysml', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/plain', body: chainedModel() }),
+  );
+  await page.goto('/?model=layered/Chained.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 60_000 });
+  await expect.poll(async () => (await current(page))?.nodes.length).toBe(9);
+  await page.locator('.react-flow__node').first().waitFor({ state: 'visible' });
+
+  // Three pieces span packages (OA·SA·PA, OA·SA, SA·PA): seven headers, each
+  // reading its package's name.
+  const headers = page.getByTestId('column-header');
+  await expect(headers).toHaveCount(7);
+  expect((await headers.allTextContents()).sort()).toEqual(['OA', 'OA', 'PA', 'PA', 'SA', 'SA', 'SA']);
+  // Fit frames the headers with the boxes: none is cut off at the canvas's edge.
+  for (let i = 0; i < 7; i += 1) await expect(headers.nth(i)).toBeInViewport({ ratio: 0.99 });
+
+  // Drawn: no header lies over a box, and each spans exactly the boxes beneath it.
+  const geometry = await page.evaluate(() => {
+    const rects = (sel: string) => [...document.querySelectorAll(sel)].map((e) => e.getBoundingClientRect());
+    const heads = rects('[data-testid="column-header"]');
+    const boxes = rects('.react-flow__node');
+    const overlapping = heads.filter((h) =>
+      boxes.some((b) => Math.min(h.right, b.right) - Math.max(h.left, b.left) > 1 && Math.min(h.bottom, b.bottom) - Math.max(h.top, b.top) > 1),
+    ).length;
+    const spans = heads.map((h) => {
+      const under = boxes.filter((b) => b.top >= h.bottom - 0.5 && b.left >= h.left - 1.5 && b.right <= h.right + 1.5);
+      return {
+        boxes: under.length,
+        left: under.length ? Math.min(...under.map((b) => b.left)) - h.left : NaN,
+        right: under.length ? h.right - Math.max(...under.map((b) => b.right)) : NaN,
+      };
+    });
+    return { overlapping, spans };
+  });
+  expect(geometry.overlapping).toBe(0);
+  for (const s of geometry.spans) {
+    expect(s.boxes).toBeGreaterThan(0);
+    expect(Math.abs(s.left)).toBeLessThan(1.5);
+    expect(Math.abs(s.right)).toBeLessThan(1.5);
+  }
+
+  // A header is not in the way of the canvas: a click on it lands on what is under it.
+  const first = (await headers.first().boundingBox())!;
+  const hitsHeader = await page.evaluate(
+    ({ x, y }) => !!document.elementFromPoint(x, y)?.closest('[data-testid="column-header"]'),
+    { x: first.x + first.width / 2, y: first.y + first.height / 2 },
+  );
+  expect(hitsHeader, 'a click on a header is taken by the header').toBe(false);
+
+  // SVG export: the headers are in the file, ahead of the edges and boxes.
+  const { readFileSync } = await import('node:fs');
+  const svgDownload = page.waitForEvent('download');
+  await page.getByTestId('tb-export').click();
+  await page.getByTestId('tb-export-svg').click();
+  const svg = readFileSync((await (await svgDownload).path())!, 'utf8');
+  expect(svg.match(/data-column-id="/g)).toHaveLength(7);
+  for (const name of ['OA', 'SA', 'PA']) expect(svg).toContain(`>${name}</text>`);
+  expect(svg.indexOf('data-layer="column-headers"')).toBeLessThan(svg.indexOf('data-layer="nodes"'));
+
+  // PNG export: the band's fill is painted into the picture.
+  const pngDownload = page.waitForEvent('download');
+  await page.getByTestId('tb-export').click();
+  await page.getByTestId('tb-export-png').click();
+  const png = readFileSync((await (await pngDownload).path())!).toString('base64');
+  const bandPixels = await page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] === 0xe8 && d[i + 1] === 0xf0 && d[i + 2] === 0xfe) n += 1;
+    return n;
+  }, png);
+  expect(bandPixels, 'the PNG has no header bands').toBeGreaterThan(1000);
+
+  // Scoped to one package it is not layered, so nothing is headed.
+  const saId = await findElementId(page, 'Package', 'SA');
+  const row = page.locator(`[data-testid="tree-node"][data-elementid="${saId}"]`);
+  await row.hover();
+  await row.getByTestId('tree-scope').click();
+  await expect.poll(async () => (await current(page))?.nodes.length).toBe(3);
+  await expect(headers).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('the first screen of a layered General view shows every column header clear of the canvas toolbar', async ({ browser }) => {
+  // Common window sizes: the toolbar floats over the canvas's top-right, where the top row of headers sits.
+  // Each size opens in a fresh context: a second visit in one would restore the first one's session.
+  // At 1024x700 the canvas (about 320 px tall) is shorter than the zoom controls and the legend stacked
+  // in its bottom-left corner, which cover boxes there as well; only what hangs from the top is checked.
+  for (const size of [{ width: 1400, height: 900 }, { width: 1280, height: 720 }, { width: 1024, height: 700 }]) {
+    const context = await browser.newContext({ viewport: size });
+    const page = await context.newPage();
+    const errors = captureErrors(page);
+    await page.route('**/layered/Chained.sysml', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/plain', body: chainedModel() }),
+    );
+    await page.goto('/?model=layered/Chained.sysml', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 60_000 });
+    await expect.poll(async () => (await current(page))?.nodes.length).toBe(9);
+    await expect(page.getByTestId('column-header')).toHaveCount(7);
+    // Wait for the opening fit to settle: the viewport stops moving.
+    const viewport = () => page.locator('.react-flow__viewport').getAttribute('style');
+    let last = await viewport();
+    await expect
+      .poll(async () => {
+        const now = await viewport();
+        const same = now === last;
+        last = now;
+        return same;
+      }, { timeout: 15_000 })
+      .toBe(true);
+    await page.waitForTimeout(300);
+
+    const overlay = size.width >= 1280 ? '.react-flow__panel, .react-flow__controls, .react-flow__minimap' : '.react-flow__panel.top';
+    const covered = await page.evaluate((overlaySelector) => {
+      const inter = (a: DOMRect, b: DOMRect) =>
+        Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+      const overlays = [...document.querySelectorAll(overlaySelector)].map((e) => ({
+        name: e.className.toString().replace(/\s+/g, '.'),
+        rect: e.getBoundingClientRect(),
+      }));
+      return [...document.querySelectorAll('[data-testid="column-header"]')].flatMap((h) =>
+        overlays.filter((o) => inter(h.getBoundingClientRect(), o.rect)).map((o) => `${h.textContent} under ${o.name}`),
+      );
+    }, overlay);
+    expect(covered, `column headers hidden by the canvas's own controls at ${size.width}x${size.height}`).toEqual([]);
+    expect(errors).toEqual([]);
+    await context.close();
+  }
+});
+
+/** The drone-swarm model's operational layer in small: every step is done by one activity per member, and the two members' activities share a definition. */
+function hubModel(): string {
+  const each = (n: number, f: (i: number) => string): string => Array.from({ length: n }, (_, i) => f(i)).join('\n    ');
+  return `package Watch {
+    part def Member;
+    part memberA : Member;
+    part memberB : Member;
+    ${each(6, (i) => `use case def Case${i} { ref holder : Member; }`)}
+    ${each(3, (i) => `requirement hazard${i} { ref holder : Member; }`)}
+    ${each(8, (i) => `action def Step${i};`)}
+    ${each(8, (i) => `action alpha${i} : Step${i};\n    action bravo${i} : Step${i};`)}
+    ${each(8, (i) => `allocate alpha${i} to memberA;\n    allocate bravo${i} to memberB;`)}
+    ${each(3, (i) => `satisfy hazard${i} by alpha${i};`)}
+}
+`;
+}
+
+test('a hub that many dependency lines end on leads a one-layer General view, its lines running from the boxes that point at it', async ({ page }) => {
+  const errors = captureErrors(page);
+  await page.route('**/layered/Hub.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: hubModel() }));
+  await page.goto('/?model=layered/Hub.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 60_000 });
+  await expect.poll(async () => (await current(page))?.nodes.length, { timeout: 60_000 }).toBe(45);
+  await page.locator('.react-flow__node').first().waitFor({ state: 'visible' });
+  await page.waitForTimeout(500);
+
+  const d = (await page.evaluate(() =>
+    (window as unknown as { sysprose: { diagram: { current: () => unknown } } }).sysprose.diagram.current(),
+  )) as {
+    nodes: { id: string; label: string; position: { x: number; y: number }; size: { w: number; h: number } }[];
+    edges: { kind: string; source: string; target: string; route?: { x: number; y: number }[] }[];
+  };
+  const byLabel = (label: string) => d.nodes.find((n) => n.label === label)!;
+  const onOutline = (p: { x: number; y: number }, n: (typeof d.nodes)[number]): boolean =>
+    p.x >= n.position.x - 1 && p.x <= n.position.x + n.size.w + 1 && p.y >= n.position.y - 1 && p.y <= n.position.y + n.size.h + 1 &&
+    (Math.abs(p.x - n.position.x) < 1 || Math.abs(p.x - n.position.x - n.size.w) < 1 || Math.abs(p.y - n.position.y) < 1 || Math.abs(p.y - n.position.y - n.size.h) < 1);
+
+  // Each member sits left of all eight activities allocated to it, and every line still runs from its activity to the member.
+  for (const [hub, who] of [['memberA', 'alpha'], ['memberB', 'bravo']] as const) {
+    const h = byLabel(hub);
+    for (let i = 0; i < 8; i += 1) expect(byLabel(`${who}${i}`).position.x, `${who}${i} is right of ${hub}`).toBeGreaterThan(h.position.x + h.size.w);
+    const lines = d.edges.filter((e) => e.kind === 'allocate' && e.target === h.id);
+    expect(lines).toHaveLength(8);
+    for (const e of lines) {
+      const src = d.nodes.find((n) => n.id === e.source)!;
+      expect(onOutline(e.route![0]!, src), `a ${who} line starts on its activity`).toBe(true);
+      expect(onOutline(e.route![e.route!.length - 1]!, h), `a ${who} line ends on ${hub}`).toBe(true);
+    }
+  }
+  await expectOrthogonalEdges(page);
+  expect(errors).toEqual([]);
+});

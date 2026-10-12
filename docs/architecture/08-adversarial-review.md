@@ -45,7 +45,7 @@ and stored queries (`src/api/rest.ts:113,292,429`). Payload
 `aaa…!` names blocks the event loop. CVSS-ish 7.5.
 
 ### C4. Main-thread ELK layout on every mutation, no debounce `[PROVEN]` · Performance
-`src/ui/store.ts:630`, `src/diagram/layout.ts:32,207` — `afterMutation()` calls
+`src/ui/store.ts:630`, `src/diagram/layout.ts:33,207` — `afterMutation()` calls
 `void rebuildDiagram()` on every `createElement/updateElement/setAttr/reparent/
 connect/deleteElement`, including remote CRDT applies. `layout.ts` imports the
 **synchronous bundled** `elkjs/lib/elk.bundled.js`; the `await` only defers a

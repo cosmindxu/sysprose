@@ -3,7 +3,9 @@
  *
  *  (1) Checks   — what each verification check last said, from the palette's
  *      Checks section; click a row to select the element it names. A result
- *      from before the last edit is labelled stale, never shown as current.
+ *      from before the last edit is labelled stale, never shown as current. A
+ *      check still running in the background is listed at once, as running:
+ *      the tab comes forward at the click, so it is where the answer will be.
  *  (2) Problems — lists {@link useAppStore.diagnostics}; click a row to select
  *      the offending element.
  *  (2) Text     — embeds the {@link TextEditor}.
@@ -76,12 +78,19 @@ type Output =
 /** What the checks said, most recent first, with their findings. */
 function ChecksTab(): JSX.Element {
   const results = useChecksStore((s) => s.results);
+  const running = useChecksStore((s) => s.running);
   const clear = useChecksStore((s) => s.clear);
   const rev = useAppStore((s) => s.rev);
   const select = useAppStore((s) => s.select);
-  const entries = Object.entries(results).sort((a, b) => b[1].at - a[1].at);
+  // A check running now is shown as running in place of what it said before: that
+  // result describes a run the person has asked to replace, and comes back if the
+  // new one is cancelled.
+  const waiting = Object.entries(running).sort((a, b) => b[1].at - a[1].at);
+  const entries = Object.entries(results)
+    .filter(([id]) => running[id] === undefined)
+    .sort((a, b) => b[1].at - a[1].at);
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && waiting.length === 0) {
     return (
       <div className="panel-empty" data-testid="checks-empty">
         No check has run yet. The palette's <b>Checks</b> section runs the one that fits the view you are on, and
@@ -96,6 +105,19 @@ function ChecksTab(): JSX.Element {
           Clear
         </button>
       </div>
+      {waiting.map(([id]) => {
+        const spec = CHECKS.find((c) => c.id === id);
+        return (
+          <div className="checks-result" key={id} data-testid="checks-result" data-check={id} data-verdict="running">
+            <div className="checks-result-head">
+              <span className="checks-result-label">{spec?.label ?? id}</span>
+              <code>{id}</code>
+              <span className="palette-check-verdict is-running">{VERDICT_LABEL.running}</span>
+              <span className="checks-result-summary">Running in the background — Cancel, in the palette, stops it.</span>
+            </div>
+          </div>
+        );
+      })}
       {entries.map(([id, stored]) => {
         const spec = CHECKS.find((c) => c.id === id);
         const verdict = verdictOf(stored, rev);
