@@ -92,8 +92,7 @@ import { effectiveNameOf, generalizationsOf } from './inheritance';
 import { isNonNormativeStatement } from './statement-kind';
 import {
   NO_MARKERS,
-  idScopeFor,
-  mergeMaps,
+  mergedScope,
   namesReadIn,
   parseRelationBody,
   relationRefused,
@@ -771,10 +770,7 @@ function assignmentEquation(
     return undefined;
   }
 
-  const nameToId = mergeMaps(
-    el.ownerId != null ? idScopeFor(model, el.ownerId) : new Map(),
-    idScopeFor(model, el.id),
-  );
+  const nameToId = mergedScope(model, el.ownerId ?? undefined, el.id);
   nameToId.set(name, el.id); // the assignment target resolves to this feature
   const lhs: ExprNode = { kind: 'ref', path: [name] };
   const identity = node.kind === 'ref' && !body.hadUnit;
@@ -963,7 +959,7 @@ function keyedNames(
   model: Model,
   el: ElementRecord,
   node: ExprNode,
-  nameToId: Map<string, ElementId>,
+  nameToId: ReadonlyMap<string, ElementId>,
   instance?: string,
 ): { nameToId: Map<string, ElementId>; instances: InstanceVariable[] } | undefined {
   const paths = [...new Set(namesReadIn(node))].filter((p) => nameToId.has(p));
@@ -1081,7 +1077,7 @@ function valueEquation(
     onRefused?.();
     return undefined;
   }
-  const nameToId = mergeMaps(idScopeFor(model, context.id), idScopeFor(model, feature.id));
+  const nameToId = mergedScope(model, context.id, feature.id);
   nameToId.set(name, feature.id);
   const identity = body.node.kind === 'ref' && !body.hadUnit;
   const lhs: ExprNode = { kind: 'ref', path: [name] };
@@ -1252,7 +1248,8 @@ function instanceBindingEquation(
   const left = pathBelow(model, edge.source?.[0], holder.id);
   const right = pathBelow(model, edge.target?.[0], holder.id);
   if (left === undefined || right === undefined) return undefined;
-  const scope = idScopeFor(model, reader.id);
+  // Read, never changed: the shared scope itself, not a copy of it.
+  const scope = sharedDefinitions(model).scope(reader.id, 'all');
   const a = scope.get(left);
   const b = scope.get(right);
   if (a === undefined || b === undefined) return undefined;
@@ -1438,7 +1435,7 @@ function inequalityResidual(ineq: Inequality, values: Map<ElementId, number>): n
  * their published meaning (plain numbers in declared units).
  */
 function namesScope(
-  nameToId: Map<string, ElementId>,
+  nameToId: ReadonlyMap<string, ElementId>,
   values: Map<ElementId, number>,
   scale?: ScaleMap,
 ): (name: string) => unknown {
@@ -1803,12 +1800,11 @@ function freeFeatures(
   for (const { eq } of rows) for (const v of eq.vars) if (eq.scale?.has(v)) inSI.add(v);
   const scaleOf = (v: ElementId, x: number): number => (inSI.has(v) ? Math.abs(x) || 1 : Math.abs(x) + 1);
 
-  const J: number[][] = [];
-  // The columns each row of `J` reads, STRUCTURALLY: its equation's own, and
-  // those of every pivot row it is reduced by.
-  const S: Array<Set<number>> = [];
+  // Each row: its slopes by column (the columns it does not read are 0), the
+  // largest of them, and the columns it reads STRUCTURALLY — its equation's own.
+  const J: JacobianRow[] = [];
   for (const { eq, r0 } of rows) {
-    const row = new Array<number>(cols.length).fill(0);
+    const row = new Map<number, number>();
     const slopes: Slope[] = [];
     let readable = true;
     for (const v of eq.vars) {
@@ -1830,9 +1826,10 @@ function freeFeatures(
       // central difference, their gap is what says the residual jumps.
       const forward = ((a - r0) / h) * s;
       const backward = ((r0 - b) / h) * s;
-      row[j] = (forward + backward) / 2;
+      const d = (forward + backward) / 2;
+      row.set(j, d);
       const steep = Math.max(Math.abs(forward), Math.abs(backward));
-      slopes.push({ d: row[j]!, split: Math.abs(forward - backward), steep });
+      slopes.push({ d, split: Math.abs(forward - backward), steep });
     }
     // A relation whose slope cannot be read — or jumps inside the probe —
     // fixes nothing this analysis can vouch for: its features are as free as
@@ -1843,12 +1840,61 @@ function freeFeatures(
     // of it either way, and its curvature (`x * x` at x = 0, slopes ∓h) is no
     // jump.
     if (!readable || jumps(slopes)) continue;
-    const mx = Math.max(...row.map(Math.abs));
+    let mx = 0;
+    for (const d of row.values()) mx = Math.max(mx, Math.abs(d));
     if (mx === 0) continue;
-    J.push(row.map((e) => e / mx));
-    S.push(new Set(eq.vars.map((v) => colIdx.get(v)).filter((j): j is number => j !== undefined)));
+    J.push({
+      slopes: row,
+      mx,
+      reads: new Set(eq.vars.map((v) => colIdx.get(v)).filter((j): j is number => j !== undefined)),
+    });
   }
   const n = cols.length;
+  const { pivots, reads } = sparseReduce(J, n) ?? denseReduce(J, n);
+  // Reduced: a pivot feature is free when its row reads a free column — read
+  // from what the row reads, never from the size of its reduced entry. A
+  // feature of a few hundred kilometres moved by an offset in millimetres
+  // (`range == base + offset`) reads it at 1e-8 of the row, under any pivot
+  // tolerance, and in nanometres not at all: `range` was published as
+  // determined, and `range >= 100.5 [km]` refuted, although an offset of
+  // 500 m meets it.
+  const isPivot = new Set(pivots);
+  const freeCols: number[] = [];
+  for (let c = 0; c < n; c++) if (!isPivot.has(c)) freeCols.push(c);
+  for (const f of freeCols) out.add(cols[f]!);
+  pivots.forEach((c, i) => {
+    if (freeCols.some((f) => reads[i]!.has(f))) out.add(cols[c]!);
+  });
+  return out;
+}
+
+/** A row of {@link freeFeatures}' Jacobian, before it is scaled to its largest entry. */
+interface JacobianRow {
+  /** The row's nonzero-or-read slopes by column; a column absent is 0. */
+  slopes: ReadonlyMap<number, number>;
+  /** The largest |slope| of the row (NaN when one is NaN), never 0. */
+  mx: number;
+  /** The columns the row's equation reads. */
+  reads: ReadonlySet<number>;
+}
+
+/**
+ * Gauss-Jordan elimination of {@link freeFeatures}' Jacobian, each row scaled
+ * to its largest entry: the pivot columns in order, and for the pivot row of
+ * each the columns it reads STRUCTURALLY — its equation's own, and those of
+ * every pivot row it was reduced by. The pivot of a column is the row at or
+ * past the current one with the strictly largest |entry|, the earliest on a
+ * tie; a pivot of {@link RANK_TOL} or less is none.
+ */
+function denseReduce(rows: readonly JacobianRow[], n: number): { pivots: number[]; reads: Array<Set<number>> } {
+  const J: number[][] = [];
+  const S: Array<Set<number>> = [];
+  for (const { slopes, mx, reads } of rows) {
+    const row = new Array<number>(n).fill(0);
+    for (const [j, d] of slopes) row[j] = d;
+    J.push(row.map((e) => e / mx));
+    S.push(new Set(reads));
+  }
   const pivots: number[] = [];
   let r = 0;
   for (let c = 0; c < n && r < J.length; c++) {
@@ -1872,21 +1918,106 @@ function freeFeatures(
     pivots.push(c);
     r++;
   }
-  // Reduced: a pivot feature is free when its row reads a free column — read
-  // from what the row reads, never from the size of its reduced entry. A
-  // feature of a few hundred kilometres moved by an offset in millimetres
-  // (`range == base + offset`) reads it at 1e-8 of the row, under any pivot
-  // tolerance, and in nanometres not at all: `range` was published as
-  // determined, and `range >= 100.5 [km]` refuted, although an offset of
-  // 500 m meets it.
-  const isPivot = new Set(pivots);
-  const freeCols: number[] = [];
-  for (let c = 0; c < n; c++) if (!isPivot.has(c)) freeCols.push(c);
-  for (const f of freeCols) out.add(cols[f]!);
-  pivots.forEach((c, i) => {
-    if (freeCols.some((f) => S[i]!.has(f))) out.add(cols[c]!);
-  });
-  return out;
+  return { pivots, reads: S.slice(0, pivots.length) };
+}
+
+/**
+ * {@link denseReduce} over SPARSE rows — its pivots and reads exactly, at a
+ * cost in the entries the rows hold rather than rows × columns (1.3 of 2.5 s
+ * of a 4098-row numeric check, dense). While every entry is finite the two
+ * agree bit for bit: every nonzero entry sees the same operations in the same
+ * order, and an entry the dense loop holds as 0 only ever becomes a signed
+ * zero there (`x − f·0`, `0 / piv`), which no comparison tells from 0 and the
+ * sparse rows hold as absent. A non-finite entry is where they could part (`f
+ * · 0` is NaN for an infinite `f`), so on the first one this answers
+ * `undefined`, and the caller runs {@link denseReduce}.
+ */
+function sparseReduce(
+  rows: readonly JacobianRow[],
+  n: number,
+): { pivots: number[]; reads: Array<Set<number>> } | undefined {
+  interface Row {
+    e: Map<number, number>;
+    S: Set<number>;
+  }
+  const R: Row[] = [];
+  for (const { slopes, mx, reads } of rows) {
+    if (!Number.isFinite(mx)) return undefined;
+    const e = new Map<number, number>();
+    for (const [j, d] of slopes) {
+      const y = d / mx;
+      if (y !== 0) e.set(j, y);
+    }
+    R.push({ e, S: new Set(reads) });
+  }
+  // Each row's position; per column, the rows holding a nonzero entry there
+  // and the rows that read it structurally (a superset: an entry is only ever
+  // made where the row reads, or comes to read, its column).
+  const pos = new Map<Row, number>();
+  R.forEach((row, i) => pos.set(row, i));
+  const nonzero = new Map<number, Set<Row>>();
+  const readers = new Map<number, Set<Row>>();
+  const enroll = (m: Map<number, Set<Row>>, c: number, row: Row): void => {
+    const set = m.get(c);
+    if (set) set.add(row);
+    else m.set(c, new Set([row]));
+  };
+  for (const row of R) {
+    for (const c of row.e.keys()) enroll(nonzero, c, row);
+    for (const c of row.S) enroll(readers, c, row);
+  }
+  let finite = true;
+  const put = (row: Row, k: number, v: number): void => {
+    if (!Number.isFinite(v)) finite = false;
+    if (v !== 0) {
+      if (!row.e.has(k)) enroll(nonzero, k, row);
+      row.e.set(k, v);
+    } else if (row.e.delete(k)) nonzero.get(k)!.delete(row);
+  };
+  const pivots: number[] = [];
+  const pivotRows: Row[] = [];
+  let r = 0;
+  for (let c = 0; c < n && r < R.length; c++) {
+    // The dense scan from row r: a strictly larger |entry| wins, the earliest
+    // row on a tie.
+    let p = r;
+    let best = Math.abs(R[r]!.e.get(c) ?? 0);
+    for (const row of nonzero.get(c) ?? []) {
+      const i = pos.get(row)!;
+      if (i <= r) continue;
+      const a = Math.abs(row.e.get(c)!);
+      if (a > best || (a === best && i < p)) {
+        best = a;
+        p = i;
+      }
+    }
+    if (best <= RANK_TOL) continue;
+    const prow = R[p]!;
+    const moved = R[r]!;
+    R[r] = prow;
+    R[p] = moved;
+    pos.set(prow, r);
+    pos.set(moved, p);
+    const piv = prow.e.get(c)!;
+    for (const k of [...prow.e.keys()]) if (k >= c) put(prow, k, prow.e.get(k)! / piv);
+    const update: Array<[number, number]> = [];
+    for (const [k, v] of prow.e) if (k >= c) update.push([k, v]);
+    for (const row of [...(readers.get(c) ?? [])]) {
+      if (row === prow) continue;
+      const f = row.e.get(c) ?? 0;
+      if (f !== 0) for (const [k, v] of update) put(row, k, (row.e.get(k) ?? 0) - f * v);
+      for (const k of prow.S) {
+        if (row.S.has(k)) continue;
+        row.S.add(k);
+        enroll(readers, k, row);
+      }
+    }
+    if (!finite) return undefined;
+    pivots.push(c);
+    pivotRows.push(prow);
+    r++;
+  }
+  return { pivots, reads: pivotRows.map((row) => row.S) };
 }
 
 /**
@@ -2888,10 +3019,23 @@ function closedByDefinitions(
     if (list) list.push(v);
     else members.set(root, [v]);
   }
+  // Each definition's component, in `definitions` order: the one every
+  // variable it does not fix is in (they were joined above), so the one of
+  // its first — grouped in one pass, where filtering the definitions per
+  // component was quadratic (1.9 of 3.5 s of a 600-binding solve).
+  const ownOf = new Map<ElementId, Equation[]>();
+  for (const eq of definitions) {
+    const v = eq.vars.find((x) => !fixed(x));
+    if (v === undefined) continue;
+    const root = find(v);
+    const list = ownOf.get(root);
+    if (list) list.push(eq);
+    else ownOf.set(root, [eq]);
+  }
   const out = new Set<ElementId>();
   for (const [root, vars] of members) {
     if (!vars.every(determined)) continue;
-    const own = definitions.filter((eq) => eq.vars.some((v) => !fixed(v) && find(v) === root));
+    const own = ownOf.get(root) ?? [];
     if (!determines(own, vars, values)) continue;
     for (const v of vars) if (defined.has(v) || (withStated && stated.has(v))) out.add(v);
   }
@@ -2937,7 +3081,18 @@ function jumps(slopes: readonly Slope[]): boolean {
  */
 function determines(eqs: readonly Equation[], vars: readonly ElementId[], values: ReadonlyMap<ElementId, number>): boolean {
   if (eqs.length < vars.length) return false;
-  const point = new Map(values);
+  // The point holds what these equations read — the ids their expressions
+  // reference — and `vars`: all a residual below ever looks up. A copy of
+  // every value per component was quadratic in a model of many components.
+  const point = new Map<ElementId, number>();
+  const take = (id: ElementId): void => {
+    if (values.has(id)) point.set(id, values.get(id)!);
+  };
+  for (const eq of eqs) {
+    for (const id of relationVarsOf(eq.lhs, eq.nameToId)) take(id);
+    for (const id of relationVarsOf(eq.rhs, eq.nameToId)) take(id);
+  }
+  for (const v of vars) take(v);
   for (const v of vars) if (!point.has(v)) point.set(v, 1);
   /**
    * ∂eq/∂v at the point, by central differences, with the gap between its two
@@ -3554,15 +3709,15 @@ export function solveFeasible(model: Model, opts: FeasibilityOptions = {}): Feas
   const target = feasTol * feasTol;
   let iterations = 0;
   let prevP = penaltyOf(eqs, ineqs, values);
-  for (let s = 0; s < sweeps && freeVars.length > 0; s++) {
+  const line = freeVars.length > 0 ? linePenalty(eqs, ineqs, values) : undefined;
+  for (let s = 0; s < sweeps && line !== undefined; s++) {
     iterations++;
+    line.refresh();
     for (const id of freeVars) {
       const c = values.get(id) ?? 0;
-      const x = convexLineMin((t) => {
-        values.set(id, t);
-        return penaltyOf(eqs, ineqs, values);
-      }, c, tol);
+      const x = convexLineMin((t) => line.along(id, t), c, tol);
       values.set(id, x);
+      line.settle(id);
     }
     const P = penaltyOf(eqs, ineqs, values);
     const improved = prevP - P;
@@ -3781,6 +3936,92 @@ function penaltyOf(
     if (g !== undefined && g > 0) p += g * g;
   }
   return p;
+}
+
+/**
+ * {@link penaltyOf} for a search that moves ONE variable at a time
+ * ({@link solveFeasible}'s coordinate descent): `along(id, t)` sets `id` to
+ * `t` in `values` and returns the penalty there, re-evaluating only the terms
+ * that read `id` — found from the names their expressions reference, which
+ * are all `evaluate` ever looks up — and `settle(id)` keeps the terms at the
+ * value `id` was left at. Every other term is the one cached at the last
+ * `refresh()` or `settle()`.
+ *
+ * The sum is folded in penaltyOf's own order (equations, then inequalities;
+ * a term with no residual adds 0, which leaves a sum ≥ +0 unchanged), from the
+ * cached partial sums up to the first term `id` changes: every value returned
+ * is bit-identical to `penaltyOf(eqs, ineqs, values)` at the same point. One
+ * re-evaluation of every term per call, as before, made a depth-8 instance
+ * tree (375 equations, 565 freedoms) take 48 s; this one 0.3 s.
+ *
+ * It caches nothing beyond the search it serves: the terms live in the
+ * returned closure and are read from `values` alone.
+ */
+function linePenalty(
+  eqs: readonly Equation[],
+  ineqs: readonly Inequality[],
+  values: Map<ElementId, number>,
+): { refresh: () => void; along: (id: ElementId, t: number) => number; settle: (id: ElementId) => void } {
+  const nE = eqs.length;
+  const n = nE + ineqs.length;
+  const termAt = (k: number): number => {
+    if (k < nE) {
+      const r = residualOf(eqs[k]!, values);
+      return r !== undefined ? r * r : 0;
+    }
+    const g = inequalityResidual(ineqs[k - nE]!, values);
+    return g !== undefined && g > 0 ? g * g : 0;
+  };
+  // The terms each variable is read by, in ascending order.
+  const readers = new Map<ElementId, number[]>();
+  for (let k = 0; k < n; k++) {
+    const ids =
+      k < nE
+        ? new Set([...relationVarsOf(eqs[k]!.lhs, eqs[k]!.nameToId), ...relationVarsOf(eqs[k]!.rhs, eqs[k]!.nameToId)])
+        : relationVarsOf(ineqs[k - nE]!.expr, ineqs[k - nE]!.nameToId);
+    for (const id of ids) {
+      const list = readers.get(id);
+      if (list) list.push(k);
+      else readers.set(id, [k]);
+    }
+  }
+  const terms = new Float64Array(n);
+  // prefix[k] = terms[0] + … + terms[k], added left to right.
+  const prefix = new Float64Array(n);
+  const refold = (from: number): void => {
+    let p = from > 0 ? prefix[from - 1]! : 0;
+    for (let k = from; k < n; k++) {
+      p += terms[k]!;
+      prefix[k] = p;
+    }
+  };
+  const NONE: number[] = [];
+  return {
+    refresh: () => {
+      for (let k = 0; k < n; k++) terms[k] = termAt(k);
+      refold(0);
+    },
+    along: (id, t) => {
+      values.set(id, t);
+      const ks = readers.get(id) ?? NONE;
+      const first = ks.length > 0 ? ks[0]! : n;
+      let p = first > 0 ? prefix[first - 1]! : 0;
+      let i = 0;
+      for (let k = first; k < n; k++) {
+        if (i < ks.length && ks[i] === k) {
+          p += termAt(k);
+          i++;
+        } else p += terms[k]!;
+      }
+      return p;
+    },
+    settle: (id) => {
+      const ks = readers.get(id) ?? NONE;
+      if (ks.length === 0) return;
+      for (const k of ks) terms[k] = termAt(k);
+      refold(ks[0]!);
+    },
+  };
 }
 
 /**
@@ -4009,7 +4250,9 @@ function numericRows(
     // value is, as `self = expr`. The gatherers left every refused relation
     // out, so it has no residual here.
     const calcValue = isCalcBody && !isEq && !isIneq;
-    const scope = relationScope(model, el);
+    // Read, never changed — so the variables below are keyed over it rather
+    // than over another copy of the same scope.
+    const scope: ReadonlyMap<string, ElementId> = relationScope(model, el);
     const unread =
       body !== undefined ? unreadValuesOf(model, el, namesReadIn(body.node).filter((n) => !body.literals.has(n)), memo) : [];
     let read: ReturnType<typeof readRefusalOf>;
@@ -4036,14 +4279,14 @@ function numericRows(
     //
     // The variables the solve gives values to: an instance's own where the
     // relation reads one through it.
-    const keys = body !== undefined ? relationKeys(model, el) : scope;
+    const keys = body !== undefined ? relationKeys(model, el, scope) : scope;
     const solvedNames = namesScope(keys, values);
     // Does every variable the relation reads stand where the model's own
     // solve puts it? Always, at that solve.
     const atModelPoint = (): boolean =>
       modelPoint === undefined ||
       (body !== undefined && relationVarsOf(body.node, keys).every((id) => sharedValue(id, values, modelPoint)));
-    const solvedScope = solvedQuantityScope(model, el, values, memo, unread);
+    const solvedScope = solvedQuantityScope(model, el, values, memo, unread, body !== undefined ? keys : undefined);
     // Where one does not — the caller holds a value fixed, and the relation
     // reads it or a value stated through it — the relation is read at the
     // point, every name the point moved at the value it has there: read at
@@ -4522,11 +4765,14 @@ function slackUnitOf(
  * path read through an instance of its own keyed to that instance's variable
  * ({@link keyedNames}) — the variables the solve gives values to.
  */
-function relationKeys(model: Model, el: ElementRecord): Map<string, ElementId> {
-  const nameToId = relationScope(model, el);
+function relationKeys(
+  model: Model,
+  el: ElementRecord,
+  scope: ReadonlyMap<string, ElementId> = relationScope(model, el),
+): ReadonlyMap<string, ElementId> {
   const raw = el.attrs.expression;
   const body = typeof raw === 'string' ? parseRelationBody(raw) : undefined;
-  return (body && keyedNames(model, el, body.node, nameToId)?.nameToId) ?? nameToId;
+  return (body && keyedNames(model, el, body.node, scope)?.nameToId) ?? scope;
 }
 
 /** How a relation reads its names at a point that is not the model's own ({@link pointReading}). */
@@ -4660,8 +4906,9 @@ function solvedQuantityScope(
   values: Map<ElementId, number>,
   memo: DerivationMemo,
   unread: readonly string[] = [],
+  keys?: ReadonlyMap<string, ElementId>,
 ): (name: string) => Quantity | undefined {
-  const nameToId = relationKeys(model, el);
+  const nameToId = keys ?? relationKeys(model, el);
   return (name: string) => {
     if (unread.includes(name)) return undefined;
     const key = nameToId.get(name);

@@ -2535,6 +2535,27 @@ describe('a design freedom no relation fixes is never judged at the solver’s p
     expect(rows(m).get('budget')!.reason).toMatch(/^cost is left free by the equations/);
   });
 
+  /**
+   * `1e-30 * c` beside `1.0` rounds away, so `e2`'s slope in c reads as
+   * exactly 0 — and `e2` still READS c, so b depends on the freedom d through
+   * it. The reduction carries what a row reads through every pivot row it
+   * reads, whatever its entry there; carried only where the entry is nonzero,
+   * b was published at 1.0 and `blim` judged satisfied there.
+   */
+  it('a value read through a slope the probe cannot resolve is free with what it reads', () => {
+    const m = parse(`package Z {
+    attribute d;
+    attribute c;
+    attribute b;
+    constraint e1 { c == d + 1.0 }
+    constraint e2 { b == 1.0 + 1e-30 * c }
+    constraint blim { b <= 2.0 }
+}
+`);
+    expect(freeNames(m)).toEqual(['b', 'c', 'd']);
+    expect(byName(m).get('blim')).toBe('unknown');
+  });
+
   it('still judges what the equations determine beside a freedom (p04)', () => {
     const m = parse(`package P4 {
     attribute x = 3.0;

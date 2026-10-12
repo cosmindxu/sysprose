@@ -46,6 +46,7 @@ import {
   STATEMENT_KIND_LIBRARY,
   SYSPROSE_VERIFICATION_LIBRARY,
 } from '@semantics/index';
+import { prepareBounds } from '@semantics/bounds';
 import { checkText } from '@text/check';
 import { loadModelText } from '@text/load';
 
@@ -897,6 +898,76 @@ describe('the variables a clause reads, named one per path', () => {
       ['a.y', 'output'],
       ['a.x', 'input'],
     ]);
+  }, 60_000);
+
+  /**
+   * A definition's relation is read once per instance it holds of — `hi` of
+   * N0 below for `a` and `b` of N1, and again for top's — and `obligationsOf`
+   * reads it ONCE per pass, re-rooting a copy for each instance. The kept
+   * reading lives exactly as long as that pass: every row holds variables of
+   * its own, and the next pass, over an edited model, reads the edit.
+   */
+  it('an instance row is a copy of its own, read from the model as it stands', async () => {
+    const model = await load(`package T {
+  part def N0 { attribute x : Real; assert constraint hi { x <= 10.0 } attribute s : Real = x; }
+  part def N1 { part a : N0; part b : N0; attribute s : Real = a.s + b.s; }
+  part top : N1;
+  constraint cap { top.s <= 15.0 }
+}`);
+    const hiRows = () => obligationsOf(model).filter((r) => r.element.qualifiedName.startsWith('T::N0::hi in '));
+    const before = hiRows();
+    expect(before.map((r) => [r.element.qualifiedName, r.expression, r.vars.map((v) => v.qualifiedName)])).toEqual([
+      ['T::N0::hi in T::N1::a', 'x <= 10.0', ['T::N1::a::x']],
+      ['T::N0::hi in T::N1::b', 'x <= 10.0', ['T::N1::b::x']],
+      ['T::N0::hi in T::top::a', 'x <= 10.0', ['T::top::a::x']],
+      ['T::N0::hi in T::top::b', 'x <= 10.0', ['T::top::b::x']],
+    ]);
+    // `a` of N1 and top's `a` are one context read for two instances: one
+    // reading, two rows — and no object of one row is another's.
+    expect(new Set(before.map((r) => r.vars)).size).toBe(4);
+    expect(new Set(before.flatMap((r) => r.vars)).size).toBe(4);
+    expect(new Set(before.map((r) => r.node)).size).toBe(4);
+
+    const hi = model.all().find((el) => el.declaredName === 'hi')!;
+    model.setAttrs(hi.id, { expression: 'x <= 7.0' });
+    expect(hiRows().map((r) => r.expression)).toEqual(['x <= 7.0', 'x <= 7.0', 'x <= 7.0', 'x <= 7.0']);
+    // An edit the relation's own text does not show: what it reads is gone.
+    const x = model.all().find((el) => el.declaredName === 'x')!;
+    model.rename(x.id, 'w');
+    expect(hiRows().map((r) => [r.vars.length, r.encodable === true ? true : r.encodable.reason])).toEqual([
+      [0, 'unresolved-name'],
+      [0, 'unresolved-name'],
+      [0, 'unresolved-name'],
+      [0, 'unresolved-name'],
+    ]);
+  }, 60_000);
+
+  /**
+   * `bounds` resolves the measure over the worklist it read, and the bound
+   * reuses that worklist — but only at the revision it was read at: the
+   * solver's load is awaited in between, and an app may edit the model there.
+   */
+  it('the bound reuses the worklist only at the revision it was read at', async () => {
+    const model = await load(`package B {
+  part def P { attribute x : Real = 3.0; attribute y : Real = x * 2.0; }
+  part p : P;
+}`);
+    const y = model.all().find((el) => model.qualifiedName(el.id) === 'B::P::y')!;
+    const terms = (prepared: ReturnType<typeof prepareBounds>) => prepared.assertions.map((a) => a.assertion.term);
+    const rows = obligationsOf(model);
+    const rev = model.rev;
+    const before = terms(prepareBounds(model, { measureId: y.id }));
+    expect(terms(prepareBounds(model, { measureId: y.id, rows, rowsRev: rev }))).toEqual(before);
+    // At its revision the worklist given IS the one read: an empty one asserts nothing.
+    expect(prepareBounds(model, { measureId: y.id, rows: [], rowsRev: rev }).assertions).toEqual([]);
+
+    const x = model.all().find((el) => model.qualifiedName(el.id) === 'B::P::x')!;
+    model.setAttrs(x.id, { value: 4, valueText: '4.0' });
+    const after = terms(prepareBounds(model, { measureId: y.id }));
+    expect(after).not.toEqual(before);
+    // Past it, the stale worklist is read afresh, the empty one with it.
+    expect(terms(prepareBounds(model, { measureId: y.id, rows, rowsRev: rev }))).toEqual(after);
+    expect(terms(prepareBounds(model, { measureId: y.id, rows: [], rowsRev: rev }))).toEqual(after);
   }, 60_000);
 
   /**

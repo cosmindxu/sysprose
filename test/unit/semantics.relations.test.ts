@@ -236,6 +236,32 @@ describe('relations — relationVarsOf builds the argument the gates are asked a
     expect(new Set(nameToId.values()).size).toBeGreaterThan(1);
   });
 
+  /**
+   * A relation's scope is ONE fresh map over the scopes the model's shared
+   * reading keeps per revision: its owner's names, then its own the owner
+   * does not answer. The caller may change it without reaching the shared
+   * scopes, and an edit to the model is read by the next one.
+   */
+  it('is a fresh map of the model as it stands, the owner first', () => {
+    const { m, c } = constraintModel('mass <= 2000.0', [['mass', { value: 1500 }]]);
+    const own = m.create('AttributeUsage', { declaredName: 'mass', ownerId: c.id, attrs: { value: 7 } });
+    const first = relationScope(m, c);
+    const owner = m.all().find((el) => el.declaredName === 'mass' && el.id !== own.id)!;
+    // The owner's `mass` answers before the relation's own.
+    expect(first.get('mass')).toBe(owner.id);
+    first.set('mass', 'changed by the caller');
+    first.set('added', 'by the caller');
+    const second = relationScope(m, c);
+    expect(second.get('mass'), "a caller's change reached the shared scope").toBe(owner.id);
+    expect(second.has('added')).toBe(false);
+    expect([...second.keys()]).toEqual([...relationScope(m, c).keys()]);
+
+    m.rename(owner.id, 'load');
+    const renamed = relationScope(m, c);
+    expect(renamed.get('load')).toBe(owner.id);
+    expect(renamed.get('mass'), 'the relation now reads its own `mass`').toBe(own.id);
+  });
+
   it('a sibling the relation never names cannot refuse its scale', () => {
     // Gates (a) and (d) of `scaleOfRelation` iterate the vars, so a caller who
     // passed the scope instead would let `weird`, whose unit resolves to

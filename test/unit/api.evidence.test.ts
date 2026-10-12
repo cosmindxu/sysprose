@@ -32,6 +32,7 @@ import {
   modelVersionOf,
   obligationDigest,
   proofScopeOf,
+  proofScopePass,
   recordEvidence,
   sha256Hex,
   verifyModel,
@@ -818,6 +819,35 @@ describe('proofScopeOf — what a proof stood on, from the model alone', () => {
       scope.footprint[0].digest,
     );
     expect(moved.axiomSet).not.toBe(scope.axiomSet);
+  }, 60_000);
+
+  /**
+   * `verify` writes every record's scope in ONE pass that digests each row once
+   * ({@link proofScopePass}). The pass caches no model state: a row's digest is
+   * kept by the row object, and the axiom set's by the worklist it was taken
+   * from — so the same pass, handed the worklist of an edited model, digests
+   * the edit, and never answers with what it kept.
+   */
+  it('a scope pass reused over an edited model reads the new worklist, not the digests it kept', async () => {
+    const model = await parse(SUBJECT);
+    const pass = proofScopePass();
+    const before = worklist(model);
+    const first = proofScopeOf(model, before.row, { rows: before.rows, pass });
+    expect(first, 'the pass changes no digest').toEqual(proofScopeOf(model, before.row, { rows: before.rows }));
+    expect(proofScopeOf(model, before.row, { rows: before.rows, pass }), 'asked again in the pass').toEqual(first);
+
+    // The value the proof reads, edited in place: the model's revision moves.
+    const mass = model.all().find((el) => model.qualifiedName(el.id) === 'P::Vehicle::mass')!;
+    const rev = model.rev;
+    model.setAttrs(mass.id, { value: 1600, valueText: '1600.0' });
+    expect(model.rev).toBeGreaterThan(rev);
+    const after = worklist(model);
+    const second = proofScopeOf(model, after.row, { rows: after.rows, pass });
+    expect(second).toEqual(proofScopeOf(model, after.row, { rows: after.rows }));
+    expect(second.footprint[0].digest, 'the axiom moved and the pass kept its old digest').not.toBe(
+      first.footprint[0].digest,
+    );
+    expect(second.axiomSet, 'the pass kept the old axiom set').not.toBe(first.axiomSet);
   }, 60_000);
 
   it('does not read an axiom the clause cannot reach', async () => {
