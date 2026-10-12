@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4266 total — 4266 passed, 0 failed, 0 skipped
+- **Tests:** 4445 total — 4445 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -35,10 +35,10 @@
 | test/integration/pipeline.validate.test.ts | 6 | 0 | 0 |
 | test/integration/semantics-exec.integration.test.ts | 9 | 0 | 0 |
 | test/integration/semantics.pipeline.test.ts | 9 | 0 | 0 |
-| test/integration/smt-z3.integration.test.ts | 31 | 0 | 0 |
+| test/integration/smt-z3.integration.test.ts | 32 | 0 | 0 |
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
-| test/integration/verification.differential.test.ts | 194 | 0 | 0 |
+| test/integration/verification.differential.test.ts | 193 | 0 | 0 |
 | test/interop/self-roundtrip.test.ts | 9 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
@@ -48,7 +48,7 @@
 | test/server/oslc-rdf.test.ts | 11 | 0 | 0 |
 | test/server/oslc-shapes.test.ts | 11 | 0 | 0 |
 | test/unit/api.analytics.test.ts | 67 | 0 | 0 |
-| test/unit/api.evidence.test.ts | 39 | 0 | 0 |
+| test/unit/api.evidence.test.ts | 41 | 0 | 0 |
 | test/unit/api.oslc.test.ts | 10 | 0 | 0 |
 | test/unit/api.prompts.test.ts | 14 | 0 | 0 |
 | test/unit/api.query.test.ts | 18 | 0 | 0 |
@@ -57,12 +57,12 @@
 | test/unit/api.rest.test.ts | 7 | 0 | 0 |
 | test/unit/api.rest2.test.ts | 9 | 0 | 0 |
 | test/unit/api.sdk.test.ts | 11 | 0 | 0 |
-| test/unit/api.verification.test.ts | 77 | 0 | 0 |
+| test/unit/api.verification.test.ts | 79 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 7 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 9 | 0 | 0 |
-| test/unit/claims.test.ts | 39 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 97 | 0 | 0 |
+| test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 14 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
@@ -79,9 +79,9 @@
 | test/unit/diagram.layout2.test.ts | 7 | 0 | 0 |
 | test/unit/diagram.matrix.test.ts | 10 | 0 | 0 |
 | test/unit/diagram.parametric.test.ts | 10 | 0 | 0 |
-| test/unit/diagram.readability.test.ts | 33 | 0 | 0 |
+| test/unit/diagram.readability.test.ts | 51 | 0 | 0 |
 | test/unit/diagram.sequence.test.ts | 8 | 0 | 0 |
-| test/unit/diagram.svg-export.test.ts | 17 | 0 | 0 |
+| test/unit/diagram.svg-export.test.ts | 21 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
 | test/unit/diagram.symbols2.test.ts | 14 | 0 | 0 |
 | test/unit/docs-counts.test.ts | 117 | 0 | 0 |
@@ -112,7 +112,7 @@
 | test/unit/semantics.connectors.test.ts | 13 | 0 | 0 |
 | test/unit/semantics.constraints.test.ts | 9 | 0 | 0 |
 | test/unit/semantics.derived-scope.test.ts | 33 | 0 | 0 |
-| test/unit/semantics.evaluate-model.test.ts | 110 | 0 | 0 |
+| test/unit/semantics.evaluate-model.test.ts | 117 | 0 | 0 |
 | test/unit/semantics.execute-full.test.ts | 14 | 0 | 0 |
 | test/unit/semantics.execute.test.ts | 22 | 0 | 0 |
 | test/unit/semantics.execution-full.test.ts | 19 | 0 | 0 |
@@ -122,29 +122,29 @@
 | test/unit/semantics.keywords.test.ts | 43 | 0 | 0 |
 | test/unit/semantics.mc.differential.test.ts | 23 | 0 | 0 |
 | test/unit/semantics.mc.modality.test.ts | 21 | 0 | 0 |
-| test/unit/semantics.mc.patterns.test.ts | 58 | 0 | 0 |
+| test/unit/semantics.mc.patterns.test.ts | 70 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 43 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 63 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 81 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 25 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.mc.traps.test.ts | 31 | 0 | 0 |
 | test/unit/semantics.metaclasses.test.ts | 10 | 0 | 0 |
 | test/unit/semantics.metamodel-complete.test.ts | 9 | 0 | 0 |
-| test/unit/semantics.relations.test.ts | 16 | 0 | 0 |
+| test/unit/semantics.relations.test.ts | 17 | 0 | 0 |
 | test/unit/semantics.requirements.test.ts | 36 | 0 | 0 |
 | test/unit/semantics.resolve.test.ts | 19 | 0 | 0 |
 | test/unit/semantics.smt-encode.test.ts | 60 | 0 | 0 |
-| test/unit/semantics.solver-ineq.test.ts | 20 | 0 | 0 |
-| test/unit/semantics.solver-units.test.ts | 130 | 0 | 0 |
-| test/unit/semantics.solver.test.ts | 22 | 0 | 0 |
+| test/unit/semantics.solver-ineq.test.ts | 22 | 0 | 0 |
+| test/unit/semantics.solver-units.test.ts | 131 | 0 | 0 |
+| test/unit/semantics.solver.test.ts | 26 | 0 | 0 |
 | test/unit/semantics.statement-kind.test.ts | 37 | 0 | 0 |
 | test/unit/semantics.units-eval.test.ts | 40 | 0 | 0 |
 | test/unit/semantics.units.test.ts | 81 | 0 | 0 |
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 221 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 236 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 12 | 0 | 0 |
@@ -165,4 +165,4 @@
 | test/unit/ui.text-editor.test.ts | 4 | 0 | 0 |
 | test/unit/user-guide.test.ts | 32 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
-| test/unit/validation.rules.test.ts | 83 | 0 | 0 |
+| test/unit/validation.rules.test.ts | 87 | 0 | 0 |
