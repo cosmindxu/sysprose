@@ -16,6 +16,7 @@ import {
   VERIFICATION_WARNING_CODES,
 } from '@api/index';
 import type { UndeterminedGuardRow } from '@api/index';
+import { CHECK_META_CODES } from '../../src/ui/checks';
 
 const DOC = readFileSync(resolve(process.cwd(), 'docs/DIAGNOSTIC-CODES.md'), 'utf8');
 const documented = new Set([...DOC.matchAll(/^### `([^`]+)`$/gm)].map((m) => m[1]));
@@ -119,6 +120,26 @@ describe('diagnostic-code catalogue', () => {
       unresolved: ['mode'],
     };
     expect(row.unresolved).toEqual(['mode']);
+  });
+
+  it('holds the app’s checks codes to the catalogue’s checks/* family', () => {
+    // The palette's status rows (`src/ui/checks.ts`) are not findings about
+    // source text, so they carry a code and no range; they enter the contract
+    // through the catalogue. `CHECK_META_CODES` is the closed set the UI emits,
+    // and the catalogue's `checks/*` entries are what holds it: a code added to
+    // one without the other fails here, in both directions, so the set is a
+    // reading of the catalogue and not a hand list.
+    const catalogueChecks = DIAGNOSTIC_CODES.filter((c) => c.code.startsWith('checks/')).map((c) => c.code).sort();
+    expect(catalogueChecks.length, 'the catalogue has no `checks/*` family').toBeGreaterThan(0);
+    expect([...CHECK_META_CODES].sort(), 'CHECK_META_CODES and the catalogue’s checks/* disagree').toEqual(
+      catalogueChecks,
+    );
+    // Every app row is filed under the app's own source. (The catalogue entry
+    // has no `range` field at all, so a `checks/*` code cannot claim a span.)
+    for (const c of DIAGNOSTIC_CODES) {
+      if (!c.code.startsWith('checks/')) continue;
+      expect(c.source, `${c.code} is not filed under the app's own source`).toBe('checks');
+    }
   });
 
   it('has no duplicate codes', () => {

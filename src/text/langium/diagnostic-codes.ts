@@ -911,6 +911,75 @@ const CODES = [
     when: 'Text produced by this tool\'s own serializer does not parse back. A silent-misparse guard.',
     hint: 'Tool defect: the serializer emitted notation the grammar rejects. See docs/AGENT-AUTHORING-CAMPAIGN.md "Open defects".',
   },
+
+  /* ── the app's own check rows (`src/ui/checks.ts`) ──
+   *
+   * These are findings about a CHECK, not about a line of a file: the size of a
+   * model, a check that cannot run here, a result narrowed to the selection.
+   * There is no span of source text for them, so they are the one family whose
+   * catalogue entries document an ABSENCE of `range` — the range rule is
+   * narrowed for this source alone (see docs/AGENT-AUTHORING-CAMPAIGN.md §2).
+   * They are here because automation reads them off the same Checks surface as
+   * every other finding, and branches on their codes the same way; the closed
+   * set is `CHECK_META_CODES` (`src/ui/checks.ts`), pinned to this family by
+   * test/unit/diagnostic-codes.test.ts.
+   */
+  {
+    code: 'checks/command-note',
+    source: 'checks',
+    severity: 'info',
+    when: 'A solver check that cannot run in the page left a file or element name out of its copyable command, because the name has characters a terminal could read as commands, so the row says what the stand-in stands for.',
+    hint: 'Save the file under the plain name the command uses, or replace `<qualified name>` with the element it names — the note names which.',
+  },
+  {
+    code: 'checks/degraded',
+    source: 'checks',
+    severity: 'warning',
+    when: 'A reach or check-behaviour run was judged over a model whose text Save writes does not parse, or whose loaded text and exported text differ, so the same command exits 1 (reach) or 2 (check-behaviour) in a terminal.',
+    hint: 'Fix the syntax errors the row counts, or open Export ▾ SysML and save the text it writes. Nothing is judged over half a model.',
+  },
+  {
+    code: 'checks/internal-error',
+    source: 'checks',
+    severity: 'error',
+    when: 'A palette check threw instead of returning a verdict, so the failure is reported rather than read as a pass.',
+    hint: 'This is a tool defect, not a verdict on the model. Report it with the model that triggered it.',
+  },
+  {
+    code: 'checks/not-here',
+    source: 'checks',
+    severity: 'info',
+    when: 'A solver-backed check (verify, consistency, bounds, refine, fault-tree) cannot run in the page because it is not cross-origin-isolated, so the row is the terminal command to run instead of a verdict.',
+    hint: 'Copy the command and run it in a terminal, or open the app on a cross-origin-isolated page where z3 can load.',
+  },
+  {
+    code: 'checks/not-walked',
+    source: 'checks',
+    severity: 'info',
+    when: 'A state belongs to no state machine the reach walk covered, listed so it is not mistaken for a walked, reachable state.',
+    hint: 'Move the state into the machine that should contain it, or select that machine and re-run the walk. Nothing is claimed about a state the walk did not cover.',
+  },
+  {
+    code: 'checks/pick-machine',
+    source: 'checks',
+    severity: 'info',
+    when: 'A check-behaviour run could not tell which state machine the selection names — the selection is not a machine, or it holds several — so the machines a person can pick are listed.',
+    hint: 'Select one of the machines the row names (or a state inside it) and re-run, or name it with `--element <qualified name>` in a terminal.',
+  },
+  {
+    code: 'checks/scoped',
+    source: 'checks',
+    severity: 'info',
+    when: 'A contracts or obligations run narrowed to the selected element and what it contains, as `--element` narrows it in a terminal.',
+    hint: 'Nothing to repair: the row records the scope the result covers. Clear the selection to cover the whole model.',
+  },
+  {
+    code: 'checks/whole-model',
+    source: 'checks',
+    severity: 'info',
+    when: 'A contracts or obligations run covers the whole model because there is nothing to narrow to — no selection, a bundled library element, or an element that can hold no contract or obligation — and the message says which.',
+    hint: 'Select a package or definition to narrow the report, or read the figure as the whole model\'s; the message names the reason it could not narrow.',
+  },
 ] as const satisfies readonly DiagnosticCode[];
 
 /** Every catalogue entry, in documentation order. */

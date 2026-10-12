@@ -37,7 +37,14 @@ that uses it is in [`AGENT-AUTHORING-CAMPAIGN.md`](AGENT-AUTHORING-CAMPAIGN.md).
 }
 ```
 
-`range` is present on every finding derived from the source text. `elementId`
+`range` is present on every finding derived from the source text. The one
+family that is NOT derived from source text is `checks/*`: those are the app's
+own status rows for a check (a result, its scope, whether it could run), so they
+carry a code and no `range`. The range rule of the contract is narrowed for
+this family alone, because no span of the file would name the thing the row is
+about; see the `checks` source in the campaign document.
+
+`elementId`
 and `elementName` appear on validation findings. `expected`/`found` appear on
 lexer and parser errors. `instances`, `instance` and `relation` appear on
 per-instance findings: a roll-up carries the counts in `instances`, and a
@@ -818,6 +825,66 @@ Guards against the tool producing notation it cannot read back.
 - **Fires when:** Text produced by this tool's own serializer does not parse back. A silent-misparse guard.
 - **Hint given:** Tool defect: the serializer emitted notation the grammar rejects. See docs/AGENT-AUTHORING-CAMPAIGN.md "Open defects".
 
+## App checks
+
+The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from source text: a row is a fact about a CHECK — its result, its scope, whether it could run — so it carries a code and NO `range`, and the contract's range rule is narrowed for this family alone. They are catalogued here because automation reads them off the same Checks surface as every other finding and branches on the same codes; the closed set is `CHECK_META_CODES`, pinned to this family by `test/unit/diagnostic-codes.test.ts`.
+
+### `checks/command-note`
+
+- **Severity:** info
+- **Source:** checks
+- **Fires when:** A solver check that cannot run in the page left a file or element name out of its copyable command, because the name has characters a terminal could read as commands, so the row says what the stand-in stands for.
+- **Hint given:** Save the file under the plain name the command uses, or replace `<qualified name>` with the element it names — the note names which.
+
+### `checks/degraded`
+
+- **Severity:** warning
+- **Source:** checks
+- **Fires when:** A reach or check-behaviour run was judged over a model whose text Save writes does not parse, or whose loaded text and exported text differ, so the same command exits 1 (reach) or 2 (check-behaviour) in a terminal.
+- **Hint given:** Fix the syntax errors the row counts, or open Export ▾ SysML and save the text it writes. Nothing is judged over half a model.
+
+### `checks/internal-error`
+
+- **Severity:** error
+- **Source:** checks
+- **Fires when:** A palette check threw instead of returning a verdict, so the failure is reported rather than read as a pass.
+- **Hint given:** This is a tool defect, not a verdict on the model. Report it with the model that triggered it.
+
+### `checks/not-here`
+
+- **Severity:** info
+- **Source:** checks
+- **Fires when:** A solver-backed check (verify, consistency, bounds, refine, fault-tree) cannot run in the page because it is not cross-origin-isolated, so the row is the terminal command to run instead of a verdict.
+- **Hint given:** Copy the command and run it in a terminal, or open the app on a cross-origin-isolated page where z3 can load.
+
+### `checks/not-walked`
+
+- **Severity:** info
+- **Source:** checks
+- **Fires when:** A state belongs to no state machine the reach walk covered, listed so it is not mistaken for a walked, reachable state.
+- **Hint given:** Move the state into the machine that should contain it, or select that machine and re-run the walk. Nothing is claimed about a state the walk did not cover.
+
+### `checks/pick-machine`
+
+- **Severity:** info
+- **Source:** checks
+- **Fires when:** A check-behaviour run could not tell which state machine the selection names — the selection is not a machine, or it holds several — so the machines a person can pick are listed.
+- **Hint given:** Select one of the machines the row names (or a state inside it) and re-run, or name it with `--element <qualified name>` in a terminal.
+
+### `checks/scoped`
+
+- **Severity:** info
+- **Source:** checks
+- **Fires when:** A contracts or obligations run narrowed to the selected element and what it contains, as `--element` narrows it in a terminal.
+- **Hint given:** Nothing to repair: the row records the scope the result covers. Clear the selection to cover the whole model.
+
+### `checks/whole-model`
+
+- **Severity:** info
+- **Source:** checks
+- **Fires when:** A contracts or obligations run covers the whole model because there is nothing to narrow to — no selection, a bundled library element, or an element that can hold no contract or obligation — and the message says which.
+- **Hint given:** Select a package or definition to narrow the report, or read the figure as the whole model's; the message names the reason it could not narrow.
+
 ---
 
-*105 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*
+*113 codes. Generated from `src/text/langium/diagnostic-codes.ts`.*

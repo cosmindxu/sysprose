@@ -43,6 +43,20 @@ via a side table the parser now returns (`ParseResult.ranges`). The table is
 deliberately *not* stored on elements: a range belongs to one source text, not
 to the model, and must never reach persistence or interchange.
 
+**The app's own rows are the one source with no range.** The palette's
+`checks/*` status rows (`src/ui/checks.ts`) are findings about a CHECK, not
+about a line of the file: the size of a model, a check that cannot run here, a
+result scoped to the selection, a machine a person must pick. There is no span
+of text for them to point at, so they enter this contract as a `checks` source
+and a `checks/` family, each with a stable `code` and a documented ABSENCE of
+`range`. The range rule is narrowed for this source alone, because it is the
+only source whose findings are not derived from source text; every other
+finding keeps it. `CHECK_META_CODES` (`src/ui/checks.ts`) — the closed set the
+UI emits — is pinned to the catalogue's `checks/*` codes by
+`test/unit/diagnostic-codes.test.ts`, so the set is held by the catalogue
+rather than by a hand list, and a new app row cannot be introduced
+uncatalogued.
+
 **Repair information.** `expected` lists what would have been legal at that
 position, `found` is what was written instead, and `hint` is one line naming the
 fix. These come from data the parser already had and used to throw away.
@@ -136,7 +150,7 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **105 catalogue codes** in
+`npm run check` is what raises it — beside **113 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **27 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and

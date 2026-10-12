@@ -44,6 +44,13 @@ export interface TextRange {
  * exact failure this type exists to prevent — and the prefix agrees with it,
  * so `source === 'verification'` and `code.startsWith('verification/')` select
  * the same rows.
+ *
+ * `checks` is the app's OWN source, and the one that is not derived from source
+ * text at all: a `checks/*` row is the palette's status for a check — its
+ * result, its scope, whether it could run — so it carries a code and NO
+ * `range`, and the Agent Diagnostics Contract's range rule is narrowed for this
+ * source alone. It is a `DiagnosticSource` all the same, because automation
+ * reads its rows off the same report as every other finding.
  */
 export type DiagnosticSource =
   | 'lexer'
@@ -51,6 +58,7 @@ export type DiagnosticSource =
   | 'mapper'
   | 'validation'
   | 'verification'
+  | 'checks'
   | 'import'
   | 'simulate'
   | 'solve'

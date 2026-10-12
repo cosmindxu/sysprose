@@ -35,6 +35,7 @@ const FAMILIES: Array<{ prefix: string; title: string; blurb: string }> = [
   { prefix: 'verification/', title: 'Formal verification', blurb: 'The verification lane, and the severity splits it in two. Almost all of these are INFO because none of them is a defect in the model: they say that a relation is outside the fragment the lane encodes, that a contract has nothing to show, that a clause sits somewhere the standard does not admit it, or that a proof would be void rather than absent — each stated rather than left to be inferred from a silence. The ERRORS are the codes that say something about the MODEL — `verification/refuted`, the violation this lane exists to find, at their head — and the two a flag asks for: `verification/vacuous-property`, which exists only because `--strict-vacuity` asked for a vacuity to be loud, and `verification/cover-required`, which exists only because `--cover-required` asked for a decided absence to spend the 1.' },
   { prefix: 'import/', title: 'Input handling', blurb: 'Problems with the input itself rather than its content: wrong format, encoding normalisation, or a failure inside the checker.' },
   { prefix: 'roundtrip/', title: 'Round-trip', blurb: 'Guards against the tool producing notation it cannot read back.' },
+  { prefix: 'checks/', title: 'App checks', blurb: 'The palette\'s own status rows (`src/ui/checks.ts`). These are NOT derived from source text: a row is a fact about a CHECK — its result, its scope, whether it could run — so it carries a code and NO `range`, and the contract\'s range rule is narrowed for this family alone. They are catalogued here because automation reads them off the same Checks surface as every other finding and branches on the same codes; the closed set is `CHECK_META_CODES`, pinned to this family by `test/unit/diagnostic-codes.test.ts`.' },
 ];
 
 const rows = (prefix: string): string =>
@@ -81,7 +82,14 @@ that uses it is in [\`AGENT-AUTHORING-CAMPAIGN.md\`](AGENT-AUTHORING-CAMPAIGN.md
 }
 \`\`\`
 
-\`range\` is present on every finding derived from the source text. \`elementId\`
+\`range\` is present on every finding derived from the source text. The one
+family that is NOT derived from source text is \`checks/*\`: those are the app's
+own status rows for a check (a result, its scope, whether it could run), so they
+carry a code and no \`range\`. The range rule of the contract is narrowed for
+this family alone, because no span of the file would name the thing the row is
+about; see the \`checks\` source in the campaign document.
+
+\`elementId\`
 and \`elementName\` appear on validation findings. \`expected\`/\`found\` appear on
 lexer and parser errors. \`instances\`, \`instance\` and \`relation\` appear on
 per-instance findings: a roll-up carries the counts in \`instances\`, and a
