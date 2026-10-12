@@ -99,7 +99,7 @@ import {
 import {
   parseModel,
   retractResolvedSpecializationWarnings,
-  serializeElement,
+  serializeUserModelSignals,
   resolveConnectorFeatureChains,
   type ParseDiagnostic,
   type ParseResult,
@@ -920,6 +920,51 @@ const EMPTY_SNAPSHOT: SerializedModel = {
   rootIds: [],
 };
 
+/** What a text is worth to a check. */
+interface TextHealth {
+  readonly parseErrors: number;
+  /**
+   * Error findings on the user's elements of the model the text parses to,
+   * with the full library merged; null when only the parse is known — a seed
+   * from {@link applyText}, whose model is the live one, or a text the
+   * serializer vouched reference-faithful, whose findings are the live
+   * model's.
+   */
+  readonly validationErrors: number | null;
+  /**
+   * The serializer reports that every reference the text writes re-resolves to
+   * its element on a fresh parse, so the model it parses to is the live one and
+   * its validation is the live model's — no parse needed to know it.
+   */
+  readonly referenceFaithful: boolean;
+}
+
+/** What {@link loadHealth} knows of the last two distinct texts it was asked about, by {@link withFinalNewline} of the text. */
+const healthMemo = new Map<string, TextHealth>();
+
+/** Count the errors among a parse's diagnostics. */
+function errorsOf(diagnostics: readonly Pick<ParseDiagnostic, 'severity'>[]): number {
+  return diagnostics.filter((d) => d.severity === 'error').length;
+}
+
+/**
+ * Keep what is known of `text`, the newest first, two at most. Save adds the
+ * one final newline a file ends in and a text typed may end otherwise, which
+ * is not a difference to a parse: the key is the text as Save writes it.
+ */
+function rememberText(text: string, health: TextHealth): void {
+  const key = withFinalNewline(text);
+  const prior = healthMemo.get(key);
+  const validationErrors = health.validationErrors ?? prior?.validationErrors ?? null;
+  const referenceFaithful = health.referenceFaithful;
+  healthMemo.delete(key);
+  healthMemo.set(key, { parseErrors: health.parseErrors, validationErrors, referenceFaithful });
+  for (const old of healthMemo.keys()) {
+    if (healthMemo.size <= 2) break;
+    healthMemo.delete(old);
+  }
+}
+
 /**
  * The text view of the model — or, when the model cannot be written, the
  * previous text and the reason.
@@ -934,13 +979,18 @@ const EMPTY_SNAPSHOT: SerializedModel = {
  * keeps the Text view honest and gives `applyText` something to refuse on. The
  * patch is PARTIAL on failure: `textDirty` is left as it was, because whether
  * the user has unapplied edits is not what just changed.
+ *
+ * The serializer also hands back what it knows of the text it wrote — the
+ * parse errors it embedded and whether its references all re-resolve — and that
+ * is kept for {@link loadHealth}, so a check reads the file's health off the
+ * serializer instead of re-parsing the text it just produced.
  */
 function textView(model: Model, previous: string): Partial<AppState> {
   try {
+    const { text, parseErrors, referenceFaithful } = serializeUserModelSignals(model);
+    rememberText(text, { parseErrors, validationErrors: null, referenceFaithful });
     return {
-      textBuffer: userRootIds(model)
-        .map((id) => serializeElement(model, id, 0))
-        .join('\n\n'),
+      textBuffer: text,
       textDirty: false,
       serializeError: null,
     };
@@ -3279,7 +3329,11 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model, textBuffer, diagramPins } = get();
       const result = parseModel(textBuffer);
       lastParse = result;
-      rememberText(textBuffer, { parseErrors: errorsOf(result.diagnostics), validationErrors: null });
+      rememberText(textBuffer, {
+        parseErrors: errorsOf(result.diagnostics),
+        validationErrors: null,
+        referenceFaithful: false,
+      });
       // The text makes every element anew, under a new id: the boxes moved by
       // hand follow their elements by qualified name, and this step's Undo
       // puts back the ones the old ids had.
@@ -4072,7 +4126,9 @@ export function lastAppliedText(): string | null {
  * a file is judged on the model its text parses to, and a rename leaves the
  * name a connector's end is written with behind (`connect a.pwrOut to …`), so
  * the file fails validation where the live model, whose ends are elements,
- * does not.
+ * does not. The serializer reports what the text it writes will parse to
+ * (`serializeUserModelSignals`), so a text whose references all re-resolve is
+ * judged without a parse, and one it cannot vouch for is parsed as before.
  */
 export interface LoadHealth {
   /** Parse errors of each distinct text below + `validationErrors` + `validateThrew` + `unwritable`, each as 1. */
@@ -4100,41 +4156,6 @@ export interface LoadHealth {
   readonly libraryPending: boolean;
 }
 
-/** What a text is worth to a check. */
-interface TextHealth {
-  readonly parseErrors: number;
-  /**
-   * Error findings on the user's elements of the model the text parses to,
-   * with the full library merged; null when only the parse is known — a seed
-   * from {@link applyText}, whose model is the live one.
-   */
-  readonly validationErrors: number | null;
-}
-
-/** What {@link loadHealth} knows of the last two distinct texts it was asked about, by {@link withFinalNewline} of the text. */
-const healthMemo = new Map<string, TextHealth>();
-
-/** Count the errors among a parse's diagnostics. */
-function errorsOf(diagnostics: readonly Pick<ParseDiagnostic, 'severity'>[]): number {
-  return diagnostics.filter((d) => d.severity === 'error').length;
-}
-
-/**
- * Keep what is known of `text`, the newest first, two at most. Save adds the
- * one final newline a file ends in and a text typed may end otherwise, which
- * is not a difference to a parse: the key is the text as Save writes it.
- */
-function rememberText(text: string, health: TextHealth): void {
-  const key = withFinalNewline(text);
-  const validationErrors = health.validationErrors ?? healthMemo.get(key)?.validationErrors ?? null;
-  healthMemo.delete(key);
-  healthMemo.set(key, { parseErrors: health.parseErrors, validationErrors });
-  for (const old of healthMemo.keys()) {
-    if (healthMemo.size <= 2) break;
-    healthMemo.delete(old);
-  }
-}
-
 /**
  * The full-library merge of the lazy chunk, once its data is in; null before,
  * and for good when the full library could not be loaded. {@link loadHealth}
@@ -4156,7 +4177,7 @@ function measureText(text: string): { health: TextHealth; keep: boolean } {
     parsed = parseModel(text);
   } catch (err) {
     console.error('parse failed', err);
-    return { health: { parseErrors: 1, validationErrors: 0 }, keep: true };
+    return { health: { parseErrors: 1, validationErrors: 0, referenceFaithful: false }, keep: true };
   }
   const model = parsed.model;
   const mine = new Set(model.all().map((el) => el.id)); // before the library goes in
@@ -4173,7 +4194,7 @@ function measureText(text: string): { health: TextHealth; keep: boolean } {
     validationErrors = 1;
   }
   return {
-    health: { parseErrors: errorsOf(parsed.diagnostics), validationErrors },
+    health: { parseErrors: errorsOf(parsed.diagnostics), validationErrors, referenceFaithful: false },
     keep: fullLibraryMerge !== null,
   };
 }
@@ -4181,13 +4202,16 @@ function measureText(text: string): { health: TextHealth; keep: boolean } {
 /**
  * What a check needs to know of `text`. While the live model stands as the
  * parse of `applied` (no edit since), its own validation reads for that text
- * and nothing is parsed again; every other text is parsed once and kept.
+ * and nothing is parsed again. A text the serializer vouched reference-faithful
+ * reference-faithful parses to the live model, so its own validation is the
+ * live model's and it too is not parsed — its parse errors and any embedded
+ * value text are already known. Every other text is parsed once and kept.
  */
 function textHealthOf(text: string, applied: string | null): { parseErrors: number; validationErrors: number } {
   const key = withFinalNewline(text);
   const known = healthMemo.get(key);
   const isLive = applied !== null && withFinalNewline(applied) === key;
-  if (known !== undefined && (known.validationErrors !== null || isLive)) {
+  if (known !== undefined && (known.validationErrors !== null || isLive || known.referenceFaithful)) {
     rememberText(text, known);
     return { parseErrors: known.parseErrors, validationErrors: known.validationErrors ?? 0 };
   }
@@ -4198,11 +4222,11 @@ function textHealthOf(text: string, applied: string | null): { parseErrors: numb
 
 /**
  * The load health of the live model, as of now. Costs a parse, a library merge
- * and a validation of each text not measured since it was written (but not of
- * the text the model was applied from, while it is unedited), and a validation
- * of the live model when none ran at this revision: 0.5-1.3 s on a model the
- * size of the drone swarm, once per text. Runs when a check is, never on an
- * edit.
+ * and a validation of each text the serializer could not vouch for (a stale
+ * reference, or unresolved text it cannot read back), and of the text the model
+ * was applied from when it is unedited; a text it vouched reference-faithful
+ * costs only the serializer's own walk. A validation of the live model runs
+ * when none did at this revision. Runs when a check is, never on an edit.
  */
 export function loadHealth(): LoadHealth {
   flushRecompute();
@@ -4211,7 +4235,18 @@ export function loadHealth(): LoadHealth {
   let exportedText: string | null = null;
   let exportRefusal: string | null = null;
   try {
-    exportedText = ioExportModel(model, 'sysml');
+    // The serializer writes the same text `ioExportModel(model, 'sysml')`
+    // does, and says as it goes what a parse of it would find: the parse
+    // errors embedded in the text, and whether every reference it writes
+    // re-resolves so its validation is the live model's. Kept with the text,
+    // so neither half is re-parsed below.
+    const signals = serializeUserModelSignals(model);
+    exportedText = signals.text;
+    rememberText(exportedText, {
+      parseErrors: signals.parseErrors,
+      validationErrors: null,
+      referenceFaithful: signals.referenceFaithful,
+    });
   } catch (err) {
     console.error('export failed', err);
     exportRefusal = serializeRefusal(err);

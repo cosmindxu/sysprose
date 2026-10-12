@@ -340,8 +340,15 @@ function memberNamed(model: Model, e: ElementRecord, seg: string): boolean {
  * materialised an implicit, valueless `p::load` next to `heavy`, and the
  * binding held the copy while every scope read `heavy`'s 50.
  */
-function childNamed(model: Model, ownerId: ElementId, seg: string): ElementRecord | undefined {
-  const kids = model.children(ownerId);
+function childNamed(
+  model: Model,
+  ownerId: ElementId,
+  seg: string,
+  skipImplicit = false,
+): ElementRecord | undefined {
+  const kids = skipImplicit
+    ? model.children(ownerId).filter((e) => e.attrs.implicit !== true)
+    : model.children(ownerId);
   return (
     kids.find((e) => memberNamed(model, e, seg)) ??
     kids.find((e) => !isRelationship(e.eClass) && redefinedClosure(model, e).some((g) => nameMatches(g, seg)))
@@ -499,10 +506,11 @@ function walkChain(
   anchor: ElementRecord,
   segs: string[],
   commit: boolean,
+  skipImplicit = false,
 ): ElementRecord | undefined {
   let cur = anchor;
   for (const seg of segs) {
-    const direct = childNamed(model, cur.id, seg);
+    const direct = childNamed(model, cur.id, seg, skipImplicit);
     if (direct) {
       cur = direct;
       continue;
@@ -512,6 +520,46 @@ function walkChain(
     cur = commit ? ensureImplicitFeature(model, cur, proto) : proto;
   }
   return cur;
+}
+
+/**
+ * Does a connector-endpoint chain `ref` resolve without the implicit features
+ * a PREVIOUS parse materialized? A fresh parse starts with no such copies, so
+ * this is the question that tells whether the text of `ref` still denotes
+ * something there. Used by the serializer's load-health tally
+ * (`serializeUserModelRefs`): a reference kept alive only by a stale end copy
+ * resolves on the live model (which holds the copy) but not here, which is the
+ * divergence `loadHealth` must see to keep judging a file on the model its
+ * text parses to.
+ */
+export function chainResolvesWithoutImplicit(
+  model: Model,
+  ref: string,
+  scopeOwnerId: ElementId | null,
+): boolean {
+  const segs = refSegments(ref);
+  if (segs.length === 0) return false;
+  const scopes = scopeChain(model, scopeOwnerId);
+  const [head, ...rest] = segs;
+  const walks = (anchor: ElementRecord): boolean =>
+    rest.length === 0 || walkChain(model, anchor, rest, false, true) !== undefined;
+  for (const s of scopes) {
+    const hit = resolveName(model, s, head);
+    if (hit && hit.attrs.implicit !== true && walks(hit)) return true;
+  }
+  for (const s of scopes) {
+    const kids = s === null ? model.roots() : model.children(s);
+    const hit = kids.find((e) => e.attrs.implicit !== true && nameMatches(e, head));
+    if (hit && walks(hit)) return true;
+  }
+  for (const s of scopes) {
+    if (s === null) continue;
+    const scopeEl = model.get(s);
+    if (!scopeEl) continue;
+    const proto = findTypeFeature(model, scopeEl, head);
+    if (proto && walks(proto)) return true;
+  }
+  return false;
 }
 
 /**

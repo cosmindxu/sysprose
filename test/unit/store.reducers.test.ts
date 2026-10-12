@@ -106,7 +106,7 @@ import {
 } from '@persistence/index';
 import * as textApi from '@text/index';
 import * as validationApi from '@validation/index';
-import { parseModel, serializeModel } from '@text/index';
+import { parseModel, serializeModel, serializeUserModelSignals } from '@text/index';
 import {
   NOTE_BODY_TERMINATOR,
   getRequirementAttr,
@@ -5544,7 +5544,7 @@ describe('the load health a check is judged under', () => {
     expect(h.errors).toBeGreaterThanOrEqual(1);
   });
 
-  it('parses a text once: the applied text’s parse is kept, and a second look parses nothing', async () => {
+  it('measures the load health without re-parsing: the applied text keeps its parse, and the serializer accounts for the export text', async () => {
     // Texts no other test applies, so the two-entry memo cannot already hold their export.
     const once = (n: number, end: string) =>
       `package Once${n} { state def M { state a; state b; transition a then b; transition b then a; } }\npackage Broken${n} { part x : ; }${end}`;
@@ -5557,13 +5557,16 @@ describe('the load health a check is judged under', () => {
         st().applyText();
         parse.mockClear();
         const h = loadHealth();
-        // Right after the apply the buffer is the applied text: its parse is already known.
+        // Right after the apply the buffer is the applied text: its parse is known from the apply.
         expect(h.saved?.parseErrors, `case ${n}`).toBeGreaterThan(0);
-        expect(parse, `case ${n}: only the export text`).toHaveBeenCalledTimes(1);
-        expect(parse.mock.calls[0]?.[0]).toBe(exported());
+        // The export text is the recovered `part x;`, and the serializer vouches for it (no
+        // references, nothing it cannot read back), so neither it nor the applied text is parsed.
+        expect(parse, `case ${n}: nothing is parsed again`).not.toHaveBeenCalled();
+        expect(h.exported?.parseErrors, `case ${n}: the recovered export parses`).toBe(0);
+        expect(h.sameText, `case ${n}: the applied text is not the recovered export`).toBe(false);
         parse.mockClear();
         expect(loadHealth(), `case ${n}`).toEqual(h);
-        expect(parse, `case ${n}: both are known now`).not.toHaveBeenCalled();
+        expect(parse, `case ${n}: still nothing`).not.toHaveBeenCalled();
         await whenLibrarySettled();
       }
     } finally {
@@ -5594,12 +5597,19 @@ describe('the load health a check is judged under', () => {
       'package P {\n  port def Pw;\n  part def A { port pwrOut : Pw; }\n  part def B { port pwrIn : Pw; }\n  part def S {\n    part a : A;\n    part b : B;\n    connection link connect a.pwrOut to b.pwrIn;\n  }\n}\n';
     await apply(WIRED);
     expect(loadHealth().errors, 'wired, to start from').toBe(0);
+    expect(serializeUserModelSignals(st().model).referenceFaithful, 'a wired text needs no parse').toBe(true);
     st().updateElement(byName('pwrOut'), { declaredName: 'C' });
     await whenLibrarySettled();
     flushRecompute();
     // The live connector still holds its end as an element, so the live model is clean…
     const live = validationApi.validate(st().model).filter((d) => d.severity === 'error' && d.elementId !== undefined && !st().model.get(d.elementId)?.attrs.isLibrary);
     expect(live, 'the live model has no error').toHaveLength(0);
+    // …and the serializer's parse-free signal marks the text it writes as no longer re-resolving
+    // the end, which is what makes `loadHealth` fall back to a parse for this text's validation.
+    expect(
+      serializeUserModelSignals(st().model).referenceFaithful,
+      'the written text no longer re-resolves the end',
+    ).toBe(false);
     // …but the text it is written as names `a.pwrOut`, which no longer exists.
     const reparsed = validationApi.validate(parseModel(st().textBuffer).model);
     expect(reparsed.some((d) => d.code === 'validation/connector-endpoints' || d.ruleId === 'connector-endpoints')).toBe(true);
@@ -5608,9 +5618,11 @@ describe('the load health a check is judged under', () => {
     expect(h.saved?.parseErrors, 'it parses, with a warning').toBe(0);
     expect(h.validationErrors, 'the file fails validation').toBeGreaterThan(0);
     expect(h.errors).toBeGreaterThan(0);
-    // Put right, it is clean again.
+    // Put right, it is clean again, and the signal clears.
     st().updateElement(byName('C'), { declaredName: 'pwrOut' });
     await whenLibrarySettled();
+    flushRecompute();
+    expect(serializeUserModelSignals(st().model).referenceFaithful, 'put right, it is faithful again').toBe(true);
     expect(loadHealth().errors).toBe(0);
   });
 
