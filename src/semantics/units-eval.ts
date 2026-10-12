@@ -1437,20 +1437,6 @@ function quantityScopeFor(
   const { definitions } = passOf(model, memo);
   return (name: string) => {
     const id = ids.get(name);
-    // H5: an asserted equation at this context — or at an enclosing one, over
-    // the path to this feature — stands OVER a `default` the feature writes,
-    // before the scope's own reading. A feature with a plain `=` value is left
-    // to its own reading (the assert against it is a contradiction).
-    const h5Feature = id !== undefined ? model.get(id) : definitions.denote(contextId).get(name)?.feature;
-    if (
-      h5Feature &&
-      (h5Feature.attrs.defaultValue === true || !hasStatedValue(model, h5Feature)) &&
-      (definitions.of(contextId, name).length > 0 || definitions.reachingAssert(contextId, name) !== undefined)
-    ) {
-      const localReads: Reads = reads ?? { depth: 0 };
-      const asserted = definedQuantity(model, contextId, name, inFlight, memo, localReads, inst);
-      if (asserted !== undefined) return asserted;
-    }
     if (id === undefined) {
       if (!reads) return undefined;
       const defined = definedQuantity(model, contextId, name, inFlight, memo, reads, inst);
@@ -2179,36 +2165,15 @@ function definedQuantity(
     return derivationEval(d, name);
   };
   if (name.includes('.')) {
-    // H5: a DOTTED asserted equation at this context defines the path directly
-    // (`assert constraint { p.x == 3.0 }` read as `p.x`).
-    const direct = definitions.of(contextId, name);
-    if (direct.length > 0) {
-      const endFeature = definitions.denote(contextId).get(name)?.feature;
-      if (endFeature) {
-        const d = definitionOf(model, endFeature.id, name, direct, memo, contextId, inFlight);
-        note(reads, d);
-        return derivationEval(d, name);
-      }
-    }
     const end = definitions.chainDefinition([contextId], name);
     return end ? read(end.feature.id, definitions.nameOf(end.feature)!, end.site, end.at) : undefined;
   }
-  const feature = definitions.feature(contextId, name) ?? definitions.denote(contextId).get(name)?.feature;
+  const feature = definitions.feature(contextId, name);
   if (!feature) return undefined;
   const candidates = definitions.of(contextId, name);
   if (candidates.length === 0) {
     const inherited = definitions.definitionReadIn(contextId, name);
     if (inherited !== undefined) return read(feature.id, name, inherited.site, inherited.at);
-    // H5: an asserted equation of an ENCLOSING context, written on the path to
-    // this feature (`assert { p.x == 3.0 }` over `part p : P`), defines it here.
-    const reaching = definitions.reachingAssert(contextId, name);
-    if (reaching !== undefined) {
-      // The equation writes the feature as its dotted path (`p.x`), so it is
-      // oriented by that path; the value is returned under `name`.
-      const d = definitionOf(model, feature.id, reaching.path, definitions.of(reaching.site, reaching.path), memo, reaching.at, inFlight, true);
-      note(reads, d);
-      return derivationEval(d, name);
-    }
     // Read per instance (A.2): the value a binding carries into `inst`, the
     // unit-aware twin of `valueBoundInInstance` of ./evaluate-model.
     if (inst !== undefined) return boundInInstanceQ(model, contextId, name, memo, inst);

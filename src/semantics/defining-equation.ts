@@ -120,10 +120,8 @@ function equationsByName(model: Model, ownerId: ElementId): Map<string, Defining
     const eq = equationOf(c);
     if (!eq) continue;
     const { node, literals } = eq;
-    // A DOTTED defined name (`assert constraint { p.x == 3.0 }`, H5) indexes
-    // under the whole path; a single-segment ref is the bare name it always was.
-    const l = definedName(node.left, literals);
-    const r = definedName(node.right, literals);
+    const l = bareName(node.left, literals);
+    const r = bareName(node.right, literals);
     if (l !== undefined) add(left, l, { constraint: c, definition: node.right, left: true, literals });
     if (r !== undefined && r !== l) add(right, r, { constraint: c, definition: node.left, left: false, literals });
   }
@@ -555,9 +553,7 @@ export class DefiningEquations {
     const target = this.carrier(d.reader, d.feature);
     if (target !== d.feature) return { target };
     if (this.statedValue(target) !== undefined) {
-      return target.ownerId === d.reader || (this.sameIn(d.reader, target) && !this.changedByAssert(d.reader, target))
-        ? { target }
-        : { target, at: d.reader };
+      return target.ownerId === d.reader || this.sameIn(d.reader, target) ? { target } : { target, at: d.reader };
     }
     // An asserted equation that defines it answers it, not a value it redefines.
     if (this.statesOrDefines(d.reader, target)) return undefined;
@@ -977,46 +973,6 @@ export class DefiningEquations {
     const site = this.definitionOwner(feature);
     if (site === undefined || site === contextId) return undefined;
     return { site, at: this.sameIn(contextId, feature, site) ? site : contextId };
-  }
-
-  /**
-   * Does `contextId` read `feature`'s value differently because an asserted
-   * equation of an ENCLOSING context (H5) defines one of the names the value
-   * reads (`assert { p.x == 3.0 }` at the package, over `P`'s `y = x * 2.0` read
-   * in `part p : P`)? The value is then the context's own, read over its names.
-   */
-  private changedByAssert(contextId: ElementId, feature: ElementRecord): boolean {
-    const raw = this.statedValue(feature);
-    if (typeof raw !== 'string') return false;
-    for (const n of namesOfValue(raw)) {
-      if (!n.includes('.') && this.reachingAssert(contextId, n)) return true;
-    }
-    return false;
-  }
-
-  /**
-   * Where an asserted equation owned by an ENCLOSING context defines the bare
-   * `name` a feature of `contextId` reads — the DOTTED form `assert constraint
-   * { p.x == 3.0 }` at a package or definition defining `x` in `part p : P`
-   * (H5). The path is the chain of owning feature names from that context down
-   * to `contextId`, then `name` (`p.x`). `site` writes the equation, `at` is
-   * `contextId` (the context it is read in, over that context's names), `path`
-   * the dotted name there. `undefined` when none does.
-   */
-  reachingAssert(contextId: ElementId, name: string): { site: ElementId; at: ElementId; path: string } | undefined {
-    if (name.includes('.')) return undefined;
-    const chain: string[] = [];
-    for (let cur = this.model.get(contextId); cur; cur = cur.ownerId != null ? this.model.get(cur.ownerId) : undefined) {
-      const owner = cur.ownerId != null ? this.model.get(cur.ownerId) : undefined;
-      if (!owner || owner.attrs.isLibrary === true) break;
-      const curName = this.nameOf(cur);
-      if (curName === undefined) break;
-      chain.unshift(curName);
-      const path = [...chain, name].join('.');
-      if (equationsByName(this.model, owner.id).has(path)) return { site: owner.id, at: contextId, path };
-      if (!isUsage(cur.eClass)) break;
-    }
-    return undefined;
   }
 
   /** Where `f`'s asserted definitions are written: its owner, else the owner of the nearest feature it redefines that has one. */
@@ -1901,16 +1857,6 @@ function bareName(n: ExprNode, literals: MarkerDimensions = NO_MARKERS): string 
 }
 
 /**
- * The name a side of an equation DEFINES — its bare name, or its whole dotted
- * path (`p.x` in `assert constraint { p.x == 3.0 }`, H5) — a lowered `[unit]`
- * literal's marker excluded, or `undefined` for anything that is no reference.
- */
-function definedName(n: ExprNode, literals: MarkerDimensions = NO_MARKERS): string | undefined {
-  if (n.kind !== 'ref' || n.path.length === 0) return undefined;
-  return n.path.some((s) => literals.has(s)) ? undefined : n.path.join('.');
-}
-
-/**
  * The value a feature STATES: its `attrs.value`, or — for a calculation usage
  * whose body is a value expression (`calc endurance { capacity / power }`)
  * rather than a relation — that body. `undefined` for one that states none.
@@ -2744,45 +2690,27 @@ function heldInstance(definitions: DefiningEquations, rootId: ElementId, path: s
 }
 
 /**
- * Does an ASSERTED equation of `f`'s owner define `f` — the H5 rule that an
- * asserted equation stands OVER a `default` the feature writes? `attribute L
- * default = 2.0` beside `assert constraint { L == 5.0 }` is L = 5, on every
- * surface: the default gives way to the equation exactly as it does to a
- * binding (`GA7`). Only a `default` is overridden; a feature whose plain `=`
- * value an assert contradicts is the strict-KerML contradiction another guard
- * reports.
- */
-function assertOverridesDefault(model: Model, f: ElementRecord): boolean {
-  if (f.attrs.defaultValue !== true) return false;
-  const name = effectiveNameOf(model, f);
-  if (name === undefined || f.ownerId == null) return false;
-  return model.children(f.ownerId).some((c) => isAsserted(c) && namesDefinedBy(c).includes(name));
-}
-
-/**
  * The default a feature's own `default` gives way to a binding ({@link
- * defaultGivesWay}) — or to an asserted equation that defines it (H5) — or
- * gives way AT the instance `inst` because a held redefinition of it falls
- * through there (`held-redef`). `undefined` `inst` answers the per-feature hold
- * alone.
+ * defaultGivesWay}) — or gives way AT the instance `inst` because a held
+ * redefinition of it falls through there (`held-redef`). `undefined` `inst`
+ * answers the per-feature hold alone.
  */
 export function defaultGivesWaySomewhere(model: Model, f: ElementRecord): boolean {
   if (f.attrs.defaultValue !== true) return false;
   const ends = bindingEnds(model);
-  return ends.held.has(f.id) || ends.heldSomewhere.has(f.id) || assertOverridesDefault(model, f);
+  return ends.held.has(f.id) || ends.heldSomewhere.has(f.id);
 }
 
 /**
  * The default a feature's own `default` gives way to a binding ({@link
- * defaultGivesWay}) — or to an asserted equation that defines it (H5) — or
- * gives way AT the instance `inst` because a held redefinition of it falls
- * through there (`held-redef`). `undefined` `inst` answers the per-feature hold
- * alone.
+ * defaultGivesWay}) — or gives way AT the instance `inst` because a held
+ * redefinition of it falls through there (`held-redef`). `undefined` `inst`
+ * answers the per-feature hold alone.
  */
 export function defaultGivesWayIn(model: Model, f: ElementRecord, inst: string | undefined): boolean {
   if (f.attrs.defaultValue !== true) return false;
   const ends = bindingEnds(model);
-  if (ends.held.has(f.id) || assertOverridesDefault(model, f)) return true;
+  if (ends.held.has(f.id)) return true;
   if (inst === undefined) return false;
   if (ends.heldIn.has(inst)) return true;
   const name = effectiveNameOf(model, f);
@@ -2935,20 +2863,18 @@ export function bindingReadingIn(
  * writes it, or nothing.
  */
 function endValue(model: Model, f: ElementRecord, root: ElementRecord, path: string): EndValue {
-  const defines = (ownerId: ElementId | null, n: string | undefined): boolean =>
-    n !== undefined && ownerId != null && model.children(ownerId).some((c) => isAsserted(c) && namesDefinedBy(c).includes(n));
-  // H5: an asserted equation that defines the feature — its own, or one it
-  // redefines, an assert inherited from a general definition through the copy's
-  // redefinition closure (the G340 family, `assert-min`) — is a STATED value,
-  // and stands OVER a `default` the same feature writes (`attribute L default =
-  // 2.0 * K` beside `assert constraint { L == 5.0 }` is L = 5: GA7). Read
-  // before the value loop so the assert wins.
-  if ([f, ...redefinedClosure(model, f)].some((g) => defines(g.ownerId, effectiveNameOf(model, g)))) {
-    return { kind: 'value' };
-  }
   for (const g of [f, ...redefinedClosure(model, f)]) {
     if (g.attrs.value === undefined || g.attrs.value === null) continue;
     return g.attrs.defaultValue === true ? { kind: 'default', source: g } : { kind: 'value' };
+  }
+  const defines = (ownerId: ElementId | null, n: string | undefined): boolean =>
+    n !== undefined && ownerId != null && model.children(ownerId).some((c) => isAsserted(c) && namesDefinedBy(c).includes(n));
+  // No value of its own: an asserted equation that defines the feature — its
+  // own, or one it redefines, an assert inherited from a general definition
+  // through the copy's redefinition closure (the G340 family, `assert-min`) —
+  // is a stated value, so a `default` in the component gives way to it.
+  if ([f, ...redefinedClosure(model, f)].some((g) => defines(g.ownerId, effectiveNameOf(model, g)))) {
+    return { kind: 'value' };
   }
   return defines(root.id, path) ? { kind: 'value' } : { kind: 'none' };
 }
@@ -2967,8 +2893,7 @@ function endValue(model: Model, f: ElementRecord, root: ElementRecord, path: str
  * default either ({@link DefiningEquations.carrier}).
  */
 export function defaultGivesWay(model: Model, f: ElementRecord): boolean {
-  if (f.attrs.defaultValue !== true) return false;
-  return bindingEnds(model).held.has(f.id) || assertOverridesDefault(model, f);
+  return f.attrs.defaultValue === true && bindingEnds(model).held.has(f.id);
 }
 
 /**
@@ -3150,28 +3075,6 @@ export function classified(model: Model, root: ElementId, component: string): Co
   return { valued, readable, heldDefaults };
 }
 
-/**
- * The feature at the dotted `path` below `root`, resolved through the model's
- * ownership by effective name — a DEFINITION feature (`P.load` below a
- * package) included, which a scope by-name map omits. Used by
- * {@link boundSourceIn} to match a usage's instance path to the definition
- * feature a binding is written on (H5).
- */
-function featureAtPath(model: Model, definitions: DefiningEquations, root: ElementId, path: string): ElementRecord | undefined {
-  let owner = model.get(root);
-  let f: ElementRecord | undefined;
-  for (const seg of path.split('.')) {
-    if (!owner) return undefined;
-    f =
-      model.children(owner.id).find((c) => definitions.nameOf(c) === seg) ??
-      definitions.byName(owner.id).get(seg) ??
-      definitions.features(owner.id).find((c) => definitions.nameOf(c) === seg);
-    if (!f) return undefined;
-    owner = f;
-  }
-  return f;
-}
-
 /** Every member path of `component` read in `root`. */
 function componentPaths(model: Model, root: ElementId, component: string): string[] {
   const reading = bindingEnds(model).readings.get(root);
@@ -3269,24 +3172,7 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
     const inst = definitions.instanceNameOf(root);
     if (symbol !== inst && !symbol.startsWith(`${inst}::`)) continue;
     const rest = symbol === inst ? '' : symbol.slice(inst.length + 2);
-    const restPath = rest.split('::').join('.');
-    let r = reading.get(restPath);
-    if (!r && restPath !== '') {
-      // H5: a binding written on a DEFINITION feature (`bind P::load = L` at
-      // package level, or between two definition features) holds in every
-      // instance of that definition, so a usage's own path (`p2.load`) is read
-      // through it — matched by the feature each path spells, through the type
-      // chain.
-      const denoted = definitions.denote(root).get(restPath)?.feature;
-      if (denoted) {
-        for (const [path, rr] of reading) {
-          if (featureAtPath(model, definitions, root, path)?.id === denoted.id) {
-            r = rr;
-            break;
-          }
-        }
-      }
-    }
+    const r = reading.get(rest.split('::').join('.'));
     if (!r) continue;
     const segments = inst.split('::').length;
     if (best === undefined || segments < bestSegments) {
