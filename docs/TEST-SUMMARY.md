@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4434 total — 4434 passed, 0 failed, 0 skipped
+- **Tests:** 4439 total — 4439 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -61,7 +61,7 @@
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 7 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 97 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 100 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 14 | 0 | 0 |
@@ -124,7 +124,7 @@
 | test/unit/semantics.mc.modality.test.ts | 21 | 0 | 0 |
 | test/unit/semantics.mc.patterns.test.ts | 65 | 0 | 0 |
 | test/unit/semantics.mc.publishable.test.ts | 43 | 0 | 0 |
-| test/unit/semantics.mc.reach.test.ts | 75 | 0 | 0 |
+| test/unit/semantics.mc.reach.test.ts | 76 | 0 | 0 |
 | test/unit/semantics.mc.recovery.test.ts | 25 | 0 | 0 |
 | test/unit/semantics.mc.scc.test.ts | 28 | 0 | 0 |
 | test/unit/semantics.mc.successors.test.ts | 31 | 0 | 0 |
@@ -144,7 +144,7 @@
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 236 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 237 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 12 | 0 | 0 |
