@@ -8,7 +8,7 @@
 
 import { useMemo, useState } from 'react';
 import type { DiagramEdge } from '@diagram/index';
-import { MARK_WORD, type ReachMark } from '../behaviour-checks';
+import { MARK_WORD, EDGE_MARK_WORD, type ReachMark, type EdgeMark } from '../behaviour-checks';
 
 interface Family {
   key: string;
@@ -30,14 +30,14 @@ const FAMILIES: Family[] = [
   { key: 'dependency', label: 'Dependency (satisfy, derive, …)', glyph: '▹', color: 'var(--dgm-violet)', dashed: true, kinds: ['include', 'satisfy', 'verify', 'refine', 'derive', 'trace', 'allocate', 'dependency'] },
 ];
 
-export function Legend({ edges, marks = [] }: { edges: DiagramEdge[]; marks?: readonly ReachMark[] }): JSX.Element | null {
+export function Legend({ edges, marks = [], edgeMarks = [] }: { edges: DiagramEdge[]; marks?: readonly ReachMark[]; edgeMarks?: readonly EdgeMark[] }): JSX.Element | null {
   const [open, setOpen] = useState(false);
   const present = useMemo(() => {
     const kinds = new Set(edges.map((e) => e.kind));
     return FAMILIES.filter((f) => f.kinds.some((k) => kinds.has(k)));
   }, [edges]);
 
-  if (present.length === 0 && marks.length === 0) return null;
+  if (present.length === 0 && marks.length === 0 && edgeMarks.length === 0) return null;
 
   return (
     <div className="diagram-legend" data-testid="diagram-legend">
@@ -72,6 +72,17 @@ export function Legend({ edges, marks = [] }: { edges: DiagramEdge[]; marks?: re
               />
               <span className="legend-mark-word" style={{ color: `var(--beh-mark-${m})` }}>
                 {MARK_WORD[m]}
+              </span>
+            </li>
+          ))}
+          {edgeMarks.map((m) => (
+            <li key={`edge-mark-${m}`} className="legend-mark" data-testid="legend-edge-marks">
+              <span
+                className="legend-swatch"
+                style={{ borderTopStyle: 'dashed', borderTopColor: `var(--beh-mark-${m})` }}
+              />
+              <span className="legend-mark-word" style={{ color: `var(--beh-mark-${m})` }}>
+                {EDGE_MARK_WORD[m]}
               </span>
             </li>
           ))}

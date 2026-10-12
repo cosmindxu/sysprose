@@ -1835,6 +1835,46 @@ describe('the state-view marks and the status panel (D.5 step 5)', () => {
     expect(mark(marks, model, 'Q::Drone::modes')).toBe('not-walked');
   });
 
+  it('walks a state def nested inside a machine as its own, so its states decide themselves', () => {
+    const model = inline(
+      'package N { state def M { state a; state b; transition a then b; transition b then a; state def Inner { state p; state q; transition p then q; } } }',
+    );
+    const { marks } = marksOf(model);
+    // The nested definition's states are neither unreachable in the outer
+    // machine nor unwalked: Inner is a machine, and it decides them.
+    expect(marks[idOf(model, 'N::M::a')]).toBeUndefined();
+    expect(marks[idOf(model, 'N::M::Inner::p')]).toBeUndefined();
+    // `q` is the nested machine's real dead end, and it is a finding there.
+    expect(mark(marks, model, 'N::M::Inner::q')).toBe('no-way-out');
+
+    // A nested `state def` that owns no transition is nobody's machine, so its
+    // states are read `not walked` rather than called unreachable under M.
+    const empty = inline(
+      'package N { state def M { state a; state b; transition a then b; state def Empty { state z; } } }',
+    );
+    expect(mark(marksOf(empty).marks, empty, 'N::M::Empty::z')).toBe('not-walked');
+  });
+
+  it('marks a dead transition and an undecided guard on the edge itself (S7)', () => {
+    const deadModel = inline(
+      'package P { state def M { state a; state b; state c; transition a then b; transition c then b; } }',
+    );
+    const dead = marksOf(deadModel);
+    const deadTr = deadModel
+      .all()
+      .find((e) => e.eClass === 'TransitionUsage' && deadModel.get(e.source![0])?.declaredName === 'c')!;
+    expect(dead.edgeMarks[deadTr.id]).toBe('dead');
+    expect(dead.summary.edgeMarked.dead).toBe(1);
+
+    const guardModel = inline(
+      'package Q { state def M { attribute x; state a; state b; transition a if x > 0 then b; } }',
+    );
+    const guarded = marksOf(guardModel);
+    const guardTr = guardModel.all().find((e) => e.eClass === 'TransitionUsage')!;
+    expect(guarded.edgeMarks[guardTr.id]).toBe('undecided');
+    expect(guarded.summary.edgeMarked.undecided).toBe(1);
+  });
+
   it('states the withheld counts only when non-zero (I7)', async () => {
     const term = marksOf(inline(TERM)).summary;
     const line = marksStatusLine(term, 0);
@@ -1843,12 +1883,20 @@ describe('the state-view marks and the status panel (D.5 step 5)', () => {
     expect(line).not.toContain('not decided on');
     expect(line).not.toContain('walk only');
     expect(line).not.toContain('not walked');
+    expect(line).not.toContain('dead transition');
+    expect(line).not.toContain('undecided guard');
 
     expect(marksStatusLine(marksOf(await load(`${FIX}/latch.sysml`)).summary, 0)).toContain(
       'trap answer withheld on 1 of 1',
     );
     expect(marksStatusLine(marksOf(inline(SPURIOUS)).summary, 0)).toContain('2 unreachable');
     expect(marksStatusLine(marksOf(inline(LONELY)).summary, 0)).toContain('3 not walked');
+
+    // The edge marks read in their own words, after the state marks (S7).
+    const dead = marksOf(
+      inline('package P { state def M { state a; state b; state c; transition a then b; transition c then b; } }'),
+    ).summary;
+    expect(marksStatusLine(dead, 0)).toContain('1 dead transition(s)');
   });
 
   it('expands to the full meaning, naming a row', async () => {
@@ -1907,6 +1955,26 @@ describe('the state-view marks and the status panel (D.5 step 5)', () => {
       const unmarked = model.all().find((el) => el.eClass === 'StateUsage' && !a.classes.has(el.id));
       expect(unmarked, 'an unmarked state').toBeDefined();
       expect(a.classes.has(unmarked!.id)).toBe(false);
+    });
+
+    it('paints edge classes for a dead transition, and gives them up when the marks do (S7)', () => {
+      const model = inline(
+        'package P { state def M { state a; state b; state c; transition a then b; transition c then b; } }',
+      );
+      const stored = storedOf(model);
+      const base = baseInput(model, stored);
+      const res = behaviourClassesOf(base);
+      expect(res.edgeClasses.size).toBeGreaterThan(0);
+      for (const [, cls] of res.edgeClasses) {
+        expect(cls).toMatch(/^rf-beh-edge rf-beh-edge-(dead|undecided)$/);
+      }
+      // Interned: two calls over equal input give the same strings by reference.
+      const again = behaviourClassesOf(base);
+      for (const [id, cls] of res.edgeClasses) expect(again.edgeClasses.get(id)).toBe(cls);
+      // The same gates as the node marks: stale, off-view, hidden, an open witness.
+      expect(behaviourClassesOf({ ...base, rev: 1 }).edgeClasses.size).toBe(0);
+      expect(behaviourClassesOf({ ...base, activeView: 'general' }).edgeClasses.size).toBe(0);
+      expect(behaviourClassesOf({ ...base, marksHidden: true }).edgeClasses.size).toBe(0);
     });
   });
 });

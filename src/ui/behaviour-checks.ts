@@ -31,6 +31,7 @@ import {
   type BehaviourReport,
 } from '@semantics/mc/patterns';
 import type { MachineReach, ReachReport } from '@semantics/mc/explore';
+import { regionDescendants } from '@semantics/mc/config';
 import type { LoadHealth } from './store';
 import type { StoredResult } from './panels/checks-store';
 
@@ -63,7 +64,7 @@ export function unwalkedStates(model: Model, r: ReachReport): ElementId[] {
   const walked = new Set<ElementId>();
   for (const m of r.machines) {
     walked.add(m.machine.id);
-    for (const d of model.descendants(m.machine.id)) walked.add(d.id);
+    for (const d of regionDescendants(model, m.machine.id)) walked.add(d.id);
   }
   return model
     .all()
@@ -119,19 +120,20 @@ export function reachResult(
   // Row 3: the report's diagnostics, one to one.
   rows.push(...diagnosticRows(r));
 
-  // The per-state marks and the status-panel summary they feed (A.4).
-  const { marks, summary: markSummary } = reachMarks(model, r);
+  // The per-state marks and the status-panel summary they feed (A.4), plus the
+  // per-edge marks (S7: dead transitions, undecided guards).
+  const { marks, edgeMarks, summary: markSummary } = reachMarks(model, r);
 
   if (M === 0 && !D) {
     const summary = `${noMachine}${N.length > 0 ? `; ${N.length} state(s) belong to no walked machine` : ''}`;
-    return { verdict: 'not-run', summary, rows, lines, marks, markSummary };
+    return { verdict: 'not-run', summary, rows, lines, marks, edgeMarks, markSummary };
   }
   if (M === 0 && D) {
     const summary = `${noMachine} — the model did not load cleanly, so a machine may be missing from what parsed`;
-    return { verdict: 'undecided', summary, rows, lines, marks, markSummary };
+    return { verdict: 'undecided', summary, rows, lines, marks, edgeMarks, markSummary };
   }
   if (F > 0) {
-    return { verdict: 'issues', summary: `${head} — ${F} finding(s)${clauseText}`, rows, lines, marks, markSummary };
+    return { verdict: 'issues', summary: `${head} — ${F} finding(s)${clauseText}`, rows, lines, marks, edgeMarks, markSummary };
   }
   if (K > 0 || N.length > 0 || D) {
     return {
@@ -140,6 +142,7 @@ export function reachResult(
       rows,
       lines,
       marks,
+      edgeMarks,
       markSummary,
     };
   }
@@ -149,6 +152,7 @@ export function reachResult(
     rows,
     lines,
     marks,
+    edgeMarks,
     markSummary,
   };
 }
@@ -375,6 +379,25 @@ const MARK_CLASS: Record<ReachMark, string> = {
   choice: 'rf-beh rf-beh-choice',
 };
 
+/**
+ * The one mark an EDGE may carry (S7): a transition the walk proved dead, or
+ * one whose guard it could not decide. Both are rows in the Checks tab already;
+ * this puts the word on the transition the row is about.
+ */
+export type EdgeMark = 'dead' | 'undecided';
+
+/** The badge word of each edge mark, as the CLI prints the row. */
+export const EDGE_MARK_WORD: Record<EdgeMark, string> = {
+  dead: 'dead',
+  undecided: 'undecided',
+};
+
+/** The edge class of each edge mark, interned so two calls give the same string. */
+const EDGE_MARK_CLASS: Record<EdgeMark, string> = {
+  dead: 'rf-beh-edge rf-beh-edge-dead',
+  undecided: 'rf-beh-edge rf-beh-edge-undecided',
+};
+
 /** The witness node classes, interned so two calls give the same string. */
 const WITNESS_AT_CLASS = 'rf-beh-witness-at';
 const WITNESS_STACK_CLASS = 'rf-beh-witness-stack';
@@ -390,6 +413,8 @@ export interface MarkSummary {
   machines: number;
   /** States marked, per mark word. */
   marked: Partial<Record<ReachMark, number>>;
+  /** Transitions marked, per edge-mark word (S7). */
+  edgeMarked: Partial<Record<EdgeMark, number>>;
   /** Machines whose trap answer was refused by the gate (a machine-level fact, never a state mark). */
   trapWithheld: number;
   /** Machines that are suppressed or unsupported: whether a state is reachable was not decided. */
@@ -406,9 +431,15 @@ export interface MarkSummary {
 export function reachMarks(
   model: Model,
   r: ReachReport,
-): { marks: Record<ElementId, ReachMark>; summary: MarkSummary } {
+): {
+  marks: Record<ElementId, ReachMark>;
+  edgeMarks: Record<ElementId, EdgeMark>;
+  summary: MarkSummary;
+} {
   const marks: Record<ElementId, ReachMark> = {};
   const marked: Partial<Record<ReachMark, number>> = {};
+  const edgeMarks: Record<ElementId, EdgeMark> = {};
+  const edgeMarked: Partial<Record<EdgeMark, number>> = {};
   let trapWithheld = 0;
   let notDecidedOn = 0;
 
@@ -417,6 +448,14 @@ export function reachMarks(
     if (marks[id] !== undefined) return;
     marks[id] = mark;
     marked[mark] = (marked[mark] ?? 0) + 1;
+  };
+  // The edge marks are disjoint: a dead transition is one the walk proved never
+  // fires, and an undecided guard is one it could not decide — the second empties
+  // the first's list (`m.transitions.dead` is published only on an exact walk).
+  const putEdge = (id: ElementId, mark: EdgeMark): void => {
+    if (edgeMarks[id] !== undefined) return;
+    edgeMarks[id] = mark;
+    edgeMarked[mark] = (edgeMarked[mark] ?? 0) + 1;
   };
 
   for (const m of r.machines) {
@@ -429,7 +468,7 @@ export function reachMarks(
     // 2. `not decided` — unreached descendants of a suppressed or unsupported machine.
     if (m.suppressed || m.unsupported.length > 0) {
       const reached = new Set(m.states.reachable.map((s) => s.id));
-      for (const d of model.descendants(m.machine.id)) {
+      for (const d of regionDescendants(model, m.machine.id)) {
         if (d.eClass !== 'StateUsage' && d.eClass !== 'ExhibitStateUsage') continue;
         if (reached.has(d.id)) continue;
         put(d.id, 'not-decided');
@@ -447,6 +486,11 @@ export function reachMarks(
 
     // 7. `choice` — a published nondeterministic choice.
     for (const n of m.nondeterminism) put(n.state.id, 'choice');
+
+    // The edge marks (S7): a dead transition, or a guard the walk could not
+    // decide, on the transition itself.
+    for (const t of m.transitions.dead) putEdge(t.id, 'dead');
+    for (const g of m.undeterminedGuards) putEdge(g.transition.id, 'undecided');
   }
 
   // 3. `not walked` — the N states of A.1, under no walked machine at all.
@@ -455,9 +499,11 @@ export function reachMarks(
 
   return {
     marks,
+    edgeMarks,
     summary: {
       machines: r.machines.length,
       marked,
+      edgeMarked,
       trapWithheld,
       notDecidedOn,
       notWalked: marked['not-walked'] ?? 0,
@@ -482,6 +528,9 @@ export function marksStatusLine(s: MarkSummary, at: number): string {
   const words = MARK_ORDER.filter((m) => (s.marked[m] ?? 0) > 0).map(
     (m) => `${s.marked[m]} ${MARK_WORD[m]}`,
   );
+  // The edge marks read after the state marks, in their own words (S7).
+  if ((s.edgeMarked.dead ?? 0) > 0) words.push(`${s.edgeMarked.dead} dead transition(s)`);
+  if ((s.edgeMarked.undecided ?? 0) > 0) words.push(`${s.edgeMarked.undecided} undecided guard(s)`);
   const line = `Reachability, ${clock(at)} — ${words.length > 0 ? words.join(', ') : 'no state marked'}`;
   const clauses: string[] = [];
   if (s.trapWithheld > 0) clauses.push(`trap answer withheld on ${s.trapWithheld} of ${s.machines}`);
@@ -496,7 +545,7 @@ export function marksStatusLine(s: MarkSummary, at: number): string {
  */
 export function marksStatusText(s: MarkSummary): string {
   const base =
-    'Each mark except "not decided" and "not walked" names a row in the Checks tab; "not decided" marks the unreached states of a machine whose lists were withheld — that machine\u2019s SUPPRESSED or not-explored line says why — and "not walked" marks a state that belongs to no machine the walk covered. An unmarked state of a walked machine is one this walk reached — it obeys run-to-completion, so it takes no event while a trigger-less transition is due — but it explores both branches of a nondeterministic choice and advances no clock, so that is not a claim that a simulation run gets there.';
+    'Each mark except "not decided" and "not walked" names a row in the Checks tab; "not decided" marks the unreached states of a machine whose lists were withheld — that machine\u2019s SUPPRESSED or not-explored line says why — and "not walked" marks a state that belongs to no machine the walk covered. A `dead` or `undecided` edge mark names a row the same way, drawn on the transition itself: `dead` on a transition the walk proved never fires and `undecided` on one whose guard it could not evaluate. An unmarked state of a walked machine is one this walk reached — it obeys run-to-completion, so it takes no event while a trigger-less transition is due — but it explores both branches of a nondeterministic choice and advances no clock, so that is not a claim that a simulation run gets there.';
   const clauses: string[] = [];
   if (s.trapWithheld > 0) {
     clauses.push(
@@ -605,7 +654,12 @@ export function behaviourClassesOf(i: {
   marksHidden: boolean;
   witness: WitnessAt | null;
   machineExists: (id: ElementId) => boolean;
-}): { classes: ReadonlyMap<ElementId, string>; witnessOpen: boolean } {
+}): {
+  classes: ReadonlyMap<ElementId, string>;
+  edgeClasses: ReadonlyMap<ElementId, string>;
+  edgeMarks: ReadonlyMap<ElementId, EdgeMark>;
+  witnessOpen: boolean;
+} {
   const witness = i.witness;
   const beh = i.beh;
   const witnessOpen =
@@ -616,7 +670,8 @@ export function behaviourClassesOf(i: {
     i.machineExists(witness.machineId);
 
   // An open witness paints the walk's run: the step's leaf, its stack
-  // ancestors, and the leaves already passed (A.5).
+  // ancestors, and the leaves already passed (A.5). It hides the marks, edges
+  // included.
   if (witnessOpen && witness !== null && beh !== undefined) {
     const view = beh.result.witnesses?.find((v) => v.block === witness.block);
     if (view !== undefined) {
@@ -633,10 +688,10 @@ export function behaviourClassesOf(i: {
           if (id !== step.leafId) classes.set(id, WITNESS_STACK_CLASS);
         }
         if (step.leafId !== null) classes.set(step.leafId, WITNESS_AT_CLASS);
-        return { classes, witnessOpen };
+        return { classes, edgeClasses: new Map(), edgeMarks: new Map(), witnessOpen };
       }
     }
-    return { classes: new Map(), witnessOpen };
+    return { classes: new Map(), edgeClasses: new Map(), edgeMarks: new Map(), witnessOpen };
   }
 
   if (
@@ -645,7 +700,7 @@ export function behaviourClassesOf(i: {
     i.activeView !== 'state' ||
     i.marksHidden
   ) {
-    return { classes: new Map(), witnessOpen };
+    return { classes: new Map(), edgeClasses: new Map(), edgeMarks: new Map(), witnessOpen };
   }
   const classes = new Map<ElementId, string>();
   const marks = i.reach.result.marks ?? {};
@@ -653,5 +708,15 @@ export function behaviourClassesOf(i: {
     const cls = MARK_CLASS[mark];
     if (cls !== undefined && i.machineExists(id)) classes.set(id, cls);
   }
-  return { classes, witnessOpen };
+  const edgeClasses = new Map<ElementId, string>();
+  const edgeWords = new Map<ElementId, EdgeMark>();
+  const storedEdgeMarks = i.reach.result.edgeMarks ?? {};
+  for (const [id, mark] of Object.entries(storedEdgeMarks)) {
+    const cls = EDGE_MARK_CLASS[mark];
+    if (cls !== undefined && i.machineExists(id)) {
+      edgeClasses.set(id, cls);
+      edgeWords.set(id, mark);
+    }
+  }
+  return { classes, edgeClasses, edgeMarks: edgeWords, witnessOpen };
 }

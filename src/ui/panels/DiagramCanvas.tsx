@@ -145,7 +145,7 @@ function pointerXY(evt: MouseEvent | TouchEvent): { x: number; y: number } | nul
 /* ──────────────────────────────── Inner ─────────────────────────────────── */
 
 /** A mark summary with nothing in it, for a reach result from before step 5. */
-const NO_MARKS: MarkSummary = { machines: 0, marked: {}, trapWithheld: 0, notDecidedOn: 0, notWalked: 0 };
+const NO_MARKS: MarkSummary = { machines: 0, marked: {}, edgeMarked: {}, trapWithheld: 0, notDecidedOn: 0, notWalked: 0 };
 
 /**
  * The status panel in the canvas's top-left corner (A.4). It exists while a
@@ -287,6 +287,14 @@ function DiagramCanvasInner(): JSX.Element {
     }
     const marked = reachStored.result.markSummary?.marked ?? {};
     return MARK_ORDER.filter((m) => (marked[m] ?? 0) > 0);
+  }, [reachStored, rev, activeView, marksHidden, witnessOpen]);
+  // The edge-mark words painted now, for the Legend's Marks section (S7).
+  const edgeMarksPresent = useMemo(() => {
+    if (reachStored === undefined || reachStored.rev !== rev || activeView !== 'state' || marksHidden || witnessOpen) {
+      return [];
+    }
+    const marked = reachStored.result.markSummary?.edgeMarked ?? {};
+    return (['dead', 'undecided'] as const).filter((m) => (marked[m] ?? 0) > 0);
   }, [reachStored, rev, activeView, marksHidden, witnessOpen]);
 
   const tool = usePaletteStore((s) => s.tool);
@@ -504,6 +512,21 @@ function DiagramCanvasInner(): JSX.Element {
     decoCache.current = next;
     return out;
   }, [nodes, selectionSet, pendingSource, dropTargetId, simActiveSet, activeView, witnessOpen, behaviourClasses]);
+
+  // Paint the S7 edge marks: the class names a `dead` or `undecided` transition,
+  // which `layout.css` draws as a coloured, dashed edge and a badge. The base
+  // edges are reused untouched when nothing is marked, so React Flow keeps their
+  // identity.
+  const decoratedEdges = useMemo(() => {
+    if (behaviour.edgeClasses.size === 0) return edges;
+    return edges.map((e) => {
+      const elementId = (e.data as { elementId?: string } | undefined)?.elementId;
+      const cls = elementId != null ? behaviour.edgeClasses.get(elementId) : undefined;
+      if (cls === undefined) return e;
+      const behMark = elementId != null ? behaviour.edgeMarks.get(elementId) : undefined;
+      return { ...e, className: cls, data: { ...e.data, behMark } };
+    });
+  }, [edges, behaviour.edgeClasses, behaviour.edgeMarks]);
 
   /* ── connection: shared resolution for handle-drag and click-to-connect ── */
 
@@ -814,7 +837,7 @@ function DiagramCanvasInner(): JSX.Element {
     <div className="diagram-canvas" data-testid="diagram-canvas" ref={canvasRef} style={{ width: '100%', height: '100%' }}>
       <ReactFlow
         nodes={decoratedNodes}
-        edges={edges}
+        edges={decoratedEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
@@ -866,7 +889,7 @@ function DiagramCanvasInner(): JSX.Element {
           </Panel>
         )}
         <Panel position="bottom-left" className="diagram-legend-panel">
-          <Legend edges={diagram?.edges ?? []} marks={marksPresent} />
+          <Legend edges={diagram?.edges ?? []} marks={marksPresent} edgeMarks={edgeMarksPresent} />
         </Panel>
         {activeView === 'state' && (reachStored !== undefined || witness !== null) && (
           <Panel position="top-left" className="behaviour-marks-panel">

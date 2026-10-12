@@ -151,10 +151,10 @@ with the function that control runs.
 | What satisfies, allocates or verifies what? | **Allocation** view (`tb-view-allocation` → `buildAllocationMatrix`) † | `npm run sysprose -- trace model.sysml --relation satisfy` | `traceabilityMatrix` — `src/api/analytics.ts` |
 | Which ports are wired, and which dangle? | **Interconnection** view (`tb-view-interconnection` → `buildInterconnection`) † | `npm run sysprose -- connectivity model.sysml [--signature]` | `connectivityReport`, `signatureCensus` — `src/api/analytics.ts` |
 | What breaks if I change this element? | Properties → *Used by* (`prop-used-by` → `whereUsed`), *Impact graph* (`prop-impact` → `neighboursOf`) † | `npm run sysprose -- where-used model.sysml --element X` | `impactClosure` — `src/api/analytics.ts` |
-| What did I declare and never use? | — no view yet | `npm run sysprose -- orphans model.sysml` | `orphanReport` — `src/api/analytics.ts` |
+| What did I declare and never use? | any view → palette *Checks* → **Unconnected definitions** → **Run** (`palette-check-run` → `orphanReport`) | `npm run sysprose -- orphans model.sysml` | `orphanReport` — `src/api/analytics.ts` |
 | What guidance applies to this element? | — no view yet | `npm run sysprose -- prompts model.sysml --element X` | `promptsFor` — `src/api/analytics.ts` |
 | What does each requirement assume and guarantee, and on which subject? | **Contracts** view (`tb-view-contracts` → `buildContractsTable`) † — an inherited clause is shown as a count and its source; the terminal lists its body marked `(inherited)` | `npm run sysprose -- contracts model.sysml` | `contractReport` — `src/api/verification.ts` |
-| What must be shown, over which axioms, and what do the gates refuse? | — no view yet | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
+| What must be shown, over which axioms, and what do the gates refuse? | **Contracts** or **Requirement** view → palette *Checks* → **Obligations** → **Run** (`palette-check-run` → `obligationsReport`) | `npm run sysprose -- obligations model.sysml` | `obligationsReport` — `src/api/verification.ts` |
 | How do I write a clause this tool will accept, over which names? | — no view yet | `npm run sysprose -- property-draft model.sysml --element X` | `propertyDraft` — `src/api/property.ts` |
 | Would this clause pass the gates, and what does it actually say? | — no view yet | `npm run sysprose -- property-check model.sysml --element X --clause 'u.mass <= 25.0 [kg]'` | `propertyCheck` — `src/api/property.ts` |
 | Does each obligation hold, by which engine, and under what bound? | — no view yet | `npm run sysprose -- verify model.sysml --engine literal` | `verifyModel` — `src/api/verification.ts` |
@@ -188,8 +188,8 @@ The **Contracts** view *projects* the same inventory through
 `buildContractsTable` (`src/diagram/contracts-table.ts`), which asks `contractReport` once per
 revision and keeps the rows and the census it returns, where `contracts` also prints the keyword
 inventory, the exclusion counts and the `verification/*` reasons behind every refusal — and,
-unlike the view, can be asked about one element. `connectivity`, `orphans`, `prompts`,
-`obligations`, `verify`, `evidence-attach`, `evidence-detach` and the depth-walking
+unlike the view, can be asked about one element. `prompts`,
+`verify`, `evidence-attach`, `evidence-detach` and the depth-walking
 `impactClosure` have no control in the
 app at all — they are the terminal's and the SDK's alone. There is no solver in the browser
 (`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), so no view reaches a

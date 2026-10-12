@@ -355,6 +355,31 @@ export function regionScope(model: Model, regionId: ElementId): Scope {
 }
 
 /**
+ * The elements a region is made of: its descendants, but STOPPING at a nested
+ * `state def`.
+ *
+ * A `state def` written inside another state machine is a machine of its own
+ * (`stateMachinesIn`, `./explore.ts`), not a composite region of its parent: its
+ * states and its transitions are the nested definition's, and the outer walk
+ * neither reaches nor reports them. Descending into it here was how the outer
+ * machine came to publish the nested definition's states `unreachable` and its
+ * transitions `dead` — absences about a machine nobody walked — so the boundary
+ * is drawn once, here, and every machine-scoped traversal reads it.
+ *
+ * A composite state USAGE that owns transitions is unaffected: it is a region of
+ * its parent and stays inside it, which is the distinction the metaclass draws
+ * (`StateDefinition` vs `StateUsage`).
+ */
+export function regionDescendants(model: Model, regionId: ElementId): ElementRecord[] {
+  return model.descendants(regionId).filter((el) => {
+    for (let p: ElementId | null = el.ownerId; p != null && p !== regionId; p = model.get(p)?.ownerId ?? null) {
+      if (model.get(p)?.eClass === 'StateDefinition') return false;
+    }
+    return true;
+  });
+}
+
+/**
  * Every step edge inside a region that has both endpoints, in declaration
  * order — which is the order the first-enabled tie-break is taken in.
  *
@@ -376,15 +401,13 @@ export function regionTransitions(model: Model, regionId: ElementId): readonly E
   const cache = cacheFor(model);
   const hit = cache.transitions.get(regionId);
   if (hit) return hit;
-  const list = model
-    .descendants(regionId)
-    .filter(
-      (e) =>
-        STEP_EDGE_KINDS.has(e.eClass) &&
-        e.source?.[0] !== undefined &&
-        e.target?.[0] !== undefined &&
-        payloadOf(e) === undefined,
-    );
+  const list = regionDescendants(model, regionId).filter(
+    (e) =>
+      STEP_EDGE_KINDS.has(e.eClass) &&
+      e.source?.[0] !== undefined &&
+      e.target?.[0] !== undefined &&
+      payloadOf(e) === undefined,
+  );
   cache.transitions.set(regionId, list);
   return list;
 }
@@ -548,7 +571,7 @@ export function initialState(
 /** The initial substate of a container (InitialNode target, else first state). */
 export function initialSubstate(model: Model, containerId: ElementId): ElementId | null {
   const states = directStates(model, containerId);
-  const desc = model.descendants(containerId);
+  const desc = regionDescendants(model, containerId);
   const declIndex = new Map<ElementId, number>();
   desc.forEach((e, i) => declIndex.set(e.id, i));
   return initialState(model, containerId, states, desc, declIndex);

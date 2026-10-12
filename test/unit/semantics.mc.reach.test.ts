@@ -353,6 +353,34 @@ describe('which elements are machines at all', () => {
     expect(only.states.unreachable).toEqual([]);
     expect(only.transitions.dead).toEqual([]);
   });
+
+  it('walks a state def nested inside a machine as a machine of its own (R1 should 9)', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const outer = f.stateDef('Outer');
+    const a = f.state('a', outer.id);
+    const b = f.state('b', outer.id);
+    f.transition(a.id, b.id, { ownerId: outer.id });
+    const inner = f.stateDef('Inner', outer.id);
+    const p = f.state('p', inner.id);
+    const q = f.state('q', inner.id);
+    f.transition(p.id, q.id, { ownerId: inner.id });
+
+    // Both definitions are machines: the nested one is not folded into the outer.
+    expect(stateMachinesIn(m).map((e) => e.declaredName)).toEqual(['Outer', 'Inner']);
+    const machines = reachReport(m).machines;
+    const outerR = machines.find((x) => x.machine.name === 'Outer')!;
+    const innerR = machines.find((x) => x.machine.name === 'Inner')!;
+    // The nested definition's states and transition belong to IT, so the outer
+    // machine neither reports them unreachable nor counts them dead.
+    expect(outerR.states.total).toBe(2);
+    expect(outerR.states.unreachable).toEqual([]);
+    expect(outerR.transitions.total).toBe(1);
+    expect(outerR.transitions.dead).toEqual([]);
+    expect(innerR.states.total).toBe(2);
+    expect(innerR.states.reachable.map((s) => s.name)).toEqual(['p', 'q']);
+    expect(innerR.states.unreachable).toEqual([]);
+  });
 });
 
 describe('the semantic profile is data, and its provenance is real', () => {

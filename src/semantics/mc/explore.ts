@@ -72,6 +72,7 @@ import {
   isHistoryPseudostate,
   isTruthy,
   leafOf,
+  regionDescendants,
   regionTransitions,
   seedStore,
   stepCandidates,
@@ -559,7 +560,7 @@ export function machineAlphabet(model: Model, machineId: ElementId): string[] {
 
 /** Every StateUsage inside the machine — the census the reachable set is read against. */
 export function machineStates(model: Model, machineId: ElementId): ElementRecord[] {
-  return model.descendants(machineId).filter((e) => e.eClass === 'StateUsage');
+  return regionDescendants(model, machineId).filter((e) => e.eClass === 'StateUsage');
 }
 
 /**
@@ -727,7 +728,7 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
   const nameOf = (id: ElementId | undefined): string =>
     id === undefined ? 'nothing' : `\`${model.qualifiedName(id) || id}\``;
 
-  for (const el of model.descendants(machineId)) {
+  for (const el of regionDescendants(model, machineId)) {
     const from = el.source?.[0];
     const to = el.target?.[0];
     if (from === undefined && to === undefined) continue; // not an edge at all
@@ -833,13 +834,11 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
  * are.
  */
 function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[] {
-  return model
-    .descendants(machineId)
-    .filter(
-      (e) =>
-        CONTROL_EDGE_KINDS.has(e.eClass) &&
-        (e.source?.[0] === undefined || e.target?.[0] === undefined),
-    );
+  return regionDescendants(model, machineId).filter(
+    (e) =>
+      CONTROL_EDGE_KINDS.has(e.eClass) &&
+      (e.source?.[0] === undefined || e.target?.[0] === undefined),
+  );
 }
 
 /**
@@ -878,7 +877,7 @@ function unsupportedConstructs(
       elementId: machineId,
     });
   }
-  for (const el of [machine, ...model.descendants(machineId)]) {
+  for (const el of [machine, ...regionDescendants(model, machineId)]) {
     if (!el) continue;
     if (isHistoryPseudostate(el) || (el.eClass === 'StateUsage' && isHistoryComposite(model, el.id))) {
       out.push({
@@ -1783,6 +1782,11 @@ export function stateMachinesIn(model: Model, scopeId?: ElementId): ElementRecor
   });
   const ownerIds = new Set(owners.map((o) => o.id));
   const roots = owners.filter((el) => {
+    // A nested `state def` is a machine of its OWN, not a region of the owner it
+    // sits in: the outer walk stops at it (`regionDescendants`, `./config`) and
+    // this definition is walked by itself, so its states decide themselves
+    // instead of being reported unreachable in the outer machine's walk.
+    if (el.eClass === 'StateDefinition') return true;
     let p: ElementId | null | undefined = el.ownerId;
     while (p != null) {
       if (ownerIds.has(p)) return false;

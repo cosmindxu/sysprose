@@ -54,7 +54,7 @@ import {
 } from '@api/index';
 import type { ReportLine } from '@semantics/mc/report-lines';
 import { reachCheck, behaviourCheck } from './behaviour-checks';
-import type { MarkSummary, ReachMark, WitnessView } from './behaviour-checks';
+import type { MarkSummary, ReachMark, EdgeMark, WitnessView } from './behaviour-checks';
 import type { LoadHealth } from './store';
 
 /** What a check says about the model when it has run. */
@@ -77,6 +77,8 @@ export interface CheckResult {
   lines?: readonly ReportLine[];
   /** The mark per state, for the state view (reach only). */
   marks?: Record<string, ReachMark>;
+  /** The mark per transition, for the state view's edges (reach only, S7). */
+  edgeMarks?: Record<string, EdgeMark>;
   /** The mark summary the status panel reads (reach only). */
   markSummary?: MarkSummary;
   /** The compact witnesses, for the canvas stepper (check-behaviour only). */

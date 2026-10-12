@@ -1665,6 +1665,8 @@ textarea:focus-visible,
   --beh-mark-no-way-out: #d92d20;
   --beh-mark-trap: #6b46c1;
   --beh-mark-choice: #c05621;
+  --beh-mark-dead: #d92d20;
+  --beh-mark-undecided: #b45309;
 }
 :root[data-theme='dark'] {
   --beh-mark-unreachable: #fbbf24;
@@ -1674,6 +1676,8 @@ textarea:focus-visible,
   --beh-mark-no-way-out: #f87171;
   --beh-mark-trap: #a78bfa;
   --beh-mark-choice: #fb923c;
+  --beh-mark-dead: #f87171;
+  --beh-mark-undecided: #fbbf24;
 }
 
 /* The ring: findings are dashed, the withheld/undecided words dotted. */
@@ -1727,6 +1731,27 @@ textarea:focus-visible,
 .react-flow__node.rf-beh-no-way-out::after { content: 'no way out'; background: var(--beh-mark-no-way-out); }
 .react-flow__node.rf-beh-trap::after { content: 'trap'; background: var(--beh-mark-trap); }
 .react-flow__node.rf-beh-choice::after { content: 'choice'; background: var(--beh-mark-choice); }
+
+/* The S7 edge marks: a dead transition, or one whose guard the walk could not
+   decide, drawn on the edge itself — a coloured, dashed stroke and a badge
+   beside the edge's label (edges.tsx). The stroke is forced past the inline
+   SysML style BaseEdge sets, which is why it carries !important. */
+.react-flow__edge.rf-beh-edge-dead .react-flow__edge-path {
+  stroke: var(--beh-mark-dead) !important;
+  stroke-width: 2.5;
+  stroke-dasharray: 2 3;
+}
+.react-flow__edge.rf-beh-edge-undecided .react-flow__edge-path {
+  stroke: var(--beh-mark-undecided) !important;
+  stroke-width: 2.5;
+  stroke-dasharray: 2 4;
+}
+.rf-beh-edge-badge {
+  background: var(--beh-mark-dead);
+}
+.rf-beh-edge-badge-undecided {
+  background: var(--beh-mark-undecided);
+}
 
 /* Witness stepper (step 6): the step's leaf, its stack, and earlier leaves. */
 .react-flow__node.rf-beh-witness-at { outline: 2px solid var(--dgm-purple); outline-offset: 3px; border-radius: 6px; }

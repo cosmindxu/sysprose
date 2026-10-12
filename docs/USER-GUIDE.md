@@ -2458,6 +2458,15 @@ configuration graph to walk*. That is an answer about what was looked for, not
 an absence claim about a graph: nothing is called unreachable and nothing is
 called exhaustive.
 
+A `state def` written **inside** another state machine is a machine of its own,
+not a region of the one it sits in: `reach` walks the nested definition
+separately, so its states decide themselves. They are neither reported
+`unreachable` nor counted in the outer machine's totals, and the outer walk stops
+at the nested definition's boundary. A nested `state def` that owns no
+`TransitionUsage` is walked by nothing, and each of its states then reads `not
+walked` in the app rather than being called unreachable under a machine that does
+not contain it.
+
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither
 marked final nor a `done` node — a reading of one machine under one alphabet,
@@ -2479,6 +2488,16 @@ of a published trap), and `choice` (a published choice). A status panel in the
 canvas's top-left corner (`behaviour-marks`) says which, and the legend gains a
 Marks section (`legend-marks`) listing the words present. Every mark names a row
 in the Checks tab except `not decided` and `not walked`.
+
+**In the app, the edge marks.** A dead transition and a guard the walk could not
+decide are marked on the transition itself, not only as a Checks-tab row: the
+edge is drawn with a coloured, dashed stroke and a `dead` or `undecided` badge
+beside its label. They follow the same rule as the state marks — painted only
+while a current reach result is stored, on the State view, with the marks not
+hidden and no witness open — and the legend lists the edge words present
+(`legend-edge-marks`). A dead transition is one the walk proved never fires; an
+undecided guard is one it could not evaluate, so the edge may in truth be taken
+and this page is not claiming either way.
 
 **In the app, the witness.** A `fail` or `covered` row turns its witness steps
 in the Checks tab into buttons (`checks-witness-step`, with **Prev** / **Next**

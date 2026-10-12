@@ -145,6 +145,7 @@ function EdgeBody(props: {
   labelY: number;
   label?: unknown;
   hideKeyword?: boolean;
+  mark?: string;
 }): JSX.Element {
   const spec = edgeStyleFor(props.kind);
   // Fall back to the SysML «keyword» for the dependency family (satisfy/allocate/…)
@@ -163,6 +164,22 @@ function EdgeBody(props: {
           strokeDasharray: spec.dashed ? '6 4' : undefined,
         }}
       />
+      {props.mark ? (
+        <EdgeLabelRenderer>
+          <div
+            className={`rf-beh-edge-badge rf-beh-edge-badge-${props.mark}`}
+            data-testid="rf-beh-edge-badge"
+            style={{
+              ...labelStyle,
+              color: '#fff',
+              fontWeight: 600,
+              transform: `translate(-50%,-50%) translate(${props.labelX}px, ${props.labelY - 12}px)`,
+            }}
+          >
+            {props.mark}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
       {text ? (
         <EdgeLabelRenderer>
           <div
@@ -308,7 +325,7 @@ function HandleEdge(props: EdgeProps): JSX.Element {
   if (route) {
     const pts = fitRouteToEnds(route, { x: sourceX, y: sourceY }, { x: targetX, y: targetY });
     const at = (d?.labelAt as Point | undefined) ?? routeLabelPoint(pts);
-    return <EdgeBody id={id} kind={kind} path={roundedPath(pts)} labelX={at.x} labelY={at.y} label={explicit} hideKeyword={d?.hideKeyword === true} />;
+    return <EdgeBody id={id} kind={kind} path={roundedPath(pts)} labelX={at.x} labelY={at.y} label={explicit} hideKeyword={d?.hideKeyword === true} mark={typeof d?.behMark === 'string' ? d.behMark : undefined} />;
   }
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -319,7 +336,7 @@ function HandleEdge(props: EdgeProps): JSX.Element {
     targetPosition,
     borderRadius: CORNER_RADIUS,
   });
-  return <EdgeBody id={id} kind={kind} path={path} labelX={labelX} labelY={labelY} label={explicit} hideKeyword={d?.hideKeyword === true} />;
+  return <EdgeBody id={id} kind={kind} path={path} labelX={labelX} labelY={labelY} label={explicit} hideKeyword={d?.hideKeyword === true} mark={typeof d?.behMark === 'string' ? d.behMark : undefined} />;
 }
 
 /** Reduce a React Flow internal node to the geometry the router needs. */
@@ -350,7 +367,7 @@ export function FloatingEdge(props: EdgeProps): JSX.Element {
   const route = currentRoute(d, sourceNode, targetNode);
   if (route) {
     const at = (d?.labelAt as Point | undefined) ?? routeLabelPoint(route);
-    return <EdgeBody id={id} kind={kind} path={roundedPath(route)} labelX={at.x} labelY={at.y} label={explicit} hideKeyword={d?.hideKeyword === true} />;
+    return <EdgeBody id={id} kind={kind} path={roundedPath(route)} labelX={at.x} labelY={at.y} label={explicit} hideKeyword={d?.hideKeyword === true} mark={typeof d?.behMark === 'string' ? d.behMark : undefined} />;
   }
   const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeEndpoints(
     shapedFromInternal(sourceNode),
@@ -365,7 +382,7 @@ export function FloatingEdge(props: EdgeProps): JSX.Element {
     targetPosition: targetPos,
     borderRadius: CORNER_RADIUS,
   });
-  return <EdgeBody id={id} kind={kind} path={path} labelX={labelX} labelY={labelY} label={explicit} hideKeyword={d?.hideKeyword === true} />;
+  return <EdgeBody id={id} kind={kind} path={path} labelX={labelX} labelY={labelY} label={explicit} hideKeyword={d?.hideKeyword === true} mark={typeof d?.behMark === 'string' ? d.behMark : undefined} />;
 }
 
 /**

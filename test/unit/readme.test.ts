@@ -117,20 +117,23 @@ const APP_DOORS: ReadonlyArray<{
       { id: 'prop-impact', fn: 'neighboursOf', file: 'src/ui/panels/ImpactGraph.tsx' },
     ],
   },
-  // `orphans` has no control at all — the row says so, and the case below holds
-  // it to saying so rather than letting an empty cell pass silently. `prompts`
-  // is the same: the Properties panel WRITES a statement kind, but nothing in
-  // the app collects the guidance that applies to an element, so the row must
-  // not credit the selector with an answer it does not compute.
-  { command: 'orphans', controls: [] },
+  // `orphans` and `prompts` used to have no control at all. The palette's
+  // Checks section now runs `orphans` in the page (`orphanReport`), so the row
+  // names its Run button; `prompts` is still the app's alone — the Properties
+  // panel WRITES a statement kind, but nothing in the app collects the guidance
+  // that applies to an element, so that row must not credit the selector with an
+  // answer it does not compute.
+  { command: 'orphans', controls: [{ id: 'palette-check-run', fn: 'orphanReport', file: 'src/ui/checks.ts' }] },
   { command: 'prompts', controls: [] },
   // The verification lane shipped to the terminal first and to the app last,
   // and the Contracts view is the last of it: the row now names a real control
   // and is DAGGERED, because the view projects `contractReport` through
   // `buildContractsTable` (rows + the census) where the command also prints the
   // keyword inventory, the exclusion counts and every refusal reason, and can
-  // be scoped to one element. `obligations` still has no control, so it keeps
-  // its `— no view yet` cell and — by the dagger rule below — no dagger.
+  // be scoped to one element. `obligations` also runs in the page now: the
+  // palette's Checks section calls `obligationsReport`, the same function the
+  // command is a shell over, so its row names the Run button and — by the dagger
+  // rule below — carries no dagger.
   {
     command: 'contracts',
     controls: [
@@ -141,7 +144,10 @@ const APP_DOORS: ReadonlyArray<{
       },
     ],
   },
-  { command: 'obligations', controls: [] },
+  {
+    command: 'obligations',
+    controls: [{ id: 'palette-check-run', fn: 'obligationsReport', file: 'src/ui/checks.ts' }],
+  },
   // The two authoring rows stand BEFORE the engines rather than behind them,
   // and neither has a control: drafting a clause is an agent's loop in a
   // terminal, and the app's Properties panel gains a "Draft property" action in

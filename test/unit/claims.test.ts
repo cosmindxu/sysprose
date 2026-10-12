@@ -850,6 +850,7 @@ describe('the sentences the model-checking lane ships pass the guard', () => {
     const full: MarkSummary = {
       machines: 4,
       marked: { choice: 2, unreachable: 1 },
+      edgeMarked: { dead: 1, undecided: 1 },
       trapWithheld: 2,
       notDecidedOn: 3,
       notWalked: 2,
