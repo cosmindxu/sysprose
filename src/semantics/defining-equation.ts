@@ -351,9 +351,15 @@ export class DefiningEquations {
    * feature, and for a subject bound to nothing this walk resolves.
    */
   subjectOf(contextId: ElementId, f: ElementRecord): ElementRecord | undefined {
-    if (f.attrs.requirementRole !== 'subject') return undefined;
-    const satisfied = this.satisfaction(contextId);
-    if (satisfied) return satisfied.satisfier;
+    const subject = f.attrs.requirementRole === 'subject';
+    // A REFERENCE feature (`ref part :>> r = r1`) stands for the feature its
+    // value names, exactly as a bound subject does: every chain through it
+    // reads the referenced feature, so `q.r.L` is r1's 50, not R's own 1.
+    if (!subject && f.attrs.isRef !== true) return undefined;
+    if (subject) {
+      const satisfied = this.satisfaction(contextId);
+      if (satisfied) return satisfied.satisfier;
+    }
     const v = f.attrs.value;
     if (typeof v !== 'string') return undefined;
     const path = v.trim();
@@ -916,9 +922,11 @@ export class DefiningEquations {
   }
 
   private pinnedUncached(contextId: ElementId, f: ElementRecord): boolean {
-    // A `default` a binding holds ({@link defaultGivesWay}) is another value
-    // in each instance it reads (F8): its symbol is the instance's own.
-    if (bindingEnds(this.model).held.has(f.id)) return false;
+    // A `default` a binding holds ({@link defaultGivesWay}), or one a held
+    // redefinition falls through to somewhere ({@link
+    // BindingEnds.heldSomewhere}), is another value in each instance it reads
+    // (F8, `held-redef`): its symbol is the instance's own.
+    if (defaultGivesWaySomewhere(this.model, f)) return false;
     // A literal is the one value in every instance — one a binding it
     // contradicts contradicts in every instance too.
     const v = this.statedValue(f);
@@ -1608,10 +1616,11 @@ export class DefiningEquations {
     if (!hasUserBindings(this.model)) return undefined;
     const reads = this.boundReads(contextId, names);
     if (reads.size === 0) return undefined;
-    const { cap, ends, unread } = bindingEnds(this.model);
-    if (cap !== undefined || unread.size > 0) {
+    const { overCap, unread } = bindingEnds(this.model);
+    if (overCap.size > 0 || unread.size > 0) {
       for (const id of reads) {
-        if (cap !== undefined && ends.has(id)) return { pastCap: cap };
+        const met = overCap.get(id);
+        if (met !== undefined) return { pastCap: met };
         if (unread.has(id)) return { pastCap: 'outside' };
       }
     }
@@ -1904,15 +1913,25 @@ interface BindingEnds {
    */
   readings: ReadonlyMap<ElementId, ReadonlyMap<string, { feature: ElementId; component: string }>>;
   /**
-   * Whether a binding was read in fewer contexts than it holds in — past
-   * {@link MAX_BINDING_FRAMES}, or a context deeper than
-   * {@link MAX_BINDING_SEGMENTS} usages left out ({@link heldDefaults}) —
-   * and which cap it met first. While it holds, no bound value is read for
-   * any one instance ({@link boundPartnerSafe}, {@link
-   * DefiningEquations.boundAbove}): coarse, and model-wide, but sound.
+   * Whether ANY binding of the model was read in fewer contexts than it holds
+   * in ({@link BindingEnds.overCap}), and which cap it met first — the
+   * model-wide summary {@link bindingCapOf} reports. The guards read the
+   * per-binding {@link BindingEnds.overCap}, so a model with one deep binding
+   * no longer abstains every bound read ({@link boundPartnerSafe}, {@link
+   * DefiningEquations.boundAbove}).
    */
   partial: boolean;
   cap?: BindingCap;
+  /**
+   * The ends of the bindings read in fewer contexts than they hold in — past
+   * {@link MAX_BINDING_FRAMES}, or a context deeper than
+   * {@link MAX_BINDING_SEGMENTS} usages left out ({@link heldDefaults}) — each
+   * with the cap its own binding met: per binding, never model-wide. Only a
+   * reading of one of THESE ends answers the cap ({@link boundPartnerSafe},
+   * {@link DefiningEquations.boundAbove}); a deep binding no longer abstains
+   * every bound read of the model.
+   */
+  overCap: ReadonlyMap<ElementId, BindingCap>;
   /**
    * The ends of the bindings read in a context where one of their ends is no
    * feature this tool finds ({@link heldDefaults}) — held as past a cap, and
@@ -1920,6 +1939,21 @@ interface BindingEnds {
    * DefiningEquations.boundAbove}): per binding, not model-wide.
    */
   unread: ReadonlySet<ElementId>;
+  /**
+   * The instance spellings at which a held redefinition's fall-through would
+   * read the redefined feature's own `default` — the original feature's
+   * default gives way THERE, and only there ({@link defaultGivesWayIn}): the
+   * held-redefinition defect's per-instance hold.
+   */
+  heldIn: ReadonlySet<string>;
+  /**
+   * The features a binding holds over a `default` SOMEWHERE ({@link heldIn}):
+   * a feature whose default gives way in one instance is not a value the same
+   * in every instance ({@link DefiningEquations.pinnedIn}), and the numeric
+   * and SMT lanes key it per instance, rather than seeding the definition's
+   * own value.
+   */
+  heldSomewhere: ReadonlySet<ElementId>;
   /**
    * The ends of the bindings that join a feature of an instance enclosing
    * where they are written (R's `L` in `part q : Q { bind p.load = L; }`):
@@ -1980,10 +2014,10 @@ function bindingEnds(model: Model): BindingEnds {
     const [s, t] = [el.source?.[0], el.target?.[0]];
     if (s !== undefined && t !== undefined && s !== t) edges.push([s, t]);
   }
-  const read: Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed'> =
+  const read: Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap'> =
     bindings.length > 0
       ? heldDefaults(model, bindings)
-      : { held: new Set<ElementId>(), readings: new Map(), unread: new Set<ElementId>(), enclosed: new Set<ElementId>() };
+      : { held: new Set<ElementId>(), readings: new Map(), unread: new Set<ElementId>(), enclosed: new Set<ElementId>(), heldIn: new Set<string>(), heldSomewhere: new Set<ElementId>(), overCap: new Map() };
   const fresh: BindingEnds = {
     rev: model.rev,
     ends,
@@ -2268,7 +2302,11 @@ export function boundPartnerSafe(model: Model, contextId: ElementId, name: strin
   if (!f) return true;
   const definitions = sharedDefinitions(model);
   const carried = definitions.carrier(contextId, f).id;
-  if (ends.partial && (ends.ends.has(f.id) || ends.ends.has(carried))) return false;
+  if (ends.overCap.has(f.id) || ends.overCap.has(carried)) return false;
+  // A feature whose default a held redefinition falls through to SOMEWHERE
+  // (`held-redef`): its generic reading is one instance's only, so a partner
+  // read through it is not safe.
+  if (ends.heldSomewhere.has(f.id) || ends.heldSomewhere.has(carried)) return false;
   if (ends.unread.has(f.id) || ends.unread.has(carried)) return false;
   if (uniformlyRead(model, f.id)) return true;
   // Read where the context reads the component: no binding reaching it there
@@ -2286,6 +2324,17 @@ export function boundPartnerSafe(model: Model, contextId: ElementId, name: strin
 export type BoundAbove = ElementRecord | { pastCap: BindingCap };
 
 /**
+ * The sentence a cap answers a bound read with ({@link BindingEnds.overCap}):
+ * the binding it belongs to held in more contexts than this tool reads, or is
+ * read deeper than {@link MAX_BINDING_SEGMENTS} usages.
+ */
+function bindingCapSentence(cap: BindingCap): string {
+  return cap === 'frames'
+    ? `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
+    : `a binding of this model is read deeper than ${MAX_BINDING_SEGMENTS} usages`;
+}
+
+/**
  * Why a relation read in `contextId` is not read there for one instance
  * ({@link DefiningEquations.boundAbove}) — the sentence every surface refuses
  * or abstains on it with.
@@ -2300,10 +2349,7 @@ export function boundAboveSentence(definitions: DefiningEquations, contextId: El
         'so it reads no value the binding gives for any one instance, and the relation is not carried'
       );
     }
-    const cap =
-      above.pastCap === 'frames'
-        ? `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
-        : `a binding of this model is read deeper than ${MAX_BINDING_SEGMENTS} usages`;
+    const cap = bindingCapSentence(above.pastCap);
     return (
       `the relation is read in ${where} and reads a value a binding joins, and ${cap}: past that, this tool ` +
       'reads no bound value for any one instance, so it is not carried'
@@ -2415,19 +2461,22 @@ type EndValue = { kind: 'value' } | { kind: 'default'; source: ElementRecord } |
 function heldDefaults(
   model: Model,
   bindings: readonly ElementRecord[],
-): Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed'> {
+): Pick<BindingEnds, 'held' | 'readings' | 'cap' | 'unread' | 'enclosed' | 'heldIn' | 'heldSomewhere' | 'overCap'> {
   const definitions = sharedDefinitions(model);
   // Per context: the paths its bindings join, and the feature at each.
   const contexts = new Map<ElementId, { parent: Map<string, string>; at: Map<string, ElementRecord> }>();
   const held = new Set<ElementId>();
   const unread = new Set<ElementId>();
   const enclosed = new Set<ElementId>();
+  const heldIn = new Set<string>();
+  const heldSomewhere = new Set<ElementId>();
+  const overCap = new Map<ElementId, BindingCap>();
   let cap: BindingCap | undefined;
   // Read nowhere in particular: held wherever an end reads a default.
   const holdEnds = (holder: ElementRecord, ids: readonly ElementId[]): void => {
     for (const id of ids) {
       const f = model.get(id);
-      if (f && endValue(model, f, holder, '').kind === 'default') held.add(f.id);
+      if (f && endValue(model, f, holder, '').kind === 'default') holdDefault(model, held, heldIn, heldSomewhere, f);
     }
   };
   const resolve = (root: ElementId, path: string): ElementRecord | undefined => {
@@ -2501,11 +2550,13 @@ function heldDefaults(
     }
     if (frames.length > MAX_BINDING_FRAMES) {
       cap ??= 'frames';
+      for (const id of pair) overCap.set(id, 'frames');
       holdEnds(holder, pair);
       continue;
     }
     if (dropped) {
       cap ??= 'segments';
+      for (const id of pair) overCap.set(id, 'segments');
       holdEnds(holder, pair);
     }
     // A context below the instance that owns an end (a usage of the holder in
@@ -2578,12 +2629,12 @@ function heldDefaults(
   const readings = new Map<ElementId, Map<string, { feature: ElementId; component: string }>>();
   for (const [rootId, ctx] of contexts) {
     const root = model.get(rootId)!;
-    const components = new Map<string, Array<{ f: ElementRecord; value: EndValue }>>();
+    const components = new Map<string, Array<{ f: ElementRecord; value: EndValue; path: string }>>();
     const reading = new Map<string, { feature: ElementId; component: string }>();
     for (const [path, f] of ctx.at) {
       const key = find(ctx.parent, path);
       const list = components.get(key) ?? [];
-      list.push({ f, value: endValue(model, f, root, path) });
+      list.push({ f, value: endValue(model, f, root, path), path });
       components.set(key, list);
       reading.set(path, { feature: f.id, component: key });
     }
@@ -2594,10 +2645,76 @@ function heldDefaults(
       const defaults = members.flatMap((m) => (m.value.kind === 'default' ? [m.value.source] : []));
       if (defaults.length === 0) continue;
       const stated = members.some((m) => m.value.kind === 'value');
-      if (stated || !defaultsAgree(defaults)) for (const m of members) if (m.value.kind === 'default') held.add(m.f.id);
+      if (stated || !defaultsAgree(defaults))
+        for (const m of members)
+          if (m.value.kind === 'default') holdDefault(model, held, heldIn, heldSomewhere, m.f, heldInstance(definitions, rootId, m.path));
     }
   }
-  return { held, readings, unread, enclosed, ...(cap !== undefined ? { cap } : {}) };
+  return { held, readings, unread, enclosed, heldIn, heldSomewhere, overCap, ...(cap !== undefined ? { cap } : {}) };
+}
+
+/**
+ * Hold the default a binding overrides — and, for `inst`, the instance at
+ * which a held redefinition falls through to the redefined feature's own
+ * `default`. Reading `P::a` generically where a redefinition of it
+ * (`part :>> p { attribute :>> a default = 50.0; }`) is held would read the
+ * redefined feature's default beside the binding there (`held-redef`): the
+ * original's default gives way at that instance alone
+ * ({@link defaultGivesWayIn}), so other instances of P keep it.
+ */
+function holdDefault(
+  model: Model,
+  held: Set<ElementId>,
+  heldIn: Set<string>,
+  heldSomewhere: Set<ElementId>,
+  f: ElementRecord,
+  inst?: string,
+): void {
+  held.add(f.id);
+  // A held redefinition falls through to the default it redefines when read
+  // generically: that default is per instance — heldSomewhere, not held — so
+  // the reading surfaces suppress it only at the instance (`defaultGivesWayIn`)
+  // while the numeric and SMT lanes key it per instance.
+  for (const g of redefinedClosure(model, f)) if (g.attrs.defaultValue === true) heldSomewhere.add(g.id);
+  // Only a held member that itself WRITES a default suppresses the redefined
+  // feature at that instance. A valueless implicit end copy redefining a
+  // feature an asserted equation defines (GA6's `p.load`) must not: its
+  // fall-through reads the assert, a stated value, not the default.
+  if (inst !== undefined && f.attrs.defaultValue === true) heldIn.add(inst);
+}
+
+/** The instance spelling of the member at `path` read in the frame rooted at `rootId` — or `undefined` for one no path spells. */
+function heldInstance(definitions: DefiningEquations, rootId: ElementId, path: string): string | undefined {
+  if (path.startsWith('#')) return undefined;
+  return `${definitions.instanceNameOf(rootId)}::${path.split('.').join('::')}`;
+}
+
+/**
+ * The default a feature's own `default` gives way to a binding ({@link
+ * defaultGivesWay}) — or gives way AT the instance `inst` because a held
+ * redefinition of it falls through there (`held-redef`). `undefined` `inst`
+ * answers the per-feature hold alone.
+ */
+export function defaultGivesWaySomewhere(model: Model, f: ElementRecord): boolean {
+  if (f.attrs.defaultValue !== true) return false;
+  const ends = bindingEnds(model);
+  return ends.held.has(f.id) || ends.heldSomewhere.has(f.id);
+}
+
+/**
+ * The default a feature's own `default` gives way to a binding ({@link
+ * defaultGivesWay}) — or gives way AT the instance `inst` because a held
+ * redefinition of it falls through there (`held-redef`). `undefined` `inst`
+ * answers the per-feature hold alone.
+ */
+export function defaultGivesWayIn(model: Model, f: ElementRecord, inst: string | undefined): boolean {
+  if (f.attrs.defaultValue !== true) return false;
+  const ends = bindingEnds(model);
+  if (ends.held.has(f.id)) return true;
+  if (inst === undefined) return false;
+  if (ends.heldIn.has(inst)) return true;
+  const name = effectiveNameOf(model, f);
+  return name !== undefined && ends.heldIn.has(`${inst}::${name}`);
 }
 
 /**
@@ -2750,10 +2867,16 @@ function endValue(model: Model, f: ElementRecord, root: ElementRecord, path: str
     if (g.attrs.value === undefined || g.attrs.value === null) continue;
     return g.attrs.defaultValue === true ? { kind: 'default', source: g } : { kind: 'value' };
   }
-  const name = effectiveNameOf(model, f);
   const defines = (ownerId: ElementId | null, n: string | undefined): boolean =>
     n !== undefined && ownerId != null && model.children(ownerId).some((c) => isAsserted(c) && namesDefinedBy(c).includes(n));
-  return defines(f.ownerId, name) || defines(root.id, path) ? { kind: 'value' } : { kind: 'none' };
+  // No value of its own: an asserted equation that defines the feature — its
+  // own, or one it redefines, an assert inherited from a general definition
+  // through the copy's redefinition closure (the G340 family, `assert-min`) —
+  // is a stated value, so a `default` in the component gives way to it.
+  if ([f, ...redefinedClosure(model, f)].some((g) => defines(g.ownerId, effectiveNameOf(model, g)))) {
+    return { kind: 'value' };
+  }
+  return defines(root.id, path) ? { kind: 'value' } : { kind: 'none' };
 }
 
 /**
@@ -3073,18 +3196,14 @@ export function boundSourceIn(model: Model, symbol: string): BoundSource | undef
   }
   // A binding read nowhere this tool finds an instance of one of its ends
   // ({@link BindingEnds.unread}) reads no value per instance (A.3).
-  const { unread } = bindingEnds(model);
-  if (member && (unread.has(member.id) || unread.has(definitions.carrier(best.root, member).id))) return undefined;
-  // Past a cap, no bound value is read for any one instance (A.3): the frame
-  // that carries the value may be one the cap dropped.
-  const cap = bindingCapOf(model);
-  if (cap !== undefined) {
-    const sentence =
-      cap === 'frames'
-        ? `a binding of this model holds in more than ${MAX_BINDING_FRAMES.toLocaleString('en')} contexts`
-        : `a binding of this model is read deeper than ${MAX_BINDING_SEGMENTS} usages`;
-    return { abstain: 'past-cap', sentence };
-  }
+  const { unread, overCap } = bindingEnds(model);
+  const carried = member ? definitions.carrier(best.root, member).id : undefined;
+  if (member && (unread.has(member.id) || (carried !== undefined && unread.has(carried)))) return undefined;
+  // Past a cap for THIS binding (A.3), no bound value is read for any one
+  // instance: the frame that carries the value may be one the cap dropped.
+  // Another binding's cap never abstains this read.
+  const capped = member ? (overCap.get(member.id) ?? (carried !== undefined ? overCap.get(carried) : undefined)) : undefined;
+  if (capped !== undefined) return { abstain: 'past-cap', sentence: bindingCapSentence(capped) };
   // A binding whose end is a feature of an instance ENCLOSING where it is
   // written (R's `L` in `part q : Q { bind p.load = L; }`) is read by that
   // feature's own id, for every such instance alike ({@link
@@ -3208,11 +3327,15 @@ export function defaultStandsIn(model: Model, symbol: string): ElementRecord | u
     }
   }
   if (!best) return undefined;
-  if (bindingCapOf(model) !== undefined) return undefined;
   const member = model.get(best.feature);
+  const { unread, overCap } = bindingEnds(model);
+  const carried = member ? definitions.carrier(best.root, member).id : undefined;
   if (
     member &&
-    (bindingEnds(model).unread.has(member.id) || bindingEnds(model).unread.has(definitions.carrier(best.root, member).id))
+    (unread.has(member.id) ||
+      (carried !== undefined && unread.has(carried)) ||
+      overCap.get(member.id) !== undefined ||
+      (carried !== undefined && overCap.get(carried) !== undefined))
   ) {
     return undefined;
   }

@@ -4484,8 +4484,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint same50 { q4.p.b >= 0.0 }
         constraint same50F { q4.p.b <= 0.0 }
       }`, {
-      'HB::same50': ['F/F/F/F', 'T'],
-      'HB::same50F': ['T/T/T/T', 'F'],
+      'HB::same50': ['T/T/T/T', 'T'],
+      'HB::same50F': ['F/F/F/F', 'F'],
     }),
     'held-redef-derived': probe(`package HBD {
         part def P { attribute a : ScalarValues::Real default = 50.0; attribute b : ScalarValues::Real = 10.0 - a; }
@@ -4494,8 +4494,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint same50 { q4.p.b >= 0.0 }
         constraint same50F { q4.p.b <= 0.0 }
       }`, {
-      'HBD::same50': ['F/F/F/F', 'T'],
-      'HBD::same50F': ['T/T/T/T', 'F'],
+      'HBD::same50': ['T/T/T/T', 'T'],
+      'HBD::same50F': ['F/F/F/F', 'F'],
     }),
     'held-redef-spec': probe(`package HBG {
         part def P { attribute a : ScalarValues::Real default = 50.0; attribute b : ScalarValues::Real = 10.0 - a; }
@@ -4505,8 +4505,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint same50 { q5.p.b >= 0.0 }
         constraint same50F { q5.p.b <= 0.0 }
       }`, {
-      'HBG::same50': ['F/F/F/F', 'T'],
-      'HBG::same50F': ['T/T/T/T', 'F'],
+      'HBG::same50': ['T/T/T/T', 'T'],
+      'HBG::same50F': ['F/F/F/F', 'F'],
     }),
     'assert-min': probe(`package AM {
         part def P { attribute load : ScalarValues::Real default = 3.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4516,10 +4516,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint ctlT { q0.p.m2 >= 8.5 }
         constraint ctlF { q0.p.m2 <= 8.0 }
       }`, {
-      'AM::Q::defL': ['T/-/?/-', 'T'],
-      'AM::Q::defL in AM::QB': ['?/-/?/-', 'T'],
-      'AM::ctlF': ['T/T/T/X', 'F'],
-      'AM::ctlT': ['F/F/F/X', 'T'],
+      'AM::Q::defL': ['T/-/T/-', 'T'],
+      'AM::Q::defL in AM::QB': ['T/-/T/-', 'T'],
+      'AM::ctlF': ['F/F/F/F', 'F'],
+      'AM::ctlT': ['T/T/T/T', 'T'],
     }),
     'assert-min-def': probe(`package AMD {
         part def P { attribute load : ScalarValues::Real default = 3.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4562,10 +4562,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'G340::Q::defL': ['T/-/T/-', 'T'],
       'G340::Q::defL in G340::Q2': ['T/-/T/-', 'T'],
-      'G340::«BindingConnectorAsUsage»#bind': ['F/-/F/-', '-'],
       'G340::ctlA': ['T/T/T/T', 'T'],
-      'G340::negT': ['F/F/F/F', 'T'],
-      'G340::posF': ['T/T/T/T', 'F'],
+      'G340::negT': ['T/T/T/T', 'T'],
+      'G340::posF': ['F/F/F/F', 'F'],
     }),
     'u-m2': probe(`package UM2 {
         part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute m2 : ISQ::MassValue = 10.0 [SI::kg] - load; }
@@ -4689,8 +4688,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint ctlA { r0.q.p.m2 >= 8.5 }
       }`, {
       'EnclW5::ctlA': ['?/?/T/T', 'T'],
-      'EnclW5::negT': ['T/T/?/?', 'T'],
-      'EnclW5::posF': ['F/F/?/?', 'F'],
+      'EnclW5::negT': ['T/T/T/?', 'T'],
+      'EnclW5::posF': ['F/F/F/?', 'F'],
     }),
     // R's own constraint over the bound path, and the context row r gains (q's m2 is −40 there).
     'encl-W4': probe(`package EnclW4 {
@@ -4736,9 +4735,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'FanS2::Q::defL': ['T/-/T/-', 'T'],
       'FanS2::Q::defL in FanS2::Q2': ['T/-/T/-', 'T'],
-      'FanS2::Q::defL in FanS2::QB': ['?/-/?/-', 'T'],
-      'FanS2::QB::«BindingConnectorAsUsage» in FanS2::Q2#bind': ['F/-/F/-', '-'],
-      'FanS2::QB::cq': ['T/T/T/X', 'T'],
+      'FanS2::Q::defL in FanS2::QB': ['T/-/T/-', 'T'],
+      'FanS2::QB::cq': ['T/T/T/T', 'T'],
       'FanS2::QB::cq in FanS2::Q2': ['?/?/?/?', 'F'],
     }),
     // The M-generator's bind2 family in a usage body, in kg (G271): the guard on a bound partner's VALUE
@@ -4773,8 +4771,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint negT { q.p.m2 <= 0.0 }
         constraint posF { q.p.m2 >= 0.0 }
       }`, {
-      'RefW9::negT': ['F/F/F/F', 'T'],
-      'RefW9::posF': ['T/T/T/T', 'F'],
+      'RefW9::negT': ['T/T/T/T', 'T'],
+      'RefW9::posF': ['F/F/F/F', 'F'],
     }),
     k4: probe(`package K4 {
         part def Q {
@@ -5005,12 +5003,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * standing: the check and the literal engine now abstain on them.
    *
    * The table's own review added rows false on ALL FOUR surfaces — no clash, so only a `ref` sees them:
-   * a usage-body binding whose type redefines a bound end (h2-bodyspec-*), an assert inherited through
-   * the end copy (assert-min, G340; FanS2's `#bind`, found by F1's review). They name no step yet: the
-   * plan must take them on. d1plain is A.5 against A.2.1, for the plan to settle. ref-W9 (F1's review)
-   * is false on the numeric surface and the SMT engine alone, which read a referenced definition's value.
-   * F2's review added held-redef*: a bound partner's default restated in a redefinition (the same value as the
-   * partner definition's own) is read as alike, though the binding overrides it.
+   * a usage-body binding whose type redefines a bound end (h2-bodyspec-*) — still no step — an assert
+   * inherited through the end copy (assert-min, G340; FanS2's `#bind`), a bound redefinition's fall-through
+   * (held-redef*) and a binding through a reference feature (ref-W9): all four are now corrected on every
+   * surface. d1plain is A.5 against A.2.1, still for the plan to settle.
    *
    * F1b corrected the rows where two defaults a binding joins were agreed by their TEXT (`2.0 * K` read in
    * two instances, R3a–c) though their values differ (2 vs 10; 2 vs 50): no value exists, and no
@@ -5029,46 +5025,11 @@ describe('per-instance readings: four surfaces, one verdict', () => {
           'NO STEP YET (plan amendment needed): the implicit end copy of a usage-body binding redefines the DECLARING feature (`H2BP::q::L` redefines Q::L, not Q2::L), so every surface reads the general value or none, and P’s default stands; outside B.1’s files (the copy should redefine the most specific inherited feature, or such a binding be refused on all four surfaces)',
         ] as const,
     ),
-    ...[
-      ['assert-min', 'AM::ctlT'],
-      ['assert-min', 'AM::ctlF'],
-      ['G340', 'G340::negT'],
-      ['G340', 'G340::posF'],
-      ['G340', 'G340::«BindingConnectorAsUsage»#bind'],
-      ['FanS2', 'FanS2::QB::«BindingConnectorAsUsage» in FanS2::Q2#bind'],
-    ].map(
-      ([p, row]) =>
-        [
-          `${p} | ${row}`,
-          'NO STEP YET (plan amendment needed): `endValue` (defining-equation.ts) checks `defines(f.ownerId, name)` on the implicit copy’s owner, so an assert inherited from a general definition is missed, P’s default stands beside the binding, and (G340) the binding reads as a contradiction; `heldDefaults` must see an asserted definition through the copy’s redefinition closure',
-        ] as const,
-    ),
     ...['D1P::at30', 'D1P::atL'].map(
       (row) =>
         [
           `d1plain | ${row}`,
           'A.5 against A.2.1, for the plan to settle: q’s plain `load = 30.0` against the bound L = 50.0 is two values (decision 1), and A.5 has both read nothing (the conflict row reports it); A.2.1 never replaces today’s decided reading, so no step yet makes these abstain',
-        ] as const,
-    ),
-    ...[
-      ['held-redef', 'HB::same50'],
-      ['held-redef', 'HB::same50F'],
-      ['held-redef-derived', 'HBD::same50'],
-      ['held-redef-derived', 'HBD::same50F'],
-      ['held-redef-spec', 'HBG::same50'],
-      ['held-redef-spec', 'HBG::same50F'],
-    ].map(
-      ([p, row]) =>
-        [
-          `${p} | ${row}`,
-          'NO STEP YET (plan amendment needed; F2’s review): `heldDefaults`/`endValue` hold the restated default, but `boundPartnerSafe` sees it as alike (the same value as P’s own default) and reads p.b at P::b over P::a’s default, although the binding gives a another value in every instance; a held redefinition’s fall-through to the redefined feature’s default must count as unsafe (F5, or F9’s list)',
-        ] as const,
-    ),
-    ...['RefW9::negT', 'RefW9::posF'].map(
-      (row) =>
-        [
-          `ref-W9 | ${row}`,
-          'NO STEP YET (outside this plan’s surfaces): a binding to `r.L` through a reference feature (`ref part :>> r = r1`) — the numeric surface and the SMT engine read R’s own L of 1, not r1’s 50 (q’s m2 is −40); the check and the literal engine abstain',
         ] as const,
     ),
   ]);
@@ -5088,7 +5049,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
    * decides those rows no longer where the witness was printed; G271's control r0's `q.p.m2` (kg) is
    * such a quantity too, beside its correct refutation.
    */
-  const WITNESS_UNPRINTED = new Set(['G271 | G271::ctlA', 'k5 | K5::n']);
+  const WITNESS_UNPRINTED = new Set(['k5 | K5::n']);
   /**
    * I7's exceptions: an SMT `inconsistent-axioms` beside a T or F elsewhere, `probe | row` → reason.
    * Checked on every probe, not only those with `bind` or `default`: three of the reviewed entries (n4,
@@ -5105,17 +5066,6 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['refute-r1 | R1::P::c in R1::Q::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
     ['refute-r1 | R1::P::c in R1::q1::p', 'the same q1 assert beside the group row read in q1’s p'],
     ['refute-r1 | R1::P::c in R1::q2::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
-    ...[
-      ['assert-min', 'AM::ctlT'],
-      ['assert-min', 'AM::ctlF'],
-      ['FanS2', 'FanS2::QB::cq'],
-    ].map(
-      ([p, row]) =>
-        [
-          `${p} | ${row}`,
-          'P’s default axiom is kept beside QB’s binding and Q’s asserted L (core: P::load, Q::defL, QB’s binding), though decision 10 has the default give way — the KNOWN_FALSE `endValue` defect (no step yet)',
-        ] as const,
-    ),
     ...['D1P::at30', 'D1P::atL'].map(
       (row) =>
         [

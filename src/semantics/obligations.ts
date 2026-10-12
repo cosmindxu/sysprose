@@ -89,6 +89,7 @@ import {
   boundHereSentence,
   contradictedBindingOf,
   defaultGivesWay,
+  defaultGivesWayIn,
   defaultStandsIn,
   hasStatedValue,
   isAsserted,
@@ -1895,14 +1896,26 @@ function instanceValueRow(
   const read = d ? definitions.valueRef(d) : undefined;
   const source = read?.target ?? (hasStatedValue(model, target) ? target : undefined) ?? stand;
   if (!source) return undefined;
+  // A `default` that gives way at THIS instance (a held redefinition's
+  // fall-through, `held-redef`): the binding that holds it fixes the instance
+  // variable, not a value row here.
+  if (defaultGivesWayIn(model, target, symbol) || defaultGivesWayIn(model, source, symbol)) return undefined;
   if (source.eClass === 'CalculationUsage' && isParameterisedCalculation(model, source)) return undefined;
   let valueSource = source;
   let text = statedValueOf(model, source);
   if (typeof text !== 'string' || text.trim() === '' || /^(["']).*\1$/s.test(text.trim())) {
-    const literal = stand?.attrs.value;
-    if (typeof literal !== 'number') return undefined;
-    valueSource = stand!;
-    text = String(literal);
+    // A numeric or boolean literal stated directly (a `default` this instance
+    // reads, no binding reaching it) is the instance variable's value too.
+    const literal = source.attrs.value;
+    if (typeof literal === 'number' || typeof literal === 'boolean') {
+      valueSource = source;
+      text = String(literal);
+    } else {
+      const stood = stand?.attrs.value;
+      if (typeof stood !== 'number') return undefined;
+      valueSource = stand!;
+      text = String(stood);
+    }
   }
   const reading = readRelation(model, { ...valueSource, id: target.id, ownerId: context.id }, text.trim(), memo, name, valueSource, path);
   const encodable = unreadAxiom('axiom', reading.encodable, reading.unread);

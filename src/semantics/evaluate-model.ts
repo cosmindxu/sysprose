@@ -32,6 +32,7 @@ import {
   boundPartnerSafe,
   boundSourceIn,
   defaultGivesWay,
+  defaultGivesWayIn,
   defaultStandsIn,
   enclosingAssertOn,
   hasUserBindings,
@@ -346,6 +347,14 @@ function answerFor(
           )
         : undefined;
     answer = valueOfFeature(model, id, pass, at, child);
+    // A feature the scope resolves a bare name to may state nothing and be
+    // fixed by an asserted equation the context inherits through a
+    // redefinition the reading masks (the implicit end copy of a binding,
+    // `assert-min`/`G340`): read the equation's value, never replacing a
+    // decided answer (A.2.1).
+    if (answer.value === undefined) {
+      answer = valueDefinedByEquation(model, contextId, name, pass) ?? valueThroughChain(model, contextId, name, pass) ?? answer;
+    }
   } else {
     answer =
       valueDefinedByEquation(model, contextId, name, pass) ??
@@ -642,7 +651,9 @@ function valueOfFeature(
   // A value that contradicts a binding it redefines is not the feature's: the
   // model states both, and neither is read (the unit-aware path refuses it).
   if (pass.definitions.contradiction(feat)) return NO_ANSWER;
-  const raw = statedValueOf(model, feat);
+  // A `default` a binding overrides gives way — per feature, or at the one
+  // instance where a held redefinition of it falls through (`held-redef`).
+  const raw = defaultGivesWayIn(model, feat, inst) ? undefined : statedValueOf(model, feat);
   if (raw === undefined || raw === null) {
     // A redefinition that states nothing, in a context that changes what the
     // value it redefines reads: that value, read there.

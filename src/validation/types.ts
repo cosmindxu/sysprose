@@ -89,6 +89,13 @@ export interface Diagnostic {
   hint?: string;
   /** Producing stage. */
   source?: DiagnosticSource;
+  /**
+   * Which Problems-tab producer filed this row: the Check button
+   * (`constraint-check`, the validator's constraint rules via
+   * {@link useAppStore.runConstraintCheck}) or the Solve button (`solve`,
+   * {@link useAppStore.solve}). The Problems tab labels rows by it (H6b).
+   */
+  producer?: 'check' | 'solve';
 
   /* ── per-instance findings (see C.2/C.3 and DIAGNOSTIC-CODES.md) ── */
 

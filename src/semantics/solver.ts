@@ -78,6 +78,8 @@ import {
 import {
   baseIdOf,
   defaultGivesWay,
+  defaultGivesWayIn,
+  defaultGivesWaySomewhere,
   defaultStandsIn,
   hasStatedValue,
   instanceGroups,
@@ -590,7 +592,7 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
       }
       // A `default` a binding overrides is no value of the feature's: the
       // binding's equation solves it, as it solves a valueless one.
-      if (defaultGivesWay(model, el)) continue;
+      if (defaultGivesWaySomewhere(model, el)) continue;
       const eq =
         assignmentEquation(model, el, memo, () => unreadable.add(el.id)) ??
         redefinedValueEquation(model, el, memo, () => unreadable.add(el.id));
@@ -1172,11 +1174,14 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
   const system: InstanceSystem = { eqs: [], ineqs: [], unreadable: new Set() };
   const pending: InstanceVariable[] = [];
   const seen = new Set<string>();
-  const seed = (el: ElementRecord, text: string): void => {
+  const seed = (el: ElementRecord, text: string, skipHeld = false): void => {
     const body = parseRelationBody(text);
     if (!body) return;
     const paths = [...new Set(namesReadIn(body.node))].filter((n) => !body.literals.has(n));
     for (const [, reading] of definitions.instanceReadings(el, paths)) {
+      // A `default` that gives way at THIS instance — a held redefinition of it
+      // falls through here (`held-redef`) — seeds no literal there.
+      if (skipHeld && defaultGivesWayIn(model, reading.feature, reading.symbol)) continue;
       pending.push({ key: `${reading.feature.id}@${reading.symbol}`, reading });
     }
   };
@@ -1192,7 +1197,7 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
     if (!isUsage(el.eClass)) continue;
     const raw = el.attrs.value;
     if (typeof raw === 'string' && raw.trim() !== '') {
-      if (!defaultGivesWay(model, el)) seed(el, raw);
+      if (!defaultGivesWaySomewhere(model, el)) seed(el, raw, true);
       continue;
     }
     const read = definitions.redefinedValueOf(el);
@@ -1252,7 +1257,9 @@ function buildInstanceSystem(model: Model, scopeId?: ElementId): InstanceSystem 
       const name = definitions.nameOf(feature);
       const d = name !== undefined ? definitions.denote(reader.id).get(name) : undefined;
       const source = (d ? definitions.valueRef(d)?.target : undefined) ?? (hasStatedValue(model, feature) ? feature : undefined);
-      if (source && name !== undefined) {
+      // A `default` that gives way at THIS instance (`held-redef`): no value
+      // equation fixes it — the binding that holds it does.
+      if (source && name !== undefined && !defaultGivesWayIn(model, feature, reading.symbol)) {
         const eq = valueEquation(model, feature, source, reader, name, memo, () => system.unreadable.add(key), reading.instance);
         if (eq) {
           // The instance's value is what the model states of it — its
@@ -3267,8 +3274,9 @@ function numericSeedOf(model: Model, feat: ElementRecord, memo: DerivationMemo =
   // A value that contradicts a binding it overrides is not the feature's: the
   // model states both, and the solve reads neither.
   if (feat.attrs.value !== undefined && sharedDefinitions(model).contradiction(feat)) return undefined;
-  // Nor is a `default` a binding overrides: the binding gives it its value.
-  if (defaultGivesWay(model, feat)) return undefined;
+  // Nor is a `default` a binding overrides: the binding gives it its value
+  // (per feature, or perchance a held redefinition falls through somewhere).
+  if (defaultGivesWaySomewhere(model, feat)) return undefined;
   const raw = feat.attrs.value;
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined;
   if (typeof raw !== 'string') return undefined;
@@ -4507,7 +4515,11 @@ function numericRows(
       row.result = detailed.verdict;
       if (row.result === 'satisfied') row.amount = 0;
     } else if (
-      (detailed.reason === 'tie' || connective || (residual !== undefined && !isRefusalReason(detailed.reason))) &&
+      (detailed.reason === 'tie' ||
+        connective ||
+        ((residual !== undefined ||
+          (iq?.vars ?? []).some((v) => String(v).includes('@'))) &&
+          !isRefusalReason(detailed.reason))) &&
       settledOf() !== undefined
     ) {
       const settled = settledOf()!;

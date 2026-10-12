@@ -55,7 +55,8 @@ import {
   hasStatedValue,
   mergeContact,
   contradictionSentence,
-  defaultGivesWay,
+  defaultGivesWayIn,
+  defaultGivesWaySomewhere,
   namesDefinedBy,
   rebaseInstance,
   returnTo,
@@ -1768,7 +1769,12 @@ function deriveFeatureUncached(
 
   // A `default` a binding overrides is no value of the feature's: the binding
   // gives it one (statedValueOf), and the literal written is not read.
-  const literal = defaultGivesWay(model, feat) ? undefined : evaluateQuantity(model, id);
+  // Generic readings (no instance) refuse a default held SOMEWHERE: the
+  // unit-aware lane cannot key it per instance, so it leaves the row to the
+  // check, which can (`held-redef`). An instance reading refuses only where
+  // the binding reaches it.
+  const givesWay = inst !== undefined ? defaultGivesWayIn(model, feat, inst) : defaultGivesWaySomewhere(model, feat);
+  const literal = givesWay ? undefined : evaluateQuantity(model, id);
   if (literal) return { claim: 'literal', q: literal };
 
   // A redefinition that states nothing, in a context that changes what the

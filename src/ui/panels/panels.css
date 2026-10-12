@@ -178,6 +178,17 @@
   font-size: 11px;
 }
 
+.problem-producer {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
 /* ── API console ── */
 
 .api-console-hint {

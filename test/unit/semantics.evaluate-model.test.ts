@@ -2009,7 +2009,7 @@ describe('checkConstraints — a bound partner is read only where every instance
     expect([resultOf(checks, m!, 'M6::c1'), resultOf(checks, m!, 'M6::c2')]).toEqual(['satisfied', 'satisfied']);
   });
 
-  it('marks the model partial past 32 usages, and then reads no bound value anywhere', async () => {
+  it('refines the frame cap per binding: one deep binding does not abstain every bound read', async () => {
     const { model: deep } = await loadModelText(bindingChain(33));
     const { model: shallow } = await loadModelText(bindingChain(32));
     // The package frame of T1's binding lies 33 usages down (`top.a.….a`): left out, not silently.
@@ -2024,7 +2024,8 @@ describe('checkConstraints — a bound partner is read only where every instance
       'the relation is read in Deep::T1::a and reads a value a binding joins, and a binding of this model is read ' +
         'deeper than 32 usages: past that, this tool reads no bound value for any one instance, so it is not carried',
     );
-    // Model-wide: a partner every context reads alike is not read either while the cap holds.
+    // Per binding, not model-wide: M6's own binding is not the one the deep chain capped, so its
+    // partner still reads — `bindingCapOf` reports the model-wide summary, the guards do not.
     const M6 = (deepChain: boolean) => `package M6 {
       attribute K : ScalarValues::Real default = 0.5;
       attribute L : ScalarValues::Real = 2.0 * K;
@@ -2033,15 +2034,15 @@ describe('checkConstraints — a bound partner is read only where every instance
       constraint c1 { load <= 1.0 }
       ${deepChain ? bindingChain(33).split('\n').slice(1, -1).join('\n') : ''}
     }`;
-    for (const [deepChain, result] of [
-      [false, 'satisfied'],
-      [true, 'unknown'],
-    ] as const) {
+    for (const deepChain of [false, true] as const) {
       const { model: m } = await loadModelText(M6(deepChain));
       expect(bindingCapOf(m!), String(deepChain)).toBe(deepChain ? 'segments' : undefined);
       const [load] = endsOf(m!, 'M6');
-      expect(boundPartnerSafe(m!, named(m!, 'M6').id, 'load', load), String(deepChain)).toBe(!deepChain);
-      expect(resultOf(checkConstraints(m!), m!, 'M6::c1'), String(deepChain)).toBe(result);
+      expect(boundPartnerSafe(m!, named(m!, 'M6').id, 'load', load), String(deepChain)).toBe(true);
+      expect(resultOf(checkConstraints(m!), m!, 'M6::c1'), String(deepChain)).toBe('satisfied');
+      const custom = sharedDefinitions(m!);
+      const inside = named(m!, 'M6');
+      expect(custom.boundAbove(inside.id, ['load']), String(deepChain)).toBeUndefined();
     }
   });
 
@@ -2188,8 +2189,10 @@ describe('checkConstraints — a bound partner is read only where every instance
     const checks = checkConstraints(m!);
     const cq = checks.find((c) => m!.qualifiedName(c.id) === 'FanS::QB::cq')!;
     expect(cq.instances!.map((i) => [i.context, i.result])).toEqual([['Q2', 'unknown']]);
-    // The binding's own row in Q2 is the G340 defect (KNOWN_FALSE); none is added for q0 or q1.
-    expect(checks.filter((c) => c.conflict === 'bind').map((c) => c.ownerId)).toEqual([named(m!, 'FanS::Q2').id]);
+    // QB's binding reads QB::L, which Q's own assert defines (2.0 * K in Q2), so the ends state no
+    // conflicting value: the false `#bind` the implicit end copy's missed assert filed is gone, and
+    // none is added for q0 or q1.
+    expect(checks.filter((c) => c.conflict === 'bind')).toEqual([]);
   });
 
   it('expands a shared usage into its generic row and one row per instance (M8, F7)', async () => {

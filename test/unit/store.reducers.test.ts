@@ -1487,6 +1487,23 @@ describe('store — per-instance Check and Solve rows (F6)', () => {
     }
   });
 
+  it('names the producer each Problems row came from — Check rows `check`, Solve rows `solve` (H6b)', () => {
+    load(`package HB {
+    part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+    part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+    part q : Q { attribute :>> L = 50.0; }
+    constraint m2NegT { q.p.m2 <= 0.0 }
+}`);
+    st().runConstraintCheck();
+    const checks = st().diagnostics.filter((d) => d.ruleId === 'constraint-check');
+    expect(checks.length).toBeGreaterThan(0);
+    expect(checks.every((d) => d.producer === 'check')).toBe(true);
+    st().solveParametric();
+    const solves = st().diagnostics.filter((d) => d.ruleId === 'solve');
+    expect(solves.length).toBeGreaterThan(0);
+    expect(solves.every((d) => d.producer === 'solve')).toBe(true);
+  });
+
   it('folds thousands of instance rows into a bounded Solve view', () => {
     const levels: string[] = [
       'part def N0 { attribute x : ScalarValues::Real; assert constraint lo { x >= 0.0 } assert constraint hi { x <= 10.0 } attribute s : ScalarValues::Real = x; }',

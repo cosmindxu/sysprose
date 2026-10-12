@@ -1329,7 +1329,7 @@ function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[]
   ) {
     header.message = 'Solve: no parametric constraints or measures to evaluate.';
   }
-  return rows;
+  return rows.map((r): Diagnostic => ({ ...r, producer: 'solve' }));
 }
 
 /** Filename + MIME for an export format. */
@@ -2993,6 +2993,7 @@ export const useAppStore = create<AppState>((set, get) => {
           {
             id: `constraint-check#${i}`,
             ruleId: 'constraint-check',
+            producer: 'check',
             severity: c.result === 'violated' ? 'warning' : 'info',
             message:
               c.result === 'satisfied'
@@ -3018,6 +3019,7 @@ export const useAppStore = create<AppState>((set, get) => {
           rows.push({
             id: `constraint-check#${i}.${j}`,
             ruleId: 'constraint-check',
+            producer: 'check',
             severity: inst.result === 'violated' ? 'warning' : 'info',
             message: inst.message,
             elementId: anchorFor(model, c, inst),
@@ -3029,6 +3031,7 @@ export const useAppStore = create<AppState>((set, get) => {
           rows.push({
             id: `constraint-check#${i}.r${k}`,
             ruleId: 'constraint-check',
+            producer: 'check',
             severity: r.severity,
             message: r.message,
             elementId: r.elementId,

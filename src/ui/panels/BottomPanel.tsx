@@ -206,6 +206,11 @@ function ProblemsTab(): JSX.Element {
           <span className={`problem-sev ${d.severity}`}>
             {icon(d.severity)} {d.severity}
           </span>
+          {d.producer && (
+            <span className="problem-producer" data-testid="problem-producer">
+              {d.producer}
+            </span>
+          )}
           <span className="problem-msg">{d.message}</span>
           <span className="problem-rule">{d.ruleId}</span>
         </div>
@@ -615,7 +620,18 @@ function VersionsTab(): JSX.Element {
 export function BottomPanel(props: { collapsed?: boolean; onToggleCollapsed?: () => void } = {}): JSX.Element {
   const { collapsed = false, onToggleCollapsed } = props;
   const [tab, setTab] = useState<Tab>('problems');
-  const problemCount = useAppStore((s) => s.diagnostics.length);
+  const diagnostics = useAppStore((s) => s.diagnostics);
+  const problemCount = diagnostics.length;
+  // The Problems tab lists the Check and the Solve rows together; label the
+  // counts by which producer filed them (H6b).
+  const checkProblems = diagnostics.filter((d) => d.producer === 'check').length;
+  const solveProblems = diagnostics.filter((d) => d.producer === 'solve').length;
+  const problemsLabel =
+    problemCount === 0
+      ? 'Problems'
+      : checkProblems > 0 && solveProblems > 0
+        ? `Problems (${checkProblems} check · ${solveProblems} solve)`
+        : `Problems (${problemCount})`;
 
   const checkRuns = useChecksStore((s) => s.runs);
   const checkCount = useChecksStore((s) => Object.keys(s.results).length);
@@ -625,7 +641,7 @@ export function BottomPanel(props: { collapsed?: boolean; onToggleCollapsed?: ()
   }, [checkRuns]);
 
   const tabs: Array<{ id: Tab; testid: string; label: string }> = [
-    { id: 'problems', testid: 'tab-problems', label: `Problems${problemCount ? ` (${problemCount})` : ''}` },
+    { id: 'problems', testid: 'tab-problems', label: problemsLabel },
     { id: 'checks', testid: 'tab-checks', label: `Checks${checkCount ? ` (${checkCount})` : ''}` },
     { id: 'text', testid: 'tab-text', label: 'Text' },
     { id: 'api', testid: 'tab-api', label: 'API Console' },
