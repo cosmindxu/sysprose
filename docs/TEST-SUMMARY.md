@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4439 total — 4439 passed, 0 failed, 0 skipped
+- **Tests:** 4445 total — 4445 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -48,7 +48,7 @@
 | test/server/oslc-rdf.test.ts | 11 | 0 | 0 |
 | test/server/oslc-shapes.test.ts | 11 | 0 | 0 |
 | test/unit/api.analytics.test.ts | 67 | 0 | 0 |
-| test/unit/api.evidence.test.ts | 41 | 0 | 0 |
+| test/unit/api.evidence.test.ts | 46 | 0 | 0 |
 | test/unit/api.oslc.test.ts | 10 | 0 | 0 |
 | test/unit/api.prompts.test.ts | 14 | 0 | 0 |
 | test/unit/api.query.test.ts | 18 | 0 | 0 |
@@ -68,7 +68,7 @@
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
 | test/unit/core.model.test.ts | 7 | 0 | 0 |
-| test/unit/diagnostic-codes.test.ts | 10 | 0 | 0 |
+| test/unit/diagnostic-codes.test.ts | 11 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
 | test/unit/diagram.exports.test.ts | 3 | 0 | 0 |
