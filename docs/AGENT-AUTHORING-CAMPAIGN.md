@@ -150,7 +150,7 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **113 catalogue codes** in
+`npm run check` is what raises it — beside **114 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **27 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3945,7 +3945,15 @@ not treated as one: the interpreter's chase never settles on a cycle and says so
 through `completionBudgetHit`, but the walk re-enters a configuration it has
 already hashed, nothing downstream is unexplored, and the absence lists stay
 exact — which is why `FlightModes`, whose completion transitions cycle, is the
-exhaustive demonstration. The walk is deliberately loose in the other direction,
+exhaustive demonstration. (Superseded in part: the chase budget is no longer a
+bound. The interpreter takes the next event where a chase spends it, and the walk
+now does the same, so a chain longer than the budget is decided rather than
+suppressed, and a cycle with a way out on an event is walked through that way
+out — see docs/06 §8.5. `FlightModes`, which names no trigger, walks as it did,
+and is still the exhaustive demonstration; what changed on it is the two answers
+about where a run ends, `recoverable` and `every run? guaranteed`, which are now
+checked against where the budget stops its one chase.)
+The walk is deliberately loose in the other direction,
 in exactly one place: it offers each `after(n)` label as a named event instead of
 advancing a clock, so a state behind a dwell is treated as reachable — an
 over-approximation, which can only shrink an absence claim, never invent one.

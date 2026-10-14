@@ -23,7 +23,7 @@
  * time advance fires, how regions compose) that the refactor moved.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId, type ElementRecord } from '@core/index';
 import { runStateMachine, type StateStep, type StateRunResult } from '@semantics/index';
@@ -42,6 +42,8 @@ import {
   type StepInput,
 } from '../../src/semantics/mc/config';
 import { loadModelText } from '@text/load';
+import { machineStates, reachReport, stateMachinesIn } from '../../src/semantics/mc/explore';
+import { WITNESS_NOT_REPLAYED_CODE, behaviourReport } from '../../src/semantics/mc/patterns';
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
 
@@ -601,4 +603,203 @@ describe('the edge kind a differential alone cannot see', () => {
     expect(model.get(res.fired[1].transitionId)!.eClass).toBe('Succession');
     expectAgreement('succession mix', res, foldRun(model, machineId, []));
   });
+});
+
+/**
+ * THE ORACLE, AND THE REPLAY SWEEP (plan O1: review B's `oracle.mts` and
+ * `witness-sweep.mts`, made standing tests).
+ *
+ * The differential above holds the two DRIVERS to one relation on runs the
+ * interpreter takes. What it cannot see is a claim the CHECKER makes about runs
+ * it did not take: `reach` and `check-behaviour` publish absences — unreachable,
+ * dead, a safety `pass`, a `not-covered` — and an absence is false the moment
+ * the interpreter does the thing. The chase budget was such a gap: the walk
+ * never took an event where a chase stopped, and published `admissionFails`
+ * dead on v9 while the interpreter fired it on `[peerVerdict]`.
+ *
+ * So the interpreter is driven over every event sequence up to length three on
+ * every machine of the corpus (the verification fixtures, the agent-authoring
+ * fixtures, the shipped examples, and review B's probe shapes inline), capped
+ * per machine, and nothing it visits or fires may be one the checker called
+ * impossible. And every witness those machines publish — their own properties,
+ * plus `cover` and `absence` of every state — must replay through the
+ * interpreter, independently of the replay the engine itself does.
+ */
+describe('the interpreter never does what the checker calls impossible, and every witness replays', () => {
+  const DEPTH = 3;
+  const RUN_CAP = 1500;
+  /** Review B's probe shapes, so the oracle holds where the corpus has no such machine. */
+  const PROBES: Record<string, string> = {
+    'livelock-two.sysml': `package LiveTwo { state def M {
+      state s0; state a; state b; state c;
+      transition go first s0 accept go then a;
+      transition ab first a then b;
+      transition ba first b then a;
+      transition ac first a accept e then c;
+    } }`,
+    'livelock-self.sysml': `package LiveSelf { state def M {
+      state a; state b;
+      transition spin first a then a;
+      transition leave first a accept e then b;
+    } }`,
+    'longchain.sysml': (() => {
+      const states = ['s0', ...Array.from({ length: 70 }, (_, i) => `c${i + 1}`), 'z'];
+      const lines = states.map((s) => `state ${s};`);
+      lines.push('transition go first s0 accept go then c1;', 'transition jump first s0 accept jump then c30;');
+      for (let i = 1; i < 70; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+      lines.push('transition esc first c65 accept e then z;');
+      return `package LongChain { state def M { ${lines.join(' ')} } }`;
+    })(),
+    'swarm-modes.sysml': `package Modes { state def SwarmMemberModes {
+      initial start;
+      state Nominal; state NavigationDegraded; state Isolated; state Quarantined; state Readmitted;
+      transition start -> Nominal;
+      transition Nominal -> NavigationDegraded;
+      transition NavigationDegraded -> Nominal;
+      transition Nominal -> Isolated;
+      transition Isolated -> Quarantined;
+      transition admissionFails first Nominal accept peerVerdict then Quarantined;
+      transition readmissionPasses first Quarantined accept readmitVerdict then Readmitted;
+      transition Readmitted -> Nominal;
+    } }`,
+    'choice-plain.sysml': `package ChoicePlain { state def M {
+      state a; state b; state c; state d;
+      transition ab first a then b;
+      transition ac first a then c;
+      transition bd first b accept e then d;
+    } }`,
+  };
+
+  interface Loaded {
+    name: string;
+    model: Model;
+  }
+  const corpus: Loaded[] = [];
+  beforeAll(async () => {
+    const files = [
+      ...readdirSync(resolve(process.cwd(), 'test/fixtures/verification/models'))
+        .filter((f) => f.endsWith('.sysml'))
+        .map((f) => `test/fixtures/verification/models/${f}`),
+      ...readdirSync(resolve(process.cwd(), 'test/fixtures/agent-authoring')).flatMap((d) =>
+        ['input.sysml', 'fixed.sysml']
+          .map((f) => `test/fixtures/agent-authoring/${d}/${f}`)
+          .filter((p) => existsSync(resolve(process.cwd(), p))),
+      ),
+      ...readdirSync(resolve(process.cwd(), 'examples'))
+        .filter((f) => f.endsWith('.sysml'))
+        .map((f) => `examples/${f}`),
+    ];
+    for (const file of files) {
+      const text = read(file);
+      if (!/\b(transition|accept)\b/.test(text)) continue;
+      const loaded = await loadModelText(text, { fileName: file, library: file.startsWith('examples/') ? 'full' : 'none' });
+      if (loaded.model) corpus.push({ name: file, model: loaded.model });
+    }
+    for (const [name, text] of Object.entries(PROBES)) {
+      corpus.push({ name, model: (await loadModelText(text, { fileName: name, library: 'none' })).model! });
+    }
+  }, 180_000);
+
+  /** Every event sequence over `alphabet` up to `DEPTH` long, shortest first, at most `RUN_CAP`. */
+  function sequences(alphabet: readonly string[]): string[][] {
+    const out: string[][] = [[]];
+    for (let head = 0; head < out.length && out.length < RUN_CAP; head++) {
+      if (out[head].length === DEPTH) continue;
+      for (const a of alphabet) if (out.length < RUN_CAP) out.push([...out[head], a]);
+    }
+    return out;
+  }
+
+  /** Each machine's state named as `state X` can name it — the atom reads a declared name. */
+  function nameable(model: Model, machineId: ElementId): ElementRecord[] {
+    return machineStates(model, machineId).filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.declaredName ?? ''));
+  }
+
+  it('finds every machine of the corpus, the four probe shapes among them', () => {
+    const machines = corpus.flatMap((c) => stateMachinesIn(c.model));
+    expect(machines.length).toBeGreaterThanOrEqual(30);
+    expect(corpus.map((c) => c.name)).toEqual(expect.arrayContaining(Object.keys(PROBES)));
+  });
+
+  it('the oracle: nothing the interpreter visits or fires is unreachable, dead, passed absent or not covered', () => {
+    const problems: string[] = [];
+    for (const { name, model } of corpus) {
+      const report = reachReport(model);
+      for (const m of report.machines) {
+        const where = `${name} ${m.machine.qualifiedName}`;
+        const visited = new Set<ElementId>();
+        const fired = new Set<ElementId>();
+        for (const events of sequences(m.bounds.alphabet)) {
+          const run = runStateMachine(model, m.machine.id, events);
+          for (const v of run.visited) visited.add(v);
+          for (const f of run.fired) fired.add(f.transitionId);
+        }
+        for (const s of m.states.unreachable) if (visited.has(s.id)) problems.push(`${where}: unreachable ${s.name}, and a run visits it`);
+        for (const t of m.transitions.dead) if (fired.has(t.id)) problems.push(`${where}: dead ${t.qualifiedName}, and a run fires it`);
+        for (const s of nameable(model, m.machine.id)) {
+          if (!visited.has(s.id)) continue;
+          for (const pattern of ['absence', 'cover'] as const) {
+            const v = behaviourReport(model, {
+              machineId: m.machine.id,
+              pattern: `pattern=${pattern}, scope=globally, p=state ${s.declaredName}`,
+            }).properties.at(-1)!;
+            if (pattern === 'absence' && v.claim === 'pass') problems.push(`${where}: absence of ${s.declaredName} passes, and a run visits it`);
+            if (pattern === 'cover' && v.claim === 'not-covered') problems.push(`${where}: ${s.declaredName} not covered, and a run visits it`);
+          }
+        }
+        // The machine's own properties, over a `state` atom globally.
+        for (const v of behaviourReport(model, { machineId: m.machine.id }).properties) {
+          const atom = /^state (\w+)$/.exec((v.property as { p?: string }).p ?? '');
+          if (!atom || v.scope !== 'globally') continue;
+          const target = nameable(model, m.machine.id).find((s) => s.declaredName === atom[1]);
+          if (!target || !visited.has(target.id)) continue;
+          if (v.pattern === 'absence' && v.claim === 'pass') problems.push(`${where}: its own absence of ${atom[1]} passes, and a run visits it`);
+          if (v.pattern === 'cover' && v.claim === 'not-covered') problems.push(`${where}: its own cover of ${atom[1]} is not covered, and a run visits it`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  }, 300_000);
+
+  it('the replay sweep: every published witness is a run the interpreter takes', () => {
+    let witnesses = 0;
+    const problems: string[] = [];
+    for (const { name, model } of corpus) {
+      for (const m of reachReport(model).machines) {
+        const reports = [behaviourReport(model, { machineId: m.machine.id })];
+        for (const s of nameable(model, m.machine.id)) {
+          if (!m.states.reachable.some((r) => r.id === s.id)) continue;
+          for (const pattern of ['absence', 'cover']) {
+            reports.push(behaviourReport(model, { machineId: m.machine.id, pattern: `pattern=${pattern}, scope=globally, p=state ${s.declaredName}` }));
+          }
+        }
+        for (const v of reports.flatMap((r) => r.properties)) {
+          const where = `${name} ${m.machine.qualifiedName} ${v.sentence}`;
+          if (v.code === WITNESS_NOT_REPLAYED_CODE) problems.push(`${where}: withheld, the witness did not replay`);
+          if (v.witness.length === 0) continue;
+          witnesses++;
+          // Independently of `replayWitness`: the events in, the tie-break the
+          // witness's way, and every fire compared with the trace.
+          const steps = v.witness.slice(1);
+          const run = runStateMachine(
+            model,
+            m.machine.id,
+            steps.filter((s) => s.event !== '').map((s) => s.event),
+            { follow: steps.map((s) => s.transition!.id) },
+          );
+          const opened = runStateMachine(model, m.machine.id, [], { maxCompletion: 0 }).visited;
+          if (opened.at(-1) !== v.witness[0].leaf?.id) problems.push(`${where}: opens elsewhere`);
+          steps.forEach((s, i) => {
+            const got = run.fired[i];
+            if (got?.transitionId !== s.transition!.id || got.trigger !== s.event || !s.stack.some((x) => x.id === got.to)) {
+              problems.push(`${where}: parts at step ${s.index}`);
+            }
+          });
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+    // Not vacuous: the corpus publishes witnesses, the long chase ones included.
+    expect(witnesses).toBeGreaterThan(100);
+  }, 300_000);
 });

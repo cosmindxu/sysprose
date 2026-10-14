@@ -44,6 +44,7 @@ import { afterDuration } from '../../src/semantics/mc/config';
 import {
   ABSENCE_CLAIMS,
   BOUND_FAMILY,
+  CLAUSE_SENTENCE,
   DWELL_SENTENCE,
   environmentSentence,
   SIMULATOR_SENTENCE,
@@ -638,7 +639,8 @@ describe('the registers are data, and every column is asserted', () => {
     // search runs on this path, and `searchComplete` has no value to read.
     const a7 = ABSENCE_CLAIMS.find((r) => r.id === 'A7')!;
     expect(a7.producedBy).toEqual({ file: 'src/semantics/mc/patterns.ts', symbol: 'recoveryRow' });
-    expect(a7.alsoRequires).toEqual([]);
+    // One conjunct, the chase budget's, and it reads the walk — never `found`.
+    expect(a7.alsoRequires).toEqual(['`recoverable` only where every configuration in `budgetStops` holds `p`']);
     const src = read(a7.producedBy!.file);
     const body = /function recoveryRow\([\s\S]*?\n}\n/.exec(src);
     expect(body, 'patterns.ts no longer declares recoveryRow').not.toBeNull();
@@ -1133,6 +1135,23 @@ describe('the exactness gate, clause by clause', () => {
     // An author whose machine names `abort` has something to do about it; the
     // dwell sentence would send them to the wrong carrier.
     expect(both.failedClause).toBe('environment');
+  });
+
+  it('names the chase budget LAST: only a walk no other clause refuses is told it', () => {
+    // A chase the interpreter's budget stops leaves a resting point the budget
+    // makes, where the machine states an edge (plan O1). It is a relation
+    // clause, and the four before it name something an author does in the
+    // model, so a walk that fails any of them is told that one instead.
+    const budget = walkIsExact({ ...base, chaseStops: 1 }, base.bounds);
+    expect(budget.walkIsExact).toBe(false);
+    expect(budget.seenWhole).toBe(true);
+    expect(budget.relationIsTheMachines).toBe(false);
+    expect(budget.failedClause).toBe('budget');
+    expect(budget.sentence).toBe(CLAUSE_SENTENCE.budget);
+    expect(walkIsExact({ ...base, chaseStops: 1 }, { alphabet: ['abort'] }).failedClause).toBe('environment');
+    expect(walkIsExact({ ...base, chaseStops: 1, undeterminedGuards: [{}] }, base.bounds).failedClause).toBe('store');
+    // Absent reads as none: a structural walk need not name it.
+    expect(walkIsExact(base, base.bounds).walkIsExact).toBe(true);
   });
 
   it('never reads `null` while the gate reads false', () => {

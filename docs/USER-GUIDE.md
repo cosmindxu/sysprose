@@ -2258,8 +2258,7 @@ of those six, and one that does not say which reading is one you cannot check.
 **A bound stops the walk, and then the absence claims stop with it.** Two
 sentences this command will only say after seeing the whole graph: "this state
 is unreachable" and "this transition is dead". Both are claims of ABSENCE, and a
-walk that was cut off cannot make one. So when `--max-configs` is spent, or when
-a chain of completion transitions is longer than the 64-step chase budget, both
+walk that was cut off cannot make one. So when `--max-configs` is spent, both
 lists come back **empty** — suppressed, not shortened — with
 `verification/bound-exhausted` saying so:
 
@@ -2268,6 +2267,29 @@ $ npm run sysprose -- reach examples/uav-isr.sysml --max-configs 2
 …
     partial under {maxConfigs 2, …} — the configuration bound was reached; the unreachable and dead lists are lower bounds and are NOT reported as findings
 ```
+
+**The 64-step chase budget is not a bound: the walk follows it.** The
+interpreter fires trigger-less transitions for at most 64 steps after each
+event, and then takes the next event wherever the chase stopped — so on a
+machine whose trigger-less transitions form a cycle (`a ⇄ b`, with
+`a accept e then c`), every run spends the budget and `e` still takes it to `c`.
+The walk does the same: where a chase reaches the budget with a trigger-less
+transition still due, it offers the machine's events right there, exactly as
+the simulator takes the next one. So `c` above is reachable and `a -> c` is not
+dead, and on a chain of trigger-less transitions longer than 64 the states past
+the 64th are unreachable — no run gets there — under the `maxCompletion 64` the
+line prints. A transition still due where a chase stops is enabled there, so it
+is not dead and that state is not a `no way out`; but a set this walk could call
+inescapable is not claimed over such a machine, and the trap line says why.
+
+A machine that names **no** trigger is walked as it states itself even when its
+trigger-less transitions cycle, like `FlightModes` above: a chase stopped there
+is followed by nothing, so the walk reaches the same states either way. What
+the budget does decide there is where a run *ends* — every run is the one chase
+from the opening, stopped after 64 steps wherever it is — so the two answers
+that are about where runs end are checked against those stopping points:
+`check-behaviour`'s `recoverable` (below) and the `every run? guaranteed` line.
+Each is withheld where the run the budget stops would read differently.
 
 The other direction is deliberately loose, in one place: the walk offers each
 `after(n)` label as a named event rather than advancing a clock, so a state
@@ -2382,7 +2404,10 @@ offers more edges than the machine grants cannot invent one. *No trap* runs the
 other way: it gets *easier* to say as edges are added, and a missing edge invents
 a trap. So the trap list is published only where the walk finished inside every
 bound, met no construct this engine refuses, offers no `after(n)` dwell, names no
-trigger, and consulted no guard it could not evaluate. On the latch machine
+trigger, consulted no guard it could not evaluate, and did not follow the
+interpreter through a chase its budget stops with a trigger-less transition
+still due — there a run rests where the budget leaves it, which is not an edge
+of the machine. On the latch machine
 (`transition locked accept unlatch then nominal;`) the walk supplies `unlatch` at
 every configuration, so whether `locked` is inescapable is a question about the
 environment, and the report says so in place of the list:
@@ -2391,8 +2416,10 @@ environment, and the report says so in place of the list:
     inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger this machine names at every configuration, …
 ```
 
-The same refusal, with its own sentence, prints for a dwell transition and for a
-guard the walk could not evaluate; a bound or an unsupported construct prints
+The same refusal, with its own sentence, prints for a dwell transition, for a
+guard the walk could not evaluate, and for a chase the budget stops (`inconclusive:
+the interpreter’s chase budget stops a run of this machine …`); a bound or an
+unsupported construct prints
 nothing extra, because the lines above already say every list is short. On
 `--json` the machine row carries `trapCensus` — how many components the walk had,
 how many nothing leaves, how many were exempted as endings, deadlocks or the
@@ -2508,9 +2535,9 @@ and this page is not claiming either way.
 in the Checks tab into buttons (`checks-witness-step`, with **Prev** / **Next**
 / **Close**). A click paints the walk's run on the State view — the step's leaf,
 its stack, and the leaves already passed — and hides the reachability marks and
-the simulation glow until it is closed. The walk obeys run-to-completion, so
-every witness it found is one a run admits and every one is drawn; none stays
-plain text.
+the simulation glow until it is closed. The walk obeys run-to-completion and
+the chase budget, so every witness it found is one a run admits and every one is
+drawn; none stays plain text.
 
 **Source of truth:** `src/semantics/mc/config.ts` (the step relation the
 interpreter and the walk share), `src/semantics/mc/explore.ts` and
@@ -2564,7 +2591,11 @@ off the same graph the witness was, and both are withheld as `not decided`, with
 the reason, whenever that graph is not the machine's: a walk that stopped at a
 bound, a machine that names a trigger the walk offers unconditionally, a dwell
 the walk takes without advancing a clock, a guard over something the walk could
-not read — and three refusals of the property itself, a stateful pattern or
+not read, a chase the walk follows the interpreter's budget through — and,
+where the machine names no trigger, a `guaranteed` that a run the budget stops
+before it violates would contradict (`not decided: the interpreter’s chase
+budget stops a run of this machine …`) — and three refusals of the property
+itself, a stateful pattern or
 scope, a `fires`/`trigger` atom, an expression that needs the store. The tail
 of the line is there because this machine has a choice point: the walk explored
 both branches at `autonomous`, and the run the sentence names is one the
@@ -2672,10 +2703,14 @@ question. Note what the row is *not*: it is a `fail` — an assertion you wrote
 that the design does not meet, `verification/refuted`, exit 1 — but there is
 no witness trace under it, because a set is not a run; the count beside the
 bounds line is the machine's own configurations, not product states, because
-no product search ran. On the flagship machine the same property reads
-`PASS` with *recoverable: `state standby` is reachable from every reachable
-configuration*, exit 0, and the simulator sentence beside it, because the walk
-explored both branches at `autonomous` and `simulate` takes one.
+no product search ran. On the flagship machine the same property is withheld —
+`inconclusive`, exit 2 — although every configuration of `FlightModes` reaches
+`standby` along the transitions it states: none of them names a trigger, so a
+run is the one chase from `standby`, and the 64-step budget stops it in
+`standby` or in `autonomous`, from where the run gets back to nothing. On
+`examples/views-tour.sysml`, whose `standby ⇄ flying` every run is stopped in
+`standby`, the row reads `PASS` with *recoverable: `state standby` is reachable
+from every reachable configuration*, exit 0.
 
 **What the row refuses, and why it refuses both directions.** `recoverable` is
 a claim that gets *easier* to make as edges are added, so it is withheld — never
@@ -2684,7 +2719,10 @@ hit, a named trigger the walk offers at every configuration with no carrier for
 whether an environment would send it (the latch fixture: `locked → nominal`
 exists only because the walk supplies `unlatch`, and the draft of this feature
 printed `recoverable` about it), an `after(n)` dwell the walk takes without
-advancing a clock. `not recoverable` gets easier as edges are *removed*, which is
+advancing a clock, a run the interpreter's chase budget stops away from `p` —
+the walk follows the budget there, or, on a machine that names no trigger,
+the relation follows the chase past where the run ends (the flagship above).
+`not recoverable` gets easier as edges are *removed*, which is
 the opposite direction — and a guard over something the walk could not decide
 removes exactly one: on the trapguard fixture the escape `degradedA if resetOk
 then nominal` is absent from the relation because nothing valued `resetOk`, and
@@ -2713,7 +2751,7 @@ is a decided *no*, not an unopened antecedent.
 | `bounded-existence` | safety | P *occurs* at most `n` times | yes |
 | `precedence` | safety | S holds before P ever does | yes |
 | `cover` | **guarantee** | P holds on some run | yes — `covered` with a witness, or `not covered` (exit 2; exit 1 under `--cover-required`) |
-| `recovery` | **branching** | P is reachable from every reachable configuration | yes — `recoverable`, or `not recoverable` naming the configurations that cannot (exit 1); withheld unless the walk's relation is the machine's; `state`/`node` atoms and `globally` only |
+| `recovery` | **branching** | P is reachable from every reachable configuration | yes — `recoverable`, or `not recoverable` naming the configurations that cannot (exit 1); withheld unless the walk's relation is the machine's, and `recoverable` withheld where the chase budget stops a run away from P; `state`/`node` atoms and `globally` only |
 | `existence` | **liveness** | P holds at some point | **no** |
 | `response` | **liveness** | every P is followed by an S | **no** |
 
@@ -2787,7 +2825,7 @@ re-parsing a sentence.
 | **covered** | a `cover` witnessed by a run, printed step by step — still covered under a bound, for the same reason; re-worded to *a run this WALK admits* where the run crossed a dwell or an undecided guard | 0 |
 | **not covered** | a `cover` no explored run witnessed, over a graph the walk saw **whole**: a decided absence and a missing behaviour, not a violated requirement (`verification/not-covered`, info) | **2** — or 1 under `--cover-required`, which adds `verification/cover-required` and changes no word |
 | **vacuous** | the property's antecedent never holds, over a graph the walk saw **whole**: a scope no run opens, or a `precedence` whose P never happens | **2** |
-| **inconclusive** | a bound hit — including one that stopped the walk before the antecedent, which is *not* a vacuity — a guard the walk could not evaluate, a construct the explorer refuses (parallel regions, history), a liveness pattern, a property that could not be read, or an atom that names nothing | **2** |
+| **inconclusive** | a bound hit — including one that stopped the walk before the antecedent, which is *not* a vacuity — a guard the walk could not evaluate, a construct the explorer refuses (parallel regions, history), a liveness pattern, a property that could not be read, an atom that names nothing, or a witness the interpreter does not take (`verification/witness-not-replayed`, below) | **2** |
 
 **A bound can hide a violation and can never invent one**, which is why those
 rows are not symmetric — and why `covered` sits with `fail` on the witness side
@@ -2797,6 +2835,19 @@ violation. A vacuity is on the `pass` side of that line: "no run opens the scope
 is a claim of *absence*, and a walk that stopped at a bound has not established
 one — so a partial walk that never reached the antecedent is `inconclusive`, not
 `vacuous`, and `--strict-vacuity` files nothing against the model for it.
+
+**Every witness is replayed through the interpreter before a row stands on
+it.** A `fail` or `covered` row prints a run, and that run is driven through
+`runStateMachine` — the simulator itself — with the witness's events before the
+row is published: the interpreter must fire the witness's transitions in its
+order and enter the states it enters. The one choice the replay makes the
+witness's way is the declaration-order tie-break, where the walk explores both
+branches and the simulator takes the first declared one (the simulator
+sentence beside such a row says so); run-to-completion, the 64-step chase
+budget and the priority rule are the interpreter's own. A row whose witness
+does not replay is `inconclusive` under `verification/witness-not-replayed`,
+exit 2, with the step where the two parted — a defect in this engine, not in
+your model, and a row no flag lowers.
 
 **A property nobody could read is never dropped.** A `pattern` outside the
 catalogue, a `scope` outside its five, a missing field — and a *carrier attribute

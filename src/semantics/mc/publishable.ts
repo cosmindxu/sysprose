@@ -55,9 +55,11 @@
  * {@link Exactness.seenWhole} is already false and no absence is published over
  * it. That is why this file carries no clause for it, and why a sixth edge kind
  * costs no register row: the census catches it without having been told what to
- * look for. The three clauses below are the other direction, and they are all of
+ * look for. The clauses below are the other direction, and they are all of
  * one kind — an edge that IS in the relation but whose AVAILABILITY at a
- * configuration the walk gets wrong.
+ * configuration the walk gets wrong. The fourth, the chase budget, joined the
+ * first three when the walk began to follow the budget the interpreter runs
+ * under (`./explore`, the note above `exploreMachine`).
  */
 
 import type { ElementId } from '@core/index';
@@ -210,7 +212,7 @@ export function publishabilityOf(
  * Exactly one is reported, in the order {@link walkIsExact} evaluates them, so
  * two machines that fail for two reasons never print the same sentence.
  */
-export type FailedClause = 'bound' | 'unsupported' | 'environment' | 'time' | 'store' | null;
+export type FailedClause = 'bound' | 'unsupported' | 'environment' | 'time' | 'store' | 'budget' | null;
 
 /**
  * What {@link walkIsExact} reads out of a walk.
@@ -246,6 +248,13 @@ export interface ExactnessWalk extends PublishabilityWalk {
    * every trigger is a dwell.
    */
   readonly timedLabels: ReadonlySet<string>;
+  /**
+   * Configurations where the interpreter's chase budget was spent with a
+   * completion transition still due, on a walk that carries the chase position
+   * (`ExploreResult.chaseStops`). Optional, and absent read as 0, so a
+   * structural walk a test builds need not name it.
+   */
+  readonly chaseStops?: number;
 }
 
 /**
@@ -274,7 +283,7 @@ export interface Exactness {
   readonly seenWhole: boolean;
   /**
    * THE PROPERTY: every edge the machine has was retained, and every edge
-   * retained is one the machine has. The three clauses below are how the second
+   * retained is one the machine has. The four clauses below are how the second
    * direction is checked — not what it means — and they are all of one kind, an
    * edge that IS in the relation but whose availability at a configuration the
    * walk gets wrong:
@@ -287,6 +296,14 @@ export interface Exactness {
    *    only alphabet it can be exact over is the empty one.
    *  • (d) no undecided guard — `undeterminedGuards` is empty, read as the
    *    shipped predicate and not as a narrower "no declared value".
+   *  • (e) no chase stopped by its budget — `chaseStops` is 0. Where the
+   *    interpreter's 64-step budget is spent with a completion transition
+   *    still due, the walk follows the interpreter and does not fire it: the
+   *    relation holds a resting point the BUDGET makes, and not the edge the
+   *    machine states there. (A machine that names no trigger keeps the
+   *    relation it states instead, and fails no clause for it: there the two
+   *    claims read over where a run ends check `budgetStops` themselves —
+   *    `./patterns`, `modalityOf` and `recoveryRow`.)
    */
   readonly relationIsTheMachines: boolean;
   /** Both halves. The name every register cell and verdict row reads. */
@@ -317,6 +334,8 @@ export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
   time: 'the walk offers every dwell transition at every configuration and advances no clock, so it holds an edge the interpreter would never take',
   store:
     'a guard the walk consulted decided nothing, so an edge the model states is absent from the relation',
+  budget:
+    'the interpreter\u2019s chase budget is spent with a completion transition still due, so where a run of this machine ends is decided by the budget and not by the edges the machine states',
 };
 
 /* ══════════════════════ the standing sentences (§2.4) ══════════════════════ */
@@ -439,6 +458,7 @@ function firstFailedClause(failed: {
   environment: boolean;
   time: boolean;
   store: boolean;
+  budget: boolean;
   residual: boolean;
 }): FailedClause {
   if (failed.bound) return 'bound';
@@ -446,6 +466,7 @@ function firstFailedClause(failed: {
   if (failed.environment) return 'environment';
   if (failed.time) return 'time';
   if (failed.store) return 'store';
+  if (failed.budget) return 'budget';
   if (failed.residual) return 'bound';
   return null;
 }
@@ -465,7 +486,8 @@ export function walkIsExact(
   const noDwell = walk.timedTransitions.size === 0;
   const noTrigger = bounds.alphabet.length === 0;
   const guardsDetermined = walk.undeterminedGuards.length === 0;
-  const relationIsTheMachines = noDwell && noTrigger && guardsDetermined;
+  const noBudgetStop = (walk.chaseStops ?? 0) === 0;
+  const relationIsTheMachines = noDwell && noTrigger && guardsDetermined && noBudgetStop;
 
   // THE ORDER IS LOAD-BEARING. `'environment'` comes FIRST of the three
   // relation clauses: an author whose machine names `abort` has something to do
@@ -480,6 +502,11 @@ export function walkIsExact(
     environment: namedTrigger,
     time: !noDwell || !noTrigger,
     store: !guardsDetermined,
+    // LAST of the relation clauses: every clause before it names something an
+    // author does in the model, and a machine that names a trigger or a dwell
+    // already fails on that one. Only a machine whose relation is otherwise the
+    // machine's — no trigger, no dwell, every guard decided — is told this.
+    budget: !noBudgetStop,
     // The residue, named so this field can never read `null` while the gate
     // reads false: `seenWhole` fails with no bound named and no unsupported row
     // only if `exhaustive` and `boundHit` disagree. Today's `exploreMachine`
@@ -748,8 +775,11 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
     // NO product-search condition, and that is deliberate: `recovery` never
     // reaches `search`, so `Publishability.searchComplete` has no value on this
     // path. Reading it as `false` would print "bound exhausted" about a bound
-    // nobody hit.
-    alsoRequires: [],
+    // nobody hit. The one conjunct is the chase budget's, on the walk a
+    // machine that names no trigger keeps: the relation follows a chase past
+    // where every run of it ends, and a run that ends away from `p` gets back
+    // to nothing (`ExploreResult.budgetStops`).
+    alsoRequires: ['`recoverable` only where every configuration in `budgetStops` holds `p`'],
     otherwise: 'inconclusive, naming the failed clause',
     producedBy: { file: 'src/semantics/mc/patterns.ts', symbol: 'recoveryRow' },
   },
@@ -761,7 +791,11 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
     polarityNote:
       'decreasing in edges, but a quantification over the run set, which the cooperative environment changes',
     walkRequires: 'walkIsExact',
-    alsoRequires: [],
+    // Every run, as the interpreter runs it: on the walk a machine that names
+    // no trigger keeps, a run ends where the budget stops its one chase, and
+    // one that keeps clear of the violation for the whole budget is a run
+    // that never reaches it (`ExploreResult.budgetStops`).
+    alsoRequires: ['no `maxCompletion`-step path from the opening inside G₀ where `budgetStops` is non-empty'],
     otherwise: '`potential` or `not-decided`',
     producedBy: MODALITY_OF,
   },
@@ -895,9 +929,13 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
     walkRequires: 'relationIsTheMachines',
     perStepAlternative: true,
     ridesOn: null,
-    alsoRequires: ['`found.violation !== null`'],
+    // The replay is what holds the walk and the interpreter to ONE run where
+    // they part on the driving discipline — the chase budget was such a part.
+    // It covers the `fail` (bad-prefix) witness the same way, which has no row
+    // of its own here: both are replayed by the one call in `checkProperty`.
+    alsoRequires: ['`found.violation !== null`', '`replayWitness(…).replays` — the interpreter takes the run'],
     otherwise:
-      'the walk-admits re-wording, never suppression — a bound can hide a witness and can never invent one',
+      'the walk-admits re-wording where the relation gate fails — a bound can hide a witness and can never invent one; a witness that does not replay is withheld as inconclusive (`verification/witness-not-replayed`)',
     producedBy: CHECK_PROPERTY,
   },
   {

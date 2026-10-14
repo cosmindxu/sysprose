@@ -4844,7 +4844,11 @@ package P {
     // configuration this machine can be in, can it get back to `standby`?
     // On the trap probe four configurations cannot, and two of those are the
     // set `reach` reports as a trap — two numbers, two questions, each under
-    // its own clause. On the flagship machine every configuration can.
+    // its own clause. On `views-tour` every configuration can, and every run
+    // the chase budget stops rests in `standby`; on the flagship machine every
+    // configuration can along the transitions it states, but the budget stops
+    // a run of it in `autonomous`, from where it gets back to nothing, so the
+    // row is withheld.
     const probe = resolve(process.cwd(), `${FIXV}/models/trap-probe.sysml`);
     const pattern = 'pattern=recovery, scope=globally, p=state standby';
     const refuted = await run(['check-behaviour', probe, '--element', 'TrapProbe::Probe::Modes', '--pattern', pattern]);
@@ -4863,14 +4867,23 @@ package P {
     expect(refuted.stdout).not.toContain('witness —');
     expect(refuted.stdout).toContain('error verification/refuted');
 
-    const held = await run(['check-behaviour', UAV, '--element', 'FlightModes', '--pattern', pattern]);
+    const tour = resolve(process.cwd(), 'examples/views-tour.sysml');
+    const held = await run(['check-behaviour', tour, '--element', 'FlightModes', '--pattern', pattern]);
     expect(held.code).toBe(0);
     expect(held.stdout).toContain('1 pass, 0 fail, 0 vacuous, 0 inconclusive, 0 covered, 0 not covered');
     expect(held.stdout).toContain('PASS         `state standby` is reachable from every reachable configuration, over the whole run');
     expect(held.stdout).toContain('recoverable: `state standby` is reachable from every reachable configuration, exhaustive under {maxConfigs 10000');
-    // §2.4(d): the walk explored both branches at `autonomous`.
-    expect(held.stdout).toContain("every claim above is about this MACHINE's semantics");
     expect(held.stdout).not.toContain('verification/refuted');
+
+    // The wrong answer this used to print about the flagship machine:
+    // `recoverable` at exit 0, over a run the budget stops in `autonomous`.
+    const withheld = await run(['check-behaviour', UAV, '--element', 'FlightModes', '--pattern', pattern]);
+    expect(withheld.code).toBe(2);
+    expect(withheld.stdout).toContain('0 pass, 0 fail, 0 vacuous, 1 inconclusive, 0 covered, 0 not covered');
+    expect(withheld.stdout).toContain('INCONCLUSIVE `state standby` is reachable from every reachable configuration, over the whole run');
+    expect(withheld.stdout).toContain('the interpreter\u2019s chase budget');
+    expect(withheld.stdout).toContain('verification/behaviour-unsupported-construct');
+    expect(withheld.stdout).not.toContain('recoverable: `state standby`');
 
     // The census, on `--json`, inside the existing payload: the top-level
     // keys are what they were.

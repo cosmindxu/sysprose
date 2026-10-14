@@ -14,8 +14,11 @@
  *  - the trap probe reads `not recoverable` naming FOUR configurations, with
  *    the trap row's TWO in its own clause — never the one number under the
  *    other's question;
- *  - the three shipped machines read `recoverable`, reflexively: the opening
- *    configuration reaches its own state in zero steps and is never reported;
+ *  - `views-tour` reads `recoverable`, reflexively: the opening configuration
+ *    reaches its own state in zero steps and is never reported — and the
+ *    other two shipped machines are WITHHELD on the chase budget, because a
+ *    run of each comes to rest where the budget stops it, in a state that
+ *    gets back to nothing from there (`recoverable` at exit 0 named wrong);
  *  - on a composite state, `state degraded` matches every configuration inside
  *    it and `node degraded` matches NONE — read through `atomHolds`'s own
  *    selection, asserted against `atomHolds` on every configuration, with the
@@ -32,7 +35,8 @@
  *    whose wrong answer is a REFUTATION, and the reason the arm gates both
  *    directions);
  *  - `trapguard-false` is the one file where `not recoverable` legitimately
- *    publishes, and `trapguard-true` reads `recoverable`.
+ *    publishes, and `trapguard-true` passes the store clause and is withheld
+ *    on the budget.
  *
  * AND NOTHING ELSE MOVED: every non-recovery row on the behaviour fixtures is
  * pinned byte-for-byte against a golden captured on the tree before the arm
@@ -311,41 +315,82 @@ describe('the trap probe: four configurations cannot reach `standby`, and two of
     expect(r.stdout).toContain('error verification/refuted');
   });
 
-  it('reflexivity: `standby` on the flagship machine is `recoverable`, exit 0, with `searchComplete` ABSENT and the simulator sentence present', async () => {
+  it('reflexivity: `standby` on `views-tour` is `recoverable`, exit 0, with `searchComplete` ABSENT and no simulator sentence', async () => {
     // `standby` is the OPENING configuration. Read non-reflexively the opening
-    // would be reported as unable to reach its own state.
-    const r = await reportOf(FILES.uav, 'FlightModes', `${RECOVERY}state standby`);
+    // would be reported as unable to reach its own state. `standby ⇄ flying`
+    // cycles on completion, and the budget stops every run of it in `standby`
+    // after its 64th step — a stop that holds the state, so the relation's
+    // answer is the interpreter's too.
+    const r = await reportOf(FILES.viewsTour, 'FlightModes', `${RECOVERY}state standby`);
     const v = r.properties[0];
-    expectArmShape(v, 4);
+    expectArmShape(v, 2);
     expect(v.claim).toBe('pass');
     expect(v.code).toBeNull();
     expect(r.exitCode).toBe(0);
     expect(v.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: 0, bottomSccOverlap: 0, refusedByGate: null });
     expect(v.detail).toMatch(/^recoverable: `state standby` is reachable from every reachable configuration, exhaustive under \{maxConfigs 10000/);
-    // §2.4(d): the walk explored both branches at `autonomous`; the simulator
-    // takes one. Printed on the row — and §2.4(a) never is: a machine that
-    // names a trigger is REFUSED on this row, not qualified.
-    expect(v.detail).toContain(SIMULATOR_SENTENCE);
+    // §2.4(a) never prints: a machine that names a trigger is REFUSED on this
+    // row, not qualified. And no choice point, so no simulator sentence.
     expect(v.detail).not.toContain('the environment offered every trigger');
-    expect(v.detail).not.toContain('standby cannot');
+    expect(v.detail).not.toContain(SIMULATOR_SENTENCE);
+    expect(v.detail).toMatch(/exhaustive under \{[^}]*\}$/);
     // The register's half of the dispatch test: no search ran, so the
     // product-search conjunct has no value — absent, never `false`.
-    const model = await modelOf(FILES.uav);
+    const model = await modelOf(FILES.viewsTour);
     const walk = exploreMachine(model, machineIn(model, 'FlightModes'));
     expect('searchComplete' in publishabilityOf(walk)).toBe(false);
-    expect(walk.nondeterminism.length).toBeGreaterThan(0);
+    expect(walk.budgetStops.map((i) => model.get(walk.configLeaves[i]!)?.declaredName)).toEqual(['standby']);
   });
 
-  it('`vehicle` and `views-tour` read `recoverable` too, and the choice-free one carries no simulator sentence', async () => {
-    const vehicle = (await reportOf(FILES.vehicle, 'VehicleStates', `${RECOVERY}state off`)).properties[0];
-    expect(vehicle.claim).toBe('pass');
-    expect(vehicle.recovery!.cannotReach).toBe(0);
-    expect(vehicle.detail).toContain(SIMULATOR_SENTENCE);
-    const tour = (await reportOf(FILES.viewsTour, 'FlightModes', `${RECOVERY}state standby`)).properties[0];
-    expect(tour.claim).toBe('pass');
-    expect(tour.recovery!.cannotReach).toBe(0);
-    expect(tour.detail).not.toContain(SIMULATOR_SENTENCE);
-    expect(tour.detail).toMatch(/exhaustive under \{[^}]*\}$/);
+  it('the flagship machine and `vehicle` are WITHHELD on the budget: a run of each rests where the budget stops it, in a state that gets back to nothing — `recoverable` at exit 0 is the wrong answer', async () => {
+    // Every configuration of `FlightModes` reaches `standby` along the
+    // transitions it states, and the row once read `recoverable` at exit 0.
+    // But no transition of it names a trigger, so a run is the one chase from
+    // `standby`, and the budget stops it after 64 steps in `standby` or in
+    // `autonomous` — and from `autonomous`, with the chase over, the run gets
+    // back to nothing.
+    const model = await modelOf(FILES.uav);
+    const walk = exploreMachine(model, machineIn(model, 'FlightModes'));
+    expect(walk.budgetStops.map((i) => model.get(walk.configLeaves[i]!)?.declaredName)).toEqual(['standby', 'autonomous']);
+    for (const [file, machine, p, configs] of [
+      [FILES.uav, 'FlightModes', 'state standby', 4],
+      [FILES.vehicle, 'VehicleStates', 'state off', 3],
+    ] as const) {
+      const r = await reportOf(file, machine, `${RECOVERY}${p}`);
+      const v = r.properties[0];
+      expectArmShape(v, configs);
+      expect(v.claim, machine).toBe('inconclusive');
+      expect(v.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+      expect(r.exitCode).toBe(2);
+      expect(v.detail).toContain('the interpreter\u2019s chase budget');
+      expect(v.detail).toContain('neither direction of this claim is made');
+      expect(v.detail).toContain(CLAUSE_SENTENCE.budget);
+      expect(v.detail).not.toContain('recoverable:');
+      expect(v.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: null, bottomSccOverlap: null, refusedByGate: 'budget' });
+      // Not the gate: the relation is the one the machine states, and every
+      // other row read off it stands.
+      const m = await modelOf(file);
+      const w = exploreMachine(m, machineIn(m, machine));
+      expect(walkIsExact(w, w.bounds).walkIsExact).toBe(true);
+    }
+  });
+
+  it('a choice point on a machine whose every stop holds the state: `recoverable`, with the simulator sentence beside it', async () => {
+    // `a` chooses between `b` and `c`, and both lead back: every run is at
+    // `a` after an even number of steps, so the budget stops each in `a`.
+    const text = 'package Hub { state def M { state a; state b; state c; transition ab first a then b; transition ac first a then c; transition ba first b then a; transition ca first c then a; } }';
+    const model = (await loadModelText(text, { fileName: 'hub.sysml' })).model!;
+    const machineId = machineIn(model, 'Hub::M');
+    const walk = exploreMachine(model, machineId);
+    expect(walk.nondeterminism).toHaveLength(1);
+    expect(walk.budgetStops.map((i) => model.get(walk.configLeaves[i]!)?.declaredName)).toEqual(['a']);
+    const v = checkProperty(model, machineId, recovery('state a'));
+    expect(v.claim).toBe('pass');
+    expect(v.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: 0, bottomSccOverlap: 0, refusedByGate: null });
+    // §2.4(d): the walk explored both branches at `a`; the simulator takes one.
+    expect(v.detail).toContain(SIMULATOR_SENTENCE);
+    // And `b`, which the budget never stops a run in, is withheld for it.
+    expect(checkProperty(model, machineId, recovery('state b')).recovery!.refusedByGate).toBe('budget');
   });
 });
 
@@ -833,7 +878,7 @@ describe('the exactness gate refuses BOTH directions, one fixture per mechanism'
     expect(r.stdout).toContain('3 configuration(s) explored — ' + CLAUSE_SENTENCE.store);
   });
 
-  it('store tracks decidedness, not the presence of a guard: `-typed` refuses, `-false` DECIDES the refutation, `-true` reads `recoverable`', async () => {
+  it('store tracks decidedness, not the presence of a guard: `-typed` refuses, `-false` DECIDES the refutation, `-true` passes the store clause and is withheld on the budget', async () => {
     // `mode : Integer = 3` with `if not mode`: every name resolves and the
     // guard still decides nothing — the shipped predicate, not "no declared
     // value".
@@ -853,12 +898,35 @@ describe('the exactness gate refuses BOTH directions, one fixture per mechanism'
     expect(f.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: 2, bottomSccOverlap: 2, refusedByGate: null });
     expect(f.exhaustive).toBe(true);
     // With the escape retained the relation is one component holding the
-    // opening: every configuration reaches `nominal`, and the walk recorded a
-    // choice at `degradedA`, so the simulator sentence prints.
+    // opening, and every configuration reaches `nominal` along it — the
+    // store clause, which is what this test is about, passes. But the budget
+    // stops a run in `degradedB` as well as in `nominal`, so the
+    // relation's `recoverable` is withheld on the clause after it.
     const t = (await reportOf(FILES.trapguardTrue, 'TrapGuardTrue::Trap::Modes', `${RECOVERY}state nominal`)).properties[0];
-    expect(t.claim).toBe('pass');
-    expect(t.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: 0, bottomSccOverlap: 0, refusedByGate: null });
-    expect(t.detail).toContain(SIMULATOR_SENTENCE);
+    expect(t.claim).toBe('inconclusive');
+    expect(t.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: null, bottomSccOverlap: null, refusedByGate: 'budget' });
+  });
+
+  it('budget: a trigger-less chain of 70, whose walk follows the budget, is `inconclusive` under `behaviour-unsupported-construct` with the budget sentence', () => {
+    // The first walk has to cut the chain, so the walk carries the chase
+    // position and stops at `s64` with a completion still due — clause (e),
+    // and nothing before it. `recoverable` and `not recoverable` would both be
+    // read off a relation whose resting point is the budget's.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Chain');
+    const states = Array.from({ length: 71 }, (_, i) => f.state(`s${i}`, sm.id));
+    for (let i = 0; i < 70; i++) f.transition(states[i].id, states[i + 1].id, { ownerId: sm.id });
+    const walk = exploreMachine(m, sm.id);
+    expect(walk.chaseKeyed).toBe(true);
+    expect(walkIsExact(walk, walk.bounds).failedClause).toBe('budget');
+    const v = checkProperty(m, sm.id, recovery('state s64'));
+    expectArmShape(v, walk.configs);
+    expect(v.claim).toBe('inconclusive');
+    expect(v.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(v.detail).toMatch(/^inconclusive: a run of this machine comes to rest where the interpreter\u2019s chase budget stops it/);
+    expect(v.detail).toContain(CLAUSE_SENTENCE.budget);
+    expect(v.recovery).toEqual({ atomKind: 'state', targetConfigs: 1, cannotReach: null, bottomSccOverlap: null, refusedByGate: 'budget' });
   });
 
   it('bound: `--max-configs 2` on the trap probe is `inconclusive` under `verification/bound-exhausted`, with the machine answers null', async () => {
@@ -888,7 +956,7 @@ describe('the register and the catalogue', () => {
     const a7 = ABSENCE_CLAIMS.find((r) => r.id === 'A7')!;
     expect(a7.polarity).toBe('increasing');
     expect(a7.walkRequires).toBe('walkIsExact');
-    expect(a7.alsoRequires).toEqual([]);
+    expect(a7.alsoRequires).toEqual(['`recoverable` only where every configuration in `budgetStops` holds `p`']);
     expect(a7.producedBy).toEqual({ file: 'src/semantics/mc/patterns.ts', symbol: 'recoveryRow' });
   });
 

@@ -846,6 +846,22 @@ export interface RunStateOptions {
   store?: Map<string, unknown> | Record<string, unknown>;
   /** Bound on automatic completion-transition chasing per step. Default 64. */
   maxCompletion?: number;
+  /**
+   * The declaration-order tie-break, resolved the way a recorded run resolved
+   * it: wherever two or more transitions are enabled at the level the
+   * interpreter fires from — innermost active state, one state on the flat
+   * path — the run's `i`-th fire is `follow[i]` if that transition is one of
+   * them, and the first declared one otherwise.
+   *
+   * THE ONE CHOICE THE PROFILE LEAVES OPEN, AND NOTHING ELSE. Run-to-completion,
+   * the chase budget, the priority rule and the event order are the
+   * interpreter's own whatever this says, so a run that cannot take a named
+   * transition fires what the interpreter fires there and parts from the list —
+   * which is what lets `check-behaviour` replay a witness that took the second
+   * branch of a choice through this function rather than through a copy of its
+   * rules, and see a departure as one. Absent, every run is the simulator's.
+   */
+  follow?: readonly ElementId[];
 }
 
 /** Result of driving a state machine against a trigger sequence. */
@@ -920,6 +936,7 @@ export function runStateMachine(
   seedStore(model, container, valueStore, opts.store);
   const maxCompletion = Math.max(0, opts.maxCompletion ?? 64);
   const performed: PerformedAction[] = [];
+  const tie: TieBreak = { follow: opts.follow, at: 0 };
 
   const parallel = isTruthy(container.attrs.parallel) || isTruthy(container.attrs.isParallel);
 
@@ -929,7 +946,7 @@ export function runStateMachine(
   // flat/simple-parallel path so existing behavior is preserved exactly.
   const timed = triggers.some(isTimedStep);
   if (timed || needsHierarchical(model, container, parallel)) {
-    return runHierMachine(model, container, triggers, valueStore, performed, maxCompletion, parallel);
+    return runHierMachine(model, container, triggers, valueStore, performed, maxCompletion, parallel, tie);
   }
 
   const stringTriggers = triggers.filter((t): t is string => typeof t === 'string');
@@ -954,7 +971,7 @@ export function runStateMachine(
   const finals: (ElementId | null)[] = [];
   let completionBudgetHit = false;
   for (const region of regions) {
-    const res = runRegion(model, region.id, stringTriggers, valueStore, performed, maxCompletion);
+    const res = runRegion(model, region.id, stringTriggers, valueStore, performed, maxCompletion, tie);
     visited.push(...res.visited);
     fired.push(...res.fired);
     finals.push(res.finalState);
@@ -971,6 +988,23 @@ function isTimedStep(s: StateStep): s is TimedStep {
   return typeof s === 'object' && s !== null && typeof (s as TimedStep).advance === 'number';
 }
 
+/** {@link RunStateOptions.follow}, and how many transitions this run has fired so far. */
+interface TieBreak {
+  readonly follow: readonly ElementId[] | undefined;
+  at: number;
+}
+
+/**
+ * Of the transitions the tie-break chooses between — in the interpreter's own
+ * order, head first — the one this run fires, counted as the run's next fire.
+ * The head unless {@link RunStateOptions.follow} names another of them here.
+ */
+function tieBreak<T>(tie: TieBreak, candidates: readonly T[], idOf: (c: T) => ElementId): T {
+  const want = tie.follow?.[tie.at];
+  tie.at++;
+  return (want !== undefined ? candidates.find((c) => idOf(c) === want) : undefined) ?? candidates[0];
+}
+
 /** Drive a single region against the trigger sequence, sharing the store. */
 function runRegion(
   model: Model,
@@ -979,6 +1013,7 @@ function runRegion(
   store: Map<string, unknown>,
   performed: PerformedAction[],
   maxCompletion: number,
+  tie: TieBreak,
 ): { visited: ElementId[]; fired: StateFire[]; finalState: ElementId | null; completionBudgetHit: boolean } {
   const region = model.get(regionId)!;
   // THE SAME CONTAINMENT THE WALK READS: the region's descendants, stopping at a
@@ -1014,19 +1049,19 @@ function runRegion(
   if (!current) return { visited, fired, finalState: null, completionBudgetHit };
   visited.push(current);
   enterState(model, current, store, scope, performed);
-  const opening = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion);
+  const opening = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion, tie);
   current = opening.current;
   if (opening.exhausted) completionBudgetHit = true;
 
   for (const trigger of triggers) {
     const cur = current!;
-    const t = transitions.find(
-      (tr) =>
-        tr.source![0] === cur &&
-        triggerEquals(tr, trigger) &&
-        guardHoldsStore(tr, store, scope),
-    );
-    if (!t) continue; // no enabled transition — stay put
+    const accepts = (tr: ElementRecord): boolean =>
+      tr.source![0] === cur && triggerEquals(tr, trigger) && guardHoldsStore(tr, store, scope);
+    const head = transitions.find(accepts);
+    if (!head) continue; // no enabled transition — stay put
+    // The list is built only where a run asks for another branch, so the
+    // simulator's own run pays for none; its head is `head`.
+    const t = tie.follow === undefined ? head : tieBreak(tie, transitions.filter(accepts), (tr) => tr.id);
     const to = t.target![0];
     exitState(model, cur, store, scope, performed);
     applyTransitionEffect(t, store, scope);
@@ -1034,7 +1069,7 @@ function runRegion(
     current = to;
     visited.push(to);
     enterState(model, to, store, scope, performed);
-    const chased = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion);
+    const chased = chaseCompletion(model, current, transitions, store, scope, performed, visited, fired, maxCompletion, tie);
     current = chased.current;
     if (chased.exhausted) completionBudgetHit = true;
   }
@@ -1062,15 +1097,17 @@ function chaseCompletion(
   visited: ElementId[],
   fired: StateFire[],
   budget: number,
+  tie: TieBreak,
 ): { current: ElementId; exhausted: boolean } {
   let current = start;
-  const enabled = (): ElementRecord | undefined =>
-    transitions.find(
-      (tr) => tr.source![0] === current && isCompletion(tr) && guardHoldsStore(tr, store, scope),
-    );
+  const due = (tr: ElementRecord): boolean =>
+    tr.source![0] === current && isCompletion(tr) && guardHoldsStore(tr, store, scope);
+  const enabled = (): ElementRecord | undefined => transitions.find(due);
   for (let i = 0; i < budget; i++) {
-    const t = enabled();
-    if (!t) return { current, exhausted: false };
+    const head = enabled();
+    if (!head) return { current, exhausted: false };
+    // As at an event: the list only where a run asks for another branch.
+    const t = tie.follow === undefined ? head : tieBreak(tie, transitions.filter(due), (tr) => tr.id);
     const to = t.target![0];
     exitState(model, current, store, scope, performed);
     applyTransitionEffect(t, store, scope);
@@ -1169,6 +1206,7 @@ function runHierMachine(
   performed: PerformedAction[],
   maxCompletion: number,
   parallel: boolean,
+  tie: TieBreak,
 ): StateRunResult {
   const visited: ElementId[] = [];
   const fired: StateFire[] = [];
@@ -1189,7 +1227,7 @@ function runHierMachine(
   const completes: boolean[] = [];
   let completionBudgetHit = false;
   for (const rc of regionContainers) {
-    const r = runHierRegion(model, rc.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion);
+    const r = runHierRegion(model, rc.id, steps, store, performed, visited, fired, history, clockRef, maxCompletion, tie);
     leaves.push(r.leaf);
     completes.push(r.complete);
     if (r.completionBudgetHit) completionBudgetHit = true;
@@ -1261,6 +1299,7 @@ function runHierRegion(
   history: Map<ElementId, ElementId>,
   clockRef: { clock: number },
   maxCompletion: number,
+  tie: TieBreak,
 ): { leaf: ElementId | null; complete: boolean; completionBudgetHit: boolean } {
   const COMPLETION: StepInput = { kind: 'completion' };
   const TIMEOUT: StepInput = { kind: 'timeout' };
@@ -1288,6 +1327,21 @@ function runHierRegion(
   };
 
   /**
+   * The transition to fire out of an enabled list: its head, which is the
+   * interpreter's own pick, unless {@link RunStateOptions.follow} names another
+   * one at the same — innermost — level. A transition at an outer level is
+   * never a candidate: the priority rule beats it, and no run takes it.
+   */
+  const take = (enabled: readonly EnabledTransition[]): EnabledTransition =>
+    tie.follow === undefined
+      ? enabled[0]
+      : tieBreak(
+          tie,
+          enabled.filter((e) => e.level === enabled[0].level),
+          (e) => e.transition.id,
+        );
+
+  /**
    * Fire completion (trigger-less) transitions until none is enabled — and SAY
    * whether it stopped because none was enabled or because the budget ran out.
    *
@@ -1301,7 +1355,7 @@ function runHierRegion(
     while (fires < maxCompletion) {
       const enabled = enabledTransitions(model, cfg, COMPLETION);
       if (enabled.length === 0) return { fires, exhausted: false };
-      apply(stepConfig(model, cfg, enabled[0]));
+      apply(stepConfig(model, cfg, take(enabled)));
       fires++;
     }
     // Budget spent. Exhausted only if something was still enabled: a chase that
@@ -1327,11 +1381,11 @@ function runHierRegion(
       for (let k = 0; k < maxCompletion; k++) {
         const enabled = enabledTransitions(model, cfg, TIMEOUT);
         if (enabled.length === 0) break;
-        fire(enabled[0]);
+        fire(take(enabled));
       }
     } else {
       const enabled = enabledTransitions(model, cfg, { kind: 'trigger', trigger: step });
-      if (enabled.length > 0) fire(enabled[0]);
+      if (enabled.length > 0) fire(take(enabled));
     }
   }
 

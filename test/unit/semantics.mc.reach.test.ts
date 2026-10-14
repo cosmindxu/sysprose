@@ -11,10 +11,12 @@
  * fabricating them, so that is asserted too.
  *
  * The second half is the bound rules, which are the reason this command can be
- * trusted at all: a configuration bound and a completion-chase bound must both
- * produce `exhaustive: false` and EMPTY absence lists, in exactly the same way,
- * because a bound hit that could masquerade as a finding is the failure this
- * whole lane is written against.
+ * trusted at all: a configuration bound must produce `exhaustive: false` and
+ * EMPTY absence lists, because a bound hit that could masquerade as a finding
+ * is the failure this whole lane is written against. The interpreter's
+ * completion-chase budget is NOT one of them any more: it is part of the
+ * semantics the walk follows (plan O1, C1/H2), and its describe pins what a run
+ * that spends it does next.
  *
  * The third half was added by a defect the first two did not catch, and it is
  * the same failure through a door the bounds do not cover: a walk that finished
@@ -58,7 +60,7 @@ import {
 } from '../../src/semantics/mc/explore';
 import { ALL_METACLASSES } from '../../src/core/metamodel';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
-import { DWELL_SENTENCE } from '../../src/semantics/mc/publishable';
+import { DWELL_SENTENCE, walkIsExact } from '../../src/semantics/mc/publishable';
 import {
   CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
@@ -175,25 +177,39 @@ describe('a bound hit can never masquerade as a finding', () => {
     expect(r.diagnostics.filter((d) => d.code === DEAD_TRANSITION_CODE)).toEqual([]);
   }, 90_000);
 
-  it('a 70-step completion chain hits the 64-step budget in exactly the same way', () => {
+  it('a 70-step completion chain is not a bound: the chase stops at the budget, as the interpreter’s does', () => {
+    // It used to be cut off as `boundHit: 'completion'` with both lists
+    // emptied. The interpreter's chase fires 64 transitions and stops at `s64`,
+    // every run, so `s65` … `s70` are states no run enters — decided, under
+    // the `maxCompletion 64` the bounds line prints — and `s64 -> s65` is
+    // ENABLED at `s64`, which is not dead though nothing fires it.
     const { model, machineId } = completionChain(70);
     const walk = exploreMachine(model, machineId);
-    expect(walk.boundHit).toBe('completion');
-    expect(walk.exhaustive).toBe(false);
+    expect(walk.boundHit).toBe('none');
+    expect(walk.exhaustive).toBe(true);
+    expect(walk.chaseKeyed).toBe(true);
+    expect(walk.chaseStops).toBe(1);
 
     const r = reachReport(model);
     const chain = r.machines[0];
-    expect(chain.boundHit).toBe('completion');
-    expect(chain.exhaustive).toBe(false);
-    // The whole point: `s65` … `s70` were never reached and the chain's last
-    // transitions never fired, and NEITHER is reported. Same two empty lists a
-    // configuration bound produces.
+    expect(chain.exhaustive).toBe(true);
     expect(chain.states.total).toBe(71);
-    expect(chain.states.reachable.length).toBeLessThan(71);
-    expect(chain.states.unreachable).toEqual([]);
-    expect(chain.transitions.dead).toEqual([]);
-    const bound = r.diagnostics.find((d) => d.code === BOUND_EXHAUSTED_CODE);
-    expect(bound!.message).toContain('chase budget');
+    expect(chain.states.unreachable.map((s) => s.name)).toEqual(['s65', 's66', 's67', 's68', 's69', 's70']);
+    expect(chain.transitions.dead.map((t) => `${t.from!.name}->${t.to!.name}`)).toEqual([
+      's65->s66',
+      's66->s67',
+      's67->s68',
+      's68->s69',
+      's69->s70',
+    ]);
+    expect(chain.qualification).toContain('maxCompletion 64');
+    expect(r.diagnostics.filter((d) => d.code === BOUND_EXHAUSTED_CODE)).toEqual([]);
+    // And the interpreter agrees, state for state.
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    const visited = new Set(run.visited);
+    for (const s of chain.states.reachable) expect(visited.has(s.id), s.name).toBe(true);
+    for (const s of chain.states.unreachable) expect(visited.has(s.id), s.name).toBe(false);
   });
 
   it('the interpreter now says when its own chase ran out of budget', () => {
@@ -1098,7 +1114,7 @@ describe('the configuration key is what the next step depends on', () => {
   });
 });
 
-describe('a completion CYCLE is not a completion bound', () => {
+describe('a completion CYCLE, and the budget the interpreter spends on it', () => {
   /** `a` ⇄ `b` on completion transitions, plus an island nothing reaches. */
   function cycleWithIsland(): { model: Model; machineId: ElementId } {
     const m = new Model();
@@ -1114,49 +1130,228 @@ describe('a completion CYCLE is not a completion bound', () => {
     return { model: m, machineId: sm.id };
   }
 
-  it('is exhaustive, and withholds the absence lists because its named trigger is never offered', () => {
-    // The two surfaces answer DIFFERENT questions and the answers only look
-    // contradictory. `runStateMachine` says whether THAT RUN was cut off
-    // mid-chase — on a cycle every run is — while the walk says whether it saw
-    // the whole configuration GRAPH, and a cycle re-enters configurations it
-    // has already hashed, so nothing downstream of it is unexplored. Pinned
-    // side by side because `FlightModes` in `examples/uav-isr.sysml` is exactly
-    // this shape, and §3.8 names it as the exhaustive demonstration.
-    //
-    // The absence lists are withheld, not published: the walk obeys
-    // run-to-completion, so at `a` and `b` — where a completion transition is
-    // always due — the named trigger `never` on the unreachable island is never
-    // offered, and the alphabet-offered gate declines to state an absence over
-    // a walk that did not offer every trigger the machine names.
+  it('offers the named trigger where the chase stops, so the island is decided unreachable', () => {
+    // Every run is cut off mid-chase on `a ⇄ b` — the interpreter says so —
+    // and then takes the next event where the chase stopped. The walk follows
+    // it there: at the stop it offers `never`, which nothing at `a` or `b`
+    // accepts. It used to offer nothing inside the cycle, withhold both lists
+    // because `never` was never offered, and — on a cycle with an exit on an
+    // event — publish that exit dead (`LiveTwo`, below).
     const { model, machineId } = cycleWithIsland();
-    const run = runStateMachine(model, machineId, []);
+    const run = runStateMachine(model, machineId, ['never']);
     expect(run.completionBudgetHit, 'the interpreter no longer says its chase was cut off').toBe(
       true,
     );
+    expect(run.fired.every((f) => f.trigger === '')).toBe(true);
 
     const walk = exploreMachine(model, machineId);
     expect(walk.boundHit).toBe('none');
     expect(walk.exhaustive).toBe(true);
+    expect(walk.offered.has('never')).toBe(true);
     const only = reachReport(model).machines[0];
-    expect(only.states.unreachable).toEqual([]);
-    expect(only.transitions.dead).toEqual([]);
+    expect(only.exhaustive).toBe(true);
+    expect(only.states.unreachable.map((s) => s.name)).toEqual(['island', 'beyond']);
+    expect(only.transitions.dead.map((t) => t.label)).toEqual(['never']);
   });
 
   it('the boundary of the chase budget, on both sides and on both surfaces', () => {
     // The interpreter fires `maxCompletion` transitions and only THEN asks
     // whether anything is still enabled, so a chain of exactly 64 is one it
-    // completes cleanly. The walk has to agree, or it prints "a completion
-    // chain longer than the 64-step chase budget was found" about a chain that
-    // is not longer than it.
+    // completes cleanly. The walk has to agree: no position is carried and
+    // nothing stops.
     const at = completionChain(MAX_COMPLETION);
     expect(runStateMachine(at.model, at.machineId, []).completionBudgetHit).toBe(false);
     expect(exploreMachine(at.model, at.machineId).boundHit).toBe('none');
     expect(exploreMachine(at.model, at.machineId).exhaustive).toBe(true);
+    expect(exploreMachine(at.model, at.machineId).chaseKeyed).toBe(false);
+    expect(reachReport(at.model).machines[0].states.unreachable).toEqual([]);
 
+    // One more, and the chase stops one short of the end — on both surfaces.
     const over = completionChain(MAX_COMPLETION + 1);
     expect(runStateMachine(over.model, over.machineId, []).completionBudgetHit).toBe(true);
-    expect(exploreMachine(over.model, over.machineId).boundHit).toBe('completion');
-    expect(exploreMachine(over.model, over.machineId).exhaustive).toBe(false);
+    expect(exploreMachine(over.model, over.machineId).boundHit).toBe('none');
+    expect(exploreMachine(over.model, over.machineId).exhaustive).toBe(true);
+    expect(reachReport(over.model).machines[0].states.unreachable.map((s) => s.name)).toEqual(['s65']);
+  });
+});
+
+/**
+ * THE CHASE BUDGET IS PART OF THE SEMANTICS (plan O1, C1 and H2, review B's
+ * probes). The interpreter chases trigger-less transitions for at most 64
+ * steps after each event, then takes the next event wherever the chase
+ * stopped. A walk that did not model that missed runs the interpreter takes,
+ * and published absences over them: `unreachable`, `dead`, a `pass`, a
+ * `not-covered` — one of them live on v9 (`admissionFails`). Each case below
+ * is checked against the interpreter itself, not against a number.
+ */
+describe('the chase budget, followed the way the interpreter follows it', () => {
+  async function load(text: string): Promise<{ model: Model; machineId: ElementId; id: (n: string) => ElementId }> {
+    const model = (await loadModelText(text, { fileName: 'budget.sysml', library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const id = (n: string) => model.all().find((e) => e.declaredName === n)!.id;
+    return { model, machineId, id };
+  }
+
+  const LIVE_TWO = `package LiveTwo {
+    state def M {
+      state s0; state a; state b; state c;
+      transition go first s0 accept go then a;
+      transition ab first a then b;
+      transition ba first b then a;
+      transition ac first a accept e then c;
+    }
+  }`;
+
+  /** `s0 -go-> c1 → … → c70` on completion, `s0 -jump-> c30`, and `c65 accept e then z`. */
+  function longChain(): string {
+    const states = ['s0', ...Array.from({ length: 70 }, (_, i) => `c${i + 1}`), 'z'];
+    const lines = states.map((s) => `state ${s};`);
+    lines.push('transition go first s0 accept go then c1;');
+    lines.push('transition jump first s0 accept jump then c30;');
+    for (let i = 1; i < 70; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+    lines.push('transition esc first c65 accept e then z;');
+    return `package LongChain { state def M { ${lines.join(' ')} } }`;
+  }
+
+  /** `s0 -go-> c1 → … → c70` on completion, nothing else. */
+  function chain65(): string {
+    const states = ['s0', ...Array.from({ length: 70 }, (_, i) => `c${i + 1}`)];
+    const lines = states.map((s) => `state ${s};`);
+    lines.push('transition go first s0 accept go then c1;');
+    for (let i = 1; i < 70; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+    return `package Chain65 { state def M { ${lines.join(' ')} } }`;
+  }
+
+  /**
+   * The shape of v9's `PA::SwarmMember::SwarmMemberModes`: a trigger-less
+   * cycle (`Nominal ⇄ NavigationDegraded`) with a guarded way out on an event
+   * (`admissionFails`), and the trigger-less ways round it.
+   */
+  const SWARM_MODES = `package Modes {
+    state def SwarmMemberModes {
+      initial start;
+      state Nominal; state NavigationDegraded; state Isolated; state Quarantined; state Readmitted;
+      transition start -> Nominal;
+      transition Nominal -> NavigationDegraded;
+      transition NavigationDegraded -> Nominal;
+      transition Nominal -> Isolated;
+      transition Isolated -> Quarantined;
+      transition admissionFails first Nominal accept peerVerdict then Quarantined;
+      transition readmissionPasses first Quarantined accept readmitVerdict then Readmitted;
+      transition Readmitted -> Nominal;
+    }
+  }`;
+
+  it('livelock-two: the interpreter on [go, e] ends in c, so c is reachable and ac fires', async () => {
+    const { model, machineId, id } = await load(LIVE_TWO);
+    const run = runStateMachine(model, machineId, ['go', 'e']);
+    expect(run.finalState).toBe(id('c'));
+    expect(run.completionBudgetHit).toBe(true);
+
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+    expect(m.states.reachable.map((s) => s.name)).toContain('c');
+  });
+
+  it('longchain: the chase from c1 stops at c65 where `e` leaves, so z is reachable and esc is not dead', async () => {
+    // `jump` lands in c30, so the first walk to c65 is a short one — and the
+    // chase a run takes from c1 is hidden behind it unless the position is
+    // part of the configuration.
+    const { model, machineId, id } = await load(longChain());
+    expect(runStateMachine(model, machineId, ['go', 'e']).finalState).toBe(id('z'));
+
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.reachable.map((s) => s.name)).toContain('z');
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead.map((t) => t.name)).not.toContain('esc');
+  });
+
+  it('chain65: no run gets past c65, so c66 … c70 are unreachable — and the interpreter agrees', async () => {
+    const { model, machineId, id } = await load(chain65());
+    for (const events of [[], ['go'], ['go', 'go'], ['go', 'go', 'go']]) {
+      const run = runStateMachine(model, machineId, events);
+      expect(run.visited.includes(id('c66')), events.join(',')).toBe(false);
+    }
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.unreachable.map((s) => s.name)).toEqual(['c66', 'c67', 'c68', 'c69', 'c70']);
+    // `t65` (c65 -> c66) is enabled at the stop, so it is not dead; the four after it are.
+    expect(m.transitions.dead.map((t) => t.name)).toEqual(['t66', 't67', 't68', 't69']);
+  });
+
+  it('the v9 SwarmMemberModes shape: admissionFails fires — the run that takes it is the interpreter’s', async () => {
+    const { model, machineId, id } = await load(SWARM_MODES);
+    const run = runStateMachine(model, machineId, ['peerVerdict']);
+    expect(run.fired.map((f) => f.transitionId)).toContain(id('admissionFails'));
+    expect(run.finalState).toBe(id('Quarantined'));
+
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.transitions.dead.map((t) => t.name)).not.toContain('admissionFails');
+    expect(m.transitions.dead).toEqual([]);
+  });
+
+  it('a machine where the budget stops no chase is walked exactly as before, configuration for configuration', async () => {
+    // No position is carried where it could not decide anything — the figures
+    // every such machine printed before are the figures it prints now.
+    const { model, machineId } = await load(`package Plain {
+      state def M {
+        state idle; state run; state stop;
+        transition go first idle accept go then run;
+        transition rs first run then stop;
+        transition back first stop accept reset then idle;
+      }
+    }`);
+    const walk = exploreMachine(model, machineId);
+    expect(walk.chaseKeyed).toBe(false);
+    expect(walk.chaseStops).toBe(0);
+    expect(walk.configs).toBe(3);
+  });
+
+  it('a trigger-less cycle stays the walk it was, and names where the budget stops its one chase', async () => {
+    // FlightModes in `examples/uav-isr.sysml` is this shape. With no event to
+    // take where a chase stops, the stop reaches nothing the uncut walk did
+    // not, so the position is not carried and the figures stand — and the gate
+    // does not fail on it. But a run ENDS there: `a → b → c → b …` is stopped
+    // after 64 steps in `c` (an odd-numbered step is `b`, an even one `c`), and
+    // the walk says so for the two claims read over where a run ends.
+    const cyc = await load(`package Cyc {
+      state def M {
+        state a; state b; state c;
+        transition ab first a then b;
+        transition bc first b then c;
+        transition cb first c then b;
+      }
+    }`);
+    const walk = exploreMachine(cyc.model, cyc.machineId);
+    expect(walk.chaseKeyed).toBe(false);
+    expect(walk.chaseStops).toBe(0);
+    expect(walk.configs).toBe(3);
+    expect(walk.exhaustive).toBe(true);
+    expect(walk.budgetStops.map((i) => cyc.model.get(walk.configLeaves[i]!)?.declaredName)).toEqual(['c']);
+    expect(walkIsExact(walk, walk.bounds).walkIsExact).toBe(true);
+    // The interpreter agrees about where it rests.
+    expect(cyc.model.get(runStateMachine(cyc.model, cyc.machineId, []).finalState!)?.declaredName).toBe('c');
+    // A machine whose chases all settle names none.
+    expect(exploreMachine(completionChain(10).model, completionChain(10).machineId).budgetStops).toEqual([]);
+  });
+
+  it('a stopped chase is not a deadlock, and the exactness gate names the budget where nothing else fails', () => {
+    // A trigger-less chain longer than the budget: the run stops at s64 with
+    // `s64 -> s65` due. Not a deadlock — a transition is enabled there — and
+    // not an inescapable set either: the walk says why it will not say.
+    const { model } = completionChain(70);
+    const m = reachReport(model).machines[0];
+    expect(m.deadlocks).toEqual([]);
+    expect(m.exactness.walkIsExact).toBe(false);
+    expect(m.exactness.failedClause).toBe('budget');
+    expect(m.trapCensus.refusedByGate).toBe('budget');
+    expect(m.traps).toEqual([]);
+    const lines = textOf(reachMachineLines(m, 1));
+    expect(lines).toContain(TRAP_REFUSAL_SENTENCE.budget);
   });
 });
 

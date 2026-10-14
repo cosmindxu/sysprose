@@ -112,6 +112,8 @@ import {
   DEFAULT_MAX_CONFIGS,
   DEFAULT_MAX_DEPTH,
   GUARD_UNDETERMINED_CODE,
+  boundAdvice,
+  chaseEnds,
   boundsSentence,
   classifyBottoms,
   exploreMachine,
@@ -128,6 +130,12 @@ import {
   type UnsupportedConstruct,
 } from './explore';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
+// The interpreter, for ONE reader: every witness this file publishes is replayed
+// through it first (`replayWitness`). A copy of its driving rules would be a
+// second reading of when a chase runs and when it stops — the gap a witness
+// fell through when this search read the chase budget one way and the
+// interpreter another.
+import { runStateMachine } from '../execute';
 // One definition of "may this absence be stated", shared with `reachOne` — and
 // the one gate the modality reads for BOTH of its values (`walkIsExact`) and
 // the exactness gate's relation half, which is what the `covered` witness
@@ -1043,9 +1051,15 @@ function monitorStep(p: ResolvedProperty, m: Monitor, v: Valuation): Monitor {
 /** One node of the product search: a configuration, a monitor, and how we got here. */
 interface ProductNode {
   readonly config: MachineConfig;
+  /** `hashConfig(config)`, kept so the search hashes each configuration once. */
+  readonly hash: string;
   readonly monitor: Monitor;
   readonly depth: number;
-  /** Consecutive completion steps taken to reach here — the chase budget. */
+  /**
+   * Completion steps fired since the last event: how far into its chase the
+   * interpreter is here. Kept at 0, in the keyed search, wherever no completion
+   * transition is due — the only place it decides anything.
+   */
   readonly completionRun: number;
   readonly parent: ProductNode | null;
   readonly input: StepInput | null;
@@ -1098,18 +1112,27 @@ function valuationOf(
  * declaration-order tie-break picks one from. Crossing the priority rule would
  * produce configurations no run of this semantics enters, and a "witness" drawn
  * from one would be a trace the model does not admit.
+ *
+ * AND SO IS THE CHASE BUDGET. `chaseKeyed` is the walk's own answer to "does
+ * the position change what a run does next on this machine"
+ * (`ExploreResult.chaseKeyed`), and where it does, a product node carries the
+ * chase position beside the configuration and the monitor, and at the budget
+ * offers the alphabet and no completion — the interpreter's next event, taken
+ * where its chase stopped. Where it does not, the search is the one it always
+ * was, and a run it would have to chase past the budget is refused — on a
+ * machine that names no trigger and cycles on completion, that is a monitor
+ * that counts round the cycle.
  */
 function search(
   model: Model,
   machineId: ElementId,
   property: ResolvedProperty,
   bounds: ExploreBounds,
+  chaseKeyed: boolean,
 ): SearchResult {
   const COMPLETION: StepInput = { kind: 'completion' };
-  const inputs: StepInput[] = [
-    COMPLETION,
-    ...bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger })),
-  ];
+  const triggers: StepInput[] = bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger }));
+  const inputs: StepInput[] = [COMPLETION, ...triggers];
   const seeded = new Map<string, unknown>();
   const machineEl = model.get(machineId);
   if (machineEl) seedStore(model, machineEl, seeded);
@@ -1131,6 +1154,7 @@ function search(
   }
   const root: ProductNode = {
     config: opening.config,
+    hash: hashConfig(opening.config),
     monitor: monitorStep(property, OPENING, first.value),
     depth: 0,
     completionRun: 0,
@@ -1145,7 +1169,27 @@ function search(
     return { violation: root, activated, pSeen, configs: 1, boundHit: 'none', refusal: null };
   }
 
-  const seen = new Set<string>([`${hashConfig(root.config)}|${monitorKey(root.monitor)}`]);
+  // What the completion input finds at a configuration, asked once per
+  // configuration: the keyed search needs it to build a key before it admits a
+  // node, and again when it dequeues one.
+  const completionCache = new Map<string, ReturnType<typeof stepCandidates>>();
+  const completionAt = (config: MachineConfig, hash: string): ReturnType<typeof stepCandidates> => {
+    let found = completionCache.get(hash);
+    if (found === undefined) {
+      found = stepCandidates(model, config, COMPLETION);
+      completionCache.set(hash, found);
+    }
+    return found;
+  };
+  // The walk's key rule: the chase position joins the key only where the walk
+  // carried it and a completion transition is due — the one place it decides
+  // what happens next.
+  const keyOf = (config: MachineConfig, hash: string, monitor: Monitor, run: number): string =>
+    chaseKeyed && completionAt(config, hash).enabled.length > 0
+      ? `${hash}|${monitorKey(monitor)}#${run}`
+      : `${hash}|${monitorKey(monitor)}`;
+
+  const seen = new Set<string>([keyOf(root.config, root.hash, root.monitor, 0)]);
   const queue: ProductNode[] = [root];
   let boundHit: BoundHit = 'none';
 
@@ -1157,10 +1201,16 @@ function search(
     // its guard is undetermined, which fails closed — no event is offered here
     // either. Without this the search takes runs the profile forbids, and a
     // `fail` or `covered` witness can stand on a configuration no run reaches
-    // (the over-approximation `./explore` no longer makes).
-    const completion = stepCandidates(model, here.config, COMPLETION);
-    const offeredInputs: StepInput[] =
-      completion.enabled.length > 0 || completion.undetermined.length > 0 ? [COMPLETION] : inputs;
+    // (the over-approximation `./explore` no longer makes) — until the chase
+    // budget is spent, where the interpreter takes the next event instead.
+    const completion = completionAt(here.config, here.hash);
+    const due = completion.enabled.length > 0;
+    const stopped = chaseKeyed && due && here.completionRun >= bounds.maxCompletion;
+    const offeredInputs: StepInput[] = stopped
+      ? triggers
+      : due || completion.undetermined.length > 0
+        ? [COMPLETION]
+        : inputs;
     for (const input of offeredInputs) {
       const enabled =
         input.kind === 'completion' ? completion.enabled : stepCandidates(model, here.config, input).enabled;
@@ -1169,6 +1219,7 @@ function search(
       for (const choice of enabled) {
         if (choice.level !== innermost) continue;
         const next = stepConfig(model, here.config, choice);
+        const run = input.kind === 'completion' ? here.completionRun + 1 : 0;
         const obs: Observation = {
           config: next.config,
           input,
@@ -1188,11 +1239,37 @@ function search(
         const monitor = monitorStep(property, here.monitor, valued.value);
         activated = activated || monitor.activated;
         pSeen = pSeen || monitor.pSeen;
+        const hash = hashConfig(next.config);
+        const key = keyOf(next.config, hash, monitor, run);
+        // A key already seen is never a violation: the monitor is in the key,
+        // `violated` is in the monitor, and a violated node returns below the
+        // first time it is met instead of being admitted.
+        if (seen.has(key)) continue;
+        // THE CHASE BUDGET COMES BEFORE THE VIOLATION TEST. A configuration
+        // the search reaches only by chasing past the budget is one no run of
+        // the interpreter enters — its chase stops short of it — so a monitor
+        // that breaks there breaks on nothing. The keyed search never chases
+        // past the budget (it offers events there instead); the search without
+        // the chase position refuses a chase longer than the budget rather
+        // than report a violation on it — on a machine whose walk found none,
+        // and on one that names no trigger, where nothing follows a stopped
+        // chase and the walk kept its relation. This test used to come AFTER
+        // the violation check, and `cover
+        // state c66` on a 70-step chain printed `covered` over a run the
+        // interpreter stops at `c65` on, every time. `>`, not `>=`: a
+        // configuration reached in exactly `maxCompletion` completion steps is
+        // one the interpreter reaches cleanly.
+        if (!chaseKeyed && run > bounds.maxCompletion) {
+          boundHit = 'completion';
+          continue;
+        }
         const node: ProductNode = {
           config: next.config,
+          hash,
           monitor,
           depth: here.depth + 1,
-          completionRun: input.kind === 'completion' ? here.completionRun + 1 : 0,
+          // The keyed search keeps the position only where it is in the key.
+          completionRun: chaseKeyed && completionAt(next.config, hash).enabled.length === 0 ? 0 : run,
           parent: here,
           input,
           transition: choice.transition,
@@ -1208,17 +1285,7 @@ function search(
             refusal: null,
           };
         }
-        const key = `${hashConfig(next.config)}|${monitorKey(monitor)}`;
-        if (seen.has(key)) continue;
-        // The three bounds, in `exploreMachine`'s own order and with its own
-        // `>` on the chase budget: a configuration reached in exactly
-        // `maxCompletion` completion steps is one the interpreter reaches
-        // cleanly, and refusing it would report a chain that is not too long as
-        // one that is.
-        if (node.completionRun > bounds.maxCompletion) {
-          boundHit = 'completion';
-          continue;
-        }
+        // The two remaining bounds, in `exploreMachine`'s own order.
         if (node.depth > bounds.maxDepth) {
           boundHit = 'depth';
           continue;
@@ -1277,6 +1344,87 @@ function traceOf(model: Model, leaf: ProductNode): TraceStep[] {
       holds: n.holds,
     };
   });
+}
+
+/** Does a witness replay through the interpreter — and, where it does not, where not and why. */
+export interface WitnessReplay {
+  readonly replays: boolean;
+  /** The witness step (its `index`) the interpreter parted from it at; `null` when it replays. */
+  readonly step: number | null;
+  /** One clause a reader can check against the trace; `''` when it replays. */
+  readonly reason: string;
+}
+
+/**
+ * Replay a witness through `runStateMachine` — the interpreter itself, not a
+ * copy of its rules — and say whether it takes the same run.
+ *
+ * THE INVARIANT EVERY PUBLISHED WITNESS IS HELD TO. The search and the
+ * interpreter share the step relation, but not the driving discipline — when a
+ * chase runs, when it stops at its budget, when an event is taken, which event
+ * an event no transition accepts is dropped at — and a witness the interpreter
+ * would not take is a `fail` that refutes nothing, or a `covered` that
+ * witnesses nothing. The chase budget is the gap that shipped: a 70-step chain
+ * printed `covered` for a state the interpreter's chase stops five steps short
+ * of. So before a row stands on its witness, the interpreter is driven with the
+ * witness's events, and must fire the witness's transitions in the witness's
+ * order, entering the state each step enters.
+ *
+ * THE TIE-BREAK IS THE ONE CHOICE THE REPLAY MAKES THE WITNESS'S WAY. Where two
+ * transitions are enabled at the innermost level, the search explores both and
+ * the simulator takes the first declared one; the profile names that as the
+ * one choice the notation leaves open, and every row over a machine with one
+ * says so. `RunStateOptions.follow` makes the interpreter take the witness's
+ * branch there — and only there: run-to-completion, the chase budget, priority
+ * and the events are its own. Replayed with the run's own `maxCompletion`.
+ */
+export function replayWitness(
+  model: Model,
+  machineId: ElementId,
+  witness: readonly TraceStep[],
+  maxCompletion: number,
+): WitnessReplay {
+  if (witness.length === 0) return { replays: true, step: null, reason: '' };
+  const steps = witness.slice(1);
+  // Where the interpreter opens: its first entries, before any chase.
+  const opened = runStateMachine(model, machineId, [], { maxCompletion: 0 }).visited;
+  const openingLeaf = witness[0].leaf?.id ?? null;
+  if ((opened[opened.length - 1] ?? null) !== openingLeaf) {
+    return {
+      replays: false,
+      step: 0,
+      reason: `the witness opens in \`${witness[0].leaf?.qualifiedName ?? 'no state'}\` and the interpreter in \`${
+        opened.length > 0 ? model.qualifiedName(opened[opened.length - 1]) || opened[opened.length - 1] : 'no state'
+      }\``,
+    };
+  }
+  const run = runStateMachine(
+    model,
+    machineId,
+    steps.filter((s) => s.event !== '').map((s) => s.event),
+    { maxCompletion, follow: steps.map((s) => s.transition?.id ?? '') },
+  );
+  for (let i = 0; i < steps.length; i++) {
+    const want = steps[i];
+    const got = run.fired[i];
+    const same =
+      got !== undefined &&
+      got.transitionId === want.transition?.id &&
+      got.trigger === want.event &&
+      want.stack.some((s) => s.id === got.to);
+    if (same) continue;
+    const taken = want.transition === null ? 'nothing' : `\`${transitionLabel(want.transition)}\``;
+    const instead =
+      got === undefined
+        ? 'fires nothing more'
+        : `fires \`${model.qualifiedName(got.transitionId) || got.transitionId}\`${got.trigger === '' ? ' as a completion' : ` on \`${got.trigger}\``}`;
+    return {
+      replays: false,
+      step: want.index,
+      reason: `at step ${want.index} the witness fires ${taken}${want.event === '' ? ' as a completion' : ` on \`${want.event}\``} and the interpreter ${instead}`,
+    };
+  }
+  return { replays: true, step: null, reason: '' };
 }
 
 /** Why a walk stopped, in the words the report prints. */
@@ -1442,7 +1590,7 @@ export function checkProperty(
   // search, which must never run for it. The walk exists here; two lines
   // higher it would not.
   if (property.pattern.kind === 'branching') return recoveryRow(model, walk, property, row, bounds);
-  const found = search(model, machineId, property, bounds);
+  const found = search(model, machineId, property, bounds, walk.chaseKeyed);
   // ONE DEFINITION, in `./publishable`, and this is the reader that adds the
   // product-search conjunct: `found.boundHit === 'none'` becomes
   // `Publishability.searchComplete`, which is a field only a claim that ran a
@@ -1509,6 +1657,26 @@ export function checkProperty(
   // never invent one.
   if (found.violation !== null) {
     const witness = traceOf(model, found.violation);
+    // THE REPLAY INVARIANT: a row stands on its witness only where the
+    // interpreter takes that run. Where it does not, the search and the
+    // interpreter have parted on the driving discipline, and the row says so
+    // under its own code instead of refuting — or witnessing — on a run the
+    // model's own interpreter never makes.
+    const replay = replayWitness(model, machineId, witness, bounds.maxCompletion);
+    if (!replay.replays) {
+      return {
+        ...base,
+        claim: 'inconclusive',
+        code: WITNESS_NOT_REPLAYED_CODE,
+        detail:
+          `inconclusive: the ${isCover ? 'witness' : 'bad prefix'} this search found (${witness.length - 1} step(s)) ` +
+          `does not replay through the interpreter — ${replay.reason}. Nothing is claimed about this property: ` +
+          `a run the interpreter does not take ${isCover ? 'witnesses' : 'refutes'} nothing.`,
+        exhaustive: false,
+        qualification: 'nothing was decided: the run the search found is not one the interpreter takes',
+        witness: [],
+      };
+    }
     // The search RETURNED at the first violation, so `configs` counts the
     // product states seen up to the witness and is not the size of the
     // product space. `exhaustive` is still true of the machine graph — that
@@ -1596,10 +1764,10 @@ export function checkProperty(
       // here exactly where `pass` is, and this row says which claim went.
       detail: isCover
         ? `inconclusive: bound exhausted — the not-covered claim is not made. No witness was found and the walk did not finish — ${boundSentence(boundHit) || 'a trigger the machine names was never offered'}. ` +
-          'A missing witness in part of a graph is not a missing behaviour. Raise the bound (`--max-configs N`) and re-run.'
+          `A missing witness in part of a graph is not a missing behaviour. ${boundAdvice(boundHit)}`
         : `inconclusive: ${found.activated ? 'no bad prefix was found' : "no explored run opened the property's scope"}, and the walk did not finish — ${boundSentence(boundHit) || 'a trigger the machine names was never offered'}. ` +
           'The absence of a violation in part of a graph is not the absence of one, and neither is ' +
-          'the absence of an antecedent. Raise the bound (`--max-configs N`) and re-run.',
+          `the absence of an antecedent. ${boundAdvice(boundHit)}`,
       witness: [],
     };
   }
@@ -1714,6 +1882,8 @@ const NOT_DECIDED = {
   time: 'not decided: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so a run that avoids the violation may be one the interpreter never takes',
   guard:
     'not decided: a transition of this machine is guarded by a condition the walk consulted and could not decide, so this walk never offered an edge the model states and a run that avoids the violation may be one it could not see',
+  budget:
+    'not decided: the interpreter\u2019s chase budget stops a run of this machine with a completion transition still due, so a run that ends there ends at the budget and not at anything the machine states',
 } as const;
 
 /** Row 9's sentence: the absence claim, register row A8. */
@@ -1871,7 +2041,9 @@ function modalityOf(
   if (atom.kind === 'expression') return withheld(NOT_DECIDED.store, null);
   // Rows 5, 6, 7 — the three relation clauses of the gate, in the gate's own
   // order (`environment` first: a named trigger is something the author can
-  // act on, and the dwell sentence would send them to the wrong carrier).
+  // act on, and the dwell sentence would send them to the wrong carrier) —
+  // and after them the chase budget's, which only a machine none of the three
+  // refuses ever reaches.
   switch (gate.failedClause) {
     case 'environment':
       return withheld(NOT_DECIDED.environment);
@@ -1879,6 +2051,8 @@ function modalityOf(
       return withheld(`${NOT_DECIDED.time} — ${DWELL_SENTENCE}`);
     case 'store':
       return withheld(`${NOT_DECIDED.guard} — ${CLAUSE_SENTENCE.store}`);
+    case 'budget':
+      return withheld(NOT_DECIDED.budget);
     case null:
       break;
   }
@@ -1935,6 +2109,24 @@ function modalityOf(
       avoiding: [stop],
     };
   }
+  // WHERE A RUN ENDS, on a machine that names no trigger and keeps the
+  // relation it states (`ExploreResult.budgetStops`). No cycle and no sink of
+  // *G* keeps clear of the violation, so every path of the relation reaches
+  // it — but a run of the interpreter is one chase, ended by the budget after
+  // `maxCompletion` steps, and a path of that many steps inside *G* is a run
+  // that ends before it gets there. The relation says `guaranteed` and the
+  // interpreter says `potential`; neither is published. A `potential` above
+  // needs no such check: a cycle or a sink of *G* the walk reached within the
+  // budget is a run of the interpreter too. Measured: a 70-step chain the
+  // walk reached the end of by a shorter tie-break branch printed `every run?
+  // guaranteed` beside a `fail` whose declaration-order run the budget stops
+  // at the 64th state.
+  if (
+    walk.budgetStops.length > 0 &&
+    chaseEnds(walk.successors, bounds.maxCompletion, (i) => inG0[i] === 1).length > 0
+  ) {
+    return withheld(NOT_DECIDED.budget, 'budget');
+  }
   return {
     value: 'guaranteed',
     sentence: `${GUARANTEED_SENTENCE}${simulator}`,
@@ -1956,7 +2148,7 @@ function modalityOf(
  * valued `mode` (`trapguard-typed.sysml`), and the narrower sentence would be
  * false on the one corpus model that tells the two readings apart.
  */
-const RECOVERY_REFUSED: Record<'time' | 'store', string> & {
+const RECOVERY_REFUSED: Record<'time' | 'store' | 'budget', string> & {
   /**
    * A function of the triggers the clause failed on, because the standing
    * sentence names them: `alphabet ∖ timedLabels`, the gate's own subtraction,
@@ -1974,6 +2166,9 @@ const RECOVERY_REFUSED: Record<'time' | 'store', string> & {
   store:
     'inconclusive: a transition of this machine is guarded by a condition the walk consulted and could not decide, so this walk never offered an edge the model states and neither direction of this claim is made — ' +
     CLAUSE_SENTENCE.store,
+  budget:
+    'inconclusive: a run of this machine comes to rest where the interpreter\u2019s chase budget stops it and gets back to nothing from there, while the transitions the machine states lead on, so neither direction of this claim is made — ' +
+    CLAUSE_SENTENCE.budget,
 };
 
 /**
@@ -2142,7 +2337,7 @@ function recoveryRow(
   if (!gate.seenWhole) {
     return refused(
       BOUND_EXHAUSTED_CODE,
-      `inconclusive: bound exhausted — the recovery claim is not made. ${gate.sentence}; neither "reachable from every configuration" nor its complement is a claim a partial relation supports. Raise the bound (\`--max-configs N\`) and re-run.`,
+      `inconclusive: bound exhausted — the recovery claim is not made. ${gate.sentence}; neither "reachable from every configuration" nor its complement is a claim a partial relation supports. ${boundAdvice(walk.boundHit)}`,
       gate.sentence,
       withheld,
     );
@@ -2165,6 +2360,10 @@ function recoveryRow(
       return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.time, gate.sentence, withheld);
     case 'store':
       return refused(GUARD_UNDETERMINED_CODE, RECOVERY_REFUSED.store, gate.sentence, withheld);
+    // A question this engine cannot decide HERE, like a trigger or a dwell:
+    // the relation is the interpreter's, and the resting point is its budget's.
+    case 'budget':
+      return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.budget, gate.sentence, withheld);
     default:
       break;
   }
@@ -2219,6 +2418,25 @@ function recoveryRow(
   const cannot: number[] = [];
   for (let i = 0; i < walk.configs; i++) if (!canReach.has(i)) cannot.push(i);
   if (cannot.length === 0) {
+    // (8) WHERE A RUN ENDS, on a machine that names no trigger and keeps the
+    // relation it states (`ExploreResult.budgetStops`). Every configuration
+    // reaches `p` in that relation — but a run of the interpreter ENDS where
+    // the budget stops its one chase, and gets back to nothing from there. So
+    // the relation's `recoverable` is the interpreter's too only where every
+    // such stop already holds `p`; where one does not, the two readings part
+    // and neither is published. A refutation needs no such check: a
+    // configuration that cannot reach `p` along the transitions the machine
+    // states cannot in any run of it either. Measured: a three-state cycle
+    // printed `recoverable` for a state the interpreter's run never enters.
+    const targetSet = new Set(targets);
+    if (walk.budgetStops.some((i) => !targetSet.has(i))) {
+      return refused(BEHAVIOUR_UNSUPPORTED_CODE, RECOVERY_REFUSED.budget, CLAUSE_SENTENCE.budget, {
+        targetConfigs: targets.length,
+        cannotReach: null,
+        bottomSccOverlap: null,
+        refusedByGate: 'budget',
+      });
+    }
     return decided(
       'pass',
       null,
@@ -2378,6 +2596,15 @@ function coverCensus(
 
 /* ──────────────────────────────── the report ────────────────────────────── */
 
+/**
+ * A `fail` or `covered` row whose witness the interpreter does not take
+ * (`replayWitness`): withheld as inconclusive rather than published on a run
+ * the model's own interpreter never makes. Info, like every code that says
+ * what was NOT decided — and a row under it is a defect in this engine, not
+ * in the model, which the hint says.
+ */
+export const WITNESS_NOT_REPLAYED_CODE = 'verification/witness-not-replayed';
+
 /** The code `--strict-vacuity` raises a vacuity row to. Declared at commit 5. */
 const STRICT_VACUITY_CODE = 'verification/vacuous-property';
 
@@ -2392,6 +2619,7 @@ export const PROPERTY_PATTERN_CODES: ReadonlySet<string> = new Set([
   UNKNOWN_ATOM_CODE,
   NOT_COVERED_CODE,
   COVER_REQUIRED_CODE,
+  WITNESS_NOT_REPLAYED_CODE,
 ]);
 
 /**
@@ -2583,7 +2811,9 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
               // between a flagged and a plain run, and the rule wins: the
               // error row beside it is what says the flag was applied.
               'This row IS decided: over a graph the walk saw whole, no run enters the situation the cover names. It is a missing behaviour and not a violated requirement, so it exits 2 — pass `--cover-required` to make it exit 1, which adds `verification/cover-required` and changes no word above.'
-            : 'Nothing is claimed about this property. A row that says what was not decided is the one thing a silence could never say.',
+            : row.code === WITNESS_NOT_REPLAYED_CODE
+              ? 'Nothing is claimed about this property, and nothing here is a defect in the model: the search and the interpreter disagree about one run, which is a defect in this engine. The row names the step where the two parted; drive the machine with the same events in the Simulation tab to see what the interpreter does there, and report the model.'
+              : 'Nothing is claimed about this property. A row that says what was not decided is the one thing a silence could never say.',
     });
   }
 

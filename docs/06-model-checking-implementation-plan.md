@@ -353,6 +353,24 @@ predicted the way it would go missing. A seventh will arrive. The register's job
 is to make its arrival a red test rather than a published sentence, and the
 census is the half that does that without being told what to look for.
 
+**The seventh arrived (2026-10-14, review B's C1 and H2), and it is the chase
+budget.** The interpreter chases trigger-less transitions for at most
+`maxCompletion` (64) steps after each event and then takes the next event
+wherever the chase stopped; the walk read the budget as a bound instead, and on
+a completion cycle never met it at all. It is fixed in the walk, not gated:
+the walk now follows the budget (§8.5), so the decreasing claims are about the
+interpreter's runs again. What remains is one clause on the increasing side —
+**(e), `chaseStops === 0`, `failedClause === 'budget'`**: where the budget stops
+a chase with a completion transition still due, the walk follows the
+interpreter and does not fire it, so the relation holds a resting point the
+budget makes where the machine states an edge. It is evaluated after (d), so
+only a machine with no trigger, no dwell and no undecided guard is ever told it.
+A machine that names no trigger at all keeps the relation it states and fails no
+clause for the budget: there only the two claims read over where a run ENDS —
+A7's `recoverable` and A8's `guaranteed` — are checked against the
+configurations where the budget stops its one chase (`budgetStops`, §8.5), and
+each register row names that conjunct.
+
 **And the bounds line names the store, in every lane, because that is what `exhaustive under {…}` has always meant.** Correction 23's clause is lifted out of §3.1 and into `boundsSentence` itself, which today names `maxConfigs`, `maxDepth`, `maxCompletion` and `alphabet` and omits the one parameter that decided the trapguard measurement above. After commit 3 it reads `…, store seeded from declared literal values — a guard over an attribute with no declared value is read as false`. One edit covers A5, A6, A7, A8, A10 and A13 at once, and it is the honest reading of the qualification string every one of them prints. **It is a disclosure and not a clause**, and it says less than clause (d) does: `c929278`'s predicate covers guards that decided nothing for reasons other than an undecided feature, and the bounds line names only the common one. Where the two differ the `verification/guard-undetermined` row is what a reader acts on.
 
 **What the exactness gate is NOT for.** It is not a truncation flag. A truncation flag was considered and rejected as a *soundness* device: measured, every bound gate in `exploreMachine` — completion, depth, configs — sets `boundHit` before it `continue`s, so an edge into a dropped successor always implies `!exhaustive`, which already implies `!decreasingOk`. What ships beside the gate is one walk-level boolean, **`openFrontier`**, defined as **`!walk.exhaustive`** — *not* as `boundHit !== 'none'`, and the difference is a real bug the review caught. `exploreMachine` has an early return for a refused construct that sets `configs: 0`, `exhaustive: false` and `boundHit: 'none'`: no bound was hit because no walk happened. Reproduced from ordinary surface syntax — a transition with an unresolved endpoint gives `reach dangle.sysml → 0 configuration(s) explored … not explored — transition-without-endpoints`, so this is reachable from the corpus and not only through `attrs.parallel` via the API. Under the draft's definition that walk would publish `openFrontier: false` and, over an empty successor relation with no cycle, **`acyclic: true`** — a census field asserting a property of a graph that was never built, on the one machine class the tool refuses to walk, flipping lane G's release gate on a false reading. So: `openFrontier === !walk.exhaustive` is what the test asserts (the draft's `openFrontier === (boundHit !== 'none')` would have **pinned the bug**), and the census field `acyclic` is **three-valued** — `true | false | null`.
@@ -1924,3 +1942,88 @@ one that moves.
   the file count to the tree; the total is honest only because the summary is
   regenerated from the gate's JSON by hand. `TEST-REPORT.md` §3 and §4 remain the
   2026-07-03 run's tables under a dated bracket — history, not a re-measurement.
+
+### 8.5 The chase budget, followed — O1 `behaviour-sound`, 2026-10-14
+
+Review B (C1, H2; `close-open-items.md` §1.1) measured the walk and the product
+search parting from the interpreter on its 64-step completion budget, with false
+verdicts as the result: `unreachable c` and `dead ac` on a two-state completion
+cycle with an exit on an event (the interpreter on `[go, e]` ends in `c`), a
+`PASS` of `absence(z)` on a 70-step chain whose 65th state accepts `e`, `COVERED
+state c66` on a 70-step chain the interpreter's chase stops at `c65` on — and on
+v9, `dead admissionFails` in `PA::SwarmMember::SwarmMemberModes`, which the
+interpreter fires on `[peerVerdict]`.
+
+- **The budget is semantics, not a bound.** A configuration where a completion
+  transition is due carries its chase position `run ∈ 0..maxCompletion` in the
+  key the walk hashes. Below the budget only completion is offered; AT the budget
+  the chase stops, as `runStateMachine`'s does, and the alphabet is offered there
+  — the completion transitions due are counted enabled (not dead; not a
+  deadlock) and none is fired. An event restarts `run` at 0. The `run >
+  maxCompletion → boundHit: 'completion'` cut is gone from every walk `reach`
+  publishes; `explore.ts`'s note above `exploreMachine` replaces the comment that
+  called a completion cycle "not a bound hit".
+- **Only where it can decide anything.** The walk runs once without the
+  position — every walk this engine published before — and carries it only where
+  the budget can stop a chase and something can follow the stopped one: that walk
+  had to cut a chain, or the machine names a trigger and its retained completion
+  edges hold a cycle or a path of more than `maxCompletion`. Everywhere else the
+  walk is the one it was, configuration for configuration: over the 272-model
+  behaviour corpus every `reach` and `check-behaviour` output is byte-identical
+  except on the four probe shapes that hold such a chase. The product search reads
+  the walk's answer (`chaseKeyed`) and hashes the same way.
+- **Where a run ends, on a machine that names no trigger.** Such a machine keeps
+  the relation it states even where its completion transitions cycle or run
+  longer than the budget (`FlightModes`, `views-tour`'s and `vehicle`'s machines,
+  eight of v9's): a stopped chase there is followed by nothing, so the walk
+  reaches the same states and enables the same transitions either way. But every
+  run of it is the one chase from the opening, stopped after 64 steps wherever it
+  is, and the relation follows that chase on. The walk names where the budget
+  stops it (`budgetStops`: the ends of the 64-step paths from the opening with a
+  completion still due), and the two claims read over where a run ends are
+  checked against them — A7's `recoverable` only where every such stop holds `p`,
+  A8's `guaranteed` only where no 64-step path from the opening stays inside G₀ —
+  and withheld under the budget sentences where they part. The rest stands
+  because it is true of the interpreter's runs too: a trap row (a set entered
+  within the budget that nothing leaves), `potential`, `not recoverable`, every
+  absence. A review of this step found the two false answers this replaces —
+  `every run? guaranteed` beside a `fail` whose declaration-order run the budget
+  stops at the 64th state of a 70-step chain reached by a shorter branch, and
+  `recovery` PASS on a three-state cycle for a state the interpreter's run never
+  enters — and asked for the gate's whole budget clause on these machines.
+  Measured, that withholds every trap row in the repository (each fixture that
+  holds one is a completion cycle), the modality and both directions of
+  `recovery` where they are true — 44 unit tests across ten files went red, all
+  but the three `recoverable` rows this check now withholds pinning a row that
+  holds of the interpreter's runs as well — so the check is per claim instead. On `FlightModes`, `recovery
+  standby` is now withheld (the budget stops a run in `autonomous`); on
+  `views-tour` it stands (every run stops in `standby`).
+- **A refusal no flag decides says so.** A `check-behaviour` refusal at the
+  depth bound, or past the chase budget in a search that does not carry the
+  position (a counting monitor round a trigger-less cycle), no longer advises
+  `--max-configs`, which comes back with the same row at every `N`; only the
+  configuration bound keeps that advice (`boundAdvice`).
+- **H2.** In the search without the position, the budget test now comes BEFORE
+  the violation test: a configuration reached only by chasing past the budget is
+  one no run enters, and a monitor that breaks there breaks on nothing.
+- **The replay invariant.** Every `fail` and `covered` witness is replayed
+  through `runStateMachine` before the row stands on it — with
+  `RunStateOptions.follow` resolving the declaration-order tie-break the
+  witness's way, the one choice the profile leaves open, and everything else the
+  interpreter's. A witness that does not replay makes the row `inconclusive`
+  under `verification/witness-not-replayed` (info, exit 2). Over the corpus none
+  does; `semantics.mc.differential.test.ts` replays every witness the corpus
+  publishes, independently of the engine's own replay, and drives the
+  interpreter over every event sequence up to length three against every
+  absence `reach` and `check-behaviour` publish.
+- **The U2 fallback was not needed.** The exact model stays far inside the
+  default bounds: on v9 the two machines it changes (`PA::SwarmMember`'s Modes
+  and States) walk 322 and 315 configurations and search at most 632 product
+  states, against `maxConfigs` 10 000, at depth 64 and 73 against 200. Those two
+  are v9's whole `reach` diff: `admissionFails` is no longer dead, and the two
+  `absence … between` rows of `SwarmMemberStates` that read `bound-exhausted`
+  because no trigger was ever offered are `pass` again. The other eight machines
+  whose chases never settle name no trigger and keep their walks; one row of
+  theirs moves, `LA::SwarmMember::SwarmMemberStates`' `recovery Landed`, from
+  `pass` to `inconclusive` — the budget stops a run of that machine in each of
+  its seven states.

@@ -1152,7 +1152,9 @@ is answered by reverse reachability over the walk's retained relation, as
 and ONLY over a walk whose relation is the machine's own (`walkIsExact`,
 register row A7) — both directions behind one gate, because a guard the walk
 could not decide removes an edge the model states and would otherwise
-manufacture the refutation at exit 1; it reads `state` and `node` atoms only,
+manufacture the refutation at exit 1 — with `recoverable` withheld besides
+wherever the interpreter's chase budget stops a run of a trigger-less machine
+somewhere that does not hold `p`; it reads `state` and `node` atoms only,
 through the same selection `absence` reads them with, and refuses the other
 three kinds rather than earning a refutation from an empty target set. Two — `existence`, `response` — are liveness,
 and a bad-prefix search finds no bad prefix for either on any graph; both report
@@ -1219,7 +1221,10 @@ the machine reaches the violation; it is register row A8, an absence claim
 everything else, with its reason: a walk not seen whole, a stateful monitor or
 a step atom (the product does not collapse onto the configuration graph), an
 expression atom (the store is not retained), a named trigger, an `after(n)`
-dwell, or a guard the walk consulted and could not decide — on the latch
+dwell, a guard the walk consulted and could not decide, or the interpreter's
+64-step chase budget — a walk that follows it through a stopped chase, or, on
+a machine that names no trigger, a `guaranteed` that a run the budget stops
+before the violation would contradict — on the latch
 machine the naive answer is `guaranteed`, about a design that sits in
 `nominal` forever when nobody sends `unlatch`, and the line says `not
 decided` instead. None of the three moves a count, a code or the exit code:

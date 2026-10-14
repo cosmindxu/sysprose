@@ -300,6 +300,11 @@ export function reachMachineLines(m: MachineReach, block: number): ReportLine[] 
         line('trap-refused', `    ${TRAP_REFUSAL_SENTENCE.store}`, { elementId: id, withholds: true }),
       );
       break;
+    case 'budget':
+      out.push(
+        line('trap-refused', `    ${TRAP_REFUSAL_SENTENCE.budget}`, { elementId: id, withholds: true }),
+      );
+      break;
     default:
       break;
   }
