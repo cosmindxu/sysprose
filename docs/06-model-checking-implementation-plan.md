@@ -2027,3 +2027,84 @@ interpreter fires on `[peerVerdict]`.
   theirs moves, `LA::SwarmMember::SwarmMemberStates`' `recovery Landed`, from
   `pass` to `inconclusive` — the budget stops a run of that machine in each of
   its seven states.
+
+### 8.6 Nested state definitions — O1 `behaviour-sound`, 2026-10-14
+
+Review B (H1, C3; `close-open-items.md` §1.1) found the change that made a
+nested `state def` a machine of its own (`stateMachinesIn`, `regionDescendants`)
+had left two ends loose, and the reviews of the fix found three more behind
+them.
+
+- **A machine that holds a nested definition could not be named.** A `state def`
+  written inside `Outer` is a second machine under `Outer`, so `check-behaviour
+  --element Outer` printed *"holds 2 state machines … name one of them"* and
+  exited 2 for every way of naming `Outer`, and the app's pick row for it named
+  it again. `behaviourMachineFor` now returns the reference itself when it is a
+  machine; a reference that only contains machines is still refused with them.
+  A state is refused with the machine whose region holds it (`noMachine`), so a
+  state of the nested definition names that definition, not `Outer`.
+- **What the outer machine is checked against stops where its walk stops.**
+  Once `Outer` could be named, its property list and its atoms still read every
+  descendant. A `@PropertyPattern` carried by `Inner`, about `Inner::y`, was
+  checked against `Outer`'s walk as well, which never stands on `y`: `absence
+  state y` printed PASS (exit 0) under `Outer` and FAIL (exit 1) under `Inner`,
+  and `Outer`'s pick row counted the property as its own. `propertiesOf` and the
+  four atom pools (`statesOf`, `nodesOf`, `namedTransitions`, `triggersOf` in
+  `atoms.ts`) now read the machine's region: a property carried inside the
+  nested definition is that definition's, and `state y` named on `Outer` is
+  `verification/unknown-atom`, as a state of another top-level machine always
+  was. On a model without a nested definition the region is every descendant,
+  so nothing else moves.
+- **A transition across a machine's boundary has no meaning here, and both
+  machines it joins are refused.** Each machine steps by its own region's
+  transitions only, so an edge joining two regions — written in `Outer` and
+  leading to a state of `Inner` or to `Inner` itself, written in `Inner` and
+  leading out of it, or written in one top-level machine and leading into
+  another's state — was walked by one side as a step into a state none of whose
+  own transitions follow, and ignored by the other. On `nest2-into` the outer
+  walk published `unreachable b` and `no way out Inner::x`, while `Inner`'s walk
+  followed its edge out and published `no way out b … reached in 2 step(s)`: one
+  report, two readings of one model, each about a machine split differently from
+  the way it was written. Such an edge is now the unsupported construct
+  `machine-boundary` (`verification/behaviour-unsupported-construct`,
+  `boundaryCrossings` in `explore.ts`), counted `refused` in the edge census of
+  BOTH machines: the one whose transitions hold it, and the one whose state it
+  names from outside, found off the endpoint index — no absence list, no
+  `exhaustive`, and an `inconclusive` property row on either. The first version
+  refused only the first machine; a one-way crossing then left the far side
+  walked as though the edge were not there (`Inner` published `unreachable z`
+  and a PASS for `absence z` beside a run of `Outer` that ends in `Inner::z`, and
+  the same between two top-level machines). An end at a machine's ROOT does not
+  count for that machine, since entering a machine at its root is starting it,
+  but `then Inner` written in `Outer` crosses into `Inner`: the walk cascaded
+  into `Inner::x` and published an exhaustive `no way out Inner::x` for `Outer`,
+  where a run of `Outer` stays at `Inner` itself. Before the split that made the
+  nested definition a machine (`0475db6`) the outer walk folded the
+  definition's states into its own and walked such an edge as an ordinary step;
+  neither reading is the model's, and the two of them are why this one is
+  refused rather than chosen. Over the 857-file survey (the gate corpus, every
+  `.sysml` under `test/` and `examples/`, and v9) `nest2-into` is the only model
+  that holds such an edge, and the region reading moves the atoms of the seven
+  machines that hold a nested definition and the properties of none.
+- **How it stands to the simulator.** The interpreter is unchanged: it reads the
+  same relation (`regionTransitions`, and, since review B's M3 was fixed,
+  `regionDescendants` for its states and its start), so a run of `Outer` on
+  `[e]` takes `ax` into `Inner::x` and stays there whatever follows, a run of
+  `Inner` on `[go, back]` takes `yb` out to `Outer::b` and stays there, and a
+  run of `Outer` over `then Inner` rests at `Inner`. Those are runs the
+  Simulation tab shows, not verdicts: the checkers refuse the machine where the
+  simulator steps through it, so no witness of such a machine is published. The
+  witness replay of §8.5 now also compares, at every step, the state the run
+  comes to rest in (`restingLeaves`, read off the interpreter's own `visited`
+  list) with the witness's leaf; it used to accept the transition's target
+  anywhere on the witness's stack, which passed the `then Inner` witness that
+  ends in `Inner::x` against a run that stays at `Inner`. The interpreter's
+  routing to its hierarchical path (`needsHierarchical`) and the trigger list
+  the Simulation tab offers (`discoverMachineTriggers`) still read every
+  descendant, the nested definition's included. The first routes an outer
+  machine whose nested definition holds a composite state through the
+  hierarchical path; measured on such a probe, its runs visit, fire and end
+  exactly as the same machine's do on the flat path without it, and differ only
+  by the two fields the hierarchical path adds (`complete`, `clock`). The second
+  lists the nested definition's triggers, which no outer transition takes, as
+  the USER-GUIDE says.

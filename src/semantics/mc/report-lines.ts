@@ -44,6 +44,7 @@ import {
   type BehaviourReport,
   type PropertyVerdict,
 } from './patterns';
+import { regionDescendants } from './config';
 import { profileLines } from './profile';
 import { DWELL_SENTENCE, environmentSentence, environmentTriggers } from './publishable';
 
@@ -430,8 +431,12 @@ export function noMachineRefusal(
 }
 
 function noMachine(model: Model, scopeId: ElementId): { message: string; holder: ElementId | null } {
+  // The machine whose REGION holds the element, not the first whose subtree
+  // does: a state of a nested `state def` is inside the outer machine's text
+  // and in the nested machine's walk, and a pick row naming the outer one
+  // would check a machine the state is not part of.
   const holder = stateMachinesIn(model).find((m) =>
-    model.descendants(m.id).some((d) => d.id === scopeId),
+    regionDescendants(model, m.id).some((d) => d.id === scopeId),
   );
   return {
     message:
@@ -468,6 +473,12 @@ export function behaviourMachineFor(model: Model, scopeId: ElementId): MachineFo
   if (machines.length === 0) {
     return { ok: false, ...noMachine(model, scopeId), candidates: [] };
   }
+  // A reference that IS a machine names that machine, whatever it holds: a
+  // `state def` written inside it is a machine of its own, so the outer one
+  // holds two, and refusing it as "several" left it the one machine no
+  // reference could name — the refusal's own pick row named it again.
+  const named = machines.find((m) => m.id === scopeId);
+  if (named !== undefined) return { ok: true, machine: named };
   if (machines.length > 1) {
     // Refused rather than answered over all of them, for `ELEMENT_REQUIRED_LEAD`'s
     // reason: a verdict is about one machine, and a `REF` that holds several is

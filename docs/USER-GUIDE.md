@@ -2499,6 +2499,39 @@ where it is. A nested `state def` that owns no `TransitionUsage` is walked by
 nothing, and each of its states then reads `not walked` in the app rather than
 being called unreachable under a machine that does not contain it.
 
+A transition that **crosses** that boundary — written in the outer machine and
+leading into one of the nested definition's states or to the definition itself,
+written in the nested definition and leading out of it, or written in one
+top-level machine and leading into another's state — has no meaning either walk
+defines, because each machine steps only by its own transitions. Walked anyway,
+the outer machine entered the inner state and found no way out of it, while the
+nested definition's walk followed its edge out to a state the outer walk had
+just called unreachable. So `reach` and `check-behaviour` alike refuse **both**
+machines the transition joins — the one it is written in, and the one whose
+state it names from outside: `verification/behaviour-unsupported-construct` with
+the construct `machine-boundary`, naming the transition — no absence list, no
+`exhaustive`, and every property about either machine `inconclusive`. Keep each
+transition inside the machine whose states it joins, or write the nested
+definition as a composite state (`state Inner { … }`) to make its states part of
+the outer machine. A simulator run still takes such a transition — into the far
+state, where it then stays, since none of that state's own transitions are the
+run's — which is what the Simulation tab shows, not a verdict.
+
+`check-behaviour --element Outer` checks `Outer` itself, also when a `state def`
+written inside it makes it hold a second machine: a reference that is a machine
+names that machine. What `Outer` is checked against stops where its walk does: a
+property carried by the nested definition, or by one of its states, belongs to
+that definition and is counted and checked there only — so, on a nested
+definition that owns no transition and is walked by nothing, nowhere — and a
+property of `Outer`'s that names one of the nested definition's states or
+transitions is refused as `verification/unknown-atom`, as one naming another
+machine's state is. A reference that only contains machines (the package, say) is still refused
+with the machines it holds, and a state is refused with the machine it belongs
+to — for a state of the nested definition, that definition, not the outer
+machine whose text holds it. In the app, the pick row such a refusal lists in
+the Checks tab (the machine's qualified name and its property count) selects
+that machine, and the next Run checks it.
+
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither
 marked final nor a `done` node — a reading of one machine under one alphabet,

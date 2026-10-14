@@ -23,9 +23,10 @@
  * inside every bound, over a guard nothing in the model decides. Its half of
  * this file is the last two describes.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { runStateMachine } from '@semantics/index';
 import { loadModelText } from '@text/load';
@@ -35,12 +36,14 @@ import { preloadFullLibrary, loadFullStandardLibrary } from '../../src/library/f
 import { resolveTypeReferences } from '../../src/library/resolve';
 import { main as sysproseMain } from '../../scripts/sysprose';
 import {
+  behaviourMachineFor,
   reachLines,
   reachMachineLines,
   rowKeyOf,
   textOf,
   type ReportLine,
 } from '../../src/semantics/mc/report-lines';
+import { behaviourReport, replayWitness, type TraceStep } from '../../src/semantics/mc/patterns';
 import {
   BEHAVIOUR_CODES,
   BOUND_EXHAUSTED_CODE,
@@ -397,6 +400,478 @@ describe('which elements are machines at all', () => {
     expect(innerR.states.reachable.map((s) => s.name)).toEqual(['p', 'q']);
     expect(innerR.states.unreachable).toEqual([]);
   });
+});
+
+/* ═══════════ a nested `state def`: the machine that holds it, and a transition across it ═══════════ */
+
+/** Review B's three nested-definition probes (O1: H1, C3), as written there. */
+const NEST2_INTO = `package Nest2 {
+    state def Outer {
+        state a;
+        state b;
+        transition ax first a accept e then Inner::x;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+            transition yb first y accept back then Outer::b;
+        }
+    }
+}
+`;
+const NEST3_FIRST = `package Nest3 {
+    state def Outer {
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+        state a;
+        state b;
+        transition ab first a accept e then b;
+    }
+}
+`;
+const NEST6_PROP = `package Nest6 {
+    state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+        transition ab first a accept e then b;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+    }
+}
+`;
+
+/** Review S3's one-way crossings and its foreign carrier: each names what the first fix left open. */
+const INTO_ONLY = `package IntoOnly {
+    state def Outer {
+        state a;
+        transition az first a accept e then Inner::z;
+        state def Inner {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state z"; }
+            state x;
+            state y;
+            state z;
+            transition xy first x accept go then y;
+        }
+    }
+}
+`;
+const OUT_ONLY = `package OutOnly {
+    state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+        transition aa first a accept e then a;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+            transition yb first y accept back then Outer::b;
+        }
+    }
+}
+`;
+const INNER_EDGE = `package InnerEdge {
+    state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+        transition aa first a accept e then a;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+            transition ab2 first Outer::a accept f then Outer::b;
+        }
+    }
+}
+`;
+const INTO_DEF = `package ToDef {
+    state def Outer {
+        state a;
+        state b;
+        transition ai first a accept e then Inner;
+        transition ab first a accept f then b;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+    }
+}
+`;
+const TOP_CROSS = `package TopCross {
+    state def A {
+        state a0;
+        transition ab first a0 accept e then B::z;
+    }
+    state def B {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state z"; }
+        state b0;
+        state z;
+        transition bb first b0 accept go then b0;
+    }
+}
+`;
+const INTO_PLAIN = `package Nm {
+    state def Outer {
+        state a;
+        state b;
+        transition ax first a accept e then Inner::x;
+        transition ab first a accept f then b;
+        state def Inner {
+            state x;
+            state y;
+        }
+    }
+}
+`;
+const LEAK = `package Leak {
+    state def Outer {
+        state a;
+        state b;
+        transition ab first a accept e then b;
+        state def Inner {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state y"; }
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+    }
+}
+`;
+
+describe('a nested state def: the machine that holds it, and a transition across its boundary', () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'sysprose-nested-'));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const fileOf = (name: string, text: string): string => {
+    const f = join(dir, name);
+    writeFileSync(f, text);
+    return f;
+  };
+  const modelOf = async (text: string): Promise<Model> =>
+    (await loadModelText(text, { fileName: 'nested.sysml', library: 'none' })).model!;
+  const idOf = (m: Model, qn: string): ElementId => m.all().find((e) => m.qualifiedName(e.id) === qn)!.id;
+
+  /*
+   * THE SELF-CONTRADICTION (H1). `ax` is written in `Outer` and leads into the
+   * nested definition; `yb` is written in `Inner` and leads out of it. The step
+   * relation stops at the boundary from both sides, so `Outer`'s walk entered
+   * `Inner::x` and found no way out, and `Inner`'s walk followed `yb` out to
+   * `b` — one report printed `unreachable b` and `no way out b … reached in 2
+   * step(s)`. Each machine is now refused on the edge its own relation holds.
+   */
+  it('refuses both machines of nest2-into by name, so the report no longer contradicts itself', async () => {
+    const model = await modelOf(NEST2_INTO);
+    const r = reachReport(model);
+    const named = (qn: string) => r.machines.find((m) => m.machine.qualifiedName === qn)!;
+    const refusals = (qn: string) =>
+      named(qn).unsupported.map((u) => [u.construct, u.elementId ? model.qualifiedName(u.elementId) : null]);
+    // Each machine on BOTH edges: the one its own relation holds, and the one
+    // written on the other side that names one of its states.
+    expect(refusals('Nest2::Outer')).toEqual([
+      ['machine-boundary', 'Nest2::Outer::ax'],
+      ['machine-boundary', 'Nest2::Outer::Inner::yb'],
+    ]);
+    expect(refusals('Nest2::Outer::Inner')).toEqual([
+      ['machine-boundary', 'Nest2::Outer::Inner::yb'],
+      ['machine-boundary', 'Nest2::Outer::ax'],
+    ]);
+    expect(named('Nest2::Outer').unsupported[0].detail).toContain(
+      'into the nested `state def` `Nest2::Outer::Inner`, a machine of its own',
+    );
+    expect(named('Nest2::Outer').unsupported[1].detail).toContain(
+      'is written outside this machine, in `Nest2::Outer::Inner`',
+    );
+    expect(named('Nest2::Outer::Inner').unsupported[0].detail).toContain(
+      'out of this nested `state def`, into `Nest2::Outer`, the machine it is written in',
+    );
+    for (const m of r.machines) {
+      expect(m.exhaustive, m.machine.qualifiedName).toBe(false);
+      expect(m.suppressed, m.machine.qualifiedName).toBe(true);
+      expect(m.states.unreachable, m.machine.qualifiedName).toEqual([]);
+      expect(m.transitions.dead, m.machine.qualifiedName).toEqual([]);
+      expect(m.deadlocks, m.machine.qualifiedName).toEqual([]);
+    }
+    // Refusals and no finding: neither `b unreachable` nor `b … reached`.
+    expect(new Set(r.diagnostics.map((d) => d.code))).toEqual(new Set([BEHAVIOUR_UNSUPPORTED_CODE]));
+    const kinds = reachLines(r, { name: 'nest2-into.sysml' }).map((l) => l.kind);
+    expect(kinds).not.toContain('unreachable');
+    expect(kinds).not.toContain('no-way-out');
+    expect(kinds.filter((k) => k === 'not-explored')).toHaveLength(4);
+    // The census counts both crossing edges `refused` on each side — the one
+    // written outside the region as well, which its domain used to miss — and
+    // leaves nothing over.
+    for (const machine of ['Nest2::Outer', 'Nest2::Outer::Inner']) {
+      const census = edgeCensus(model, idOf(model, machine));
+      expect(census.unaccounted, machine).toEqual([]);
+      for (const edge of ['Nest2::Outer::ax', 'Nest2::Outer::Inner::yb']) {
+        expect(census.rows.find((row) => row.qualifiedName === edge)?.account, `${machine}: ${edge}`).toBe('refused');
+      }
+    }
+  });
+
+  /*
+   * A ONE-WAY CROSSING REFUSES THE FAR SIDE TOO. Refusing only the machine whose
+   * relation holds the edge left the other walked as though the edge were not
+   * there: `Inner` published `unreachable z` and a PASS for `absence z` while a
+   * run of `Outer` ends in `Inner::z`, and `Outer` published `unreachable b`
+   * while a run of `Inner` ends in `Outer::b`. The edge written in `Inner`
+   * between two of `Outer`'s states is the same hole with both ends on one side.
+   */
+  it('refuses both machines of a one-way crossing, from either side, and decides no property over them', async () => {
+    for (const [text, edge, far, run] of [
+      [INTO_ONLY, 'IntoOnly::Outer::az', 'IntoOnly::Outer::Inner', { machine: 'IntoOnly::Outer', events: ['e'], ends: 'IntoOnly::Outer::Inner::z' }],
+      [OUT_ONLY, 'OutOnly::Outer::Inner::yb', 'OutOnly::Outer', { machine: 'OutOnly::Outer::Inner', events: ['go', 'back'], ends: 'OutOnly::Outer::b' }],
+      [INNER_EDGE, 'InnerEdge::Outer::Inner::ab2', 'InnerEdge::Outer', null],
+    ] as const) {
+      const model = await modelOf(text);
+      const r = reachReport(model);
+      expect(r.machines, edge).toHaveLength(2);
+      for (const m of r.machines) {
+        const qn = m.machine.qualifiedName;
+        expect(m.unsupported.map((u) => [u.construct, model.qualifiedName(u.elementId!)]), qn).toEqual([
+          ['machine-boundary', edge],
+        ]);
+        expect(m.exhaustive, qn).toBe(false);
+        expect(m.states.unreachable, qn).toEqual([]);
+        expect(m.transitions.dead, qn).toEqual([]);
+        const census = edgeCensus(model, m.machine.id);
+        expect(census.unaccounted, qn).toEqual([]);
+        expect(census.rows.find((row) => row.qualifiedName === edge)?.account, qn).toBe('refused');
+        // Every carrier is decided over nothing: each machine is refused.
+        for (const p of behaviourReport(model, { machineId: m.machine.id }).properties) {
+          expect(p.claim, qn).toBe('inconclusive');
+          expect(p.code, qn).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+        }
+      }
+      // The far machine has the carrier: it is refused rather than passed.
+      expect(behaviourReport(model, { machineId: idOf(model, far) }).exitCode, far).toBe(2);
+      // The run the reviewer's oracle found, which the far side's walk had ignored.
+      if (run !== null) {
+        expect(model.qualifiedName(runStateMachine(model, idOf(model, run.machine), [...run.events]).finalState!)).toBe(
+          run.ends,
+        );
+      }
+    }
+  });
+
+  /*
+   * TWO TOP-LEVEL MACHINES ARE NO DIFFERENT. `A`'s transition into `B::z` was
+   * walked by `A` and ignored by `B`, which published `unreachable z` and a PASS
+   * for `absence z` beside a run of `A` that ends in `B::z`.
+   */
+  it('refuses both top-level machines a transition between them joins', async () => {
+    const model = await modelOf(TOP_CROSS);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.map((u) => u.construct), m.exhaustive])).toEqual([
+      ['TopCross::A', ['machine-boundary'], false],
+      ['TopCross::B', ['machine-boundary'], false],
+    ]);
+    expect(r.machines[0].unsupported[0].detail).toContain('out of this machine, into `TopCross::B`, a machine of its own');
+    expect(r.machines[1].unsupported[0].detail).toContain('is written outside this machine, in `TopCross::A`');
+    expect(behaviourReport(model, { machineId: idOf(model, 'TopCross::B') }).properties[0].claim).toBe('inconclusive');
+    expect(model.qualifiedName(runStateMachine(model, idOf(model, 'TopCross::A'), ['e']).finalState!)).toBe('TopCross::B::z');
+  });
+
+  /*
+   * A TRANSITION TO THE NESTED DEFINITION ITSELF crosses too. `Inner` is in the
+   * outer region — the boundary stops below it — so `then Inner` was walked as
+   * an ordinary step: the walk cascaded into `Inner::x` and published `no way
+   * out Inner::x` as an exhaustive deadlock of `Outer`, while a run of `Outer`
+   * stays at `Inner` itself. Entering a machine at its root is starting it, so
+   * `Inner` is still walked whole.
+   */
+  it('refuses the outer machine of a transition to the nested definition itself, and walks the definition whole', async () => {
+    const model = await modelOf(INTO_DEF);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.map((u) => model.qualifiedName(u.elementId!)), m.exhaustive])).toEqual([
+      ['ToDef::Outer', ['ToDef::Outer::ai'], false],
+      ['ToDef::Outer::Inner', [], true],
+    ]);
+    expect(r.machines[0].deadlocks).toEqual([]);
+    expect(r.machines[0].unsupported[0].detail).toContain(
+      'leads from `ToDef::Outer::a` to `ToDef::Outer::Inner`, into the nested `state def` `ToDef::Outer::Inner`',
+    );
+    const outerId = idOf(model, 'ToDef::Outer');
+    expect(runStateMachine(model, outerId, ['e']).visited.map((id) => model.qualifiedName(id))).toEqual([
+      'ToDef::Outer::a',
+      'ToDef::Outer::Inner',
+    ]);
+    const row = behaviourReport(model, { machineId: outerId, pattern: 'pattern=absence, scope=globally, p=state b' });
+    expect(row.properties[0].claim).toBe('inconclusive');
+    expect(row.exitCode).toBe(2);
+  });
+
+  /*
+   * THE REPLAY READS WHERE THE RUN RESTS. The walk's witness for `then Inner`
+   * stood on `Inner::x`; the run fires the same transition and stays at
+   * `Inner`. The replay accepted it because `Inner` was on the witness's stack.
+   * It now compares the state the interpreter comes to rest in, step by step.
+   */
+  it('does not replay a witness whose step cascades where the interpreter does not', async () => {
+    const model = await modelOf(INTO_DEF);
+    const outerId = idOf(model, 'ToDef::Outer');
+    const ref = (qn: string) => ({ id: idOf(model, qn), name: qn.split('::').pop()!, qualifiedName: qn });
+    const ai = model.get(idOf(model, 'ToDef::Outer::ai'))!;
+    const witness: TraceStep[] = [
+      { index: 0, event: '-', transition: null, leaf: ref('ToDef::Outer::a'), stack: [ref('ToDef::Outer::a')], holds: [] },
+      {
+        index: 1,
+        event: 'e',
+        transition: {
+          id: ai.id,
+          name: 'ai',
+          qualifiedName: 'ToDef::Outer::ai',
+          from: ref('ToDef::Outer::a'),
+          to: ref('ToDef::Outer::Inner'),
+          label: 'e',
+        },
+        leaf: ref('ToDef::Outer::Inner::x'),
+        stack: [ref('ToDef::Outer::Inner'), ref('ToDef::Outer::Inner::x')],
+        holds: ['p'],
+      },
+    ];
+    const replay = replayWitness(model, outerId, witness, MAX_COMPLETION);
+    expect(replay.replays).toBe(false);
+    expect(replay.step).toBe(1);
+    expect(replay.reason).toBe(
+      'at step 1 the witness fires `ToDef::Outer::ai` and enters `ToDef::Outer::Inner::x`, and the interpreter fires ' +
+        'it and enters `ToDef::Outer::Inner`',
+    );
+    // The same witness ending where the run rests replays.
+    const resting: TraceStep[] = [
+      witness[0],
+      { ...witness[1], leaf: ref('ToDef::Outer::Inner'), stack: [ref('ToDef::Outer::Inner')] },
+    ];
+    expect(replayWitness(model, outerId, resting, MAX_COMPLETION).replays).toBe(true);
+  });
+
+  /*
+   * A NESTED DEFINITION THAT OWNS NO TRANSITION is not a machine, and the
+   * refusal no longer calls it one under a header that counts one machine.
+   */
+  it('names a nested definition that owns no transition as one no walk enters', async () => {
+    const model = await modelOf(INTO_PLAIN);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => m.machine.qualifiedName)).toEqual(['Nm::Outer']);
+    expect(r.machines[0].unsupported[0].detail).toContain(
+      'into the nested `state def` `Nm::Outer::Inner`, a definition this walk stops at and no walk enters',
+    );
+    expect(r.machines[0].unsupported[0].detail).not.toContain('a machine of its own');
+  });
+
+  /*
+   * WHAT THE OUTER MACHINE IS CHECKED AGAINST STOPS WHERE ITS WALK STOPS. Once
+   * `--element Outer` named `Outer`, its property list and its atoms still read
+   * every descendant: `Inner`'s carrier was checked against `Outer`'s walk too,
+   * which never stands on `Inner::y`, and printed PASS (exit 0) beside the FAIL
+   * the same claim gets on `Inner`.
+   */
+  it('gives the outer machine only the properties and atoms of its own region', async () => {
+    const model = await modelOf(LEAK);
+    const outerId = idOf(model, 'Leak::Outer');
+    const innerId = idOf(model, 'Leak::Outer::Inner');
+    expect(behaviourReport(model, { machineId: outerId }).properties).toEqual([]);
+    expect(behaviourReport(model, { machineId: innerId }).properties.map((p) => p.claim)).toEqual(['fail']);
+    for (const p of ['state y', 'fires xy', 'node x', 'trigger go']) {
+      const row = behaviourReport(model, { machineId: outerId, pattern: `pattern=absence, scope=globally, p=${p}` });
+      expect(row.properties[0].claim, p).toBe('inconclusive');
+      expect(row.properties[0].code, p).toBe('verification/unknown-atom');
+      expect(row.exitCode, p).toBe(2);
+    }
+    // The outer machine's own atoms still resolve.
+    expect(
+      behaviourReport(model, { machineId: outerId, pattern: 'pattern=absence, scope=globally, p=state b' }).properties[0].claim,
+    ).toBe('fail');
+
+    const file = fileOf('leak.sysml', LEAK);
+    const outer = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Leak::Outer']);
+    expect(outer.code).toBe(2);
+    expect(outer.stdout).not.toContain('PASS');
+    const inner = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Leak::Outer::Inner']);
+    expect(inner.code).toBe(1);
+    expect(inner.stdout).toContain('FAIL         `state y` never holds, over the whole run');
+    const atom = await reachCli([
+      'check-behaviour',
+      file,
+      '--no-library',
+      '--element',
+      'Leak::Outer',
+      '--pattern',
+      'pattern=absence, scope=globally, p=state y',
+    ]);
+    expect(atom.code).toBe(2);
+    expect(atom.stdout + atom.stderr).toContain('verification/unknown-atom');
+  }, 60_000);
+
+  /*
+   * THE NEGATIVE CONTROL. A nested definition no transition crosses is not
+   * refused: the outer machine opens at its own `a` although `Inner` is written
+   * first, each machine decides its own states, and the outer witness replays
+   * through the interpreter from that same start.
+   */
+  it('walks nest3-first whole, from the outer machine’s own start, and its witness replays', async () => {
+    const model = await modelOf(NEST3_FIRST);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.length, m.exhaustive])).toEqual([
+      ['Nest3::Outer', 0, true],
+      ['Nest3::Outer::Inner', 0, true],
+    ]);
+    const outer = r.machines[0];
+    expect(outer.states.reachable.map((s) => s.name)).toEqual(['a', 'b']);
+    expect(outer.deadlocks.map((d) => [d.leaf.name, d.steps])).toEqual([['b', 1]]);
+    const outerId = idOf(model, 'Nest3::Outer');
+    const b = behaviourReport(model, { machineId: outerId, pattern: 'pattern=cover, scope=globally, p=state b' });
+    expect(b.properties[0].claim).toBe('covered');
+    expect(b.properties[0].witness.map((s) => s.leaf?.name)).toEqual(['a', 'b']);
+    expect(replayWitness(model, outerId, b.properties[0].witness, MAX_COMPLETION).replays).toBe(true);
+    expect(runStateMachine(model, outerId, ['e']).visited.map((id) => model.get(id)?.declaredName)).toEqual(['a', 'b']);
+    // A state of the nested definition belongs to IT: naming one is refused
+    // with that definition as the machine to pick, not the outer one.
+    const x = behaviourMachineFor(model, idOf(model, 'Nest3::Outer::Inner::x'));
+    expect(x.ok).toBe(false);
+    if (!x.ok) {
+      expect(x.holder).toBe(idOf(model, 'Nest3::Outer::Inner'));
+      expect(x.message).toBe(
+        '`Nest3::Outer::Inner::x` holds no state machine — it is inside `Nest3::Outer::Inner`, which is one',
+      );
+    }
+  });
+
+  /*
+   * THE MACHINE NO REFERENCE COULD NAME (C3). `Inner` is a second machine under
+   * `Outer`, so `--element Nest6::Outer` was refused as holding two, every way
+   * of naming `Outer` was refused the same way, and the app's pick row for it
+   * named it again.
+   */
+  it('checks nest6-prop’s outer machine when it is named, and still refuses the package that holds both', async () => {
+    const model = await modelOf(NEST6_PROP);
+    const outer = behaviourMachineFor(model, idOf(model, 'Nest6::Outer'));
+    expect(outer.ok && model.qualifiedName(outer.machine.id)).toBe('Nest6::Outer');
+    const pkg = behaviourMachineFor(model, idOf(model, 'Nest6'));
+    expect(pkg.ok).toBe(false);
+    if (!pkg.ok) expect(pkg.candidates).toEqual([idOf(model, 'Nest6::Outer'), idOf(model, 'Nest6::Outer::Inner')]);
+
+    const file = fileOf('nest6-prop.sysml', NEST6_PROP);
+    const named = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Nest6::Outer']);
+    expect(named.stderr).not.toContain('holds 2 state machines');
+    expect(named.code).toBe(1);
+    expect(named.stdout).toContain('Nest6::Outer — 1 property: 0 pass, 1 fail');
+    expect(named.stdout).toContain('FAIL         `state b` never holds, over the whole run');
+    const both = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Nest6']);
+    expect(both.code).toBe(2);
+    expect(both.stderr).toContain('`Nest6` holds 2 state machines:');
+  }, 60_000);
 });
 
 describe('the semantic profile is data, and its provenance is real', () => {

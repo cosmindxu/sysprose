@@ -91,7 +91,9 @@ import {
   afterDuration,
   hashConfig,
   initialConfig,
+  directStates,
   leafOf,
+  regionDescendants,
   seedStore,
   stepCandidates,
   stepConfig,
@@ -689,14 +691,27 @@ export function isPropertyCarrier(el: ElementRecord): boolean {
 /**
  * Every property carried inside one machine, in model order.
  *
- * Read from the machine AND its descendants: the natural home for a property
- * about a machine is the machine itself, and the natural home for one about a
- * state is that state. Both are inside the graph the walk covers, so both are
- * about the same runs.
+ * Read from the machine AND its region: the natural home for a property about
+ * a machine is the machine itself, and the natural home for one about a state
+ * is that state. Both are inside the graph the walk covers, so both are about
+ * the same runs.
+ *
+ * THE REGION, NOT EVERY DESCENDANT. A `state def` written inside the machine is
+ * a machine of its own (`stateMachinesIn`, `./explore`), and a carrier on it or
+ * on one of its states is a claim about ITS runs. Read from every descendant,
+ * that carrier was checked against the outer walk as well, which never stands
+ * on the nested definition's states — so `absence of state y` carried by
+ * `Inner` printed PASS under `Outer` and FAIL under `Inner`, and the outer
+ * machine's pick row counted a property that was not its own.
+ * `regionDescendants` stops below the nested definition but keeps the
+ * definition itself, whose own carriers are its, so it is skipped as a holder.
  */
 export function propertiesOf(model: Model, machineId: ElementId): PropertyText[] {
   const out: PropertyText[] = [];
-  const holders = [model.get(machineId), ...model.descendants(machineId)];
+  const holders = [
+    model.get(machineId),
+    ...regionDescendants(model, machineId).filter((h) => h.eClass !== 'StateDefinition'),
+  ];
   for (const holder of holders) {
     if (!holder) continue;
     for (const carrier of model.children(holder.id)) {
@@ -1404,15 +1419,28 @@ export function replayWitness(
     steps.filter((s) => s.event !== '').map((s) => s.event),
     { maxCompletion, follow: steps.map((s) => s.transition?.id ?? '') },
   );
+  const rests = restingLeaves(model, run.visited, run.fired);
+  const qn = (id: ElementId | null | undefined): string =>
+    id == null ? 'no state' : model.qualifiedName(id) || id;
   for (let i = 0; i < steps.length; i++) {
     const want = steps[i];
     const got = run.fired[i];
     const same =
-      got !== undefined &&
-      got.transitionId === want.transition?.id &&
-      got.trigger === want.event &&
-      want.stack.some((s) => s.id === got.to);
-    if (same) continue;
+      got !== undefined && got.transitionId === want.transition?.id && got.trigger === want.event;
+    if (same) {
+      // THE LEAF, NOT A MEMBER OF THE STACK. The same transition fired is the
+      // same target entered; what can still part is how far in the run goes
+      // from there. This test used to accept the target anywhere on the
+      // witness's stack, so a witness that cascaded from `Inner` into
+      // `Inner::x` replayed against a run that stayed at `Inner` — and every
+      // atom the row read at that step was read of a state no run entered.
+      if (rests[i] === (want.leaf?.id ?? null)) continue;
+      return {
+        replays: false,
+        step: want.index,
+        reason: `at step ${want.index} the witness fires \`${qn(got.transitionId)}\` and enters \`${qn(want.leaf?.id)}\`, and the interpreter fires it and enters \`${qn(rests[i])}\``,
+      };
+    }
     const taken = want.transition === null ? 'nothing' : `\`${transitionLabel(want.transition)}\``;
     const instead =
       got === undefined
@@ -1425,6 +1453,44 @@ export function replayWitness(
     };
   }
   return { replays: true, step: null, reason: '' };
+}
+
+/**
+ * The state a run stands on after each of its fires, read off the
+ * interpreter's own `visited` list — `null` where that list cannot be lined up
+ * with the fires, which the caller reads as a departure.
+ *
+ * Every fire appends the states it enters: its target first, then — on the
+ * hierarchical path, through `stepConfig` — each initial substate it cascades
+ * into, every one a direct substate of the one before; the opening appends its
+ * own cascade the same way. A cascade ends on a state with no substate, so the
+ * next fire's target can never continue it. On the flat path a fire appends its
+ * target alone, which is the point: a run there does not cascade, and a witness
+ * that did is not that run.
+ */
+function restingLeaves(
+  model: Model,
+  visited: readonly ElementId[],
+  fired: readonly { readonly to: ElementId }[],
+): (ElementId | null)[] {
+  const cascadeEnd = (i: number): number => {
+    let j = i;
+    while (j + 1 < visited.length && directStates(model, visited[j]).some((s) => s.id === visited[j + 1])) j++;
+    return j;
+  };
+  const out: (ElementId | null)[] = [];
+  let at = visited.length === 0 ? 0 : cascadeEnd(0) + 1;
+  for (const f of fired) {
+    if (at >= visited.length || visited[at] !== f.to) {
+      out.push(null);
+      at = visited.length;
+      continue;
+    }
+    const end = cascadeEnd(at);
+    out.push(visited[end]);
+    at = end + 1;
+  }
+  return out;
 }
 
 /** Why a walk stopped, in the words the report prints. */

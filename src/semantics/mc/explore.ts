@@ -786,6 +786,7 @@ export interface EdgeCensus {
 export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
   const relation = new Set(regionTransitions(model, machineId).map((t) => t.id));
   const refusedIds = new Set(danglingTransitions(model, machineId).map((t) => t.id));
+  const crossing = new Map(boundaryCrossings(model, machineId).map((c) => [c.edge.id, c] as const));
   const onStack = stackNodes(model, machineId);
   const rows: EdgeCensusRow[] = [];
   const nameOf = (id: ElementId | undefined): string =>
@@ -817,6 +818,14 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
         'refused',
         'it names no source or no target, so the walk refuses this machine by name rather than ' +
           'counting the edge dead on a technicality',
+      );
+    } else if (crossing.has(el.id)) {
+      // BEFORE `opening`: an opening edge into a nested definition's state would
+      // open this machine somewhere its relation does not reach.
+      row(
+        'refused',
+        `it leads ${acrossSentence(model, crossing.get(el.id)!)}, so the walk refuses this machine by ` +
+          'name rather than walking a step whose meaning is not defined here',
       );
     } else if (relation.has(el.id) && sourceKind === 'InitialNode') {
       row(
@@ -859,6 +868,23 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
             : `: it carries the payload \`${payloadOf(el)}\`, and this relation models no payload`),
       );
     }
+  }
+  // The far side of a crossing: an edge written OUTSIDE this region that joins
+  // one of its states. The domain above is the region, so these are counted
+  // here or nowhere, and an edge into this machine's states that no row
+  // accounted for is the hole this census exists to close.
+  for (const c of crossing.values()) {
+    if (c.way !== 'foreign') continue;
+    rows.push({
+      id: c.edge.id,
+      eClass: c.edge.eClass,
+      qualifiedName: model.qualifiedName(c.edge.id) || c.edge.id,
+      account: 'refused',
+      reason:
+        `it joins ${nameOf(c.edge.source?.[0])} to ${nameOf(c.edge.target?.[0])} and is ` +
+        `${acrossSentence(model, c)}, so the walk refuses this machine by name rather than walking ` +
+        'it as though the edge were not there',
+    });
   }
 
   const counts: Record<EdgeAccount, number> = {
@@ -904,6 +930,148 @@ function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[
   );
 }
 
+/** A step edge that joins this machine's states to states outside its region. */
+interface BoundaryCrossing {
+  edge: ElementRecord;
+  /**
+   * `into` — in this machine's relation, leading into a `state def` written
+   * inside it (or to that definition itself); `out` — in this machine's
+   * relation, leading out of its region; `foreign` — written OUTSIDE this
+   * machine's region and joining one of its states to somewhere else.
+   */
+  way: 'into' | 'out' | 'foreign';
+  /**
+   * The element across the boundary, named in the refusal: the nested
+   * definition (`into`), the machine whose region holds the far end (`out`,
+   * `null` when none does), or the element the edge is written in (`foreign`).
+   */
+  other: ElementId | null;
+}
+
+/**
+ * The step edges that join this machine's states to states outside its region,
+ * from EITHER side: written in this machine and leading out of its region —
+ * into a `state def` written inside it, or into another machine — or written
+ * outside it and leading into or out of one of its states.
+ *
+ * Each machine steps by its own relation only (`regionTransitions`, which stops
+ * at a nested `state def`, `./config`), and a nested `state def` is a machine of
+ * its own (`stateMachinesIn`). So an edge across a region's boundary has no
+ * meaning this engine defines, and no walk follows it as one. The outer walk of
+ * `Nest2` entered `Inner::x` and found none of its transitions (`no way out
+ * Inner::x`, although `Inner`'s own walk fires one there), and `Inner`'s walk
+ * followed `yb` out to a state the outer walk had just published `unreachable`
+ * (`unreachable b` beside `deadlock b … reached in 2 step(s)`).
+ *
+ * BOTH SIDES ARE REFUSED, not only the machine whose relation holds the edge.
+ * Refusing that one alone left the far side walked as though the edge were not
+ * there: with only `az` (written in `Outer`, leading into `Inner::z`), `Inner`
+ * still published `unreachable z` and a `pass` for `absence z` while a run of
+ * `Outer` ends in `Inner::z`; with only `yb`, `Outer` published `unreachable b`
+ * the same way. The far side is found off the endpoint index, so an edge
+ * written anywhere — in a nested definition, in another top-level machine, in
+ * a package — that names one of this machine's states is one of them.
+ *
+ * An end AT a machine's root is not a crossing for that machine — entering a
+ * machine at its root is starting it, which is what its walk does — but a
+ * nested `state def` is not part of the outer machine's region, so `then
+ * Inner` written in `Outer` crosses into it: the walk cascaded into `Inner`'s
+ * initial state, where a run of `Outer` stays at `Inner` itself.
+ *
+ * The interpreter (`runRegion`, `../execute.ts`) reads the same relation and
+ * takes such an edge where the walk would have: the run enters the far state
+ * and stays there, since none of that state's transitions are in it. That
+ * reading is not a verdict, and `docs/06` §8.6 says how the two stand.
+ *
+ * Read twice, like {@link danglingTransitions}: by {@link edgeCensus}, for the
+ * `refused` bucket, and by {@link unsupportedConstructs}.
+ */
+function boundaryCrossings(model: Model, machineId: ElementId): BoundaryCrossing[] {
+  const region = regionDescendants(model, machineId);
+  const regionIds = new Set<ElementId>(region.map((d) => d.id));
+  // The nodes this machine's region is made of. A nested `state def` is in
+  // `regionDescendants` — the boundary stops BELOW it — but it is a machine of
+  // its own, or a definition no walk enters, and not a node of this one.
+  const own = new Set<ElementId>([machineId]);
+  for (const d of region) if (d.eClass !== 'StateDefinition') own.add(d.id);
+  let inside: ReadonlySet<ElementId> | undefined;
+  const out: BoundaryCrossing[] = [];
+  for (const edge of regionTransitions(model, machineId)) {
+    for (const end of [edge.source![0], edge.target![0]]) {
+      if (own.has(end)) continue;
+      inside ??= new Set(model.descendants(machineId).map((d) => d.id));
+      out.push(
+        inside.has(end)
+          ? { edge, way: 'into', other: outermostDefinitionAt(model, machineId, end) }
+          : { edge, way: 'out', other: machineHolding(model, end) },
+      );
+      break;
+    }
+  }
+  const foreign = new Set<ElementId>();
+  for (const id of own) {
+    if (id === machineId) continue;
+    for (const edge of model.edgesOf(id)) {
+      if (foreign.has(edge.id) || regionIds.has(edge.id)) continue;
+      if (!CONTROL_EDGE_KINDS.has(edge.eClass) || edge.attrs.isLibrary === true) continue;
+      if (edge.source?.[0] === undefined || edge.target?.[0] === undefined) continue;
+      foreign.add(edge.id);
+      out.push({ edge, way: 'foreign', other: edge.ownerId ?? null });
+    }
+  }
+  return out;
+}
+
+/**
+ * The `state def` written in the machine's region that holds `id` — the
+ * boundary between the two — or `id` itself when it is that definition. `id` is
+ * a descendant of the machine that its region does not hold, so there is one.
+ */
+function outermostDefinitionAt(model: Model, machineId: ElementId, id: ElementId): ElementId {
+  let found = id;
+  for (let p: ElementId | null = id; p != null && p !== machineId; p = model.get(p)?.ownerId ?? null) {
+    if (model.get(p)?.eClass === 'StateDefinition') found = p;
+  }
+  return found;
+}
+
+/** The machine whose region holds `id` as one of its nodes, if any does. */
+function machineHolding(model: Model, id: ElementId): ElementId | null {
+  for (const m of stateMachinesIn(model)) {
+    if (m.id === id) return m.id;
+    const holds = regionDescendants(model, m.id).some((d) => d.id === id && d.eClass !== 'StateDefinition');
+    if (holds) return m.id;
+  }
+  return null;
+}
+
+/**
+ * What lies across the boundary, in the refusal's words: a nested definition
+ * is "a machine of its own" only when it is one — a `state def` that owns no
+ * transition is walked by nothing (`stateMachinesIn`), and calling it a machine
+ * printed a second machine under a header that counted one.
+ */
+function acrossSentence(model: Model, c: BoundaryCrossing): string {
+  const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  const other = c.other === null ? undefined : model.get(c.other);
+  switch (c.way) {
+    case 'into':
+      return (
+        `into the nested \`state def\` ${qn(c.other!)}, ` +
+        (other !== undefined && ownsMachine(model, other)
+          ? 'a machine of its own that this walk does not enter'
+          : 'a definition this walk stops at and no walk enters, since it owns no transition')
+      );
+    case 'out':
+      if (other === undefined) return 'out of this machine, to an element no machine walks';
+      return model.descendants(other.id).some((d) => d.id === c.edge.ownerId)
+        ? `out of this nested \`state def\`, into ${qn(other.id)}, the machine it is written in`
+        : `out of this machine, into ${qn(other.id)}, a machine of its own`;
+    case 'foreign':
+      return `written outside this machine${other !== undefined ? `, in ${qn(other.id)}` : ''}`;
+  }
+}
+
 /**
  * The constructs this engine refuses, checked BEFORE the walk.
  *
@@ -915,7 +1083,14 @@ function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[
  * cannot fire at all, and a walk that ignored it would count it dead on a
  * technicality rather than on a semantics.
  *
- * The fourth is not a construct anybody enumerated, and that is its point. It
+ * `machine-boundary` is a step edge that joins this machine's states to states
+ * outside its region ({@link boundaryCrossings}), from either side: written in
+ * this machine and leading into a `state def` written inside it or out to
+ * another machine, or written elsewhere and leading into or out of one of its
+ * states. Each machine walks only its own transitions, so the step has no
+ * meaning here, and neither side's walk is a claim about the model.
+ *
+ * The last is not a construct anybody enumerated, and that is its point. It
  * is whatever the {@link edgeCensus} could not account for: an edge that
  * touches this machine's states and that the relation does not follow. §3.8's
  * list was written by reading the code, which is how an edge kind came to be
@@ -961,6 +1136,22 @@ function unsupportedConstructs(
         'a step edge names no source or no target, so no run can fire it and no walk can say ' +
         'whether it would have. Give it both endpoints.',
       elementId: tr.id,
+    });
+  }
+  const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  for (const c of boundaryCrossings(model, machineId)) {
+    out.push({
+      construct: 'machine-boundary',
+      detail:
+        `${qn(c.edge.id)} leads from ${qn(c.edge.source![0])} to ${qn(c.edge.target![0])}` +
+        (c.way === 'foreign'
+          ? ` and is ${acrossSentence(model, c)}, so this walk does not take it. `
+          : `, ${acrossSentence(model, c)}. `) +
+        'Each machine steps only by its own transitions, so what a step across that boundary means ' +
+        'is not defined here, and no walk of this machine is a claim about it as written. Keep each ' +
+        'transition inside the machine whose states it joins, or write a nested definition as a ' +
+        'composite state (`state Inner { … }`) to make its states part of the outer machine.',
+      elementId: c.edge.id,
     });
   }
   // The detail is the census ROW'S OWN sentence, not a fixed one. A single
@@ -2108,6 +2299,21 @@ export interface ReachOptions extends ExploreOptions {
 }
 
 /**
+ * Does this element own a state machine — a non-library element that directly
+ * owns a TransitionUsage, or one marked parallel that contains one? The first
+ * half of {@link stateMachinesIn}, and what decides whether a nested `state
+ * def` a crossing leads into is a machine of its own (`acrossSentence`).
+ */
+function ownsMachine(model: Model, el: ElementRecord): boolean {
+  if (el.attrs.isLibrary === true) return false;
+  if (model.children(el.id).some((c) => c.eClass === 'TransitionUsage')) return true;
+  return (
+    (isTruthy(el.attrs.parallel) || isTruthy(el.attrs.isParallel)) &&
+    model.descendants(el.id).some((d) => d.eClass === 'TransitionUsage')
+  );
+}
+
+/**
  * The state machines of a model: every non-library element that directly owns a
  * TransitionUsage — plus any element marked parallel that CONTAINS one — and is
  * not itself inside another such element.
@@ -2123,14 +2329,7 @@ export interface ReachOptions extends ExploreOptions {
  * is precisely the answer §3.8 says this engine must refuse to give.
  */
 export function stateMachinesIn(model: Model, scopeId?: ElementId): ElementRecord[] {
-  const owners = model.all().filter((el) => {
-    if (el.attrs.isLibrary === true) return false;
-    if (model.children(el.id).some((c) => c.eClass === 'TransitionUsage')) return true;
-    return (
-      (isTruthy(el.attrs.parallel) || isTruthy(el.attrs.isParallel)) &&
-      model.descendants(el.id).some((d) => d.eClass === 'TransitionUsage')
-    );
-  });
+  const owners = model.all().filter((el) => ownsMachine(model, el));
   const ownerIds = new Set(owners.map((o) => o.id));
   const roots = owners.filter((el) => {
     // A nested `state def` is a machine of its OWN, not a region of the owner it

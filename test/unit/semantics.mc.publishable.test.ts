@@ -1450,6 +1450,50 @@ describe('each clause of the gate, on the one input that can fail it', () => {
     expect(row.exactness.acyclic).toBeNull();
   });
 
+  /*
+   * A TRANSITION ACROSS A NESTED `state def`'S BOUNDARY (review B's
+   * `nest2-into`, O1 H1). Before the boundary refused it, `Outer`'s walk was
+   * exhaustive and named only the environment: it published `unreachable b`
+   * and a `no way out` at the inner state it walked into, and the inner
+   * machine's walk published `b` reached. The gate now fails on the refusal —
+   * on both edges, each machine refused on the one it holds and on the one
+   * written across from it — which comes before every relation clause, and the
+   * property row has no answer over either machine.
+   */
+  it('names `unsupported` on both machines of a transition across a nested `state def`, and decides no property over them', async () => {
+    const text = [
+      'package Nest2 {',
+      '    state def Outer {',
+      '        state a;',
+      '        state b;',
+      '        transition ax first a accept e then Inner::x;',
+      '        state def Inner {',
+      '            state x;',
+      '            state y;',
+      '            transition xy first x accept go then y;',
+      '            transition yb first y accept back then Outer::b;',
+      '        }',
+      '    }',
+      '}',
+      '',
+    ].join('\n');
+    const model = (await loadModelText(text, { fileName: 'nest2-into.sysml', library: 'none' })).model!;
+    for (const row of reachReport(model).machines) {
+      expect(row.exactness.walkIsExact, row.machine.qualifiedName).toBe(false);
+      expect(row.exactness.failedClause, row.machine.qualifiedName).toBe('unsupported');
+      expect(row.qualification, row.machine.qualifiedName).toBe(
+        'not explored — machine-boundary, machine-boundary; no figure below is a claim of absence',
+      );
+      const walk = exploreMachine(model, row.machine.id);
+      expect(publishabilityOf(walk).decreasingOk, row.machine.qualifiedName).toBe(false);
+      // An atom each machine holds, so the row reaches the walk rather than a refusal of the atom.
+      const own = row.machine.qualifiedName === 'Nest2::Outer' ? 'state b' : 'state y';
+      const verdict = checkProperty(model, row.machine.id, prop(own));
+      expect(verdict.claim, row.machine.qualifiedName).toBe('inconclusive');
+      expect(verdict.code, row.machine.qualifiedName).toBe('verification/behaviour-unsupported-construct');
+    }
+  }, 60_000);
+
   it('puts `environment` before `time` on a real machine carrying both, not only on a fabricated walk', () => {
     const { model } = triggerAndDwellMachine();
     const row = reachReport(model).machines[0];
