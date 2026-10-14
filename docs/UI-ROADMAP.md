@@ -160,6 +160,8 @@ so ALL(\*) is the cheapest option Chevrotain offers this grammar, not a misconfi
 build the parser in a Web Worker. Measured boundary cost to move a parse result across: 1.2 ms.
 Still open at `5943654`: there is no parser worker (the dedicated workers are ELK's layout and the
 palette's checks), and in Node the first parse of a one-line model takes 1.2 s and the next 2 ms.
+Since branch `load-health` (2026-10-14) the checks worker builds the parser too, and parses each
+text a palette check's load health needs there; Apply's parse is still on the page.
 
 ### What the profiling ruled OUT, with the arithmetic
 

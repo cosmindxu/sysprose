@@ -89,3 +89,15 @@ export function parseDocument(text: string): SysmlParseResult {
     parserErrors: result.parserErrors,
   };
 }
+
+/**
+ * The offsets at which the parser's own lexer starts a token it hands the
+ * parser (whitespace and `//` notes are not handed over) when it reads `text`:
+ * the places it reads as code. An offset inside a string, a quoted name or a
+ * `/* … *\/` comment is not one, whichever field of the text opened it.
+ */
+export function tokenStarts(text: string): Set<number> {
+  cachedServices ??= createSysmlServices();
+  const { tokens } = cachedServices.Sysml.parser.Lexer.tokenize(text);
+  return new Set(tokens.map((t) => t.startOffset));
+}

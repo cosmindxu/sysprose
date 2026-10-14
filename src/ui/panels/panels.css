@@ -1702,6 +1702,7 @@
   border-color: var(--warning);
 }
 /* A check in a worker: not a verdict at all yet, so it takes the accent and none of the verdict colours. */
+.palette-check-verdict.is-checking,
 .palette-check-verdict.is-running {
   color: var(--accent);
   border-color: var(--accent);

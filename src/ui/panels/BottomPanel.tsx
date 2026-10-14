@@ -4,8 +4,9 @@
  *  (1) Checks   — what each verification check last said, from the palette's
  *      Checks section; click a row to select the element it names. A result
  *      from before the last edit is labelled stale, never shown as current. A
- *      check still running in the background is listed at once, as running:
- *      the tab comes forward at the click, so it is where the answer will be.
+ *      check still running in the background is listed at once, as checking
+ *      the load or as running: the tab comes forward at the click, so it is
+ *      where the answer will be.
  *  (2) Problems — lists {@link useAppStore.diagnostics}; click a row to select
  *      the offending element.
  *  (2) Text     — embeds the {@link TextEditor}.
@@ -25,7 +26,7 @@ function isFullQueryElement(el: ElementRecord | ProjectedRow): el is ElementReco
   return typeof el.id === 'string';
 }
 import { TextEditor } from './TextEditor';
-import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
+import { runningVerdict, useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 import { CHECKS } from '../checks';
 import { BehaviourReport } from './BehaviourReport';
 import { SimulationTab } from './SimulationTab';
@@ -108,15 +109,20 @@ function ChecksTab(): JSX.Element {
           Clear
         </button>
       </div>
-      {waiting.map(([id]) => {
+      {waiting.map(([id, run]) => {
         const spec = CHECKS.find((c) => c.id === id);
+        const verdict = runningVerdict(run);
         return (
-          <div className="checks-result" key={id} data-testid="checks-result" data-check={id} data-verdict="running">
+          <div className="checks-result" key={id} data-testid="checks-result" data-check={id} data-verdict={verdict}>
             <div className="checks-result-head">
               <span className="checks-result-label">{spec?.label ?? id}</span>
               <code>{id}</code>
-              <span className="palette-check-verdict is-running">{VERDICT_LABEL.running}</span>
-              <span className="checks-result-summary">Running in the background — Cancel, in the palette, stops it.</span>
+              <span className={`palette-check-verdict is-${verdict}`}>{VERDICT_LABEL[verdict]}</span>
+              <span className="checks-result-summary">
+                {verdict === 'checking'
+                  ? 'Checking that the model’s text loads, in the background — Cancel, in the palette, stops it.'
+                  : 'Running in the background — Cancel, in the palette, stops it.'}
+              </span>
             </div>
           </div>
         );

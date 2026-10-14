@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildSampleModel, Model, type ElementId } from '@core/index';
 import { contractReport, isUserElement, obligationsReport } from '@api/index';
-import { isKnownCode, parseModel, resolveConnectorFeatureChains } from '@text/index';
+import { isKnownCode, measureTextHealth, parseModel, resolveConnectorFeatureChains, serializeUserModelSignals, type MeasuredText } from '@text/index';
 import { loadModelText } from '@text/load';
 import { resolveTypeReferences } from '@library/resolve';
 import { loadFullStandardLibrary } from '@library/full-library';
@@ -59,7 +59,7 @@ import {
   type ReachMark,
 } from '../../src/ui/behaviour-checks';
 import type { StoredResult } from '../../src/ui/panels/checks-store';
-import type { LoadHealth } from '../../src/ui/store';
+import type { LoadHealth, PendingLoadHealth } from '../../src/ui/store';
 import { COMMANDS } from '../../scripts/lib/sysprose-spec';
 import { main as sysproseMain } from '../../scripts/sysprose';
 import {
@@ -70,8 +70,9 @@ import {
   userPart,
   type CheckReply,
   type CheckRequest,
+  type HealthRequest,
 } from '../../src/ui/checks-offthread';
-import { useChecksStore, verdictOf } from '../../src/ui/panels/checks-store';
+import { runningVerdict, useChecksStore, verdictOf } from '../../src/ui/panels/checks-store';
 import {
   IDLE_MS,
   WATCHDOG_MS,
@@ -752,7 +753,10 @@ describe('the checks that run in a worker', () => {
 /** A worker the test answers by hand. */
 class FakeWorker implements CheckWorker {
   static made: FakeWorker[] = [];
+  /** The checks it was asked to run. */
   posted: CheckRequest[] = [];
+  /** The texts it was asked to measure. */
+  health: HealthRequest[] = [];
   terminated = false;
   onmessage: CheckWorker['onmessage'] = null;
   onerror: CheckWorker['onerror'] = null;
@@ -760,8 +764,9 @@ class FakeWorker implements CheckWorker {
   constructor() {
     FakeWorker.made.push(this);
   }
-  postMessage(message: CheckRequest): void {
-    this.posted.push(message);
+  postMessage(message: CheckRequest | HealthRequest): void {
+    if ('kind' in message && message.kind === 'health') this.health.push(message);
+    else this.posted.push(message as CheckRequest);
   }
   terminate(): void {
     this.terminated = true;
@@ -771,7 +776,51 @@ class FakeWorker implements CheckWorker {
     const req = this.posted[this.posted.length - 1];
     this.onmessage?.({ data: { id: req.id, ok: true, result } satisfies CheckReply });
   }
+  /** Answer the latest load request with these counts, as the worker would. */
+  measured(texts: MeasuredText[]): void {
+    const req = this.health[this.health.length - 1];
+    this.onmessage?.({ data: { id: req.id, ok: true, texts } });
+  }
 }
+
+/**
+ * A load still to be measured, as `loadHealthNow` hands one over, recording what
+ * it is asked; measured on the page (`here`), it is `onPage` — clean unless a
+ * test says otherwise.
+ */
+function pendingLoad(
+  texts: string[] = ['package Q;\n'],
+  onPage: (after: string | undefined) => LoadHealth = () => healthy,
+): {
+  load: PendingLoadHealth;
+  calls: { finished: MeasuredText[][]; unchecked: string[]; here: number; after: Array<string | undefined> };
+} {
+  const calls = { finished: [] as MeasuredText[][], unchecked: [] as string[], here: 0, after: [] as Array<string | undefined> };
+  const load: PendingLoadHealth = {
+    unmeasured: texts,
+    finish: (measured) => {
+      calls.finished.push([...measured]);
+      const parse = measured.reduce((n, m) => n + m.parseErrors, 0);
+      const validation = measured.reduce((n, m) => Math.max(n, m.validationErrors), 0);
+      return parse + validation === 0
+        ? healthy
+        : degradedHealth({ errors: parse + validation, saved: { parseErrors: parse }, exported: { parseErrors: parse }, validationErrors: validation });
+    },
+    unchecked: (why) => {
+      calls.unchecked.push(why);
+      return { ...healthy, errors: 1, unchecked: why };
+    },
+    here: (after) => {
+      calls.here++;
+      calls.after.push(after);
+      return onPage(after);
+    },
+  };
+  return { load, calls };
+}
+
+/** What a worker counts for a text that parses and loads cleanly, and writes back as itself. */
+const cleanCount = (text = 'package Q;'): MeasuredText => ({ parseErrors: 0, validationErrors: 0, rewritten: text });
 
 describe('running a check from the palette', () => {
   const reach = CHECKS.find((c) => c.id === 'reach')!;
@@ -1093,6 +1142,341 @@ describe('running a check from the palette', () => {
     expect(stored('reach')).toBeUndefined();
     expect(running('reach')).toBe(false);
   });
+
+  /*
+   * The load first, in the worker (review 2026-10-14, D-3 and U3): a text no parse
+   * has measured goes to the worker before the walk, and the page is not held for
+   * the parse. A load nobody could measure is never clean.
+   */
+  it('checks the load in the worker before the walk: checking the load from the click, then the walk, judged over what the worker counted', () => {
+    withFakeWorker();
+    const { load, calls } = pendingLoad();
+    runChecked(reach, walkable({ loadHealth: undefined }), 3, load);
+    const run = useChecksStore.getState().running.reach;
+    expect(run).toMatchObject({ phase: 'load', rev: 3 });
+    expect(runningVerdict(run)).toBe('checking');
+    const w = FakeWorker.made[0];
+    expect(w.health).toEqual([{ id: expect.any(Number), kind: 'health', texts: load.unmeasured }]);
+    expect(w.posted, 'no walk before its load is known').toHaveLength(0);
+
+    w.measured([{ parseErrors: 2, validationErrors: 0, rewritten: null }]);
+    expect(calls.finished).toEqual([[{ parseErrors: 2, validationErrors: 0, rewritten: null }]]);
+    expect(useChecksStore.getState().running.reach).toMatchObject({ phase: 'walk' });
+    expect(runningVerdict(useChecksStore.getState().running.reach)).toBe('running');
+    // The walk goes to the same worker, judged over what it counted.
+    expect(FakeWorker.made).toHaveLength(1);
+    expect(w.posted).toHaveLength(1);
+    expect(w.posted[0].loadHealth).toMatchObject({ errors: 2, saved: { parseErrors: 2 } });
+    w.answer();
+    expect(running('reach')).toBe(false);
+    expect(stored('reach')).toMatchObject({ rev: 3, ranIn: 'worker', result: { summary: 'from the worker' } });
+  });
+
+  /** Each way a worker can fail to measure the load, and what the page is told of it. */
+  const loadFailures = (): Array<[string, (w: FakeWorker) => void, string]> => [
+    ['no counts', (w) => w.onmessage?.({ data: { id: w.health[0].id, ok: false, message: 'the library data could not be fetched' } }), 'the background worker could not check it (the library data could not be fetched)'],
+    ['counts for other texts', (w) => w.measured([]), 'the background worker answered something other than the texts asked about'],
+    ['an error', (w) => w.onerror?.({ message: 'script failed to load' }), 'the background worker stopped'],
+    ['a reply it could not read', (w) => w.onmessageerror?.({}), 'the background worker could not read its answer'],
+    ['a minute of silence', () => vi.advanceTimersByTime(WATCHDOG_MS), 'the background worker said nothing for a minute'],
+  ];
+
+  it('measures the load on the page where the worker could not, and the check runs here over that: a true answer, not none', () => {
+    vi.useFakeTimers();
+    const term = inline(TERM);
+    const c = ctx({ model: term, loadHealth: undefined });
+    let rev = 1;
+    for (const [what, fail, why] of loadFailures()) {
+      withFakeWorker();
+      const { load, calls } = pendingLoad();
+      runChecked(reach, c, rev, load);
+      const w = FakeWorker.made[0];
+      fail(w);
+      expect(running('reach'), what).toBe(false);
+      expect(w.terminated, what).toBe(true);
+      expect(calls.here, what).toBe(1);
+      expect(calls.after, what).toEqual([why]);
+      expect(calls.finished, what).toHaveLength(0);
+      expect(FakeWorker.made, `${what}: no second worker for the walk`).toHaveLength(1);
+      expect(stored('reach'), what).toMatchObject({ rev, ranIn: 'page', result: runCheck(reach, { ...c, loadHealth: healthy }) });
+      expect(stored('reach')!.result.verdict, `${what}: measured clean on the page, it holds`).toBe('holds');
+      resetCheckRunner();
+      rev++;
+    }
+  });
+
+  it('takes a load neither the worker nor the page could measure as not checked: the check runs here over that, and never holds', () => {
+    vi.useFakeTimers();
+    const term = inline(TERM);
+    const c = ctx({ model: term, loadHealth: undefined });
+    expect(runCheck(reach, { ...c, loadHealth: healthy }).verdict, 'over a clean load, it holds').toBe('holds');
+    // The page has no library either: what `loadHealthNow`'s `here` answers then.
+    const noLibrary = (after: string | undefined): LoadHealth => ({ ...healthy, errors: 1, unchecked: `${after}, and the standard library has not loaded in this page` });
+    let rev = 1;
+    for (const [what, fail, why] of loadFailures()) {
+      withFakeWorker();
+      const { load } = pendingLoad(undefined, noLibrary);
+      runChecked(reach, c, rev, load);
+      fail(FakeWorker.made[0]);
+      expect(running('reach'), what).toBe(false);
+      const s = stored('reach')!;
+      expect(s, what).toMatchObject({ rev, ranIn: 'page' });
+      expect(s.result.verdict, what).toBe('undecided');
+      expect(s.result.rows[0], what).toMatchObject({ code: 'checks/degraded', severity: 'warning' });
+      expect(s.result.rows[0].message, what).toContain(`could not be checked (${why}, and the standard library has not loaded in this page)`);
+      expect(s.result.rows[0].message, `${what}: reach lists what parsed`).toContain('this is a report of what parsed');
+      expect(s.result.summary, what).toContain('could not be checked');
+      resetCheckRunner();
+      rev++;
+    }
+  });
+
+  it('measures the load here where the page has no worker, or one cannot be started, as it always did', () => {
+    setCheckWorkerFactory(null);
+    const none = pendingLoad();
+    runChecked(reach, walkable({ loadHealth: undefined }), 4, none.load);
+    expect(none.calls.here).toBe(1);
+    expect(running('reach')).toBe(false);
+    expect(stored('reach')).toMatchObject({ rev: 4, ranIn: 'page', result: runCheck(reach, walkable()) });
+
+    setCheckWorkerFactory(() => {
+      throw new Error('this browser starts no module worker');
+    });
+    const refused = pendingLoad();
+    runChecked(behaviour, walkable({ loadHealth: undefined }), 5, refused.load);
+    expect(refused.calls.here).toBe(1);
+    expect(stored('check-behaviour')).toMatchObject({ rev: 5, ranIn: 'page', result: runCheck(behaviour, walkable()) });
+  });
+
+  it('starts no load phase for a load already known', () => {
+    withFakeWorker();
+    runChecked(reach, walkable({ loadHealth: undefined }), 2, { known: healthy });
+    expect(useChecksStore.getState().running.reach).toMatchObject({ phase: 'walk' });
+    const w = FakeWorker.made[0];
+    expect(w.health).toHaveLength(0);
+    expect(w.posted[0].loadHealth).toEqual(healthy);
+  });
+
+  it('checks the load of a model with no state machine in the worker, then answers the check here: nothing to walk', () => {
+    withFakeWorker();
+    const { load } = pendingLoad();
+    runChecked(reach, ctx({ loadHealth: undefined }), 1, load);
+    const w = FakeWorker.made[0];
+    expect(w.health).toHaveLength(1);
+    expect(running('reach')).toBe(true);
+    w.measured([cleanCount()]);
+    expect(w.posted, 'no walk is sent').toHaveLength(0);
+    expect(running('reach')).toBe(false);
+    expect(stored('reach')).toMatchObject({ ranIn: 'page', result: runCheck(reach, ctx()) });
+  });
+
+  it('ends the worker on Cancel while the load is checked, and a late count lands nothing', () => {
+    withFakeWorker();
+    const { load, calls } = pendingLoad();
+    runChecked(reach, walkable({ loadHealth: undefined }), 1, load);
+    const w = FakeWorker.made[0];
+    cancelChecked('reach');
+    expect(w.terminated).toBe(true);
+    expect(running('reach')).toBe(false);
+    w.measured([cleanCount()]);
+    expect(calls.finished).toHaveLength(0);
+    expect(stored('reach')).toBeUndefined();
+  });
+
+  it('walks the model of the click: an edit made while the load is checked, or while a run ahead walks, is not what the worker walks (review 2026-10-14, L1)', () => {
+    withFakeWorker();
+    const m = inline(TERM);
+    const transition = m.all().find((e) => e.eClass === 'TransitionUsage' && e.attrs.isLibrary !== true)!;
+    const state = m.all().find((e) => e.declaredName === 'b' && e.attrs.isLibrary !== true)!;
+    const sent = (req: CheckRequest) => ({
+      effect: req.model.elements.find((e) => e.id === transition.id)?.attrs.effect,
+      name: req.model.elements.find((e) => e.id === state.id)?.declaredName,
+    });
+    // Reach waits for its load; Behaviour properties, clicked while it does, waits for Reach.
+    const { load } = pendingLoad();
+    runChecked(reach, ctx({ model: m, loadHealth: undefined }), 1, load);
+    runChecked(behaviour, ctx({ model: m, loadHealth: undefined }), 1, { known: healthy });
+    expect(useChecksStore.getState().running['check-behaviour']).toMatchObject({ phase: 'walk' });
+    // The person edits while the worker parses: an effect the text cannot hold, a rename (both change records in place).
+    m.setAttrs(transition.id, { effect: '}' });
+    m.rename(state.id, 'renamed');
+    const w = FakeWorker.made[0];
+    w.measured([cleanCount()]);
+    expect(w.posted).toHaveLength(1);
+    expect(sent(w.posted[0]), 'Reach walks the model its load was measured on').toEqual({ effect: undefined, name: 'b' });
+    w.answer();
+    expect(w.posted).toHaveLength(2);
+    expect(sent(w.posted[1]), 'Behaviour properties walks the model of its click').toEqual({ effect: undefined, name: 'b' });
+    w.answer();
+    // Both land against the click's revision, so the edit shows them stale.
+    expect(stored('reach')).toMatchObject({ rev: 1, ranIn: 'worker' });
+    expect(verdictOf(stored('reach'), 2)).toBe('stale');
+    expect(verdictOf(stored('check-behaviour'), 2)).toBe('stale');
+  });
+});
+
+/*
+ * The load, measured in the worker as a terminal measures it: `measureTextHealth`
+ * is held to `loadModelText` — the CLI's loader, the real standard library merged —
+ * over the corpus and a mutation fuzz of every field the serializer writes back
+ * verbatim, so a count the app reads is a count a terminal prints.
+ */
+describe('the load, measured as a terminal measures it', () => {
+  const terminal = async (text: string, file = 'm.sysml') => (await loadModelText(text, { fileName: file })).report;
+  /** A terminal's errors of the text itself: the parse's, and the loader's own refusal of it (`import/*`). */
+  const parseErrorsIn = (r: Awaited<ReturnType<typeof terminal>>) =>
+    r.diagnostics.filter((d) => d.severity === 'error' && (d.ruleId === 'parse' || d.ruleId === 'import')).length;
+
+  it('counts each text in the worker as a terminal loads it, and keeps the counts by text', async () => {
+    const host = new CheckHost(mergeLibrary);
+    const clean = read('examples/uav-isr.sysml');
+    const faulty = 'package F { part def P { attribute rate : Real = 1 +; } }\n';
+    const reply = await host.measure({ id: 4, kind: 'health', texts: [clean, faulty] });
+    expect(reply).toMatchObject({ id: 4, ok: true });
+    if (!reply.ok) return;
+    for (const [i, text] of [clean, faulty].entries()) {
+      const r = await terminal(text);
+      expect(reply.texts[i].parseErrors + reply.texts[i].validationErrors).toBe(r.summary.errors);
+      expect(reply.texts[i].parseErrors).toBe(parseErrorsIn(r));
+    }
+    expect(reply.texts[0]).toMatchObject({ parseErrors: 0, validationErrors: 0 });
+    expect(reply.texts[1].parseErrors).toBeGreaterThan(0);
+    // A text that parses is written back from its parse, for the page to set beside what the model on screen writes;
+    // one that does not is faulty already.
+    const back = await loadModelText(clean, { fileName: 'm.sysml' });
+    expect(reply.texts[0].rewritten).toBe(serializeUserModelSignals(back.model!).text);
+    expect(reply.texts[1].rewritten).toBeNull();
+    const again = await host.measure({ id: 5, kind: 'health', texts: [faulty] });
+    expect(again.ok && again.texts[0], 'kept, not parsed again').toBe(reply.texts[1]);
+  }, 60_000);
+
+  it('says it could not count when the library could not be loaded, and tries again on the next request', async () => {
+    let attempts = 0;
+    const host = new CheckHost((model) => {
+      attempts++;
+      if (attempts === 1) throw new Error('the library data could not be fetched');
+      mergeLibrary(model);
+    });
+    expect(await host.measure({ id: 1, kind: 'health', texts: ['package Q;\n'] })).toEqual({
+      id: 1,
+      ok: false,
+      message: 'the library data could not be fetched',
+    });
+    expect(await host.measure({ id: 2, kind: 'health', texts: ['package Q;\n'] })).toEqual({
+      id: 2,
+      ok: true,
+      texts: [{ parseErrors: 0, validationErrors: 0, rewritten: 'package Q;' }],
+    });
+  });
+
+  it('is a terminal’s count over the corpus: the fixtures, the examples and the authoring campaign', async () => {
+    const files = (dir: string): string[] =>
+      readdirSync(root(dir), { recursive: true, encoding: 'utf8' })
+        .filter((f) => f.endsWith('.sysml'))
+        .sort()
+        .map((f) => `${dir}/${f}`);
+    const corpus = [...files('test/fixtures/verification/models'), ...files('examples'), ...files('test/fixtures/agent-authoring')];
+    expect(corpus.length).toBeGreaterThan(200);
+    let faulty = 0;
+    let fixpoints = 0;
+    for (const file of corpus) {
+      const text = read(file);
+      const m = measureTextHealth(text, loadFullStandardLibrary);
+      const loaded = await loadModelText(text, { fileName: file });
+      const r = loaded.report;
+      expect(m.parseErrors + m.validationErrors, file).toBe(r.summary.errors);
+      expect(m.parseErrors, file).toBe(parseErrorsIn(r));
+      if (!r.ok) faulty++;
+      else if (!file.startsWith('test/fixtures/agent-authoring')) {
+        // The model as the app writes it back is a file of itself, with the library bound: its parse writes the same text.
+        const written = serializeUserModelSignals(loaded.model!).text;
+        expect(measureTextHealth(written, loadFullStandardLibrary).rewritten, `${file}: written back, it reads as another model`).toBe(written);
+        fixpoints++;
+      }
+    }
+    expect(faulty, 'the campaign fixtures that test a fault').toBeGreaterThan(20);
+    expect(fixpoints, 'the corpus models that load').toBeGreaterThan(60);
+  }, 600_000);
+
+  /** A model Reachability holds over, with a field of every kind the serializer writes back verbatim. */
+  const FUZZ = `package Fz {
+  state def M {
+    state s1;
+    state s2;
+    state final;
+    transition t1 first s1 then s2;
+    transition t2 first s2 then final;
+  }
+  part def Pump { attribute rate : Real = 2; }
+  constraint def Lim { in attribute lim : Real; lim <= 10 }
+  part def Sys { part p : Pump [1]; }
+}
+`;
+  const fuzzCases = (): Array<[string, string, Record<string, unknown> | string]> => [
+    ...['}', 'do do', 'action (', 'a then s1; state s9; transition x first s2', '{', 'send'].map((v): [string, string, Record<string, unknown>] => ['t1', 'effect', { effect: v }]),
+    ...['true )', 'x >', '(', '"', 'x > 0 then s2'].map((v): [string, string, Record<string, unknown>] => ['t1', 'guard', { guard: v }]),
+    ...['go now', 'go;', 'a b }', 'after', '{'].map((v): [string, string, Record<string, unknown>] => ['t1', 'trigger', { trigger: v }]),
+    ...[
+      '2; attribute rate = 3',
+      '1 +',
+      '"a\nb"',
+      '2 )',
+      '2; part def Pump',
+      '1 // c',
+      '2 }',
+      '"open',
+      "'q",
+      '2 [kg',
+      '2; state def Z { state a; state b; state c; transition first a then b; } attribute zz = 0',
+      '2; } state def Z { state a; state b; state c; transition first a then b; } part def Q { attribute zz = 0',
+    ].map((v): [string, string, Record<string, unknown>] => ['rate', 'value', { value: v, valueText: undefined }]),
+    ...['Real // kg', 'Real; part def Z', 'Real }'].map((v): [string, string, Record<string, unknown>] => ['rate', 'type', { type: v }]),
+    ...[{ a: 1 }, [1, 2], NaN, Infinity, true].map((v): [string, string, Record<string, unknown>] => ['rate', 'value', { value: v, valueText: undefined }]),
+    ...['lim <=', 'lim <= 10 }', 'lim <= 10; attribute q', ')'].map((v): [string, string, Record<string, unknown>] => ['Lim', 'expression', { expression: v }]),
+    ...[['my meta'], ['X\nY'], ['A;B'], ['}']].map((v): [string, string, Record<string, unknown>] => ['Pump', 'metadata', { metadata: v }]),
+    ...['k\ng', 'kg; part def Z'].map((v): [string, string, Record<string, unknown>] => ['rate', 'unit', { unit: v }]),
+    ...['1..', '1 2', '*..*'].map((v): [string, string, Record<string, unknown>] => ['p', 'multiplicity', { multiplicity: v }]),
+    ...['sideways', 'in out'].map((v): [string, string, Record<string, unknown>] => ['lim', 'direction', { direction: v }]),
+    ...['Pu\nmp', '', 'done', "a'b", 'part', 'Pump Two', 'Pump;'].map((v): [string, string, string] => ['Pump', 'name', v]),
+    ...['s\n2', 'state'].map((v): [string, string, string] => ['s2', 'name', v]),
+  ];
+  it('a mutation fuzz of every verbatim field, counted in the worker: a terminal’s count each time, so a text it rejects is never counted clean, and one it loads as another model is told apart', async () => {
+    const host = new CheckHost(mergeLibrary);
+    const term = (await terminal(FUZZ)).ok;
+    expect(term, 'the fuzz starts from a text a terminal loads').toBe(true);
+    const reach = CHECKS.find((c) => c.id === 'reach')!;
+    const reachOver = (model: Model) => runCheck(reach, ctx({ model, loadHealth: healthy }));
+    let rejected = 0;
+    let other = 0;
+    let id = 0;
+    for (const [name, field, change] of fuzzCases()) {
+      const model = parseModel(FUZZ).model;
+      const el = model.all().find((e) => e.declaredName === name)!;
+      if (typeof change === 'string') model.rename(el.id, change);
+      else model.setAttrs(el.id, change as never);
+      let text: string;
+      try {
+        text = serializeUserModelSignals(model).text;
+      } catch {
+        continue; // a model the serializer refuses is no file's text; the page counts it as unwritable
+      }
+      const what = `${name}.${field} = ${JSON.stringify(change)}`;
+      const reply = await host.measure({ id: ++id, kind: 'health', texts: [text] });
+      expect(reply.ok, what).toBe(true);
+      if (!reply.ok) continue;
+      const loaded = await loadModelText(text, { fileName: 'm.sysml' });
+      const r = loaded.report;
+      expect(reply.texts[0].parseErrors + reply.texts[0].validationErrors, `${what}\n${text}`).toBe(r.summary.errors);
+      if (!r.ok) rejected++;
+      else if (reply.texts[0].rewritten === text) {
+        // Written back as itself: a file of the model fuzzed, and a terminal's Reachability over it is the page's.
+        const [page, file] = [reachOver(model), reachOver(loaded.model!)];
+        expect([file.verdict, file.rows.map((row) => row.code)], `${what}\n${text}`).toEqual([page.verdict, page.rows.map((row) => row.code)]);
+      } else other++;
+    }
+    expect(rejected, 'the fuzz must make texts a terminal rejects').toBeGreaterThanOrEqual(30);
+    expect(other, 'and texts a terminal loads as another model').toBeGreaterThanOrEqual(3);
+  }, 300_000);
 });
 /* ════════════ the two behaviour lanes, judged as the terminal judges them ══ */
 

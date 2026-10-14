@@ -30,10 +30,22 @@
  * page answers by running the check itself, on the library it has, and by not
  * asking a worker again about that library: it would be told the same, after
  * the cost of a start and a load.
+ *
+ * THE LOAD IS CHECKED HERE TOO. A check judged over the load health
+ * (`CheckSpec.readsLoadHealth`) needs each text a file of the model can hold
+ * parsed and validated as a terminal loads it, and written back from its parse
+ * to tell whether it holds the model on screen — a parse that held the page for
+ * seconds at the click on the drone-swarm model. So the page sends the texts it
+ * cannot judge yet ({@link HealthRequest}) and {@link CheckHost.measure} parses
+ * them with the standard library this worker holds, the one a terminal loads
+ * (`measureTextHealth`, `src/text/health.ts`), keeping the last few answers by
+ * text. Which library the PAGE holds does not enter into it: a text is parsed
+ * afresh, as a terminal parses it.
  */
 
 import { FORMAT_VERSION, Model, type ElementRecord, type SerializedModel } from '@core/index';
 import { loadFullStandardLibrary } from '@library/full-library';
+import { measureTextHealth, type MeasuredText } from '@text/health';
 import { CHECKS, runCheck, type CheckResult } from './checks';
 import type { LoadHealth } from './store';
 
@@ -58,6 +70,28 @@ export interface CheckRequest {
    * failing closed.
    */
   loadHealth?: LoadHealth;
+}
+
+/**
+ * The texts the page could not judge, to be parsed and validated as a terminal
+ * loads them (`measureTextHealth`): what Save writes and, where it differs, what
+ * Export ▾ SysML writes.
+ */
+export interface HealthRequest {
+  /** The runner's token, echoed in the reply. */
+  id: number;
+  kind: 'health';
+  texts: string[];
+}
+
+/** What comes back for a {@link HealthRequest}: a count for each text, in its order, or why there is none. */
+export type HealthReply =
+  | { id: number; ok: true; texts: MeasuredText[] }
+  | { id: number; ok: false; message: string };
+
+/** A {@link HealthRequest}, told apart from a {@link CheckRequest} by its `kind`. */
+export function isHealthRequest(req: CheckRequest | HealthRequest): req is HealthRequest {
+  return (req as Partial<HealthRequest>).kind === 'health';
 }
 
 /**
@@ -86,7 +120,10 @@ const isLibraryElement = (el: ElementRecord): boolean => el.attrs.isLibrary === 
  * model); `Model.toJSONWhere` copies each one first, which the send then copies
  * again, and costs several times as much on the page's thread for nothing the
  * worker can tell. The send is the snapshot: it is taken before `postMessage`
- * returns, so an edit made while the worker runs changes nothing it reads.
+ * returns, so an edit made while the worker runs changes nothing it reads. A
+ * run whose send waits — for its load, or for a run ahead of it — copies this at
+ * the click instead (`panels/checks-runner.ts`), since an edit changes the
+ * records in place.
  */
 export function userPart(model: Model): SerializedModel {
   const rootIds = model.rootIds().filter((id) => {
@@ -130,12 +167,15 @@ export function libraryKey(model: Model): string {
  * connector ends through them (`resolveConnectorFeatureChains`). Only the first
  * is done here. The other two act on what a person wrote, which arrives already
  * bound, and on a library-only model they change nothing — a unit test pins that
- * the library comes out the same — while the connector pass would bring the whole
- * text parser into the worker.
+ * the library comes out the same. (A text the worker measures is parsed afresh,
+ * and `measureTextHealth` binds that parse with all three, as a terminal does.)
  */
 export function mergeLibrary(model: Model): void {
   loadFullStandardLibrary(model);
 }
+
+/** How many texts' counts a {@link CheckHost} keeps: those of the model now, and before the last edit. */
+const MEASURED_KEPT = 4;
 
 /**
  * The worker's side of a run. One per worker; it holds the library-bearing model
@@ -146,6 +186,8 @@ export class CheckHost {
   private loading: Promise<Model> | null = null;
   /** {@link libraryKey} of the library this host holds. */
   private held = '';
+  /** The texts measured last, by text, the newest last: a check run again over a model not changed since needs no parse. */
+  private readonly measured = new Map<string, MeasuredText>();
 
   /**
    * @param loadLibrary merges the standard library into a fresh model, as the
@@ -195,5 +237,33 @@ export class CheckHost {
     } catch (err) {
       return { id: req.id, ok: false, message: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  /**
+   * Parses and validates each text a request carries, as a terminal loads it.
+   * Never throws: a library that could not be loaded — so a text could not be
+   * validated as a terminal validates it — is a reply with no counts, which the
+   * page takes as a load nobody could check.
+   */
+  async measure(req: HealthRequest): Promise<HealthReply> {
+    try {
+      // The standard library this worker holds, loaded once: its data is what each text's own parse is merged with.
+      await this.base();
+      return { id: req.id, ok: true, texts: req.texts.map((text) => this.measureText(text)) };
+    } catch (err) {
+      return { id: req.id, ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** One text's counts: kept from an earlier request, or measured now and kept. */
+  private measureText(text: string): MeasuredText {
+    const known = this.measured.get(text) ?? measureTextHealth(text, mergeLibrary);
+    this.measured.delete(text);
+    this.measured.set(text, known);
+    for (const old of this.measured.keys()) {
+      if (this.measured.size <= MEASURED_KEPT) break;
+      this.measured.delete(old);
+    }
+    return known;
   }
 }

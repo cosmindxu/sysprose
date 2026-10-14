@@ -57,8 +57,12 @@ import { reachCheck, behaviourCheck } from './behaviour-checks';
 import type { MarkSummary, ReachMark, EdgeMark, WitnessView } from './behaviour-checks';
 import type { LoadHealth } from './store';
 
-/** What a check says about the model when it has run. */
-export type CheckVerdict = 'not-run' | 'running' | 'holds' | 'issues' | 'undecided' | 'unavailable' | 'stale';
+/**
+ * What a check says about the model when it has run — or, while it runs in the
+ * background, `checking` (the model's text is being parsed, to know whether it
+ * loads) and then `running` (the check itself).
+ */
+export type CheckVerdict = 'not-run' | 'checking' | 'running' | 'holds' | 'issues' | 'undecided' | 'unavailable' | 'stale';
 
 /** One finding, shaped like every other finding in the app. */
 export interface CheckRow {

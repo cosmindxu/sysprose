@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { captureErrors, diagramSettled, findElementId, gotoApp, openTab, selectElementById } from './fixtures';
-import { modelSize } from './model-helpers';
+import { attrOf, modelSize } from './model-helpers';
 
 test('a model check runs here, lands in the Checks tab, and goes stale on an edit', async ({ page }) => {
   const errors = captureErrors(page);
@@ -374,13 +374,16 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
 
   await expect(page.locator('.bottom-tab.is-active')).not.toContainText('Checks');
   await reach.getByTestId('palette-check-run').click();
-  // From the click the check is running, and the person can stop it.
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
-  await expect(reach.getByTestId('palette-check-verdict')).toHaveText('running…');
+  // From the click the check is under way, and the person can stop it: first the worker parses the
+  // model's text the serializer wrote (a text no parse has measured), then it walks.
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
   await expect(reach.getByTestId('palette-check-run')).toHaveAttribute('aria-disabled', 'true');
   await expect(reach.getByTestId('palette-check-cancel')).toBeVisible();
-  // The Checks tab comes forward at the click, where the answer will be, and lists the check as running.
+  // The Checks tab comes forward at the click, where the answer will be, and lists the check as under way.
   await expect(page.locator('.bottom-tab.is-active')).toContainText('Checks');
+  await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', /checking|running/);
+  await expect(reach).toHaveAttribute('data-verdict', 'running', { timeout: 60_000 });
+  await expect(reach.getByTestId('palette-check-verdict')).toHaveText('running…');
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', 'running');
   // Another check, started while it runs, is answered on the spot.
   await checkRow(page, 'stats').getByTestId('palette-check-run').click();
@@ -434,7 +437,9 @@ test('Cancel ends a running check, which keeps what it said before, and the next
   expect(await userRoots(page)).toEqual(['Heavy']);
 
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  // The worker's replies are held: the run waits on the load it asked the worker to check.
+  await expect(reach).toHaveAttribute('data-verdict', 'checking');
+  await expect(reach.getByTestId('palette-check-verdict')).toHaveText('checking the load…');
   await reach.getByTestId('palette-check-cancel').click();
   await expect(reach).toHaveAttribute('data-verdict', 'not-run');
   await expect(reach.getByTestId('palette-check-verdict')).toHaveText('not run');
@@ -450,7 +455,7 @@ test('Cancel ends a running check, which keeps what it said before, and the next
 
   await releaseWorker(page);
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
   await expect(reach).toHaveAttribute('data-verdict', /holds|issues|undecided/, { timeout: 60_000 });
   await expect(reach).toHaveAttribute('data-ran-in', 'worker');
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
@@ -461,8 +466,8 @@ test('a walk that finishes after the model was edited is shown stale, not curren
   await openMachine(page, heavyMachine(2, 3));
   const reach = checkRow(page, 'reach');
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
-  // An edit while the worker walks the model as it was.
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
+  // An edit while the worker checks the load of, then walks, the model as it was.
   const machine = await findElementId(page, 'StateDefinition', 'Modes');
   await page.evaluate(
     (id) => (window as unknown as { sysml: { update(id: string, patch: { declaredName: string }): unknown } }).sysml.update(id, { declaredName: 'Modes2' }),
@@ -488,19 +493,93 @@ test('on a page with no worker the check runs on the page, and answers the same'
   expect(workers.filter((u) => u.includes('checks-worker'))).toEqual([]);
 });
 
-test('a model with no state machine is told so at once, with no worker started', async ({ page }) => {
+/** Record, in the page, what the checks worker is asked: a load to check (`health`) or a check to run. */
+async function recordWorkerRequests(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { Worker: typeof Worker; __asked: string[] };
+    w.__asked = [];
+    const Real = w.Worker;
+    w.Worker = class extends Real {
+      private readonly checks: boolean;
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        // The layout worker takes messages too; only the checks worker's are counted.
+        this.checks = String(url).includes('checks-worker');
+      }
+      postMessage(message: unknown, ...rest: unknown[]): void {
+        const m = message as { kind?: string; check?: string };
+        if (this.checks) w.__asked.push(m.kind === 'health' ? 'health' : `check:${m.check}`);
+        (super.postMessage as (...a: unknown[]) => void)(message, ...rest);
+      }
+    };
+  });
+}
+const workerAsked = (page: Page): Promise<string[]> => page.evaluate(() => (window as unknown as { __asked: string[] }).__asked);
+
+test('a model with no state machine starts no walk: its load is checked once, then the row says there is nothing to walk', async ({ page }) => {
   const errors = captureErrors(page);
-  const workers: string[] = [];
-  page.on('worker', (w) => workers.push(w.url()));
+  await recordWorkerRequests(page);
   await gotoApp(page);
   await page.getByTestId('tb-view-state').click();
   const reach = checkRow(page, 'reach');
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'not-run');
+  await expect(reach).toHaveAttribute('data-verdict', 'not-run', { timeout: 60_000 });
   await expect(reach.locator('.palette-check-summary')).toHaveText('this file declares no element that owns a transition, so there is no configuration graph to walk');
   await expect(reach).toHaveAttribute('data-ran-in', 'page');
   await expect(reach.getByTestId('palette-check-cancel')).toHaveCount(0);
-  expect(workers.filter((u) => u.includes('checks-worker')), 'nothing to walk, nothing to start a worker for').toEqual([]);
+  // The worker parsed the sample's text, which nothing had parsed, and was sent no walk.
+  expect(await workerAsked(page), 'the load, and nothing to walk').toEqual(['health']);
+  // Run again over the model unchanged: its load is known, and nothing goes to the worker.
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'not-run');
+  expect(await workerAsked(page)).toEqual(['health']);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a guard, trigger or effect typed in Properties that the text cannot hold: Reachability is never `holds` over it (review 2026-10-14, LH-1)', async ({ page }) => {
+  const errors = captureErrors(page);
+  // A machine that ends: Reachability holds over it, until its text no longer loads.
+  await openMachine(page, 'package Heavy {\n  state def M {\n    state a;\n    state b;\n    state final;\n    transition t1 first a then b;\n    transition t2 first b then final;\n  }\n}\n');
+  const reach = checkRow(page, 'reach');
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'holds', { timeout: 60_000 });
+
+  // An effect of `}`: the serializer writes it back as typed and sees nothing wrong in it; the
+  // worker parses the text, as a terminal would, and finds it does not load.
+  const t1 = await findElementId(page, 'TransitionUsage', 't1');
+  await selectElementById(page, t1);
+  await page.getByTestId('prop-effect').fill('}');
+  await expect.poll(() => attrOf(page, t1, 'effect')).toBe('}');
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'undecided', { timeout: 60_000 });
+  await expect(reach.locator('.palette-check-summary')).toContainText('did not load cleanly');
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  const result = page.locator('[data-testid="checks-result"][data-check="reach"]');
+  await expect(result.getByTestId('checks-row').first()).toContainText('syntax error');
+  await expect(result.getByTestId('checks-row').first()).toContainText('exits 1');
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a value typed in Properties that closes its owner and adds a machine: the text loads, but as another model, and Reachability is not `holds` (review 2026-10-14)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await openMachine(page, 'package Heavy {\n  state def M {\n    state a;\n    state b;\n    state final;\n    transition t1 first a then b;\n    transition t2 first b then final;\n  }\n  part def Pump { attribute rate = 2; }\n}\n');
+  const reach = checkRow(page, 'reach');
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'holds', { timeout: 60_000 });
+
+  // The value is written back as typed: the text parses cleanly, to a model with a second machine in it.
+  const value = '2; } state def Z { state a; state b; state c; transition first a then b; } part def Q { attribute zz = 0';
+  const rate = await findElementId(page, 'AttributeUsage', 'rate');
+  await selectElementById(page, rate);
+  await page.getByTestId('prop-value').fill(value);
+  await expect.poll(() => attrOf(page, rate, 'value')).toBe(value);
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'undecided', { timeout: 60_000 });
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  const row = page.locator('[data-testid="checks-result"][data-check="reach"]').getByTestId('checks-row').first();
+  await expect(row).toContainText('parses cleanly, but to a model other than the one on screen');
+  // A terminal loads that file, so no exit code is claimed for it.
+  await expect(row).not.toContainText('exits 1');
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
@@ -511,14 +590,14 @@ test('an answer that lands while the person is typing in another tab leaves the 
   const reach = checkRow(page, 'reach');
 
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
   // The person goes on working: to the Text tab, with the cursor in the text.
   await page.getByTestId('tab-text').click();
   const text = page.getByTestId('text-editor');
   await text.click();
   await expect(page.locator('.bottom-tab.is-active')).toContainText('Text');
   await expect(text).toBeFocused();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
 
   await releaseWorker(page);
   await expect(reach).toHaveAttribute('data-verdict', /holds|issues|undecided/);
@@ -531,7 +610,7 @@ test('an answer that lands while the person is typing in another tab leaves the 
   expect(await userRoots(page)).toEqual(['Heavy']);
   await expect(text).toBeFocused();
   await page.getByTestId('tab-checks').click();
-  await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).not.toHaveAttribute('data-verdict', 'running');
+  await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).not.toHaveAttribute('data-verdict', /checking|running/);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
@@ -541,7 +620,7 @@ test('an answer that lands while Cancel has the keyboard focus moves it to Run, 
   const reach = checkRow(page, 'reach');
 
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
   await reach.getByTestId('palette-check-cancel').focus();
   expect(await focusedTestId(page)).toBe('BUTTON:palette-check-cancel');
   await releaseWorker(page);

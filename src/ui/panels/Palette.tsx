@@ -28,9 +28,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
-import { checkFileName, flushRecompute, loadHealth, useAppStore } from '../store';
+import { checkFileName, flushRecompute, loadHealthNow, useAppStore } from '../store';
 import { checksFor, commandNote, selectionKey, type CheckSpec } from '../checks';
-import { useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
+import { runningVerdict, useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
 import { cancelChecked, runChecked } from './checks-runner';
 
 /* ─────────────────────────── Shared tool state ──────────────────────────── */
@@ -348,7 +348,8 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   // name, which is what a student downloads from Drive, else the project's.
   const fileName = useAppStore(checkFileName);
   const stored = useChecksStore((st) => st.results[spec.id]);
-  const running = useChecksStore((st) => st.running[spec.id] !== undefined);
+  const run = useChecksStore((st) => st.running[spec.id]);
+  const running = run !== undefined;
   const [copied, setCopied] = useState(false);
 
   // One object per (model, selection, file name), so the callbacks below are
@@ -366,8 +367,8 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   // What of the selection the result read: once that moves, the row shows the
   // result as stale, since the command beside it names the new selection.
   const reads = selectionKey(spec, ctx);
-  // A check in a worker is running until it settles, whatever it said before.
-  const verdict = running ? 'running' : verdictOf(stored, rev, reads);
+  // A check in a worker is checking the load, then running, until it settles, whatever it said before.
+  const verdict = run !== undefined ? runningVerdict(run) : verdictOf(stored, rev, reads);
   // A file or element name the command could not carry as it is (it would be
   // read as code by some terminal): what the stand-in in its place stands for.
   const note = commandNote(spec, ctx);
@@ -375,11 +376,11 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   const onRun = useCallback(() => {
     flushRecompute();
     const st = useAppStore.getState();
-    // The load health (a parse + validation of the model's text) is read here, in
-    // the same turn as `st.rev` (I8), and travels with the request so an
-    // off-thread walk judges the same health the page would.
-    const runCtx = { ...ctx, model: st.model, ...(spec.readsLoadHealth ? { loadHealth: loadHealth() } : {}) };
-    runChecked(spec, runCtx, st.rev);
+    // What is known of the load health is read here, in the same turn as `st.rev`
+    // (I8), with no parse on this thread: a text no parse has measured yet goes to
+    // the worker, and the row reads `checking the load…` until it is back. The
+    // health travels with the request so an off-thread walk judges what the page would.
+    runChecked(spec, { ...ctx, model: st.model }, st.rev, spec.readsLoadHealth ? loadHealthNow() : undefined);
   }, [spec, ctx]);
   const onCancel = useCallback(() => cancelChecked(spec.id), [spec.id]);
 
@@ -451,7 +452,11 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
           {note}
         </div>
       )}
-      {running ? (
+      {verdict === 'checking' ? (
+        <div className="palette-check-summary" role="status">
+          Checking that the model’s text loads, in the background — the page stays usable. Cancel stops it.
+        </div>
+      ) : running ? (
         <div className="palette-check-summary" role="status">
           Running in the background — the page stays usable. Cancel stops it.
         </div>

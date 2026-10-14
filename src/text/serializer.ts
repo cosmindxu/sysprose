@@ -26,7 +26,6 @@ import {
 } from '@core/index';
 import { resolveFullName, resolveRedefinedFeature } from '@semantics/bind';
 import { UnwritableNoteBodyError, isWritableNoteBody } from '@semantics/notes';
-import { chainResolvesWithoutImplicit } from './langium/map-to-model';
 
 const INDENT = '    ';
 
@@ -1174,104 +1173,12 @@ function refTo(
     resolveFullName(model, simple, scope));
   const target = model.get(targetId);
   const simple = target ? nameOf(target) : undefined;
-  let out: string;
   if (simple && !simple.startsWith('«') && answer(simple, scopeOwnerId)?.id === targetId) {
-    out = simple;
-  } else {
-    const rel = relativePath(model, targetId, scopeOwnerId);
-    out = rel ?? qualifiedRef(model, targetId);
+    return simple;
   }
-  if (refTallying) tallyEmittedRef(model, out, targetId, scopeOwnerId, resolve);
-  return out;
-}
-
-/* ─────────────────────── emitted-reference tally ─────────────────────────
-   A file is judged on the model its text parses to, and a rename can leave a
-   reference written in the text denoting nothing even though the live model
-   still holds it as an element id. The clear case is a connector end: its end
-   is an implicit per-usage copy, and the path it is written with (`a.pwrOut`)
-   is re-resolved from scratch on a parse. `loadHealth` used to find such a
-   divergence only by re-parsing the whole text; this tally is the parse-free
-   signal — while {@link serializeUserModelRefs} runs, every reference the
-   serializer emits is checked against the model a fresh parse would see, and
-   one that would not re-bind the same element is counted.
-
-   THE CHECK CANNOT ASK THE LIVE MODEL NAIVELY. The implicit copy a stale path
-   names is itself in the live model, so an ordinary resolution of `a.pwrOut`
-   finds it and the reference looks fine — while a fresh parse, which has no
-   such copy yet, fails. So the check resolves with every IMPLICIT element
-   excluded, which is what a fresh parse starts from; a real element still
-   resolves, a spelling kept alive only by a previous parse's copy does not. */
-
-/** True while {@link serializeUserModelRefs} is running and every emitted reference is checked. */
-let refTallying = false;
-/** References emitted since {@link refTallying} was set that a fresh parse would not re-bind. */
-let refUnresolved = 0;
-
-/** True when `spelling` resolves to `targetId` without help from an implicit element. */
-function emittedRefResolves(
-  model: Model,
-  spelling: string,
-  targetId: ElementId,
-  scopeOwnerId: ElementId | null,
-  resolve?: RefResolver,
-): boolean {
-  const target = model.get(targetId);
-  // An implicit target (a connector's end copy) has no name a fresh parse could
-  // bind by id: the parse materializes its own copy. All that can be asked of
-  // the spelling is that the chain it names still resolves to a real element.
-  const targetImplicit = target?.attrs.implicit === true;
-  const found =
-    resolve !== undefined
-      ? resolve(spelling, scopeOwnerId)
-      : resolveFullName(model, spelling, scopeOwnerId, {
-          accept: (e) => e.attrs.implicit !== true,
-        });
-  if (found !== undefined && found.attrs.implicit !== true && (targetImplicit || found.id === targetId)) {
-    return true;
-  }
-  // A dotted chain (`a.pwrOut`) resolves through feature typing, which
-  // `resolveFullName` does not follow on a model that still holds the previous
-  // parse's implicit copies — the copy shadows the type-owned feature. The
-  // parser's own chain walk, with those copies excluded, is the fresh parse's
-  // answer.
-  return spelling.includes('.') && chainResolvesWithoutImplicit(model, spelling, scopeOwnerId);
-}
-
-function tallyEmittedRef(
-  model: Model,
-  spelling: string,
-  targetId: ElementId,
-  scopeOwnerId: ElementId | null,
-  resolve?: RefResolver,
-): void {
-  if (!emittedRefResolves(model, spelling, targetId, scopeOwnerId, resolve)) refUnresolved++;
-}
-
-/**
- * Serialize the USER model (the same roots {@link serializeModel} is filtered
- * to by Export and the Text view) and report how many references its text
- * writes that would not re-resolve on a fresh parse. This is the serializer's
- * half of a parse-free load health: the text is the one a file holds, and the
- * count is what the text-derived validation would find beyond the live model.
- * The output text is byte-identical to `serializeModel` for those roots.
- */
-export function serializeUserModelRefs(model: Model): { text: string; unresolvedRefs: number } {
-  const wasTallying = refTallying;
-  const before = refUnresolved;
-  refTallying = true;
-  refUnresolved = 0;
-  try {
-    const text = model
-      .roots()
-      .filter((r) => r.attrs.isLibrary !== true)
-      .map((r) => serializeElement(model, r.id, 0))
-      .join('\n\n');
-    return { text, unresolvedRefs: refUnresolved };
-  } finally {
-    refTallying = wasTallying;
-    refUnresolved = before;
-  }
+  const rel = relativePath(model, targetId, scopeOwnerId);
+  if (rel) return rel;
+  return qualifiedRef(model, targetId);
 }
 
 /**
