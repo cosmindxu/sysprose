@@ -13,7 +13,8 @@ end-to-end `E`). Test names match `test/**` and the verdict tables in
 `docs/TEST-REPORT.md`.
 
 Legend — **Yes**: capability present and (for us) test-covered; **Partial**: a
-representative subset is present / a facet is missing; **—**: not implemented.
+representative subset is present / a facet is missing; **—**: not implemented;
+**Not compared**: no comparison with that reference tool was made, so no parity is claimed.
 
 ---
 
@@ -81,6 +82,11 @@ representative subset is present / a facet is missing; **—**: not implemented.
 | Behavioral simulation / execution | Yes (simulation toolkit) | Partial | **Yes (fuller)** | Deepened token-flow engine: composite/call sub-behaviors (recursive, depth-bounded, enter/exit + result params), object/item-flow data passing between pins, hierarchical state machines (composite entry/exit cascade, history resume), orthogonal regions with completion join, and timed `after(n)` transitions on a discrete clock; unified `executeBehavior`. Now driven from an **interactive simulation panel** (step / play-pause / seek a trace, inject events, live active-state highlight on the state diagram, plus a per-sample value plot). `E simulate`, `E execution`, `E gui-simulation` (`tb-simulate` composite trace + produced data + stepper UI), `E simulate-check`; `U simulate`, `U semantics.execute`/`execute-full`/`execution-full`; `I execution.integration`, `I semantics-exec.integration` |
 | Parametric / equation solving | Yes | Partial | **Yes** | Numeric constraint solver + MoE evaluation + optimization, now with **inequality + feasibility** constraints (`U semantics.solver`, `U semantics.solver-ineq`, `I analysis.integration`, `E solve` — `tb-solve` solves the chain, propagates bindings, converges coupled systems, evaluates MoEs, optimizes over bounded variables **subject to inequality constraints**, and reports **feasibility + violated constraints**); `gatherInequalities` normalises comparison bodies (`<`,`<=`,`>`,`>=`) to `g(x)<=0`, `solveFeasible` finds a penalty-minimising feasible point, `checkConstraintsNumeric` flags violations for the Check/Problems surface; a **design freedom** the equations leave open (a null direction of their Jacobian at the solved point) is reported as `free`, never published as a value or judged at the point the solve stopped at, and `solveFeasible` says whether its answer is `decided`; the solver is **unit-aware** — relations are scaled to SI behind four gates that compare DIMENSIONS (so a length against a duration is refused, not answered), values stay in their declared unit, slack carries its SI unit, a scaled relation is solved and judged relative to its own SI magnitude, and a body's `[unit]` literals are lowered instead of dropped, so a relation either agrees with the validation surface or is reported `unknown` on both (`U semantics.solver-units` — a **unit-aware, number-level agreement suite**: solved values, slack + unit, convergence, feasibility; `I uav-example` runs the shipped example through both surfaces); constraint evaluation + report (`U semantics.expr`, `U semantics.constraints`) |
 | Unit / quantity / dimensional analysis | Yes | Partial | **Yes** | `E properties-all-fields` (`prop-dimension`, `prop-unit-convert` kg→t = 1.5); `U semantics.units`, `I units.integration` |
+| Verification checks run from the diagram's palette | Not compared | Not compared | **Partial** | The palette's **Checks** section lists, per view, the commands that fit it, each with **Run** and **Copy command** (the same check for a terminal). The model checks run in the page against the model on screen and land in the Checks tab: a finding selects its element, a result goes `stale` after an edit, and `contracts` and `obligations` narrow to the selection as `--element` does and say when they cover the whole model; `reach` and `check-behaviour` walk a state machine in a background worker with a **Cancel**. The five solver-backed checks (`verify`, `consistency`, `bounds`, `refine`, `fault-tree`) give their command and `not here`, never a verdict, because z3 needs a cross-origin-isolated page, which the GitHub Pages deployment cannot give. `E palette-checks` (a model check runs here, lands in the Checks tab and goes stale on an edit; a finding selects its element; a solver check offers its command instead of a verdict it cannot give; every view has a palette; a state-machine check runs in a worker and Cancel ends it); `U checks-registry` (every entry names a real CLI subcommand and its copied command is the one it runs; a check that throws becomes a finding, never a pass; a solver check is never reported as passed on a page that cannot run one; the worker gives the answer the page gives) |
+| Reachability marks on the state diagram | Not compared | Not compared | **Yes** (State view) | After **Reachability** runs, the State view puts the walk's findings on the diagram: one badge per state (`unreachable`, `not decided`, `not walked`, `withheld`, `no way out`, `trap`, `choice`, in a fixed precedence) and `dead` or `undecided` on a transition, with a status panel (`behaviour-marks`) that counts them and the answers the walk withheld, and a Marks section in the legend. Marks are painted only for a result of the current model, on the State view; an edit (the panel then says the model changed), **Hide marks** and an open witness each hide them. `E palette-checks` (nothing is marked before Run; the marks show findings, withheld, not-decided and not-walked beside the simulation glow); `U checks-registry` (the state-view marks and the status panel: the mark precedence, a dead transition and an undecided guard marked on the edge itself, nothing painted on a stale revision, off the State view or with the marks hidden) |
+| Witness stepper: the run behind a behaviour verdict, stepped on the state diagram | Not compared | Not compared | **Yes** (State view) | A `fail` or `covered` result of **Behaviour properties** lists its witness as steps in the Checks tab. A click on a step, or **Prev** / **Next**, switches to the State view and paints that step of the checker's walk (the current state, its stack and the states already passed), and hides the reachability marks and the simulation highlight until **Close**. A step is the run the walk found, never a simulation, and the panel says so; stepping starts no simulation session, leaves a running one where it was, and does not move the selection. `E palette-checks` (witness steps paint the state view and leave a live simulation and the selection alone; a failing property shows its `every run?` line and its witness steps); `U checks-registry` (the witness stepper: a witness compacts to the terminal's trace rows, a `cover` the walk saw whole has none, the steps render as buttons with Prev / Next / Close and never select, and the witness path never constructs a `SimulationSession`) |
+
+*The last three rows (the palette's checks, the reachability marks and the witness stepper) describe this tool's own surface. Their two comparison columns say "Not compared": no comparison with another tool was made, and none is implied.*
 
 ## 6. Libraries, data & interoperability
 
@@ -147,6 +153,10 @@ two-context convergence, `U collab.binding` deterministic CRDT merge). On
 **offline, static-hostable, pure-browser** deployment we **exceed** both
 reference tools (the commercial one is desktop; the open-source one is server-backed).
 
+**Present here, not compared:** the palette's **Checks**, which run the model checks in the page,
+with **reachability marks** and a **witness stepper** on the State view (`E palette-checks`,
+`U checks-registry`). No comparison with the two reference tools was made, so no parity is claimed.
+
 **Partial (candid):** the geometry view is now a real interactive 3D WebGL scene
 (Three.js: orbit/zoom, per-part solids, raycast selection), though it renders
 primitive solids (box/sphere/cylinder) from model attributes/shape typings rather
@@ -158,7 +168,10 @@ is present as a **fixed-step Jacobi master** over the parametric solver and anal
 FMUs, but cannot execute a real `.fmu`'s native/physics binary in the browser —
 that plugs in only via a WASM-compiled fmi3 FMU behind the `Fmi3Instance` interface;
 pilot-API interop is a **representative** exchange
-(read 300 real elements + write a `Package`), not a full-model migration.
+(read 300 real elements + write a `Package`), not a full-model migration;
+and, of the palette's checks, the five solver-backed ones (`verify`, `consistency`, `bounds`, `refine`,
+`fault-tree`) give the command to run and `not here`, never a verdict, because z3 needs a
+cross-origin-isolated page, which the GitHub Pages deployment cannot give.
 
 **Not implemented (—):** a *standardized* **graphical diagram-interchange** file
 format (none exists for OMG v2) — though diagrams now export as de-facto **SVG**

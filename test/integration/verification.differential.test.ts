@@ -4758,9 +4758,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'G271::negT': ['T/T/T/T', 'T'],
       'G271::posF': ['F/F/F/F', 'F'],
     }),
-    // A partner read through a reference feature's value (q's r is r1, whose K makes L 50): the check
-    // abstains, the numeric surface and the SMT engine read the referenced definition's value (see
-    // KNOWN_FALSE: no step of this plan takes it on).
+    // A partner read through a reference feature's value (q's r is r1, whose K makes L 50): `subjectOf`
+    // reads the feature the `ref` names, so all four surfaces read r1's 50 (q's m2 is −40) and agree with
+    // the hand-computed verdict; they once read R's own L instead (F1's review); the pins below hold the fix.
     'ref-W9': probe(`package RefW9 {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; }
@@ -5120,7 +5120,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     expect([...wrong.keys()].filter((k) => !KNOWN_FALSE.has(k)).map((k) => `${k}: ${wrong.get(k)}`)).toEqual([]);
     expect([...KNOWN_FALSE.keys()].filter((k) => !wrong.has(k))).toEqual([]);
     // Every known one a step of this plan corrects is one the check and the literal engine publish, the
-    // surfaces this work corrects; one no step takes on may be another surface's alone (ref-W9).
+    // surfaces this work corrects; one whose reason starts with `NO STEP` is exempt from that.
     for (const [k, why] of KNOWN_FALSE) if (!why.startsWith('NO STEP')) expect(wrong.get(k), k).toMatch(/check [TF]/);
   });
 
