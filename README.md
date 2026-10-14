@@ -189,9 +189,9 @@ The **Contracts** view *projects* the same inventory through
 revision and keeps the rows and the census it returns, where `contracts` also prints the keyword
 inventory, the exclusion counts and the `verification/*` reasons behind every refusal — and,
 unlike the view, can be asked about one element. `prompts`,
-`verify`, `evidence-attach`, `evidence-detach` and the depth-walking
-`impactClosure` have no control in the
-app at all — they are the terminal's and the SDK's alone. There is no solver in the browser
+`evidence-attach`, `evidence-detach` and the depth-walking `impactClosure` have no control in the
+app at all, and `verify` has only a palette row that gives its command to copy and answers
+`not here` — they are the terminal's and the SDK's alone. There is no solver in the browser
 (`SharedArrayBuffer` needs COOP/COEP headers GitHub Pages cannot set), so no view reaches a
 solver verdict; the behaviour lane needs none — **Reachability** and **Behaviour properties** run
 `reachReport` and `behaviourReport` in the page with the terminal's default bounds and print the

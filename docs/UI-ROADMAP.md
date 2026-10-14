@@ -49,7 +49,7 @@ commit**, and refreshes `docs/TEST-REPORT.md` counts.
 - **Pane context menu** (right-click empty canvas) — Add a top-level element / Fit view; completes the node·edge·pane family (shared `useContextMenuChrome`). `E gui-context-menu`.
 
 ### Diagram layout
-- **Compound layout only where a piece has nested boxes** (the flat half of P1 of the 2026-09-08 profile) — `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` had been set on every view. `layoutOptionsFor(viewKind, nested)` now sets it only for a connected piece that contains nested boxes and uses `SEPARATE_CHILDREN` for every other piece (`layoutOptionsFor` and `layoutPiece`, `src/diagram/layout.ts`). On 950 flat nodes that took 569 ms down to 342 ms (1.7×). It does nothing for a piece that nests: that case, the profile's 83×, is **still open** — see P1 under Performance. `214b3c5`, `U diagram.layout2` (asserts the option for a flat and for a nested call, not its timing).
+- **Compound layout only where a piece has nested boxes** (the flat half of P1 of the 2026-09-08 profile) — `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` had been set on every view. `layoutOptionsFor(viewKind, nested)` now sets it only for a connected piece that contains nested boxes and uses `SEPARATE_CHILDREN` for every other piece (`layoutOptionsFor`, and `toElkTree` which computes `nested` per piece, `src/diagram/layout.ts`). On 950 flat nodes that took 569 ms down to 342 ms (1.7×). It does nothing for a piece that nests: that case, the profile's 83×, is **still open** — see P1 under Performance. `214b3c5`, `U diagram.layout2` (asserts the option for a flat and for a nested call, not its timing).
 
 ### Keyboard
 - **Richer shortcuts** — `Delete`/`Backspace` removes the selection (React Flow's own delete disabled so model + diagram stay in sync), digits `1–6` switch primary views, `/` focuses Explorer search; input-guard extended to `<select>`. `E gui-keyboard`.
@@ -120,11 +120,11 @@ least one nested node.
 
 **Shipped (`214b3c5`), the flat half.** `layoutOptionsFor(viewKind, nested)` sets the option for a
 connected piece that contains nested boxes and `SEPARATE_CHILDREN` for every other piece
-(`layoutPiece`, `src/diagram/layout.ts`). `U diagram.layout2` asserts the option for a flat and for
-a nested call, not its timing. That is the 1.7× row, and it leaves a piece that nests exactly as it
-was.
+(`toElkTree` computes `nested`, `src/diagram/layout.ts`). `U diagram.layout2` asserts the option for
+a flat and for a nested call, not its timing. That is the 1.7× row, and it leaves a piece that
+nests exactly as it was.
 
-**Still open at `5943654`: a piece that nests.** `layoutPiece` passes `nested = true` for any piece
+**Still open at `5943654`: a piece that nests.** `toElkTree` passes `nested = true` for any piece
 with one nested box, and that keeps `INCLUDE_CHILDREN`. Measured through `layoutDiagram` on the
 `interconnection` view, 30 parents of 10 children each and two edges per leaf (330 nodes): 11 113 ms
 as it stands (14 s on a loaded machine), 171 ms with `SEPARATE_CHILDREN` forced (65×); the raw ELK
@@ -133,9 +133,9 @@ options for the profile's own graph give 12 003 ms against 164 ms. ELK runs in a
 drone-swarm v9 model of mbse-workflow (42 584 elements, one run each) the option is not the dominant
 cost: the General view takes 5 035 ms against 4 469 ms forced, `interconnection` 550 against 486,
 and `tree` 44 184 against 42 411. Whether to drop the option for nested pieces (trading the layout of
-edges that cross a parent's border for time), or to bound the compound layout, is not decided:
-awaits coordinator decision, which also settles where it is tracked (a `TODO.md` line or a backlog
-step).
+edges that cross a parent's border for time), or to bound the compound layout, is not decided; it
+is tracked in `TODO.md` (*Decide what the layout does with a piece that nests*) and awaits a user
+decision.
 
 ### P2 — the solver clones its whole value map per probe (`src/semantics/solver.ts`: `solveScalar`, `newtonStep`, `substitutedNewton`)
 
