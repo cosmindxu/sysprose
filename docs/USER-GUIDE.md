@@ -844,8 +844,10 @@ which carries both values in SI, decides whether they meet. A feature that
 hides P's `m` by its name alone (`attribute m = 20.0 [kg];` with no `:>>`)
 overrides it all the same, and so does the same check. Two values a context
 inherits under one name from two general types (`part def C :> A, B` over A's
-and B's `:>> m`) are read by no surface there; two literal bindings that differ
-are a contradiction reported at C.
+and B's `:>> m`) are read by no surface there, nor through a binding one of
+them is joined to (a `part :>> p : P2` whose P2 writes `:>> extra = 9.5`, under
+Q's `bind p.extra = X`, reads neither 9.5 nor X's default); two literal
+bindings that differ are a contradiction reported at C.
 
 **A binding overrides a `default` as a redefinition does.** `bind p.m = M` in
 `part def Q`, over P's `attribute m default = 18.5 [kg]`, makes p's m Q's M in
@@ -883,32 +885,43 @@ instance, named `P::c in Q::p (Q's own)` on the verify lane — and again for ea
 other instance, q's p included, whose load the binding carries q's L into. The
 rows are read apart, each at the value of the instance it names, so an instance
 that breaks the relation is reported against that instance and the check rolls
-them up into one finding. An instance is read so only where it reads the
-relation as the usage does. One whose own element reads a name of it, or a name
-that name's value reads, through another feature — a redefinition with a value
-of its own on its path (`part q2 : Q { part :>> p { attribute :>> extra = 20.0;
-} }`), a specialised type (`part :>> p : P2`), a binding written there, a
-reference to another part (`ref part :>> r = ra`) — or that redefines the
-relation itself, is *could not be evaluated* in that row on every surface, and
-counted *not read* in the roll-up; so is one where a reference the relation is
-read through stands for another feature than where its value is written (`ref
-part :>> r = s` written in Q's p is Q's `s`, and q2's p reads q2's own `s`), or
-for one a binding reaches into. Where that element is a context of its own
-(q2's `part :>> p`), its own row, under the same name on the verify lane, reads
-the relation there. A relation read through a part a binding joins to another
-(`bind p.r = s`, the relation reading `r.x`) is read per instance nowhere, the
-usage's own row included: that row is *could not be evaluated*, as it was
-before any instance was read. A relation written in such a usage (`part p : P {
-constraint c2 { load <= 10.0 } }` in Q) is read the same way; an `assert` there
-stays an axiom, read for the usage's own instance. A value the partner of a
-binding derives (Q's `L = 2.0 * K`) is read for the bound feature only where
-every instance it stands for reads the partner alike — not for q's p, whose K q
-sets. A binding written in a usage's body to a feature of the definition around
-it (`part q : Q { bind p.load = L; }` in R, over R's L) is read in every
-instance of that definition, so not for r's q where `r : R` sets K. No value is
-read through a binding for any one instance while a binding of the model holds
-in more than 4,096 contexts or more than 32 usages deep, nor through one whose
-end has no instance in a context it holds in (R's nested Q used outside any R).
+them up into one finding. An instance whose own element — the most specific
+one that denotes it — reads a name of the relation, or a name that name's value
+reads, through another feature is read in that element, at the instance's own
+values: a redefinition with a value of its own on its path (`part q2 : Q { part
+:>> p { attribute :>> extra = 20.0; } }` reads q2's extra of 20), a specialised
+type (`part :>> p : P2`, for Q2's p and for every Q2 that redefines nothing of
+it), a binding written there, a reference to another part (`ref part :>> r =
+ra`). That row is the element's own reading too: q2's `part :>> p` has no row of
+its own beside it, and each instance is one row under its name. One that
+redefines the relation itself is *could not be evaluated* in that row on every
+surface, and counted *not read* in the roll-up; so is one where a reference the
+relation is read through stands for another feature than where its value is
+written (`ref part :>> r = s` written in Q's p is Q's `s`, and q2's p reads
+q2's own `s`), or for one a binding reaches into; one whose path inherits a
+name twice, neither feature redefining the other (`part def Q3 :> Q2, Q4` over
+Q2's `part :>> p : P2` and Q4's `part :>> p : P4`, or `part q3 : Q2, Q4`: q3's
+p is P2's and P4's at once, and no one element stands for it); and one whose
+own element states a `default` that an asserted equation of its own constrains
+(`part :>> p { assert constraint { extra == 20.0 } }` over P's `extra default =
+0.0`). One read in its own element that an `assert` of an instance around that
+element constrains (`part q2 : Q { part :>> p { … } assert constraint { p.load
+>= 0.5 } }`) is *could not be evaluated* too: a reading in that element reads
+none of the asserts around it. A relation read through a part a binding
+joins to another (`bind p.r = s`, the relation reading `r.x`) is read per
+instance nowhere, the usage's own row included: that row is *could not be
+evaluated*, as it was before any instance was read. A relation written in such
+a usage (`part p : P { constraint c2 { load <= 10.0 } }` in Q) is read the same
+way; an `assert` there stays an axiom, read for the usage's own instance. A
+value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
+feature only where every instance it stands for reads the partner alike — not
+for q's p, whose K q sets. A binding written in a usage's body to a feature of
+the definition around it (`part q : Q { bind p.load = L; }` in R, over R's L) is
+read in every instance of that definition, so not for r's q where `r : R` sets
+K. No value is read through a binding for any one instance while a binding of
+the model holds in more than 4,096 contexts or more than 32 usages deep, nor
+through one whose end has no instance in a context it holds in (R's nested Q
+used outside any R).
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
 listed, and decided by no surface yet. Against a value

@@ -2564,11 +2564,13 @@ describe('the instance index — frames, components, and bound sources', () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
-  // The coverage guard (A.7, `not-enumerated`; the 2026-10-14 review's A-C1). A group reads every instance
-  // of its shared usage through the usage's own features; an instance whose element reads a name of the
-  // relation — or a name such a name's value reads — through another feature is no instance that reading
-  // reads, and its row abstains on every surface (A2: q2's p states extra = 20, and the group held it at 0).
-  it('lists an instance that reads the relation through another feature, and only that one', async () => {
+  // The coverage guard (A.7; the 2026-10-14 review's A-C1). A group reads every instance of its shared usage
+  // through the usage's own features; an instance whose element reads a name of the relation — or a name such a
+  // name's value reads — through another feature was read so all the same, and published the usage's value as
+  // its own (A2: q2's p states extra = 20, and the group held it at 0). O2 S1 had such an instance abstain; S2
+  // reads it in that element — the most specific one that denotes it — at the instance, on every surface, and
+  // the element's own context row is that row, filed once.
+  it('reads an instance in its own element where that element reads the relation otherwise', async () => {
     const { model: m } = await loadModelText(`package G {
       part def P {
         attribute load : ScalarValues::Real default = 1.0;
@@ -2585,27 +2587,33 @@ describe('the instance index — frames, components, and bound sources', () => {
       part q4 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
       part q5 : Q2;
     }`);
+    const qn = (id: string | undefined) => (id === undefined ? undefined : m!.qualifiedName(id));
     const [group] = instanceGroups(m!);
     expect(group && m!.qualifiedName(group.relationId)).toBe('G::P::c');
     // Generic first, then frame order: Q's specialiser, the usages redefining Q's p, then the climb to Q's
     // own usages.
     expect(group!.instances).toEqual(['G::Q::p', 'G::Q2::p', 'G::q2::p', 'G::q3::p', 'G::q1::p', 'G::q4::p', 'G::q5::p']);
     // q2 redefines a name the relation reads; q3 one that a read name's value reads (extra's 2.0 * k); q4's
-    // own binding gives its p's extra an implicit end copy (A4); Q2 — and so q5 — types p by P2, whose extra
-    // is 20 (A3). q1's L reaches p's load through Q's own binding, which the per-instance reading reads: not
-    // listed.
-    expect([...(group!.otherwise ?? new Map()).keys()]).toEqual(['G::Q2::p', 'G::q2::p', 'G::q3::p', 'G::q4::p', 'G::q5::p']);
-    expect(group!.otherwise!.get('G::q2::p')).toEqual({
-      kind: 'not-enumerated',
-      sentence:
-        'G::P::c is not read in G::q2::p: its extra there is G::q2::p::extra, not G::P::extra as in G::Q::p, ' +
-        "and this tool reads an instance of G::Q::p only through G::Q::p's own features",
+    // own binding gives its p's extra an implicit end copy (A4); Q2 types p by P2, whose extra is 20 (A3), and
+    // q5 — a Q2 that redefines nothing — is read in Q2's p, at q5's own values. q1's L reaches p's load through
+    // Q's own binding, which the per-instance reading reads: read through Q's p.
+    expect(group!.otherwise).toBeUndefined();
+    expect(Object.fromEntries([...(group!.readIn ?? new Map())].map(([i, e]) => [i, qn(e)]))).toEqual({
+      'G::Q2::p': 'G::Q2::«PartUsage»',
+      'G::q2::p': 'G::q2::«PartUsage»',
+      'G::q3::p': 'G::q3::«PartUsage»',
+      'G::q4::p': 'G::q4::p',
+      'G::q5::p': 'G::Q2::«PartUsage»',
     });
-    expect(group!.otherwise!.get('G::q3::p')!.sentence).toMatch(/: its k there is G::q3::p::k, not G::P::k as in G::Q::p,/);
-    expect(group!.otherwise!.get('G::q4::p')!.sentence).toMatch(/: its extra there is G::q4::p::extra, not G::P::extra as in G::Q::p,/);
-    expect(group!.otherwise!.get('G::q5::p')!.sentence).toMatch(/: its extra there is G::P2::extra, not G::P::extra as in G::Q::p,/);
-    // The check: the listed instances abstain in the guard's sentence; q1 and the generic row are read, and
-    // the rows of the elements Q2's, q2's and q3's p are (each a context of its own) read as before.
+    // The elements whose own instance the group reads: their context rows are the group's rows.
+    expect(Object.fromEntries([...(group!.standsFor ?? new Map())].map(([i, e]) => [i, qn(e)]))).toEqual({
+      'G::Q2::p': 'G::Q2::«PartUsage»',
+      'G::q2::p': 'G::q2::«PartUsage»',
+      'G::q3::p': 'G::q3::«PartUsage»',
+      'G::q4::p': 'G::q4::p',
+    });
+    // The check: every instance is one row, read at its own values — 1 + 20 > 10 wherever extra is 20 — and no
+    // row reads Q2's, q2's or q3's p as a context of its own beside it.
     const rows = new Map(
       (checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'G::P::c')!.instances ?? []).map((i) => [
         i.instance ?? (i.generic ? 'generic' : m!.qualifiedName(i.contextId)),
@@ -2615,35 +2623,241 @@ describe('the instance index — frames, components, and bound sources', () => {
     expect([...rows].map(([k, i]) => `${k} ${i.result} ${i.abstention ?? ''}`.trim())).toEqual([
       'G::P2 violated',
       'generic satisfied',
-      'G::Q2::p unknown not-enumerated',
-      'G::q2::p unknown not-enumerated',
+      'G::Q2::p violated',
+      'G::q2::p violated',
+      'G::q3::p violated',
+      'G::q1::p satisfied',
+      'G::q4::p violated',
+      'G::q5::p violated',
+    ]);
+    expect(qn(rows.get('G::q5::p')!.contextId)).toBe('G::Q2::«PartUsage»');
+    expect(rows.get('G::q5::p')!.elementId).toBeUndefined();
+    expect(qn(rows.get('G::q2::p')!.elementId)).toBe('G::q2::«PartUsage»');
+    // The obligations: one goal row per instance, each over the instance's own symbols — q2's own extra, P2's
+    // extra (one literal for every instance) and q5's own load — and none for the elements' contexts.
+    const goals = obligationsOf(m!).filter((o) => o.instance?.baseId === group!.relationId && o.role === 'obligation');
+    expect(goals.map((o) => o.element.qualifiedName)).toEqual([
+      'G::P::c in G::P2',
+      "G::P::c in G::Q::p (G::Q's own)",
+      'G::P::c in G::Q2::p',
+      'G::P::c in G::q2::p',
+      'G::P::c in G::q3::p',
+      'G::P::c in G::q1::p',
+      'G::P::c in G::q4::p',
+      'G::P::c in G::q5::p',
+    ]);
+    const vars = (path: string) =>
+      goals.find((o) => o.instance?.path === path)!.vars.map((v) => `${v.path}=${v.qualifiedName}`);
+    expect(goals.every((o) => o.encodable === true)).toBe(true);
+    expect(vars('G::q2::p')).toEqual(['load=G::q2::p::load', 'extra=G::q2::p::extra']);
+    expect(vars('G::q4::p')).toEqual(['load=G::q4::p::load', 'extra=G::q4::p::extra']);
+    expect(vars('G::q5::p')).toEqual(['load=G::q5::p::load', 'extra=G::P2::extra']);
+    expect(qn(goals.find((o) => o.instance?.path === 'G::q5::p')!.instance!.contextId)).toBe('G::Q2::«PartUsage»');
+  });
+
+  // What the reading in an instance's own element must not miss (O2 S2). An assert of an instance ENCLOSING
+  // that element constrains what it reads there (A.2.4): the row abstains, `enclosing-assert`, as every
+  // per-instance reading of an enclosed value does. A group of a more specific usage (Q2's p, where q2 sets
+  // L) reads its instances itself: the outer group files none of them, so q2's p is one row, not two. And an
+  // element that reads the relation as the usage does, but is a context of its own (q2's p redefines what a
+  // binding gives `extra`), is no second row beside the group's.
+  it('abstains under an enclosing assert, and files every instance once', async () => {
+    const head = `part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute extra : ScalarValues::Real default = 0.0;
+        constraint c { load + extra <= 10.0 }
+      }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }`;
+    const { model: a } = await loadModelText(`package G {
+      ${head}
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q { part :>> p { attribute :>> extra = 20.0; } assert constraint { p.load >= 0.5 } }
+    }`);
+    const [ga] = instanceGroups(a!);
+    expect(ga!.readIn).toBeUndefined();
+    expect([...(ga!.otherwise ?? new Map())]).toEqual([
+      [
+        'G::q2::p',
+        {
+          kind: 'enclosing-assert',
+          sentence:
+            "G::P::c is not read in G::q2::p: G::q2's asserted `p.load >= 0.5` constrains it there, " +
+            'and this tool does not read a value an enclosing assert constrains',
+        },
+      ],
+    ]);
+    const rowsOf = (m: Model, rel: string) =>
+      (checkConstraints(m).find((c) => m.qualifiedName(c.id) === rel)!.instances ?? []).map(
+        (i) => `${i.instance ?? (i.generic ? 'generic' : m.qualifiedName(i.contextId))} ${i.result}${i.abstention ? ` ${i.abstention}` : ''}`,
+      );
+    expect(rowsOf(a!, 'G::P::c')).toEqual(['generic satisfied', 'G::q2::p unknown enclosing-assert', 'G::q1::p satisfied']);
+    const names = (m: Model) =>
+      obligationsOf(m)
+        .filter((o) => o.role === 'obligation' && o.instance !== undefined)
+        .map((o) => o.element.qualifiedName);
+    // Two groups, one below the other: each instance is read by the more specific one.
+    const { model: b } = await loadModelText(`package G {
+      ${head}
+      part def P2 :> P { attribute :>> extra = 20.0; }
+      part def Q2 :> Q { part :>> p : P2; }
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q2 { attribute :>> L = 2.0; }
+    }`);
+    expect(instanceGroups(b!).map((g) => [b!.qualifiedName(g.usageId), g.instances])).toEqual([
+      ['G::Q::p', ['G::Q::p', 'G::q1::p']],
+      ['G::Q2::«PartUsage»', ['G::Q2::p', 'G::q2::p']],
+    ]);
+    expect(rowsOf(b!, 'G::P::c')).toEqual([
+      'generic satisfied',
+      'G::q1::p satisfied',
+      'G::P2 violated',
+      'generic violated',
+      'G::q2::p violated',
+    ]);
+    expect(names(b!)).toEqual([
+      "G::P::c in G::Q::p (G::Q's own)",
+      'G::P::c in G::q1::p',
+      'G::P::c in G::P2',
+      "G::P::c in G::Q2::p (G::Q2's own)",
+      'G::P::c in G::q2::p',
+    ]);
+    // q2's p redefines what P binds extra to; the group reads it through Q's p and the binding, at q2's own
+    // values (2 × 50): q2's p is no context row of its own beside it.
+    const { model: c } = await loadModelText(`package G {
+      part def S { attribute v : ScalarValues::Real default = 1.0; attribute w : ScalarValues::Real = 2.0 * v; }
+      part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute extra : ScalarValues::Real;
+        part sub : S;
+        bind extra = sub.w;
+        constraint c { load + extra <= 10.0 }
+      }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q { part :>> p { part :>> sub { attribute :>> v = 50.0; } } }
+    }`);
+    const [gc] = instanceGroups(c!);
+    expect(gc!.readIn).toBeUndefined();
+    expect([...(gc!.standsFor ?? new Map()).keys()]).toEqual(['G::q2::p']);
+    expect(rowsOf(c!, 'G::P::c')).toEqual(['generic satisfied', 'G::q2::p violated', 'G::q1::p satisfied']);
+    expect(names(c!)).toEqual(["G::P::c in G::Q::p (G::Q's own)", 'G::P::c in G::q2::p', 'G::P::c in G::q1::p']);
+  });
+
+  // What the reading in an instance's own element must not read either (the review of O2 S2). An instance on
+  // whose path a name is inherited twice, neither feature redefining the other (Q3 :> Q2, Q4 over Q2's and
+  // Q4's `part :>> p`), is P2's p and P4's p at once: no one element stands for it, so it abstains, in the
+  // group it is taken from — no group of one of the two takes it. A name two inherited values collide under
+  // (Q2's p, typed P2, inherits P2's `extra = 9.5` and the end copy of Q's `bind p.extra = X`) has no value,
+  // and none is read through the binding in its place (it was X's default, 0). A `default` an asserted
+  // equation of the element's own constrains is not read there (H5; the row abstains, as at S1). And an
+  // enclosing assert makes only an instance read in its own element abstain: q1, read through Q's p, still
+  // reads its p's load past q1's assert (A-H1, O2 S3).
+  it('abstains where no one element stands for an instance, a name reads two values, or an own assert meets a default', async () => {
+    const P3 = `part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute extra : ScalarValues::Real default = 0.0;
+        attribute extra2 : ScalarValues::Real default = 0.0;
+        constraint c { load + extra + extra2 <= 10.0 }
+      }
+      part def P2 :> P { attribute :>> extra = 0.5; }
+      part def P4 :> P { attribute :>> extra2 = 20.0; }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part def Q2 :> Q { part :>> p : P2; }
+      part def Q4 :> Q { part :>> p : P4; }`;
+    const rowsOf = (m: Model, rel: string) =>
+      (checkConstraints(m).find((c) => m.qualifiedName(c.id) === rel)!.instances ?? []).map(
+        (i) => `${i.instance ?? (i.generic ? 'generic' : m.qualifiedName(i.contextId))} ${i.result}${i.abstention ? ` ${i.abstention}` : ''}`,
+      );
+    const { model: d } = await loadModelText(`package G {
+      ${P3}
+      part def Q3 :> Q2, Q4;
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q2 { attribute :>> L = 2.0; }
+      part q3 : Q3;
+    }`);
+    const groups = instanceGroups(d!);
+    expect(groups.map((g) => [d!.qualifiedName(g.usageId), g.instances])).toEqual([
+      ['G::Q::p', ['G::Q::p', 'G::Q4::p', 'G::Q3::p', 'G::q1::p', 'G::q3::p']],
+      ['G::Q2::«PartUsage»', ['G::Q2::p', 'G::q2::p']],
+    ]);
+    expect(groups[0]!.otherwise?.get('G::q3::p')).toEqual({
+      kind: 'not-enumerated',
+      sentence:
+        'G::P::c is not read in G::q3::p: G::q3 inherits G::Q2::p and G::Q4::p under the one name `p`, neither ' +
+        'redefining the other, so this tool cannot tell which element stands for it there',
+    });
+    expect(rowsOf(d!, 'G::P::c')).toEqual([
+      'G::P2 satisfied',
+      'G::P4 violated',
+      'generic satisfied',
+      'G::Q4::p violated',
+      'G::Q3::p unknown not-enumerated',
+      'G::q1::p satisfied',
+      'G::q3::p unknown not-enumerated',
+      'generic satisfied',
+      'G::q2::p satisfied',
+    ]);
+    const head = `part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute extra : ScalarValues::Real default = 0.0;
+        constraint c { load + extra <= 10.0 }
+      }`;
+    const { model: h } = await loadModelText(`package G {
+      ${head}
+      part def P2 :> P { attribute :>> extra = 9.5; }
+      part def Q {
+        attribute L : ScalarValues::Real default = 1.0;
+        attribute X : ScalarValues::Real default = 0.0;
+        part p : P;
+        bind p.load = L;
+        bind p.extra = X;
+      }
+      part def Q2 :> Q { part :>> p : P2; }
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q2 { attribute :>> L = 3.0; }
+    }`);
+    const clash =
+      'Could not evaluate: extra has no value: G::Q2::p inherits P::extra = 0.0 and P2::extra = 9.5 under the one ' +
+      'name `extra`, and which one an instance has is not decided by reading them, so neither is read';
+    const hc = checkConstraints(h!).find((c) => h!.qualifiedName(c.id) === 'G::P::c')!;
+    expect(rowsOf(h!, 'G::P::c')).toEqual([
+      'G::P2 violated',
+      'generic satisfied',
+      'G::q1::p satisfied',
+      'generic unknown',
+      'G::q2::p unknown',
+    ]);
+    for (const i of (hc.instances ?? []).filter((x) => x.result === 'unknown')) expect(i.message).toBe(clash);
+    const { model: b } = await loadModelText(`package G {
+      ${head}
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 2.0; assert constraint { p.load >= 0.5 } }
+      part q2 : Q { part :>> p { attribute :>> extra = 0.5; } assert constraint { p.load >= 0.5 } }
+      part q3 : Q { part :>> p { assert constraint { extra == 20.0 } } }
+    }`);
+    const [gb] = instanceGroups(b!);
+    expect(Object.fromEntries([...(gb!.otherwise ?? new Map())].map(([i, o]) => [i, o.kind]))).toEqual({
+      'G::q2::p': 'enclosing-assert',
+      'G::q3::p': 'not-enumerated',
+    });
+    expect(gb!.otherwise!.get('G::q3::p')!.sentence).toBe(
+      'G::P::c is not read in G::q3::p: its extra there states a default that an asserted equation of its own ' +
+        'constrains, and this tool does not decide per instance which of the two it reads',
+    );
+    expect(rowsOf(b!, 'G::P::c')).toEqual([
+      'generic satisfied',
+      'G::q2::p unknown enclosing-assert',
       'G::q3::p unknown not-enumerated',
       'G::q1::p satisfied',
-      'G::q4::p unknown not-enumerated',
-      'G::q5::p unknown not-enumerated',
-      'G::Q2::«PartUsage» violated',
-      'G::q2::«PartUsage» violated',
-      'G::q3::«PartUsage» violated',
     ]);
-    expect(rows.get('G::q2::p')!.message).toBe(`Could not evaluate: ${group!.otherwise!.get('G::q2::p')!.sentence}`);
-    // The obligations: the listed instances' goal rows are refused in the same sentence.
-    const goals = new Map(
-      obligationsOf(m!)
-        .filter((o) => o.instance?.baseId === group!.relationId && o.instance.path !== undefined)
-        .map((o) => [o.instance!.path!, o.encodable]),
-    );
-    expect(goals.get('G::q1::p')).toBe(true);
-    for (const listed of ['G::Q2::p', 'G::q2::p', 'G::q3::p', 'G::q4::p', 'G::q5::p']) {
-      expect(goals.get(listed), listed).toEqual({ reason: 'unread-definition', detail: group!.otherwise!.get(listed)!.sentence });
-    }
   });
 
   // The guard's other causes (the review of O2 S1). A reference's value is resolved once, where it is
   // written: `ref part :>> r = s` in Q's p is Q's `s`, so an instance whose own `s` is another feature
-  // (q2's override, Q2's `s : R2`) or is bound per instance (Q's `bind s.k = K`), or whose own p refers
-  // elsewhere (q4), is not read; nor one whose own p redefines the relation (q5). And a usage that reads
-  // through a part a binding joins to another (`bind p.r = s`) is read per instance nowhere — its own row
-  // included, which read R's own x where Q's s has k = 50.
+  // (q2's override, Q2's `s : R2`) or is bound per instance (Q's `bind s.k = K`) is not read; nor one whose
+  // own p redefines the relation (q5). One whose own p refers elsewhere (q4's `r = ra`) is read in that p (O2
+  // S2). And a usage that reads through a part a binding joins to another (`bind p.r = s`) is read per
+  // instance nowhere — its own row included, which read R's own x where Q's s has k = 50.
   it('re-reads a reference at the instance, and reads no group through a bound part', async () => {
     const groupsOf = async (text: string) => {
       const { model: m } = await loadModelText(text);
@@ -2652,11 +2866,12 @@ describe('the instance index — frames, components, and bound sources', () => {
         expanded: g.expanded,
         refusal: g.refusal,
         otherwise: Object.fromEntries([...(g.otherwise ?? new Map())].map(([i, o]) => [i, o.sentence])),
+        readIn: [...(g.readIn?.keys() ?? [])],
       }));
     };
     const rp = `part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
       part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }`;
-    const tail = "and this tool reads an instance of X::Q::p only through X::Q::p's own features";
+    const tail = 'and this tool resolves what a reference stands for only where its value is written';
     expect(
       await groupsOf(`package X {
       ${rp}
@@ -2676,12 +2891,13 @@ describe('the instance index — frames, components, and bound sources', () => {
         expanded: true,
         refusal: undefined,
         otherwise: {
-          'X::q4::p': `X::P::c is not read in X::q4::p: its r.x there is read through X::ra, not X::Q::s as in X::Q::p, ${tail}`,
-          'X::q5::p': `X::P::c is not read in X::q5::p: its c there is X::q5::p::c, not X::P::c, ${tail}`,
+          'X::q5::p':
+            'X::P::c is not read in X::q5::p: its c there is X::q5::p::c, not X::P::c, and that relation is read in a row of its own',
           'X::Q2::p': `X::P::c is not read in X::Q2::p: its r there stands for X::Q2::s, not X::Q::s, ${tail}`,
           'X::q2::p': `X::P::c is not read in X::q2::p: its r there stands for X::q2::s, not X::Q::s, ${tail}`,
           'X::q3::p': `X::P::c is not read in X::q3::p: its r there stands for X::Q2::s, not X::Q::s, ${tail}`,
         },
+        readIn: ['X::q4::p'],
       },
     ]);
     // q1's s is Q's, but Q binds its k to K, which q1 sets: what r stands for there is q1's s, not Q's.
@@ -2709,7 +2925,7 @@ describe('the instance index — frames, components, and bound sources', () => {
       'X::P::c is not read per instance in X::Q::p: it reads r.x through r, which a binding joins to another feature, ' +
       'and this tool reads no feature through a bound part';
     expect(await groupsOf(bound)).toEqual([
-      { instances: ['X::Q::p', 'X::q1::p'], expanded: false, refusal: { kind: 'not-enumerated', sentence }, otherwise: {} },
+      { instances: ['X::Q::p', 'X::q1::p'], expanded: false, refusal: { kind: 'not-enumerated', sentence }, otherwise: {}, readIn: [] },
     ]);
     const { model: m } = await loadModelText(bound);
     const row = checkConstraints(m!).find((c) => m!.qualifiedName(c.id) === 'X::P::c')!.instances!;

@@ -362,8 +362,14 @@ function answerFor(
       valueThroughChain(model, contextId, name, pass);
   }
   // A decided answer is never replaced. Only a valueless one is read through
-  // the binding the name meets in the instance (A.2.1).
+  // the binding the name meets in the instance (A.2.1) — never one two values
+  // the context inherits under the name leave valueless ({@link
+  // DefiningEquations.clash}): the binding reaches one of them, and its
+  // partner's value is no value the name has there. H2's Q2's p, typed P2,
+  // inherits P2's `extra = 9.5` and the end copy of Q's `bind p.extra = X`
+  // under `extra`; read through the binding, it was X's default of 0.
   if (answer?.value !== undefined || inst === undefined) return answer;
+  if (pass.definitions.clashedIn(contextId, name)) return answer;
   return valueBoundInInstance(model, contextId, name, pass, inst) ?? answer;
 }
 
@@ -946,6 +952,12 @@ export interface SpecialisationInstance {
   readAs?: string;
   /** The instance path the row names, for an expanded group (F7 only). */
   instance?: string;
+  /**
+   * On a group row whose instance is an element's own instance (q2's `part
+   * :>> p { … }` for q2's p; {@link InstanceGroup.standsFor}): that element.
+   * The row is the relation read in it, and no context row reads it there.
+   */
+  elementId?: ElementId;
   /** Set on the generic (definition's own) row of an expanded group (F7). */
   generic?: true;
   /** Set when the reading met a binding ({@link readInContexts}, F5). */
@@ -1068,8 +1080,11 @@ export function checkConstraints(model: Model): ConstraintCheck[] {
  * by its element id, and its reading in a context ({@link readInContexts}) by
  * `<id>@<context id>` — the id of the worklist row that reads it there
  * (`Obligation.instance` of ./obligations) — and a group's instance row (F7)
- * by `<id>@<instance path>`. What the literal and SMT engines look a row's
- * numeric reading up in.
+ * by `<id>@<instance path>`, and also by `<id>@<element id>` where the
+ * instance is that element's own ({@link SpecialisationInstance.elementId}):
+ * the row the obligations lane files for that element's context, when the
+ * run's goal budget leaves the group's rows unfiled. What the literal and SMT
+ * engines look a row's numeric reading up in.
  */
 export function checksByRow(checks: readonly ConstraintCheck[]): Map<ElementId, ConstraintCheck> {
   const out = new Map<ElementId, ConstraintCheck>();
@@ -1077,14 +1092,16 @@ export function checksByRow(checks: readonly ConstraintCheck[]): Map<ElementId, 
     out.set(c.id, c);
     for (const i of c.instances ?? []) {
       const at = i.instance ?? i.contextId;
-      out.set(`${c.id}@${at}`, {
+      const row: ConstraintCheck = {
         id: `${c.id}@${at}`,
         ownerId: i.contextId,
         expression: c.expression,
         result: i.result,
         message: i.detail ?? i.message,
         ...(i.reads ? { reads: i.reads } : {}),
-      });
+      };
+      out.set(`${c.id}@${at}`, row);
+      if (i.elementId !== undefined && !out.has(`${c.id}@${i.elementId}`)) out.set(`${c.id}@${i.elementId}`, row);
     }
   }
   return out;
@@ -1364,11 +1381,15 @@ function readInContexts(
   const instances = check.instances ?? [];
   const bodyNames = relationNamesOf(expr);
   const groupFor = new Map((groups ?? []).map((g) => [g.usageId, g] as const));
+  // The elements an expanded group's row reads as their own instance (q2's
+  // `part :>> p { … }` is q2's p): that row is the relation read there.
+  const standing = new Set((groups ?? []).filter((g) => g.expanded).flatMap((g) => [...(g.standsFor?.values() ?? [])]));
   for (const x of contexts) {
     // A shared usage U (F7) whose group {@link instanceGroups} expanded: read
     // per instance — the generic (U's own) row and one per other instance. An
     // unexpanded group keeps today's refusal, in its sentence.
     const group = groupFor.get(x.id);
+    if (group === undefined && standing.has(x.id)) continue;
     if (group !== undefined) {
       if (group.expanded) {
         instances.push(...groupInstanceRows(model, el, expr, pass, group));
@@ -1458,9 +1479,11 @@ function readInContexts(
  * instance, `{Rel} in {U} ({D}'s own)`), then one row per other instance
  * (`{Rel} in {I}`). Each is judged by the one pipeline at that instance, so a
  * binding that gives one instance its own value reads that value there. An
- * instance the coverage guard lists (`group.otherwise`: it reads the relation
- * through another feature or source than the usage) is not judged: its row
- * abstains, `not-enumerated`, in the guard's sentence.
+ * instance whose own element reads the relation otherwise than the usage
+ * (`group.readIn`: q2's `part :>> p { attribute :>> extra = 20.0; }`, Q2's
+ * `part :>> p : P2`) is judged in that element, at the instance; one the
+ * coverage guard lists (`group.otherwise`) is not judged: its row abstains in
+ * the guard's sentence.
  */
 function groupInstanceRows(
   model: Model,
@@ -1485,9 +1508,10 @@ function groupInstanceRows(
   });
   const contextName = definitions.contextName(usage.id);
   const rows: SpecialisationInstance[] = [];
-  const push = (inst: string | undefined, judged: Judgement): void => {
+  const push = (inst: string | undefined, judged: Judgement, readIn?: ElementId): void => {
+    const element = inst !== undefined ? group.standsFor?.get(inst) : undefined;
     rows.push({
-      contextId: usage.id,
+      contextId: readIn ?? usage.id,
       context: contextName,
       featureId: shown[0]?.featureId ?? usage.id,
       qualifiedName: effectiveQualifiedName(model, shown[0]?.featureId ?? usage.id),
@@ -1496,6 +1520,7 @@ function groupInstanceRows(
       message: judged.message,
       detail: judged.message,
       ...(inst === undefined ? { generic: true as const } : { instance: inst }),
+      ...(element !== undefined ? { elementId: element } : {}),
       ...(judged.abstention !== undefined ? { abstention: judged.abstention } : {}),
       ...(judged.reads ? { reads: judged.reads } : {}),
     });
@@ -1503,18 +1528,20 @@ function groupInstanceRows(
   if (withGeneric) push(undefined, judgeConstraint(model, reading, expr, pass));
   for (const inst of group.instances.slice(1)) {
     const otherwise = group.otherwise?.get(inst);
-    push(
-      inst,
-      otherwise !== undefined
-        ? {
-            result: 'unknown',
-            message: `Could not evaluate: ${otherwise.sentence}`,
-            gap: false,
-            abstention: otherwise.kind,
-            abstentionSentence: otherwise.sentence,
-          }
-        : judgeConstraint(model, reading, expr, pass, undefined, inst),
-    );
+    const readIn = group.readIn?.get(inst);
+    if (otherwise !== undefined) {
+      push(inst, {
+        result: 'unknown',
+        message: `Could not evaluate: ${otherwise.sentence}`,
+        gap: false,
+        abstention: otherwise.kind,
+        abstentionSentence: otherwise.sentence,
+      });
+    } else if (readIn !== undefined) {
+      push(inst, judgeConstraint(model, { ...el, ownerId: readIn }, expr, pass, undefined, inst), readIn);
+    } else {
+      push(inst, judgeConstraint(model, reading, expr, pass, undefined, inst));
+    }
   }
   return rows;
 }

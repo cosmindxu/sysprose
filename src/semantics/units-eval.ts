@@ -2175,8 +2175,11 @@ function definedQuantity(
     const inherited = definitions.definitionReadIn(contextId, name);
     if (inherited !== undefined) return read(feature.id, name, inherited.site, inherited.at);
     // Read per instance (A.2): the value a binding carries into `inst`, the
-    // unit-aware twin of `valueBoundInInstance` of ./evaluate-model.
-    if (inst !== undefined) return boundInInstanceQ(model, contextId, name, memo, inst);
+    // unit-aware twin of `valueBoundInInstance` of ./evaluate-model — never
+    // for a name two inherited values leave valueless there.
+    if (inst !== undefined) {
+      return definitions.clashedIn(contextId, name) ? undefined : boundInInstanceQ(model, contextId, name, memo, inst);
+    }
     // No equation: a binding may hold it to a derived value ({@link
     // boundDerivation}) — read where the partner is written, so only where
     // that is every instance's value the context stands for (the guard the

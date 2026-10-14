@@ -39,6 +39,7 @@ import {
   generalizationsOf,
   inheritedNameClashes,
   maskedByName,
+  ownFeatures,
   redefinedClosure,
 } from './inheritance';
 import { type ExprNode } from './expr';
@@ -1288,6 +1289,17 @@ export class DefiningEquations {
     if (name === undefined) return undefined;
     const hit = this.clashesIn(contextId).get(name);
     return hit && hit.kept === f ? hit : undefined;
+  }
+
+  /**
+   * Does `name`, read in `contextId`, denote a feature two values the context
+   * it is read in inherit under one name ({@link clash})? Such a name reads
+   * neither value on any surface, and nothing read through a binding stands in
+   * for them (A.2.1): the binding reaches one of the two.
+   */
+  clashedIn(contextId: ElementId, name: string): boolean {
+    const d = this.denote(contextId).get(name);
+    return d !== undefined && this.clash(d.reader, d.feature) !== undefined;
   }
 
   /** Every {@link clash} of `contextId`, by name, once per context. */
@@ -2996,14 +3008,31 @@ export interface InstanceGroup {
   refusal?: { kind: InstanceAbstention; sentence: string };
   /**
    * The instances of an expanded group its rows do NOT read (A.7's coverage
-   * guard, `not-enumerated`), each with the sentence every surface abstains on
-   * it with: an instance that reads a name of the relation — or a name its
-   * value reads — through another feature or source than the usage does
-   * ({@link instanceReadsOtherwise}). The group's reading through the usage's
-   * own features is no reading of such an instance. Absent where every
-   * instance reads the relation as the usage does.
+   * guard), each with the kind and the sentence every surface abstains on it
+   * with ({@link instanceReadsOtherwise}): one whose own element cannot be
+   * read for it (`not-enumerated`), or that an enclosing assert constrains
+   * (`enclosing-assert`). Absent where there is none.
    */
   otherwise?: ReadonlyMap<string, { kind: InstanceAbstention; sentence: string }>;
+  /**
+   * The instances of an expanded group read in an element of their OWN, by
+   * that element's id: an instance whose most specific element reads a name of
+   * the relation — or a name its value reads — through another feature than
+   * the usage does (a redefinition with a value of its own, a specialised
+   * type, a nested override; {@link instanceReadsOtherwise}) is read there, at
+   * the instance, never through the usage's features. Absent where there is
+   * none.
+   */
+  readIn?: ReadonlyMap<string, ElementId>;
+  /**
+   * The instances of an expanded group that are an element's own instance,
+   * by that element's id — an element other than the usage (q2's `part :>> p
+   * { … }` is q2's p; Q2's `part :>> p : P2` is Q2's p): the group's row for
+   * the instance IS the relation read in that element, so the element is no
+   * context of the relation's own — no other row reads it there, and the
+   * instance is filed once under its name. Absent where there is none.
+   */
+  standsFor?: ReadonlyMap<string, ElementId>;
 }
 
 /** Past this many instances of one usage, its group is not expanded (A.7, E). */
@@ -3460,7 +3489,7 @@ function instanceSitesOf(
  * bound to a read feature, never the identity of a bound part.
  */
 interface GuardReading {
-  paths: Map<string, { feature?: ElementRecord; through?: ElementId; signature: string }>;
+  paths: Map<string, { signature: string; assertedDefault?: string }>;
   crossings: Array<{ path: string; reader: ElementId; feature: ElementRecord }>;
   bound?: { path: string; prefix: string };
 }
@@ -3474,8 +3503,10 @@ interface GuardReading {
  * {@link DefiningEquations.denote} walk resolves it. Each path's signature is
  * the feature it denotes, the one whose value that is, the asserts that
  * define it (`''` where it denotes nothing) and — below a prefix — the
- * feature it is read through, and the instance it is read in where that is
- * spelled outside the context (through a reference to `rb`, `rb::x`). A
+ * feature it is read through, the instance it is read in where that is
+ * spelled outside the context (through a reference to `rb`, `rb::x`), and
+ * whether two values inherited under its name collide where it is read
+ * ({@link DefiningEquations.clash}: it then reads neither). A
  * binding partner is not followed: the per-instance reading reads it in the
  * binding's own frame ({@link boundSourceIn}). `undefined` past
  * {@link MAX_GUARD_PATHS} paths.
@@ -3543,8 +3574,16 @@ function readFeatures(
       asserts.map((eq) => eq.constraint.id).sort().join(','),
       segments.length > 1 ? d.reader : '',
       at === undefined ? d.instance : '',
+      definitions.clash(d.reader, d.feature) !== undefined ? 'clash' : '',
     ].join(' ');
-    paths.set(path, { feature: d.feature, ...(segments.length > 1 ? { through: d.reader } : {}), signature });
+    // A `default` an asserted equation constrains (H5): the asserts, by id.
+    const defaulted = [d.feature, target].some((f) => f.attrs.defaultValue === true);
+    paths.set(path, {
+      signature,
+      ...(defaulted && asserts.length > 0
+        ? { assertedDefault: asserts.map((eq) => eq.constraint.id).sort().join(',') }
+        : {}),
+    });
     if (at === undefined) continue;
     const reads: string[] = [];
     for (const f of new Set([d.feature, target])) {
@@ -3653,27 +3692,141 @@ function crossingReadsOtherwise(
 }
 
 /**
+ * The features `ownerId` inherits under `name` from two general types or
+ * more, none redefining another — a diamond: `part def Q3 :> Q2, Q4` over
+ * Q2's `part :>> p : P2` and Q4's `part :>> p : P4`, both of Q's `p`; a usage
+ * typed by both, `part q3 : Q2, Q4` — unless a feature `ownerId` declares
+ * under the name redefines every one of them. `undefined` where there is no
+ * such pair. Every instance of `ownerId` is an instance of each, so its `p`
+ * is P2's and P4's at once; the {@link DefiningEquations.denote} walk reads
+ * the name through one of them (Q2's), and a feature `ownerId` declares that
+ * redefines only Q's `p` (`part :>> p;`) reads neither. `cache` holds the
+ * answer per owner and name, for one sweep.
+ */
+function inheritedTwice(
+  model: Model,
+  ownerId: ElementId,
+  name: string,
+  cache: Map<string, readonly ElementRecord[] | undefined>,
+): readonly ElementRecord[] | undefined {
+  const key = `${ownerId} ${name}`;
+  if (cache.has(key)) return cache.get(key);
+  const candidates = new Set<ElementRecord>();
+  for (const general of generalizationsOf(model, ownerId)) {
+    if (general.attrs.isLibrary === true) continue;
+    for (const f of ownFeatures(model, general.id)) if (effectiveNameOf(model, f) === name) candidates.add(f);
+  }
+  let hit: readonly ElementRecord[] | undefined;
+  if (candidates.size >= 2) {
+    const redefined = new Set<ElementId>();
+    for (const f of candidates) for (const g of redefinedClosure(model, f)) redefined.add(g.id);
+    const left = [...candidates].filter((f) => !redefined.has(f.id));
+    const mine = ownFeatures(model, ownerId).find((f) => effectiveNameOf(model, f) === name);
+    const covered = new Set(mine ? redefinedClosure(model, mine).map((g) => g.id) : []);
+    if (left.length >= 2 && left.some((f) => !covered.has(f.id))) hit = left;
+  }
+  cache.set(key, hit);
+  return hit;
+}
+
+/**
+ * The first segment of an instance's path, spelled from a site ({@link
+ * instanceSitesOf}), that the element it is read in inherits twice ({@link
+ * inheritedTwice}): the element, the name, and the features. Each segment is
+ * read in the site's root, then in what the {@link DefiningEquations.denote}
+ * walk reaches along the path before it. `undefined` where none is.
+ */
+function diamondOnPath(
+  definitions: DefiningEquations,
+  sites: readonly InstanceSite[],
+  cache: Map<string, readonly ElementRecord[] | undefined>,
+): { owner: ElementRecord; name: string; features: readonly ElementRecord[] } | undefined {
+  const model = definitions.model;
+  for (const { root, path } of sites) {
+    if (path === '') continue;
+    const steps = path.split('.');
+    const denoted = definitions.denote(root);
+    let owner = model.get(root);
+    for (let k = 0; k < steps.length && owner !== undefined; k++) {
+      const features = inheritedTwice(model, owner.id, steps[k]!, cache);
+      if (features !== undefined) return { owner, name: steps[k]!, features };
+      const d = denoted.get(steps.slice(0, k + 1).join('.'));
+      owner = d ? (definitions.subjectOf(d.reader, d.feature) ?? d.feature) : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The most specific element that denotes an instance: the one the {@link
+ * DefiningEquations.denote} walk reaches along the instance's path from each
+ * site it is spelled at ({@link instanceSitesOf}) — what a subject or a
+ * reference there stands for, else the feature itself — or `undefined` where
+ * it is spelled at no site, at sites that reach different elements, or along
+ * a path that inherits a name twice ({@link diamondOnPath}): no one element
+ * stands for an instance of Q3's p, which is Q2's p and Q4's p at once.
+ */
+function instanceElementOf(
+  definitions: DefiningEquations,
+  sites: readonly InstanceSite[],
+  cache: Map<string, readonly ElementRecord[] | undefined>,
+): ElementRecord | undefined {
+  if (diamondOnPath(definitions, sites, cache) !== undefined) return undefined;
+  const elements = new Set<ElementRecord | undefined>();
+  for (const { root, path } of sites) {
+    if (path === '') {
+      elements.add(definitions.model.get(root));
+      continue;
+    }
+    const d = definitions.denote(root).get(path);
+    elements.add(d ? (definitions.subjectOf(d.reader, d.feature) ?? d.feature) : undefined);
+  }
+  const [element] = elements;
+  return elements.size === 1 ? element : undefined;
+}
+
+/**
+ * What the coverage guard makes of one instance ({@link instanceReadsOtherwise}):
+ * the instance is read in an element of its own, `element` — the most specific
+ * element that denotes it — or its row abstains, in `sentence`.
+ */
+type GuardVerdict = { element: ElementRecord } | { kind: InstanceAbstention; sentence: string };
+
+/**
  * THE COVERAGE GUARD (A.7, `not-enumerated`). A group reads every instance of
  * its shared usage U through U's own features, re-rooted at the instance: a
  * value a binding carries into one instance is read there ({@link
- * boundSourceIn}), and nothing else is. So an instance whose element — the one
- * the {@link DefiningEquations.denote} walk reaches along its path from each
- * site it is spelled at ({@link instanceSitesOf}) — reads a name of the
- * relation, or a name such a name's value reads, through ANOTHER feature or
- * source than U does — a redefinition with a value of its own (`part :>> p {
- * attribute :>> extra = 20.0; }`), a specialised type (`part :>> p : P2`), a
- * nested override on its path, a binding written there (its implicit end
- * copy), an asserted equation of its own, a reference to another feature
- * (`ref part :>> r = ra`), a part bound to another (`bind p.r = s`) — or
- * that redefines the relation itself (`constraint :>> c { … }`) is no
- * instance that reading reads: read through U, it published U's value as its
- * own (A2: `P::c in q2::p` held at P's `extra` of 0 while q2's p states 20).
- * So is one where a reference the reading crosses stands for another feature
- * than where its value is written ({@link crossingReadsOtherwise}): `r = s`
- * written in Q's p is Q's `s`, and q2's p reads q2's. Its row abstains, in
- * the sentence returned; `undefined` where it reads every name as U does. An
- * instance spelled at no site, at sites that reach different elements, or
- * whose reading runs past {@link MAX_GUARD_PATHS} paths, abstains too.
+ * boundSourceIn}), and nothing else is. So an instance whose element — the
+ * most specific element that denotes it, the one the {@link
+ * DefiningEquations.denote} walk reaches along its path from each site it is
+ * spelled at ({@link instanceSitesOf}) — reads a name of the relation, or a
+ * name such a name's value reads, through ANOTHER feature or source than U
+ * does — a redefinition with a value of its own (`part :>> p { attribute :>>
+ * extra = 20.0; }`), a specialised type (`part :>> p : P2`), a nested
+ * override on its path, a binding written there (its implicit end copy, A4's
+ * `bind p.extra = E` in q2), an asserted equation of its own, a reference to
+ * another feature (`ref part :>> r = ra`) — is not read through U: read so,
+ * it published U's value as its own (A2: `P::c in q2::p` held at P's `extra`
+ * of 0 while q2's p states 20). It is read in that element instead, at the
+ * instance (`{ element }`): A2's q2's p is read in q2's `part :>> p`, whose
+ * extra is 20, and A3's q2's p in Q2's `part :>> p : P2`, at q2's own values
+ * — the reading the element's own context row gives where the element is the
+ * instance's alone.
+ *
+ * Its row abstains — `undefined` where it reads every name as U does — where
+ * that element cannot be read for it either: an instance spelled at no site,
+ * at sites that reach different elements, along a path that inherits a name
+ * twice ({@link diamondOnPath}: Q3's p, where `Q3 :> Q2, Q4` and each types
+ * its p, is both at once), or whose reading runs past {@link MAX_GUARD_PATHS}
+ * paths; one that redefines the relation itself (`constraint :>> c { … }`;
+ * its own relation is read in its own row); one read through a part a binding
+ * joins to another (`bind p.r = s`); one where a reference the reading
+ * crosses stands for another feature than where its value is written ({@link
+ * crossingReadsOtherwise}: `r = s` written in Q's p is Q's `s`, and q2's p
+ * reads q2's); one whose element states a `default` an asserted equation of
+ * its own constrains (H5: which of the two stands is not decided here); and
+ * one an asserted relation of an instance ENCLOSING the element constrains
+ * ({@link assertAbove}, A.2.4: `enclosing-assert`).
  * `cache` holds {@link readFeatures} per context and relation, for one sweep.
  */
 function instanceReadsOtherwise(
@@ -3684,60 +3837,140 @@ function instanceReadsOtherwise(
   sites: readonly InstanceSite[],
   names: readonly string[],
   cache: Map<string, GuardReading | undefined>,
-): string | undefined {
+  twice: Map<string, readonly ElementRecord[] | undefined>,
+): GuardVerdict | undefined {
   const model = definitions.model;
-  const where = definitions.contextName(usage.id);
   const head = `${effectiveQualifiedName(model, relation.id)} is not read in ${instance}`;
-  const tail = `and this tool reads an instance of ${where} only through ${where}'s own features`;
   const named = (f: ElementRecord | undefined) => (f ? definitions.qualifiedNameOf(f.id) : 'nothing this tool resolves');
-  const elements = new Set<ElementRecord | undefined>();
-  for (const { root, path } of sites) {
-    if (path === '') {
-      elements.add(model.get(root));
-      continue;
-    }
-    const d = definitions.denote(root).get(path);
-    elements.add(d ? (definitions.subjectOf(d.reader, d.feature) ?? d.feature) : undefined);
+  const abstain = (sentence: string): GuardVerdict => ({ kind: 'not-enumerated', sentence });
+  const diamond = diamondOnPath(definitions, sites, twice);
+  if (diamond !== undefined) {
+    const features = diamond.features.map((f) => named(f));
+    const listed = `${features.slice(0, -1).join(', ')} and ${features[features.length - 1]}`;
+    return abstain(
+      `${head}: ${definitions.qualifiedNameOf(diamond.owner.id)} inherits ${listed} ` +
+        `under the one name \`${diamond.name}\`, ${diamond.features.length === 2 ? 'neither redefining the other' : 'none redefining another'}, ` +
+        'so this tool cannot tell which element stands for it there',
+    );
   }
-  const [element] = elements;
-  if (elements.size !== 1 || element === undefined) {
-    return `${head}: this tool cannot tell which element stands for it there, ${tail}`;
+  const element = instanceElementOf(definitions, sites, twice);
+  if (element === undefined) {
+    return abstain(`${head}: this tool cannot tell which element stands for it there`);
   }
   // The relation itself, redefined there: the instance's own relation is read in its own row.
   const relationName = definitions.nameOf(relation);
   if (element.id !== usage.id && relationName !== undefined) {
     const mine = definitions.byName(element.id).get(relationName);
     if (mine !== undefined && mine.id !== relation.id) {
-      return `${head}: its ${relationName} there is ${named(mine)}, not ${named(relation)}, ${tail}`;
+      return abstain(
+        `${head}: its ${relationName} there is ${named(mine)}, not ${named(relation)}, and that relation is read in a row of its own`,
+      );
     }
   }
   const shared = guardReading(definitions, relation, usage.id, names, cache);
   const own = element.id === usage.id ? shared : guardReading(definitions, relation, element.id, names, cache);
   if (shared === undefined || own === undefined) {
-    return `${head}: what it reads there runs past ${MAX_GUARD_PATHS} names, ${tail}`;
+    return abstain(`${head}: what it reads there runs past ${MAX_GUARD_PATHS} names, and this tool compares no further`);
   }
   if (own.bound !== undefined) {
-    return `${head}: ${boundPartPhrase(own.bound, instance)}`;
+    return abstain(`${head}: ${boundPartPhrase(own.bound, instance)}`);
   }
+  let differs = false;
   if (element.id !== usage.id) {
     for (const path of new Set([...shared.paths.keys(), ...own.paths.keys()])) {
-      const a = shared.paths.get(path);
-      const b = own.paths.get(path);
-      if (a?.signature === b?.signature) continue;
-      if (a?.feature !== undefined && a.feature === b?.feature && a.through !== b.through) {
-        const through = (id: ElementId | undefined) => (id !== undefined ? definitions.qualifiedNameOf(id) : 'nothing');
-        return `${head}: its ${path} there is read through ${through(b.through)}, not ${through(a.through)} as in ${where}, ${tail}`;
+      if (shared.paths.get(path)?.signature !== own.paths.get(path)?.signature) {
+        differs = true;
+        break;
       }
-      if (a?.feature !== undefined && a.feature === b?.feature) {
-        return `${head}: its ${path} there reads its value otherwise than in ${where} (another asserted equation, or another value it redefines), ${tail}`;
-      }
-      return `${head}: its ${path} there is ${named(b?.feature)}, not ${named(a?.feature)} as in ${where}, ${tail}`;
     }
   }
   for (const crossing of own.crossings) {
     for (const site of sites) {
       const why = crossingReadsOtherwise(definitions, site, element, crossing);
-      if (why !== undefined) return `${head}: ${why}, ${tail}`;
+      if (why !== undefined) {
+        return abstain(`${head}: ${why}, and this tool resolves what a reference stands for only where its value is written`);
+      }
+    }
+  }
+  if (!differs) return undefined;
+  // A value of the element's own that states a `default` and that an asserted
+  // equation the usage does not read constrains (H5B: q2's `part :>> p {
+  // assert constraint { extra == 20.0 } }` over P's `extra default = 0.0`):
+  // which of the two stands is not decided here (H5), and a reading in the
+  // element would read the default.
+  for (const [path, mine] of own.paths) {
+    if (mine.assertedDefault === undefined || mine.assertedDefault === shared.paths.get(path)?.assertedDefault) continue;
+    return abstain(
+      `${head}: its ${path} there states a default that an asserted equation of its own constrains, ` +
+        'and this tool does not decide per instance which of the two it reads',
+    );
+  }
+  const assert = assertAbove(definitions, sites, element, [...own.paths.keys()]);
+  if (assert !== undefined) {
+    return {
+      kind: 'enclosing-assert',
+      sentence:
+        `${head}: ${effectiveQualifiedName(model, assert.frame)}'s asserted \`${assert.expr}\` constrains it there, ` +
+        'and this tool does not read a value an enclosing assert constrains',
+    };
+  }
+  return { element };
+}
+
+/**
+ * The first asserted relation of an instance ENCLOSING `element` on an
+ * instance's path — the root of a site it is spelled at ({@link
+ * instanceSitesOf}), every usage on the path between, and each one's types
+ * and the features it redefines, user-written — that references a path
+ * `element` reads (`paths`, as {@link readFeatures} lists them), spelled
+ * below that instance: q2's `assert constraint { p.load == 5.0 }` over q2's
+ * `part :>> p { … }` reading `load`. A.2.4: an enclosing assert constrains
+ * the value, and a reading in `element` reads none of it. `undefined` where
+ * none does.
+ */
+function assertAbove(
+  definitions: DefiningEquations,
+  sites: readonly InstanceSite[],
+  element: ElementRecord,
+  paths: readonly string[],
+): { frame: ElementId; expr: string } | undefined {
+  const model = definitions.model;
+  for (const site of sites) {
+    if (site.path === '') continue;
+    const steps = site.path.split('.');
+    const denoted = definitions.denote(site.root);
+    // The instances above the element, outermost first, each with the path
+    // from it down to the element.
+    const frames: Array<{ el: ElementRecord; below: string }> = [];
+    const root = model.get(site.root);
+    if (root) frames.push({ el: root, below: site.path });
+    for (let k = 1; k < steps.length; k++) {
+      const d = denoted.get(steps.slice(0, k).join('.'));
+      if (d) frames.push({ el: definitions.subjectOf(d.reader, d.feature) ?? d.feature, below: steps.slice(k).join('.') });
+    }
+    for (const { el, below } of frames) {
+      if (el.id === element.id) continue;
+      const holders = new Set<ElementRecord>();
+      for (const h of [el, ...redefinedClosure(model, el)]) {
+        holders.add(h);
+        for (const g of generalizationsOf(model, h.id)) holders.add(g);
+      }
+      for (const holder of holders) {
+        if (holder.attrs.isLibrary === true) continue;
+        for (const child of model.children(holder.id)) {
+          if (child.attrs.isLibrary === true || !isAsserted(child)) continue;
+          const expr = child.attrs.expression;
+          if (typeof expr !== 'string' || expr.trim() === '') continue;
+          for (const n of relationNamesOf(expr)) {
+            for (const p of paths) {
+              const remaining = `${below}.${p}`;
+              if (n === remaining || n.startsWith(`${remaining}.`) || remaining.startsWith(`${n}.`)) {
+                return { frame: holder.id, expr };
+              }
+            }
+          }
+        }
+      }
     }
   }
   return undefined;
@@ -3775,15 +4008,20 @@ function boundPartPhrase(bound: NonNullable<GuardReading['bound']>, where: strin
  * usage reads the relation through a bound part ({@link GuardReading}'s
  * `bound`; `bind p.r = s`): no row of it — its generic row included — reads
  * what the part is bound to (`not-enumerated`). In an expanded group, an
- * instance that reads the relation otherwise than the usage does is not
- * read: the coverage guard ({@link instanceReadsOtherwise}) lists it in
- * `otherwise`, and its row abstains on every surface.
+ * instance whose own element reads the relation otherwise than the usage
+ * does is read in that element (`readIn`), or — where that element cannot be
+ * read for it — not read: the coverage guard ({@link instanceReadsOtherwise})
+ * lists it in `otherwise`, and its row abstains on every surface. An instance
+ * that is an element's own instance is that element's reading (`standsFor`),
+ * and one that a group of a more specific usage lists is that group's: every
+ * instance is one row.
  */
 export function instanceGroups(model: Model): InstanceGroup[] {
   const definitions = sharedDefinitions(model);
   if (!hasUserBindings(model)) return [];
   const out: InstanceGroup[] = [];
   const read = new Map<string, GuardReading | undefined>();
+  const twice = new Map<string, readonly ElementRecord[] | undefined>();
   let budget = MAX_INSTANCE_RELATIONS;
   for (const el of model.ofKind('ConstraintUsage', 'RequirementUsage')) {
     if (el.ownerId == null) continue;
@@ -3800,6 +4038,10 @@ export function instanceGroups(model: Model): InstanceGroup[] {
     // its own row is U's generic reading, and each other instance gets a row
     // of its own. `readingContexts` never lists the owner, so this is added.
     if (isUsage(definition.eClass) && definitions.boundAbove(definition.id, names) !== undefined) usages.push(definition);
+    const mine: InstanceGroup[] = [];
+    // The instances on whose path a name is inherited twice, per group
+    // ({@link diamondOnPath}): no group of one of the features takes them.
+    const diamonds = new Map<InstanceGroup, Set<string>>();
     for (const usage of usages) {
       const { sites, truncated } = instanceSitesOf(definitions, usage);
       const instances = [...sites.keys()];
@@ -3837,15 +4079,83 @@ export function instanceGroups(model: Model): InstanceGroup[] {
           group.expanded = true;
           budget -= instances.length;
           const otherwise = new Map<string, { kind: InstanceAbstention; sentence: string }>();
+          const readIn = new Map<string, ElementId>();
+          const standsFor = new Map<string, ElementId>();
+          const crossed = new Set<string>();
           for (const instance of instances.slice(1)) {
-            const sentence = instanceReadsOtherwise(definitions, el, usage, instance, sites.get(instance) ?? [], names, read);
-            if (sentence !== undefined) otherwise.set(instance, { kind: 'not-enumerated', sentence });
+            const own = sites.get(instance) ?? [];
+            if (diamondOnPath(definitions, own, twice) !== undefined) crossed.add(instance);
+            // The element whose own instance this is: the group's row reads the
+            // relation there, so that element's context row is this row.
+            const element = instanceElementOf(definitions, own, twice);
+            if (element !== undefined && element.id !== usage.id && definitions.instanceNameOf(element.id) === instance) {
+              standsFor.set(instance, element.id);
+            }
+            const verdict = instanceReadsOtherwise(definitions, el, usage, instance, own, names, read, twice);
+            if (verdict === undefined) continue;
+            if ('element' in verdict) readIn.set(instance, verdict.element.id);
+            else otherwise.set(instance, verdict);
           }
           if (otherwise.size > 0) group.otherwise = otherwise;
+          if (readIn.size > 0) group.readIn = readIn;
+          if (standsFor.size > 0) group.standsFor = standsFor;
+          if (crossed.size > 0) diamonds.set(group, crossed);
         }
       }
-      out.push(group);
+      mine.push(group);
     }
+    // A group of a usage that redefines another group's usage (Q2's `part :>>
+    // p : P2`, a group of its own where q2 sets Q's L, below Q's p) reads its
+    // instances itself — through the more specific usage, each in its own
+    // element: the other group files none of them, so each is one row. An
+    // instance on whose path a name is inherited twice (Q3's p, Q2's p and
+    // Q4's p at once) is no more Q2's than Q4's: the group it is taken from
+    // keeps it, and every group of one of the features drops it. One that
+    // two groups still list is filed by the first.
+    const byUsage = new Map(mine.map((g) => [g.usageId, g] as const));
+    const taken = new Map<InstanceGroup, Set<string>>();
+    const dropped = (g: InstanceGroup): Set<string> => {
+      let set = taken.get(g);
+      if (!set) taken.set(g, (set = new Set<string>()));
+      return set;
+    };
+    if (mine.length > 1) {
+      for (const h of mine) {
+        const hu = model.get(h.usageId);
+        for (const x of hu ? redefinedClosure(model, hu) : []) {
+          const g = byUsage.get(x.id);
+          if (g === undefined || g === h) continue;
+          const listed = new Set(g.instances);
+          for (const [k, i] of h.instances.entries()) {
+            if (k > 0 && diamonds.get(h)?.has(i) === true && listed.has(i)) dropped(h).add(i);
+            else dropped(g).add(i);
+          }
+        }
+      }
+      const filed = new Set<string>();
+      for (const g of mine) {
+        for (const [k, i] of g.instances.entries()) {
+          if (k === 0 || taken.get(g)?.has(i) === true) continue;
+          if (filed.has(i)) dropped(g).add(i);
+          else filed.add(i);
+        }
+      }
+    }
+    for (const [g, theirs] of taken) {
+      g.instances = g.instances.filter((i, k) => k === 0 || !theirs.has(i));
+      const keep = <V>(m: ReadonlyMap<string, V> | undefined): Map<string, V> | undefined => {
+        const kept = new Map([...(m ?? [])].filter(([i]) => !theirs.has(i)));
+        return kept.size > 0 ? kept : undefined;
+      };
+      const [otherwise, readIn, standsFor] = [keep(g.otherwise), keep(g.readIn), keep(g.standsFor)];
+      if (otherwise) g.otherwise = otherwise;
+      else delete g.otherwise;
+      if (readIn) g.readIn = readIn;
+      else delete g.readIn;
+      if (standsFor) g.standsFor = standsFor;
+      else delete g.standsFor;
+    }
+    out.push(...mine);
   }
   return out;
 }
