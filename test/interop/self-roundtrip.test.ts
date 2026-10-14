@@ -130,6 +130,26 @@ describe('PilotApiClient self round-trip', () => {
     expect(oneJson['@id']).toBe(root.id);
   });
 
+  /**
+   * A pull rebuilds each owner's children in the order the elements come, and
+   * after a reparent that is not the order they were added in: pushed in that
+   * order, the moved element came back where it had been added (review
+   * 2026-10-14 D-2, the S2 review).
+   */
+  it("keeps each owner's children in the order the model holds them after a reparent", async () => {
+    const client = new PilotApiClient(baseUrl);
+    const source = buildSampleModel();
+    const owner = source.all().find((e) => source.children(e.id).filter((c) => c.declaredName).length >= 3)!;
+    const first = source.children(owner.id).find((c) => c.declaredName)!;
+    source.reparent(first.id, null);
+    source.reparent(first.id, owner.id);
+    const order = (m: Model) => m.childIds(owner.id);
+    expect(order(source).at(-1)).toBe(first.id);
+    const pushed = await client.pushModel(source, 'OrderRT');
+    const pulled = await client.pullModel(pushed.projectId, pushed.commitId);
+    expect(order(pulled)).toEqual(order(source));
+  });
+
   it('follows pagination to fetch ALL elements (> page size)', async () => {
     // Build a model larger than the page size we will read with.
     const big = new Model();

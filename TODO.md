@@ -547,7 +547,7 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
 - [ ] **Make the Problems tab label's producer split show, or remove it (H6b).**
       `src/ui/panels/BottomPanel.tsx:632-639` labels the Problems tab `Problems (N check · M solve)`
       when both producers filed rows, but Check and Solve each replace `diagnostics` wholesale
-      (`src/ui/store.ts:3162`, `:3250`) and validation rows carry no `producer`, so the label can
+      (`src/ui/store.ts:3165`, `:3253`) and validation rows carry no `producer`, so the label can
       never show. The per-instance plan deferred H6b because of the tutorial videos; 3e3b0ff shipped
       it with a per-row producer chip on v9's screen. Either count every row by producer, or remove
       the dead branch (the chips stay). Done when the label either shows on a model with both or is
@@ -599,26 +599,12 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
 From the review of the load-health certificate (679a5e5) and of the checks worker (the ux merge).
 The load health no longer vouches for a text it has not parsed (branch `load-health` S1: each
 text is parsed, validated and written back in the checks worker, so a text that parses to
-another model is told apart too); what remains is the worker's copy of the model and the
-page-thread guard.
+another model is told apart too), and the worker rebuilds the page's model after a reparent
+(S2: Save, Undo and Redo, the Model JSON and OMG API JSON exports, a push to an OMG API server
+and the worker's copy list each owner's children in the order the model holds them, and a drag
+lists the page's own model in that order); what remains is the page-thread guard, the order
+between elements of different owners, and a collaboration room's child order.
 
-- [ ] **Emit containment in pre-order wherever a model is serialised.** `Model.reparent` appends the
-      child to its new owner (`src/core/model.ts:430-432`) while `rebuildIndex` (`:519-534`) groups
-      children by insertion order, so `toJSON` and `toJSONWhere` (`:562-571`) emit them out of
-      containment order. The checks worker's `userPart` (`src/ui/checks-offthread.ts:128-138`), Save
-      in this browser (`store.ts:3483`) and every Undo snapshot (`store.ts:1889`, `:3879`, `:3902`)
-      rebuild a model whose children are reordered, and an initial-less composite state takes its
-      first child as its initial one (`initialState`, `src/semantics/mc/config.ts:563-566` at
-      5943654). Probe: a machine with `initial start`, a composite `Work { Prep; Run }` with no
-      `initial`, and the property `absence globally "state Spare"`; drag the older state `Spare`
-      into `Work` in the Explorer: the page's check-behaviour reads `holds` (1 pass) and the
-      worker's `issues` (1 fail), `reach` gives 3 configurations and 2 findings on the page against
-      2 and 4 in the worker, and Save then reopen, or any Undo, rewrites the Text view from
-      `state B; state C; state A;` to `state A; state B; state C;`. Fix: emit user elements in containment pre-order (a DFS over the
-      children from the user roots) in `toJSON`, `toJSONWhere` and `userPart`. Done when tests show
-      that after a reparent the worker matches the page (verdict, configurations, findings), Save
-      then reopen keeps the order and an initial-less composite's initial state, and Undo after a
-      reparent restores the text byte for byte. [review 2026-10-14 D-1, D-2]
 - [ ] **Guard the page thread at a palette check click on v9.** A check click no longer parses on
       the page: `onRun` (`src/ui/panels/Palette.tsx`) reads `loadHealthNow()` (`src/ui/store.ts`),
       which only looks up what is known of each text, and a text no parse has measured goes to the
@@ -632,6 +618,42 @@ page-thread guard.
       browser. Done when an E2E guard on v9 shows no long
       task over 200 ms on the page thread after an edit and a palette check click, measured beside
       the existing frame-gap guard. [review 2026-10-14 D-3]
+- [ ] **List the elements of different owners in the order the text gives them.** The page and
+      every copy of its model (the checks worker's, Undo's, Save's) now list each owner's children
+      in the order the owner holds them, but elements of different owners stay in the order they
+      were added, by a load, a creation or a drag (`Model.adoptSerialOrder` and `inSerialOrder`,
+      `src/core/model.ts`), while a terminal over the saved text reads them from top to bottom. So
+      the two can disagree on whatever goes by the model's order across owners: the order of
+      `reach` and `check-behaviour` rows, and a choice of the first of several, such as the first
+      transition out of an `initial` when the transitions have different owners. Probe:
+      `package P { package Q1 { state def M1 { state a; state b; state dead1; transition t1 first
+      a then b; } } package Q2 { state def M2 { state x; state y; state dead2; transition t2 first
+      x then y; } } }`; drag `Q1` out of `P` and back in: the Text view lists `Q2` first, and
+      `reach` on the saved text reports M2's rows first, while the page and the worker report M1's
+      first (measured on the `load-health` S2 tree). No drag is needed: a machine `M0` created in
+      `Q1` after the load is reported after M2 on the page and in the worker, and before it by the
+      terminal. Fix: list the user's part in containment
+      pre-order after each edit, at a measured cost on the drone-swarm model (a load is not in
+      pre-order: 1,030 of its 3,823 user elements would move), or order the rows by the text.
+      Done when the probe's page, worker and terminal rows come in one order. [review 2026-10-14
+      D-1, the S2 review]
+- [ ] **Keep each owner's child order in a collaboration room.** A room keeps the model's
+      elements in a `Y.Map` (`src/collab/model-doc.ts`), and a peer rebuilds the model from it in
+      ways that lose the order an owner holds its children in. `reconcileModelFromDoc` creates the
+      elements it is sent last to first, so a batch of new elements in one peer (one transaction,
+      or a reset: Apply, Import, Undo, Redo) reaches the others reversed: three parts `a, b, c`
+      made in one transaction read `c, b, a` on the other peer, and a reset to `x, y, z` reads
+      `z, y, x`. And a peer that joins loads the model in the map's key order
+      (`serializeFromDoc`), where a drag changed only the element's owner: after `toA` of
+      `start, A, B, toA, toB` is dragged out of its machine and back in, the room holds
+      `start, A, B, toB, toA` and a peer that joins then holds `start, A, B, toA, toB`, and walks
+      `toA` out of `start` first. Its Text view differs, and a composite with no `initial` can enter
+      another state. A peer present at a drag takes it in as a move, and lists its model as the
+      mover does (`load-health` S2). Fix: create in the map's order, and carry the child order in
+      the document (an order key per element, or a `Y.Array` of child ids per owner). Done when a
+      test shows every peer's children in the mover's order after a batch, a reset and a drag
+      followed by a join (measured on the `load-health` S2 tree). [review 2026-10-14 D-2, the S2
+      review]
 
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
@@ -769,7 +791,7 @@ merge removes what it closes.
       witness on `begin`. Done when a test shows the witness can be closed while a check runs.
       [review 2026-10-14 D-9]
 - [ ] **Make the worker's library identity depend on the library's content.** `libraryKey`
-      (`src/ui/checks-offthread.ts:147-159`) is the library element count plus a hash of the root
+      (`src/ui/checks-offthread.ts:155-167`) is the library element count plus a hash of the root
       ids, so a page library of the same shape and different content (the Properties name field can
       rename a library element; a same-shape bundle from another build) counts as the same and the
       worker answers over its pristine copy [D-10]. And only `libraryMismatch` is remembered

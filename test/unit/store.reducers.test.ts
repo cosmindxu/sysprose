@@ -114,6 +114,7 @@ import {
   requirementShortId,
   statementKindOf,
 } from '@semantics/index';
+import { initialSubstate } from '@semantics/mc/config';
 import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
 import { commandById, handlePageKey, handleShortcut, runExportSysml, runSave } from '../../src/ui/commands';
@@ -411,6 +412,174 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
     expect(st().undoStack.length).toBe(undoBefore); // snapshot rolled back
     expect(st().rev).toBe(revBefore); // no mutation
     expect(st().redoStack.length).toBe(1); // redo history NOT destroyed
+  });
+
+  /**
+   * Undo, Redo and Save then Open take the model through a serialised copy, and
+   * a load rebuilds each owner's children from the order that copy lists them
+   * in. Listed in the order they were added, a reparented state came back where
+   * it had been added: the Text view rewrote itself, and a machine with no
+   * `initial` opened in another state (review 2026-10-14 D-2, D's probe d3).
+   */
+  it('Undo, Redo and Save then Open after a reparent give the model back as it was: its text byte for byte, and the states it opens in', async () => {
+    st().importModel(
+      [
+        'package P {',
+        '    part def Machine {',
+        '        state def M {',
+        '            state A;',
+        '            state B;',
+        '            state C;',
+        '            state Work {',
+        '                state Prep;',
+        '                state Run;',
+        '            }',
+        '            transition t1 first A accept go then B;',
+        '        }',
+        '    }',
+        '}',
+        '',
+      ].join('\n'),
+      'sysml',
+    );
+    await whenLibrarySettled();
+    flushRecompute();
+    const named = (name: string) => st().model.all().find((e) => e.declaredName === name)!.id;
+    // Neither the machine nor its composite state names an `initial`: each opens in its first state.
+    const opensIn = () =>
+      ['M', 'Work'].map((owner) => st().model.get(initialSubstate(st().model, named(owner))!)?.declaredName).join(' ');
+    expect(opensIn()).toBe('A Prep');
+    // In the Explorer: A dragged out of the machine and back in, now its last state; C, older than Work, dragged into it.
+    st().reparent(named('A'), named('Machine'));
+    st().reparent(named('A'), named('M'));
+    st().reparent(named('C'), named('Work'));
+    flushRecompute();
+    const moved = st().textBuffer;
+    expect(moved.indexOf('state A;')).toBeGreaterThan(moved.indexOf('state Work'));
+    expect(moved.indexOf('state C;')).toBeGreaterThan(moved.indexOf('state Run;'));
+    expect(opensIn()).toBe('B Prep');
+
+    // An edit after the reparents, undone: the model as it was before the edit, the reparents in it.
+    st().createElement('PartDefinition', named('P'), 'Later');
+    flushRecompute();
+    const edited = st().textBuffer;
+    expect(edited).toContain('part def Later;');
+    st().undo();
+    flushRecompute();
+    expect(st().textBuffer, 'Undo').toBe(moved);
+    expect(opensIn(), 'Undo').toBe('B Prep');
+    st().redo();
+    flushRecompute();
+    expect(st().textBuffer, 'Redo').toBe(edited);
+    expect(opensIn(), 'Redo').toBe('B Prep');
+    st().undo();
+    flushRecompute();
+    expect(st().textBuffer, 'Undo after Redo').toBe(moved);
+
+    await st().saveProject('Reparented');
+    st().newProject('Other');
+    await st().loadProject('Reparented');
+    await whenLibrarySettled();
+    flushRecompute();
+    expect(st().textBuffer, 'Save, then Open').toBe(moved);
+    expect(opensIn(), 'Save, then Open').toBe('B Prep');
+  });
+
+  /**
+   * The page decides by the order its model lists the elements in — the walk
+   * finds its machines in it, and takes the first of two transitions out of an
+   * `initial` from it — while Undo, Save and the checks worker rebuild the
+   * model in the order each owner holds its children. So a drag lists the
+   * page's model in that order too (`Model.adoptSerialOrder`): else a machine
+   * dragged out of its package and back was reported last on the page and
+   * first by the worker, and an unrelated edit undone moved it back (review
+   * 2026-10-14 D-1, the S2 review).
+   */
+  it('a drag, and a drag of several, list the model as Undo, Save and the checks worker rebuild it', async () => {
+    st().importModel(
+      [
+        'package P {',
+        '    state def M1 {',
+        '        state a;',
+        '        state b;',
+        '        state dead1;',
+        '        transition t1 first a then b;',
+        '    }',
+        '    state def M2 {',
+        '        state x;',
+        '        state y;',
+        '        state dead2;',
+        '        transition t2 first x then y;',
+        '    }',
+        '}',
+        '',
+      ].join('\n'),
+      'sysml',
+    );
+    await whenLibrarySettled();
+    flushRecompute();
+    const named = (name: string) => st().model.all().find((e) => e.declaredName === name)!.id;
+    const listedAsCopies = () => {
+      const all = st().model.all();
+      return st().model.inSerialOrder().every((el, i) => el === all[i]);
+    };
+    const reach = CHECKS.find((c) => c.id === 'reach')!;
+    const healthy: ReturnType<typeof loadHealth> = {
+      errors: 0,
+      saved: { parseErrors: 0 },
+      exported: { parseErrors: 0 },
+      sameText: true,
+      validationErrors: 0,
+      validateThrew: false,
+      unwritable: null,
+      libraryPending: false,
+    };
+    const machines = () =>
+      runCheck(reach, { model: st().model, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: healthy })
+        .rows.map((r) => /`P::(M\d)::/.exec(r.message)?.[1])
+        .filter((m, i, all) => m !== undefined && all.indexOf(m) === i);
+    expect(machines()).toEqual(['M1', 'M2']);
+
+    // M1 dragged out of the package and back in: the text lists M2 first, and so does the page.
+    st().reparent(named('M1'), null);
+    st().reparent(named('M1'), named('P'));
+    flushRecompute();
+    expect(st().textBuffer.indexOf('state def M2')).toBeLessThan(st().textBuffer.indexOf('state def M1'));
+    expect(listedAsCopies(), 'reparent').toBe(true);
+    expect(machines()).toEqual(['M2', 'M1']);
+    // An edit after it, undone: the model comes back from a snapshot, listed as it was.
+    st().createElement('PartDefinition', named('P'), 'Later');
+    flushRecompute();
+    st().undo();
+    flushRecompute();
+    expect(machines(), 'Undo').toEqual(['M2', 'M1']);
+
+    // Two of M1's states dragged together into M2, after its own.
+    st().reparentMany([named('a'), named('b')], named('M2'));
+    expect(st().model.children(named('M2')).map((e) => e.declaredName)).toEqual(['x', 'y', 'dead2', 't2', 'a', 'b']);
+    expect(listedAsCopies(), 'reparentMany').toBe(true);
+  });
+
+  /**
+   * A load can reorder an owner's children itself: the parser puts a feature's
+   * specialisations back in the order they were declared. Import keeps that
+   * order now, so the Text view reads as the file, where it used to read
+   * `part : Sub :>> p;` (the S2 review of D-2).
+   */
+  it('Import keeps a feature\'s specialisations in the order the file declares them, through an Undo', async () => {
+    st().importModel(
+      ['package S1 {', '    part def P;', '    part def Sub :> P;', '    part def Q {', '        part p : P;', '    }', '    part q : Q {', '        part :>> p : Sub;', '    }', '}', ''].join('\n'),
+      'sysml',
+    );
+    await whenLibrarySettled();
+    flushRecompute();
+    const imported = st().textBuffer;
+    expect(imported).toContain('part :>> p : Sub;');
+    st().createElement('PartDefinition', st().model.all().find((e) => e.declaredName === 'S1')!.id, 'Later');
+    flushRecompute();
+    st().undo();
+    flushRecompute();
+    expect(st().textBuffer, 'Undo').toBe(imported);
   });
 
   it('connect creates a relationship edge between two elements', () => {

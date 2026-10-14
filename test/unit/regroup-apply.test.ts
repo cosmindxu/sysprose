@@ -245,6 +245,29 @@ describe('planApply — op list', () => {
     for (const id of [X.id, P.id, Q.id]) expect(m.get(id)?.ownerId).toBe(composite);
   });
 
+  // Undo, Save and the checks worker rebuild a model in the order each owner
+  // holds its children, and the page decides by the order its model lists them
+  // in: after the moves, the apply lists the model as those copies are rebuilt
+  // (`Model.adoptSerialOrder`, review 2026-10-14 D-1).
+  it('lists the model as its copies are rebuilt once members moved into an existing part', () => {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const pkg = f.pkg('P');
+    const K = f.part('K', pkg.id);
+    const A = f.part('A', pkg.id);
+    const B = f.part('B', pkg.id);
+    f.part('k1', K.id); // K's own, added after A and B
+    const plan = planApply(
+      m,
+      cfg({ bundles: [{ id: K.id, label: 'K', isNew: false }], membership: { [A.id]: K.id, [B.id]: K.id } }),
+    );
+    expect(plan.errors).toEqual([]);
+    m.transaction(() => applyRegroup(m, plan));
+    expect(m.children(K.id).map((e) => e.declaredName)).toEqual(['k1', 'A', 'B']);
+    const listed = m.inSerialOrder();
+    expect(m.all().every((el, i) => el === listed[i])).toBe(true);
+  });
+
   // F4: cycles that only materialize once OTHER planned moves have landed —
   // e.g. two existing-part bundles swapping members (A→X and X→A) — must be
   // refused up-front by the simulated-ownership validation, not throw mid-apply.

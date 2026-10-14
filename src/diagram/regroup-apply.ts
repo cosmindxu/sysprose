@@ -382,6 +382,8 @@ export function applyRegroup(model: Model, plan: RegroupApplyPlan): RegroupApply
     model.reparent(mv.partId, realBundleId(mv.bundleId));
     movedPartIds.push(mv.partId);
   }
+  // Listed as Undo, Save and the checks worker rebuild it (`Model.adoptSerialOrder`).
+  model.adoptSerialOrder();
 
   // (3) Delegation ports + one binding each + endpoint rewires. Ports come
   // innermost-first; `portByKey` remembers each created (endpoint, bundle) port

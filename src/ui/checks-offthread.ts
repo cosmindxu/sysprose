@@ -124,6 +124,14 @@ const isLibraryElement = (el: ElementRecord): boolean => el.attrs.isLibrary === 
  * run whose send waits — for its load, or for a run ahead of it — copies this at
  * the click instead (`panels/checks-runner.ts`), since an edit changes the
  * records in place.
+ *
+ * IN THE ORDER THE MODEL HOLDS ITS CHILDREN (`Model.inSerialOrder`), not the
+ * order the elements were added in: the worker rebuilds each owner's children
+ * from the order they arrive in, and after a reparent in the Explorer the two
+ * differ. Sent as added, the moved element came back among its new siblings
+ * where it had been added rather than where it was put, a composite with no
+ * `initial` entered another state, and the palette said `issues` where the
+ * page and a terminal said `holds` (review 2026-10-14 D-1).
  */
 export function userPart(model: Model): SerializedModel {
   const rootIds = model.rootIds().filter((id) => {
@@ -132,7 +140,7 @@ export function userPart(model: Model): SerializedModel {
   });
   return {
     formatVersion: FORMAT_VERSION,
-    elements: model.all().filter((el) => !isLibraryElement(el)),
+    elements: model.inSerialOrder((el) => !isLibraryElement(el)),
     rootIds,
   };
 }

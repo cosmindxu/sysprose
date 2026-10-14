@@ -151,6 +151,63 @@ describe('exportModel / importModel — round-trips', () => {
     expect(graph.rootElement.length).toBeGreaterThan(0);
   });
 
+  /**
+   * A load rebuilds each owner's children from the order the elements are listed
+   * in, and `reparent` appends the element it moves to its new owner's children
+   * without moving it in the order they were added: exported in that order, the
+   * moved element came back where it had been added (review 2026-10-14 D-2).
+   */
+  for (const format of FORMATS) {
+    it(`'${format}' export → import after a reparent keeps each owner's children in order`, () => {
+      const original = buildSampleModel();
+      // The first owner with three children or more: its first child, dragged out and back in, is now its last.
+      const owner = original.all().find((e) => original.children(e.id).filter((c) => c.declaredName).length >= 3)!;
+      const first = original.children(owner.id).find((c) => c.declaredName)!;
+      original.reparent(first.id, null);
+      original.reparent(first.id, owner.id);
+      const order = (m: Model) =>
+        m
+          .all()
+          .filter((e) => e.declaredName && m.children(e.id).some((c) => c.declaredName))
+          .map((e) => `${m.qualifiedName(e.id)}: ${m.children(e.id).map((c) => c.declaredName).filter(Boolean).join(',')}`)
+          .sort();
+      expect(order(original).find((l) => l.startsWith(`${original.qualifiedName(owner.id)}:`))).toMatch(new RegExp(`,${first.declaredName}$`));
+      const { model } = importModel(exportModel(original, format), format);
+      expect(order(model)).toEqual(order(original));
+    });
+  }
+
+  /**
+   * The parser reparents too, while it loads: it puts a feature's
+   * specialisations back in the order they were declared in, and moves a
+   * relationship statement onto the element it names. Saved in the order the
+   * elements were added, such a model came back with those children reordered,
+   * and the Text view rewrote itself on Save then reopen and on every Undo
+   * (the S2 review of D-2: 1 of the 637 models of the verdict corpus, and the
+   * L5 campaign fixture).
+   */
+  it.each([
+    [
+      'a redefinition declared before its typing',
+      ['package S1 {', '    part def P;', '    part def Sub :> P;', '    part def Q {', '        part p : P;', '    }', '    part q : Q {', '        part :>> p : Sub;', '    }', '}', ''],
+      'part :>> p : Sub;',
+    ],
+    [
+      'a subsetting statement written onto the part it names',
+      ['package Q {', '    part def W;', '}', 'package P {', '    import Q::*;', '    part a;', '    subset b subsets a;', '    part b : W;', '}', ''],
+      'part b : W :> a;',
+    ],
+  ])('a model the parser reordered (%s) keeps its text through Save then reopen and an Undo', (_what, lines, line) => {
+    const { model, diagnostics } = parseModel(lines.join('\n'));
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    const text = exportModel(model, 'sysml');
+    expect(text).toContain(line);
+    expect(exportModel(Model.fromJSON(JSON.parse(JSON.stringify(model.toJSON()))), 'sysml'), 'Save, then reopen').toBe(text);
+    const restored = Model.fromJSON(model.toJSON());
+    restored.resetPreserving(model.toJSONWhere((el) => el.attrs.isLibrary !== true), (el) => el.attrs.isLibrary === true);
+    expect(exportModel(restored, 'sysml'), 'Undo').toBe(text);
+  });
+
   it("'api-json' is idempotent across two export/import cycles", () => {
     const once = exportModel(buildSampleModel(), 'api-json');
     const reparsed = importModel(once, 'api-json').model;

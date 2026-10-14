@@ -147,7 +147,9 @@ export function bindModelToDoc(model: Model, doc: Y.Doc): ModelDocBinding {
     applyingRemote = true;
     try {
       model.transaction(() => {
-        reconcileModelFromDoc(model, elements);
+        // A peer's drag lists this model as the peer's own: as its Undo, Save
+        // and checks worker rebuild it (`Model.adoptSerialOrder`, D-1).
+        if (reconcileModelFromDoc(model, elements)) model.adoptSerialOrder();
       });
     } finally {
       applyingRemote = false;
@@ -210,9 +212,11 @@ function applyLocalEvent(model: Model, elements: Y.Map<ElementYMap>, ev: ChangeE
 /**
  * Reconcile the model to match the doc's element set. Idempotent & deterministic:
  * removes elements gone from the doc, creates missing ones (owners first), and
- * patches changed fields / ownership on the rest.
+ * patches changed fields / ownership on the rest. Returns whether it reparented
+ * anything.
  */
-function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): void {
+function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): boolean {
+  let moved = false;
   const docIds = new Set<ElementId>(elements.keys());
 
   // 1) Removals — anything in the model but no longer in the doc.
@@ -267,6 +271,7 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): void
     if (cur.ownerId !== rec.ownerId) {
       try {
         model.reparent(id, rec.ownerId);
+        moved = true;
       } catch {
         /* ignore transient cycle/ordering during convergence */
       }
@@ -302,4 +307,5 @@ function reconcileModelFromDoc(model: Model, elements: Y.Map<ElementYMap>): void
       if (el) el.attrs = next;
     }
   }
+  return moved;
 }

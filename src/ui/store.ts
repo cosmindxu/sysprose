@@ -2943,6 +2943,8 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         pushUndo();
         model.reparent(id, to);
+        // Listed as Undo, Save and the checks worker rebuild it (D-1).
+        model.adoptSerialOrder();
         if (to) get().expand(to, true);
         afterMutation();
       } catch (err) {
@@ -2989,6 +2991,7 @@ export const useAppStore = create<AppState>((set, get) => {
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
         return;
       }
+      model.adoptSerialOrder(); // as in `reparent`
       if (ownerId && targets.some((id) => ownerFor(id) === ownerId)) get().expand(ownerId, true);
       afterMutation();
     },

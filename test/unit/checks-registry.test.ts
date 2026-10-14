@@ -686,6 +686,154 @@ describe('the checks that run in a worker', () => {
     expect(reply.ok && reply.result).toEqual(before);
   });
 
+  /**
+   * The worker rebuilds each owner's children from the order the user part lists
+   * them in. Listed in the order the elements were added, a state dragged in the
+   * Explorer came back among its new siblings where it had been added: a
+   * composite with no `initial` entered it, and the palette said `issues` beside
+   * a copied command that said `holds` (review 2026-10-14 D-1, D's probes d2 and
+   * d7). And the page decided by its own order: of two transitions out of an
+   * `initial`, it took the one added first, so a drag that put that one second
+   * in the text left the page saying `holds` where the worker and a terminal
+   * over the saved text said `issues` (the S2 review). A drag in the app lists
+   * the page's model as every copy is rebuilt (`Model.adoptSerialOrder`, called
+   * by the store's drag commands, a regroup and the SDK); the moves below make
+   * it as they do. The fresh loads the test above compares were never
+   * reparented, so they could not show either.
+   */
+  it('give the page\'s answer after a reparent in the Explorer, and the terminal\'s over the text it saves', { timeout: 120_000 }, async () => {
+    const machine = (never: string, states: string[]): string =>
+      [
+        'package P {',
+        '  item def Cmd { attribute id; }',
+        '  part def Machine {',
+        '    state def M {',
+        '      @SysproseVerification::PropertyPattern {',
+        '        attribute pattern = "absence";',
+        '        attribute scope = "globally";',
+        `        attribute p = "state ${never}";`,
+        '      }',
+        ...states.map((s) => `      ${s}`),
+        '    }',
+        '  }',
+        '}',
+        '',
+      ].join('\n');
+    const cases: Array<{
+      what: string;
+      text: string;
+      move: (m: Model, by: (n: string) => ElementId) => void;
+      /** The verdict before the move, and after it: on the page, from the worker and from a terminal over the saved text. */
+      was: 'holds' | 'issues';
+      is: { verdict: 'holds' | 'issues'; tally: string; exit: number };
+    }> = [
+      {
+        // d7: the machine opens in Idle; Work, which has no `initial`, enters its first state.
+        what: 'an older state dragged into a composite with no initial',
+        text: machine('Spare', [
+          'initial start;',
+          'transition start -> Idle;',
+          'state Idle;',
+          'state Spare;',
+          'state Work {',
+          '  state Prep;',
+          '  state Run;',
+          '  transition r first Prep accept go : Cmd then Run;',
+          '}',
+          'transition w first Idle accept go : Cmd then Work;',
+        ]),
+        move: (m, by) => m.reparent(by('Spare'), by('Work')),
+        was: 'holds',
+        is: { verdict: 'holds', tally: '1 pass, 0 fail', exit: 0 },
+      },
+      {
+        // d2: a machine with no `initial` opens in its first state; A, dragged out and back, is its last.
+        what: 'a state of a machine with no initial dragged out and back in',
+        text: machine('C', ['state A;', 'state B;', 'state C;', 'transition t1 first A accept go : Cmd then C;']),
+        move: (m, by) => {
+          m.reparent(by('A'), by('Machine'));
+          m.reparent(by('A'), by('M'));
+        },
+        was: 'issues',
+        is: { verdict: 'holds', tally: '1 pass, 0 fail', exit: 0 },
+      },
+      {
+        // The S2 review: toA, dragged out and back, is now the second transition out of `start`.
+        what: 'the first of two transitions out of initial dragged out and back in',
+        text: machine('B', ['initial start;', 'transition toA first start then A;', 'transition toB first start then B;', 'state A;', 'state B;']),
+        move: (m, by) => {
+          m.reparent(by('toA'), by('Machine'));
+          m.reparent(by('toA'), by('M'));
+        },
+        was: 'holds',
+        is: { verdict: 'issues', tally: '0 pass, 1 fail', exit: 1 },
+      },
+    ];
+    const host = new CheckHost(mergeLibrary);
+    const dir = mkdtempSync(join(tmpdir(), 'checks-registry-reparent-'));
+    /** Reach's rows on the page and from the worker, alike, and a terminal over the saved text lists them in that order. */
+    const sameRows = async (model: Model, c: CheckContext, what: string): Promise<void> => {
+      const reach = runCheck(WALKERS[0], c);
+      const reply = await host.handle(requestFor(WALKERS[0], c));
+      expect(reply.ok && reply.result, `${what}: reach`).toEqual(reach);
+      const file = join(dir, 'm.sysml');
+      writeFileSync(file, serializeUserModelSignals(model).text);
+      const terminal = await cli(['reach', file]);
+      const walked = /\d+ configuration\(s\) explored/;
+      expect(terminal.stdout.match(walked)?.[0], `${what}: reach`).toBe(reach.summary.match(walked)?.[0]);
+      expect(reach.rows.length, what).toBeGreaterThan(0);
+      const at = reach.rows.map((row) => terminal.stdout.indexOf(`${row.code}  ${row.message}`));
+      expect(at.every((i) => i >= 0), `${what}: every row of reach in the terminal's`).toBe(true);
+      expect(at, `${what}: in the same order`).toEqual([...at].sort((a, b) => a - b));
+    };
+    try {
+      for (const { what, text, move, was, is } of cases) {
+        const model = (await loadModelText(text, { fileName: 'm.sysml' })).model!;
+        const by = (name: string): ElementId => model.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+        const M = by('M');
+        const c = ctx({ model, selectionId: M, selectionName: model.qualifiedName(M), fileName: 'm.sysml' });
+        expect(runCheck(WALKERS[1], c).verdict, `${what}: before the move`).toBe(was);
+        move(model, by);
+        model.adoptSerialOrder();
+        for (const spec of WALKERS) {
+          const page = runCheck(spec, c);
+          const reply = await host.handle(requestFor(spec, c));
+          expect(reply.ok, `${what}: ${spec.id}`).toBe(true);
+          expect(reply.ok && reply.result, `${what}: ${spec.id} — verdict, configurations, findings`).toEqual(page);
+        }
+        // The page is right: a terminal over the text Save writes says the same.
+        const file = join(dir, 'm.sysml');
+        writeFileSync(file, serializeUserModelSignals(model).text);
+        const behaviour = runCheck(WALKERS[1], c);
+        expect(behaviour.verdict, what).toBe(is.verdict);
+        expect(behaviour.summary, what).toContain(is.tally);
+        const terminal = await cli(['check-behaviour', file, '--element', 'P::Machine::M']);
+        expect(terminal.code, what).toBe(is.exit);
+        expect(terminal.stdout, what).toContain(is.tally);
+        await sameRows(model, c, what);
+      }
+
+      // Two machines, the first dragged out of their package and back in: the text, the page and the worker list M2 first.
+      const twoMachines = [
+        'package P {',
+        '  state def M1 { state a; state b; state dead1; transition t1 first a then b; }',
+        '  state def M2 { state x; state y; state dead2; transition t2 first x then y; }',
+        '}',
+        '',
+      ].join('\n');
+      const model = (await loadModelText(twoMachines, { fileName: 'm.sysml' })).model!;
+      const by = (name: string): ElementId => model.all().find((e) => e.declaredName === name && e.attrs.isLibrary !== true)!.id;
+      model.reparent(by('M1'), null);
+      model.reparent(by('M1'), by('P'));
+      model.adoptSerialOrder();
+      const c = ctx({ model, fileName: 'm.sysml' });
+      expect(runCheck(WALKERS[0], c).rows[0].message).toContain('P::M2::');
+      await sameRows(model, c, 'two machines, the first dragged out and back in');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('are given the library the page has: the two passes the worker leaves out change none of it', () => {
     const page = new Model();
     loadFullStandardLibrary(page);

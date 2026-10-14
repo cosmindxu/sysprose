@@ -289,13 +289,19 @@ function jsonAttrs(ae: Record<string, unknown>): ElementRecord['attrs'] {
  * usages) or `OwningMembership` (otherwise) per owned element. Endpoint arrays
  * (`source`/`target`) on relationships and connector usages become `{@id}`
  * reference arrays. Every metaclass attribute rides along at top level.
+ *
+ * Listed as `Model.toJSON` lists them (`Model.inSerialOrder`): the import
+ * rebuilds each owner's children from the order the elements come in, so a
+ * model exported after a reparent would otherwise come back with that owner's
+ * children reordered (review 2026-10-14 D-2).
  */
 function toApiGraph(model: Model): ApiGraph {
   const elements: ApiElement[] = [];
+  const listed = model.inSerialOrder();
   // Pre-compute the membership ids each owner contributes, so `ownedRelationship`
   // can list them on the owner.
   const ownedByOwner = new Map<ElementId, Ref[]>();
-  for (const el of model.all()) {
+  for (const el of listed) {
     if (el.ownerId !== null) {
       const list = ownedByOwner.get(el.ownerId) ?? [];
       list.push({ '@id': membershipId(el.id) });
@@ -303,7 +309,7 @@ function toApiGraph(model: Model): ApiGraph {
     }
   }
 
-  for (const el of model.all()) {
+  for (const el of listed) {
     const out: ApiElement = {
       '@id': el.id,
       '@type': el.eClass,
