@@ -8,11 +8,15 @@ Working method (unchanged): every UI change goes through **implement → indepen
 Fable adversarial review → validate (tsc · vitest · build · E2E) → screenshot →
 commit**, and refreshes `docs/TEST-REPORT.md` counts.
 
-> **Status:** the roadmap is fully implemented. Canvas drag-to-reparent (+ multi),
-> per-element PageRank centrality, roving menu tab-order, and the shared
+> **Status:** the feature items below are implemented. Canvas drag-to-reparent
+> (+ multi), per-element PageRank centrality, roving menu tab-order, and the shared
 > toolbar↔canvas menu behavior all shipped in `9ba0b62` (each Fable-reviewed with
-> all confirmed findings fixed). The only remaining item is **Electron/Tauri** (a
-> hard environmental blocker: no Windows cross-build here); community-detection
+> all confirmed findings fixed). Still open: three measured performance items from
+> the profiling round, **P1** for a piece with nested boxes (the compound-layout
+> option is now off for a flat piece, but a nested piece still pays for it), **P2**
+> (the solver clones its value map per probe) and **P3** (the first "Apply text →
+> model" click builds the parser on the page's thread), and **Electron/Tauri** (a
+> hard environmental blocker: no Windows cross-build here). Community-detection
 > **per element** stays deferred as low-value optional depth.
 
 ---
@@ -35,13 +39,17 @@ commit**, and refreshes `docs/TEST-REPORT.md` counts.
 - **Context-aware tools** — Auto-layout / Diagram SVG-PNG disabled off graph views (prevents stale-diagram export). `f11e777`.
 
 ### Palette (per-diagram tools)
-- **Per-metaclass tool glyphs**, **Escape-cancel**, **armed-tool hint**, and the **column hidden on non-graph views**. `bfdd5b3`, `E gui-palette`.
+- **Per-metaclass tool glyphs**, **Escape-cancel** and **armed-tool hint**. `bfdd5b3`, `E gui-palette`.
+- **A palette on every view**, in three sections: **Tools** (what to draw — a table or analysis view draws nothing, so it has no Tools section), **Edit** (Rename · Duplicate · Delete over the selection) and **Checks** (the verification commands that fit the view, each with Run and Copy command). It replaces the earlier palette that was hidden on the non-graph views. `2486d72`, `E palette-checks`, `E palette-per-view`, `U checks-registry`.
 
 ### Canvas
 - **Mini-toolbar** — Fit · Fit-to-selection · Snap-to-grid · Auto-layout. `91e20e1`, `E gui-canvas`.
 - **Node context menu** (right-click) — Rename · Add child · Zoom to · Delete; viewport-clamped. `0d9e0ce`, `E gui-context-menu`.
 - **Edge context menu** (right-click) — Delete a relationship/connection; structural edges guarded as non-interactive. `b56e5ff`.
 - **Pane context menu** (right-click empty canvas) — Add a top-level element / Fit view; completes the node·edge·pane family (shared `useContextMenuChrome`). `E gui-context-menu`.
+
+### Diagram layout
+- **Compound layout only where a piece has nested boxes** (the flat half of P1 of the 2026-09-08 profile) — `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` had been set on every view. `layoutOptionsFor(viewKind, nested)` now sets it only for a connected piece that contains nested boxes and uses `SEPARATE_CHILDREN` for every other piece (`layoutOptionsFor` and `layoutPiece`, `src/diagram/layout.ts`). On 950 flat nodes that took 569 ms down to 342 ms (1.7×). It does nothing for a piece that nests: that case, the profile's 83×, is **still open** — see P1 under Performance. `214b3c5`, `U diagram.layout2` (asserts the option for a flat and for a nested call, not its timing).
 
 ### Keyboard
 - **Richer shortcuts** — `Delete`/`Backspace` removes the selection (React Flow's own delete disabled so model + diagram stay in sync), digits `1–6` switch primary views, `/` focuses Explorer search; input-guard extended to `<select>`. `E gui-keyboard`.
@@ -94,10 +102,10 @@ Rust/WebAssembly to improve the user's experience and memory use. **The answer i
 Four of six subsystems returned *do-not-port*, and the two largest user-visible costs are
 JavaScript defects a port would have inherited unchanged. Ordered by measured value.
 
-### P1 — `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` is applied to every view (`src/diagram/layout.ts`:83)
+### P1 — `elk.hierarchyHandling: 'INCLUDE_CHILDREN'` is applied to every view — fixed for flat pieces, still open for nested ones
 
 The single worst measured defect in the tool. The option makes ELK route edges across the node
-hierarchy, and it is set unconditionally for all fourteen view kinds. Measured with `elkjs` in this
+hierarchy, and it was set unconditionally for all fourteen view kinds. Measured with `elkjs` in this
 repo, one nested graph, everything else identical:
 
 | Graph | With the option | Without | Ratio |
@@ -105,16 +113,42 @@ repo, one nested graph, everything else identical:
 | 300 leaf nodes in 30 parents, degree 2 | **13 781 ms** | 165 ms | **83x** |
 | 950 flat nodes, degree 1 (no nesting) | 569 ms | 342 ms | 1.7x |
 
-The cost appears **only when nodes actually have children** — which is every structural view of a
-SysML model, because parts contain parts. A flat graph barely notices, which is why this has gone
-unseen. **Fix:** set the option only when the projected graph has at least one nested node. Guard it
-with a test that builds both shapes and asserts the option's presence, not its timing.
+The cost appears **only when nodes actually have children** — in the profile's reading, every
+structural view of a SysML model, because parts contain parts. A flat graph barely notices, which is
+why this had gone unseen. The profile's fix: set the option only when the projected graph has at
+least one nested node.
 
-### P2 — the solver clones its whole value map per probe (`src/semantics/solver.ts`:1062)
+**Shipped (`214b3c5`), the flat half.** `layoutOptionsFor(viewKind, nested)` sets the option for a
+connected piece that contains nested boxes and `SEPARATE_CHILDREN` for every other piece
+(`layoutPiece`, `src/diagram/layout.ts`). `U diagram.layout2` asserts the option for a flat and for
+a nested call, not its timing. That is the 1.7× row, and it leaves a piece that nests exactly as it
+was.
 
-`const trial = new Map(values)` sits inside the finite-difference closure, so a solve clones the
-entire map once per probe — measured at ~50 000 clones for one solve of the shipped example. Set the
-one key, read the residual, restore it. No behaviour change; the map is not retained.
+**Still open at `5943654`: a piece that nests.** `layoutPiece` passes `nested = true` for any piece
+with one nested box, and that keeps `INCLUDE_CHILDREN`. Measured through `layoutDiagram` on the
+`interconnection` view, 30 parents of 10 children each and two edges per leaf (330 nodes): 11 113 ms
+as it stands (14 s on a loaded machine), 171 ms with `SEPARATE_CHILDREN` forced (65×); the raw ELK
+options for the profile's own graph give 12 003 ms against 164 ms. ELK runs in a Web Worker
+(`src/ui/elk-worker.ts`), so the page does not freeze, but the diagram appears no sooner. On the
+drone-swarm v9 model of mbse-workflow (42 584 elements, one run each) the option is not the dominant
+cost: the General view takes 5 035 ms against 4 469 ms forced, `interconnection` 550 against 486,
+and `tree` 44 184 against 42 411. Whether to drop the option for nested pieces (trading the layout of
+edges that cross a parent's border for time), or to bound the compound layout, is not decided:
+awaits coordinator decision, which also settles where it is tracked (a `TODO.md` line or a backlog
+step).
+
+### P2 — the solver clones its whole value map per probe (`src/semantics/solver.ts`: `solveScalar`, `newtonStep`, `substitutedNewton`)
+
+`const trial = new Map(values)` sits inside the residual closure that every finite-difference probe
+calls (`solver.ts:2520`, `:2706` and `:2979` at `5943654`), so a solve clones the entire map once
+per probe. The profiling round counted about 50 000 clones for one solve of the example shipped
+then. That count was **not reproduced** at `5943654`. Counting `new Map(<Map>)` calls during a
+solve, `solve` copies a map 3 to 510 times on the six models in `examples/` and `solveFeasible` 5
+to 21 times, each in tens of milliseconds; on the drone-swarm v9 model of mbse-workflow (42 584
+elements) `solve` makes 3 082 clones and `solveFeasible` 132, each in under 100 ms. So P2 is a
+code-level defect whose cost is not visible on any model measured since, not a measured cost. The
+fix is unchanged: set the one key, read the residual, restore it. No behaviour change; the map is
+not retained.
 
 ### P3 — the first "Apply text → model" click blocks the main thread for ~1.28 s
 
@@ -124,6 +158,8 @@ Not parsing — **parser construction**. Chevrotain's ALL(\*) lookahead analysis
 `maxLookahead: 3` fails the grammar outright with an ambiguity, and 5 and 8 do not finish in 150 s —
 so ALL(\*) is the cheapest option Chevrotain offers this grammar, not a misconfiguration. **Fix:**
 build the parser in a Web Worker. Measured boundary cost to move a parse result across: 1.2 ms.
+Still open at `5943654`: there is no parser worker (the dedicated workers are ELK's layout and the
+palette's checks), and in Node the first parse of a one-line model takes 1.2 s and the next 2 ms.
 
 ### What the profiling ruled OUT, with the arithmetic
 
@@ -140,8 +176,9 @@ build the parser in a Web Worker. Measured boundary cost to move a parse result 
   WebAssembly is unavailable. Any "Rust for parallelism" argument does not apply to the shipped app.
 
 **One Rust candidate stays open**, unmerged and unscheduled: a layered layout engine behind
-`layoutDiagram`, where the boundary cost is 0.05 % of the work. Its bar is ≥3x against the
-**post-P1** baseline, not the 13 s one — a 3x win over a defect is not a win.
+`layoutDiagram`, where the boundary cost is 0.05 % of the work. Its bar is ≥3x against a baseline
+without the nested-layout cost of P1 (the option off, or the compound layout fixed), not against the
+11 to 14 s a nested piece takes today — a 3x win over a defect is not a win.
 
 ## 🔜 Next — diagram editing (near-term)
 
