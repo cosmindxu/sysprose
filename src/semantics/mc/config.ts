@@ -366,6 +366,11 @@ export function regionScope(model: Model, regionId: ElementId): Scope {
  * transitions `dead` — absences about a machine nobody walked — so the boundary
  * is drawn once, here, and every machine-scoped traversal reads it.
  *
+ * The interpreter's flat path (`runRegion`, `../execute.ts`) reads it too, for
+ * its start state as well as its transitions. It used to take its states and
+ * its `initial` node from every descendant, so a nested definition declared
+ * before the outer machine's own gave the simulator a start the walk never had.
+ *
  * A composite state USAGE that owns transitions is unaffected: it is a region of
  * its parent and stays inside it, which is the distinction the metaclass draws
  * (`StateDefinition` vs `StateUsage`).

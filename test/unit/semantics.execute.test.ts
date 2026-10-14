@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { Model, ModelFactory } from '@core/index';
+import { loadModelText } from '@text/load';
 import {
   runActionFlow,
   runStateMachine,
   propagateBindings,
   evaluateModel,
 } from '../../src/semantics/index';
+import { initialSubstate } from '../../src/semantics/mc/config';
 
 /* ───────────────────────────── action flow ───────────────────────────── */
 
@@ -199,6 +201,141 @@ describe('runStateMachine', () => {
     // guard false ⇒ no transition fires
     expect(res.fired.length).toBe(0);
     expect(res.finalState).toBe(s0.id);
+  });
+});
+
+/**
+ * A `state def` written inside a machine is a machine of its own, and the walk
+ * stops at it (`regionDescendants`, `src/semantics/mc/config.ts`). The flat
+ * interpreter path took its start state from every descendant, so a nested
+ * definition declared BEFORE the outer machine's states handed the simulator
+ * its own first state: on `nest3-first` the Simulation tab, `executeModel` and
+ * the SDK started in `Inner::x` and never entered `a`, while the walk (and every
+ * witness it publishes) started in `a`. The shapes are review B's probes (plan
+ * O1, M3).
+ */
+describe('runStateMachine — a nested state def does not take the start (M3)', () => {
+  const SHAPES: Record<string, string> = {
+    'nest1-plain': `package Nest1 {
+      state def Outer {
+        state a; state b;
+        transition ab first a accept e then b;
+        state def Inner { state x; state y; transition xy first x accept go then y; }
+      }
+    }`,
+    'nest2-into': `package Nest2 {
+      state def Outer {
+        state a; state b;
+        transition ax first a accept e then Inner::x;
+        state def Inner {
+          state x; state y;
+          transition xy first x accept go then y;
+          transition yb first y accept back then Outer::b;
+        }
+      }
+    }`,
+    'nest3-first': `package Nest3 {
+      state def Outer {
+        state def Inner { state x; state y; transition xy first x accept go then y; }
+        state a; state b;
+        transition ab first a accept e then b;
+      }
+    }`,
+    'nest4-typed': `package Nest4 {
+      state def Outer {
+        state def Inner { state x; state y; transition xy first x accept go then y; }
+        state a;
+        state s : Inner;
+        transition toS first a accept e then s;
+      }
+    }`,
+    'nest5-partdef': `package Nest5 {
+      part def Drone {
+        state def Outer {
+          state a; state b;
+          transition ab first a accept e then b;
+          state def Inner { state x; state y; transition xy first x accept go then y; }
+        }
+      }
+    }`,
+    'nest6-prop': `package Nest6 {
+      state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a; state b;
+        transition ab first a accept e then b;
+        state def Inner { state x; state y; transition xy first x accept go then y; }
+      }
+    }`,
+  };
+
+  async function outerOf(name: string) {
+    const model = (await loadModelText(SHAPES[name], { fileName: `${name}.sysml`, library: 'none' })).model!;
+    const outer = model.all().find((e) => e.eClass === 'StateDefinition' && e.declaredName === 'Outer')!;
+    const named = (n: string) => model.all().find((e) => e.declaredName === n)!.id;
+    return { model, outer, named };
+  }
+
+  it('starts every probe shape in the outer machine’s first state, where the walk starts', async () => {
+    for (const name of Object.keys(SHAPES)) {
+      const { model, outer, named } = await outerOf(name);
+      const res = runStateMachine(model, outer.id, []);
+      expect(res.visited[0], `${name}: the simulator's start`).toBe(named('a'));
+      // The walk enters `initialSubstate` (`initialConfig`, `./mc/config.ts`);
+      // the simulator must start where the walk starts.
+      expect(res.visited[0], `${name}: the walk's start`).toBe(initialSubstate(model, outer.id));
+    }
+  });
+
+  it('nest3-first: the nested definition declared first does not steal the start, and `e` reaches b', async () => {
+    const { model, outer, named } = await outerOf('nest3-first');
+    // `go` is the nested definition's trigger: no outer transition takes it.
+    const res = runStateMachine(model, outer.id, ['go', 'e']);
+    expect(res.visited).toEqual([named('a'), named('b')]);
+    expect(res.fired.map((f) => f.transitionId)).toEqual([named('ab')]);
+    expect(res.finalState).toBe(named('b'));
+  });
+
+  it('nest4-typed: a typed usage of the nested definition is the outer machine’s state, entered from a', async () => {
+    const { model, outer, named } = await outerOf('nest4-typed');
+    const res = runStateMachine(model, outer.id, ['e']);
+    expect(res.visited).toEqual([named('a'), named('s')]);
+    expect(res.finalState).toBe(named('s'));
+  });
+
+  it('nest1-plain and nest5-partdef (nested definition declared last) run as before', async () => {
+    for (const name of ['nest1-plain', 'nest5-partdef']) {
+      const { model, outer, named } = await outerOf(name);
+      const res = runStateMachine(model, outer.id, ['go', 'e']);
+      expect(res.visited, name).toEqual([named('a'), named('b')]);
+      expect(res.fired.map((f) => f.transitionId), name).toEqual([named('ab')]);
+    }
+  });
+
+  it('an `initial` node inside the nested definition does not choose the outer start; the outer’s own does', async () => {
+    // The InitialNode came from the same descendant list: the nested definition's,
+    // declared first, sent the outer run to `Inner::y` even past the outer
+    // machine's own `initial`, while the walk opened at `a` (or `b`).
+    const inner = 'state def Inner { initial j; first j then y; state x; state y; transition yx first y accept go then x; }';
+    const cases: Array<[string, string]> = [
+      [`package P { state def Outer { ${inner} state a; state b; transition ab first a accept e then b; } }`, 'a'],
+      [
+        `package P { state def Outer { ${inner} initial i; first i then b; state a; state b; transition ba first b accept e then a; } }`,
+        'b',
+      ],
+    ];
+    for (const [text, start] of cases) {
+      const model = (await loadModelText(text, { fileName: 'initial.sysml', library: 'none' })).model!;
+      const outer = model.all().find((e) => e.eClass === 'StateDefinition' && e.declaredName === 'Outer')!;
+      const want = model.all().find((e) => e.declaredName === start)!.id;
+      expect(runStateMachine(model, outer.id, []).visited[0], start).toBe(want);
+      expect(initialSubstate(model, outer.id), start).toBe(want);
+    }
+  });
+
+  it('the nested definition run by itself still starts in its own first state', async () => {
+    const { model, named } = await outerOf('nest3-first');
+    const res = runStateMachine(model, named('Inner'), ['go']);
+    expect(res.visited).toEqual([named('x'), named('y')]);
   });
 });
 

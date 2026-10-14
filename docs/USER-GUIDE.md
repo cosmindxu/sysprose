@@ -2462,10 +2462,15 @@ A `state def` written **inside** another state machine is a machine of its own,
 not a region of the one it sits in: `reach` walks the nested definition
 separately, so its states decide themselves. They are neither reported
 `unreachable` nor counted in the outer machine's totals, and the outer walk stops
-at the nested definition's boundary. A nested `state def` that owns no
-`TransitionUsage` is walked by nothing, and each of its states then reads `not
-walked` in the app rather than being called unreachable under a machine that does
-not contain it.
+at the nested definition's boundary. A simulator run of the outer machine takes
+its states at the same boundary, so it starts where the walk opens: at the outer
+machine's own initial substate (where its own `initial` node leads, else its
+first declared state), also when the nested definition is written before it. The
+Simulation tab still lists the nested definition's triggers among the outer
+machine's events; no outer transition takes them, so injecting one leaves the run
+where it is. A nested `state def` that owns no `TransitionUsage` is walked by
+nothing, and each of its states then reads `not walked` in the app rather than
+being called unreachable under a machine that does not contain it.
 
 **What it may never say.** Not "verified", not "deadlock-free", not "proved".
 `verification/deadlock` names a state with no enabled way out that is neither

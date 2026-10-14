@@ -60,6 +60,7 @@ import {
   isTruthy,
   leafOf,
   literalValueOf,
+  regionDescendants,
   regionTransitions,
   runStatePhase,
   seedStore,
@@ -980,7 +981,14 @@ function runRegion(
   maxCompletion: number,
 ): { visited: ElementId[]; fired: StateFire[]; finalState: ElementId | null; completionBudgetHit: boolean } {
   const region = model.get(regionId)!;
-  const desc = model.descendants(regionId);
+  // THE SAME CONTAINMENT THE WALK READS: the region's descendants, stopping at a
+  // nested `state def` (`regionDescendants`, `./mc/config.ts`). That definition
+  // is a machine of its own, and taking the start from every descendant handed
+  // the outer run the nested definition's states and its `initial` node: one
+  // declared before the outer machine's own took the start, so the simulator
+  // began in `Inner::x` and never entered the `a` the walk opens at — every run
+  // it showed parted from the walk's witnesses at their first step.
+  const desc = regionDescendants(model, regionId);
   const states = desc.filter((e) => e.eClass === 'StateUsage');
   const declIndex = new Map<ElementId, number>();
   desc.forEach((e, i) => declIndex.set(e.id, i));
@@ -992,8 +1000,8 @@ function runRegion(
   // relation is how the simulator and the explorer came to walk different
   // graphs while the differential between them stayed green: a differential
   // cannot see an edge BOTH readers ignore. The declaration-order sort is gone
-  // with the duplicate because `model.descendants` already yields that order,
-  // which is the order `declIndex` was built from.
+  // with the duplicate because `regionDescendants` keeps `model.descendants`'
+  // order, which is the order `declIndex` was built from.
   const transitions = regionTransitions(model, regionId);
 
   const scope = combinedScope(model, region);
