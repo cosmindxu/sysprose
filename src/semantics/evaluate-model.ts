@@ -1457,7 +1457,10 @@ function readInContexts(
  * usage `group.usageId` once per instance — the generic row (the usage's own
  * instance, `{Rel} in {U} ({D}'s own)`), then one row per other instance
  * (`{Rel} in {I}`). Each is judged by the one pipeline at that instance, so a
- * binding that gives one instance its own value reads that value there.
+ * binding that gives one instance its own value reads that value there. An
+ * instance the coverage guard lists (`group.otherwise`: it reads the relation
+ * through another feature or source than the usage) is not judged: its row
+ * abstains, `not-enumerated`, in the guard's sentence.
  */
 function groupInstanceRows(
   model: Model,
@@ -1499,7 +1502,19 @@ function groupInstanceRows(
   };
   if (withGeneric) push(undefined, judgeConstraint(model, reading, expr, pass));
   for (const inst of group.instances.slice(1)) {
-    push(inst, judgeConstraint(model, reading, expr, pass, undefined, inst));
+    const otherwise = group.otherwise?.get(inst);
+    push(
+      inst,
+      otherwise !== undefined
+        ? {
+            result: 'unknown',
+            message: `Could not evaluate: ${otherwise.sentence}`,
+            gap: false,
+            abstention: otherwise.kind,
+            abstentionSentence: otherwise.sentence,
+          }
+        : judgeConstraint(model, reading, expr, pass, undefined, inst),
+    );
   }
   return rows;
 }

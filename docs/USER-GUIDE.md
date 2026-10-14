@@ -883,7 +883,22 @@ instance, named `P::c in Q::p (Q's own)` on the verify lane — and again for ea
 other instance, q's p included, whose load the binding carries q's L into. The
 rows are read apart, each at the value of the instance it names, so an instance
 that breaks the relation is reported against that instance and the check rolls
-them up into one finding. A relation written in such a usage (`part p : P {
+them up into one finding. An instance is read so only where it reads the
+relation as the usage does. One whose own element reads a name of it, or a name
+that name's value reads, through another feature — a redefinition with a value
+of its own on its path (`part q2 : Q { part :>> p { attribute :>> extra = 20.0;
+} }`), a specialised type (`part :>> p : P2`), a binding written there, a
+reference to another part (`ref part :>> r = ra`) — or that redefines the
+relation itself, is *could not be evaluated* in that row on every surface, and
+counted *not read* in the roll-up; so is one where a reference the relation is
+read through stands for another feature than where its value is written (`ref
+part :>> r = s` written in Q's p is Q's `s`, and q2's p reads q2's own `s`), or
+for one a binding reaches into. Where that element is a context of its own
+(q2's `part :>> p`), its own row, under the same name on the verify lane, reads
+the relation there. A relation read through a part a binding joins to another
+(`bind p.r = s`, the relation reading `r.x`) is read per instance nowhere, the
+usage's own row included: that row is *could not be evaluated*, as it was
+before any instance was read. A relation written in such a usage (`part p : P {
 constraint c2 { load <= 10.0 } }` in Q) is read the same way; an `assert` there
 stays an axiom, read for the usage's own instance. A value the partner of a
 binding derives (Q's `L = 2.0 * K`) is read for the bound feature only where

@@ -1047,7 +1047,16 @@ function groupGoalRows(
   const out: Obligation[] = [];
   const make = (instance: string, generic: boolean): Obligation | undefined => {
     const reading = readRelation(model, { ...el, ownerId: usage.id }, raw, memo, undefined, undefined, instance);
-    const encodable = refuse !== undefined && generic ? refuse : unreadAxiom(filed.role, reading.encodable, reading.unread);
+    // An instance the coverage guard lists reads the relation otherwise than
+    // the usage (A.7, `not-enumerated`): refused, in the sentence the check
+    // abstains with.
+    const otherwise = generic ? undefined : group.otherwise?.get(instance);
+    const encodable: Encodable =
+      refuse !== undefined && generic
+        ? refuse
+        : otherwise !== undefined
+          ? { reason: 'unread-definition', detail: otherwise.sentence }
+          : unreadAxiom(filed.role, reading.encodable, reading.unread);
     const element: ContractRef = generic
       ? {
           ...ref(model, el),

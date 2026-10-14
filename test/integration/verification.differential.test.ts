@@ -3251,7 +3251,11 @@ describe('a redefinition is the feature in its context, and a value written with
  *      listed exactly as I2's are;
  *      a witness printed with no value is not compared, and its rows are listed exactly too;
  *  I7  the SMT engine's `inconsistent-axioms` beside a T or F on another surface only where listed, with
- *      the reason — and only while it still happens, so the list cannot rot.
+ *      the reason — and only while it still happens, so the list cannot rot;
+ *  I8  no engine files two rows under one name, one proved and the other refuted. A group's row for an
+ *      instance and the row of the element that instance is (q2's `part :>> p { … }`) are both
+ *      `{Rel} in q2::p` on the verify surface; such a name filed twice is keyed by each row's element id,
+ *      as the check and the numeric surface key them, and this invariant reads the names as printed.
  *
  * Letters, in the order check / literal / numeric / SMT: T holds (the literal engine's
  * `holds-at-values`), F violated or refuted, ? abstains, X inconsistent axioms, V vacuous, U a construct
@@ -3295,6 +3299,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
               ? 'U'
               : '?';
   const decided = (l: Letter) => l === 'T' || l === 'F';
+  /** I8: per probe, each verify name an engine filed both proved and refuted (`literal: R in I`). */
+  const bothWays = new Map<string, string[]>();
 
   /** Every row of a model on the four surfaces, by qualified name (`R in C` for a context's reading). */
   async function fourSurfaces(text: string, pkg: string): Promise<Map<string, SurfaceRow>> {
@@ -3338,8 +3344,22 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       [3, 'smt'],
     ] as const) {
       const report = await verifyModel(m, { engine, sourceText: text });
+      // I8: a name filed twice is two rows (a group's instance row and the row of the element that
+      // instance is), keyed by element id as the other surfaces key them; read here as printed.
+      const printed = new Map<string, Letter[]>();
       for (const r of report.results) {
-        put(norm(r.clause.qualifiedName), s, engineLetter(r), r.clause.id, r.detail);
+        const n = norm(r.clause.qualifiedName);
+        printed.set(n, [...(printed.get(n) ?? []), engineLetter(r)]);
+      }
+      for (const [n, letters] of printed) {
+        if (letters.includes('T') && letters.includes('F')) bothWays.set(pkg, [...(bothWays.get(pkg) ?? []), `${engine}: ${n}`]);
+      }
+      const rowKey = (r: ObligationVerdict) => {
+        const n = norm(r.clause.qualifiedName);
+        return printed.get(n)!.length > 1 ? key(r.clause.id) : n;
+      };
+      for (const r of report.results) {
+        put(rowKey(r), s, engineLetter(r), r.clause.id, r.detail);
         // I6: each side of the relation, where it is one bare path the row prints a value for — in the
         // row's bindings and in its evidence record. A value printed with a unit is compared as a quantity
         // (its SI value, as `bound.si` holds the compared sides); one printed with NO value is recorded,
@@ -3348,7 +3368,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         const split = /^(.*?)(?:<=|>=|==|!=|<|>)(.*)$/s.exec(r.expression);
         if (si2 === undefined || split === null) continue;
         const bare = (side: string) => /^\s*([A-Za-z_][\w.]*)\s*$/.exec(side)?.[1];
-        const row = rows.get(norm(r.clause.qualifiedName))!;
+        const row = rows.get(rowKey(r))!;
         const record = report.records.find(
           (x) => x.obligation.clause === r.clause.qualifiedName && x.obligation.expression === r.expression,
         );
@@ -4435,6 +4455,260 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R19::q2T': ['?/?/?/?', '?'],
       'R19::soloT': ['T/T/T/T', 'T'],
     }),
+    // Found by the 2026-10-14 review (A1–A9, A-C1): an instance of a shared usage whose own element reads the
+    // relation through ANOTHER feature or source than the usage — a redefinition with a value of its own (A1,
+    // A2), a specialised type (A3), a nested override (A6), under a usage-owned relation (A9). The group read
+    // every instance through the usage's features and published P's `extra` of 0 for an instance that states
+    // 20: T on all four surfaces where it is F, beside the row of the element that instance is, refuted under
+    // the same name (I8). The coverage guard (A.7, `not-enumerated`) has those rows abstain; A5 (the value
+    // carried by the usage's own binding), A7 and A8 are controls that keep their verdicts. A4 (a binding
+    // written in q2's body) joins the table with O2 S3, which fixes its SMT `inconsistent-axioms` (A-C2); the
+    // guard's effect on its q2 row is pinned in the unit test of the instance index.
+    'A1-redef-in-instance': probe(`package A1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }
+      }`, {
+      'A1::P::c': ['T/T/T/T', 'T'],
+      'A1::P::c in A1::Q::p': ['T/T/T/T', 'T'],
+      'A1::P::c in A1::q::p': ['?/?/?/?', 'F'],
+      'A1::P::c in A1::q::«PartUsage»': ['F/F/F/F', 'F'],
+    }),
+    'A2-redef-in-instance-noL': probe(`package A2 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { attribute :>> extra = 20.0; } }
+      }`, {
+      'A2::P::c': ['T/T/T/T', 'T'],
+      'A2::P::c in A2::Q::p': ['T/T/T/T', 'T'],
+      'A2::P::c in A2::q1::p': ['T/T/T/T', 'T'],
+      'A2::P::c in A2::q2::p': ['?/?/?/?', 'F'],
+      'A2::P::c in A2::q2::«PartUsage»': ['F/F/F/F', 'F'],
+    }),
+    'A3-spec-type': probe(`package A3 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 20.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p : P2; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2;
+      }`, {
+      'A3::P::c': ['T/T/T/T', 'T'],
+      'A3::P::c in A3::P2': ['F/F/F/F', 'F'],
+      'A3::P::c in A3::Q::p': ['T/T/T/T', 'T'],
+      'A3::P::c in A3::Q2::p': ['?/?/?/?', 'F'],
+      'A3::P::c in A3::Q2::«PartUsage»': ['F/F/F/F', 'F'],
+      'A3::P::c in A3::q1::p': ['T/T/T/T', 'T'],
+      'A3::P::c in A3::q2::p': ['?/?/?/?', 'F'],
+    }),
+    'A5-instance-assert': probe(`package A5 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute X : ScalarValues::Real default = 0.0;
+          part p : P;
+          bind p.load = L;
+          bind p.extra = X;
+        }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> X = 20.0; }
+      }`, {
+      'A5::P::c': ['?/?/?/?', '?'],
+      'A5::P::c in A5::Q::p': ['T/T/T/T', 'T'],
+      'A5::P::c in A5::q1::p': ['T/T/T/T', 'T'],
+      'A5::P::c in A5::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'A6-nested': probe(`package A6 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R { part q : Q; }
+        part r1 : R { part :>> q { attribute :>> L = 2.0; } }
+        part r2 : R { part :>> q { part :>> p { attribute :>> extra = 20.0; } } }
+      }`, {
+      'A6::P::c': ['T/T/T/T', 'T'],
+      'A6::P::c in A6::Q::p': ['T/T/T/T', 'T'],
+      'A6::P::c in A6::R::q::p': ['T/T/T/T', 'T'],
+      'A6::P::c in A6::r1::q::p': ['T/T/T/T', 'T'],
+      'A6::P::c in A6::r2::q::p': ['?/?/?/?', 'F'],
+      'A6::P::c in A6::r2::«PartUsage»::«PartUsage»': ['F/F/F/F', 'F'],
+    }),
+    'A7-body-binding-default': probe(`package A7 {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+        constraint top { q2.p.extra <= 10.0 }
+      }`, {
+      'A7::P::c': ['T/T/T/T', 'T'],
+      'A7::top': ['F/F/F/F', 'F'],
+    }),
+    'A8-body-binding-default-def': probe(`package A8 {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+        part q2 : Q;
+        constraint top { q2.p.extra <= 10.0 }
+      }`, {
+      'A8::P::c': ['T/T/T/T', 'T'],
+      'A8::P::c in A8::Q::p': ['F/F/F/F', 'F'],
+      'A8::top': ['F/F/F/F', 'F'],
+    }),
+    'A9-owned-redef': probe(`package A9 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P { constraint c2 { load + extra <= 10.0 } }
+          bind p.load = L;
+        }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { attribute :>> extra = 20.0; } }
+        constraint top { q2.p.load + q2.p.extra <= 10.0 }
+      }`, {
+      'A9::Q::p::c2': ['T/T/T/T', 'T'],
+      'A9::Q::p::c2 in A9::q1::p': ['T/T/T/T', 'T'],
+      'A9::Q::p::c2 in A9::q2::p': ['?/?/?/?', 'F'],
+      'A9::Q::p::c2 in A9::q2::«PartUsage»': ['F/F/F/F', 'F'],
+      'A9::top': ['F/F/F/F', 'F'],
+    }),
+    // Found by the review of O2 S1: the guard compared the features a reading reads, not the feature a
+    // REFERENCE stands for, nor what a part bound to another reads. X15b: q2's p refers to ra (k = 50) where
+    // Q's p refers to rb — the same R::x read through another feature. X17: `ref part :>> r = s` written in
+    // Q's p is Q's `s`, resolved once where it is written, and q2's p reads q2's `s` (k = 50); X19: Q2 types
+    // its `s` by R2 (k = 50). Z1: q1's `s` is Q's `s`, but Q binds its k to K and q1 sets K = 50. Each such
+    // instance read T on all four surfaces where it is F; the guard re-reads the reference at the instance
+    // and has it abstain. X18 and X24: `bind p.r = s` binds a PART, and every row read r.x as R's own x (2)
+    // — X24's own row T where Q's s has k = 50 (F); no per-instance reading carries a bound part, so the group
+    // is refused whole, its own row included. X9: the context row of q2's own p read T through a memo entry
+    // its group row left (A-L2); the guard keeps the group row from filling it. X11: q2's p redefines the
+    // relation itself; P's c is not read there (what such a redefinition means for P's c is not decided).
+    'X15b-ref-at-instance': probe(`package X15b {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part ra : R { attribute :>> k = 50.0; }
+        part rb : R { attribute :>> k = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { ref part :>> r default = rb; } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { ref part :>> r = ra; } }
+      }`, {
+      'X15b::P::c': ['T/T/T/T', 'T'],
+      'X15b::P::c in X15b::Q::p': ['T/T/T/T', 'T'],
+      'X15b::P::c in X15b::q1::p': ['T/T/T/T', 'T'],
+      'X15b::P::c in X15b::q2::p': ['?/?/?/?', 'F'],
+      'X15b::P::c in X15b::q2::«PartUsage»': ['F/F/F/F', 'F'],
+    }),
+    'X17-ref-sibling': probe(`package X17 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R; part p : P { ref part :>> r = s; } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> s { attribute :>> k = 50.0; } }
+      }`, {
+      'X17::P::c': ['T/T/T/T', 'T'],
+      'X17::P::c in X17::Q::p': ['T/T/T/T', 'T'],
+      'X17::P::c in X17::q1::p': ['T/T/T/T', 'T'],
+      'X17::P::c in X17::q2::p': ['?/?/?/?', 'F'],
+    }),
+    'X19-ref-sibling-spec': probe(`package X19 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def R2 :> R { attribute :>> k = 50.0; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R; part p : P { ref part :>> r = s; } bind p.load = L; }
+        part def Q2 :> Q { part :>> s : R2; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2;
+      }`, {
+      'X19::P::c': ['T/T/T/T', 'T'],
+      'X19::P::c in X19::Q::p': ['T/T/T/T', 'T'],
+      'X19::P::c in X19::Q2::p': ['?/?/?/?', 'F'],
+      'X19::P::c in X19::q1::p': ['T/T/T/T', 'T'],
+      'X19::P::c in X19::q2::p': ['?/?/?/?', 'F'],
+    }),
+    'Z1-ref-target-bound': probe(`package Z1 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute K : ScalarValues::Real default = 1.0;
+          part s : R;
+          part p : P { ref part :>> r = s; }
+          bind p.load = L;
+          bind s.k = K;
+        }
+        part q1 : Q { attribute :>> K = 50.0; }
+      }`, {
+      'Z1::P::c': ['T/T/T/T', 'T'],
+      'Z1::P::c in Z1::Q::p': ['T/T/T/T', 'T'],
+      'Z1::P::c in Z1::q1::p': ['?/?/?/?', 'F'],
+    }),
+    'X18-bind-ref': probe(`package X18 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R; part p : P; bind p.r = s; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> s { attribute :>> k = 50.0; } }
+      }`, {
+      'X18::P::c': ['T/T/T/T', 'T'],
+      'X18::P::c in X18::Q::p': ['?/?/?/?', 'T'],
+    }),
+    'X24-bind-ref-valued': probe(`package X24 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R { attribute :>> k = 50.0; } part p : P; bind p.r = s; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+      }`, {
+      'X24::P::c': ['T/T/T/T', 'T'],
+      'X24::P::c in X24::Q::p': ['?/?/?/?', 'F'],
+    }),
+    'X9-sub-value-reads': probe(`package X9 {
+        part def S { attribute v : ScalarValues::Real default = 1.0; attribute w : ScalarValues::Real = 2.0 * v; }
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          part sub : S;
+          attribute extra : ScalarValues::Real = sub.w;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { part :>> sub { attribute :>> v = 50.0; } } }
+      }`, {
+      'X9::P::c': ['T/T/T/T', 'T'],
+      'X9::P::c in X9::Q::p': ['T/T/T/T', 'T'],
+      'X9::P::c in X9::q1::p': ['T/T/T/T', 'T'],
+      'X9::P::c in X9::q2::p': ['?/?/?/?', 'F'],
+      'X9::P::c in X9::q2::«PartUsage»': ['F/F/F/F', 'F'],
+    }),
+    'X11-constraint-redef': probe(`package X11 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> L = 50.0; part :>> p { constraint :>> c { load <= 100.0 } } }
+      }`, {
+      'X11::P::c': ['T/T/T/T', 'T'],
+      'X11::P::c in X11::Q::p': ['T/T/T/T', 'T'],
+      'X11::P::c in X11::q1::p': ['T/T/T/T', 'T'],
+      'X11::P::c in X11::q2::p': ['?/?/?/?', null],
+      'X11::q2::«PartUsage»::«ConstraintUsage»': ['T/-/?/-', 'T'],
+      'X11::q2::p::c': ['-/T/-/T', 'T'],
+    }),
     chain33: probe(bindingChain(33), {
       'Deep::deepNegT': ['?/?/T/T', 'T'],
       'Deep::deepPosF': ['?/?/F/?', 'F'],
@@ -5165,6 +5439,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     const keys = beside.map((r) => `${r.name} | ${r.row}`);
     expect(keys.filter((k) => !I7_ALLOWED.has(k))).toEqual([]);
     expect([...I7_ALLOWED.keys()].filter((k) => !keys.includes(k))).toEqual([]);
+  });
+
+  withZ3('I8: no engine reads one name both proved and refuted', () => {
+    expect([...bothWays].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
   });
 });
 
