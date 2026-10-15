@@ -84,10 +84,13 @@ export interface HealthRequest {
   texts: string[];
 }
 
-/** What comes back for a {@link HealthRequest}: a count for each text, in its order, or why there is none. */
+/**
+ * What comes back for a {@link HealthRequest}: a count for each text, in its order,
+ * or why there is none. `libraryUnavailable` is as in {@link CheckReply}.
+ */
 export type HealthReply =
   | { id: number; ok: true; texts: MeasuredText[] }
-  | { id: number; ok: false; message: string };
+  | { id: number; ok: false; message: string; libraryUnavailable?: true };
 
 /** A {@link HealthRequest}, told apart from a {@link CheckRequest} by its `kind`. */
 export function isHealthRequest(req: CheckRequest | HealthRequest): req is HealthRequest {
@@ -102,13 +105,15 @@ export function isHealthRequest(req: CheckRequest | HealthRequest): req is Healt
 export const NO_REQUEST = 0;
 
 /**
- * What comes back: the result, or why there is none. `libraryMismatch` marks the
- * one reason that holds for every later request about the same library: the
- * worker's own is not the page's.
+ * What comes back: the result, or why there is none. `libraryMismatch` marks a
+ * reason that holds for every later request about the same library: the worker's
+ * own is not the page's. `libraryUnavailable` marks one that holds for every
+ * later request at all: the worker could not load the standard library (offline,
+ * the data not cached).
  */
 export type CheckReply =
   | { id: number; ok: true; result: CheckResult }
-  | { id: number; ok: false; message: string; libraryMismatch?: true };
+  | { id: number; ok: false; message: string; libraryMismatch?: true; libraryUnavailable?: true };
 
 const isLibraryElement = (el: ElementRecord): boolean => el.attrs.isLibrary === true;
 
@@ -147,23 +152,29 @@ export function userPart(model: Model): SerializedModel {
 
 /**
  * Which library a model holds, as a short string two models share only when they
- * hold the same one: how many library elements, and a hash of the ids of the
- * library's roots (the packages it is made of). The count tells the curated
- * subset from the bundle, and none from either; the roots tell one bundle from
- * another of the same size.
+ * hold the same one: how many library elements, and a hash of what they are —
+ * each one's metaclass and names, summed so the order they are held in does not
+ * matter. The count tells the curated subset from the bundle, and none from
+ * either; the names tell one bundle from another of the same size, and a bundle
+ * from one a person renamed an element of (the Properties name field edits any
+ * element, a library's too; review 2026-10-14 D-10). Ids are not in it: the ones
+ * made as type references are bound differ between two loads of the same data.
+ * The sum is commutative, so swapping the names of two elements of one metaclass is
+ * not seen: a limit accepted for a key that costs one pass.
  */
 export function libraryKey(model: Model): string {
   let count = 0;
-  for (const el of model.all()) if (isLibraryElement(el)) count++;
-  const roots = model
-    .rootIds()
-    .filter((id) => model.get(id)?.attrs.isLibrary === true)
-    .sort()
-    .join('\n');
-  // FNV-1a over the UTF-16 code units: a key, not a defence.
-  let h = 0x811c9dc5;
-  for (let i = 0; i < roots.length; i++) h = Math.imul(h ^ roots.charCodeAt(i), 0x01000193) >>> 0;
-  return `${count}:${h.toString(36)}`;
+  let sum = 0;
+  for (const el of model.all()) {
+    if (!isLibraryElement(el)) continue;
+    count++;
+    // FNV-1a over the UTF-16 code units of the element's identity: a key, not a defence.
+    const identity = `${el.eClass}\n${el.declaredName ?? ''}\n${el.declaredShortName ?? ''}`;
+    let h = 0x811c9dc5;
+    for (let i = 0; i < identity.length; i++) h = Math.imul(h ^ identity.charCodeAt(i), 0x01000193) >>> 0;
+    sum = (sum + h) >>> 0;
+  }
+  return `${count}:${sum.toString(36)}`;
 }
 
 /**
@@ -221,12 +232,27 @@ export class CheckHost {
     });
   }
 
+  /**
+   * The model with the library, or why there is none: a library that could not
+   * be loaded is told apart from any other failure of a request, since it will
+   * fail the same for every later one.
+   */
+  private async withLibrary(): Promise<{ model: Model } | { message: string }> {
+    try {
+      return { model: await this.base() };
+    } catch (err) {
+      return { message: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   /** Runs the check a request names on the model it carries. Never throws. */
   async handle(req: CheckRequest): Promise<CheckReply> {
     try {
       const spec = CHECKS.find((c) => c.id === req.check);
       if (spec === undefined) return { id: req.id, ok: false, message: `no check named ${req.check}` };
-      const model = await this.base();
+      const have = await this.withLibrary();
+      if (!('model' in have)) return { id: req.id, ok: false, message: have.message, libraryUnavailable: true };
+      const model = have.model;
       if (req.library !== this.held) {
         // Not an error in the check: the page's references point into a library this worker does not hold.
         return { id: req.id, ok: false, message: 'the standard library the page holds is not the one this worker holds', libraryMismatch: true };
@@ -256,7 +282,8 @@ export class CheckHost {
   async measure(req: HealthRequest): Promise<HealthReply> {
     try {
       // The standard library this worker holds, loaded once: its data is what each text's own parse is merged with.
-      await this.base();
+      const have = await this.withLibrary();
+      if (!('model' in have)) return { id: req.id, ok: false, message: have.message, libraryUnavailable: true };
       return { id: req.id, ok: true, texts: req.texts.map((text) => this.measureText(text)) };
     } catch (err) {
       return { id: req.id, ok: false, message: err instanceof Error ? err.message : String(err) };

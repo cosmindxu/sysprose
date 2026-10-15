@@ -5,9 +5,9 @@ that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
 
 Entries tagged `[review 2026-10-14 …]` come from the read-only review of Sysprose 5943654 on that
 date, and each id is the finding's own in the review's plan: `A-…` is from the per-instance
-soundness review (A), `C1`, `C3`, `H1`, `H2`, `M1`, `M2`, `M3` and `L1` from the behaviour review
-(B), `C-F…` from the speed review (C), `D-…` from the app and merges review (D), and `LH-`, `PI-`,
-`EV-` and `CK-` from the decisions batch and per-instance reporting review (E). The `E<n>` ids and
+soundness review (A), `C1`, `C3`, `H1`, `H2`, `M1`, `M2` and `M3` from the behaviour review
+(B), `C-F…` from the speed review (C), `D-…` from the app and merges review (D), and `PI-` and
+`EV-` from the decisions batch and per-instance reporting review (E). The `E<n>` ids and
 `X2` are rows of the open-items inventory (F), not of reviewer E; its two further rows are written
 `F-U1` and `F-C2` here, so that they do not read as a decision or as another reviewer's id. A model an entry writes
 out as `package … { … }` is complete and loads as written; the review file an entry names
@@ -778,33 +778,6 @@ merge removes what it closes.
       clause failed, without the raise-the-bound advice (a catalogue entry and `npm run codes`).
       Done when the non-bound case prints its own code with no `--max-configs` advice and v9's two
       rows read PASS again. [review 2026-10-14 M2]
-- [ ] **Correct the checks lane's comment that the code contradicts.** `src/ui/checks.ts:26-36`
-      says "Not yet the same: `check-behaviour` here checks the selected machine or else the model's
-      first"; that has been false since 2add5b3 (`pickBehaviourMachine`,
-      `src/ui/behaviour-checks.ts:199`, calls the CLI's own `behaviourMachineFor`), while its remark
-      about `reach` stays true. Done when the comment says what the code does. [review 2026-10-14
-      D-8]
-- [ ] **Keep the witness stepper's Close reachable while a check runs.** A running check hides the
-      Checks tab's previous result (`src/ui/panels/BottomPanel.tsx:92-94`), and with it the witness
-      stepper's Prev, Next and Close (`src/ui/panels/BehaviourReport.tsx:194`, the only Close),
-      while the canvas keeps painting the open witness (`src/ui/panels/DiagramCanvas.tsx:166-172`)
-      until the new result lands, up to the 60 s watchdog. Keep the stepper row, or close the
-      witness on `begin`. Done when a test shows the witness can be closed while a check runs.
-      [review 2026-10-14 D-9]
-- [ ] **Make the worker's library identity depend on the library's content.** `libraryKey`
-      (`src/ui/checks-offthread.ts:155-167`) is the library element count plus a hash of the root
-      ids, so a page library of the same shape and different content (the Properties name field can
-      rename a library element; a same-shape bundle from another build) counts as the same and the
-      worker answers over its pristine copy [D-10]. And only `libraryMismatch` is remembered
-      (`src/ui/panels/checks-runner.ts:256-279`): a worker whose library fetch fails (offline,
-      `stdlib.json` not cached) is restarted on every Run, then falls back to the page [D-11].
-      Include a content hash or a build id in the key, and remember load failures for the session.
-      Done when a test renames a library element and the worker declines, and a failed library load
-      starts no second worker. [review 2026-10-14 D-10, D-11]
-- [ ] **Stroke the SVG export's column-header band as the screen does.** The export
-      (`src/diagram/svg-export.ts`) strokes all four sides of the band where the screen draws only a
-      bottom rule. Cosmetic. Done when the export's band matches the screen's.
-      [review 2026-10-14 D-12]
 
 ## Solver and speed — review 2026-10-14
 
@@ -838,23 +811,6 @@ code or value changed, and the claimed gains reproduce. These three are what it 
 
 User guide and tutorials that are wrong, and what waits on something outside the code.
 
-- [ ] **Pin the user guide's `src/ui/store.ts` citations to symbols.** Twenty-four `store.ts` line
-      ranges in `docs/USER-GUIDE.md` (lines 456-458, 582-585, 2945, 3289-3291, 3541-3542) point at
-      the wrong code at 5943654: the diagram scope cited as `311-324` is `318-331`; d476d66
-      re-pointed line 2945 by +48 where +279 is right (the four buttons run from `runValidation` at
-      3002 to the end of `solveParametric` at 3184, an SDK edit is 1914-1994).
-      `test/unit/user-guide.test.ts` checks that a cited range exists, not what is in it, so every
-      edit to `store.ts` stales them again. Re-point the 24 and add a test that fails when a cited
-      `store.ts` range no longer contains the symbol the sentence names. Done when the test is green
-      and fails on a shifted range. [review 2026-10-14 D-4]
-- [ ] **Re-point the guide's `analytics.ts` citation for `feasible`.** `docs/USER-GUIDE.md:2947`
-      cites `src/api/analytics.ts:1215-1290` for `feasible`; that range now holds `orphanReport`
-      (`:1233`) and the start of the `PortOccurrence` and `ConnectivityReport` types (`:1278`,
-      `:1286`), and `feasible` is at `analytics.ts:2408` (the `AnalysisReport` field) and `:2473`
-      (where it is computed). Re-point the range. The previous entry's test is for `store.ts` ranges
-      only, so this citation needs a pin of its own, or that test widened to every cited `src/`
-      range that names a symbol. Done when the cited range holds `feasible`.
-      [review 2026-10-14 D-13]
 - [ ] **Re-record tutorials 1, 3, 4 and 5 and correct the caption that is false.** The workflow
       repo's tutorials were recorded on Sysprose 8581721; the site pins 5943654, where the hub-led
       layout (d60cd5d) and the column-header band (ea0d807) changed the views they show.

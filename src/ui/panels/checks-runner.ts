@@ -43,7 +43,11 @@
  * run against that library, so the runs after the first go straight to the page
  * and start no worker: each would pay for a start, a load and a reply, then the
  * walk. The page's library changing (it finishes loading, a project from another
- * build is opened) lifts it.
+ * build is opened) lifts it. A worker that could not LOAD the library at all
+ * (offline, the data not cached: `libraryUnavailable`) is remembered for the
+ * session the same way, for every library, since the next worker would fail as
+ * it did: later runs go to the page at once, and a load still to measure is taken
+ * as not checked (review 2026-10-14 D-11).
  *
  * THE LOAD FIRST, IN THE WORKER. The two walks are judged over the load health:
  * whether each text a file of the model can hold loads cleanly, which only a parse
@@ -55,10 +59,11 @@
  * check never runs ahead of its load: it waits, because a verdict over a load
  * nobody has checked could only be `undecided`. Where the worker cannot measure
  * the texts — it fails, stops, cannot load the library or says nothing for a
- * minute — the page measures them itself, as a page with no worker does: the page
- * is held for the parse that once, for a true answer rather than none. Only where
- * the page cannot either (no standard library has loaded here) is the load taken
- * as NOT CHECKED, which is never clean, and the check runs over that. The texts
+ * minute — the load is NOT CHECKED, which is never clean, and the check runs over
+ * that: the page measures nothing, so a worker that is dead or late costs the
+ * page no parse, and the row says the load could not be checked (a page with no
+ * worker at all measures the texts itself, as it always did, and takes the load as
+ * not checked only where no standard library has loaded here either). The texts
  * measured are kept by the page, so a check run again over a model not changed
  * since has its load at once.
  *
@@ -168,6 +173,10 @@ let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let watchdog: ReturnType<typeof setTimeout> | null = null;
 /** {@link libraryKey} of the library a worker declined: runs against it go to the page. */
 let declined: string | null = null;
+/** A worker could not load the standard library: no later run asks one (D-11). */
+let libraryFailed = false;
+/** Why a load still to measure is taken as not checked once {@link libraryFailed}. */
+const LIBRARY_FAILED = 'a background worker could not load the standard library earlier in this session';
 
 function stopWatchdog(): void {
   if (watchdog !== null) clearTimeout(watchdog);
@@ -213,20 +222,19 @@ function runHere(job: Job): void {
 }
 
 /**
- * The worker could not measure the run's texts (`why`): the page measures them
- * (`PendingLoadHealth.here`, which takes the load as not checked where the page
- * cannot either), and the check runs here over that — never over a load it did
- * not have.
+ * The worker could not measure the run's texts (`why`): the load is taken as not
+ * checked (`PendingLoadHealth.unchecked`), and the check runs here over that —
+ * never over a load it did not have, and with no parse on the page.
  */
-function loadHere(job: Job, load: PendingLoadHealth, why: string): void {
+function loadUnchecked(job: Job, load: PendingLoadHealth, why: string): void {
   job.load = undefined;
-  job.ctx = { ...job.ctx, loadHealth: load.here(why) };
+  job.ctx = { ...job.ctx, loadHealth: load.unchecked(why) };
   runHere(job);
 }
 
-/** The worker failed the run it was on (`why`): in the load phase the page measures the load; either way the check runs here. */
+/** The worker failed the run it was on (`why`): in the load phase the load ends as not checked; either way the check runs here. */
 function workerFailed(job: Job, why: string): void {
-  if (job.load !== undefined) loadHere(job, job.load, why);
+  if (job.load !== undefined) loadUnchecked(job, job.load, why);
   else runHere(job);
 }
 
@@ -257,12 +265,13 @@ function onReply(from: CheckWorker, reply: CheckReply | HealthReply): void {
   // A reply that cannot name its request (`NO_REQUEST`) can only be for the one being waited for.
   if (from !== worker || active === null || (reply.id !== active.token && reply.id !== NO_REQUEST)) return;
   const job = active;
+  if (!reply.ok && reply.libraryUnavailable === true) libraryFailed = true;
   if (job.load !== undefined) {
     const load = job.load;
     stopWatchdog();
-    if (!reply.ok) loadHere(job, load, `the background worker could not check it (${reply.message})`);
+    if (!reply.ok) loadUnchecked(job, load, `the background worker could not check it (${reply.message})`);
     else if (!('texts' in reply) || reply.texts.length !== load.unmeasured.length) {
-      loadHere(job, load, 'the background worker answered something other than the texts asked about');
+      loadUnchecked(job, load, 'the background worker answered something other than the texts asked about');
     } else {
       job.load = undefined;
       job.ctx = { ...job.ctx, loadHealth: load.finish(reply.texts) };
@@ -292,12 +301,9 @@ function pump(): void {
 function measureLoad(job: Job, load: PendingLoadHealth): void {
   try {
     ensureWorker().postMessage({ id: job.token, kind: 'health', texts: [...load.unmeasured] });
-  } catch {
-    // No worker after all (one could not be started, or take the texts): the page parses them, as it always did.
-    job.load = undefined;
-    job.ctx = { ...job.ctx, loadHealth: load.here() };
-    useChecksStore.getState().walking(job.spec.id, job.token);
-    walk(job);
+  } catch (err) {
+    // No worker after all (one could not be started, or take the texts): a worker that is dead answers 'not checked'.
+    loadUnchecked(job, load, `a background worker could not be started (${err instanceof Error ? err.message : String(err)})`);
     return;
   }
   armWatchdog(job);
@@ -312,8 +318,8 @@ function walk(job: Job): void {
     return;
   }
   const library = libraryKey(ctx.model);
-  if (library === declined) {
-    // A worker has said this page's library is not its own: do not start one to be told again.
+  if (library === declined || libraryFailed) {
+    // A worker has said this page's library is not its own, or that it cannot load one: do not start one to be told again.
     settle(job, runCheck(job.spec, ctx), 'page');
     return;
   }
@@ -432,10 +438,11 @@ function launch(spec: CheckSpec, ctx: CheckContext, rev: number, health: LoadHea
   if (health !== undefined) {
     if ('known' in health) c = { ...ctx, loadHealth: health.known };
     else if (factory() === null) c = { ...ctx, loadHealth: health.here() };
+    else if (libraryFailed) c = { ...ctx, loadHealth: health.unchecked(LIBRARY_FAILED) };
     else load = health;
   }
   const walks = spec.offThread === true && hasStateMachine(c.model);
-  if (load === undefined && (!walks || factory() === null)) {
+  if (load === undefined && (!walks || factory() === null || libraryFailed)) {
     const result = runCheck(spec, c);
     if (begun === undefined) store.record(spec.id, result, rev, selection);
     else store.land(spec.id, result, rev, 'page', selection);
@@ -475,6 +482,7 @@ export function resetCheckRunner(): void {
   queue.length = 0;
   active = null;
   declined = null;
+  libraryFailed = false;
   endWorker();
   useChecksStore.setState({ running: {} });
 }

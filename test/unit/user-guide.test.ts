@@ -707,6 +707,55 @@ describe('§7 — the three kinds of statement', () => {
       expect(lines[from - 1].trim(), `${file}:${from} is a blank line`).not.toBe('');
     }
   });
+
+  /**
+   * A citation that names a symbol must land on it.
+   *
+   * The test above only says a range is inside its file, so every edit to
+   * `src/ui/store.ts` moved the 24 ranges the guide cites there off the code
+   * they described and the gate stayed green (review 2026-10-14 D-4; D-13 was
+   * a range in `analytics.ts` that never held the `feasible` it names). So a
+   * "Source of truth" range is written with its symbol: ``1512-1620``
+   * (`carryPins`: ...). Each backticked identifier in the parenthesis that
+   * follows a range must appear in the lines that range cites, and every range
+   * into `src/ui/store.ts` must name one, because that is the file that moves.
+   * A shifted range then fails here, and the message says which symbol left.
+   * Limit: it catches a symbol leaving its range, not a few lines of drift, and
+   * a range that names no symbol outside `src/ui/store.ts` is not pinned.
+   */
+  it('every cited range holds the symbol its sentence names', () => {
+    const seen = new Map<string, string[]>();
+    const token =
+      /`((?:src|test|scripts)\/[\w./-]+)(?::(\d+(?:-\d+)?))?`|`(\d+(?:-\d+)?)`/g;
+    let storeRanges = 0;
+    for (const para of GUIDE.split(/\n\s*\n/)) {
+      if (!para.startsWith('**Source of truth:**')) continue;
+      const text = para.replace(/\s+/g, ' ');
+      let file = '';
+      for (const m of text.matchAll(token)) {
+        if (m[1] !== undefined) file = m[1];
+        const range = m[2] ?? m[3];
+        if (range === undefined || !/\.tsx?$/.test(file) || !file.startsWith('src/')) continue;
+        const named = /^\s*\(([^)]*)\)/.exec(text.slice(m.index! + m[0].length));
+        const names = [...(named?.[1] ?? '').matchAll(/`([A-Za-z_]\w*)`/g)].map((n) => n[1]);
+        const [from, to = from] = range.split('-').map(Number);
+        const where = `${file}:${range}`;
+        if (file === 'src/ui/store.ts') {
+          storeRanges++;
+          expect(names, `${where} names no symbol: write it as \`${range}\` (\`symbol\`: ...)`).not.toEqual([]);
+        }
+        if (names.length === 0) continue;
+        if (!seen.has(file)) seen.set(file, read(file).split('\n'));
+        const cited = seen.get(file)!.slice(from - 1, to).join('\n');
+        for (const name of names) {
+          expect(cited, `${where} does not contain \`${name}\`: the code moved`).toMatch(
+            new RegExp(`\\b${name}\\b`),
+          );
+        }
+      }
+    }
+    expect(storeRanges, 'the guide cites no store.ts ranges, or the scan lost them').toBeGreaterThan(20);
+  });
 });
 
 /**
