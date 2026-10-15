@@ -441,21 +441,8 @@ From the review of the decisions batch and the per-instance reporting (Sysprose 
 7277a97). `validation/constraint-by-instance` is the finding an instance group's violated reading
 becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
 
-- [ ] **Report a decided violation in a single-instance group.** `instanceRollup`
-      (`src/semantics/evaluate-model.ts:1152`) emits findings only when `group.length >= 2`
-      (`:1168`), so a relation owned by a usage and read in one instance drops its violation. Probe
-      (r17, the review's `E/pi/r17.sysml`): `package R17 { part def P { attribute load default =
-      1.0; } part def Q { attribute L default = 1.0; part p : P { constraint c2 { load <= 10.0 } }
-      bind p.load = L; } part q1 : Q { attribute :>> L = 50.0; } }`: `sysml-check --strict` prints
-      `OK — 0 error(s), 0 warning(s), 0 info(s)` and exits 0 while `verify --engine literal` refutes
-      `R17::Q::p::c2 in R17::q1::p` (load 50 > 10) and exits 1 (re-run at 5943654; 7277a97 at least
-      printed an info). mbse-workflow can never block on it. Fix: count the own row in the group, or
-      emit the violated-instance finding whatever the group size. Done when that probe exits 1 under
-      `sysml-check --strict` and is pinned, and a standing check ≡ verify sweep over the
-      four-surface table finds no row that `verify` refutes while `sysml-check` is silent.
-      [review 2026-10-14 PI-1]
 - [ ] **Anchor a violated-instance finding at the line that differs.**
-      `SpecialisationInstance.anchorId` (`src/semantics/evaluate-model.ts:954`) is read by
+      `SpecialisationInstance.anchorId` (`src/semantics/evaluate-model.ts`) is read by
       `anchorFor` (`:1102`), which the Solve row calls (`src/semantics/solver.ts:4780`), but nothing
       in `src/` assigns it, so a finding points at the shared usage's feature instead of the
       instance's differing redefinition, while the hint says "the line the finding points at". Probe
@@ -463,8 +450,8 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
       constraint c { load <= 10.0 } } part def Q { attribute L default = 1.0; part p : P; bind
       p.load = L; } }` and eight usages `part qN : Q { attribute :>> L = 50.0; }` (N = 1 to 8): all
       the violated-instance findings sit at `part p : P` in `Q` (`3:64` when the package, `P` and
-      `Q` each take a line), none at a `:>> L` (re-run at 5943654). Fix: set `anchorId` to the differing redefinition or stated
-      member when the group row is built. Done when m1's findings anchor at each usage's `:>> L`
+      `Q` each take a line), none at a `:>> L` (re-run at 5943654; the single-instance finding of `4ac2fff` anchors the same way).
+      Fix: set `anchorId` to the differing redefinition or stated member when the group row is built. Done when m1's findings anchor at each usage's `:>> L`
       line. [review 2026-10-14 PI-2]
 - [ ] **Route a binding-carried context read to `constraint-by-instance`.** The per-instance plan
       sends a context read that goes through a binding (h2c, k2, M7) to
