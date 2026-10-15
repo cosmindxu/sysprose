@@ -450,8 +450,9 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
       constraint c { load <= 10.0 } } part def Q { attribute L default = 1.0; part p : P; bind
       p.load = L; } }` and eight usages `part qN : Q { attribute :>> L = 50.0; }` (N = 1 to 8): all
       the violated-instance findings sit at `part p : P` in `Q` (`3:64` when the package, `P` and
-      `Q` each take a line), none at a `:>> L` (re-run at 5943654; the single-instance finding of `4ac2fff` anchors the same way).
-      Fix: set `anchorId` to the differing redefinition or stated member when the group row is built. Done when m1's findings anchor at each usage's `:>> L`
+      `Q` each take a line), none at a `:>> L` (re-run at 5943654; the single-instance finding of
+      `4ac2fff` anchors the same way). Fix: set `anchorId` to the differing redefinition or stated
+      member when the group row is built. Done when m1's findings anchor at each usage's `:>> L`
       line. [review 2026-10-14 PI-2]
 - [ ] **Route a binding-carried context read to `constraint-by-instance`.** The per-instance plan
       sends a context read that goes through a binding (h2c, k2, M7) to
