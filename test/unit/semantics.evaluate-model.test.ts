@@ -20,10 +20,13 @@ import {
   boundSourceIn,
   classified,
   defaultGivesWay,
+  defaultGivesWayIn,
+  defaultStandsIn,
   hasUserBindings,
   instanceGroups,
   instancesOfDefinition,
   isBindingConnector,
+  pastCapEnd,
   readsOtherwise,
   shadowedNamesOf,
   sharedDefinitions,
@@ -2048,6 +2051,68 @@ describe('checkConstraints — a bound partner is read only where every instance
     }
   });
 
+  // CAP1 (the 2026-10-14 review, A-C3): the package's `bind Y = top.a.….a.load` joins Y's default to the load
+  // T1's `bind a.load = L` gives X's 50 thirty-three usages down — a binding past the segment cap. Read in the
+  // package alone, Y's default and the load's fall-through were two defaults that agree, and Y stood at 1:
+  // `Y >= 40.0` refuted where it holds, on all four surfaces. The cap reaches every binding joined to the
+  // capped one, through what an end redefines (the package's end at that path redefines T1's).
+  it('carries a cap along every binding joined to the capped one, through what an end redefines (CAP1)', async () => {
+    const as = (n: number) => Array.from({ length: n }, () => 'a').join('.');
+    const cap1 = (y: string) =>
+      [
+        'package CAP {',
+        `  ${P.replace('part def P', 'part def T0')}`,
+        '  part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }',
+        ...Array.from({ length: 32 }, (_, i) => `  part def T${i + 2} { part a : T${i + 1}; }`),
+        '  part top : T33;',
+        '  attribute X : ScalarValues::Real = 50.0;',
+        `  bind top.${as(32)}.L = X;`,
+        `  attribute Y : ScalarValues::Real${y};`,
+        `  bind Y = top.${as(33)}.load;`,
+        '  constraint yT { Y >= 40.0 }',
+        '  constraint yF { Y <= 5.0 }',
+        `  constraint negT { top.${as(33)}.m2 <= 0.0 }`,
+        '  attribute V : ScalarValues::Real = 3.0;',
+        '  attribute W : ScalarValues::Real;',
+        '  bind W = V;',
+        '  constraint wT { W >= 2.0 }',
+        '  part def U { part a : T0; attribute M : ScalarValues::Real default = 1.0; bind a.load = M; }',
+        '  part u : U;',
+        '  constraint uF { u.a.load == 9.0 }',
+        '  constraint uT { u.M <= 5.0 }',
+        '}',
+      ].join('\n');
+    for (const y of [' default = 1.0', ''] as const) {
+      const { model: m } = await loadModelText(cap1(y));
+      expect(bindingCapOf(m!), y).toBe('segments');
+      const Y = named(m!, 'CAP::Y');
+      const src = boundSourceIn(m!, 'CAP::Y');
+      expect(src && 'abstain' in src && src.abstain, y).toBe('past-cap');
+      expect(defaultStandsIn(m!, 'CAP::Y'), y).toBeUndefined();
+      expect(boundPartnerSafe(m!, named(m!, 'CAP').id, 'Y', Y.id), y).toBe(false);
+      expect(sharedDefinitions(m!).boundAbove(named(m!, 'CAP').id, ['Y']), y).toEqual({ pastCap: 'segments' });
+      if (y !== '') expect(defaultGivesWay(m!, Y)).toBe(true);
+      const checks = checkConstraints(m!);
+      expect(['CAP::yT', 'CAP::yF', 'CAP::negT'].map((r) => resultOf(checks, m!, r)), y).toEqual(['unknown', 'unknown', 'unknown']);
+      // Y has a value (its default, or the one the capped binding gives): the cap is why it is not read.
+      expect(checks.find((c) => m!.qualifiedName(c.id) === 'CAP::yT')!.message, y).toBe(
+        'Could not evaluate: Y is not read in CAP: a binding of this model is read deeper than 32 usages',
+      );
+      expect(pastCapEnd(m!, Y.id), y).toBe(true);
+      // A binding the capped one does not reach reads as before.
+      const w = boundSourceIn(m!, 'CAP::W');
+      expect(w && !('abstain' in w) && w.via.source, y).toBe('V');
+      expect(resultOf(checks, m!, 'CAP::wT'), y).toBe('satisfied');
+      // Nor does one that redefines only what the capped binding's end redefines (CAPU2): U's end and T1's
+      // both redefine T0's load, which no binding names. Joined through it, U's M and load were held past
+      // T1's cap, and the numeric lane solved `u.a.load == 9.0` as a design equation.
+      expect(pastCapEnd(m!, named(m!, 'CAP::U::M').id), y).toBe(false);
+      const u = boundSourceIn(m!, 'CAP::u::a::load');
+      expect(u && 'abstain' in u ? u.abstain : 'read', y).not.toBe('past-cap');
+      expect([resultOf(checks, m!, 'CAP::uF'), resultOf(checks, m!, 'CAP::uT')], y).toEqual(['violated', 'satisfied']);
+    }
+  });
+
   it('counts only the bindings the user wrote: a model that writes none asks nothing of them', async () => {
     // The full library carries binding connectors of its own (82); the uav ISR example writes none. It
     // stands in here for v9 (planted bug P16), which lives outside the repository: v9 itself is checked
@@ -2445,6 +2510,44 @@ describe('the instance index — frames, components, and bound sources', () => {
     expect(cls.heldDefaults).toEqual(['q.p.load']);
   });
 
+  // A-C2 (the 2026-10-14 review): q2's `bind p.extra = E` makes an implicit end copy of P's `extra default =
+  // 0.0` that writes no default of its own. Held, it held P's extra at q2's p only where the copy WROTE a
+  // default — never, so P's 0 stood at q2's p beside the binding's 20 (decision 10), and the SMT lane's
+  // instance value row asserted it there. The redefined default gives way at the instance where the copy
+  // falls through to it, and only there; where an asserted equation defines the end (GA6), its fall-through
+  // reads the assert, and nothing changes (H5 is not decided here).
+  it('holds the redefined default at the instance where a held end copy falls through to it (A4)', async () => {
+    const { model: m } = await loadModelText(`package A4 {
+      part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute extra : ScalarValues::Real default = 0.0;
+        constraint c { load + extra <= 10.0 }
+      }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 2.0; }
+      part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+    }`);
+    const [load, extra] = [named(m!, 'A4::P::load'), named(m!, 'A4::P::extra')];
+    // P's extra gives way at q2's p, where q2's E holds the copy; P's load at q1's p, where q1's L does.
+    expect(defaultGivesWayIn(m!, extra, 'A4::q2::p')).toBe(true);
+    expect(defaultGivesWayIn(m!, load, 'A4::q1::p')).toBe(true);
+    // Not elsewhere: q1's extra and q2's load are P's own defaults, and so are Q's own p's.
+    expect(defaultGivesWayIn(m!, extra, 'A4::q1::p')).toBe(false);
+    expect(defaultGivesWayIn(m!, load, 'A4::q2::p')).toBe(false);
+    expect(defaultGivesWayIn(m!, extra, 'A4::Q::p')).toBe(false);
+    // No instance value row asserts P's default for q2's extra beside the binding that holds it.
+    const rows = obligationsOf(m!).filter((o) => o.role === 'axiom').map((o) => o.element.qualifiedName);
+    expect(rows).not.toContain('A4::P::extra in A4::q2::p');
+    expect(rows).toContain('A4::P::extra in A4::q1::p');
+    const { model: g } = await loadModelText(`package GA6 {
+      part def P { attribute load : ScalarValues::Real default = 7.0; assert constraint pa { load == 7.0 } }
+      part def Q { attribute L : ScalarValues::Real default = 5.0; assert constraint qa { L == 5.0 } part p : P; bind p.load = L; }
+      part q : Q;
+    }`);
+    const gl = named(g!, 'GA6::P::load');
+    expect([defaultGivesWayIn(g!, gl, 'GA6::Q::p'), defaultGivesWayIn(g!, gl, 'GA6::q::p')]).toEqual([false, false]);
+  });
+
   it('reads one valued member, and abstains free / two-values / defaults-differ as A.3 does', async () => {
     // A single valued member: the default carried into a valueless feature stands.
     const { model: k } = await loadModelText(`package K {
@@ -2750,8 +2853,8 @@ describe('the instance index — frames, components, and bound sources', () => {
   // (Q2's p, typed P2, inherits P2's `extra = 9.5` and the end copy of Q's `bind p.extra = X`) has no value,
   // and none is read through the binding in its place (it was X's default, 0). A `default` an asserted
   // equation of the element's own constrains is not read there (H5; the row abstains, as at S1). And an
-  // enclosing assert makes only an instance read in its own element abstain: q1, read through Q's p, still
-  // reads its p's load past q1's assert (A-H1, O2 S3).
+  // enclosing assert makes an instance abstain whether it is read in its own element (q2, the guard) or
+  // through Q's p (q1, the reading itself, at q1's frames: A-H1, O2 S3).
   it('abstains where no one element stands for an instance, a name reads two values, or an own assert meets a default', async () => {
     const P3 = `part def P {
         attribute load : ScalarValues::Real default = 1.0;
@@ -2848,8 +2951,82 @@ describe('the instance index — frames, components, and bound sources', () => {
       'generic satisfied',
       'G::q2::p unknown enclosing-assert',
       'G::q3::p unknown not-enumerated',
-      'G::q1::p satisfied',
+      'G::q1::p unknown',
     ]);
+    // q1's p is read through Q's p, and q1's assert is of an instance enclosing it: it abstains in A.9's
+    // sentence, as the own row reading `q1.p.load` does.
+    const bq1 = checkConstraints(b!).find((c) => b!.qualifiedName(c.id) === 'G::P::c')!.instances!.find((i) => i.instance === 'G::q1::p')!;
+    expect(bq1.message).toBe(
+      "Could not evaluate: load is not read in G::q1::p: G::q1's asserted `p.load >= 0.5` constrains it there, " +
+        'and this tool does not read a value an enclosing assert constrains',
+    );
+  });
+
+  // A-H1 (the 2026-10-14 review): a group row reads Q's p for q1's p, and read through Q's p's frames it
+  // read x's default past q1's `assert constraint { p.x == 50.0 }` — T where the own row reading `q1.p.x`
+  // abstained. It is read at q1's p's own frames, a value derived from x too (m2 = 10 − x, read in P for
+  // q1's p). A definition's own frame is none of them: Q's assert holds of every Q's p, the usage's own
+  // included, and reads as it always did.
+  it('reads an instance at the frames that enclose it, a derived value too (A-H1)', async () => {
+    const text = (qAssert: string) => `package G {
+      part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute x : ScalarValues::Real default = 2.0;
+        attribute m2 : ScalarValues::Real = 10.0 - x;
+        constraint c { load + m2 <= 20.0 }
+      }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; ${qAssert} }
+      part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.x == 50.0 } }
+      part q2 : Q;
+    }`;
+    const rowsOf = (m: Model) =>
+      (checkConstraints(m).find((c) => m.qualifiedName(c.id) === 'G::P::c')!.instances ?? []).map(
+        (i) => [i.instance ?? 'generic', i.result, i.result === 'unknown' ? i.message : ''],
+      );
+    const { model: m } = await loadModelText(text(''));
+    expect(sharedDefinitions(m!).framesAbove('G::q1::p')!.map((f) => f.instance)).toEqual(['G', 'G::q1']);
+    expect(rowsOf(m!)).toEqual([
+      ['generic', 'satisfied', ''],
+      [
+        'G::q1::p',
+        'unknown',
+        "Could not evaluate: x is not read in G::q1::p: G::q1's asserted `p.x == 50.0` constrains it there, " +
+          'and this tool does not read a value an enclosing assert constrains',
+      ],
+      ['G::q2::p', 'satisfied', ''],
+    ]);
+    const { model: d } = await loadModelText(text('assert constraint qx { p.x == 2.0 }'));
+    expect(rowsOf(d!).map(([i, r]) => `${i} ${r}`)).toEqual(['generic satisfied', 'G::q1::p unknown', 'G::q2::p satisfied']);
+    // The package is the outermost of q1's p's frames (H1C3, the review of O2 S3): its `assert constraint {
+    // q1.p.x == 50.0 }` constrains q1's p's x as q1's own does, and q2's p, read in its own element, already
+    // abstained on the package's assert of it — the two rows of one relation give one cause.
+    const { model: h } = await loadModelText(`package H {
+      part def P {
+        attribute load : ScalarValues::Real default = 1.0;
+        attribute x : ScalarValues::Real default = 2.0;
+        constraint c { load + x <= 10.0 }
+      }
+      part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+      part q1 : Q { attribute :>> L = 3.0; }
+      part q2 : Q { part :>> p { attribute :>> load default = 4.0; } }
+      part q3 : Q;
+      assert constraint t { q2.p.x == 50.0 }
+      assert constraint t1 { q1.p.x == 50.0 }
+    }`);
+    expect(sharedDefinitions(h!).framesAbove('H::q1::p')!.map((f) => f.instance)).toEqual(['H', 'H::q1']);
+    const hRows = (checkConstraints(h!).find((c) => h!.qualifiedName(c.id) === 'H::P::c')!.instances ?? []).map(
+      (i) => [i.instance ?? 'generic', i.result, i.result === 'unknown' ? i.message : ''],
+    );
+    expect(hRows.map(([i, r]) => `${i} ${r}`)).toEqual([
+      'generic satisfied',
+      'H::q2::p unknown',
+      'H::q1::p unknown',
+      'H::q3::p satisfied',
+    ]);
+    expect(hRows.find(([i]) => i === 'H::q1::p')![2]).toBe(
+      "Could not evaluate: x is not read in H::q1::p: H's asserted `q1.p.x == 50.0` constrains it there, " +
+        'and this tool does not read a value an enclosing assert constrains',
+    );
   });
 
   // The guard's other causes (the review of O2 S1). A reference's value is resolved once, where it is

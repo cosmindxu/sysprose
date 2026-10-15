@@ -311,11 +311,13 @@ function answerFor(
   pass: ScalarPass,
   inst?: string,
 ): ScalarAnswer | undefined {
-  // An enclosing assert constrains the value (A.2.4): abstain, never read it.
+  // An enclosing assert constrains the value (A.2.4): abstain, never read it —
+  // one of an instance enclosing `inst` too, where the context is read for an
+  // instance not its own (a group row, A-H1).
   if (inst !== undefined) {
     const den = pass.definitions.denote(contextId).get(name);
     if (den) {
-      const ea = enclosingAssertOn(model, contextId, den.enclosing, name);
+      const ea = enclosingAssertOn(model, contextId, den.enclosing, name, inst);
       if (ea) {
         const ownName = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
         const where = effectiveQualifiedName(model, ea.frame);
@@ -2688,6 +2690,28 @@ function unitAwareVerdict(
   return ua;
 }
 
+/**
+ * Why a feature a relation reads by its bare name has no value read for it,
+ * where a binding past a cap holds it ({@link boundSourceIn}'s `past-cap`):
+ * `Y is not read in CAP: a binding of this model is read deeper than 32
+ * usages`, in the sentence a per-instance read gives — or `undefined`.
+ */
+function pastCapCause(model: Model, feature: ElementRecord, pass: ScalarPass): string | undefined {
+  if (!hasUserBindings(model)) return undefined;
+  const symbol = pass.definitions.instanceNameOf(feature.id);
+  const sep = symbol.lastIndexOf('::');
+  if (sep < 0) return undefined;
+  let src: BoundSource | undefined;
+  try {
+    src = boundSourceIn(model, symbol);
+  } catch {
+    // The generic sentence stands: a failed lookup is no cause to name.
+    return undefined;
+  }
+  if (!src || !('abstain' in src) || src.abstain !== 'past-cap') return undefined;
+  return `${symbol.slice(sep + 2)} is not read in ${symbol.slice(0, sep)}: ${src.sentence}`;
+}
+
 /* ─────────────── A target read through the features that specialise its measure ─────────────── */
 
 /** A measure a body names, as the constraint's own context declares it. */
@@ -2785,6 +2809,11 @@ function readThroughSpecialisers(
       // anywhere" of a feature an equation defines was false.
       const inherited = inheritedCause(model, el, m.name, pass);
       if (inherited) return inherited;
+      // A feature with a value a binding past a cap holds (CAP1's Y and its
+      // `default = 1.0`): the cap is why, not a value it lacks — told to set
+      // one, an agent would set the wrong thing.
+      const capped = pastCapCause(model, m.feature, pass);
+      if (capped) return capped;
       return checked
         ? `${m.name} has no value anywhere, no asserted equation, and nothing specialises it`
         : `${m.name} has no value anywhere and nothing specialises it`;

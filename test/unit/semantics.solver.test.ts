@@ -8,6 +8,7 @@ import {
   checkConstraints,
   checkConstraintsNumeric,
   obligationsOf,
+  solveFeasible,
 } from '../../src/semantics/index';
 import { loadModelText } from '@text/load';
 import { defaultStandsIn } from '../../src/semantics/defining-equation';
@@ -489,5 +490,80 @@ describe('solve — a default a binding holds per feature stands in the instance
     expect(load?.role).toBe('axiom');
     // q1's L is 50: no standing-default row, the binding carries the value.
     expect(obligationsOf(m!).find((o) => o.element.qualifiedName === 'W2::Q::p::load in W2::q1::p')).toBeUndefined();
+  });
+});
+
+/**
+ * A binding read in fewer contexts than it holds in — 32 usages deep, or with
+ * an end that has no instance where it holds — holds its ends' defaults
+ * wherever they are read, and the check reads no value for them. The numeric
+ * lane read such a value as a design freedom: a plain check fixed it, and the
+ * others were judged at that invented point (the review of O2 S3: CAPU4, and
+ * R's nested Q used outside any R). It is a value the model has and this tool
+ * does not read, unless the bindings carry it from a stated one (Y, from X's
+ * 50 through T1's binding at the chain's end).
+ */
+describe('solve — a value a binding past a cap holds is no design freedom', () => {
+  const as = (n: number) => Array.from({ length: n }, () => 'a').join('.');
+  const CAPU4 = [
+    'package CAPU4 {',
+    '  part def T0 { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }',
+    '  part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }',
+    ...Array.from({ length: 32 }, (_, i) => `  part def T${i + 2} { part a : T${i + 1}; }`),
+    '  part top : T33;',
+    '  attribute X : ScalarValues::Real = 50.0;',
+    `  bind top.${as(32)}.L = X;`,
+    '  attribute Y : ScalarValues::Real default = 1.0;',
+    `  bind Y = top.${as(33)}.load;`,
+    '  part s : T1;',
+    '  constraint c1 { s.a.load == 9.0 }',
+    '  constraint c2 { s.a.load <= 5.0 }',
+    '  constraint c3 { s.L <= 5.0 }',
+    '  constraint yT { Y >= 40.0 }',
+    `  constraint negT { top.${as(33)}.m2 <= 0.0 }`,
+    '}',
+  ].join('\n');
+
+  it('leaves a shallow instance of the capped binding unjudged, and solves what X carries', async () => {
+    const { model: m } = await loadModelText(CAPU4);
+    const numeric = checkConstraintsNumeric(m!);
+    const row = (n: string) => numeric.find((r) => m!.qualifiedName(r.id) === `CAPU4::${n}`)!;
+    expect(['c1', 'c2', 'c3', 'yT', 'negT'].map((n) => row(n).result)).toEqual([
+      'unknown',
+      'unknown',
+      'unknown',
+      'satisfied',
+      'satisfied',
+    ]);
+    expect(row('c1').imposed).toBeUndefined();
+    expect(row('c1').reason).toBe('load is not read in CAPU4::s::a: a binding of this model is read deeper than 32 usages');
+    // T1's own L is held past the cap, not left free.
+    const free = solve(m!).free.map((id) => m!.qualifiedName(id.split('@')[0]!));
+    expect(free).not.toContain('CAPU4::T1::L');
+  });
+
+  it('leaves an instance whose binding has an end outside it unjudged (R’s nested Q)', async () => {
+    const { model: m } = await loadModelText(`package XO2 {
+      part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
+      part def R {
+        attribute L : ScalarValues::Real default = 1.0;
+        part def Q { part p : P; bind p.load = L; }
+        part q : Q;
+      }
+      part def S { part z : R::Q; }
+      part s : S;
+      part r2 : R;
+      constraint c3 { r2.q.p.load == 9.0 }
+      constraint c5 { r2.q.p.m2 >= 5.0 }
+      constraint c6 { r2.L >= 5.0 }
+    }`);
+    const numeric = checkConstraintsNumeric(m!);
+    const row = (n: string) => numeric.find((r) => m!.qualifiedName(r.id) === `XO2::${n}`)!;
+    // r2's load is R's default of 1, so c3 and c6 are false and c5 true: read as free, c3 was imposed and c5
+    // refuted, and the feasibility search met c6 by moving r2's L, which only c6 reads.
+    expect([row('c3').result, row('c5').result, row('c6').result]).toEqual(['unknown', 'unknown', 'unknown']);
+    expect(row('c3').imposed).toBeUndefined();
+    const feasibility = solveFeasible(m!);
+    expect([feasibility.decided, feasibility.free]).toEqual([false, []]);
   });
 });

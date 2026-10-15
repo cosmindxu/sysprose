@@ -4020,6 +4020,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Big::k3': ['F/F/F/F', 'F'],
       'Big::k4': ['F/F/F/F', 'F'],
     }),
+    // q1 asserts `p.x == 50.0` over P's `x default = 2.0`: which stands is H5, not decided here, so every
+    // per-instance reading of q1's p's x abstains (`enclosing-assert`, A.2.4) — the own row top1 and, since
+    // O2 S3 (A-H1), q1's group row, which read x's default through Q's p's frames and was T/T/T/X beside
+    // top1's `?`. q1's own `tie` row reads p.x and is decided; so can a package constraint reading `q1.p.x`.
     'refute-r1': probe(`package R1 {
         part def P {
           attribute load : ScalarValues::Real default = 1.0;
@@ -4033,7 +4037,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R1::P::c': ['T/T/T/X', 'T'],
       'R1::P::c in R1::Q::p': ['T/T/T/X', 'T'],
-      'R1::P::c in R1::q1::p': ['T/T/T/X', 'T'],
+      'R1::P::c in R1::q1::p': ['?/?/?/X', 'T'],
       'R1::P::c in R1::q2::p': ['T/T/T/X', 'T'],
       'R1::q1::tie': ['F/-/F/-', null],
       'R1::top1': ['?/?/T/X', null],
@@ -5046,6 +5050,91 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'DP32::negT': ['T/T/T/T', 'T'],
       'DP32::posF': ['F/F/F/F', 'F'],
     }),
+    // CAP1 (the 2026-10-14 review, A-C3): chainPkg33 plus `bind Y = top.a.….a.load` read in the package, over
+    // `Y default = 1.0`. T1's binding is past the segment cap, and the package's second binding carried its
+    // value on: Y's default and the load's fall-through were read there as two defaults that agree, so Y and
+    // the load stood at 1 — yT and negT F/F/F/X, yF and posF T/T/T/X, where Y is 50 and m2 is −40. The cap
+    // reaches every binding joined to the capped one (O2 S3): the check and the literal engine abstain, the
+    // numeric and SMT lanes solve the bindings and decide. It sits beside chainPkg33, the cap's pin here;
+    // P4's others are the 33-level chain unit test (CAP1 is pinned beside it too) and r4cap, out of tree.
+    cap1: probe(
+      bindingChainPkg(33)
+        .replace('package DP33 {', 'package CAP1 {')
+        .replace(
+          /\n}$/,
+          [
+            '',
+            '  attribute Y : ScalarValues::Real default = 1.0;',
+            `  bind Y = top.${Array.from({ length: 33 }, () => 'a').join('.')}.load;`,
+            '  constraint yT { Y >= 40.0 }',
+            '  constraint yF { Y <= 5.0 }',
+            '}',
+          ].join('\n'),
+        ),
+      {
+        'CAP1::negT': ['?/?/T/T', 'T'],
+        'CAP1::posF': ['?/?/F/?', 'F'],
+        'CAP1::yT': ['?/?/T/T', 'T'],
+        'CAP1::yF': ['?/?/F/?', 'F'],
+      },
+    ),
+    // CAPU2 (the review of O2 S3): chainPkg33 plus U's own `bind a.load = M` on its `part a : T0`. Both U's end
+    // and T1's capped one redefine T0's load, and joined through it U's binding was held past T1's cap: M and
+    // the load were free to the numeric lane, which solved `u.a.load == 9.0` as a design equation and refuted
+    // c2–c4 at 9 (the app's Solve: infeasible), where u's load and M are U's default of 1. A binding joins a
+    // capped one only through another binding's end.
+    capu2: probe(
+      bindingChainPkg(33)
+        .replace('package DP33 {', 'package CAPU2 {')
+        .replace(
+          /\n}$/,
+          [
+            '',
+            '  part def U { part a : T0; attribute M : ScalarValues::Real default = 1.0; bind a.load = M; }',
+            '  part u : U;',
+            '  constraint c1 { u.a.load == 9.0 }',
+            '  constraint c2 { u.a.load <= 5.0 }',
+            '  constraint c3 { u.M <= 5.0 }',
+            '  constraint c4 { u.a.m2 >= 5.0 }',
+            '}',
+          ].join('\n'),
+        ),
+      {
+        'CAPU2::negT': ['?/?/T/T', 'T'],
+        'CAPU2::posF': ['?/?/F/?', 'F'],
+        'CAPU2::c1': ['F/F/F/F', 'F'],
+        'CAPU2::c2': ['T/T/T/T', 'T'],
+        'CAPU2::c3': ['T/T/T/T', 'T'],
+        'CAPU2::c4': ['T/T/T/T', 'T'],
+      },
+    ),
+    // CAPU4 (the same review; at 5943654 too): a shallow `part s : T1;` beside the capped chain. T1's binding
+    // is past the cap, so s's L and its a's load are held at T1's default of 1 and read by no surface — but
+    // the numeric lane read them as a design freedom: c1 `s.a.load == 9.0` was satisfied by construction,
+    // and c2 and c3 refuted at that 9. A value held past a cap that no binding carries from a stated value
+    // is no freedom: every surface abstains.
+    capu4: probe(
+      bindingChainPkg(33)
+        .replace('package DP33 {', 'package CAPU4 {')
+        .replace(
+          /\n}$/,
+          [
+            '',
+            '  part s : T1;',
+            '  constraint c1 { s.a.load == 9.0 }',
+            '  constraint c2 { s.a.load <= 5.0 }',
+            '  constraint c3 { s.L <= 5.0 }',
+            '}',
+          ].join('\n'),
+        ),
+      {
+        'CAPU4::negT': ['?/?/T/T', 'T'],
+        'CAPU4::posF': ['?/?/F/?', 'F'],
+        'CAPU4::c1': ['?/?/?/?', 'F'],
+        'CAPU4::c2': ['?/?/?/?', 'T'],
+        'CAPU4::c3': ['?/?/?/?', 'T'],
+      },
+    ),
     'h2-bodyspec-plain': probe(`package H2BP {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         part def Q { attribute L : ScalarValues::Real; part p : P; }
@@ -5662,7 +5751,6 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['refute-r1 | R1::P::c', 'q1’s asserted `p.x == 50.0` against x’s default: the default-vs-assert semantics is open (H5)'],
     ['refute-r1 | R1::top1', 'the same; the check abstains (an enclosing assert, F5)'],
     ['refute-r1 | R1::P::c in R1::Q::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
-    ['refute-r1 | R1::P::c in R1::q1::p', 'the same q1 assert beside the group row read in q1’s p'],
     ['refute-r1 | R1::P::c in R1::q2::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
     ...['D1P::at30', 'D1P::atL'].map(
       (row) =>

@@ -904,12 +904,16 @@ Q2's `part :>> p : P2` and Q4's `part :>> p : P4`, or `part q3 : Q2, Q4`: q3's
 p is P2's and P4's at once, and no one element stands for it); and one whose
 own element states a `default` that an asserted equation of its own constrains
 (`part :>> p { assert constraint { extra == 20.0 } }` over P's `extra default =
-0.0`). One read in its own element that an `assert` of an instance around that
-element constrains (`part q2 : Q { part :>> p { … } assert constraint { p.load
->= 0.5 } }`) is *could not be evaluated* too: a reading in that element reads
-none of the asserts around it. A relation read through a part a binding
-joins to another (`bind p.r = s`, the relation reading `r.x`) is read per
-instance nowhere, the usage's own row included: that row is *could not be
+0.0`). An instance row that reads a value an `assert` of an instance around
+it constrains, the package's included, is *could not be evaluated* too, read
+in its own element (`part q2 : Q { part :>> p { … } assert constraint { p.load
+>= 0.5 } }`) or through the usage (`part q1 : Q { assert constraint { p.x ==
+50.0 } }`, or the package's `assert constraint { q1.p.x == 50.0 }`, for q1's
+p's x): neither reading of the instance reads the asserts around it. A relation
+outside the instance's rows that reads `q1.p.x` (a package constraint) can
+still read x's `default` past such an assert. A relation read through a part a
+binding joins to another (`bind p.r = s`, the relation reading `r.x`) is read
+per instance nowhere, the usage's own row included: that row is *could not be
 evaluated*, as it was before any instance was read. A relation written in such
 a usage (`part p : P { constraint c2 { load <= 10.0 } }` in Q) is read the same
 way; an `assert` there stays an axiom, read for the usage's own instance. A
@@ -918,10 +922,20 @@ feature only where every instance it stands for reads the partner alike — not
 for q's p, whose K q sets. A binding written in a usage's body to a feature of
 the definition around it (`part q : Q { bind p.load = L; }` in R, over R's L) is
 read in every instance of that definition, so not for r's q where `r : R` sets
-K. No value is read through a binding for any one instance while a binding of
-the model holds in more than 4,096 contexts or more than 32 usages deep, nor
-through one whose end has no instance in a context it holds in (R's nested Q
-used outside any R).
+K. No value is read through a binding for any one instance where it holds in
+more than 4,096 contexts or more than 32 usages deep, nor through a binding
+joined to such a one, end to end or through a feature an end redefines (a
+package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33 usages
+down that gives that load its value: Y's `default` gives way, and the check
+reads no value for Y), nor through one whose end has no instance in a context
+it holds in (R's nested Q used outside any R). A binding joins such a one
+through a feature an end redefines only where that feature is itself another
+binding's end: U's `bind a.load = M` on its own `part a : T0` is not joined to
+T1's capped binding by the T0 `load` both redefine. A value held so, which no
+binding carries from a stated value, is no design freedom to the numeric
+surface either: a relation reading it is *could not be evaluated* there too,
+never solved as a design equation (`s.a.load == 9.0` for a shallow `part s :
+T1` beside the capped chain), and the feasibility search does not move it.
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
 listed, and decided by no surface yet. Against a value
