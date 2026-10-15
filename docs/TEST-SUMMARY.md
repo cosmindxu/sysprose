@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4495 total — 4495 passed, 0 failed, 0 skipped
+- **Tests:** 4500 total — 4500 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -61,7 +61,7 @@
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 7 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 118 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 121 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
 | test/unit/collab.binding.test.ts | 15 | 0 | 0 |
@@ -81,7 +81,7 @@
 | test/unit/diagram.parametric.test.ts | 10 | 0 | 0 |
 | test/unit/diagram.readability.test.ts | 51 | 0 | 0 |
 | test/unit/diagram.sequence.test.ts | 8 | 0 | 0 |
-| test/unit/diagram.svg-export.test.ts | 21 | 0 | 0 |
+| test/unit/diagram.svg-export.test.ts | 22 | 0 | 0 |
 | test/unit/diagram.symbols.test.ts | 12 | 0 | 0 |
 | test/unit/diagram.symbols2.test.ts | 14 | 0 | 0 |
 | test/unit/docs-counts.test.ts | 117 | 0 | 0 |
@@ -163,6 +163,6 @@
 | test/unit/ui.properties-facets.test.ts | 22 | 0 | 0 |
 | test/unit/ui.requirements-table.test.ts | 22 | 0 | 0 |
 | test/unit/ui.text-editor.test.ts | 4 | 0 | 0 |
-| test/unit/user-guide.test.ts | 32 | 0 | 0 |
+| test/unit/user-guide.test.ts | 33 | 0 | 0 |
 | test/unit/validation.connection.test.ts | 6 | 0 | 0 |
 | test/unit/validation.rules.test.ts | 87 | 0 | 0 |
