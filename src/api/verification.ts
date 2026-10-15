@@ -140,6 +140,7 @@ import {
 import {
   CLAIMED_WITHOUT_EVIDENCE_CODE,
   VERDICT_OVERSTATES_EVIDENCE_CODE,
+  instanceFacetOf,
   modelVersionOf,
   obligationDigest,
   proofScopeOf,
@@ -148,6 +149,7 @@ import {
   verdictFor,
   type EvidenceBound,
   type EvidenceClaim,
+  type EvidenceInstanceFacet,
   type EvidenceRecord,
   type EvidenceVerdict,
   type ModelVersion,
@@ -1401,8 +1403,30 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
   // A case's verdict stands on obligations that stand on the model's own
   // axioms, so filtering the worklist before judging would decide `--case` under
   // a context the reader never removed.
+  //
+  // A READING IS A ROW OF ITS REQUIREMENT. A requirement's clause read in a
+  // context or an instance names `<requirement> in <reading>`, whose id is no
+  // element's, so the roll-up filed it under nothing: a case verifying a
+  // requirement refuted in one instance printed `pass`, `--case` dropped the
+  // refuted reading from its rows and its records, and the attach of that file
+  // wrote `pass` over the `fail` the readings had written. The case input files
+  // each reading under the requirement it reads, as `evidence-attach` does;
+  // `results` and the records keep the reading's own name.
+  const instances = instanceFacets(model, rows);
   const cases = runVerificationCases(model, {
-    judged,
+    judged: judged.map((r) => {
+      const reading = instances.get(r.clause.id);
+      return reading === undefined || r.requirement === null
+        ? r
+        : {
+            ...r,
+            requirement: {
+              ...r.requirement,
+              id: reading.requirementId,
+              qualifiedName: reading.facet.requirement,
+            },
+          };
+    }),
     ...(opts.caseId !== undefined ? { caseId: opts.caseId } : {}),
     toolAbsent,
   });
@@ -1471,6 +1495,10 @@ export async function verifyModel(model: Model, opts: VerifyOptions = {}): Promi
           : {}),
         ...(r.code !== null ? { code: r.code } : {}),
         detail: r.detail,
+        // A ROW READ IN A CONTEXT OR INSTANCE IS A `…/2` RECORD, with the
+        // requirement and the reading taken from the row itself rather than
+        // left for attach to recover by splitting `<requirement> in <reading>`.
+        ...(instances.has(r.clause.id) ? { instance: instances.get(r.clause.id)?.facet } : {}),
       })),
       modelVersion,
       producedBy: opts.producedBy ?? `sysprose verify --engine ${engineAsked}`,
@@ -1678,6 +1706,25 @@ function scopeFor(
   return {
     proofScope: proofScopeOf(model, row, { rows, pass, ...(free !== undefined ? { free } : {}) }),
   };
+}
+
+/**
+ * The per-instance facet of every row of the worklist the run judged, by
+ * clause id, with the requirement element it reads: present only on a
+ * requirement's clause read in a context or an instance. Built once per run,
+ * for the records and for the case roll-up.
+ */
+function instanceFacets(
+  model: Model,
+  rows: readonly Obligation[],
+): ReadonlyMap<ElementId, { requirementId: ElementId; facet: EvidenceInstanceFacet }> {
+  const out = new Map<ElementId, { requirementId: ElementId; facet: EvidenceInstanceFacet }>();
+  for (const row of rows) {
+    const facet = instanceFacetOf(model, row);
+    const requirementId = row.instance?.requirementId;
+    if (facet !== undefined && requirementId !== undefined) out.set(row.element.id, { requirementId, facet });
+  }
+  return out;
 }
 
 /**

@@ -3874,6 +3874,76 @@ package P {
     }
   }, 300_000);
 
+  it('a case over a requirement refuted in one instance writes `fail`, and every re-attach keeps it (EV-1)', async () => {
+    // E's h5 probe. `LoadReq` holds on its own row and in p2, and is refuted in
+    // p1. The record layer wrote `fail`; the CASE layer then judged `VC` on the
+    // requirement's own row alone — the per-instance records name
+    // `LoadReq in p1`, which is no element, and were dropped — and printed
+    // `H::LoadReq — verdict fail → pass from H::VC`, on every re-attach again.
+    // `verify`'s own roll-up dropped them the same way: it printed `VC` `pass`,
+    // and `--case H::VC` recorded the own row only, whose attach wrote `pass`.
+    const dir = mkdtempSync(join(tmpdir(), 'sysprose-cli-'));
+    try {
+      const model = join(dir, 'h5.sysml');
+      writeFileSync(
+        model,
+        [
+          'package H {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+          '  requirement def LoadReq { subject s : P; require constraint { s.load <= 10.0 } }',
+          '  part p1 : P { attribute :>> load = 50.0; }',
+          '  part p2 : P { attribute :>> load = 2.0; }',
+          '  satisfy LoadReq by p1;',
+          '  satisfy LoadReq by p2;',
+          '  verification def VC; verify LoadReq by VC;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const records = join(dir, 'h5.json');
+      const verified = await run(['verify', model, '--engine', 'smt', '--record', records]);
+      expect(verified.code).toBe(1);
+      expect(verified.stdout).toContain('H::VC  verdict fail');
+      const caseRecords = join(dir, 'h5.case.json');
+      const narrowed = await run(['verify', model, '--engine', 'smt', '--case', 'H::VC', '--record', caseRecords]);
+      expect(narrowed.code, '--case keeps the refuted reading').toBe(1);
+      expect(JSON.parse(readFileSync(caseRecords, 'utf8'))).toHaveLength(3);
+      const written = JSON.parse(readFileSync(records, 'utf8')) as Array<{
+        schema: string;
+        claim: string;
+        instance?: { requirement: string; reading: string };
+      }>;
+      // EV-5: the refuted reading is written as `…/2`, naming its requirement.
+      expect(written.find((r) => r.claim === 'refuted')).toMatchObject({
+        schema: 'sysprose-evidence/2',
+        instance: { requirement: 'H::LoadReq', reading: 'H::p1' },
+      });
+
+      const facet = (): RegExpMatchArray | null =>
+        readFileSync(model, 'utf8').match(/metadata RequirementMetadata \{\s*attribute verdict = "(\w+)"/);
+      for (const pass of ['attach', 're-attach', 're-attach again']) {
+        const attached = await run(['evidence-attach', model, '--from', records, '--out', model]);
+        expect(attached.code, pass).toBe(0);
+        expect(attached.stderr, `${pass}: the case laundered the refuted reading`).not.toContain('→ pass');
+        expect(attached.stderr, pass).toContain('H::LoadReq — verdict fail written from H::VC');
+        expect(attached.stderr, pass).toContain('H::VC verdict fail');
+        expect(facet()?.[1], `${pass}: the requirement's facet`).toBe('fail');
+      }
+      const fromCase = await run(['evidence-attach', model, '--from', caseRecords, '--out', model]);
+      expect(fromCase.stderr, 'the `--case` file').not.toContain('→ pass');
+      expect(facet()?.[1], 'after the `--case` file').toBe('fail');
+      // The file and the run now say the same word, so `verify` reports no change.
+      const again = await run(['verify', model, '--engine', 'smt']);
+      expect(again.stdout).toContain('H::VC  verdict fail');
+      expect(`${again.stdout}${again.stderr}`).not.toContain('the file says');
+      const status = await run(['evidence-status', model]);
+      expect(status.stdout).toContain('claim `refuted`, verdict `fail`');
+      expect(status.stdout).toContain('the weakest of 3 obligations');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
   it('evidence-attach refuses a record whose stated verdict does not follow from its claim', async () => {
     // `verdict` and `claim` are two independent enumerations in the schema, so
     // `{"claim":"holds-at-values","verdict":"pass"}` is valid against it and is

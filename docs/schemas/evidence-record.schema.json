@@ -198,15 +198,15 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["requirement", "reading"],
-      "description": "The per-instance facet a `sysprose-evidence/2` record carries, and the reason the version exists. `verify --record` names a relation read in one instance or context `<requirement> in <reading>`; that name resolves to no element, so a `…/1` record carrying it could not be attached anywhere. This facet names the element that carries the verdict facet and the reading the record was taken in, so the requirement's facet can take the MINIMUM over its readings rather than never see them. Present iff `schema` is `sysprose-evidence/2`.",
+      "description": "The per-instance facet a `sysprose-evidence/2` record carries, and the reason the version exists. `verify --record` names a relation read in one instance or context `<requirement> in <reading>`; that name resolves to no element, so it writes such a row as `…/2` with this facet. An older `…/1` record of one is upgraded at attach only when the model reads that requirement in that reading, and skipped otherwise. This facet names the element that carries the verdict facet and the reading the record was taken in, so the requirement's facet can take the MINIMUM over its readings rather than never see them. Present iff `schema` is `sysprose-evidence/2`.",
       "properties": {
         "requirement": {
           "type": "string",
-          "description": "Qualified name of the requirement element whose facet this reading contributes to — the part of `obligation.requirement` before the last ` in `."
+          "description": "Qualified name of the requirement element whose facet this reading contributes to: the requirement the row was read for (the obligation row's `instance.requirementId`), written by `verify --record` from the row, never by splitting the name."
         },
         "reading": {
           "type": "string",
-          "description": "The context or instance the relation was read in — the part after the last ` in `. It is part of the obligation's identity, so two readings of one clause are two live obligations and neither supersedes the other."
+          "description": "The context or instance the relation was read in: what follows the requirement's name and ` in ` in `obligation.requirement`. It may itself contain ` in `. It is part of the obligation's identity, so two readings of one clause are two live obligations and neither supersedes the other."
         }
       }
     }

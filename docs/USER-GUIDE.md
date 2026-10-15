@@ -2124,6 +2124,19 @@ supersedes that obligation and nothing else — the pair `clause` +
 was just discharged still reads `fail` while its first clause stands refuted, and
 the answer does not change if you swap the two clauses in the source.
 
+**A reading in a context or an instance is one of those obligations.** `satisfy
+LoadReq by p1;` makes `verify` read `LoadReq` in `p1` as well as on its own row,
+and `verify --record` writes that reading as a `sysprose-evidence/2` record naming
+the requirement and the reading (`"instance": { "requirement": "H::LoadReq",
+"reading": "H::p1" }`). The facet is the worst over the readings too, and so is the
+verdict of a verification case that verifies the requirement: a requirement
+refuted in one part makes the case `fail` in `verify`'s report, with or without
+`--case` (which records the readings with the own row), and is written `fail` by
+the record and by the case, on every attach. A record from an older build names a reading only as `<requirement> in
+<reading>`; it is carried the same way when the first half is a requirement of
+this model and the model reads it in the second, and is otherwise skipped with
+the half that does not match named.
+
 **Evidence accumulates.** A second run **appends** a carrier; nothing is
 overwritten and no earlier verdict is deleted, so the file keeps the history of
 what was claimed and when it changed. A record that is already there byte for

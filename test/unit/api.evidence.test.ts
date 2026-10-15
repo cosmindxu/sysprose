@@ -264,6 +264,28 @@ function withVerdict(
   return { ...record, verdict, claim };
 }
 
+/**
+ * E's h5 probe: one requirement, satisfied by two parts, refuted in one of
+ * them. `verify` reads `LoadReq` on its own row and once per satisfier, so the
+ * run has three records about one requirement and only one of them fails.
+ */
+const PER_INSTANCE = `package H {
+    part def P { attribute load : Real default = 1.0; }
+    requirement def LoadReq { subject s : P; require constraint { s.load <= 10.0 } }
+    part p1 : P { attribute :>> load = 50.0; }
+    part p2 : P { attribute :>> load = 2.0; }
+    satisfy LoadReq by p1;
+    satisfy LoadReq by p2;
+}
+`;
+
+/** The one requirement of {@link PER_INSTANCE}. */
+function loadReq(model: Model): string {
+  const el = model.all().find((e) => e.declaredName === 'LoadReq');
+  expect(el, 'the fixture declares `LoadReq`').toBeDefined();
+  return el!.id;
+}
+
 describe('attachEvidence — what goes into the file comes back out of it', () => {
   it('round-trips through the notation: attach → serialize → parse → the same records', async () => {
     const model = await parse(SUBJECT);
@@ -412,40 +434,93 @@ describe('attachEvidence — what goes into the file comes back out of it', () =
     expect(report.skipped[0].reason).toMatch(/no requirement to annotate/);
   }, 60_000);
 
-  it('records a per-instance row as sysprose-evidence/2 — the facet v1 could not carry (H4)', async () => {
+  it('verify --record writes a reading in one instance as sysprose-evidence/2, from the row (EV-5)', async () => {
     // A `verify --record` row for a relation read in one instance is named
-    // `<requirement> in <instance>`. That name resolves to no element, so a
-    // `sysprose-evidence/1` record carrying it had nowhere to be attached and
-    // was skipped. `…/2` names the requirement element AND the reading, so the
-    // record is kept and the requirement's facet takes the MINIMUM over the
+    // `<requirement> in <instance>`. That name resolves to no element, so as a
+    // `sysprose-evidence/1` record it had nowhere to be attached until attach
+    // guessed the split. `…/2` names the requirement element AND the reading,
+    // taken from the row, so the requirement's facet takes the MINIMUM over the
     // readings instead of never seeing them.
-    const model = await parse(SUBJECT);
-    const [base] = await literalRecords(model);
-    const requirement = base.obligation.requirement as string;
-    const refuted: EvidenceRecord = {
-      ...base,
-      claim: 'refuted',
-      verdict: 'fail',
-      obligation: { ...base.obligation, requirement: `${requirement} in Q::p` },
-    };
-    // The requirement's own row (inconclusive) BESIDE the one refuted reading:
-    // the facet must be the worst of them, not the last one attached.
-    const report = attachEvidence(model, [base, refuted]);
-    expect(report.attached).toBe(2);
-    expect(report.skipped).toEqual([]);
-    expect(report.elements).toEqual(['P::massLimit']);
+    const model = await parse(PER_INSTANCE);
+    const { records } = await verifyModel(model, { engine: 'literal' });
+    expect(records.map((r) => [r.schema, r.claim, r.instance])).toEqual([
+      ['sysprose-evidence/1', 'holds-at-values', undefined],
+      ['sysprose-evidence/2', 'refuted', { requirement: 'H::LoadReq', reading: 'H::p1' }],
+      ['sysprose-evidence/2', 'holds-at-values', { requirement: 'H::LoadReq', reading: 'H::p2' }],
+    ]);
 
-    const records = evidenceOf(model, requirementId(model));
-    expect(records).toHaveLength(2);
-    const perInstance = records.find((r) => r.schema === 'sysprose-evidence/2');
-    expect(perInstance, 'the per-instance record was not upgraded to v2').toBeDefined();
-    expect(perInstance!.instance).toEqual({ requirement: 'P::massLimit', reading: 'Q::p' });
-    // And the two readings are two live obligations, not one that supersedes
-    // the other: the facet is `fail`, taken from the refuted instance.
-    expect(getRequirementAttr(model, requirementId(model), 'verdict')).toBe('fail');
-    expect(
-      evidenceStatus(model).rows.find((r) => r.qualifiedName === 'P::massLimit')?.verdict,
-    ).toBe('fail');
+    // The requirement's own row BESIDE the two readings: the facet is the
+    // worst of them, and a re-attach writes nothing and keeps it.
+    const report = attachEvidence(model, records);
+    expect(report).toMatchObject({ attached: 3, skipped: [], elements: ['H::LoadReq'] });
+    const req = loadReq(model);
+    expect(getRequirementAttr(model, req, 'verdict')).toBe('fail');
+    expect(evidenceOf(model, req).map((r) => r.instance?.reading)).toEqual([undefined, 'H::p1', 'H::p2']);
+    expect(attachEvidence(model, records)).toMatchObject({ attached: 0, unchanged: 3 });
+    expect(getRequirementAttr(model, req, 'verdict')).toBe('fail');
+    expect(evidenceStatus(model).rows.find((r) => r.qualifiedName === 'H::LoadReq')?.verdict).toBe('fail');
+  }, 60_000);
+
+  it('upgrades an older …/1 `R in X` record when this model reads R in X (H4)', async () => {
+    // What an older build wrote: the same records with no facet. Attach still
+    // carries them, as `…/2`, onto the requirement they read.
+    const model = await parse(PER_INSTANCE);
+    const { records } = await verifyModel(model, { engine: 'literal' });
+    const old = records.map(({ instance: _facet, ...rest }) => ({
+      ...rest,
+      schema: 'sysprose-evidence/1' as const,
+    }));
+    const report = attachEvidence(model, old);
+    expect(report).toMatchObject({ attached: 3, skipped: [] });
+    expect(evidenceOf(model, loadReq(model))).toEqual(records);
+    expect(getRequirementAttr(model, loadReq(model), 'verdict')).toBe('fail');
+  }, 60_000);
+
+  it('carries a reading that contains ` in ` whole, never split at the last one (EV-2)', async () => {
+    // Split at the last ` in `, `H::LoadReq in H::p in 1` named `H::LoadReq in
+    // H::p` — nothing — and the refuted reading was skipped as a record of a
+    // different file, leaving the requirement `pass`-able.
+    const model = await parse(PER_INSTANCE.replace(/\bp1\b/g, "'p in 1'"));
+    const { records } = await verifyModel(model, { engine: 'literal' });
+    expect(records.find((r) => r.claim === 'refuted')?.instance).toEqual({
+      requirement: 'H::LoadReq',
+      reading: 'H::p in 1',
+    });
+    const report = attachEvidence(model, records);
+    expect(report.skipped).toEqual([]);
+    expect(getRequirementAttr(model, loadReq(model), 'verdict')).toBe('fail');
+
+    // An older `…/1` record of it is tried at every ` in `, and lands too.
+    const fresh = await parse(PER_INSTANCE.replace(/\bp1\b/g, "'p in 1'"));
+    const old = records.map(({ instance: _facet, ...rest }) => ({
+      ...rest,
+      schema: 'sysprose-evidence/1' as const,
+    }));
+    expect(attachEvidence(fresh, old).skipped).toEqual([]);
+    expect(getRequirementAttr(fresh, loadReq(fresh), 'verdict')).toBe('fail');
+  }, 60_000);
+
+  it('attaches an old `R in X` only to a requirement this model reads in X (EV-3)', async () => {
+    // E's F7 and F9: the split used to accept any element and any reading — a
+    // part definition took a refutation it is not about, and `LoadReq` was
+    // failed over a context the model does not have.
+    const model = await parse(PER_INSTANCE);
+    const { records } = await verifyModel(model, { engine: 'literal' });
+    const refuted = records.find((r) => r.claim === 'refuted')!;
+    const { instance: _facet, ...v1 } = refuted;
+    const aimed = (requirement: string): EvidenceRecord => ({
+      ...v1,
+      schema: 'sysprose-evidence/1',
+      obligation: { ...v1.obligation, requirement },
+    });
+    const report = attachEvidence(model, [aimed('H::P in H::p1'), aimed('H::LoadReq in H::nowhere')]);
+    expect(report.attached).toBe(0);
+    expect(report.skipped.map((s) => s.reason)).toEqual([
+      expect.stringMatching(/^`H::P` is a PartDefinition, not a requirement/),
+      expect.stringMatching(/^this model never reads `H::LoadReq` in `H::nowhere`/),
+    ]);
+    expect(evidenceHolders(model)).toEqual([]);
+    expect(getRequirementAttr(model, loadReq(model), 'verdict')).toBeUndefined();
   }, 60_000);
 
   it('still skips a name that resolves to nothing, with the true wrong-file reason', async () => {
