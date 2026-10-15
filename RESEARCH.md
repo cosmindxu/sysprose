@@ -8,11 +8,14 @@ Where to put new work: [`TODO.md`](TODO.md) holds next actions that are concrete
 [`ROADMAP.md`](ROADMAP.md) holds big features that need a refined plan. **This file** holds items that
 need decisions after research.
 
-All five items below are verification checks that the model-checking plan
+Items R1 to R5 below are verification checks that the model-checking plan
 ([`docs/06-model-checking-implementation-plan.md`](docs/06-model-checking-implementation-plan.md))
 **held**: it built a check only once a model in this repository would exercise it. §8.1 of that plan
 records each hold with the census value measured at `510793c`. The page references come from
 [`docs/05-model-checking-literature.md`](docs/05-model-checking-literature.md).
+
+R6 is of another kind: a question about simulation over time, raised by a modelling run on
+2026-10-15. It has no plan yet.
 
 ## The decision that comes first
 
@@ -194,3 +197,87 @@ Diagnosis, and Synthesis", MoChArt, LNCS 4428, pp.5–9.
 an `#exceptional` state that a contract-level fault tree cannot reach.
 
 **Plan.** `docs/06` §3.8.
+
+---
+
+## R6. Time-based simulation from parametric constraints (no plan yet)
+
+**Question.** Should a parametric diagram (constraint usages and the binds between value
+properties) also drive a simulation **over time**, and not only be judged at one point? If so, what
+does an author write to say that a value changes in time, which engine runs it, and how is the result
+judged against a requirement?
+
+**Why it is not built.** Every surface that reads parametrics today is static:
+
+- the literal engine checks the relations at the model's own values;
+- the SMT engine (`verify --engine smt`, z3) proves or refutes them over the free variables;
+- `bounds` and the app's Solve find a range or one solved point.
+
+Time appears in two other places only:
+
+- Simulate runs state machines as discrete events. The interpreter's timed runs advance a discrete
+  clock and fire `after(n)` transitions (`src/semantics/execute.ts`).
+- FMI is an interface:
+  - Export → FMU writes a co-simulation interface skeleton with no behaviour inside
+    (`src/interop/fmi/export.ts`), and Import FMI adds a block read from a `modelDescription.xml`.
+  - A fixed-step Jacobi co-simulation master (`CoSimMaster`, `src/interop/fmi/cosim.ts`) can be called
+    from code but not from the app.
+  - A SysML block takes part in it by re-solving its parametric equations at every step from the
+    inputs it holds (`sysmlBlockInstance`). Its outputs are therefore an algebraic function of its
+    inputs, with no state of its own; state can only come from another participant, such as an
+    in-TS stepping component (`analyticFmu`).
+
+The case that raised the question is mbse-workflow's drone-swarm v9 model. Its coverage equation is
+an average over the duty cycle, and evaluates to 0.78 against the 0.9 the brief asks for. A
+two-hour time-based simulation built outside the model watched 0.54 of its sectors, and its watch fell
+to zero whenever the whole fleet recharged at once. No static relation states that effect.
+
+**Decisions needed.**
+
+- **Which kind of time first.** The options are:
+  - continuous: derivatives, an ODE or DAE, integrated;
+  - discrete-time: difference equations per step;
+  - discrete-event: state machines with time triggers, which the interpreter already has.
+
+  The duty cycle above is mostly discrete events: launch, transit, watch, return, battery swap.
+- **Notation.** How an author marks a value as state, gives its derivative or next-step value and its
+  initial value, and names the independent time. The candidates are:
+  - a metadata convention in the spirit of SysPhS;
+  - a library calculation such as `der`;
+  - SysML v2 occurrences with time slices and snapshots.
+
+  To clarify: whether any part of the SysML v2 libraries defines a derivative with solver semantics.
+- **Engine.** A built-in fixed-step integrator in the co-simulation master, an export to Modelica or
+  to a WebAssembly-compiled FMU, or an external tool.
+- **Causality.** Parametric equations are acausal. The numeric solver solves a static system. A
+  dynamic one needs causalisation (sorting, index reduction) or a DAE solver.
+- **How a run is judged.** A requirement such as "at least 0.9 under watch at every moment" read as
+  a monitor over the simulated trace. The property patterns of `check-behaviour` (globally, after,
+  between) are candidates. A simulation is evidence about the runs it made, never a proof, and its
+  verdict must say so.
+- **Bounded proofs over time.** Whether to unroll a discretised model over N steps for z3 (bounded
+  model checking), so that "never below X within N steps" is proved or gets a counterexample run.
+  This would sit between a single-point check and a simulation.
+- **Where it shows.** A CLI command (`simulate --until`), a panel in the app, and an evidence record.
+
+**Research.**
+
+- OMG SysPhS, the SysML v1 extension for physical interaction and signal-flow simulation, and its
+  mappings of constraint blocks to Modelica and Simulink.
+- SysML v2 and KerML: time slices and snapshots of occurrences, the Time library, analysis cases.
+- FMI 3.0: co-simulation and model exchange.
+- The Modelica Language Specification: DAE semantics, causalisation, events.
+- Cellier & Kofman, *Continuous System Simulation* (2006): integration methods and DAE index
+  reduction.
+- Biere et al., "Symbolic Model Checking without BDDs" (TACAS 1999), for bounded model checking.
+- Gao, Kong & Clarke, dReal/dReach (δ-complete SMT over nonlinear ODEs), for bounded proofs with
+  continuous dynamics.
+
+**Released by.**
+
+- A measurement first: the v9 duty cycle written as per-drone state machines with `after`
+  triggers, run by the interpreter alone, reproduces the outside simulation's 0.54 within a stated
+  tolerance. This shows whether the discrete-event path already answers the case.
+- Then a decision on the notation and the engine for continuous dynamics, if a model needs them.
+
+**Plan.** None yet; this item needs its own plan document.
