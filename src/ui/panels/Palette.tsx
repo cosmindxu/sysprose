@@ -28,10 +28,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { create } from 'zustand';
 import { TEXTUAL_KEYWORD } from '@core/index';
 import type { ViewKind } from '@diagram/index';
-import { checkFileName, flushRecompute, loadHealthNow, useAppStore } from '../store';
+import { checkFileName, loadHealthAtHand, loadHealthNow, useAppStore } from '../store';
 import { checksFor, commandNote, selectionKey, type CheckSpec } from '../checks';
 import { runningVerdict, useChecksStore, verdictOf, VERDICT_LABEL } from './checks-store';
-import { cancelChecked, runChecked } from './checks-runner';
+import { cancelChecked, runChecked, runCheckedOnceDrawn, type RunStart } from './checks-runner';
 
 /* ─────────────────────────── Shared tool state ──────────────────────────── */
 
@@ -374,13 +374,32 @@ function CheckRowView({ spec }: { spec: CheckSpec }): JSX.Element {
   const note = commandNote(spec, ctx);
 
   const onRun = useCallback(() => {
-    flushRecompute();
     const st = useAppStore.getState();
-    // What is known of the load health is read here, in the same turn as `st.rev`
-    // (I8), with no parse on this thread: a text no parse has measured yet goes to
-    // the worker, and the row reads `checking the load…` until it is back. The
-    // health travels with the request so an off-thread walk judges what the page would.
-    runChecked(spec, { ...ctx, model: st.model }, st.rev, spec.readsLoadHealth ? loadHealthNow() : undefined);
+    // A check not judged over the load reads the model alone, which an edit
+    // changes at once: nothing an edit's recompute owes (the text, Problems) is
+    // waited for.
+    if (!spec.readsLoadHealth) {
+      runChecked(spec, { ...ctx, model: st.model }, st.rev);
+      return;
+    }
+    // What is known of the load health is read in the same turn as `rev` (I8),
+    // with no parse on this thread: a text no parse has measured yet goes to the
+    // worker, and the row reads `checking the load…` until it is back. The health
+    // travels with the request so an off-thread walk judges what the page would.
+    const read = (): RunStart => {
+      const health = loadHealthNow();
+      const now = useAppStore.getState();
+      return { model: now.model, rev: now.rev, health };
+    };
+    if (loadHealthAtHand()) {
+      const start = read();
+      runChecked(spec, { ...ctx, model: start.model }, start.rev, start.health);
+    } else {
+      // Reading it would hold the page — an edit's recompute is still waiting
+      // (up to about 0.6 s on the drone-swarm model) — so the run begins first and
+      // reads once its row is drawn (review 2026-10-14 D-3).
+      runCheckedOnceDrawn(spec, ctx, st.rev, read);
+    }
   }, [spec, ctx]);
   const onCancel = useCallback(() => cancelChecked(spec.id), [spec.id]);
 

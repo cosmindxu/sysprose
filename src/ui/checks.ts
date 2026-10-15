@@ -570,10 +570,15 @@ export function runCheck(spec: CheckSpec, ctx: CheckContext): CheckResult {
   try {
     return spec.run(ctx);
   } catch (err) {
-    return {
-      verdict: 'issues',
-      summary: 'The check itself failed — this is a defect, not a verdict on the model.',
-      rows: [{ code: 'checks/internal-error', message: err instanceof Error ? err.message : String(err), severity: 'error' }],
-    };
+    return checkThrew(err);
   }
+}
+
+/** What a check that threw `err` says: an `issues` row carrying the message, never a pass. */
+export function checkThrew(err: unknown): CheckResult {
+  return {
+    verdict: 'issues',
+    summary: 'The check itself failed — this is a defect, not a verdict on the model.',
+    rows: [{ code: 'checks/internal-error', message: err instanceof Error ? err.message : String(err), severity: 'error' }],
+  };
 }

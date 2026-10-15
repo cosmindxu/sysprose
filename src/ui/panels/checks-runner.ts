@@ -13,9 +13,10 @@
  *    worker — the run ends, and the next one starts a new worker (which loads
  *    the library again; the price of an ended walk);
  *  - no stale result: a run is recorded against the model revision and the
- *    selection of the click, so an edit made while it ran shows it `stale`,
- *    exactly as one made after it; and a run that was cancelled finds its token
- *    gone and lands nothing.
+ *    selection it started from (the click's; the revision is read a frame later
+ *    for a run begun before it reads the page, below), so an edit made while it
+ *    ran shows it `stale`, exactly as one made after it; and a run that was
+ *    cancelled finds its token gone and lands nothing.
  *
  * ONE WORKER, ONE RUN AT A TIME. Each worker holds a copy of the standard library
  * (38,000 elements), so two would cost twice that for nothing a person can see:
@@ -60,16 +61,29 @@
  * check runs over that. The texts measured are kept by the page, so a check run
  * again over a model not changed since has its load at once.
  *
- * WHAT IS WALKED IS THE MODEL OF THE CLICK. The load is the click's texts, so the
- * walk is of the click's model: a run whose walk is not sent at once (it waits
- * for its load, or for a run ahead of it) copies the model's user part at the
- * click (`userPart`, about 10 ms on the drone-swarm model), and an edit made
- * meanwhile is not walked under a load measured before it. Either way the result
- * lands against the click's revision, so such an edit shows it `stale`.
+ * WHAT IS WALKED IS THE MODEL THE RUN STARTED FROM: the click's, or, for a run
+ * begun before it reads the page (below), the model a frame after the click. The
+ * load is that start's texts, so the walk is of that start's model: a run whose
+ * walk is not sent at once (it waits for its load, or for a run ahead of it)
+ * copies the model's user part as it starts (`userPart`, about 10 ms on the
+ * drone-swarm model), and an edit made meanwhile is not walked under a load
+ * measured before it. Either way the result lands against the revision the run
+ * started at, so such an edit shows it `stale`.
+ *
+ * THE CLICK HOLDS THE PAGE FOR NOTHING THAT GROWS WITH THE MODEL. What it reads of
+ * the load is looked up; the parse is the worker's (above). Where reading it would
+ * cost the page — an edit's recompute still waiting, which validates the model and
+ * writes its text — the run begins first and reads once its row is drawn
+ * ({@link runCheckedOnceDrawn}): the page does the edit's work after showing
+ * `checking the load…`, not before. An E2E guard holds the drone-swarm model to it:
+ * with the edit's recompute done, no task of the page over 200 ms from the click
+ * to the answer; with it still waiting, a click that leaves it waiting and holds
+ * the page under 50 ms, the row under way at once, and a frame drawn before the
+ * edit's work.
  */
 
-import { hasStateMachine, runCheck, selectionKey, type CheckContext, type CheckResult, type CheckSpec } from '../checks';
-import type { SerializedModel } from '@core/index';
+import { checkThrew, hasStateMachine, runCheck, selectionKey, type CheckContext, type CheckResult, type CheckSpec } from '../checks';
+import type { Model, SerializedModel } from '@core/index';
 import {
   libraryKey,
   NO_REQUEST,
@@ -129,14 +143,14 @@ interface Job {
   token: number;
   spec: CheckSpec;
   ctx: CheckContext;
-  /** `useAppStore.rev` at the click. */
+  /** `useAppStore.rev` at the click, or, for a run begun before it reads the page ({@link runCheckedOnceDrawn}), at that read. */
   rev: number;
   /** What of the selection the check reads, at the click. */
   selection: string | undefined;
   /** {@link libraryKey} of the page's model when the run was sent to the worker. */
   library?: string;
   /**
-   * The user part of the model to walk in the worker, from the click
+   * The user part of the model to walk in the worker, as the run started
    * ({@link userPart}, copied when the send waits); null when there is no state
    * machine to walk, and the check is answered here.
    */
@@ -339,9 +353,79 @@ function walk(job: Job): void {
  * walk is sent is the click's, copied when the send waits.
  */
 export function runChecked(spec: CheckSpec, ctx: CheckContext, rev: number, health?: LoadHealthNow): void {
+  if (useChecksStore.getState().running[spec.id] !== undefined) return;
+  launch(spec, ctx, rev, health);
+}
+
+/** What a run reads of the page as it starts, in one turn (I8): the model, the store's revision, and the load health of a check judged over it. */
+export interface RunStart {
+  readonly model: Model;
+  readonly rev: number;
+  readonly health?: LoadHealthNow;
+}
+
+/**
+ * How long a run started with {@link runCheckedOnceDrawn} waits for a frame
+ * before it reads the page anyway: a page in a background tab draws none.
+ */
+export const FRAME_WAIT_MS = 250;
+
+/** Call `fn` once, in a task of its own after the page's next frame — or after {@link FRAME_WAIT_MS} where no frame comes. */
+function afterFrame(fn: () => void): void {
+  let done = false;
+  const go = (): void => {
+    if (done) return;
+    done = true;
+    fn();
+  };
+  // A timer set from a frame callback fires after that frame is drawn.
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(go, 0));
+  setTimeout(go, FRAME_WAIT_MS);
+}
+
+/**
+ * {@link runChecked}, for a run whose start would hold the page: reading the load
+ * health is not at hand (`loadHealthAtHand`, `../store.ts`) — an edit's
+ * recompute is still waiting, which validates the model and writes its text,
+ * up to about 0.6 s on the drone-swarm model. The run begins at once, reading
+ * `checking the load…`, and `read` is called once the row has been drawn, so the
+ * click itself does not hold the page and the person sees the run under way
+ * before the page does that work. What `read` returns — the model, its revision
+ * and the load health, read in one turn — is what the run is of: an edit made in
+ * the frame between the click and the read is part of it. A run cancelled before
+ * then reads nothing. One whose read or start throws lands as a check that threw
+ * does (`checks/internal-error`, against the click's revision): begun at the
+ * click with no job behind it yet, it would otherwise read `checking the load…`
+ * until cancelled, since no reply and no watchdog would end it.
+ */
+export function runCheckedOnceDrawn(spec: CheckSpec, ctx: CheckContext, rev: number, read: () => RunStart): void {
+  const store = useChecksStore.getState();
+  if (store.running[spec.id] !== undefined) return;
+  const selection = selectionKey(spec, ctx);
+  const token = nextToken++;
+  store.begin(spec.id, token, rev, 'load');
+  afterFrame(() => {
+    // Cancelled since, or another run of it begun: this one is no longer wanted.
+    if (useChecksStore.getState().running[spec.id]?.token !== token) return;
+    try {
+      const start = read();
+      launch(spec, { ...ctx, model: start.model }, start.rev, start.health, token);
+    } catch (err) {
+      console.error('a palette check could not start', err);
+      const now = useChecksStore.getState();
+      if (now.running[spec.id]?.token === token) now.land(spec.id, checkThrew(err), rev, 'page', selection);
+    }
+  });
+}
+
+/**
+ * Start a run over what it read: the body of {@link runChecked}. `begun` is the
+ * token of a run already begun in the store ({@link runCheckedOnceDrawn}); it is
+ * carried on, and one answered on the spot lands rather than being recorded anew.
+ */
+function launch(spec: CheckSpec, ctx: CheckContext, rev: number, health: LoadHealthNow | undefined, begun?: number): void {
   const store = useChecksStore.getState();
   const selection = selectionKey(spec, ctx);
-  if (store.running[spec.id] !== undefined) return;
   let c = ctx;
   let load: PendingLoadHealth | undefined;
   if (health !== undefined) {
@@ -351,15 +435,18 @@ export function runChecked(spec: CheckSpec, ctx: CheckContext, rev: number, heal
   }
   const walks = spec.offThread === true && hasStateMachine(c.model);
   if (load === undefined && (!walks || factory() === null)) {
-    store.record(spec.id, runCheck(spec, c), rev, selection);
+    const result = runCheck(spec, c);
+    if (begun === undefined) store.record(spec.id, result, rev, selection);
+    else store.land(spec.id, result, rev, 'page', selection);
     return;
   }
   // The records are the model's own (`userPart`), and edits change them in place:
   // a send that waits (for the load, or for the run ahead) takes a copy now.
   const waits = load !== undefined || active !== null;
   const part = !walks ? null : waits ? structuredClone(userPart(c.model)) : userPart(c.model);
-  const job: Job = { token: nextToken++, spec, ctx: c, rev, selection, part, ...(load !== undefined ? { load } : {}) };
-  store.begin(spec.id, job.token, rev, load !== undefined ? 'load' : 'walk');
+  const job: Job = { token: begun ?? nextToken++, spec, ctx: c, rev, selection, part, ...(load !== undefined ? { load } : {}) };
+  if (begun === undefined) store.begin(spec.id, job.token, rev, load !== undefined ? 'load' : 'walk');
+  else if (load === undefined) store.walking(spec.id, job.token);
   queue.push(job);
   pump();
 }

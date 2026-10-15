@@ -49,7 +49,14 @@
  * certificate "can only make loadHealth parse more, never less". Neither held
  * (review 2026-10-14, LH-1..LH-4): the app read `holds` over texts the terminal
  * rejects. The certificate and its reference tally are gone; a text is clean only
- * once a parse has said so.
+ * once a parse has said so. Nor did it save the time it was for where it mattered
+ * most: its `displayTypesFaithful` refused the drone-swarm model over its 76
+ * `@SysproseVerification::PropertyPattern` metadata usages (a vocabulary that
+ * model does not declare), so a check click there parsed on the page after every
+ * edit, 0.4 to 0.7 s in one task in a browser (review 2026-10-14, D-3). With the
+ * parse in the worker, which vocabularies a text uses no longer bears on what a
+ * click costs the page; an E2E guard on that model holds the click's own work to
+ * no task over 200 ms (`test/e2e/palette-checks.spec.ts`).
  */
 
 import { Model, type ElementId } from '@core/index';

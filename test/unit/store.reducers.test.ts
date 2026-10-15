@@ -76,6 +76,7 @@ import {
   initialDriveState,
   lastAppliedText,
   loadHealth,
+  loadHealthAtHand,
   loadHealthNow,
   mergeLoads,
   openText,
@@ -6257,6 +6258,59 @@ describe('the load health never vouches for a text that does not load (review 20
       expect('known' in third && third.known).toEqual(h);
     } finally {
       measure.mockRestore();
+    }
+  });
+
+  /*
+   * What a click may read of the load without holding the page (review 2026-10-14, D-3): on the
+   * drone-swarm model, writing its text and validating it take most of a second, so where reading
+   * the load would do either, the palette starts the run first and reads once its row is drawn.
+   */
+  it('says whether the load can be read without work on the page: never while an edit’s recompute waits, nor with the text or the validation behind the model', async () => {
+    const write = vi.spyOn(textApi, 'serializeUserModelSignals');
+    const validate = vi.spyOn(validationApi, 'validate');
+    const work = (): number => write.mock.calls.length + validate.mock.calls.length;
+    try {
+      await apply(BASE);
+      flushRecompute();
+      expect(loadHealthAtHand(), 'an applied text: written and validated').toBe(true);
+      // At hand, the read only looks up: no text written, no validation.
+      write.mockClear();
+      validate.mockClear();
+      loadHealthNow();
+      expect(work()).toBe(0);
+
+      // An edit: its recompute waits, and a read now would run it here.
+      st().updateElement(byName('Pump'), { declaredName: 'Pump2' });
+      expect(recomputePending()).toBe(true);
+      expect(loadHealthAtHand()).toBe(false);
+      flushRecompute();
+      expect(loadHealthAtHand(), 'the recompute ran: the text written, the model validated').toBe(true);
+
+      // A change no recompute follows (the model edited in place): its text and validation are behind it.
+      st().model.rename(byName('Pump2'), 'Pump3');
+      expect(recomputePending()).toBe(false);
+      expect(loadHealthAtHand()).toBe(false);
+      write.mockClear();
+      validate.mockClear();
+      loadHealthNow();
+      expect(write, 'read anyway, the model is written once').toHaveBeenCalledTimes(1);
+      expect(validate).toHaveBeenCalled();
+      expect(loadHealthAtHand(), 'that read wrote and validated it').toBe(true);
+
+      // Text typed in the Text view and not applied: Save's text is then the model's own, which is
+      // written already, so the read writes nothing again.
+      st().setTextBuffer(`${st().textBuffer}\n// typed, not applied\n`);
+      expect(st().textDirty).toBe(true);
+      expect(loadHealthAtHand()).toBe(true);
+      write.mockClear();
+      validate.mockClear();
+      const typed = loadHealthNow();
+      expect(work()).toBe(0);
+      expect('known' in typed ? typed.known.sameText : typed.unmeasured.length === 1, 'Save and Export write one text').toBe(true);
+    } finally {
+      write.mockRestore();
+      validate.mockRestore();
     }
   });
 

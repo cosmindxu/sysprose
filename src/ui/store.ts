@@ -1023,8 +1023,12 @@ let lastWritten: { model: WeakRef<Model>; modelRev: number; text: string } | nul
  * what the serializer throws.
  */
 function exportTextNow(model: Model): string {
-  if (lastWritten !== null && lastWritten.model.deref() === model && lastWritten.modelRev === model.rev) return lastWritten.text;
-  return writeText(model);
+  return writtenNow(model) ?? writeText(model);
+}
+
+/** {@link lastWritten}'s text while `model` has not changed since it was written, else null. */
+function writtenNow(model: Model): string | null {
+  return lastWritten !== null && lastWritten.model.deref() === model && lastWritten.modelRev === model.rev ? lastWritten.text : null;
 }
 
 /** Write the model's user text, keeping what the serializer saw of it ({@link rememberText}) and the text ({@link lastWritten}). */
@@ -4399,13 +4403,38 @@ export interface PendingLoadHealth {
 /** The load health at a check's click: known now, or {@link PendingLoadHealth} on texts still to parse. */
 export type LoadHealthNow = { readonly known: LoadHealth } | PendingLoadHealth;
 
+/** Whether {@link validationHealth} is of `model` as it stands. */
+function validatedNow(model: Model): boolean {
+  return validationHealth !== null && validationHealth.model.deref() === model && validationHealth.modelRev === model.rev;
+}
+
+/**
+ * Whether {@link loadHealthNow} can answer from what the page already holds: no
+ * edit's recompute still waiting, and the model's text written and its validation
+ * run since it last changed. Then it only looks things up. Otherwise it would
+ * first do work that grows with the model, on the page's thread: the recompute
+ * an edit still owes, which validates the model and writes its text (0.14 to
+ * 0.63 s on the drone-swarm model in a browser, as loaded as the machine is), or
+ * the text or the validation alone. So the palette starts the run before it
+ * reads the load, and the row says `checking the load…` while the page does that
+ * work (`runCheckedOnceDrawn`, `panels/checks-runner.ts`; review 2026-10-14
+ * D-3).
+ */
+export function loadHealthAtHand(): boolean {
+  if (recomputePending()) return false;
+  const { model } = useAppStore.getState();
+  return writtenNow(model) !== null && validatedNow(model);
+}
+
 /**
  * The load health of the live model as of now, with no parse on the page: what
  * is known of each text a file can hold (see {@link textHealthOf}), and the texts
  * a parse must still measure. Reads the text the serializer last wrote while the
  * model has not changed since, and the live model's validation when one ran at
- * this revision (it validates the live model when none did). Read at a palette
- * check's click, in the same turn as the store's `rev`.
+ * this revision (it validates the live model when none did). Read where a
+ * palette check starts — at the click, or once its row is drawn when
+ * {@link loadHealthAtHand} says reading it costs the page — in the same turn as
+ * the store's `rev`.
  */
 export function loadHealthNow(): LoadHealthNow {
   flushRecompute();
@@ -4425,7 +4454,7 @@ export function loadHealthNow(): LoadHealthNow {
   const unwritable = serializeError ?? exportRefusal ?? (savedText === null ? serializeRefusal('') : null);
 
   let validation = validationHealth;
-  if (validation === null || validation.model.deref() !== model || validation.modelRev !== model.rev) {
+  if (!validatedNow(model)) {
     safeValidate(model);
     validation = validationHealth;
   }
@@ -4548,15 +4577,21 @@ export function typedTextFaulted(): boolean {
  * typed there and not applied, which is not the model; then the model's own
  * text. The text a faulted apply was made from stays: it is what the model
  * was applied from, as a Drive open keeps it. Null for a model the serializer
- * refuses.
+ * refuses. The model's own text is the one last written while the model has not
+ * changed since ({@link exportTextNow}), so a check's click with text typed in the
+ * Text view does not write the model again.
  */
 function savedTextNow(): string | null {
   flushRecompute();
   const { model, textBuffer, textDirty, serializeError } = useAppStore.getState();
   if (serializeError !== null) return null;
   if (!textDirty || textBuffer === lastAppliedText()) return withFinalNewline(textBuffer);
-  const view = textView(model, textBuffer);
-  return view.serializeError == null && view.textBuffer !== undefined ? withFinalNewline(view.textBuffer) : null;
+  try {
+    return withFinalNewline(exportTextNow(model));
+  } catch (err) {
+    console.error('serialization failed', err);
+    return null;
+  }
 }
 
 /**

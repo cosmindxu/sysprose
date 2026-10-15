@@ -429,6 +429,192 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
   }
 });
 
+/**
+ * The drone-swarm model of mbse-workflow, byte for byte
+ * (`examples/drone-swarm-v9/SurveillanceDroneSwarm.sysml` at 9122db0, sha256 7f31cfe3…): the
+ * reference model the app is measured on, 3,823 elements of the user's and 17 state machines.
+ * A copy as of that commit: it does not follow later edits of the model, and is refreshed by
+ * hand when they would change what the guard measures. Kept as `.txt` so the tree's walks over
+ * `.sysml` files (the successor census in `U semantics.mc.successors`) do not count it among the
+ * repository's models. Relative to the E2E test directory, so the guard reads it from whatever
+ * directory Playwright was started in.
+ */
+const DRONE_SWARM = '../fixtures/drone-swarm-v9.sysml.txt';
+
+/** What {@link watchPageThread} records, in the page's `performance.now()` milliseconds. */
+interface PageThreadWatch {
+  /** The page's long tasks (the browser reports those over 50 ms). */
+  long: Array<{ start: number; duration: number }>;
+  /** When each pointer press came. */
+  clicks: number[];
+  /** Each palette row's verdict as it changes. */
+  verdicts: Array<{ check: string; verdict: string; at: number }>;
+  /** When each frame began. */
+  frames: number[];
+}
+
+/**
+ * Record, in the page, how its thread is held from now on: the long tasks, each click, each
+ * palette row's verdict as it changes, and the frames. Installed once; {@link pageThread} reads
+ * it, and {@link clearPageThread} starts it afresh.
+ */
+async function watchPageThread(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __thread: PageThreadWatch };
+    w.__thread = { long: [], clicks: [], verdicts: [], frames: [] };
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) w.__thread.long.push({ start: e.startTime, duration: e.duration });
+    }).observe({ type: 'longtask' });
+    document.addEventListener('pointerdown', () => w.__thread.clicks.push(performance.now()), true);
+    new MutationObserver((records) => {
+      const at = performance.now();
+      for (const r of records) {
+        const el = r.target as Element;
+        if (el.getAttribute('data-testid') === 'palette-check') w.__thread.verdicts.push({ check: el.getAttribute('data-check') ?? '', verdict: el.getAttribute('data-verdict') ?? '', at });
+      }
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-verdict'] });
+    const tick = (): void => {
+      w.__thread.frames.push(performance.now());
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+const clearPageThread = (page: Page): Promise<void> =>
+  page.evaluate(() => {
+    const t = (window as unknown as { __thread: PageThreadWatch }).__thread;
+    for (const list of [t.long, t.clicks, t.verdicts, t.frames]) list.length = 0;
+  });
+const pageThread = (page: Page): Promise<PageThreadWatch> => page.evaluate(() => (window as unknown as { __thread: PageThreadWatch }).__thread);
+
+/** Rename the first part definition of the user's through the SDK: an edit, with a text no parse has measured. */
+async function renameFirstPartDef(page: Page, name: string): Promise<void> {
+  await page.evaluate((to) => {
+    const api = (window as unknown as { sysml: { elementsOfType(t: string): Array<{ id: string; attrs?: { isLibrary?: boolean } }>; update(id: string, p: { declaredName: string }): unknown } }).sysml;
+    const def = api.elementsOfType('PartDefinition').find((e) => e.attrs?.isLibrary !== true);
+    if (def === undefined) throw new Error('no part definition of the user’s');
+    api.update(def.id, { declaredName: to });
+  }, name);
+}
+
+/**
+ * Rename the first part definition of the user's, then press Run on the palette row `check` in
+ * the next task: the edit's own rendering is done, and its recompute — a timer due no sooner than
+ * 80 ms after it, which the next task's timer comes before — still waits, however fast or loaded
+ * the machine. Returns whether that recompute was waiting at the click and still was after it (the
+ * click left it for later), when the click came, and how long the click's handler held the page.
+ */
+function editThenRun(page: Page, check: string, name: string): Promise<{ waiting: boolean; stillWaiting: boolean; at: number; held: number }> {
+  return page.evaluate(
+    async ({ check, name }) => {
+      const w = window as unknown as {
+        sysml: { elementsOfType(t: string): Array<{ id: string; attrs?: { isLibrary?: boolean } }>; update(id: string, p: { declaredName: string }): unknown };
+        sysprose: { diagram: { recomputePending(): boolean } };
+      };
+      const def = w.sysml.elementsOfType('PartDefinition').find((e) => e.attrs?.isLibrary !== true);
+      if (def === undefined) throw new Error('no part definition of the user’s');
+      w.sysml.update(def.id, { declaredName: name });
+      await new Promise((next) => setTimeout(next, 0));
+      const waiting = w.sysprose.diagram.recomputePending();
+      const run = document.querySelector<HTMLButtonElement>(`[data-testid="palette-check"][data-check="${check}"] [data-testid="palette-check-run"]`);
+      if (run === null) throw new Error(`no Run button on the ${check} row`);
+      const at = performance.now();
+      run.click();
+      const held = performance.now() - at;
+      return { waiting, stillWaiting: w.sysprose.diagram.recomputePending(), at, held };
+    },
+    { check, name },
+  );
+}
+
+/** The long task the page was in at `at`, in ms; 0 when that task was under 50 ms, which the browser does not report. */
+const taskAt = (watch: PageThreadWatch, at: number): number => watch.long.find((t) => t.start <= at && t.start + t.duration >= at)?.duration ?? 0;
+
+test('on the drone-swarm model, a check clicked after an edit holds the page for no task over 200 ms of its own, and the edit’s own work waits for a frame (review 2026-10-14, D-3)', async ({ page }, testInfo) => {
+  test.setTimeout(300_000);
+  const errors = captureErrors(page);
+  const source = readFileSync(resolve(testInfo.project.testDir, DRONE_SWARM), 'utf8');
+  await page.route('**/linked/SurveillanceDroneSwarm.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: source }));
+  await page.goto('/?model=linked/SurveillanceDroneSwarm.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 120_000 });
+  await expect.poll(() => userRoots(page), { timeout: 120_000 }).toContain('SurveillanceDroneSwarm');
+  await page.getByTestId('tb-view-state').click();
+  await diagramSettled(page);
+  const reach = checkRow(page, 'reach');
+  const answered = /holds|issues|undecided/;
+  // A first Run starts the worker, which loads the library; the model as it opened is its own
+  // file's parse, so its load is known and the worker walks at once.
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', answered, { timeout: 120_000 });
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  await watchPageThread(page);
+  const measured: string[] = [];
+
+  // 1. An edit, its recompute run (the drawing settles), then Run. The edit's text is new, so
+  // the click before S1 parsed and validated it on the page: 0.37 to 0.66 s here, in one task.
+  // Now the worker does that, and nothing from the click to the answer holds the page 200 ms.
+  await renameFirstPartDef(page, 'SwarmEditedOnce');
+  await diagramSettled(page);
+  await clearPageThread(page);
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', answered, { timeout: 120_000 });
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  await page.waitForTimeout(1000); // the answer drawn, and anything it set off
+  const settled = await pageThread(page);
+  const settledClick = settled.clicks[0];
+  const settledLong = settled.long.filter((t) => t.start + t.duration >= settledClick).map((t) => Math.round(t.duration));
+  measured.push(`after the edit's recompute: long tasks from the click to the answer ${JSON.stringify(settledLong)} ms`);
+  expect(Math.max(0, ...settledLong), `the longest task from the click to the answer, in ms (all: ${settledLong.join(', ')})`).toBeLessThan(200);
+  // The load went to the worker: the row read `checking the load…` before `running…`.
+  expect(settled.verdicts.filter((v) => v.check === 'reach').map((v) => v.verdict)).toContain('checking');
+
+  // 2. An edit, then Run straight after it, while the edit's recompute still waits: that
+  // recompute validates the model and writes its text, 0.14 to 0.63 s here as the machine is
+  // loaded, and the load cannot be read before it. The run begins first: the click's handler
+  // does nothing that grows with the model (it is no long task: under 50 ms), its task holds the
+  // page under 200 ms, the row reads `checking the load…`, a frame is drawn, and only then does
+  // the page do the edit's work — a task that is the edit's, run after every edit with or
+  // without a click, and not the click's to bound (TODO.md has it).
+  await clearPageThread(page);
+  const click = await editThenRun(page, 'reach', 'SwarmEditedTwice');
+  await expect(reach).toHaveAttribute('data-verdict', answered, { timeout: 120_000 });
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  await page.waitForTimeout(1000);
+  const pending = await pageThread(page);
+  const after = pending.long.filter((t) => t.start > click.at);
+  const heavy = after.find((t) => t.duration >= 200);
+  measured.push(
+    `with the edit's recompute waiting: the click's handler ${Math.round(click.held)} ms, its task ${Math.round(taskAt(pending, click.at))} ms (0: under 50); ` +
+      `long tasks after it ${JSON.stringify(after.map((t) => Math.round(t.duration)))} ms`,
+  );
+  expect(click.waiting, 'the edit’s recompute was still waiting at the click').toBe(true);
+  expect(click.stillWaiting, 'the click left the edit’s recompute for later').toBe(true);
+  expect(click.held, 'how long the click’s handler held the page, in ms').toBeLessThan(50);
+  expect(taskAt(pending, click.at), 'how long the click’s task held the page, in ms').toBeLessThan(200);
+  expect(pending.verdicts.find((v) => v.check === 'reach' && v.at >= click.at)?.verdict, 'the row under way from the click').toBe('checking');
+  if (heavy !== undefined) {
+    expect(pending.frames.some((f) => f > click.at + click.held && f < heavy.start), 'a frame drawn between the click and the edit’s work').toBe(true);
+  }
+
+  // 3. A check not judged over the load (Statistics) reads the model alone, which the edit has
+  // changed already: straight after an edit, its click does not run the edit's recompute either,
+  // and its task holds the page under 200 ms. (Its handler runs the check itself, 10 to 50 ms on
+  // this model, so it is not held to the 50 ms of Reachability's, which runs nothing.)
+  await diagramSettled(page);
+  await clearPageThread(page);
+  const stats = checkRow(page, 'stats');
+  const statsClick = await editThenRun(page, 'stats', 'SwarmEditedThrice');
+  await expect(stats).toHaveAttribute('data-verdict', answered);
+  await page.waitForTimeout(1000); // the browser reports a long task after it ends
+  const third = await pageThread(page);
+  measured.push(`Statistics straight after an edit: the click's handler ${Math.round(statsClick.held)} ms, its task ${Math.round(taskAt(third, statsClick.at))} ms`);
+  expect(statsClick.waiting, 'the edit’s recompute was still waiting at the click').toBe(true);
+  expect(statsClick.stillWaiting, 'the Statistics click left the edit’s recompute for later').toBe(true);
+  expect(taskAt(third, statsClick.at), 'how long the Statistics click’s task held the page, in ms').toBeLessThan(200);
+  testInfo.annotations.push({ type: 'page thread on the drone-swarm model', description: measured.join('; ') });
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 test('Cancel ends a running check, which keeps what it said before, and the next run starts again', async ({ page }) => {
   const errors = captureErrors(page);
   await holdWorkerReplies(page);

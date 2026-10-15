@@ -547,7 +547,7 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
 - [ ] **Make the Problems tab label's producer split show, or remove it (H6b).**
       `src/ui/panels/BottomPanel.tsx:632-639` labels the Problems tab `Problems (N check · M solve)`
       when both producers filed rows, but Check and Solve each replace `diagnostics` wholesale
-      (`src/ui/store.ts:3165`, `:3253`) and validation rows carry no `producer`, so the label can
+      (`src/ui/store.ts:3169`, `:3257`) and validation rows carry no `producer`, so the label can
       never show. The per-instance plan deferred H6b because of the tutorial videos; 3e3b0ff shipped
       it with a per-row producer chip on v9's screen. Either count every row by producer, or remove
       the dead branch (the chips stay). Done when the label either shows on a model with both or is
@@ -602,22 +602,23 @@ text is parsed, validated and written back in the checks worker, so a text that 
 another model is told apart too), and the worker rebuilds the page's model after a reparent
 (S2: Save, Undo and Redo, the Model JSON and OMG API JSON exports, a push to an OMG API server
 and the worker's copy list each owner's children in the order the model holds them, and a drag
-lists the page's own model in that order); what remains is the page-thread guard, the order
-between elements of different owners, and a collaboration room's child order.
+lists the page's own model in that order). A check's click no longer holds the page for work
+that grows with the model (S3, guarded on the drone-swarm v9 model). What remains is the cost of
+an edit itself on v9, which S3 measured, the order between elements of different owners, and a
+collaboration room's child order.
 
-- [ ] **Guard the page thread at a palette check click on v9.** A check click no longer parses on
-      the page: `onRun` (`src/ui/panels/Palette.tsx`) reads `loadHealthNow()` (`src/ui/store.ts`),
-      which only looks up what is known of each text, and a text no parse has measured goes to the
-      checks worker, the row reading `checking the load…` until it is back (branch `load-health`
-      S1). Before S1 the click cost about 3.2 s on the drone-swarm v9 model after an edit (serialize
-      280–390 ms, parse 1.5 s, library merge 390 ms, validate 670 ms, live validate 340 ms, in
-      node). What the click still does on the page — the edit's pending recompute when it has not
-      run yet (`flushRecompute`), the model's text written afresh when the model changed since it
-      was last written, the live model's validation when none ran at this revision, and `userPart`
-      (copied, about 10 ms in node, when the walk waits for its load) — is not measured on v9 in a
-      browser. Done when an E2E guard on v9 shows no long
-      task over 200 ms on the page thread after an edit and a palette check click, measured beside
-      the existing frame-gap guard. [review 2026-10-14 D-3]
+- [ ] **Cut what an edit costs the page on the drone-swarm v9 model.** Each edit's recompute
+      (`recomputeNow`, `src/ui/store.ts`) validates the whole model and writes its text on the
+      page's thread before the diagram is rebuilt: one task, after every edit, whether or not a
+      check is run, of 0.14 to 0.63 s on v9 in a browser, the longer the more loaded the machine
+      (load averages from about 4 to about 20; in node, validation about 0.35 s and the text 0.15
+      to 0.3 s). A palette check's click no longer runs it ahead of time (branch `load-health` S3: the
+      run begins first and reads the load once its row is drawn, `runCheckedOnceDrawn`), but the
+      page still stops for it after each edit, and the `E palette-checks` guard on v9 leaves that
+      task out as the edit's. Fix: validate only what an edit can change, write the text in a
+      worker, or both, measured on v9 first. Done when an edit on v9 leaves no task over 200 ms on
+      the page with the machine loaded, measured as that guard measures a click. [review
+      2026-10-14 D-3, measured on the `load-health` S3 tree]
 - [ ] **List the elements of different owners in the order the text gives them.** The page and
       every copy of its model (the checks worker's, Undo's, Save's) now list each owner's children
       in the order the owner holds them, but elements of different owners stay in the order they
@@ -795,7 +796,7 @@ merge removes what it closes.
       ids, so a page library of the same shape and different content (the Properties name field can
       rename a library element; a same-shape bundle from another build) counts as the same and the
       worker answers over its pristine copy [D-10]. And only `libraryMismatch` is remembered
-      (`src/ui/panels/checks-runner.ts:241-264`): a worker whose library fetch fails (offline,
+      (`src/ui/panels/checks-runner.ts:255-278`): a worker whose library fetch fails (offline,
       `stdlib.json` not cached) is restarted on every Run, then falls back to the page [D-11].
       Include a content hash or a build id in the key, and remember load failures for the session.
       Done when a test renames a library element and the worker declines, and a failed library load

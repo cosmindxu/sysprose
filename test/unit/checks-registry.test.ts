@@ -74,13 +74,16 @@ import {
 } from '../../src/ui/checks-offthread';
 import { runningVerdict, useChecksStore, verdictOf } from '../../src/ui/panels/checks-store';
 import {
+  FRAME_WAIT_MS,
   IDLE_MS,
   WATCHDOG_MS,
   cancelChecked,
   resetCheckRunner,
   runChecked,
+  runCheckedOnceDrawn,
   setCheckWorkerFactory,
   type CheckWorker,
+  type RunStart,
 } from '../../src/ui/panels/checks-runner';
 import type { ViewKind } from '@diagram/index';
 
@@ -1460,6 +1463,137 @@ describe('running a check from the palette', () => {
     expect(stored('reach')).toMatchObject({ rev: 1, ranIn: 'worker' });
     expect(verdictOf(stored('reach'), 2)).toBe('stale');
     expect(verdictOf(stored('check-behaviour'), 2)).toBe('stale');
+  });
+
+  /*
+   * A run whose start would hold the page (review 2026-10-14, D-3): reading its load waits on an
+   * edit's recompute, which validates the model and writes its text — most of a second on the
+   * drone-swarm model. It begins at the click and reads the page once its row is drawn.
+   */
+  /** Fake timers with frames: the runner waits for one before it reads the page. */
+  const withFrames = (): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+  };
+  /** A read that counts its calls and returns `start`. */
+  const reading = (start: RunStart): { read: () => RunStart; reads: () => number } => {
+    let n = 0;
+    return {
+      read: () => {
+        n++;
+        return start;
+      },
+      reads: () => n,
+    };
+  };
+
+  it('begins at the click a run whose start would hold the page, and reads the page in a task after the next frame', () => {
+    withFrames();
+    withFakeWorker();
+    const { load } = pendingLoad();
+    const r = reading({ model: machine, rev: 4, health: load });
+    runCheckedOnceDrawn(reach, walkable({ loadHealth: undefined }), 3, r.read);
+    // Under way from the click, checking the load, the Checks tab brought forward; nothing read yet, no worker asked.
+    expect(useChecksStore.getState().running.reach).toMatchObject({ phase: 'load', rev: 3 });
+    expect(runningVerdict(useChecksStore.getState().running.reach)).toBe('checking');
+    expect(useChecksStore.getState().runs).toBe(1);
+    expect(r.reads()).toBe(0);
+    expect(FakeWorker.made).toHaveLength(0);
+    // The frame draws the row; the read is a task of its own after it.
+    vi.advanceTimersToNextFrame();
+    expect(r.reads(), 'not in the frame itself').toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(r.reads()).toBe(1);
+    // Then the run goes on as one begun at the click: the load to the worker, then the walk.
+    const w = FakeWorker.made[0];
+    expect(w.health).toEqual([{ id: expect.any(Number), kind: 'health', texts: load.unmeasured }]);
+    w.measured([cleanCount()]);
+    expect(useChecksStore.getState().running.reach).toMatchObject({ phase: 'walk' });
+    w.answer();
+    // It lands against the revision read with the load; the tab came forward once, at the click.
+    expect(stored('reach')).toMatchObject({ rev: 4, ranIn: 'worker', result: { summary: 'from the worker' } });
+    expect(useChecksStore.getState().runs).toBe(1);
+    vi.advanceTimersByTime(FRAME_WAIT_MS);
+    expect(r.reads(), 'once').toBe(1);
+  });
+
+  it('reads the page after FRAME_WAIT_MS where no frame comes (a page in a background tab)', () => {
+    withFrames();
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    try {
+      withFakeWorker();
+      const r = reading({ model: machine, rev: 1, health: { known: healthy } });
+      runCheckedOnceDrawn(reach, walkable(), 1, r.read);
+      vi.advanceTimersByTime(FRAME_WAIT_MS - 1);
+      expect(r.reads()).toBe(0);
+      vi.advanceTimersByTime(1);
+      expect(r.reads()).toBe(1);
+      // A load already known: straight to the walk.
+      expect(useChecksStore.getState().running.reach).toMatchObject({ phase: 'walk' });
+      expect(FakeWorker.made[0].posted).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('reads nothing for a run cancelled before its row is drawn, and a run begun again reads once', () => {
+    withFrames();
+    withFakeWorker();
+    const first = reading({ model: machine, rev: 1, health: { known: healthy } });
+    runCheckedOnceDrawn(reach, walkable(), 1, first.read);
+    // Started again while it is under way: nothing new begins.
+    runCheckedOnceDrawn(reach, walkable(), 1, first.read);
+    runChecked(reach, walkable(), 1, { known: healthy });
+    expect(useChecksStore.getState().runs).toBe(1);
+    cancelChecked('reach');
+    expect(running('reach')).toBe(false);
+    const second = reading({ model: machine, rev: 2, health: { known: healthy } });
+    runCheckedOnceDrawn(reach, walkable(), 2, second.read);
+    vi.advanceTimersByTime(FRAME_WAIT_MS);
+    expect([first.reads(), second.reads()]).toEqual([0, 1]);
+    expect(FakeWorker.made).toHaveLength(1);
+    expect(FakeWorker.made[0].posted).toHaveLength(1);
+    FakeWorker.made[0].answer();
+    expect(stored('reach')).toMatchObject({ rev: 2, ranIn: 'worker' });
+  });
+
+  it('lands a run with nothing to walk, once its row is drawn, as worked out here', () => {
+    withFrames();
+    withFakeWorker();
+    const c = ctx({ loadHealth: undefined });
+    runCheckedOnceDrawn(reach, c, 1, () => ({ model: c.model, rev: 2, health: { known: healthy } }));
+    vi.advanceTimersByTime(FRAME_WAIT_MS);
+    expect(running('reach')).toBe(false);
+    expect(FakeWorker.made).toHaveLength(0);
+    expect(stored('reach')).toMatchObject({ rev: 2, ranIn: 'page', result: runCheck(reach, ctx()) });
+    expect(useChecksStore.getState().runs).toBe(1);
+  });
+
+  it('ends a run whose read throws as a check that threw does, not `checking the load…` until cancelled', () => {
+    withFrames();
+    withFakeWorker();
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      runCheckedOnceDrawn(reach, walkable(), 3, () => {
+        throw new Error('boom');
+      });
+      vi.advanceTimersByTime(FRAME_WAIT_MS);
+      // Begun at the click with no job behind it, nothing else would end it: it lands at the click's revision.
+      expect(running('reach')).toBe(false);
+      expect(stored('reach')).toMatchObject({
+        rev: 3,
+        ranIn: 'page',
+        result: { verdict: 'issues', rows: [{ code: 'checks/internal-error', message: 'boom', severity: 'error' }] },
+      });
+      expect(FakeWorker.made).toHaveLength(0);
+      expect(logged).toHaveBeenCalled();
+      // The next Run starts afresh.
+      runCheckedOnceDrawn(reach, walkable(), 4, () => ({ model: machine, rev: 4, health: { known: healthy } }));
+      vi.advanceTimersByTime(FRAME_WAIT_MS);
+      FakeWorker.made[0].answer();
+      expect(stored('reach')).toMatchObject({ rev: 4, ranIn: 'worker' });
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
 

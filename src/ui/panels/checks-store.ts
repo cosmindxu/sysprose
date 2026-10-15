@@ -16,8 +16,9 @@
  * token gone and is dropped. It runs in two phases: `load` while the worker
  * parses the model's text to know whether it loads, which the check is judged
  * over, then `walk` while the check itself runs. The `rev` and selection it ran
- * on are those of the click, not of the moment it lands, so an edit made
- * meanwhile shows it `stale`.
+ * on are those of the click — or, for a run begun before it reads the page
+ * (`runCheckedOnceDrawn`), the `rev` of that read, a frame later — not of the
+ * moment it lands, so an edit made meanwhile shows it `stale`.
  *
  * `runs` moves when a check is STARTED, not when it lands: it brings the Checks
  * tab forward, and that belongs to the click. A tab that came forward when the
