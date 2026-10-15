@@ -5,7 +5,7 @@
 > `docs/TEST-REPORT.md`; if the numbers disagree, this file is ground truth.
 
 - **Files:** 157
-- **Tests:** 4445 total — 4445 passed, 0 failed, 0 skipped
+- **Tests:** 4495 total — 4495 passed, 0 failed, 0 skipped
 
 | File | Passed | Failed | Skipped |
 |------|-------:|-------:|--------:|
@@ -39,7 +39,7 @@
 | test/integration/uav-example.test.ts | 15 | 0 | 0 |
 | test/integration/units.integration.test.ts | 14 | 0 | 0 |
 | test/integration/verification.differential.test.ts | 193 | 0 | 0 |
-| test/interop/self-roundtrip.test.ts | 9 | 0 | 0 |
+| test/interop/self-roundtrip.test.ts | 10 | 0 | 0 |
 | test/server/api-server.test.ts | 10 | 0 | 0 |
 | test/server/auth-headers.test.ts | 6 | 0 | 0 |
 | test/server/concurrency-full.test.ts | 5 | 0 | 0 |
@@ -56,18 +56,18 @@
 | test/unit/api.request-validation.test.ts | 9 | 0 | 0 |
 | test/unit/api.rest.test.ts | 7 | 0 | 0 |
 | test/unit/api.rest2.test.ts | 9 | 0 | 0 |
-| test/unit/api.sdk.test.ts | 11 | 0 | 0 |
+| test/unit/api.sdk.test.ts | 12 | 0 | 0 |
 | test/unit/api.verification.test.ts | 79 | 0 | 0 |
 | test/unit/api.versioning.test.ts | 11 | 0 | 0 |
 | test/unit/branding.test.ts | 13 | 0 | 0 |
 | test/unit/centrality.test.ts | 7 | 0 | 0 |
-| test/unit/checks-registry.test.ts | 100 | 0 | 0 |
+| test/unit/checks-registry.test.ts | 118 | 0 | 0 |
 | test/unit/claims.test.ts | 40 | 0 | 0 |
 | test/unit/cli-reference.test.ts | 28 | 0 | 0 |
-| test/unit/collab.binding.test.ts | 14 | 0 | 0 |
+| test/unit/collab.binding.test.ts | 15 | 0 | 0 |
 | test/unit/collab.provider.test.ts | 5 | 0 | 0 |
 | test/unit/contracts-table.test.ts | 10 | 0 | 0 |
-| test/unit/core.model.test.ts | 7 | 0 | 0 |
+| test/unit/core.model.test.ts | 12 | 0 | 0 |
 | test/unit/diagnostic-codes.test.ts | 11 | 0 | 0 |
 | test/unit/diagram.build.test.ts | 14 | 0 | 0 |
 | test/unit/diagram.case.test.ts | 8 | 0 | 0 |
@@ -97,12 +97,12 @@
 | test/unit/library.load.test.ts | 13 | 0 | 0 |
 | test/unit/linked-model.test.ts | 15 | 0 | 0 |
 | test/unit/paste.test.ts | 7 | 0 | 0 |
-| test/unit/persistence.io.test.ts | 26 | 0 | 0 |
+| test/unit/persistence.io.test.ts | 31 | 0 | 0 |
 | test/unit/planning.test.ts | 25 | 0 | 0 |
 | test/unit/property.test.ts | 26 | 0 | 0 |
 | test/unit/readme.test.ts | 15 | 0 | 0 |
 | test/unit/reconnect.test.ts | 9 | 0 | 0 |
-| test/unit/regroup-apply.test.ts | 27 | 0 | 0 |
+| test/unit/regroup-apply.test.ts | 28 | 0 | 0 |
 | test/unit/regroup.test.ts | 34 | 0 | 0 |
 | test/unit/reparent-target.test.ts | 14 | 0 | 0 |
 | test/unit/requirements-table.test.ts | 20 | 0 | 0 |
@@ -144,7 +144,7 @@
 | test/unit/simulate.test.ts | 23 | 0 | 0 |
 | test/unit/smt-z3-bridge-death.test.ts | 44 | 0 | 0 |
 | test/unit/store.library-refresh.test.ts | 6 | 0 | 0 |
-| test/unit/store.reducers.test.ts | 237 | 0 | 0 |
+| test/unit/store.reducers.test.ts | 255 | 0 | 0 |
 | test/unit/text.bracket-expr.test.ts | 45 | 0 | 0 |
 | test/unit/text.clause-bodies.test.ts | 29 | 0 | 0 |
 | test/unit/text.connectors.test.ts | 12 | 0 | 0 |
