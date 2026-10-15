@@ -62,7 +62,15 @@ import {
   verifyModel,
   type ObligationVerdict,
 } from '@api/index';
-import { checkConstraints, checksByRow, type ConstraintCheck } from '@semantics/evaluate-model';
+import {
+  anchorFor,
+  checkConstraints,
+  checksByRow,
+  withEveryInstanceJudged,
+  type ConstraintCheck,
+  type SpecialisationInstance,
+} from '@semantics/evaluate-model';
+import { effectiveQualifiedName } from '@semantics/inheritance';
 import { obligationsOf, type Obligation } from '@semantics/obligations';
 import { checkConstraintsNumeric, solveFeasible } from '@semantics/solver';
 import { resolveFreeFeatures } from '@semantics/engines/smt';
@@ -3251,7 +3259,23 @@ describe('a redefinition is the feature in its context, and a value written with
  *      listed exactly as I2's are;
  *      a witness printed with no value is not compared, and its rows are listed exactly too;
  *  I7  the SMT engine's `inconsistent-axioms` beside a T or F on another surface only where listed, with
- *      the reason — and only while it still happens, so the list cannot rot.
+ *      the reason — and only while it still happens, so the list cannot rot;
+ *  I8  no engine files two rows under one name, one proved and the other refuted. A group's row for an
+ *      instance and the row of the element that instance is (q2's `part :>> p { … }`) are both
+ *      `{Rel} in q2::p` on the verify surface; such a name filed twice is keyed by each row's element id,
+ *      as the check and the numeric surface key them, and this invariant reads the names as printed;
+ *  I9  no engine files two rows under one name at all: an instance that is an element's own is that
+ *      element's reading, and one a group of a more specific usage reads is that group's (O2 S2).
+ *  I10 check ≡ verify: `sysml-check --strict` is never silent on a row literal or SMT refutes (PI-1).
+ *  I11 the rows the check shares among instances read alike are the rows each instance's own reading
+ *      gives (`withEveryInstanceJudged`), row for row, message and witness included (O2 S5's sharing);
+ *  I12 a relation and its verbatim copy (`c` and `c__dup`, the same body beside it) give the same rows,
+ *      per context and instance: verdict, abstention and the values read — so no reading of one relation
+ *      takes what another worked out before it (Sh1's `m <= 10.0` read q2's p at q1's m, worked out for
+ *      `m <= 1000.0`);
+ *  I13 an instance row the SMT engine refutes with nothing freed, and the check decides otherwise — the
+ *      witness the same-point gate demotes to `inconclusive` — only where listed, with the reason: both
+ *      read the model's own point, so one of them is wrong (it was the signature of Sh1's false T).
  *
  * Letters, in the order check / literal / numeric / SMT: T holds (the literal engine's
  * `holds-at-values`), F violated or refuted, ? abstains, X inconsistent axioms, V vacuous, U a construct
@@ -3295,10 +3319,66 @@ describe('per-instance readings: four surfaces, one verdict', () => {
               ? 'U'
               : '?';
   const decided = (l: Letter) => l === 'T' || l === 'F';
+  /** I8: per probe, each verify name an engine filed both proved and refuted (`literal: R in I`). */
+  const bothWays = new Map<string, string[]>();
+  /** I9: per probe, each verify name an engine filed more than once, with its letters. */
+  const twice = new Map<string, string[]>();
+  /** I10: per probe, each row literal or SMT refutes that `sysml-check --strict` names in no warning. */
+  const unreported = new Map<string, string[]>();
+  /** I11: per probe, each check row the shared reading gives otherwise than the instance's own reading. */
+  const unshared = new Map<string, string[]>();
+  /** I12: per probe, each row of a relation's verbatim copy that differs from the relation's own. */
+  const copied = new Map<string, string[]>();
+  /** I12: the relations each probe's copy run compared, so the invariant is not vacuous. */
+  let copiedRelations = 0;
+
+  /**
+   * I12: `text` with every one-line relation `constraint c { … }` (not an `assert`, `assume` or `require`)
+   * followed by its verbatim copy `constraint c__dup { … }`, checked: each copy's rows must be its
+   * relation's — the verdict, the abstention and the values read, per context and instance.
+   */
+  async function copiedRows(text: string, pkg: string): Promise<void> {
+    let any = false;
+    const copy = text.replace(
+      /(^|[^\w])(constraint\s+)([A-Za-z_]\w*)(\s*\{)([^{}\n]*)(\})/g,
+      (all, before: string, kw: string, name: string, open: string, body: string, close: string, at: number, whole: string) => {
+        if (/\b(?:assert|assume|require)\s*$/.test(whole.slice(Math.max(0, at - 12), at + before.length))) return all;
+        // One the model names elsewhere (a redefinition `constraint :>> c2 { … }` in q2) is read otherwise there.
+        if ((whole.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length > 1) return all;
+        any = true;
+        return `${all} ${kw}${name}__dup${open}${body}${close}`;
+      },
+    );
+    if (!any) return;
+    const { model: m } = await loadModelText(copy, { fileName: `${pkg}-copy.sysml` });
+    if (!m) throw new Error(`${pkg}'s copy produced no model`);
+    const qn = (id: string) => m.qualifiedName(id as ElementId) || id;
+    const checks = checkConstraints(m);
+    const byName = new Map(checks.map((c) => [qn(c.id), c]));
+    const where = (i: SpecialisationInstance) => `${i.generic ? 'own ' : ''}${(i as { instance?: string }).instance ?? qn(i.contextId)}`;
+    const sig = (i: SpecialisationInstance) =>
+      `${i.result} ${i.abstention ?? ''} ${JSON.stringify((i.reads ?? []).map((r) => [r.path, r.value]))}`;
+    const out: string[] = [];
+    for (const [name, c] of byName) {
+      const d = byName.get(`${name}__dup`);
+      if (name.endsWith('__dup') || d === undefined) continue;
+      copiedRelations++;
+      if (c.result !== d.result) out.push(`${name}: ${c.result}, its copy ${d.result}`);
+      const theirs = new Map((d.instances ?? []).map((i) => [where(i), i]));
+      for (const i of c.instances ?? []) {
+        const j = theirs.get(where(i));
+        if (j === undefined) out.push(`${name} in ${where(i)}: no row of the copy`);
+        else if (sig(i) !== sig(j)) out.push(`${name} in ${where(i)}: ${sig(i)}, its copy ${sig(j)}`);
+      }
+    }
+    if (out.length > 0) copied.set(pkg, out);
+  }
 
   /** Every row of a model on the four surfaces, by qualified name (`R in C` for a context's reading). */
   async function fourSurfaces(text: string, pkg: string): Promise<Map<string, SurfaceRow>> {
-    const m = await contextModel(text, pkg);
+    // The model, and the report `sysml-check --strict` prints for the same text (I10).
+    const { model: m, report } = await loadModelText(text, { fileName: `${pkg}.sysml`, strict: true });
+    if (!m) throw new Error(`${pkg} produced no model`);
     const qn = (id: string) => m.qualifiedName(id as ElementId) || id;
     const key = (id: string) => {
       const [base, ctx] = id.split('@');
@@ -3320,13 +3400,33 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       row.ids.add(id);
       if (!decided(letter)) row.why[s] = why;
     };
-    for (const c of checkConstraints(m)) {
+    // I10: each per-instance row the check files, by its id, with the check it belongs to.
+    const filedBy = new Map<string, { check: ConstraintCheck; inst: SpecialisationInstance }>();
+    const checks = checkConstraints(m);
+    // I11: every row as each instance's own reading gives it, none taken from another read alike.
+    const rowsOf = (list: ConstraintCheck[]) =>
+      list.flatMap((c) => [
+        `${key(c.id)}: ${c.result} | ${c.message}`,
+        ...(c.instances ?? []).map(
+          (i) =>
+            `${key(c.id)} in ${(i as { instance?: string }).instance ?? qn(i.contextId)}: ${i.result} ${i.abstention ?? ''} ${i.cause ?? ''} | ` +
+            `${i.message} | ${JSON.stringify(i.reads ?? null)}`,
+        ),
+      ]);
+    const shared = rowsOf(checks);
+    const full = rowsOf(withEveryInstanceJudged(() => checkConstraints(m)));
+    const differ = shared.flatMap((row, k) => (row === full[k] ? [] : [`shared ${row} ≠ own ${full[k] ?? 'no row'}`]));
+    if (differ.length > 0 || shared.length !== full.length) unshared.set(pkg, differ.length > 0 ? differ : ['a different number of rows']);
+    // I12: the same model with each relation's body copied beside it under another name.
+    await copiedRows(text, pkg);
+    for (const c of checks) {
       put(c.conflict ? `${key(c.id)}#${c.conflict}` : key(c.id), 0, POINT[c.result]!, c.id, c.message);
       for (const i of c.instances ?? []) {
         // An instance row (plan F7: `instance`, its path as the solver spells it) is keyed and filed by
         // that path, as the other surfaces file it (`${id}@${path}`); a context's reading by the context.
         const at = (i as { instance?: string }).instance;
         put(`${key(c.id)} in ${at ?? qn(i.contextId)}`, 0, POINT[i.result]!, `${c.id}@${at ?? i.contextId}`, i.message);
+        filedBy.set(`${c.id}@${at ?? i.contextId}`, { check: c, inst: i });
       }
     }
     for (const r of checkConstraintsNumeric(m)) {
@@ -3338,8 +3438,25 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       [3, 'smt'],
     ] as const) {
       const report = await verifyModel(m, { engine, sourceText: text });
+      // I8: a name filed twice is two rows (a group's instance row and the row of the element that
+      // instance is), keyed by element id as the other surfaces key them; read here as printed.
+      const printed = new Map<string, Letter[]>();
       for (const r of report.results) {
-        put(norm(r.clause.qualifiedName), s, engineLetter(r), r.clause.id, r.detail);
+        const n = norm(r.clause.qualifiedName);
+        printed.set(n, [...(printed.get(n) ?? []), engineLetter(r)]);
+      }
+      for (const [n, letters] of printed) {
+        if (letters.includes('T') && letters.includes('F')) bothWays.set(pkg, [...(bothWays.get(pkg) ?? []), `${engine}: ${n}`]);
+        if (letters.length > 1) twice.set(pkg, [...(twice.get(pkg) ?? []), `${engine}: ${n} ${letters.join('/')}`]);
+      }
+      // A generic row is keyed by its id too (`${id}@${U}`), as the other surfaces key it: for a usage with
+      // no name of its own (Q2's `part :>> p : P2`) the verify name spells U's effective name, they its own.
+      const rowKey = (r: ObligationVerdict) => {
+        const n = norm(r.clause.qualifiedName);
+        return printed.get(n)!.length > 1 || n !== r.clause.qualifiedName ? key(r.clause.id) : n;
+      };
+      for (const r of report.results) {
+        put(rowKey(r), s, engineLetter(r), r.clause.id, r.detail);
         // I6: each side of the relation, where it is one bare path the row prints a value for — in the
         // row's bindings and in its evidence record. A value printed with a unit is compared as a quantity
         // (its SI value, as `bound.si` holds the compared sides); one printed with NO value is recorded,
@@ -3348,7 +3465,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         const split = /^(.*?)(?:<=|>=|==|!=|<|>)(.*)$/s.exec(r.expression);
         if (si2 === undefined || split === null) continue;
         const bare = (side: string) => /^\s*([A-Za-z_][\w.]*)\s*$/.exec(side)?.[1];
-        const row = rows.get(norm(r.clause.qualifiedName))!;
+        const row = rows.get(rowKey(r))!;
         const record = report.records.find(
           (x) => x.obligation.clause === r.clause.qualifiedName && x.obligation.expression === r.expression,
         );
@@ -3383,6 +3500,75 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         }
       }
     }
+    // I10 (check ≡ verify, PI-1): a row literal or SMT refutes fails `sysml-check --strict`, under a
+    // warning that names it:
+    //  - the relation's own row: a `constraint-violation` anchored at the relation;
+    //  - any row read in an instance or a context: a constraint-by-instance finding naming that relation and
+    //    that instance or context;
+    //  - a group's row (an instance's, or the usage's own generic one) also: the group's roll-up listing
+    //    it, or counting it among the violations it lists no path of — one row per such violation;
+    //  - a context's row that met no binding also: a target-by-specialisation miss of the relation at the
+    //    element that rule anchors that row's finding at — one row per such miss.
+    // A fold of more than 20 contexts names none, and is matched by nobody: such a probe fails here until
+    // it is read.
+    const warned = report.diagnostics.filter((d) => d.severity === 'warning' || d.severity === 'error');
+    const targetOf = (id: string) => {
+      const el = m.get(id as ElementId);
+      const owner = el?.ownerId != null ? m.get(el.ownerId) : undefined;
+      const ownerName = owner?.declaredName ?? owner?.declaredShortName ?? `«${owner?.eClass}»`;
+      const own = el?.declaredName ?? el?.declaredShortName;
+      return own ? `${ownerName}::${own}` : `a constraint in ${ownerName}`;
+    };
+    // Per relation, the violations its roll-ups count and list no path of, not yet taken by a row; per
+    // anchor and relation, the misses not yet taken.
+    const unlisted = new Map<string, number>();
+    for (const d of warned) {
+      if (d.code !== 'validation/constraint-by-instance' || d.instances === undefined || d.relation === undefined) continue;
+      unlisted.set(d.relation, (unlisted.get(d.relation) ?? 0) + d.instances.violated - d.instances.listed.length);
+    }
+    const missesTaken = new Map<string, number>();
+    const silent: string[] = [];
+    for (const [k, row] of rows) {
+      if (row.verdicts[1] !== 'F' && row.verdicts[3] !== 'F') continue;
+      const [base, at] = [...row.ids][0]!.split('@') as [string, string | undefined];
+      if (at === undefined) {
+        const own = warned.some(
+          (d) => d.code === 'validation/constraint-violation' && d.elementId === base && d.instance === undefined && d.instances === undefined,
+        );
+        if (!own) silent.push(k);
+        continue;
+      }
+      // Named as the findings name them: an unnamed element by what it redefines (Q2's `part :>> p` is
+      // `Q2::p`, its row `… in Q2::«PartUsage»`).
+      const rel = effectiveQualifiedName(m, base as ElementId);
+      const where = m.get(at as ElementId) ? effectiveQualifiedName(m, at as ElementId) : at;
+      const byCode = (code: string) => warned.filter((d) => d.code === code);
+      if (byCode('validation/constraint-by-instance').some((d) => d.relation === rel && d.instance === where)) continue;
+      const filed = [...row.ids].map((id) => filedBy.get(id)).find((x) => x !== undefined);
+      if (filed !== undefined && (filed.inst.instance !== undefined || filed.inst.generic === true)) {
+        const rollups = byCode('validation/constraint-by-instance').filter((d) => d.relation === rel && d.instances !== undefined);
+        if (rollups.some((d) => d.instances!.listed.includes(where))) continue;
+        const left = unlisted.get(rel) ?? 0;
+        if (left > 0) {
+          unlisted.set(rel, left - 1);
+          continue;
+        }
+      } else if (filed !== undefined && filed.inst.via !== true) {
+        const anchor = anchorFor(m, filed.check, filed.inst);
+        const misses = byCode('validation/target-by-specialisation').filter(
+          (d) => d.elementId === anchor && d.message.includes(` misses ${targetOf(base)} (`),
+        ).length;
+        const taken = missesTaken.get(`${anchor} ${base}`) ?? 0;
+        if (taken < misses) {
+          missesTaken.set(`${anchor} ${base}`, taken + 1);
+          continue;
+        }
+      }
+      silent.push(k);
+    }
+    const refuted = [...rows.values()].some((r) => r.verdicts[1] === 'F' || r.verdicts[3] === 'F');
+    if (refuted && report.ok) silent.push('sysml-check --strict passes (exit 0)');
+    if (silent.length > 0) unreported.set(pkg, silent);
     return rows;
   }
 
@@ -3993,6 +4179,10 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'Big::k3': ['F/F/F/F', 'F'],
       'Big::k4': ['F/F/F/F', 'F'],
     }),
+    // q1 asserts `p.x == 50.0` over P's `x default = 2.0`: which stands is H5, not decided here, so every
+    // per-instance reading of q1's p's x abstains (`enclosing-assert`, A.2.4) — the own row top1 and, since
+    // O2 S3 (A-H1), q1's group row, which read x's default through Q's p's frames and was T/T/T/X beside
+    // top1's `?`. q1's own `tie` row reads p.x and is decided; so can a package constraint reading `q1.p.x`.
     'refute-r1': probe(`package R1 {
         part def P {
           attribute load : ScalarValues::Real default = 1.0;
@@ -4006,7 +4196,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       }`, {
       'R1::P::c': ['T/T/T/X', 'T'],
       'R1::P::c in R1::Q::p': ['T/T/T/X', 'T'],
-      'R1::P::c in R1::q1::p': ['T/T/T/X', 'T'],
+      'R1::P::c in R1::q1::p': ['?/?/?/X', 'T'],
       'R1::P::c in R1::q2::p': ['T/T/T/X', 'T'],
       'R1::q1::tie': ['F/-/F/-', null],
       'R1::top1': ['?/?/T/X', null],
@@ -4081,6 +4271,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q { bind p.load = L; }
       }`, {
       'GA12::P::pa': ['T/-/T/-', null],
+      // q's binding reaches into its p, an end copy of Q's p: P's pa is read per instance of Q's p (O2 S4).
+      'GA12::P::pa in GA12::Q::p': ['T/-/T/-', null],
+      'GA12::P::pa in GA12::q::p': ['T/-/T/-', null],
       'GA12::Q::qa': ['T/-/T/-', null],
       'GA12::q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
     }),
@@ -4396,6 +4589,116 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R17c::Q::p::c2 in R17c::q::p': ['F/F/F/F', 'F'],
       'R17c::top': ['F/F/F/F', 'F'],
     }),
+    // PI-1: a relation a usage owns, read in its one other instance — a group of one — with no package
+    // constraint beside it, so `sysml-check --strict` fails on that instance's finding or not at all (I10):
+    // E's r17, the same one level down (R's q, r1's q), and in a specialising definition (Q2's p).
+    'pi1-r17': probe(`package PI1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 50.0; }
+      }`, {
+      'PI1::Q::p::c2': ['T/T/T/T', 'T'],
+      'PI1::Q::p::c2 in PI1::q1::p': ['F/F/F/F', 'F'],
+    }),
+    'pi1-nested': probe(`package PI1N {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R {
+          attribute X : ScalarValues::Real default = 1.0;
+          part q : Q { constraint c { p.load <= 10.0 } }
+          bind q.L = X;
+        }
+        part r1 : R { attribute :>> X = 50.0; }
+      }`, {
+      'PI1N::R::q::c': ['T/T/T/T', 'T'],
+      'PI1N::R::q::c in PI1N::r1::q': ['F/F/F/F', 'F'],
+    }),
+    'pi1-spec': probe(`package PI1S {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+      }`, {
+      'PI1S::Q::p::c2': ['T/T/T/T', 'T'],
+      'PI1S::Q::p::c2 in PI1S::Q2::p': ['F/F/F/F', 'F'],
+    }),
+    // An instance whose only difference is a binding written in its own element (q2's `bind p.extra = E`,
+    // whose implicit end copy is q2's p): no binding of an owner tells it apart, so no group and no context
+    // listed it, and every surface published the own row alone — the model clean, q2's p at 1 + 20 > 10
+    // (A-H3's coverage, PI-1's symptom). The binding reaching into a redefinition of the usage now makes it
+    // a group (`boundAbove`), and the instance is read in its end copy: a relation the usage owns, with and
+    // without a binding of the owner (body-bind-owned, -owned-free); a definition's, read in Q's p
+    // (body-bind-def, A7's own shape with no package constraint beside it: A7N); two usages deep, from R's
+    // usage r2 (-deep, -deep-owned); and from the package (-package).
+    'body-bind-owned': probe(`package BBO {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P { constraint c2 { load + extra <= 10.0 } }
+          bind p.load = L;
+        }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'BBO::Q::p::c2': ['T/T/T/T', 'T'],
+      'BBO::Q::p::c2 in BBO::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-owned-free': probe(`package BBOF {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q { part p : P { constraint c2 { load + extra <= 10.0 } } }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'BBOF::Q::p::c2': ['T/T/T/T', 'T'],
+      'BBOF::Q::p::c2 in BBOF::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-def': probe(`package BBD {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; constraint c { load + extra <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'BBD::P::c': ['T/T/T/T', 'T'],
+      'BBD::P::c in BBD::Q::p': ['T/T/T/T', 'T'],
+      'BBD::P::c in BBD::q2::p': ['F/F/F/F', 'F'],
+    }),
+    A7N: probe(`package A7N {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'A7N::P::c': ['T/T/T/T', 'T'],
+      'A7N::P::c in A7N::Q::p': ['T/T/T/T', 'T'],
+      'A7N::P::c in A7N::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-deep': probe(`package BBP {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; }
+        part def R { part q : Q; }
+        part r2 : R { attribute E : ScalarValues::Real = 20.0; bind q.p.extra = E; }
+      }`, {
+      'BBP::P::c': ['T/T/T/T', 'T'],
+      'BBP::P::c in BBP::Q::p': ['T/T/T/T', 'T'],
+      'BBP::P::c in BBP::R::q::p': ['T/T/T/T', 'T'],
+      'BBP::P::c in BBP::r2::q::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-deep-owned': probe(`package BBPO {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q { part p : P { constraint c2 { extra <= 10.0 } } }
+        part def R { part q : Q; }
+        part r2 : R { attribute E : ScalarValues::Real = 20.0; bind q.p.extra = E; }
+      }`, {
+      'BBPO::Q::p::c2': ['T/T/T/T', 'T'],
+      'BBPO::Q::p::c2 in BBPO::R::q::p': ['T/T/T/T', 'T'],
+      'BBPO::Q::p::c2 in BBPO::r2::q::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-package': probe(`package BBK {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; }
+        part q2 : Q;
+        attribute E : ScalarValues::Real = 20.0;
+        bind q2.p.extra = E;
+      }`, {
+      'BBK::P::c': ['T/T/T/T', 'T'],
+      'BBK::P::c in BBK::Q::p': ['T/T/T/T', 'T'],
+      'BBK::P::c in BBK::q2::p': ['F/F/F/F', 'F'],
+    }),
     'refute-r18': probe(`package R18 {
         calc def Twice { in x : ScalarValues::Real; return r : ScalarValues::Real = 2.0 * x; }
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4435,6 +4738,652 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R19::q2T': ['?/?/?/?', '?'],
       'R19::soloT': ['T/T/T/T', 'T'],
     }),
+    // Found by the 2026-10-14 review (A1–A9, A-C1): an instance of a shared usage whose own element reads the
+    // relation through ANOTHER feature or source than the usage — a redefinition with a value of its own (A1,
+    // A2), a specialised type (A3), a binding written in the instance's body (A4), a nested override (A6),
+    // under a usage-owned relation (A9). The group read every instance through the usage's features and
+    // published P's `extra` of 0 for an instance that states 20: T on all four surfaces where it is F, beside
+    // the row of the element that instance is, refuted under the same name (I8). O2 S1 had those rows abstain
+    // (A.7's coverage guard); O2 S2 reads each in that element at the instance — 1 + 20 > 10, F on every
+    // surface — and the element's own row is that row, filed once (I9). A4's SMT `inconsistent-axioms` on every
+    // row came from its q2 row read through Q's p, which asserted P's default of 0 for q2's extra against q2's
+    // binding: read in q2's own p (the implicit end copy, which states no default) it is gone. A5 (the value
+    // carried by the usage's own binding) and A8 are controls that keep their verdicts; A7, whose q2 differs by
+    // its own binding alone, was read for Q's p by no surface until O2 S4 made Q's p a group (its q2 row is F,
+    // as `top` is). A3L: where q2 sets L,
+    // Q2's p is a group of its own, below Q's p; each instance is read once, by the group of the more specific
+    // usage. A2E: q2 asserts a relation over its p's load; read in q2's p, which reads none of q2's asserts, the
+    // row abstains (`enclosing-assert`, A.2.4).
+    'A1-redef-in-instance': probe(`package A1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q : Q { attribute :>> L = 2.0; part :>> p { attribute :>> extra = 20.0; } }
+      }`, {
+      'A1::P::c': ['T/T/T/T', 'T'],
+      'A1::P::c in A1::Q::p': ['T/T/T/T', 'T'],
+      'A1::P::c in A1::q::p': ['F/F/F/F', 'F'],
+    }),
+    'A2-redef-in-instance-noL': probe(`package A2 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { attribute :>> extra = 20.0; } }
+      }`, {
+      'A2::P::c': ['T/T/T/T', 'T'],
+      'A2::P::c in A2::Q::p': ['T/T/T/T', 'T'],
+      'A2::P::c in A2::q1::p': ['T/T/T/T', 'T'],
+      'A2::P::c in A2::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'A2E-enclosing-assert': probe(`package A2E {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { attribute :>> extra = 20.0; } assert constraint { p.load >= 0.5 } }
+      }`, {
+      'A2E::P::c': ['T/T/T/T', 'T'],
+      'A2E::P::c in A2E::Q::p': ['T/T/T/T', 'T'],
+      'A2E::P::c in A2E::q1::p': ['T/T/T/T', 'T'],
+      'A2E::P::c in A2E::q2::p': ['?/?/?/?', 'F'],
+      'A2E::q2::«ConstraintUsage»': ['T/-/T/-', 'T'],
+    }),
+    'A3-spec-type': probe(`package A3 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 20.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p : P2; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2;
+      }`, {
+      'A3::P::c': ['T/T/T/T', 'T'],
+      'A3::P::c in A3::P2': ['F/F/F/F', 'F'],
+      'A3::P::c in A3::Q::p': ['T/T/T/T', 'T'],
+      'A3::P::c in A3::Q2::p': ['F/F/F/F', 'F'],
+      'A3::P::c in A3::q1::p': ['T/T/T/T', 'T'],
+      'A3::P::c in A3::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'A3L-spec-type-L': probe(`package A3L {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 20.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p : P2; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2 { attribute :>> L = 2.0; }
+      }`, {
+      'A3L::P::c': ['T/T/T/T', 'T'],
+      'A3L::P::c in A3L::P2': ['F/F/F/F', 'F'],
+      'A3L::P::c in A3L::Q::p': ['T/T/T/T', 'T'],
+      'A3L::P::c in A3L::Q2::«PartUsage»': ['F/F/F/F', 'F'],
+      'A3L::P::c in A3L::q1::p': ['T/T/T/T', 'T'],
+      'A3L::P::c in A3L::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'A4-second-binding': probe(`package A4 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'A4::P::c': ['T/T/T/T', 'T'],
+      'A4::P::c in A4::Q::p': ['T/T/T/T', 'T'],
+      'A4::P::c in A4::q1::p': ['T/T/T/T', 'T'],
+      'A4::P::c in A4::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'A5-instance-assert': probe(`package A5 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute X : ScalarValues::Real default = 0.0;
+          part p : P;
+          bind p.load = L;
+          bind p.extra = X;
+        }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> X = 20.0; }
+      }`, {
+      'A5::P::c': ['?/?/?/?', '?'],
+      'A5::P::c in A5::Q::p': ['T/T/T/T', 'T'],
+      'A5::P::c in A5::q1::p': ['T/T/T/T', 'T'],
+      'A5::P::c in A5::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'A6-nested': probe(`package A6 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R { part q : Q; }
+        part r1 : R { part :>> q { attribute :>> L = 2.0; } }
+        part r2 : R { part :>> q { part :>> p { attribute :>> extra = 20.0; } } }
+      }`, {
+      'A6::P::c': ['T/T/T/T', 'T'],
+      'A6::P::c in A6::Q::p': ['T/T/T/T', 'T'],
+      'A6::P::c in A6::R::q::p': ['T/T/T/T', 'T'],
+      'A6::P::c in A6::r1::q::p': ['T/T/T/T', 'T'],
+      'A6::P::c in A6::r2::q::p': ['F/F/F/F', 'F'],
+    }),
+    'A7-body-binding-default': probe(`package A7 {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+        constraint top { q2.p.extra <= 10.0 }
+      }`, {
+      'A7::P::c': ['T/T/T/T', 'T'],
+      'A7::P::c in A7::Q::p': ['T/T/T/T', 'T'],
+      'A7::P::c in A7::q2::p': ['F/F/F/F', 'F'],
+      'A7::top': ['F/F/F/F', 'F'],
+    }),
+    'A8-body-binding-default-def': probe(`package A8 {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+        part q2 : Q;
+        constraint top { q2.p.extra <= 10.0 }
+      }`, {
+      'A8::P::c': ['T/T/T/T', 'T'],
+      'A8::P::c in A8::Q::p': ['F/F/F/F', 'F'],
+      'A8::top': ['F/F/F/F', 'F'],
+    }),
+    'A9-owned-redef': probe(`package A9 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P { constraint c2 { load + extra <= 10.0 } }
+          bind p.load = L;
+        }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { attribute :>> extra = 20.0; } }
+        constraint top { q2.p.load + q2.p.extra <= 10.0 }
+      }`, {
+      'A9::Q::p::c2': ['T/T/T/T', 'T'],
+      'A9::Q::p::c2 in A9::q1::p': ['T/T/T/T', 'T'],
+      'A9::Q::p::c2 in A9::q2::p': ['F/F/F/F', 'F'],
+      'A9::top': ['F/F/F/F', 'F'],
+    }),
+    // Found by the review of O2 S6 (its U5, U8, U9, V1, V4): a value a binding carries into an instance, with a
+    // unit, was read as the number its source writes and compared as one — q1's `L = 20.0 [kg]` against P's `cap
+    // = 10000.0 [g]` as 20 <= 10000, held on all four surfaces (U8; the same in a usage's own relation, U9, and
+    // through a package binding, V1/V4, where the check and the literal engine abstained at 7277a97); q1's `L =
+    // 5000.0 [g]` against 10 [kg] as 5000, violated where it holds (U5). The value is now read in the unit the
+    // feature it fills declares (P's `load`, kg, the binding's end copy included), the body in units with it, and
+    // the solver lane stores the end copy in that unit. U1 is the bare-literal contract over such a value: the
+    // literal is read in `load`'s declared unit, as for every value of it (5000 g is 5 kg <= 10).
+    'U5-bound-unit-two-features': probe(`package U5 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10.0 [SI::kg]; constraint c { load <= cap } }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 5000.0 [SI::g]; }
+        part q2 : Q { attribute :>> L = 50000.0 [SI::g]; }
+      }`, {
+      'U5::P::c': ['T/T/T/T', 'T'],
+      'U5::P::c in U5::Q::p': ['T/T/T/T', 'T'],
+      'U5::P::c in U5::q1::p': ['T/T/T/T', 'T'],
+      'U5::P::c in U5::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'U8-bound-unit-false-T': probe(`package U8 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; constraint c { load <= cap } }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 20.0 [SI::kg]; }
+        part q2 : Q { attribute :>> L = 5.0 [SI::kg]; }
+        constraint top1 { q1.p.load <= q1.p.cap }
+      }`, {
+      'U8::P::c': ['T/T/T/T', 'T'],
+      'U8::P::c in U8::Q::p': ['T/T/T/T', 'T'],
+      'U8::P::c in U8::q1::p': ['F/F/F/F', 'F'],
+      'U8::P::c in U8::q2::p': ['T/T/T/T', 'T'],
+      'U8::top1': ['F/F/F/F', 'F'],
+    }),
+    'U9-bound-unit-single': probe(`package U9 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P { constraint c2 { load <= cap } } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 20.0 [SI::kg]; }
+      }`, {
+      'U9::Q::p::c2': ['T/T/T/T', 'T'],
+      'U9::Q::p::c2 in U9::q1::p': ['F/F/F/F', 'F'],
+    }),
+    'V1-bound-unit-package': probe(`package V1 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; }
+        part p1 : P;
+        attribute L : ISQ::MassValue = 20.0 [SI::kg];
+        bind p1.load = L;
+        constraint top1 { p1.load <= p1.cap }
+      }`, {
+      'V1::top1': ['F/F/F/F', 'F'],
+    }),
+    'V4-bound-unit-valueless': probe(`package V4 {
+        part def P { attribute load : ISQ::MassValue; attribute cap : ISQ::MassValue = 10000.0 [SI::g]; }
+        part p1 : P;
+        attribute L : ISQ::MassValue = 20.0 [SI::kg];
+        bind p1.load = L;
+        constraint top1 { p1.load <= p1.cap }
+      }`, {
+      'V4::top1': ['F/F/F/F', 'F'],
+    }),
+    'U1-bound-unit-bare-literal': probe(`package U1 {
+        part def P { attribute load : ISQ::MassValue default = 1.0 [SI::kg]; constraint c { load <= 10.0 } }
+        part def Q { attribute L : ISQ::MassValue default = 1.0 [SI::kg]; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 5000.0 [SI::g]; }
+        part q2 : Q { attribute :>> L = 50000.0 [SI::g]; }
+        part q3 : Q { attribute :>> L = 5.0 [SI::kg]; }
+      }`, {
+      'U1::P::c': ['T/T/T/T', 'T'],
+      'U1::P::c in U1::Q::p': ['T/T/T/T', 'T'],
+      'U1::P::c in U1::q1::p': ['T/T/T/T', 'T'],
+      'U1::P::c in U1::q2::p': ['F/F/F/F', 'F'],
+      'U1::P::c in U1::q3::p': ['T/T/T/T', 'T'],
+    }),
+    // Found by the review of O2 S2. DM1–DM4, DN1, DN2 (the review's M1, M2, N1, N2, and two more): an instance on
+    // whose path a name is inherited twice, neither feature redefining the other — `part def Q3 :> Q2, Q4` over
+    // Q2's `part :>> p : P2` and Q4's `part :>> p : P4` (DM1; DM2 with bodies; DM3 where Q3's own `part :>> p;`
+    // redefines Q's p only; DM4 where Q2's and Q4's p are groups of their own), a usage typed by both (DN1), the
+    // same one level down (DN2). Every Q3 is a Q2 and a Q4, so its p is P2's and P4's at once: 1 + 0.5 + 20 > 10.
+    // The denote walk reads it through one of them (Q2's), and S2's first cut read the row there, T on all four
+    // surfaces; the row abstains, as at S1 (no one element stands for it), and no group of one of the features
+    // takes it. CI1, CI2, CH1, CH2 (the review's I1, I2, H1, H2): a name two values the context inherits collide
+    // under (Q2's p, typed P2, inherits P2's `:>> extra = 9.5` and the end copy of Q's `bind p.extra = X`) has no
+    // value; since F5 the per-instance reading read it through the binding instead, at X's default of 0 — T where
+    // it is F (P2's 9.5 is a binding X gives way to), and T where the defaults differ (CH1, `?`). It reads
+    // nothing through the binding now, on every surface. CI1's context row is split, as X11's is: the check and
+    // the numeric surface name Q2's unnamed p by its qualified name, the verify surface by its effective name.
+    'DM1-diamond': probe(`package DM1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          attribute extra2 : ScalarValues::Real default = 0.0;
+          constraint c { load + extra + extra2 <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 0.5; }
+        part def P4 :> P { attribute :>> extra2 = 20.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p : P2; }
+        part def Q4 :> Q { part :>> p : P4; }
+        part def Q3 :> Q2, Q4;
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q3 : Q3;
+      }`, {
+      'DM1::P::c': ['T/T/T/T', 'T'],
+      'DM1::P::c in DM1::P2': ['T/T/T/T', 'T'],
+      'DM1::P::c in DM1::P4': ['F/F/F/F', 'F'],
+      'DM1::P::c in DM1::Q::p': ['T/T/T/T', 'T'],
+      'DM1::P::c in DM1::q1::p': ['T/T/T/T', 'T'],
+      'DM1::P::c in DM1::Q2::p': ['T/T/T/T', 'T'],
+      'DM1::P::c in DM1::Q3::p': ['?/?/?/?', 'F'],
+      'DM1::P::c in DM1::q3::p': ['?/?/?/?', 'F'],
+      'DM1::P::c in DM1::Q4::p': ['F/F/F/F', 'F'],
+    }),
+    'DM2-diamond-own': probe(`package DM2 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          attribute extra2 : ScalarValues::Real default = 0.0;
+          constraint c { load + extra + extra2 <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p { attribute :>> extra = 0.5; } }
+        part def Q4 :> Q { part :>> p { attribute :>> extra2 = 20.0; } }
+        part def Q3 :> Q2, Q4;
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q3 : Q3;
+      }`, {
+      'DM2::P::c': ['T/T/T/T', 'T'],
+      'DM2::P::c in DM2::Q::p': ['T/T/T/T', 'T'],
+      'DM2::P::c in DM2::q1::p': ['T/T/T/T', 'T'],
+      'DM2::P::c in DM2::Q2::p': ['T/T/T/T', 'T'],
+      'DM2::P::c in DM2::Q3::p': ['?/?/?/?', 'F'],
+      'DM2::P::c in DM2::q3::p': ['?/?/?/?', 'F'],
+      'DM2::P::c in DM2::Q4::p': ['F/F/F/F', 'F'],
+    }),
+    'DM3-diamond-own-redef': probe(`package DM3 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          attribute extra2 : ScalarValues::Real default = 0.0;
+          constraint c { load + extra + extra2 <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 0.5; }
+        part def P4 :> P { attribute :>> extra2 = 20.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p : P2; }
+        part def Q4 :> Q { part :>> p : P4; }
+        part def Q3 :> Q2, Q4 { part :>> p; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q3 : Q3;
+      }`, {
+      'DM3::P::c': ['T/T/T/T', 'T'],
+      'DM3::P::c in DM3::P2': ['T/T/T/T', 'T'],
+      'DM3::P::c in DM3::P4': ['F/F/F/F', 'F'],
+      'DM3::P::c in DM3::Q::p': ['T/T/T/T', 'T'],
+      'DM3::P::c in DM3::q1::p': ['T/T/T/T', 'T'],
+      'DM3::P::c in DM3::Q2::p': ['T/T/T/T', 'T'],
+      'DM3::P::c in DM3::Q3::p': ['?/?/?/?', 'F'],
+      'DM3::P::c in DM3::q3::p': ['?/?/?/?', 'F'],
+      'DM3::P::c in DM3::Q4::p': ['F/F/F/F', 'F'],
+    }),
+    'DM4-diamond-groups': probe(`package DM4 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          attribute extra2 : ScalarValues::Real default = 0.0;
+          constraint c { load + extra + extra2 <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 0.5; }
+        part def P4 :> P { attribute :>> extra2 = 20.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p : P2; }
+        part def Q4 :> Q { part :>> p : P4; }
+        part def Q3 :> Q2, Q4;
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2 { attribute :>> L = 2.0; }
+        part q4 : Q4 { attribute :>> L = 2.0; }
+        part q3 : Q3;
+      }`, {
+      'DM4::P::c': ['T/T/T/T', 'T'],
+      'DM4::P::c in DM4::P2': ['T/T/T/T', 'T'],
+      'DM4::P::c in DM4::P4': ['F/F/F/F', 'F'],
+      'DM4::P::c in DM4::Q::p': ['T/T/T/T', 'T'],
+      'DM4::P::c in DM4::q1::p': ['T/T/T/T', 'T'],
+      'DM4::P::c in DM4::Q2::«PartUsage»': ['T/T/T/T', 'T'],
+      'DM4::P::c in DM4::q2::p': ['T/T/T/T', 'T'],
+      'DM4::P::c in DM4::Q3::p': ['?/?/?/?', 'F'],
+      'DM4::P::c in DM4::q3::p': ['?/?/?/?', 'F'],
+      'DM4::P::c in DM4::Q4::«PartUsage»': ['F/F/F/F', 'F'],
+      'DM4::P::c in DM4::q4::p': ['F/F/F/F', 'F'],
+    }),
+    'DN1-multi-typed': probe(`package DN1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          attribute extra2 : ScalarValues::Real default = 0.0;
+          constraint c { load + extra + extra2 <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 0.5; }
+        part def P4 :> P { attribute :>> extra2 = 20.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def Q2 :> Q { part :>> p : P2; }
+        part def Q4 :> Q { part :>> p : P4; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q3 : Q2, Q4;
+      }`, {
+      'DN1::P::c': ['T/T/T/T', 'T'],
+      'DN1::P::c in DN1::P2': ['T/T/T/T', 'T'],
+      'DN1::P::c in DN1::P4': ['F/F/F/F', 'F'],
+      'DN1::P::c in DN1::Q::p': ['T/T/T/T', 'T'],
+      'DN1::P::c in DN1::q1::p': ['T/T/T/T', 'T'],
+      'DN1::P::c in DN1::Q2::p': ['T/T/T/T', 'T'],
+      'DN1::P::c in DN1::q3::p': ['?/?/?/?', 'F'],
+      'DN1::P::c in DN1::Q4::p': ['F/F/F/F', 'F'],
+    }),
+    'DN2-nested-diamond': probe(`package DN2 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          attribute extra2 : ScalarValues::Real default = 0.0;
+          constraint c { load + extra + extra2 <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R { part q : Q; }
+        part def R1 :> R { part :>> q { part :>> p { attribute :>> extra = 0.5; } } }
+        part def R2 :> R { part :>> q { part :>> p { attribute :>> extra2 = 20.0; } } }
+        part def R3 :> R1, R2;
+        part r0 : R { part :>> q { attribute :>> L = 2.0; } }
+        part r3 : R3;
+      }`, {
+      'DN2::P::c': ['T/T/T/T', 'T'],
+      'DN2::P::c in DN2::Q::p': ['T/T/T/T', 'T'],
+      'DN2::P::c in DN2::R::q::p': ['T/T/T/T', 'T'],
+      'DN2::P::c in DN2::r0::q::p': ['T/T/T/T', 'T'],
+      'DN2::P::c in DN2::R1::q::p': ['T/T/T/T', 'T'],
+      'DN2::P::c in DN2::R2::q::p': ['F/F/F/F', 'F'],
+      'DN2::P::c in DN2::R3::q::p': ['?/?/?/?', 'F'],
+      'DN2::P::c in DN2::r3::q::p': ['?/?/?/?', 'F'],
+    }),
+    'CI1-clash-nogroup': probe(`package CI1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 9.5; }
+        part def Q {
+          attribute X : ScalarValues::Real default = 0.0;
+          part p : P;
+          bind p.extra = X;
+        }
+        part def Q2 :> Q { part :>> p : P2; }
+        part q3 : Q2;
+        constraint topF { q3.p.extra <= 5.0 }
+      }`, {
+      'CI1::P::c': ['T/T/T/T', 'T'],
+      'CI1::P::c in CI1::P2': ['F/F/F/F', 'F'],
+      'CI1::P::c in CI1::Q2::«PartUsage»': ['?/-/?/-', 'F'],
+      'CI1::P::c in CI1::Q2::p': ['-/?/-/?', 'F'],
+      'CI1::topF': ['?/?/?/?', 'F'],
+    }),
+    'CI2-clash-onegroup': probe(`package CI2 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 9.5; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute X : ScalarValues::Real default = 0.0;
+          part p : P;
+          bind p.load = L;
+          bind p.extra = X;
+        }
+        part def Q2 :> Q { part :>> p : P2; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2 { attribute :>> L = 3.0; }
+        constraint topF { q2.p.load + q2.p.extra <= 10.0 }
+      }`, {
+      'CI2::P::c': ['T/T/T/T', 'T'],
+      'CI2::P::c in CI2::P2': ['F/F/F/F', 'F'],
+      'CI2::P::c in CI2::Q::p': ['T/T/T/T', 'T'],
+      'CI2::P::c in CI2::q1::p': ['T/T/T/T', 'T'],
+      'CI2::P::c in CI2::Q2::«PartUsage»': ['?/?/?/?', 'F'],
+      'CI2::P::c in CI2::q2::p': ['?/?/?/?', 'F'],
+      'CI2::topF': ['?/?/?/?', 'F'],
+    }),
+    'CH1-clash-default': probe(`package CH1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra default = 9.5; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute X : ScalarValues::Real default = 0.0;
+          part p : P;
+          bind p.load = L;
+          bind p.extra = X;
+        }
+        part def Q2 :> Q { part :>> p : P2; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2 { attribute :>> L = 3.0; }
+        part q3 : Q2;
+      }`, {
+      'CH1::P::c': ['T/T/T/T', 'T'],
+      'CH1::P::c in CH1::P2': ['F/F/F/F', 'F'],
+      'CH1::P::c in CH1::Q::p': ['T/T/T/T', 'T'],
+      'CH1::P::c in CH1::q1::p': ['T/T/T/T', 'T'],
+      'CH1::P::c in CH1::Q2::«PartUsage»': ['?/?/?/?', '?'],
+      'CH1::P::c in CH1::q2::p': ['?/?/?/?', '?'],
+      'CH1::P::c in CH1::q3::p': ['?/?/?/?', '?'],
+    }),
+    'CH2-clash-value': probe(`package CH2 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute extra : ScalarValues::Real default = 0.0;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def P2 :> P { attribute :>> extra = 9.5; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute X : ScalarValues::Real default = 0.0;
+          part p : P;
+          bind p.load = L;
+          bind p.extra = X;
+        }
+        part def Q2 :> Q { part :>> p : P2; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2 { attribute :>> L = 3.0; }
+        part q3 : Q2;
+      }`, {
+      'CH2::P::c': ['T/T/T/T', 'T'],
+      'CH2::P::c in CH2::P2': ['F/F/F/F', 'F'],
+      'CH2::P::c in CH2::Q::p': ['T/T/T/T', 'T'],
+      'CH2::P::c in CH2::q1::p': ['T/T/T/T', 'T'],
+      'CH2::P::c in CH2::Q2::«PartUsage»': ['?/?/?/?', 'F'],
+      'CH2::P::c in CH2::q2::p': ['?/?/?/?', 'F'],
+      'CH2::P::c in CH2::q3::p': ['?/?/?/?', 'F'],
+    }),
+    // Found by the review of O2 S1: the guard compared the features a reading reads, not the feature a
+    // REFERENCE stands for, nor what a part bound to another reads. X15b: q2's p refers to ra (k = 50) where
+    // Q's p refers to rb — the same R::x read through another feature; O2 S2 reads it in q2's p (F). X17: `ref
+    // part :>> r = s` written in Q's p is Q's `s`, resolved once where it is written, and q2's p reads q2's `s`
+    // (k = 50); X19: Q2 types its `s` by R2 (k = 50). Z1: q1's `s` is Q's `s`, but Q binds its k to K and q1
+    // sets K = 50. Each such instance read T on all four surfaces where it is F; the guard re-reads the
+    // reference at the instance and has it abstain. X18 and X24: `bind p.r = s` binds a PART, and every row
+    // read r.x as R's own x (2) — X24's own row T where Q's s has k = 50 (F); no per-instance reading carries a
+    // bound part, so the group is refused whole, its own row included. X9: the context row of q2's own p read
+    // T through a memo entry its group row left (A-L2); q2's row is now read in q2's p, once (F). X11: q2's p
+    // redefines the relation itself; P's c is not read there (what such a redefinition means for P's c is not
+    // decided).
+    'X15b-ref-at-instance': probe(`package X15b {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part ra : R { attribute :>> k = 50.0; }
+        part rb : R { attribute :>> k = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { ref part :>> r default = rb; } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { ref part :>> r = ra; } }
+      }`, {
+      'X15b::P::c': ['T/T/T/T', 'T'],
+      'X15b::P::c in X15b::Q::p': ['T/T/T/T', 'T'],
+      'X15b::P::c in X15b::q1::p': ['T/T/T/T', 'T'],
+      'X15b::P::c in X15b::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'X17-ref-sibling': probe(`package X17 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R; part p : P { ref part :>> r = s; } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> s { attribute :>> k = 50.0; } }
+      }`, {
+      'X17::P::c': ['T/T/T/T', 'T'],
+      'X17::P::c in X17::Q::p': ['T/T/T/T', 'T'],
+      'X17::P::c in X17::q1::p': ['T/T/T/T', 'T'],
+      'X17::P::c in X17::q2::p': ['?/?/?/?', 'F'],
+    }),
+    'X19-ref-sibling-spec': probe(`package X19 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def R2 :> R { attribute :>> k = 50.0; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R; part p : P { ref part :>> r = s; } bind p.load = L; }
+        part def Q2 :> Q { part :>> s : R2; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q2;
+      }`, {
+      'X19::P::c': ['T/T/T/T', 'T'],
+      'X19::P::c in X19::Q::p': ['T/T/T/T', 'T'],
+      'X19::P::c in X19::Q2::p': ['?/?/?/?', 'F'],
+      'X19::P::c in X19::q1::p': ['T/T/T/T', 'T'],
+      'X19::P::c in X19::q2::p': ['?/?/?/?', 'F'],
+    }),
+    'Z1-ref-target-bound': probe(`package Z1 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          attribute K : ScalarValues::Real default = 1.0;
+          part s : R;
+          part p : P { ref part :>> r = s; }
+          bind p.load = L;
+          bind s.k = K;
+        }
+        part q1 : Q { attribute :>> K = 50.0; }
+      }`, {
+      'Z1::P::c': ['T/T/T/T', 'T'],
+      'Z1::P::c in Z1::Q::p': ['T/T/T/T', 'T'],
+      'Z1::P::c in Z1::q1::p': ['?/?/?/?', 'F'],
+    }),
+    'X18-bind-ref': probe(`package X18 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R; part p : P; bind p.r = s; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> s { attribute :>> k = 50.0; } }
+      }`, {
+      'X18::P::c': ['T/T/T/T', 'T'],
+      'X18::P::c in X18::Q::p': ['?/?/?/?', 'T'],
+    }),
+    'X24-bind-ref-valued': probe(`package X24 {
+        part def R { attribute k : ScalarValues::Real default = 1.0; attribute x : ScalarValues::Real = 2.0 * k; }
+        part def P { attribute load : ScalarValues::Real default = 1.0; ref part r : R; constraint c { load + r.x <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part s : R { attribute :>> k = 50.0; } part p : P; bind p.r = s; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+      }`, {
+      'X24::P::c': ['T/T/T/T', 'T'],
+      'X24::P::c in X24::Q::p': ['?/?/?/?', 'F'],
+    }),
+    'X9-sub-value-reads': probe(`package X9 {
+        part def S { attribute v : ScalarValues::Real default = 1.0; attribute w : ScalarValues::Real = 2.0 * v; }
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          part sub : S;
+          attribute extra : ScalarValues::Real = sub.w;
+          constraint c { load + extra <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { part :>> p { part :>> sub { attribute :>> v = 50.0; } } }
+      }`, {
+      'X9::P::c': ['T/T/T/T', 'T'],
+      'X9::P::c in X9::Q::p': ['T/T/T/T', 'T'],
+      'X9::P::c in X9::q1::p': ['T/T/T/T', 'T'],
+      'X9::P::c in X9::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'X11-constraint-redef': probe(`package X11 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> L = 50.0; part :>> p { constraint :>> c { load <= 100.0 } } }
+      }`, {
+      'X11::P::c': ['T/T/T/T', 'T'],
+      'X11::P::c in X11::Q::p': ['T/T/T/T', 'T'],
+      'X11::P::c in X11::q1::p': ['T/T/T/T', 'T'],
+      'X11::P::c in X11::q2::p': ['?/?/?/?', null],
+      'X11::q2::«PartUsage»::«ConstraintUsage»': ['T/-/?/-', 'T'],
+      'X11::q2::p::c': ['-/T/-/T', 'T'],
+    }),
     chain33: probe(bindingChain(33), {
       'Deep::deepNegT': ['?/?/T/T', 'T'],
       'Deep::deepPosF': ['?/?/F/?', 'F'],
@@ -4448,6 +5397,91 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'DP32::negT': ['T/T/T/T', 'T'],
       'DP32::posF': ['F/F/F/F', 'F'],
     }),
+    // CAP1 (the 2026-10-14 review, A-C3): chainPkg33 plus `bind Y = top.a.….a.load` read in the package, over
+    // `Y default = 1.0`. T1's binding is past the segment cap, and the package's second binding carried its
+    // value on: Y's default and the load's fall-through were read there as two defaults that agree, so Y and
+    // the load stood at 1 — yT and negT F/F/F/X, yF and posF T/T/T/X, where Y is 50 and m2 is −40. The cap
+    // reaches every binding joined to the capped one (O2 S3): the check and the literal engine abstain, the
+    // numeric and SMT lanes solve the bindings and decide. It sits beside chainPkg33, the cap's pin here;
+    // P4's others are the 33-level chain unit test (CAP1 is pinned beside it too) and r4cap, out of tree.
+    cap1: probe(
+      bindingChainPkg(33)
+        .replace('package DP33 {', 'package CAP1 {')
+        .replace(
+          /\n}$/,
+          [
+            '',
+            '  attribute Y : ScalarValues::Real default = 1.0;',
+            `  bind Y = top.${Array.from({ length: 33 }, () => 'a').join('.')}.load;`,
+            '  constraint yT { Y >= 40.0 }',
+            '  constraint yF { Y <= 5.0 }',
+            '}',
+          ].join('\n'),
+        ),
+      {
+        'CAP1::negT': ['?/?/T/T', 'T'],
+        'CAP1::posF': ['?/?/F/?', 'F'],
+        'CAP1::yT': ['?/?/T/T', 'T'],
+        'CAP1::yF': ['?/?/F/?', 'F'],
+      },
+    ),
+    // CAPU2 (the review of O2 S3): chainPkg33 plus U's own `bind a.load = M` on its `part a : T0`. Both U's end
+    // and T1's capped one redefine T0's load, and joined through it U's binding was held past T1's cap: M and
+    // the load were free to the numeric lane, which solved `u.a.load == 9.0` as a design equation and refuted
+    // c2–c4 at 9 (the app's Solve: infeasible), where u's load and M are U's default of 1. A binding joins a
+    // capped one only through another binding's end.
+    capu2: probe(
+      bindingChainPkg(33)
+        .replace('package DP33 {', 'package CAPU2 {')
+        .replace(
+          /\n}$/,
+          [
+            '',
+            '  part def U { part a : T0; attribute M : ScalarValues::Real default = 1.0; bind a.load = M; }',
+            '  part u : U;',
+            '  constraint c1 { u.a.load == 9.0 }',
+            '  constraint c2 { u.a.load <= 5.0 }',
+            '  constraint c3 { u.M <= 5.0 }',
+            '  constraint c4 { u.a.m2 >= 5.0 }',
+            '}',
+          ].join('\n'),
+        ),
+      {
+        'CAPU2::negT': ['?/?/T/T', 'T'],
+        'CAPU2::posF': ['?/?/F/?', 'F'],
+        'CAPU2::c1': ['F/F/F/F', 'F'],
+        'CAPU2::c2': ['T/T/T/T', 'T'],
+        'CAPU2::c3': ['T/T/T/T', 'T'],
+        'CAPU2::c4': ['T/T/T/T', 'T'],
+      },
+    ),
+    // CAPU4 (the same review; at 5943654 too): a shallow `part s : T1;` beside the capped chain. T1's binding
+    // is past the cap, so s's L and its a's load are held at T1's default of 1 and read by no surface — but
+    // the numeric lane read them as a design freedom: c1 `s.a.load == 9.0` was satisfied by construction,
+    // and c2 and c3 refuted at that 9. A value held past a cap that no binding carries from a stated value
+    // is no freedom: every surface abstains.
+    capu4: probe(
+      bindingChainPkg(33)
+        .replace('package DP33 {', 'package CAPU4 {')
+        .replace(
+          /\n}$/,
+          [
+            '',
+            '  part s : T1;',
+            '  constraint c1 { s.a.load == 9.0 }',
+            '  constraint c2 { s.a.load <= 5.0 }',
+            '  constraint c3 { s.L <= 5.0 }',
+            '}',
+          ].join('\n'),
+        ),
+      {
+        'CAPU4::negT': ['?/?/T/T', 'T'],
+        'CAPU4::posF': ['?/?/F/?', 'F'],
+        'CAPU4::c1': ['?/?/?/?', 'F'],
+        'CAPU4::c2': ['?/?/?/?', 'T'],
+        'CAPU4::c3': ['?/?/?/?', 'T'],
+      },
+    ),
     'h2-bodyspec-plain': probe(`package H2BP {
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
         part def Q { attribute L : ScalarValues::Real; part p : P; }
@@ -4705,6 +5739,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part r0 : R;
       }`, {
       'EnclW4::P::c': ['T/T/T/T', 'T'],
+      // R's q's binding reaches into its p, an end copy of Q's p: P's c is read per instance of Q's p — the
+      // three in R's q abstain (r's is F: L = 50), where no row of them existed before (O2 S4); reading them
+      // at the instance is O6 S4's (E7).
+      'EnclW4::P::c in EnclW4::Q::p': ['T/T/T/T', 'T'],
+      'EnclW4::P::c in EnclW4::R::q::p': ['?/?/?/T', 'T'],
+      'EnclW4::P::c in EnclW4::r::q::p': ['?/?/?/?', 'F'],
+      'EnclW4::P::c in EnclW4::r0::q::p': ['?/?/?/?', 'T'],
       'EnclW4::R::rc': ['?/?/T/T', 'T'],
       'EnclW4::R::rc in EnclW4::r': ['?/?/?/?', 'F'],
     }),
@@ -4989,6 +6030,130 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'C1::wF': ['F/F/F/F', 'F'],
       'C1::wT': ['T/T/T/T', 'T'],
     }),
+    // The branch review of O2: a reading shared among instances read alike (O2 S5) took a value the memo had
+    // worked out for another relation without the questions it was worked out with, so it recorded none, and
+    // every other instance took its verdict. Sh1: `m <= 1000.0` works q1's m (4) out first; `m <= 10.0` then
+    // read q2's p at that 4 and held, on all four surfaces bar SMT, whose refutation at 100 the same-point gate
+    // demoted (I13). Sh4b: the same through Q's own relation over `p.m`, declared first. TREE+e: tree10's tree
+    // (the unit test's TREE) with `e`, a copy of `d`: e read m2 = 9 at every instance where d read −40 (I12).
+    'sh1-memo-two-relations': probe(`package Sh1 {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m : ScalarValues::Real = load * 2.0;
+          constraint c1 { m <= 1000.0 }
+          constraint c2 { m <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> L = 50.0; }
+      }`, {
+      'Sh1::P::c1': ['T/T/T/T', 'T'],
+      'Sh1::P::c1 in Sh1::Q::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c1 in Sh1::q1::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c1 in Sh1::q2::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c2': ['T/T/T/T', 'T'],
+      'Sh1::P::c2 in Sh1::Q::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c2 in Sh1::q1::p': ['T/T/T/T', 'T'],
+      'Sh1::P::c2 in Sh1::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'sh4b-owned-reader-first': probe(`package Sh4b {
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P;
+          bind p.load = L;
+          constraint cq { p.m <= 1000.0 }
+        }
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m : ScalarValues::Real = load * 2.0;
+          constraint c2 { m <= 10.0 }
+        }
+        part q1 : Q { attribute :>> L = 2.0; }
+        part q2 : Q { attribute :>> L = 50.0; }
+      }`, {
+      'Sh4b::Q::cq': ['T/T/T/T', 'T'],
+      'Sh4b::Q::cq in Sh4b::q1': ['T/T/T/T', 'T'],
+      'Sh4b::Q::cq in Sh4b::q2': ['T/T/T/T', 'T'],
+      'Sh4b::P::c2': ['T/T/T/T', 'T'],
+      'Sh4b::P::c2 in Sh4b::Q::p': ['T/T/T/T', 'T'],
+      'Sh4b::P::c2 in Sh4b::q1::p': ['T/T/T/T', 'T'],
+      'Sh4b::P::c2 in Sh4b::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'tree-e': probe(
+      `package T {
+        part def T0 {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute m2 : ScalarValues::Real = 10.0 - load;
+          constraint c { load <= 10.0 }
+          constraint d { m2 >= 0.0 }
+          constraint e { m2 >= 0.0 }
+        }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; part b : T0; bind a.load = L; bind b.load = L; }
+        part def T2 { attribute L : ScalarValues::Real default = 1.0; part a : T1; part b : T1; bind a.L = L; bind b.L = L; }
+        part def T3 { attribute L : ScalarValues::Real default = 1.0; part a : T2; part b : T2; bind a.L = L; bind b.L = L; }
+        part top : T3 { attribute :>> L = 50.0; }
+        part mid : T3 { attribute :>> L = 7.0; }
+      }`,
+      // Each instance of T1's a and b reads the L of the root it is in: T2's and T3's own default 1, top's 50,
+      // mid's 7. Under top, load is 50 (> 10) and m2 is −40 (< 0): c, d and e are violated there, and hold
+      // everywhere else (load 1 or 7, m2 9 or 3).
+      Object.fromEntries(
+        ['c', 'd', 'e'].flatMap((rel) => [
+          [`T::T0::${rel}`, ['T/T/T/T', 'T']],
+          ...['a', 'b'].flatMap((g) => [
+            [`T::T0::${rel} in T::T1::${g}`, ['T/T/T/T', 'T']],
+            ...['T2', 'T3', 'top', 'mid'].flatMap((root) =>
+              (root === 'T2' ? ['a', 'b'] : ['a::a', 'a::b', 'b::a', 'b::b']).map((path) => [
+                `T::T0::${rel} in T::${root}::${path}::${g}`,
+                root === 'top' ? ['F/F/F/F', 'F'] : ['T/T/T/T', 'T'],
+              ]),
+            ),
+          ]),
+        ]),
+      ) as Record<string, [string, Ref]>,
+    ),
+    // A-H1 through a DERIVED value (the branch review of O2): the unit-aware reading, which judges a body before
+    // the scalar one, has no rule for an enclosing assert, and derived R1D's `s = load + x` in q1's p at x's
+    // default, past q1's `assert constraint tie { p.x == 50.0 }` — `cd in q1::p` held at s = 5 where `c` over
+    // `load + x` abstains (refute-r1), and so did the package's `topd` over `q1.p.s`. Every reading of it
+    // abstains now, as A.2.4 has it. Sh7: the same in a tree, the assert in top's `part :>> b`, over `m = load *
+    // k`. The SMT `inconsistent-axioms` is refute-r1's (I7): one variable for x, with no instance split (H5).
+    'refute-r1d': probe(`package R1D {
+        part def P {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute x : ScalarValues::Real default = 2.0;
+          attribute s : ScalarValues::Real = load + x;
+          constraint cd { s <= 10.0 }
+        }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q1 : Q { attribute :>> L = 3.0; assert constraint tie { p.x == 50.0 } }
+        part q2 : Q;
+        constraint topd { q1.p.s <= 10.0 }
+      }`, {
+      'R1D::P::cd': ['T/T/T/X', 'T'],
+      'R1D::P::cd in R1D::Q::p': ['T/T/T/X', 'T'],
+      'R1D::P::cd in R1D::q1::p': ['?/?/?/X', null],
+      'R1D::P::cd in R1D::q2::p': ['T/T/T/X', 'T'],
+      'R1D::q1::tie': ['F/-/F/-', null],
+      'R1D::topd': ['?/?/T/X', null],
+    }),
+    'sh7-tree-assert-derived': probe(`package Sh7 {
+        part def T0 {
+          attribute load : ScalarValues::Real default = 1.0;
+          attribute k : ScalarValues::Real default = 1.0;
+          attribute m : ScalarValues::Real = load * k;
+          constraint c { m <= 10.0 }
+        }
+        part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind a.load = L; }
+        part def T2 { attribute L : ScalarValues::Real default = 1.0; part b : T1; bind b.L = L; }
+        part top : T2 { attribute :>> L = 5.0; part :>> b { assert constraint { a.k == 50.0 } } }
+      }`, {
+      'Sh7::T0::c': ['T/T/T/X', 'T'],
+      'Sh7::T0::c in Sh7::T1::a': ['T/T/T/X', 'T'],
+      'Sh7::T0::c in Sh7::T2::b::a': ['T/T/T/X', 'T'],
+      'Sh7::T0::c in Sh7::top::b::a': ['?/?/?/X', null],
+      'Sh7::top::«PartUsage»::«ConstraintUsage»': ['F/-/F/-', null],
+    }),
   };
 
   /**
@@ -5064,8 +6229,15 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     ['refute-r1 | R1::P::c', 'q1’s asserted `p.x == 50.0` against x’s default: the default-vs-assert semantics is open (H5)'],
     ['refute-r1 | R1::top1', 'the same; the check abstains (an enclosing assert, F5)'],
     ['refute-r1 | R1::P::c in R1::Q::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
-    ['refute-r1 | R1::P::c in R1::q1::p', 'the same q1 assert beside the group row read in q1’s p'],
     ['refute-r1 | R1::P::c in R1::q2::p', 'q1’s assert contradicts x’s default, so the group’s axioms are inconsistent together'],
+    // refute-r1's clash, read through a derived value (the branch review of O2): each of these rows is T under
+    // either reading of H5 — none is q1's p, nor top's b's a — and each will leave with refute-r1's (O5 S3).
+    ...['R1D::P::cd', 'R1D::P::cd in R1D::Q::p', 'R1D::P::cd in R1D::q2::p', 'R1D::topd'].map(
+      (row) => [`refute-r1d | ${row}`, 'refute-r1’s clash: q1’s asserted `p.x == 50.0` against x’s default, one SMT variable for x (H5)'] as const,
+    ),
+    ...['Sh7::T0::c', 'Sh7::T0::c in Sh7::T1::a', 'Sh7::T0::c in Sh7::T2::b::a'].map(
+      (row) => [`sh7-tree-assert-derived | ${row}`, 'refute-r1’s clash in a tree: top’s b’s asserted `a.k == 50.0` against k’s default (H5)'] as const,
+    ),
     ...['D1P::at30', 'D1P::atL'].map(
       (row) =>
         [
@@ -5165,6 +6337,54 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     const keys = beside.map((r) => `${r.name} | ${r.row}`);
     expect(keys.filter((k) => !I7_ALLOWED.has(k))).toEqual([]);
     expect([...I7_ALLOWED.keys()].filter((k) => !keys.includes(k))).toEqual([]);
+  });
+
+  withZ3('I8: no engine reads one name both proved and refuted', () => {
+    expect([...bothWays].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+  });
+
+  withZ3('I9: no engine files one name twice', () => {
+    expect([...twice].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+  });
+
+  withZ3('I11: a row shared among instances read alike is the row the instance’s own reading gives', () => {
+    expect([...unshared].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+  });
+
+  withZ3('I12: a relation and its verbatim copy give the same rows', () => {
+    expect([...copied].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+    // Not vacuous: the copies of every probe's own one-line relations were compared.
+    expect(copiedRelations).toBeGreaterThan(150);
+  });
+
+  /**
+   * I13's exceptions, `probe | row` → reason: an instance row the SMT engine refutes with nothing freed — the
+   * witness must then be the model's own point — while the check reads that point otherwise; the same-point
+   * gate demotes the SMT row to `inconclusive` ("witness not confirmed: with nothing freed …"). Listed exactly.
+   */
+  const SAME_POINT_DEMOTED = new Map<string, string>();
+  withZ3('I13: an SMT refutation with nothing freed against the check’s verdict only where listed', () => {
+    const demoted = each().filter(
+      (r) =>
+        r.got !== undefined &&
+        r.row.includes(' in ') &&
+        decided(r.got.verdicts[0]) &&
+        r.got.verdicts[3] === '?' &&
+        r.got.why[3].includes('witness not confirmed: with nothing freed'),
+    );
+    const keys = demoted.map((r) => `${r.name} | ${r.row}`);
+    expect(keys.filter((k) => !SAME_POINT_DEMOTED.has(k))).toEqual([]);
+    expect([...SAME_POINT_DEMOTED.keys()].filter((k) => !keys.includes(k))).toEqual([]);
+  });
+
+  // PI-1: a usage-owned relation's one other instance (pi1-r17's q1::p) was refuted by verify while
+  // `sysml-check --strict` printed "OK, 0 findings" and exited 0, so nothing gating on it could block.
+  withZ3('I10: check ≡ verify — sysml-check is never silent on a row verify refutes', () => {
+    expect([...unreported].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+    // Not vacuous: the table holds refuted rows of every kind I10 names.
+    const refutedRows = each().filter((r) => r.got && (r.got.verdicts[1] === 'F' || r.got.verdicts[3] === 'F'));
+    expect(refutedRows.filter((r) => !r.row.includes(' in ')).length).toBeGreaterThan(0);
+    expect(refutedRows.filter((r) => r.row.includes(' in ')).length).toBeGreaterThan(0);
   });
 });
 

@@ -3053,31 +3053,34 @@ never the model's own. The reach is every value linked to the missed equation,
 not only those the miss moves, so a non-converged solve may withhold more than
 it had to.
 
-**A `default` a binding overrides gives way on every surface, but only two of
-them read the bound value.** The numeric surface and the solver lane read `bind
-p.load = L` over `load default = 1.0` as q's L (decision 10), along a chain of
-bindings and where a context redefines the bound end with a default of its own;
-the default is no axiom, and `--with-values` re-pins nothing of it. The check
-and the literal engine never read a value through a binding — as for any
-valueless feature a binding holds — so a relation over one is *could not be
-evaluated* there, and the SMT engine, which re-reads a witness through the
-check, cannot confirm a refutation over it (`q.p.m2 >= 0.0` at −40 stays
-`inconclusive`, never `refuted`). Reading q's p's load as q's L there needs the
-check to read a value per instance through a usage it shares (`Q::p` is every
-Q's p), which it cannot do for a redefinition's value over an outer name
-either. The same gap leaves P's own constraint (`load <= 10.0`) unasked in q's
-p, an instance no context names: its reading in `Q::p` is Q's own p's and is
-refused (`not-evaluable`) rather than proved for every Q's p, and P's own
-reading stands for P's own values. A constraint of Q itself over p's load is
-read in q, as over any value q changes. Whether a default gives way is decided per FEATURE, over every context
-a binding holds in: one that gives way in one context is read in none, so
-where `q1 : Q` sets the valueless L that P's load is bound to, a `q2 : Q` that
-leaves L unset reads no load at all rather than P's default. Two defaults
-bound to each other stand only where they state one constant value (numbers,
-booleans or expressions that read no name, compared exactly) and give way
-otherwise — where they differ, and where one reads a name, however alike the
-text (`2.0 * K` bound to `2.0 * K` is two values where the Ks differ) — and
-the model states neither, so no surface calls that a contradiction.
+**A `default` a binding overrides gives way on every surface, and every
+surface reads the bound value.** The numeric surface and the solver lane read
+`bind p.load = L` over `load default = 1.0` as q's L at the path (decision 10),
+along a chain of bindings and where a context redefines the bound end with a
+default of its own; the default is no axiom, and `--with-values` re-pins
+nothing of it. The check and the literal engine read it per instance: q's p is
+the instance the binding carries q's L into, and a relation over its load reads
+q's L there, in a sentence naming the binding it came through (`load = 50 in
+q::p, its L q::L through q's bind`). `q.p.m2 >= 0.0` at −40 is violated on the
+check and refuted by the literal and SMT engines, the SMT refutation confirmed
+on the numeric surface. P's own constraint (`load <= 10.0`) is read in the
+usage `Q::p` once per instance — Q's own p (`P::c in Q::p (Q's own)` on the
+verify lane) and each other instance, q's p included — so an instance that
+breaks it is reported against that instance; P's own reading stands for P's
+own values. A constraint of Q itself over p's load is read in q, as over any
+value q changes. Whether a default gives way is decided for each instance: a
+literal default still stands in an instance whose own component states no value
+and whose every default is a literal agreeing exactly, so where `q1 : Q` sets
+the valueless L that P's load is bound to, a `q2 : Q` that leaves L unset reads
+P's 1.0. Two defaults bound to each other stand only where they state one
+constant value (numbers, booleans or expressions that read no name, compared
+exactly) and give way otherwise — where they differ, and where one reads a name,
+however alike the text (`2.0 * K` bound to `2.0 * K` is two values where the Ks
+differ) — and the model states neither, so no surface calls that a
+contradiction. An instance the check and the literal engine cannot read — one
+an enclosing `assert` constrains a value of, one past a binding cap, one whose
+own element no single feature stands for — is *could not be evaluated*, in a
+sentence that says why; the USER-GUIDE's binding section lists each case.
 
 **A binding's contradiction is reported where the check decides the two ends
 differ.** A binding against a value written with `=` (P's `load = 1.0` beside

@@ -849,17 +849,20 @@ which carries both values in SI, decides whether they meet. A feature that
 hides P's `m` by its name alone (`attribute m = 20.0 [kg];` with no `:>>`)
 overrides it all the same, and so does the same check. Two values a context
 inherits under one name from two general types (`part def C :> A, B` over A's
-and B's `:>> m`) are read by no surface there; two literal bindings that differ
-are a contradiction reported at C.
+and B's `:>> m`) are read by no surface there, nor through a binding one of
+them is joined to (a `part :>> p : P2` whose P2 writes `:>> extra = 9.5`, under
+Q's `bind p.extra = X`, reads neither 9.5 nor X's default); two literal
+bindings that differ are a contradiction reported at C.
 
 **A binding overrides a `default` as a redefinition does.** `bind p.m = M` in
 `part def Q`, over P's `attribute m default = 18.5 [kg]`, makes p's m Q's M in
 every Q — wherever M has a value of its own: written with `=`, set in a
 context (`part q : Q { attribute :>> M = 20.0 [kg]; }`), or fixed by an
-asserted equation. The numeric surface and the solver lane read `q.p.m` as
-20 kg, and no surface reads the 18.5 kg; the check and the literal engine read
-it as they read any feature a binding holds — with no value of its own, so a
-relation over it is *could not be evaluated* there. The same holds for a
+asserted equation. Every surface reads `q.p.m` as 20 kg, and no surface
+reads the 18.5 kg: the numeric surface and the solver lane at the path `q.p.m`,
+the check and the literal engine in q's p, the instance the binding carries q's
+M into, in a sentence that names the binding the value came through (`q.p.m =
+20 in …::q::p, its M …::q::M through …::q's bind`). The same holds for a
 `default` on a feature the binding names directly (`bind m = M`), for one a
 context writes on the bound end (`part q : Q { part :>> p { attribute :>> m
 default = 30.0 [kg]; } }` against Q's `M = 20.0 [kg]`), and along a chain of
@@ -885,23 +888,91 @@ value, once per instance, as a constraint over a redefined value is. One read in
 a usage (P's `load <= 10.0` in `Q::p`) whose value a binding of Q joins to
 another in a context of Q (q's L) is read for Q's own p — the usage's own
 instance, named `P::c in Q::p (Q's own)` on the verify lane — and again for each
-other instance, q's p included, whose load the binding carries q's L into. The
+other instance, q's p included, whose load the binding carries q's L into. So is
+one where a binding written in or around one instance reaches into it and no
+binding of Q tells the instances apart (`part q2 : Q { attribute E = 20.0; bind
+p.extra = E; }`, or the package's `bind q2.p.extra = E`: q2's p is read in its
+own element, at q2's extra of 20). The
 rows are read apart, each at the value of the instance it names, so an instance
-that breaks the relation is reported against that instance and the check rolls
-them up into one finding. A relation written in such a usage (`part p : P {
-constraint c2 { load <= 10.0 } }` in Q) is read the same way; an `assert` there
-stays an axiom, read for the usage's own instance. A value the partner of a
-binding derives (Q's `L = 2.0 * K`) is read for the bound feature only where
-every instance it stands for reads the partner alike — not for q's p, whose K q
-sets. A binding written in a usage's body to a feature of the definition around
-it (`part q : Q { bind p.load = L; }` in R, over R's L) is read in every
-instance of that definition, so not for r's q where `r : R` sets K. No value is
-read through a binding for any one instance while a binding of the model holds
-in more than 4,096 contexts or more than 32 usages deep, nor through one whose
-end has no instance in a context it holds in (R's nested Q used outside any R).
+that breaks the relation is reported against that instance, and the check rolls
+two or more of them up into one finding; a relation written in the usage itself
+and read for one instance besides the usage's own (`part q1 : Q` and no other)
+has no roll-up, and a violation there is that instance's finding alone — one the
+check could not read there, an info finding of its own. Solve lists an
+instance as a row of its own (`violated inequality: load <= 10.0 in
+R::q1::p`); past five rows of one relation, the violated ones fold into one
+row, and so do the unjudged ones that give one reason or abstain for one cause
+(defaults that differ, no value, a cap) — the first five instances, the count,
+and the first one's sentence, which names that instance. An
+instance whose own element — the most specific one that denotes it — reads a
+name of the relation, or a name that name's value reads, through another feature
+is read in that element, at the instance's own
+values: a redefinition with a value of its own on its path (`part q2 : Q { part
+:>> p { attribute :>> extra = 20.0; } }` reads q2's extra of 20), a specialised
+type (`part :>> p : P2`, for Q2's p and for every Q2 that redefines nothing of
+it), a binding written there, a reference to another part (`ref part :>> r =
+ra`). That row is the element's own reading too: q2's `part :>> p` has no row of
+its own beside it, and each instance is one row under its name. One that
+redefines the relation itself is *could not be evaluated* in that row on every
+surface, and counted *not read* in the roll-up (in a group of one, an info
+finding of its own); so is one where a reference the
+relation is read through stands for another feature than where its value is
+written (`ref part :>> r = s` written in Q's p is Q's `s`, and q2's p reads
+q2's own `s`), or for one a binding reaches into; one whose path inherits a
+name twice, neither feature redefining the other (`part def Q3 :> Q2, Q4` over
+Q2's `part :>> p : P2` and Q4's `part :>> p : P4`, or `part q3 : Q2, Q4`: q3's
+p is P2's and P4's at once, and no one element stands for it); and one whose
+own element states a `default` that an asserted equation of its own constrains
+(`part :>> p { assert constraint { extra == 20.0 } }` over P's `extra default =
+0.0`). An instance row that reads a value an `assert` of an instance around
+it constrains, the package's included, is *could not be evaluated* too, read
+in its own element (`part q2 : Q { part :>> p { … } assert constraint { p.load
+>= 0.5 } }`) or through the usage (`part q1 : Q { assert constraint { p.x ==
+50.0 } }`, or the package's `assert constraint { q1.p.x == 50.0 }`, for q1's
+p's x): neither reading of the instance reads the asserts around it. So is
+one that reads such a value through a value derived from it (P's `s = load +
+x` in `s <= 10.0`), in units or not, and so is a check or literal row of a
+relation outside the instance's rows that reads it there (a package
+constraint over `q1.p.x` or `q1.p.s`); the numeric surface can still read x's
+`default` past such an assert in that one. A relation read through a part a
+binding joins to another (`bind p.r = s`, the relation reading `r.x`) is read
+per instance nowhere, the usage's own row included: that row is *could not be
+evaluated*, as it was before any instance was read. A relation written in such
+a usage (`part p : P { constraint c2 { load <= 10.0 } }` in Q) is read the same
+way; an `assert` there stays an axiom, read for the usage's own instance. A
+value the partner of a binding derives (Q's `L = 2.0 * K`) is read for the bound
+feature only where every instance it stands for reads the partner alike — not
+for q's p, whose K q sets. A binding written in a usage's body to a feature of
+the definition around it (`part q : Q { bind p.load = L; }` in R, over R's L) is
+read in every instance of that definition, so not for r's q where `r : R` sets
+K. No value is read through a binding for any one instance where it holds in
+more than 4,096 contexts or more than 32 usages deep, nor through a binding
+joined to such a one, end to end or through a feature an end redefines (a
+package's `bind Y = top.a.….a.load` beside the `bind a.load = L` 33 usages
+down that gives that load its value: Y's `default` gives way, and the check
+reads no value for Y), nor through one whose end has no instance in a context
+it holds in (R's nested Q used outside any R). A binding joins such a one
+through a feature an end redefines only where that feature is itself another
+binding's end: U's `bind a.load = M` on its own `part a : T0` is not joined to
+T1's capped binding by the T0 `load` both redefine. A value held so, which no
+binding carries from a stated value, is no design freedom to the numeric
+surface either: a relation reading it is *could not be evaluated* there too,
+never solved as a design equation (`s.a.load == 9.0` for a shallow `part s :
+T1` beside the capped chain), and the feasibility search does not move it.
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
-listed, and decided by no surface yet. Against a value
+listed, and decided by no surface yet. A per-instance reading that fails
+inside the tool makes the row it was read for *could not be evaluated*, in a
+sentence naming the failure (`… the per-instance reading failed (RangeError);
+reported, not dropped`; a group's roll-up counts it *not read*), and every
+other row and finding stands. A value a binding carries is read in the unit
+the feature it fills declares — the copy `bind p.load = L` makes of P's `load`
+included — and compared as the quantity it is: q1's `L = 20.0 [kg]` is 20 kg
+against P's `cap = 10000.0 [g]` (violated, on every surface), q2's `L = 5000.0
+[g]` is 5 kg (`load = 5` in the row's sentence), and a bare literal beside it
+is read in `load`'s unit (`load <= 10.0` holds for q2). A value of another
+dimension carried into it (a length into a mass) is compared by no surface.
+Against a value
 written with `=`, a binding is a **contradiction**, as a redefinition is:
 `bind p.m = M` where P writes `m = 18.5 [kg]` and q's M is 20 kg is reported
 violated at the binding (in a context that specialises the binding's owner, at

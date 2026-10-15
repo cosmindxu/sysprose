@@ -1253,13 +1253,13 @@ function solveViolations(model: Model, violations: AnalysisViolation[]): Diagnos
   return out;
 }
 
-/** The unknown rows: a context row says where it stood, the rest the reason (C.3). */
+/** The unknown rows: a context row says where it stood, the rest the reason (C.3); context rows fold by relation and cause (C.2). */
 function solveUnknowns(model: Model, unknowns: AnalysisUnknown[]): Diagnostic[] {
   const out: Diagnostic[] = [];
   const groups = new Map<string, AnalysisUnknown[]>();
   for (const u of unknowns) {
     if (u.context) {
-      const key = `${u.context.baseId}\u0000${u.reason ?? ''}`;
+      const key = `${u.context.baseId}\u0000${u.cause ?? `\u0000${u.reason ?? ''}`}`;
       const list = groups.get(key);
       if (list) list.push(u);
       else groups.set(key, [u]);
@@ -1281,7 +1281,7 @@ function solveUnknowns(model: Model, unknowns: AnalysisUnknown[]): Diagnostic[] 
           id: `solve#unknown#${out.length}`,
           ruleId: 'solve',
           severity: 'info',
-          message: `unjudged ${u.kind}: ${u.expression} in ${solveContextLabel(model, u.context!)}${reason}`,
+          message: `unjudged ${u.kind}: ${u.expression} in ${solveContextLabel(model, u.context!)}${u.reason ? ` — ${u.reason}` : ''}`,
           elementId: u.anchorId ?? u.context!.baseId,
         });
       }
@@ -1400,8 +1400,8 @@ function solveFree(model: Model, free: ElementRef[]): Diagnostic[] {
  * navigable to its underlying feature element).
  *
  * Rows a binding or context reads once per instance (`<id>@<instance>`, C.2)
- * fold: a relation's violations/unknowns fold per (base relation, reason) past
- * five, and an instance's values/freedoms fold per feature past five. v9 has no
+ * fold past five: a relation's violations per relation, its unknowns per (relation,
+ * cause, else reason), an instance's values/freedoms per feature. v9 has no
  * such rows, so its Solve view is byte-identical.
  */
 function analysisDiagnostics(model: Model, report: AnalysisReport): Diagnostic[] {

@@ -27,9 +27,13 @@
  * carries one number for "init plus three checks" and could not tell which half
  * it was. `resetZ3Cache()` exists for this case alone.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { loadModelText } from '@text/load';
+import type { ConstraintCheck } from '@semantics/evaluate-model';
+import { judgeBySmt } from '@semantics/engines/smt';
+import { obligationsOf } from '@semantics/obligations';
 import {
   DEAD_MODULE_MARGIN_MS,
   DEFAULT_TIMEOUT_MS,
@@ -44,6 +48,24 @@ import {
 } from '@semantics/smt/z3-bridge';
 import { encodeRelation, encodeScript, notTerm } from '@semantics/smt/encode';
 import { parseExpr } from '@semantics/expr';
+
+/**
+ * The forged check (planted bug P9): the SMT engine reads the check's sweep
+ * (`checkConstraints`) through this wrapper, which hands it back as the check
+ * gave it unless a case forges it — the point the engine's same-point gate
+ * holds a witness to.
+ */
+const forger = vi.hoisted(() => ({ forge: undefined as undefined | ((checks: ConstraintCheck[]) => ConstraintCheck[]) }));
+vi.mock('@semantics/evaluate-model', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@semantics/evaluate-model')>();
+  return {
+    ...real,
+    checkConstraints: (...args: Parameters<typeof real.checkConstraints>) => {
+      const checks = real.checkConstraints(...args);
+      return forger.forge ? forger.forge(checks) : checks;
+    },
+  };
+});
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8');
 
@@ -537,6 +559,64 @@ describe('a terminated module’s abandoned check does not hold up the next modu
     },
     60_000,
   );
+});
+
+/*
+ * The same-point gate (F5): where the check read a name per instance, a counterexample the solver found is
+ * printed refuted only if it is the check's own point there — the same symbol, the same exact value. The
+ * gate had no test of its own: with it switched off (P9) only two rows of the per-instance table moved. Here
+ * the check's reading of q2's p is forged, and the witness z3 finds (q2's p's load at 20) must no longer be
+ * confirmed by it.
+ */
+describe('a witness that is not the check’s own point confirms nothing (the same-point gate)', () => {
+  afterEach(() => {
+    forger.forge = undefined;
+  });
+  const GROUP = `package SP {
+    part def P { attribute x : ScalarValues::Real default = 3.0; attribute load : ScalarValues::Real default = 1.0; constraint c { load + x <= 10.0 } }
+    part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+    part q1 : Q { attribute :>> L = 2.0; }
+    part q2 : Q { attribute :>> L = 20.0; }
+  }`;
+  /** The SMT outcome and detail of `SP::P::c in SP::q2::p`, with the check's read of q2's p's load forged. */
+  const q2Row = async (z3: Z3Backend, forge?: (read: NonNullable<ConstraintCheck['reads']>[number]) => object) => {
+    const { model } = await loadModelText(GROUP);
+    forger.forge =
+      forge &&
+      ((checks) =>
+        checks.map((c) =>
+          !c.instances
+            ? c
+            : {
+                ...c,
+                instances: c.instances.map((i) =>
+                  i.instance !== 'SP::q2::p'
+                    ? i
+                    : { ...i, reads: (i.reads ?? []).map((r) => (r.path === 'load' ? forge(r) : r)) },
+                ),
+              },
+        ) as ConstraintCheck[]);
+    const results = await judgeBySmt(model!, obligationsOf(model!), { backend: z3 });
+    const row = results.find((r) => r.row.element.qualifiedName === 'SP::P::c in SP::q2::p')!;
+    return [row.judgement.outcome, row.judgement.detail] as const;
+  };
+
+  withZ3('confirms the witness at the check’s own point, and nowhere else', async (z3) => {
+    // Not vacuous: unforged, the counterexample IS the check's point (q2's p's load is 20, 20 + 3 > 10).
+    expect((await q2Row(z3))[0]).toBe('refuted');
+    // Another value at the same symbol.
+    const value = await q2Row(z3, (r) => ({ ...r, value: 21, exact: '21/1' }));
+    expect(value[0]).toBe('witness-unconfirmed');
+    expect(value[1]).toContain("the witness is not the model's point at `load` (20/1 vs 21/1)");
+    // The same value, read at another instance's symbol.
+    const symbol = await q2Row(z3, (r) => ({ ...r, symbol: 'SP::q1::p::load' }));
+    expect(symbol[0]).toBe('witness-unconfirmed');
+    expect(symbol[1]).toContain("the witness is not the model's point at `load` (SP::q2::p::load vs SP::q1::p::load)");
+    // A reading at another path, and none at this one.
+    const none = await q2Row(z3, (r) => ({ ...r, path: 'extra', symbol: 'SP::q2::p::extra' }));
+    expect(none[0]).toBe('witness-unconfirmed');
+    expect(none[1]).toContain('the check reads no value at `load`');
+  });
 });
 
 describe('the absent path is a first-class answer', () => {

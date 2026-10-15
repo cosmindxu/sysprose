@@ -81,17 +81,20 @@ import {
   defaultGivesWayIn,
   defaultGivesWaySomewhere,
   defaultStandsIn,
+  hasPastCapBindings,
   hasStatedValue,
   instanceGroups,
   isAsserted,
   isParameterisedCalculation,
   MAX_INSTANCE_RELATIONS,
+  pastCapEnd,
   relationNamesOf,
   shadowedNamesOf,
   shadowedSentence,
   sharedDefinitions,
   statedValueOf,
   usageOwnedRefusal,
+  type InstanceAbstention,
   type InstanceReading,
 } from './defining-equation';
 import { effectiveNameOf, generalizationsOf } from './inheritance';
@@ -117,6 +120,7 @@ import {
   featuresDefinedBy,
   derivationOf,
   derivedDimensionOf,
+  declaredFacetsOf,
   dimensionalFacets,
   evaluateConstraintQuantityDetailed,
   evaluateQuantity,
@@ -470,6 +474,13 @@ export interface NumericConstraintResult {
    */
   anchorId?: ElementId;
   /**
+   * On an `unknown` {@link context} row that abstained (A.9): why, as a kind
+   * (`SpecialisationInstance.cause` of ./evaluate-model) — the same for every
+   * instance of a relation that abstains for one reason, where each row's
+   * {@link reason} names its own instance. The app's Solve rows fold by it.
+   */
+  cause?: InstanceAbstention;
+  /**
    * Set on a row that is a value the model states twice, not a relation
    * (`ConstraintCheck.conflict` of ./evaluate-model) — a binding connector's
    * two ends among them (`bind`).
@@ -487,7 +498,7 @@ export interface FeasibilityOptions extends SolveOptions {
 
 /** The dimension a feature's magnitude is expressed in, when it has one. */
 function featureDimension(model: Model, id: ElementId, memo: DerivationMemo): Dimension | undefined {
-  const facets = dimensionalFacets(model, id);
+  const facets = declaredFacetsOf(model, id);
   return facets.unitDimension ?? facets.kindDimension ?? derivedDimensionOf(model, id, memo);
 }
 
@@ -641,7 +652,44 @@ function gatherSystem(model: Model, scopeId?: ElementId): GatheredSystem {
   // `assert constraint { sub.x == 10.0 }` made p.sub.x 1).
   const instances = instanceSystem(model, scopeId);
   for (const id of instances.unreadable) unreadable.add(id);
-  return { eqs: [...instances.eqs, ...eqs], unreadable, relationOf };
+  const all = [...instances.eqs, ...eqs];
+  pastCapUnreadable(model, all, unreadable, scopeId);
+  return { eqs: all, unreadable, relationOf };
+}
+
+/**
+ * The variables of `eqs`, and of the inequalities in scope, a binding past a
+ * cap holds ({@link pastCapEnd}) that nothing the model states determines —
+ * added to `unreadable`. Such a feature has a value (its default, or the one
+ * the capped binding gives where this tool does not read it), and no plain
+ * check may fix it, nor the feasibility search move it: read as a design
+ * freedom, CAPU4's `s.a.load == 9.0` (s a T1 beside T1's chain 33 usages
+ * deep) was solved as a design equation, and `s.L <= 5.0` refuted at that 9,
+ * where s's L and load are T1's default of 1; and `r2.L >= 5.0` over R's L
+ * (R's nested Q used outside any R), which only that inequality reads, was
+ * met by moving r2's L and decided feasible, where it is R's default of 1.
+ * One the definitions alone determine over the stated values ({@link
+ * closedByDefinitions}) stays solved: CAP1's Y, bound to the load T1's
+ * binding gives X's 50 there.
+ */
+function pastCapUnreadable(model: Model, eqs: readonly Equation[], unreadable: Set<ElementId>, scopeId?: ElementId): void {
+  if (!hasPastCapBindings(model)) return;
+  const capped = new Set<ElementId>();
+  const read = (vars: readonly ElementId[]): void => {
+    for (const v of vars) if (!unreadable.has(v) && pastCapEnd(model, baseIdOf(v))) capped.add(v);
+  };
+  for (const eq of eqs) read(eq.vars);
+  for (const iq of gatherInequalities(model, scopeId)) read(iq.vars);
+  if (capped.size === 0) return;
+  const stated = new Map<ElementId, number>();
+  const memo: DerivationMemo = new Map();
+  for (const el of model.all()) {
+    if (el.attrs.isLibrary === true) continue;
+    const v = numericSeedOf(model, el, memo);
+    if (v !== undefined) stated.set(el.id, v);
+  }
+  const closed = closedByDefinitions(eqs, definedFeatures(eqs, unreadable), (v) => stated.has(v), stated, unreadable, true);
+  for (const v of capped) if (!stated.has(v) && !closed.has(v)) unreadable.add(v);
 }
 
 /** A predicate selecting elements at/under `scopeId` (or everything when none). */
@@ -3408,7 +3456,7 @@ export function evaluateMoEs(model: Model): MeasureResult[] {
     // from the seed/expression fallbacks below, in whatever unit the author
     // wrote, and a 20 °C magnitude was published as `20 [K]`. So a value the
     // solver did not itself produce is never labelled either.
-    const facets = dimensionalFacets(model, el.id);
+    const facets = declaredFacetsOf(model, el.id);
     const dimension = q?.dimension ?? facets.unitDimension ?? facets.kindDimension;
     const inSI = !unitBlind.has(el.id) && (fromSolver || value === undefined);
     const unit =
@@ -4590,12 +4638,19 @@ function numericRows(
       // after the unit-aware refusals. A verdict that turned on a name that
       // surface reads no value for is undecided in its words.
       const own = read?.byDefinition || !isRefusalReason(detailed.reason);
+      // A value a binding past a cap holds, which nothing stated fixes ({@link
+      // pastCapUnreadable}): the validation surface's sentence names the cap.
+      const capped =
+        body !== undefined &&
+        hasPastCapBindings(model) &&
+        relationVarsOf(body.node, keys).some((id) => !values.has(id) && pastCapEnd(model, baseIdOf(id)));
       // A calculation with a parameter states no value to judge its body against.
       const reason =
         calcValue && isParameterisedCalculation(model, el)
           ? `${el.declaredName} has a parameter, so its body is the value of a call over arguments and no value of its own`
           : own
-            ? (read?.detail ?? (unread.length > 0 ? (checkSentence(el.id) ?? detailed.detail) : detailed.detail))
+            ? (read?.detail ??
+              (unread.length > 0 || capped ? (checkSentence(el.id) ?? detailed.detail) : detailed.detail))
             : detailed.detail;
       if (reason) row.reason = reason;
     } else {
@@ -4779,6 +4834,7 @@ function contextRows(model: Model, checks: readonly ConstraintCheck[]): NumericC
         context: { baseId: c.id, contextId: i.contextId, ...(i.instance !== undefined ? { path: i.instance } : {}) },
         ...(i.instance !== undefined ? { anchorId: anchorFor(model, c, i) } : {}),
         ...(i.result !== 'satisfied' ? { reason: reason(i.detail ?? i.message) } : {}),
+        ...(i.result === 'unknown' && i.cause !== undefined ? { cause: i.cause } : {}),
       });
     }
   }
@@ -4998,7 +5054,8 @@ function solvedQuantityScope(
     const v = values.get(key);
     if (v === undefined || !Number.isFinite(v)) return undefined;
     const id = baseIdOf(key);
-    const facets = dimensionalFacets(model, id);
+    // The unit the solved magnitude is stored in ({@link storageScaleOf}).
+    const facets = declaredFacetsOf(model, id);
     const derived = derivationOf(model, id, memo);
     const dimension = facets.unitDimension ?? facets.kindDimension ?? derived?.derived ?? DIMENSIONLESS;
     const q: Quantity = { magnitude: v, dimension };

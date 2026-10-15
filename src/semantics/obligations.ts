@@ -639,7 +639,18 @@ export function obligationsOf(model: Model, opts: ObligationOptions = {}): Oblig
             ? { reason: 'unread-definition' as const, detail: owned.refusal!.sentence }
             : usageOwnedGoal(model, el, filed.role, relationNamesOf(raw), unread);
     const instances = filed.source !== 'calculation'
-      ? instanceRows(model, el, raw, filed, memo, contract, undefined, groupsByRelation.get(el.id), goalBudget)
+      ? instanceRows(
+          model,
+          el,
+          raw,
+          filed,
+          memo,
+          contract,
+          undefined,
+          groupsByRelation.get(el.id),
+          goalBudget,
+          ownedFits === true ? owned : undefined,
+        )
       : undefined;
     if (filed.source !== 'calculation') read.set(el.id, { el, raw, filed, ...(contract ? { contract } : {}) });
     const sharedWith = instances?.shared[0];
@@ -906,6 +917,7 @@ function instanceRows(
   only?: readonly ElementRecord[],
   groups?: readonly InstanceGroup[],
   goalBudget?: { left: number; max: number },
+  owned?: InstanceGroup,
 ): { rows: Obligation[]; shared: Array<{ context: ElementRecord; vars: ContractVariable[] }> } {
   const body = parseRelationBody(raw);
   if (!body) return { rows: [], shared: [] };
@@ -914,13 +926,28 @@ function instanceRows(
   const sharedOut: Array<{ context: ElementRecord; vars: ContractVariable[] }> = [];
   const definitions = sharedDefinitions(model);
   const groupFor = new Map((groups ?? []).map((g) => [g.usageId, g] as const));
-  for (const context of only ?? definitions.readingContexts(el, names)) {
+  const contexts = only ?? definitions.readingContexts(el, names);
+  // Each expanded group's share of the run's goal budget, taken in the order
+  // its context comes (as the loop below files it): only a group whose rows
+  // are filed reads, in its row for an element's own instance, the relation
+  // in that element (`standsFor`) — whose context row it then is. `owned` is
+  // the relation's own usage's group, when its rows are filed.
+  const fits = new Map<InstanceGroup, boolean>();
+  const standing = new Set<ElementId>(owned?.standsFor?.values() ?? []);
+  for (const context of contexts) {
+    const group = groupFor.get(context.id);
+    if (group === undefined || !group.expanded || filed.role === 'axiom' || !goalBudget) continue;
+    const fit = takeGoalBudget(group, goalBudget, true);
+    fits.set(group, fit);
+    if (fit) for (const id of group.standsFor?.values() ?? []) standing.add(id);
+  }
+  for (const context of contexts) {
     // A shared usage (F7): an expanded group files per-instance GOAL rows; an
     // asserted relation and an unexpanded group keep today's refusal, and a
     // group past the run's goal budget keeps its generic row as the refusal.
     const group = groupFor.get(context.id);
-    if (group !== undefined && group.expanded && filed.role !== 'axiom' && goalBudget) {
-      const fits = takeGoalBudget(group, goalBudget, true);
+    if (group === undefined && standing.has(context.id)) continue;
+    if (group !== undefined && fits.has(group)) {
       out.push(
         ...groupGoalRows(
           model,
@@ -931,7 +958,7 @@ function instanceRows(
           contract,
           group,
           true,
-          fits ? undefined : goalBudgetRefusal(model, el, group, goalBudget.max),
+          fits.get(group) === true ? undefined : goalBudgetRefusal(model, el, group, goalBudget!.max),
         ),
       );
       continue;
@@ -1019,8 +1046,11 @@ function goalBudgetRefusal(model: Model, el: ElementRecord, group: InstanceGroup
  * read in the shared usage `group.usageId` at each instance, filed all-or-
  * nothing against the run's goal budget — the generic row (`{Rel} in {U}
  * ({D}'s own)`, `withGeneric`) and one row per other instance (`{Rel} in
- * {I}`). Each carries the instance's own symbols, so the SMT lane can refute
- * the one instance a binding breaks. An asserted relation files no row here.
+ * {I}`), an instance whose own element reads it otherwise read in that
+ * element (`group.readIn`). Each carries the instance's own symbols, so the
+ * SMT lane can refute the one instance a binding breaks, and reads the
+ * instance's own features where it states them. An asserted relation files no
+ * row here.
  *
  * `refuse` is the group's generic row over the run's budget: it files that one
  * row with the refusal and no instance rows. The caller decides all-or-nothing
@@ -1046,8 +1076,20 @@ function groupGoalRows(
   const relationName = effectiveQualifiedName(model, el.id);
   const out: Obligation[] = [];
   const make = (instance: string, generic: boolean): Obligation | undefined => {
-    const reading = readRelation(model, { ...el, ownerId: usage.id }, raw, memo, undefined, undefined, instance);
-    const encodable = refuse !== undefined && generic ? refuse : unreadAxiom(filed.role, reading.encodable, reading.unread);
+    // An instance whose own element reads the relation otherwise than the
+    // usage is read in that element, over the instance's own symbols
+    // (`group.readIn`); one the coverage guard lists (A.7) is refused, in the
+    // sentence the check abstains with.
+    const readIn = generic ? undefined : group.readIn?.get(instance);
+    const context = readIn ?? usage.id;
+    const reading = readRelation(model, { ...el, ownerId: context }, raw, memo, undefined, undefined, instance);
+    const otherwise = generic ? undefined : group.otherwise?.get(instance);
+    const encodable: Encodable =
+      refuse !== undefined && generic
+        ? refuse
+        : otherwise !== undefined
+          ? { reason: 'unread-definition', detail: otherwise.sentence }
+          : unreadAxiom(filed.role, reading.encodable, reading.unread);
     const element: ContractRef = generic
       ? {
           ...ref(model, el),
@@ -1080,7 +1122,7 @@ function groupGoalRows(
       ...readFields(reading),
       instance: {
         baseId: el.id,
-        contextId: usage.id,
+        contextId: context,
         ...(generic ? {} : { path: instance }),
         ...(contract ? { requirementId: contract.id } : {}),
       },
@@ -1891,8 +1933,12 @@ function instanceValueRow(
   if (name === undefined) return undefined;
   // A `default` a binding holds per FEATURE but which this instance reads as
   // its value (F8, A.4 Part 2): the literal the instance variable stands on.
-  const stand = defaultStandsIn(model, symbol);
   const d = definitions.denote(context.id).get(name);
+  // Two values the context inherits under the name ({@link DefiningEquations.clash}):
+  // the instance reads neither, on any surface — not the default of a binding
+  // partner either, which one of the two overrides (A.2.1).
+  if (d !== undefined && definitions.clash(d.reader, d.feature) !== undefined) return undefined;
+  const stand = defaultStandsIn(model, symbol);
   const read = d ? definitions.valueRef(d) : undefined;
   const source = read?.target ?? (hasStatedValue(model, target) ? target : undefined) ?? stand;
   if (!source) return undefined;
