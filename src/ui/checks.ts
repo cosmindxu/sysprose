@@ -57,8 +57,12 @@ import { reachCheck, behaviourCheck } from './behaviour-checks';
 import type { MarkSummary, ReachMark, EdgeMark, WitnessView } from './behaviour-checks';
 import type { LoadHealth } from './store';
 
-/** What a check says about the model when it has run. */
-export type CheckVerdict = 'not-run' | 'running' | 'holds' | 'issues' | 'undecided' | 'unavailable' | 'stale';
+/**
+ * What a check says about the model when it has run — or, while it runs in the
+ * background, `checking` (the model's text is being parsed, to know whether it
+ * loads) and then `running` (the check itself).
+ */
+export type CheckVerdict = 'not-run' | 'checking' | 'running' | 'holds' | 'issues' | 'undecided' | 'unavailable' | 'stale';
 
 /** One finding, shaped like every other finding in the app. */
 export interface CheckRow {
@@ -519,9 +523,11 @@ export function commandNote(spec: CheckSpec, ctx: CheckContext): string | null {
 
 /**
  * Whether there is a state machine for a {@link CheckSpec.offThread} check to
- * walk. A model with none is answered by the check itself — "No state machine in
- * this model" — in the few milliseconds this scan takes, so the palette answers
- * it on the spot and starts no worker (and loads no second library) to say so.
+ * walk. A model with none is answered by the check itself — "this file declares
+ * no element that owns a transition, so there is no configuration graph to
+ * walk" — in the few milliseconds this scan takes, so the palette answers it on
+ * the spot once its load is known (a text no parse has measured still goes to a
+ * worker for that: `panels/checks-runner.ts`), and sends a worker no walk.
  */
 export const hasStateMachine = (model: Model): boolean => stateMachinesIn(model).length > 0;
 
@@ -566,10 +572,15 @@ export function runCheck(spec: CheckSpec, ctx: CheckContext): CheckResult {
   try {
     return spec.run(ctx);
   } catch (err) {
-    return {
-      verdict: 'issues',
-      summary: 'The check itself failed — this is a defect, not a verdict on the model.',
-      rows: [{ code: 'checks/internal-error', message: err instanceof Error ? err.message : String(err), severity: 'error' }],
-    };
+    return checkThrew(err);
   }
+}
+
+/** What a check that threw `err` says: an `issues` row carrying the message, never a pass. */
+export function checkThrew(err: unknown): CheckResult {
+  return {
+    verdict: 'issues',
+    summary: 'The check itself failed — this is a defect, not a verdict on the model.',
+    rows: [{ code: 'checks/internal-error', message: err instanceof Error ? err.message : String(err), severity: 'error' }],
+  };
 }

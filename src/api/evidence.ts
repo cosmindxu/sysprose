@@ -233,12 +233,12 @@ export function toolVersion(cwd?: string): ToolVersion {
  * THREE THINGS MAKE IT SURVIVE A REPARSE, and all three are load-bearing.
  * **Element ids are replaced by qualified names** (D3 — ids are fresh UUIDs per
  * load). **Elements are sorted by qualified name**, with the canonical
- * serialisation as the tiebreak, because `toJSONWhere` preserves insertion
- * order and a reordered file would otherwise read as a
- * changed model. **Library elements are excluded**, because binding the
- * standard library is not an edit to the reader's model and a digest that moved
- * when the library was bound would call every `--no-library` run a different
- * design.
+ * serialisation as the tiebreak, because `toJSONWhere` lists elements in the
+ * order the load (and any edit since) left them, and a reordered file would
+ * otherwise read as a changed model. **Library elements are excluded**, because
+ * binding the standard library is not an edit to the reader's model and a
+ * digest that moved when the library was bound would call every `--no-library`
+ * run a different design.
  *
  * What it does NOT ignore: anything the author wrote. Change a literal, rename
  * a feature, add a clause, and the digest moves — which is what the stale-record
@@ -266,11 +266,11 @@ export function modelVersionOf(model: Model, sourceText?: string): ModelVersion 
  * looks only at the digest stays green under that mutation. The count of what
  * goes IN is the only thing that reddens, so it is reachable.
  *
- * The sort is on the qualified name FIRST — `toJSONWhere` preserves insertion
- * order, so a reordered file would otherwise read as a changed model. The
- * canonical serialisation is the tiebreak, because two elements can share a
- * qualified name (an unnamed member's is `''`) and a sort that stopped at the
- * name would then be unstable between loads.
+ * The sort is on the qualified name FIRST — `toJSONWhere` lists elements in an
+ * order the load decides, so a reordered file would otherwise read as a
+ * changed model. The canonical serialisation is the tiebreak, because two
+ * elements can share a qualified name (an unnamed member's is `''`) and a sort
+ * that stopped at the name would then be unstable between loads.
  *
  * AND EVIDENCE ITSELF IS NOT PART OF THE DESIGN IT IS ABOUT. This is the
  * fourth exclusion and it arrives with {@link attachEvidence}, because without

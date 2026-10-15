@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as Y from 'yjs';
 import { Model } from '@core/index';
@@ -76,6 +76,8 @@ import {
   initialDriveState,
   lastAppliedText,
   loadHealth,
+  loadHealthAtHand,
+  loadHealthNow,
   mergeLoads,
   openText,
   pageLinks,
@@ -113,9 +115,12 @@ import {
   requirementShortId,
   statementKindOf,
 } from '@semantics/index';
+import { initialSubstate } from '@semantics/mc/config';
 import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
 import { commandById, handlePageKey, handleShortcut, runExportSysml, runSave } from '../../src/ui/commands';
+import { CHECKS, runCheck } from '../../src/ui/checks';
+import { degradedRow } from '../../src/ui/behaviour-checks';
 import { TextEditor } from '../../src/ui/panels/TextEditor';
 
 /** The Drive slice as the module left it on import, before any test touched it. */
@@ -408,6 +413,174 @@ describe('useAppStore — reducers / undo-redo (C12)', () => {
     expect(st().undoStack.length).toBe(undoBefore); // snapshot rolled back
     expect(st().rev).toBe(revBefore); // no mutation
     expect(st().redoStack.length).toBe(1); // redo history NOT destroyed
+  });
+
+  /**
+   * Undo, Redo and Save then Open take the model through a serialised copy, and
+   * a load rebuilds each owner's children from the order that copy lists them
+   * in. Listed in the order they were added, a reparented state came back where
+   * it had been added: the Text view rewrote itself, and a machine with no
+   * `initial` opened in another state (review 2026-10-14 D-2, D's probe d3).
+   */
+  it('Undo, Redo and Save then Open after a reparent give the model back as it was: its text byte for byte, and the states it opens in', async () => {
+    st().importModel(
+      [
+        'package P {',
+        '    part def Machine {',
+        '        state def M {',
+        '            state A;',
+        '            state B;',
+        '            state C;',
+        '            state Work {',
+        '                state Prep;',
+        '                state Run;',
+        '            }',
+        '            transition t1 first A accept go then B;',
+        '        }',
+        '    }',
+        '}',
+        '',
+      ].join('\n'),
+      'sysml',
+    );
+    await whenLibrarySettled();
+    flushRecompute();
+    const named = (name: string) => st().model.all().find((e) => e.declaredName === name)!.id;
+    // Neither the machine nor its composite state names an `initial`: each opens in its first state.
+    const opensIn = () =>
+      ['M', 'Work'].map((owner) => st().model.get(initialSubstate(st().model, named(owner))!)?.declaredName).join(' ');
+    expect(opensIn()).toBe('A Prep');
+    // In the Explorer: A dragged out of the machine and back in, now its last state; C, older than Work, dragged into it.
+    st().reparent(named('A'), named('Machine'));
+    st().reparent(named('A'), named('M'));
+    st().reparent(named('C'), named('Work'));
+    flushRecompute();
+    const moved = st().textBuffer;
+    expect(moved.indexOf('state A;')).toBeGreaterThan(moved.indexOf('state Work'));
+    expect(moved.indexOf('state C;')).toBeGreaterThan(moved.indexOf('state Run;'));
+    expect(opensIn()).toBe('B Prep');
+
+    // An edit after the reparents, undone: the model as it was before the edit, the reparents in it.
+    st().createElement('PartDefinition', named('P'), 'Later');
+    flushRecompute();
+    const edited = st().textBuffer;
+    expect(edited).toContain('part def Later;');
+    st().undo();
+    flushRecompute();
+    expect(st().textBuffer, 'Undo').toBe(moved);
+    expect(opensIn(), 'Undo').toBe('B Prep');
+    st().redo();
+    flushRecompute();
+    expect(st().textBuffer, 'Redo').toBe(edited);
+    expect(opensIn(), 'Redo').toBe('B Prep');
+    st().undo();
+    flushRecompute();
+    expect(st().textBuffer, 'Undo after Redo').toBe(moved);
+
+    await st().saveProject('Reparented');
+    st().newProject('Other');
+    await st().loadProject('Reparented');
+    await whenLibrarySettled();
+    flushRecompute();
+    expect(st().textBuffer, 'Save, then Open').toBe(moved);
+    expect(opensIn(), 'Save, then Open').toBe('B Prep');
+  });
+
+  /**
+   * The page decides by the order its model lists the elements in — the walk
+   * finds its machines in it, and takes the first of two transitions out of an
+   * `initial` from it — while Undo, Save and the checks worker rebuild the
+   * model in the order each owner holds its children. So a drag lists the
+   * page's model in that order too (`Model.adoptSerialOrder`): else a machine
+   * dragged out of its package and back was reported last on the page and
+   * first by the worker, and an unrelated edit undone moved it back (review
+   * 2026-10-14 D-1, the S2 review).
+   */
+  it('a drag, and a drag of several, list the model as Undo, Save and the checks worker rebuild it', async () => {
+    st().importModel(
+      [
+        'package P {',
+        '    state def M1 {',
+        '        state a;',
+        '        state b;',
+        '        state dead1;',
+        '        transition t1 first a then b;',
+        '    }',
+        '    state def M2 {',
+        '        state x;',
+        '        state y;',
+        '        state dead2;',
+        '        transition t2 first x then y;',
+        '    }',
+        '}',
+        '',
+      ].join('\n'),
+      'sysml',
+    );
+    await whenLibrarySettled();
+    flushRecompute();
+    const named = (name: string) => st().model.all().find((e) => e.declaredName === name)!.id;
+    const listedAsCopies = () => {
+      const all = st().model.all();
+      return st().model.inSerialOrder().every((el, i) => el === all[i]);
+    };
+    const reach = CHECKS.find((c) => c.id === 'reach')!;
+    const healthy: ReturnType<typeof loadHealth> = {
+      errors: 0,
+      saved: { parseErrors: 0 },
+      exported: { parseErrors: 0 },
+      sameText: true,
+      validationErrors: 0,
+      validateThrew: false,
+      unwritable: null,
+      libraryPending: false,
+    };
+    const machines = () =>
+      runCheck(reach, { model: st().model, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: healthy })
+        .rows.map((r) => /`P::(M\d)::/.exec(r.message)?.[1])
+        .filter((m, i, all) => m !== undefined && all.indexOf(m) === i);
+    expect(machines()).toEqual(['M1', 'M2']);
+
+    // M1 dragged out of the package and back in: the text lists M2 first, and so does the page.
+    st().reparent(named('M1'), null);
+    st().reparent(named('M1'), named('P'));
+    flushRecompute();
+    expect(st().textBuffer.indexOf('state def M2')).toBeLessThan(st().textBuffer.indexOf('state def M1'));
+    expect(listedAsCopies(), 'reparent').toBe(true);
+    expect(machines()).toEqual(['M2', 'M1']);
+    // An edit after it, undone: the model comes back from a snapshot, listed as it was.
+    st().createElement('PartDefinition', named('P'), 'Later');
+    flushRecompute();
+    st().undo();
+    flushRecompute();
+    expect(machines(), 'Undo').toEqual(['M2', 'M1']);
+
+    // Two of M1's states dragged together into M2, after its own.
+    st().reparentMany([named('a'), named('b')], named('M2'));
+    expect(st().model.children(named('M2')).map((e) => e.declaredName)).toEqual(['x', 'y', 'dead2', 't2', 'a', 'b']);
+    expect(listedAsCopies(), 'reparentMany').toBe(true);
+  });
+
+  /**
+   * A load can reorder an owner's children itself: the parser puts a feature's
+   * specialisations back in the order they were declared. Import keeps that
+   * order now, so the Text view reads as the file, where it used to read
+   * `part : Sub :>> p;` (the S2 review of D-2).
+   */
+  it('Import keeps a feature\'s specialisations in the order the file declares them, through an Undo', async () => {
+    st().importModel(
+      ['package S1 {', '    part def P;', '    part def Sub :> P;', '    part def Q {', '        part p : P;', '    }', '    part q : Q {', '        part :>> p : Sub;', '    }', '}', ''].join('\n'),
+      'sysml',
+    );
+    await whenLibrarySettled();
+    flushRecompute();
+    const imported = st().textBuffer;
+    expect(imported).toContain('part :>> p : Sub;');
+    st().createElement('PartDefinition', st().model.all().find((e) => e.declaredName === 'S1')!.id, 'Later');
+    flushRecompute();
+    st().undo();
+    flushRecompute();
+    expect(st().textBuffer, 'Undo').toBe(imported);
   });
 
   it('connect creates a relationship edge between two elements', () => {
@@ -5511,8 +5684,10 @@ describe('the load health a check is judged under', () => {
       unwritable: null,
       sameText: true,
     });
-    expect(clean.saved).toEqual({ parseErrors: 0 });
-    expect(clean.exported).toEqual({ parseErrors: 0 });
+    // Each text was parsed, and parses to the model on screen.
+    expect(clean.saved).toEqual({ parseErrors: 0, basis: 'parse', otherModel: false });
+    expect(clean.exported).toEqual({ parseErrors: 0, basis: 'parse', otherModel: false });
+    expect(clean.otherModel).toBe(false);
 
     await apply('package Two { part def D; part def D; }\n');
     const dup = loadHealth();
@@ -5544,33 +5719,35 @@ describe('the load health a check is judged under', () => {
     expect(h.errors).toBeGreaterThanOrEqual(1);
   });
 
-  it('measures the load health without re-parsing: the applied text keeps its parse, and the serializer accounts for the export text', async () => {
-    // Texts no other test applies, so the two-entry memo cannot already hold their export.
+  it('parses each text no parse has measured, once: the applied text keeps its own parse, and the export text is parsed and kept', async () => {
+    // Texts no other test applies, so the memo cannot already hold their export.
     const once = (n: number, end: string) =>
       `package Once${n} { state def M { state a; state b; transition a then b; transition b then a; } }\npackage Broken${n} { part x : ; }${end}`;
-    const parse = vi.spyOn(textApi, 'parseModel');
+    const measure = vi.spyOn(textApi, 'measureTextHealth');
     try {
       // Save adds the one final newline a file ends in, so a text typed with none, or with two, is the same text to it.
       for (const [n, end] of [[1, '\n'], [2, ''], [3, '\n\n']] as const) {
         const text = once(n, end);
         st().setTextBuffer(text);
         st().applyText();
-        parse.mockClear();
+        await whenLibrarySettled();
+        measure.mockClear();
         const h = loadHealth();
-        // Right after the apply the buffer is the applied text: its parse is known from the apply.
+        // The buffer is the applied text, and the model stands as its parse: that parse is known from the apply.
         expect(h.saved?.parseErrors, `case ${n}`).toBeGreaterThan(0);
-        // The export text is the recovered `part x;`, and the serializer vouches for it (no
-        // references, nothing it cannot read back), so neither it nor the applied text is parsed.
-        expect(parse, `case ${n}: nothing is parsed again`).not.toHaveBeenCalled();
+        // The export text is the recovered `part x;`, which no parse has seen: whatever the serializer saw as it
+        // wrote it, it is parsed — once — before it counts as loading (review 2026-10-14, LH-1).
+        expect(measure, `case ${n}: the export text is parsed`).toHaveBeenCalledTimes(1);
+        expect(measure.mock.calls[0][0], `case ${n}: and only it`).not.toBe(text);
         expect(h.exported?.parseErrors, `case ${n}: the recovered export parses`).toBe(0);
         expect(h.sameText, `case ${n}: the applied text is not the recovered export`).toBe(false);
-        parse.mockClear();
+        expect(h.exported?.basis, `case ${n}`).toBe('parse');
+        measure.mockClear();
         expect(loadHealth(), `case ${n}`).toEqual(h);
-        expect(parse, `case ${n}: still nothing`).not.toHaveBeenCalled();
-        await whenLibrarySettled();
+        expect(measure, `case ${n}: its counts are kept`).not.toHaveBeenCalled();
       }
     } finally {
-      parse.mockRestore();
+      measure.mockRestore();
     }
   });
 
@@ -5597,19 +5774,14 @@ describe('the load health a check is judged under', () => {
       'package P {\n  port def Pw;\n  part def A { port pwrOut : Pw; }\n  part def B { port pwrIn : Pw; }\n  part def S {\n    part a : A;\n    part b : B;\n    connection link connect a.pwrOut to b.pwrIn;\n  }\n}\n';
     await apply(WIRED);
     expect(loadHealth().errors, 'wired, to start from').toBe(0);
-    expect(serializeUserModelSignals(st().model).referenceFaithful, 'a wired text needs no parse').toBe(true);
     st().updateElement(byName('pwrOut'), { declaredName: 'C' });
     await whenLibrarySettled();
     flushRecompute();
     // The live connector still holds its end as an element, so the live model is clean…
     const live = validationApi.validate(st().model).filter((d) => d.severity === 'error' && d.elementId !== undefined && !st().model.get(d.elementId)?.attrs.isLibrary);
     expect(live, 'the live model has no error').toHaveLength(0);
-    // …and the serializer's parse-free signal marks the text it writes as no longer re-resolving
-    // the end, which is what makes `loadHealth` fall back to a parse for this text's validation.
-    expect(
-      serializeUserModelSignals(st().model).referenceFaithful,
-      'the written text no longer re-resolves the end',
-    ).toBe(false);
+    // …and the serializer saw nothing wrong as it wrote the text, which says nothing either way…
+    expect(serializeUserModelSignals(st().model).faults).toBe(0);
     // …but the text it is written as names `a.pwrOut`, which no longer exists.
     const reparsed = validationApi.validate(parseModel(st().textBuffer).model);
     expect(reparsed.some((d) => d.code === 'validation/connector-endpoints' || d.ruleId === 'connector-endpoints')).toBe(true);
@@ -5618,11 +5790,10 @@ describe('the load health a check is judged under', () => {
     expect(h.saved?.parseErrors, 'it parses, with a warning').toBe(0);
     expect(h.validationErrors, 'the file fails validation').toBeGreaterThan(0);
     expect(h.errors).toBeGreaterThan(0);
-    // Put right, it is clean again, and the signal clears.
+    // Put right, it is clean again.
     st().updateElement(byName('C'), { declaredName: 'pwrOut' });
     await whenLibrarySettled();
     flushRecompute();
-    expect(serializeUserModelSignals(st().model).referenceFaithful, 'put right, it is faithful again').toBe(true);
     expect(loadHealth().errors).toBe(0);
   });
 
@@ -5638,4 +5809,609 @@ describe('the load health a check is judged under', () => {
     await whenLibrarySettled();
     expect(loadHealth().libraryPending).toBe(false);
   });
+});
+
+/**
+ * The load health never says a text loads that a terminal rejects (review
+ * 2026-10-14: LH-1..LH-4, and B's C2). 679a5e5 let a serializer-side
+ * certificate vouch for a text without parsing it; it read neither the fields
+ * the serializer writes back verbatim nor a value that reads alone but not in
+ * its place, so Reachability read `holds` over texts `reach` exits 1 on, and a
+ * faulty line applied in the Text view was talked back down to 0 errors by the
+ * serializer's own count. Each case is a probe from that review, judged against
+ * a terminal's loader (`loadModelText`) over the same library the store merges —
+ * the stub here, the real one where a case says so.
+ */
+describe('the load health never vouches for a text that does not load (review 2026-10-14)', () => {
+  const reachSpec = CHECKS.find((c) => c.id === 'reach')!;
+  const behaviourSpec = CHECKS.find((c) => c.id === 'check-behaviour')!;
+  const byName = (name: string) => st().model.all().find((e) => e.declaredName === name && e.attrs.implicit !== true)!.id;
+
+  async function apply(text: string): Promise<void> {
+    st().setTextBuffer(text);
+    st().applyText();
+    await whenLibrarySettled();
+  }
+
+  /** What a terminal reports on `text`: `loadModelText`, the CLI's loader, over the library the store merges. */
+  const terminal = async (text: string) => (await textApi.loadModelText(text, { fileName: 'x.sysml' })).report;
+  const parseErrorsIn = (r: Awaited<ReturnType<typeof terminal>>) =>
+    r.diagnostics.filter((d) => d.severity === 'error' && d.ruleId === 'parse').length;
+
+  /** A palette check's verdict over the model as it stands, judged under `h`. */
+  const verdict = (spec: typeof reachSpec, h: ReturnType<typeof loadHealth>, selected: string | null = null) =>
+    runCheck(spec, {
+      model: st().model,
+      selectionId: selected,
+      selectionName: selected === null ? null : st().model.qualifiedName(selected),
+      isolated: false,
+      fileName: 'x.sysml',
+      loadHealth: h,
+    }).verdict;
+
+  /**
+   * The line held: the texts a file of the model can hold (what Save writes and
+   * what Export ▾ SysML writes), each loaded as a terminal loads it. A health of
+   * 0 errors is a pair of texts that both load; a text that does not load — or a
+   * model the serializer refuses to write, so no file holds it — leaves the health
+   * above 0, and no check `holds` over it. Returns whether either happened.
+   */
+  async function holdsTheLine(what: string, machine: string | null = null): Promise<boolean> {
+    flushRecompute();
+    const h = loadHealth();
+    const texts: string[] = [];
+    let rejected = false;
+    if (st().serializeError === null) texts.push(withFinalNewline(st().textBuffer));
+    else rejected = true;
+    try {
+      texts.push(exportModel(st().model, 'sysml'));
+    } catch {
+      rejected = true;
+    }
+    if (rejected) expect(h.unwritable, `${what}: no file holds the model`).not.toBeNull();
+    for (const text of texts) {
+      const loaded = await textApi.loadModelText(text, { fileName: 'x.sysml' });
+      const r = loaded.report;
+      if (h.errors === 0) {
+        expect(r.ok, `${what}: health 0, but a terminal rejects\n${text}`).toBe(true);
+        // …and a file holding it is the model on screen: Reachability over its parse is the page's.
+        const onFile = runCheck(reachSpec, { model: loaded.model!, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: h });
+        expect(onFile.verdict, `${what}: health 0, but a terminal's Reachability over the file differs\n${text}`).toBe(verdict(reachSpec, h));
+      }
+      if (!r.ok) rejected = true;
+    }
+    if (rejected) {
+      expect(h.errors, `${what}: a terminal rejects the text`).toBeGreaterThan(0);
+      expect(verdict(reachSpec, h), `${what}: Reachability over a text a terminal rejects`).not.toBe('holds');
+      if (machine !== null) {
+        expect(verdict(behaviourSpec, h, byName(machine)), `${what}: Behaviour properties over it`).not.toBe('holds');
+      }
+    }
+    return rejected;
+  }
+
+  beforeEach(async () => {
+    await whenLibrarySettled();
+    lib.merge = null;
+    reset();
+    useAppStore.setState({ textBuffer: '', textDirty: false, diagnostics: [], serializeError: null });
+  });
+
+  /* B's probes: a transition's free text, typed in Properties. */
+  const TERM = 'package T {\n  state def M {\n    state a;\n    state b;\n    state final;\n    transition go first a accept go then b;\n    transition b then final;\n  }\n}\n';
+  const CARRIER = 'package F {\n  state def M {\n    @SysproseVerification::PropertyPattern { attribute pattern = "cover"; attribute scope = "globally"; attribute p = "state final"; }\n    state a;\n    state b;\n    state final;\n    transition t1 first a then b;\n    transition t2 first b then final;\n  }\n}\n';
+  const PLAIN = 'package G {\n  state def M {\n    state a;\n    state b;\n    state final;\n    transition t1 first a then b;\n    transition t2 first b then final;\n  }\n}\n';
+  const TRANSITION_TEXT: Array<[string, string, string, string]> = [
+    // S2: a triggered machine.
+    [TERM, 'go', 'trigger', 'go now'],
+    [TERM, 'go', 'trigger', 'go;'],
+    [TERM, 'go', 'guard', 'x >'],
+    [TERM, 'go', 'guard', 'true )'],
+    [TERM, 'go', 'effect', 'do do'],
+    [TERM, 'go', 'effect', '}'],
+    // S3: a property carrier on a trigger-free machine that ends.
+    [CARRIER, 't1', 'effect', '}'],
+    [CARRIER, 't1', 'effect', 'do do'],
+    [CARRIER, 't1', 'trigger', ''],
+    [CARRIER, 't1', 'guard', 'true )'],
+    // S4: the same machine with no carrier, where the certificate vouched and Reachability read `holds`.
+    [PLAIN, 't1', 'effect', '}'],
+    [PLAIN, 't1', 'effect', 'do do'],
+    [PLAIN, 't1', 'guard', 'true )'],
+    [PLAIN, 't1', 'trigger', 'go now'],
+  ];
+  it('counts what a guard, a trigger or an effect typed in Properties does to the text (B: S2, S3, S4)', { timeout: 60_000 }, async () => {
+    let rejected = 0;
+    for (const [text, name, key, value] of TRANSITION_TEXT) {
+      reset();
+      await apply(text);
+      const what = `${text.slice(8, 9)}: ${key} = ${JSON.stringify(value)}`;
+      expect(loadHealth().errors, `${what}: clean, to start from`).toBe(0);
+      st().setAttr(byName(name), key, value);
+      if (await holdsTheLine(what, 'M')) rejected++;
+    }
+    // B found every one but the empty trigger rejected; the empty trigger is written as no trigger at all.
+    expect(rejected).toBeGreaterThanOrEqual(TRANSITION_TEXT.length - 1);
+  });
+
+  it('counts an effect of `}` with the full standard library merged, and Behaviour properties is not `holds` (B: S6)', async () => {
+    const actual = await vi.importActual<typeof import('../../src/library/full-library')>('../../src/library/full-library');
+    await actual.preloadFullLibrary();
+    lib.merge = (m: Model) => actual.loadFullStandardLibrary(m);
+    try {
+      await apply(CARRIER);
+      const machine = st().model.all().find((e) => e.declaredName === 'M' && e.attrs.isLibrary !== true)!.id;
+      const h0 = loadHealth();
+      expect(h0.errors, 'with the library, the carrier loads').toBe(0);
+      expect(verdict(behaviourSpec, h0, machine)).toBe('holds');
+      st().setAttr(byName('t1'), 'effect', '}');
+      flushRecompute();
+      const h = loadHealth();
+      const r = await terminal(withFinalNewline(st().textBuffer));
+      expect(r.ok, 'a terminal rejects `do }`').toBe(false);
+      expect(h.errors).toBeGreaterThan(0);
+      expect(h.saved?.parseErrors).toBe(parseErrorsIn(r));
+      expect(verdict(behaviourSpec, h, machine)).toBe('undecided');
+      expect(verdict(reachSpec, h)).not.toBe('holds');
+    } finally {
+      lib.merge = null;
+    }
+  }, 120_000);
+
+  /* E's probes: every field the serializer writes back verbatim, and the routes a value reaches it by. */
+  const BASE = `package C {
+  part def Ctl {
+    attribute x = 1;
+    state def M { state idle; state busy; transition t1 first idle then busy; transition t2 first busy then idle; }
+  }
+  part def Pump { attribute rate = 2; }
+  part def Sys { part p : Pump; part c : Ctl; }
+  constraint def Lim { in attribute a; a <= 10 }
+}
+`;
+  const viaApi = (name: string, attrs: Record<string, unknown>) => () => {
+    st().model.setAttrs(byName(name), attrs as never);
+    st().regenerateText();
+  };
+  /** A model-JSON file of BASE, edited as a file can be: by name, `edit` changes one element's record. */
+  const viaJson = (name: string, edit: (el: { eClass: string; attrs: Record<string, unknown> }) => void) => () => {
+    const j = parseModel(BASE).model.toJSON() as { elements: Array<{ declaredName?: string; eClass: string; attrs: Record<string, unknown> }> };
+    edit(j.elements.find((e) => e.declaredName === name)!);
+    st().importModel(JSON.stringify(j), 'model-json');
+  };
+  const E_PROBES: Array<[string, () => void]> = [
+    ['guard typo (Properties)', () => st().setAttr(byName('t1'), 'guard', 'x >')],
+    ['effect typo (Properties)', () => st().setAttr(byName('t1'), 'effect', 'action (')],
+    ['trigger typo (Properties)', () => st().setAttr(byName('t1'), 'trigger', 'a b }')],
+    ['a value that reads alone but adds a declaration in place (LH-3)', () => st().setAttr(byName('rate'), 'value', '2; attribute rate = 3')],
+    ['a value that adds a part def', () => st().setAttr(byName('rate'), 'value', '2; part def Pump')],
+    ['an object value (API)', viaApi('rate', { value: { a: 1 }, valueText: undefined })],
+    ['an array value (API)', viaApi('rate', { value: [1, 2], valueText: undefined })],
+    ['NaN (API)', viaApi('rate', { value: NaN, valueText: undefined })],
+    ['a quoted value with a raw line break', () => st().setAttr(byName('rate'), 'value', '"a\nb"')],
+    ['a name with a line break', () => st().updateElement(byName('Pump'), { declaredName: 'Pu\nmp' })],
+    ['an empty name', () => st().updateElement(byName('Pump'), { declaredName: '' })],
+    ['a multiplicity typo (Properties)', () => st().setAttr(byName('p'), 'multiplicity', '1..')],
+    ['an expression typo (API)', viaApi('Lim', { expression: 'a <=' })],
+    ['a metadata name with a space (API)', viaApi('Pump', { metadata: ['my meta'] })],
+    ['a unit with a line break (API)', viaApi('rate', { unit: 'k\ng' })],
+    ['an unknown eClass (model JSON)', viaJson('Pump', (el) => (el.eClass = 'Bogus'))],
+    ['an object value (model JSON)', viaJson('rate', (el) => (el.attrs = { ...el.attrs, value: { a: 1 }, valueText: undefined }))],
+    ['a guard typo (model JSON)', viaJson('t1', (el) => (el.attrs = { ...el.attrs, guard: 'x >' }))],
+    ['an effect that adds elements (Properties)', () => st().setAttr(byName('t1'), 'effect', 'a then idle; state idle; transition x first busy')],
+  ];
+  it('counts every verbatim field and every route a value takes in, as a terminal does (E: LH-1, LH-3)', { timeout: 60_000 }, async () => {
+    let rejected = 0;
+    for (const [what, edit] of E_PROBES) {
+      reset();
+      await apply(BASE);
+      edit();
+      await whenLibrarySettled();
+      if (await holdsTheLine(what)) rejected++;
+    }
+    expect(rejected, 'the probes are texts a terminal rejects').toBeGreaterThanOrEqual(14);
+  });
+
+  it('counts a user package flagged as library: the text leaves it out, and a terminal cannot resolve it (E: LH-3)', async () => {
+    const m = parseModel(BASE.replace('part c : Ctl; }', 'part c : Ctl; part q : MyLib::Thing; }') + 'package MyLib { part def Thing; }\n').model;
+    for (const el of m.all()) {
+      if (el.declaredName === 'MyLib' || m.ancestors(el.id).some((a) => a.declaredName === 'MyLib')) m.setAttrs(el.id, { isLibrary: true });
+    }
+    st().importModel(JSON.stringify(m.toJSON()), 'model-json');
+    await whenLibrarySettled();
+    expect(await holdsTheLine('isLibrary package'), 'a terminal rejects the text').toBe(true);
+  });
+
+  it('keeps a faulty line applied in the Text view at its error, however often the serializer writes it back (LH-2)', async () => {
+    await apply(BASE);
+    st().regenerateText();
+    flushRecompute();
+    const typed = st().textBuffer.replace('transition t1 first idle then busy;', 'transition t1 first idle if x > then busy;');
+    expect(typed).not.toBe(st().textBuffer);
+    await apply(typed);
+    flushRecompute();
+    // The guard is kept as typed, so the serializer writes the very text back — and sees nothing wrong in it.
+    expect(withFinalNewline(serializeUserModelSignals(st().model).text)).toBe(withFinalNewline(typed));
+    expect(serializeUserModelSignals(st().model).faults).toBe(0);
+    const r = await terminal(typed);
+    expect(r.ok).toBe(false);
+    const h = loadHealth();
+    expect(h.saved?.parseErrors, 'the apply’s own parse').toBe(parseErrorsIn(r));
+    expect(h.errors).toBeGreaterThan(0);
+    // The serializer writes it again (a refresh, a regenerate): its word does not replace the parse.
+    st().regenerateText();
+    expect(loadHealth()).toEqual(h);
+    expect(loadHealth()).toEqual(h);
+  });
+
+  it('keeps a fallback parse when loadHealth runs again: 5/4 stays 5/4 (LH-2)', async () => {
+    const WIRED = `package P {
+  port def Pw;
+  part def A { port pwrOut : Pw; }
+  part def B { port pwrIn : Pw; }
+  part def S {
+    part a : A;
+    part b : B;
+    connection link connect a.pwrOut to b.pwrIn;
+  }
+  part def Ctl { state def M { state idle; state busy; transition t1 first idle then busy; transition t2 first busy then idle; } }
+}
+`;
+    await apply(WIRED);
+    st().updateElement(byName('pwrOut'), { declaredName: 'C' });
+    st().setAttr(byName('t1'), 'effect', 'action (');
+    await whenLibrarySettled();
+    flushRecompute();
+    const r = await terminal(withFinalNewline(st().textBuffer));
+    const [h1, h2, h3] = [loadHealth(), loadHealth(), loadHealth()];
+    expect(h1.saved?.parseErrors).toBe(parseErrorsIn(r));
+    expect(h1.saved?.parseErrors).toBeGreaterThan(0);
+    expect(h1.errors).toBeGreaterThanOrEqual(r.summary.errors);
+    expect(h2).toEqual(h1);
+    expect(h3).toEqual(h1);
+  });
+
+  it('takes a value the grammar cannot read on its own as faulty without a parse, and says so; a signal that finds nothing is not taken as clean', async () => {
+    const measure = vi.spyOn(textApi, 'measureTextHealth');
+    try {
+      await apply(BASE);
+      st().setAttr(byName('rate'), 'value', '1 +');
+      flushRecompute();
+      measure.mockClear();
+      const h = loadHealth();
+      expect(measure, 'faulty already: nothing to parse').not.toHaveBeenCalled();
+      expect(h.saved?.basis).toBe('signal');
+      expect(h.errors).toBeGreaterThan(0);
+      expect(h.saved?.parseErrors).toBe(1);
+      const row = degradedRow('reach', h);
+      expect(row.message).toContain('was not parsed');
+      expect(verdict(reachSpec, h)).not.toBe('holds');
+
+      // A guard typo the serializer cannot see: it found nothing, which is not "clean" — the text is parsed.
+      st().setAttr(byName('rate'), 'value', '2');
+      st().setAttr(byName('t1'), 'guard', 'x >');
+      flushRecompute();
+      expect(serializeUserModelSignals(st().model).faults).toBe(0);
+      measure.mockClear();
+      const g = loadHealth();
+      expect(measure).toHaveBeenCalledTimes(1);
+      expect(g.saved?.basis).toBe('parse');
+      expect(g.errors).toBeGreaterThan(0);
+    } finally {
+      measure.mockRestore();
+    }
+  });
+
+  it('leaves to the parse a value the text around it can complete or close, and agrees with a terminal over it', async () => {
+    const PLACED: Array<[string, () => void]> = [
+      // `1 +` before a body is read as `1 + { … }`: the documentation becomes an operand.
+      ['`1 +` before a body', () => {
+        const doc = st().createElement('Documentation', byName('rate'));
+        st().setAttr(doc, 'body', 'the pump rate');
+        st().setAttr(byName('rate'), 'value', '1 +');
+      }],
+      // A `}` closes the owner, and the rest reads as a declaration of its own.
+      ['a value that closes its owner', () => st().setAttr(byName('rate'), 'value', '1 } part def Z { attribute q = 2')],
+      // A unit is written after the value.
+      ['`1 +` before a unit', () => {
+        st().setAttr(byName('rate'), 'value', '1 +');
+        st().model.setAttrs(byName('rate'), { unit: 'kg' });
+        st().regenerateText();
+      }],
+    ];
+    for (const [what, edit] of PLACED) {
+      reset();
+      await apply(BASE);
+      edit();
+      flushRecompute();
+      expect(serializeUserModelSignals(st().model).faults, `${what}: nothing the signal can be sure of`).toBe(0);
+      const h = loadHealth();
+      expect(h.saved?.basis, what).toBe('parse');
+      const r = await terminal(withFinalNewline(st().textBuffer));
+      expect(h.saved?.parseErrors, what).toBe(parseErrorsIn(r));
+      // Where a terminal loads it, it loads another model than the one on screen (the body an operand, the owner closed).
+      expect(h.errors > 0, `${what}: a terminal rejects it, or it is a file of another model`).toBe(!r.ok || h.otherModel === true);
+      if (r.ok) expect(h.otherModel, what).toBe(true);
+      await holdsTheLine(what);
+    }
+  });
+
+  it('counts a text that parses cleanly to another model: a value written back as typed that adds or closes a declaration', async () => {
+    const PUMPED = PLAIN.replace('\n}\n', '\n  part def Pump { attribute rate = 2; }\n}\n');
+    const INJECTED = [
+      // Adds a machine beside the value (at 5c257a1 the health read 0 and Reachability `holds`).
+      '2; state def Z { state a; state b; state c; transition first a then b; } attribute zz = 0',
+      // Closes its owner first (S1 handed this to the parse, which reads it cleanly).
+      '2; } state def Z { state a; state b; state c; transition first a then b; } part def Q { attribute zz = 0',
+    ];
+    for (const v of INJECTED) {
+      reset();
+      await apply(PUMPED);
+      const h0 = loadHealth();
+      expect(h0.errors).toBe(0);
+      expect(verdict(reachSpec, h0)).toBe('holds');
+      st().setAttr(byName('rate'), 'value', v);
+      flushRecompute();
+      const h = loadHealth();
+      // A terminal loads the file cleanly, and walks a second machine with findings in it…
+      const loaded = await textApi.loadModelText(withFinalNewline(st().textBuffer), { fileName: 'x.sysml' });
+      expect(loaded.report.ok, v).toBe(true);
+      const onFile = runCheck(reachSpec, { model: loaded.model!, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: h0 });
+      expect(onFile.verdict, v).toBe('issues');
+      // …so the file is not the model on screen, and nothing holds over it.
+      expect(h.saved, v).toMatchObject({ parseErrors: 0, basis: 'parse', otherModel: true });
+      expect(h.otherModel, v).toBe(true);
+      expect(h.errors, v).toBe(1);
+      expect(verdict(reachSpec, h), v).toBe('undecided');
+      expect(runCheck(reachSpec, { model: st().model, selectionId: null, selectionName: null, isolated: false, fileName: 'x.sysml', loadHealth: h }).summary, v).toContain('the text a file of it holds reads as another model');
+      const row = degradedRow('reach', h).message;
+      expect(row, v).toContain('parses cleanly, but to a model other than the one on screen');
+      // The file loads: no exit code is claimed for it.
+      expect(row, v).not.toContain('exits 1');
+      expect(degradedRow('check-behaviour', h).message, v).not.toContain('exits 2');
+    }
+  });
+
+  it('counts only a faulty line the lexer reads as code: one inside a comment, or after a line note, is left to the parse', async () => {
+    const PUMP = 'package G {\n  part def Pump {\n    attribute r1 = 1;\n    attribute r2 = 2;\n    attribute r3 = 3;\n  }\n}\n';
+    // A comment one value opens and another closes, around a faulty value: inside it, the value is no code.
+    await apply(PUMP);
+    st().setAttr(byName('r1'), 'value', '1 /*');
+    st().setAttr(byName('r2'), 'value', '1 +');
+    st().setAttr(byName('r3'), 'value', '*/');
+    flushRecompute();
+    expect(serializeUserModelSignals(st().model).faults, 'the comment holds the faulty line').toBe(0);
+    let h = loadHealth();
+    let r = await terminal(withFinalNewline(st().textBuffer));
+    expect(h.saved).toMatchObject({ basis: 'parse', parseErrors: parseErrorsIn(r) });
+    expect(h.errors === 0).toBe(r.ok);
+    // A line note in the type before the value: the line reads `attribute r2 : Real`, which parses — to another model.
+    reset();
+    await apply(PUMP);
+    st().setAttr(byName('r2'), 'type', 'Real // kg');
+    st().setAttr(byName('r2'), 'value', '1 +');
+    flushRecompute();
+    expect(serializeUserModelSignals(st().model).faults, 'the note holds the value').toBe(0);
+    h = loadHealth();
+    r = await terminal(withFinalNewline(st().textBuffer));
+    expect(r.ok, 'a terminal loads it').toBe(true);
+    expect(h.saved).toMatchObject({ basis: 'parse', parseErrors: 0, otherModel: true });
+    expect(degradedRow('reach', h).message, 'and no exit code is claimed for it').not.toContain('exits 1');
+    // The faulty line written into a documentation comment as well as in its place: only the one in code counts.
+    reset();
+    await apply(PUMP);
+    const doc = st().createElement('Documentation', byName('Pump'));
+    st().setAttr(doc, 'body', 'was:\nattribute r2 = 1 +;\nnow fixed');
+    st().setAttr(byName('r2'), 'value', '1 +');
+    flushRecompute();
+    expect(serializeUserModelSignals(st().model).text.match(/^\s*attribute r2 = 1 \+;$/gm)).toHaveLength(2);
+    expect(serializeUserModelSignals(st().model).faults).toBe(1);
+    h = loadHealth();
+    expect(h.saved).toMatchObject({ basis: 'signal', parseErrors: 1 });
+    expect((await terminal(withFinalNewline(st().textBuffer))).ok).toBe(false);
+  });
+
+  it('says which text a parse counted and which the serializer judged without one', async () => {
+    const T = 'package G {\n  part def Pump {\n    attribute rate = 1 +;\n    frobnicate z;\n    frobnicate y;\n  }\n  state def M { state a; state b; transition t1 first a if x > then b; }\n}\n';
+    await apply(T);
+    flushRecompute();
+    const h = loadHealth();
+    const saved = await terminal(withFinalNewline(st().textBuffer));
+    expect(h.sameText).toBe(false);
+    // The applied text is the apply's own parse; the export holds the value the serializer can see is faulty.
+    expect(h.saved).toMatchObject({ basis: 'parse', parseErrors: parseErrorsIn(saved) });
+    expect(h.exported).toMatchObject({ basis: 'signal', parseErrors: 1 });
+    const row = degradedRow('reach', h).message;
+    expect(row).toContain(`which Save writes, has ${parseErrorsIn(saved)} syntax error(s)`);
+    expect(row).toContain('the text Export ▾ SysML writes holds 1 value(s) written back as typed that the grammar cannot read where they stand');
+    expect((await terminal(exportModel(st().model, 'sysml'))).ok).toBe(false);
+  });
+
+  it('says at the click which texts no parse has measured, and parses none of them on the page', async () => {
+    const measure = vi.spyOn(textApi, 'measureTextHealth');
+    try {
+      await apply(BASE);
+      st().setAttr(byName('t1'), 'effect', '}');
+      flushRecompute();
+      measure.mockClear();
+      const now = loadHealthNow();
+      expect(measure, 'no parse on the page at the click').not.toHaveBeenCalled();
+      expect('known' in now).toBe(false);
+      if ('known' in now) return;
+      expect(now.unmeasured).toEqual([withFinalNewline(st().textBuffer)]);
+      // Nobody could measure it (the worker failed): never clean, and the row says why.
+      const unchecked = now.unchecked('the background worker stopped');
+      expect(unchecked.errors).toBeGreaterThan(0);
+      expect(unchecked.unchecked).toBe('the background worker stopped');
+      // The text nobody measured is not reported as parsed with 0 errors.
+      expect(unchecked.saved).toEqual({ parseErrors: 0, basis: 'unmeasured', otherModel: false });
+      expect(degradedRow('reach', unchecked).message).toContain('could not be checked (the background worker stopped)');
+      expect(verdict(reachSpec, unchecked)).not.toBe('holds');
+      // Measured (here, as the worker would): finished, and kept, so the next click knows it at once.
+      const counts = now.unmeasured.map((t) => textApi.measureTextHealth(t, () => {}));
+      const h = now.finish(counts);
+      expect(h.saved?.parseErrors).toBe(counts[0].parseErrors);
+      expect(h.errors).toBeGreaterThan(0);
+      const again = loadHealthNow();
+      expect('known' in again && again.known).toEqual(h);
+      // The serializer writing the same text again does not undo the parse.
+      st().regenerateText();
+      const third = loadHealthNow();
+      expect('known' in third && third.known).toEqual(h);
+    } finally {
+      measure.mockRestore();
+    }
+  });
+
+  /*
+   * What a click may read of the load without holding the page (review 2026-10-14, D-3): on the
+   * drone-swarm model, writing its text and validating it take most of a second, so where reading
+   * the load would do either, the palette starts the run first and reads once its row is drawn.
+   */
+  it('says whether the load can be read without work on the page: never while an edit’s recompute waits, nor with the text or the validation behind the model', async () => {
+    const write = vi.spyOn(textApi, 'serializeUserModelSignals');
+    const validate = vi.spyOn(validationApi, 'validate');
+    const work = (): number => write.mock.calls.length + validate.mock.calls.length;
+    try {
+      await apply(BASE);
+      flushRecompute();
+      expect(loadHealthAtHand(), 'an applied text: written and validated').toBe(true);
+      // At hand, the read only looks up: no text written, no validation.
+      write.mockClear();
+      validate.mockClear();
+      loadHealthNow();
+      expect(work()).toBe(0);
+
+      // An edit: its recompute waits, and a read now would run it here.
+      st().updateElement(byName('Pump'), { declaredName: 'Pump2' });
+      expect(recomputePending()).toBe(true);
+      expect(loadHealthAtHand()).toBe(false);
+      flushRecompute();
+      expect(loadHealthAtHand(), 'the recompute ran: the text written, the model validated').toBe(true);
+
+      // A change no recompute follows (the model edited in place): its text and validation are behind it.
+      st().model.rename(byName('Pump2'), 'Pump3');
+      expect(recomputePending()).toBe(false);
+      expect(loadHealthAtHand()).toBe(false);
+      write.mockClear();
+      validate.mockClear();
+      loadHealthNow();
+      expect(write, 'read anyway, the model is written once').toHaveBeenCalledTimes(1);
+      expect(validate).toHaveBeenCalled();
+      expect(loadHealthAtHand(), 'that read wrote and validated it').toBe(true);
+
+      // Text typed in the Text view and not applied: Save's text is then the model's own, which is
+      // written already, so the read writes nothing again.
+      st().setTextBuffer(`${st().textBuffer}\n// typed, not applied\n`);
+      expect(st().textDirty).toBe(true);
+      expect(loadHealthAtHand()).toBe(true);
+      write.mockClear();
+      validate.mockClear();
+      const typed = loadHealthNow();
+      expect(work()).toBe(0);
+      expect('known' in typed ? typed.known.sameText : typed.unmeasured.length === 1, 'Save and Export write one text').toBe(true);
+    } finally {
+      write.mockRestore();
+      validate.mockRestore();
+    }
+  });
+
+  /* The corpus, through the store: applied, written back, and loaded as a terminal loads it. */
+  const corpus = (): Array<[string, string]> => {
+    const dir = 'test/fixtures/verification/models';
+    return [
+      ...readdirSync(resolve(process.cwd(), dir))
+        .filter((f) => f.endsWith('.sysml'))
+        .sort()
+        .map((f): [string, string] => [`${dir}/${f}`, readFileSync(resolve(process.cwd(), dir, f), 'utf8')]),
+      ...readdirSync(resolve(process.cwd(), 'examples'))
+        .filter((f) => f.endsWith('.sysml'))
+        .sort()
+        .map((f): [string, string] => [`examples/${f}`, readFileSync(resolve(process.cwd(), 'examples', f), 'utf8')]),
+    ];
+  };
+  it('agrees with a terminal over the corpus: each text’s parse errors exactly, and 0 errors only where both texts load', async () => {
+    const files = corpus();
+    expect(files.length).toBeGreaterThan(70);
+    let faulty = 0;
+    for (const [file, text] of files) {
+      reset();
+      await apply(text);
+      flushRecompute();
+      const h = loadHealth();
+      const saved = await terminal(withFinalNewline(st().textBuffer));
+      expect(h.saved?.parseErrors, `${file}: the text Save writes`).toBe(parseErrorsIn(saved));
+      if (!h.sameText) expect(h.exported?.parseErrors, `${file}: the text Export writes`).toBe(parseErrorsIn(await terminal(exportModel(st().model, 'sysml'))));
+      // A model as written back is a file of itself: the parse of the export text writes that text again.
+      if (h.exported?.parseErrors === 0) expect(h.exported.otherModel, `${file}: the text Export writes is a file of another model`).toBe(false);
+      if (await holdsTheLine(file)) faulty++;
+    }
+    // The corpus is mostly clean models; the fixtures that test a typo are not.
+    expect(faulty).toBeGreaterThan(0);
+    expect(faulty).toBeLessThan(files.length);
+  }, 120_000);
+
+  /*
+   * A mutation fuzz of every field the serializer writes back verbatim, on a model
+   * Reachability reads `holds` over: each value set the way a person or a program
+   * can set it (Properties, the explorer's rename, the API and model JSON). The
+   * model names no library type, so nothing in it but the field fuzzed can make a
+   * text fail: what 679a5e5's certificate vouched for without a parse.
+   */
+  const FUZZ = `package Fz {
+  state def M {
+    state s1;
+    state s2;
+    state final;
+    transition t1 first s1 then s2;
+    transition t2 first s2 then final;
+  }
+  part def Pump { attribute rate = 2; }
+  constraint def Lim { in attribute lim; lim <= 10 }
+  part def Sys { part p : Pump [1]; }
+}
+`;
+  /** Values that close their owner or add a machine and parse cleanly: a file of another model. */
+  const INJECTIONS = [
+    '2; state def Z { state a; state b; state c; transition first a then b; } attribute zz = 0',
+    '2; } state def Z { state a; state b; state c; transition first a then b; } part def Q { attribute zz = 0',
+  ];
+  const setIn = (name: string, key: string, value: string) => () => st().setAttr(byName(name), key, value);
+  const setRaw = (name: string, attrs: Record<string, unknown>) => () => {
+    st().model.setAttrs(byName(name), attrs as never);
+    st().regenerateText();
+  };
+  const renamed = (name: string, to: string) => () => st().updateElement(byName(name), { declaredName: to });
+  const FUZZ_CASES: Array<[string, () => void]> = [
+    ...['}', 'do do', 'action (', 'a then s1; state s9; transition x first s2', '{', 'send'].map((v): [string, () => void] => [`effect ${JSON.stringify(v)}`, setIn('t1', 'effect', v)]),
+    ...['true )', 'x >', '(', '"', 'x > 0 then s2'].map((v): [string, () => void] => [`guard ${JSON.stringify(v)}`, setIn('t1', 'guard', v)]),
+    ...['go now', 'go;', 'a b }', 'after', '{'].map((v): [string, () => void] => [`trigger ${JSON.stringify(v)}`, setIn('t1', 'trigger', v)]),
+    ...['2; attribute rate = 3', '1 +', '"a\nb"', '2 )', '2; part def Pump', '1 // c', '2 }', '"open', "'q", '2 [kg', ...INJECTIONS].map(
+      (v): [string, () => void] => [`value ${JSON.stringify(v)}`, setIn('rate', 'value', v)],
+    ),
+    ...['Real // kg', 'Real; part def Z', 'Real }', 'Real = 3; attribute q'].map((v): [string, () => void] => [`type ${JSON.stringify(v)}`, setIn('rate', 'type', v)]),
+    ...[{ a: 1 }, [1, 2], NaN, Infinity, true].map((v): [string, () => void] => [`value ${JSON.stringify(v) ?? String(v)} (API)`, setRaw('rate', { value: v, valueText: undefined })]),
+    ...['lim <=', 'lim <= 10 }', 'lim <= 10; attribute q', ')'].map((v): [string, () => void] => [`expression ${JSON.stringify(v)} (API)`, setRaw('Lim', { expression: v })]),
+    ...[['my meta'], ['X\nY'], ['A;B'], ['}']].map((v): [string, () => void] => [`metadata ${JSON.stringify(v)} (API)`, setRaw('Pump', { metadata: v })]),
+    ...['k\ng', 'kg]', 'kg; part def Z'].map((v): [string, () => void] => [`unit ${JSON.stringify(v)} (API)`, setRaw('rate', { unit: v })]),
+    ...['1..', '1 2', '1]', '*..*'].map((v): [string, () => void] => [`multiplicity ${JSON.stringify(v)}`, setIn('p', 'multiplicity', v)]),
+    ...['sideways', 'in out'].map((v): [string, () => void] => [`direction ${JSON.stringify(v)} (API)`, setRaw('lim', { direction: v })]),
+    ...['Pu\nmp', '', 'done', "a'b", 'part', 'Pump Two', 'Pump;'].map((v): [string, () => void] => [`name ${JSON.stringify(v)}`, renamed('Pump', v)]),
+    ...['s\n2', 'state'].map((v): [string, () => void] => [`state name ${JSON.stringify(v)}`, renamed('s2', v)]),
+  ];
+  it('a mutation fuzz of every verbatim field: 0 errors only over texts a terminal loads as the model on screen, and Reachability never `holds` over one it rejects', async () => {
+    await apply(FUZZ);
+    const h0 = loadHealth();
+    expect(h0.errors, 'the fuzz starts from a clean model').toBe(0);
+    expect(verdict(reachSpec, h0), 'over which Reachability holds').toBe('holds');
+    let rejected = 0;
+    for (const [what, edit] of FUZZ_CASES) {
+      reset();
+      await apply(FUZZ);
+      edit();
+      await whenLibrarySettled();
+      if (await holdsTheLine(what)) rejected++;
+    }
+    expect(rejected, 'the fuzz must make texts a terminal rejects, or it compares clean with clean').toBeGreaterThanOrEqual(30);
+  }, 120_000);
 });

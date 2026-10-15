@@ -32,7 +32,7 @@ import {
 } from '@semantics/mc/patterns';
 import type { MachineReach, ReachReport } from '@semantics/mc/explore';
 import { regionDescendants } from '@semantics/mc/config';
-import type { LoadHealth } from './store';
+import type { LoadHealth, TextLoad } from './store';
 import type { StoredResult } from './panels/checks-store';
 
 /* ────────────────────────────── reach, judged ───────────────────────────── */
@@ -84,10 +84,13 @@ function diagnosticRows(r: ReachReport): CheckRow[] {
 }
 
 /**
- * The reach verdict, judged exactly as the CLI would: findings over the
+ * The reach verdict, judged as the CLI judges it: findings over the
  * diagnostics, `undecided` over anything withheld, and `holds` only when every
  * machine was walked to exhaustion with nothing withheld and no finding. The
- * load health demotes a pass, never promotes one.
+ * load health demotes a pass, never promotes one: `holds` needs a health that
+ * says every text a file of the model can hold was parsed and loads cleanly, as
+ * a terminal loads it (`loadHealth`, `./store.ts`), so a text the CLI rejects,
+ * or one whose load could not be checked, is never `holds`.
  */
 export function reachResult(
   r: ReachReport,
@@ -103,7 +106,7 @@ export function reachResult(
   const clauses: string[] = [];
   if (K > 0) clauses.push(`an answer withheld on ${K} of ${M} machine(s)`);
   if (N.length > 0) clauses.push(`${N.length} state(s) in no walked machine`);
-  if (D) clauses.push('the model did not load cleanly');
+  if (D) clauses.push(notClean(o.health));
   const clauseText = clauses.map((c) => `; ${c}`).join('');
 
   const lines = reachLines(r, { name: commandFileName(o.fileName) });
@@ -129,7 +132,9 @@ export function reachResult(
     return { verdict: 'not-run', summary, rows, lines, marks, edgeMarks, markSummary };
   }
   if (M === 0 && D) {
-    const summary = `${noMachine} — the model did not load cleanly, so a machine may be missing from what parsed`;
+    const summary = onlyOtherModel(o.health)
+      ? `${noMachine} — ${notClean(o.health)}, which may hold a machine this one does not`
+      : `${noMachine} — ${notClean(o.health)}, so a machine may be missing from what parsed`;
     return { verdict: 'undecided', summary, rows, lines, marks, edgeMarks, markSummary };
   }
   if (F > 0) {
@@ -268,7 +273,7 @@ export function behaviourResult(
   );
 
   let summary = lines[0]?.text ?? '';
-  if (D) summary += ` — the model did not load cleanly, so nothing is judged over it`;
+  if (D) summary += ` — ${notClean(o.health)}, so nothing is judged over it`;
 
   return { verdict, summary, rows, lines, witnesses: compactWitnesses(b, lines) };
 }
@@ -285,40 +290,127 @@ export function behaviourCheck(ctx: CheckContext, fileName: string): CheckResult
 
 /* ───────────────────────────── the meta rows ─────────────────────────────── */
 
+/** The one thing wrong with the load is that a text of the model parses cleanly to another model ({@link LoadHealth.otherModel}). */
+function onlyOtherModel(health: LoadHealth | undefined): boolean {
+  return health?.otherModel === true && health.errors === 1;
+}
+
+/**
+ * How a summary says the model is not taken as loading cleanly: it did not, a
+ * file of it holds another model, or nobody could check whether it does.
+ */
+function notClean(health: LoadHealth | undefined): string {
+  if (health?.unchecked != null) return 'whether the model loads cleanly could not be checked';
+  if (onlyOtherModel(health)) return 'the text a file of it holds reads as another model';
+  return 'the model did not load cleanly';
+}
+
+/** How the row says a text parses cleanly to another model than the one on screen ({@link LoadHealth.otherModel}). */
+const OTHER_MODEL =
+  'parses cleanly, but to a model other than the one on screen: written back from its parse it reads otherwise (a field written back as typed can close its owner, add a declaration or turn the rest of its line into a comment), so a terminal given a file holding it checks that other model';
+
+/** What the row says of one text's syntax: a parse's count, or the faulty values the serializer found in a text it did not parse. */
+function textFaults(t: TextLoad): string {
+  return t.basis === 'signal'
+    ? `holds ${t.parseErrors} value(s) written back as typed that the grammar cannot read where they stand, found as the text was written: it was not parsed, so this is not a terminal's count of syntax errors`
+    : `has ${t.parseErrors} syntax error(s)`;
+}
+
+/**
+ * Which text a terminal refuses, as the `reach` row names it: where the two texts
+ * differ and validation found nothing, only the one with syntax errors — a file
+ * holding the other loads, so it is not said to exit 1.
+ */
+function refusedText(health: LoadHealth): string {
+  if (health.unwritable !== null) return 'that text';
+  if (health.sameText) return 'the text Save writes';
+  const { saved, exported } = health;
+  if (health.validationErrors === 0 && saved !== null && exported !== null) {
+    if (exported.parseErrors === 0) return 'the text Save writes';
+    if (saved.parseErrors === 0) return 'the text Export ▾ SysML writes';
+  }
+  return 'either text';
+}
+
 /**
  * The `checks/degraded` row, from the load health, for a command that exits 1
- * (reach) or 2 (check-behaviour).
+ * (reach) or 2 (check-behaviour): what made the model not count as loading
+ * cleanly — the load could not be checked, the model cannot be written, a text of
+ * it does not parse or parses to another model, validation finds errors on the
+ * user's elements, or validation itself failed. It says what a terminal does with
+ * a file holding the text only where that follows from what was found.
  */
 export function degradedRow(cmd: 'reach' | 'check-behaviour', health: LoadHealth): CheckRow {
-  let text: string;
-  if (health.unwritable !== null) {
-    text = `The model cannot be written as text (${health.unwritable}), so no file holds it`;
-  } else if (health.saved !== null && health.exported !== null && health.sameText && health.saved.parseErrors > 0) {
-    text = `The model's text has ${health.saved.parseErrors} syntax error(s)`;
-  } else if (health.saved !== null && health.exported !== null && !health.sameText) {
-    text = `The text this model was applied from, which Save writes, has ${health.saved.parseErrors} syntax error(s); the text Export ▾ SysML writes has ${health.exported.parseErrors}`;
-  } else {
-    text = `The model's text has ${health.saved?.parseErrors ?? 0} syntax error(s)`;
+  const row = (message: string): CheckRow => ({ code: 'checks/degraded', message, severity: 'warning' });
+  if (health.unchecked != null) {
+    // Nothing is known of the text, so nothing is said of what a terminal would do with it.
+    const why = `Whether the model's text loads could not be checked (${health.unchecked}), so it is not taken as loading cleanly`;
+    return row(
+      cmd === 'reach'
+        ? `${why}: this is a report of what parsed. Run the check again, or the command in a terminal`
+        : `${why} and nothing is judged over it. Run the check again, or the command in a terminal`,
+    );
   }
-  if (health.validationErrors > 0) text += `; ${health.validationErrors} validation error(s) on your elements`;
+  const { saved, exported } = health;
+  const clauses: string[] = [];
+  // A terminal refuses a file holding the text: no file at all, a syntax error, or a validation error.
+  let refused = false;
+  if (health.unwritable !== null) {
+    clauses.push(`The model cannot be written as text (${health.unwritable}), so no file holds it`);
+    refused = true;
+  } else if (saved !== null && exported !== null) {
+    if (health.sameText) {
+      if (saved.parseErrors > 0) clauses.push(`The model's text ${textFaults(saved)}`);
+      else if (saved.otherModel === true) clauses.push(`The model's text ${OTHER_MODEL}`);
+      refused = saved.parseErrors > 0;
+    } else {
+      if (saved.parseErrors + exported.parseErrors > 0) {
+        clauses.push(`The text this model was applied from, which Save writes, ${textFaults(saved)}; the text Export ▾ SysML writes ${textFaults(exported)}`);
+      }
+      if (saved.otherModel === true) clauses.push(`the text Save writes ${OTHER_MODEL}`);
+      if (exported.otherModel === true) clauses.push(`the text Export ▾ SysML writes ${OTHER_MODEL}`);
+      refused = saved.parseErrors + exported.parseErrors > 0;
+    }
+  }
+  if (health.validationErrors > 0) {
+    clauses.push(clauses.length === 0 ? `Validation finds ${health.validationErrors} error(s) on your elements` : `${health.validationErrors} validation error(s) on your elements`);
+    refused = true;
+  }
+  if (health.validateThrew) {
+    if (clauses.length === 0) {
+      // The one reason is the tool's own failure: no claim about what a terminal prints.
+      return row(`Validation of the model failed with an internal error, so whether it loads cleanly is not known and nothing is judged over it. This is a tool defect, not a verdict on the model`);
+    }
+    clauses.push('validation of the model failed with an internal error, so what it would find is not known');
+  }
+  if (clauses.length === 0) clauses.push(`The model's text has ${saved?.parseErrors ?? 0} syntax error(s)`);
+  let text = clauses.join('; ');
+  text = text.charAt(0).toUpperCase() + text.slice(1);
 
   if (cmd === 'reach') {
-    const which = health.unwritable !== null ? 'that text' : health.sameText ? 'the text Save writes' : 'either text';
-    let tail = `. This is a report of what parsed; \`reach\` on a file holding ${which} exits 1`;
-    if (
-      health.unwritable === null &&
-      !health.sameText &&
-      health.exported !== null &&
-      health.exported.parseErrors === 0 &&
-      health.validationErrors === 0
-    ) {
-      tail += '; Export ▾ SysML writes the model as it stands, and that text parses';
+    if (refused) {
+      let tail = `. This is a report of what parsed; \`reach\` on a file holding ${refusedText(health)} exits 1`;
+      if (
+        health.unwritable === null &&
+        !health.sameText &&
+        exported !== null &&
+        exported.parseErrors === 0 &&
+        exported.otherModel !== true &&
+        health.validationErrors === 0
+      ) {
+        tail += '; Export ▾ SysML writes the model as it stands, and that text parses';
+      }
+      text += tail;
+    } else {
+      // The file loads: what a terminal says of it is its walk of the other model, which is not this one's.
+      text += '. This is a report of the model on screen, not of the model a file of it holds';
     }
-    text += tail;
   } else {
-    text += `. Nothing is judged over half a model: \`check-behaviour\` on a file holding that text exits 2`;
+    text += refused
+      ? `. Nothing is judged over half a model: \`check-behaviour\` on a file holding that text exits 2`
+      : '. Nothing is judged over it: a file holding that text holds another model';
   }
-  return { code: 'checks/degraded', message: text, severity: 'warning' };
+  return row(text);
 }
 
 /** The `checks/not-walked` row, one per unwalked state. */

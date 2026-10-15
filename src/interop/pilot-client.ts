@@ -279,7 +279,10 @@ export class PilotApiClient {
    * Push `model` to a fresh project named `projectName`: create the project,
    * then commit one `create` change record per element — emitted in
    * owner-before-child order so every element's owner already exists on the
-   * server when it is applied. Returns the resulting ids.
+   * server when it is applied, each owner's children in the order the model
+   * holds them (`Model.inSerialOrder`: a pull rebuilds them in the order they
+   * come, and after a reparent that is not the order they were added in).
+   * Returns the resulting ids.
    */
   async pushModel(
     model: Model,
@@ -288,7 +291,7 @@ export class PilotApiClient {
     const project = await this.createProject(projectName);
     const projectId = project['@id'];
     const branchId = project.defaultBranch['@id'];
-    const changes = orderByOwnership(model.all()).map(recordToCreateChange);
+    const changes = orderByOwnership(model.inSerialOrder()).map(recordToCreateChange);
     const commit = await this.createCommit(projectId, branchId, changes, `Push ${projectName}`);
     return { projectId, branchId, commitId: commit['@id'] };
   }

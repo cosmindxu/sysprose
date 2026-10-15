@@ -897,6 +897,17 @@ describe('the sentences the model-checking lane ships pass the guard', () => {
       ['degraded check-behaviour, export parses', degradedRow('check-behaviour', degraded({ errors: 1, saved: { parseErrors: 1 }, exported: { parseErrors: 0 }, sameText: false })).message],
       ['degraded reach, validation errors', degradedRow('reach', degraded({ errors: 5, validationErrors: 5 })).message],
       ['degraded check-behaviour, validation errors', degradedRow('check-behaviour', degraded({ errors: 5, validationErrors: 5 })).message],
+      ['degraded reach, validation threw', degradedRow('reach', degraded({ errors: 1, validateThrew: true })).message],
+      ['degraded check-behaviour, validation threw beside a syntax error', degradedRow('check-behaviour', degraded({ errors: 2, saved: { parseErrors: 1 }, exported: { parseErrors: 1 }, validateThrew: true })).message],
+      ['degraded reach, a fault the serializer found', degradedRow('reach', degraded({ errors: 1, saved: { parseErrors: 1, basis: 'signal' }, exported: { parseErrors: 1, basis: 'signal' }, sameText: true })).message],
+      ['degraded reach, a parsed text beside one the serializer judged', degradedRow('reach', degraded({ errors: 6, saved: { parseErrors: 5, basis: 'parse' }, exported: { parseErrors: 1, basis: 'signal' }, sameText: false })).message],
+      ['degraded reach, another model', degradedRow('reach', degraded({ errors: 1, saved: { parseErrors: 0, otherModel: true }, exported: { parseErrors: 0, otherModel: true }, sameText: true, otherModel: true })).message],
+      ['degraded check-behaviour, another model', degradedRow('check-behaviour', degraded({ errors: 1, saved: { parseErrors: 0, otherModel: true }, exported: { parseErrors: 0, otherModel: true }, sameText: true, otherModel: true })).message],
+      ['degraded reach, the export text another model', degradedRow('reach', degraded({ errors: 2, saved: { parseErrors: 1 }, exported: { parseErrors: 0, otherModel: true }, sameText: false, otherModel: true })).message],
+      ['degraded reach, load not checked', degradedRow('reach', degraded({ errors: 1, unchecked: 'the background worker stopped' })).message],
+      ['degraded check-behaviour, load not checked', degradedRow('check-behaviour', degraded({ errors: 1, unchecked: 'the background worker said nothing for a minute' })).message],
+      ['the reach summary, load not checked', reachResult(r, term, { fileName: 'model.sysml', health: degraded({ errors: 1, unchecked: 'the background worker stopped' }) }).summary],
+      ['the reach summary, another model', reachResult(r, term, { fileName: 'model.sysml', health: degraded({ errors: 1, otherModel: true }) }).summary],
       ['the check-behaviour tooltip', CHECKS.find((c) => c.id === 'check-behaviour')!.question],
     ];
     for (const [name, text] of sentences) {

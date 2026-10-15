@@ -112,6 +112,30 @@ describe('ModelApi — mutation & commits', () => {
     expect(c2).not.toBe(c1); // monotonic
     expect(c1).toMatch(/^commit-\d+-\d+$/); // deterministic, not a Date.now timestamp
   });
+
+  /**
+   * `reparent` lists the model as every copy of it is rebuilt — the checks
+   * worker's, Undo's, Save's — as a drag in the app does
+   * (`Model.adoptSerialOrder`, review 2026-10-14 D-1): of two transitions out
+   * of `start`, the one moved out and back is the second, here and in a copy.
+   */
+  it('reparent lists the model as its copies are rebuilt', () => {
+    const model = new Model();
+    const api = new ModelApi(model);
+    const M = api.create('StateDefinition', { declaredName: 'M' });
+    const start = api.create('InitialNode', { declaredName: 'start', ownerId: M.id });
+    const A = api.create('StateUsage', { declaredName: 'A', ownerId: M.id });
+    const B = api.create('StateUsage', { declaredName: 'B', ownerId: M.id });
+    const toA = api.create('TransitionUsage', { declaredName: 'toA', ownerId: M.id, source: [start.id], target: [A.id] });
+    api.create('TransitionUsage', { declaredName: 'toB', ownerId: M.id, source: [start.id], target: [B.id] });
+    api.reparent(toA.id, null);
+    api.reparent(toA.id, M.id);
+    const listed = model.inSerialOrder();
+    expect(model.all().every((el, i) => el === listed[i])).toBe(true);
+    const outOfStart = (m: Model) => m.edgesFrom(start.id).map((e) => e.declaredName);
+    expect(outOfStart(model)).toEqual(['toB', 'toA']);
+    expect(outOfStart(Model.fromJSON(model.toJSON()))).toEqual(['toB', 'toA']);
+  });
 });
 
 describe('ModelApi — versioning surface', () => {

@@ -73,6 +73,8 @@ export function App(): JSX.Element {
          * still waiting, or a diagram is being laid out.
          */
         busy: () => recomputePending() || useAppStore.getState().diagramLayoutPending,
+        /** True while an edit's recompute is still waiting: the drawing, Problems and the Text tab do not show that edit yet. */
+        recomputePending: () => recomputePending(),
       },
       // Google Drive (optional). What a test or an agent may read; nothing
       // token-like is reachable from here.

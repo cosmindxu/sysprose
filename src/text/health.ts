@@ -1,108 +1,164 @@
 /**
- * Serializer-side load health: what a file of the live model holds, without
- * re-parsing it.
+ * Load health, the half that needs no store: what a text a file of the model can
+ * hold is worth to a check.
  *
- * {@link loadHealth} judges a model by the texts a file of it can hold — the
- * parse errors each text carries and the validation findings on the model it
- * parses to. Measuring that by parsing every text, merging the library and
- * validating is ~0.5-1.3 s per text on a model the size of the drone swarm. The
- * serializer can say most of it as it writes, and this module collects the two
- * halves:
+ * `loadHealth` (`src/ui/store.ts`) judges a model by the texts a file of it can
+ * hold — what Save writes and what Export ▾ SysML writes — as a terminal loads
+ * that file: the errors the parse reports, and the error findings validation puts
+ * on the text's own elements with the standard library merged. It also asks
+ * whether such a file holds the model on screen at all: a field written back as
+ * typed that closes its owner, adds a declaration or turns the rest of its line
+ * into a comment can leave a text that parses cleanly, but to another model, so a
+ * terminal checks a model the page never walked ({@link MeasuredText.rewritten}). {@link measureTextHealth} is that
+ * measurement. The checks worker runs it (`src/ui/checks-offthread.ts`), so a
+ * check click does not hold the page for a parse — seconds on the drone-swarm
+ * model the first time, while the worker builds the parser and the library, and
+ * less after an edit — and the page runs the same function where it has no
+ * worker. A unit test holds it to `loadModelText` (`./load.ts`,
+ * the terminal's own loader) over the test corpus and a fuzz of every field the
+ * serializer writes verbatim.
  *
- *  - {@link TextSignals.parseErrors}: the words the serializer writes back that
- *    the grammar cannot read (a feature value the parser stored as verbatim
- *    expression text, and an `unparsedText` residue that reproduces a fault).
- *    These are known without parsing the file;
- *  - {@link TextSignals.referenceFaithful}: whether every reference the text
- *    writes re-resolves to the element it denotes on a FRESH parse. When it
- *    does, and nothing is left as unresolved text, the model the text parses to
- *    is the live model, so the text's validation is the live model's and
- *    `loadHealth` need not parse it. When it does not (a connector end left
- *    behind by a rename, the case `test/unit/store.reducers.test.ts` pins), the
- *    text is only a sample and `loadHealth` falls back to a parse for the exact
- *    count.
+ * THE SERIALIZER'S SIGNAL ONLY EVER SAYS "FAULTY". As it writes a text, the
+ * serializer can see one kind of fault for certain ({@link serializeUserModelSignals}):
+ * a line of the text that is one declaration written whole, ending in a feature
+ * value written back as it was typed and the `;` that ends it, where nothing on
+ * the line can pair with or close anything else (no brace, semicolon, quote,
+ * comment mark, line break or unmatched bracket), the value is one the grammar
+ * cannot read on its own, and the parser's own lexer reads the line's start as
+ * code — not the inside of a string, a quoted name or a comment that some other
+ * field opened before it. The value's tokens then reach the expression rule
+ * exactly as they do alone, with the same `;` after them, so a parse fails there.
+ * A text with such a line is taken as not loading cleanly WITHOUT being parsed:
+ * an early answer that can only demote a check, never let one pass. A text with
+ * none is NOT thereby clean, and nothing here says it is. The signal does not
+ * read a guard, a trigger, an effect, an expression or a metadata name, a
+ * non-string value, a name or unit holding a line break, a declaration a parse
+ * could not read (`unparsedText`, whose span the mapper's fault-residue pass
+ * chooses by rule of thumb, so only a parse of the text it lands in can say what
+ * it does there), a value whose line holds a quote or a comment mark before it
+ * (`attribute rate : Real // kg = 1 +;` reads as a line note), or a value the text
+ * around it can complete or close (`2; attribute rate = 3` adds a declaration,
+ * `1 +` before a `{ … }` body is read as `1 + { … }`, a unit is written after the
+ * value, and a `}` closes its owner) — the parse does all of those. Nor is its
+ * count a terminal's: it counts the lines it found, and a parse may report their
+ * errors otherwise. The row that reports it says what was found, and that the
+ * text was not parsed.
  *
- * The reference check is the serializer's {@link serializeUserModelRefs} tally;
- * the unresolved-text and import checks live here because they need the model,
- * not the emitted string.
+ * 679a5e5 used the signal the other way, as a certificate that a text parses to
+ * the live model, so that `loadHealth` could skip the parse; it said the
+ * certificate "can only make loadHealth parse more, never less". Neither held
+ * (review 2026-10-14, LH-1..LH-4): the app read `holds` over texts the terminal
+ * rejects. The certificate and its reference tally are gone; a text is clean only
+ * once a parse has said so. Nor did it save the time it was for where it mattered
+ * most: its `displayTypesFaithful` refused the drone-swarm model over its 76
+ * `@SysproseVerification::PropertyPattern` metadata usages (a vocabulary that
+ * model does not declare), so a check click there parsed on the page after every
+ * edit, 0.4 to 0.7 s in one task in a browser (review 2026-10-14, D-3). With the
+ * parse in the worker, which vocabularies a text uses no longer bears on what a
+ * click costs the page; an E2E guard on that model holds the click's own work to
+ * no task over 200 ms (`test/e2e/palette-checks.spec.ts`).
  */
 
-import { Model } from '@core/index';
-import { resolveFullName } from '@semantics/bind';
-import { astToModel } from './langium/map-to-model';
-import { serializeUserModelRefs } from './serializer';
+import { Model, type ElementId } from '@core/index';
+import { resolveTypeReferences } from '@library/resolve';
+import { validate } from '@validation/index';
+import { astToModel, resolveConnectorFeatureChains } from './langium/map-to-model';
+import { tokenStarts } from './langium/module';
+import { serializeElement } from './serializer';
 
-/** What the serializer can say about the text a file of the model holds. */
+/** What the serializer can say about the text a file of the model holds, as it writes it. */
 export interface TextSignals {
   /** The text Save/Export write for the model's user roots. */
   readonly text: string;
-  /** Parse errors the text will carry, counted without parsing the whole text. */
-  readonly parseErrors: number;
   /**
-   * Every reference the text writes re-resolves to its element on a fresh
-   * parse, and no reference is left as unresolved text. Then the text parses to
-   * the live model, so its validation does not have to be measured separately.
+   * The lines of the text that a parse would find faulty wherever they stand
+   * ({@link serializeUserModelSignals}): more than 0 takes the text as not loading
+   * cleanly without a parse. 0 says nothing — and neither count is the number of
+   * parse errors a terminal prints.
    */
-  readonly referenceFaithful: boolean;
-}
-
-/** The specialization-family attributes the mapper leaves behind as TEXT. */
-const TEXTUAL_REF_KEYS = ['typeRef', 'specializes', 'redefines', 'references', 'aliasFor'] as const;
-/** Endpoint attributes the mapper leaves behind as TEXT when an end does not resolve. */
-const ENDPOINT_REF_KEYS = ['sourceRef', 'targetRef'] as const;
-/** Names a note/annotation carries about elements; emitted verbatim, so a rename can stale them. */
-const ABOUT_KEYS = ['about'] as const;
-
-/** A bare double-quoted string literal the grammar reads back as written. */
-const QUOTED_STRING = /^"(?:\\.|[^"\\])*"$/;
-
-function str(v: unknown): string | undefined {
-  return typeof v === 'string' && v.trim() !== '' ? v : undefined;
-}
-
-/** True when any user element carries a still-textual reference the parser could not bind. */
-function hasTextualResidue(model: Model): boolean {
-  for (const el of model.all()) {
-    if (el.attrs.isLibrary === true) continue;
-    for (const key of [...TEXTUAL_REF_KEYS, ...ENDPOINT_REF_KEYS, ...ABOUT_KEYS]) {
-      const v = el.attrs[key];
-      if (typeof v === 'string') {
-        if (v.trim() !== '') return true;
-      } else if (Array.isArray(v) && v.some((x) => typeof x === 'string' && x.trim() !== '')) {
-        return true;
-      }
-    }
-  }
-  return false;
+  readonly faults: number;
 }
 
 /**
- * The number of parse errors the emitted text will carry, counted without
- * parsing the file: one per `unparsedText` residue (emitted verbatim, so it
- * reproduces its fault) and one per feature value written as verbatim
- * expression text the grammar cannot read back. A value the grammar reads
- * (`2 * 3`, a quoted string) is not an error; the value is re-read on its own,
- * which is a fraction of the file's parse.
+ * Text with nothing in it the text around it could pair with or close: no
+ * brace, semicolon, quote, comment mark or line break. Read in place, its tokens
+ * are its own, as they are read alone.
  */
-function parseErrorsOf(model: Model): number {
-  let n = 0;
+const SELF_CONTAINED = /^(?![\s\S]*(?:\/\*|\*\/|\/\/))[^{};"'\r\n]*$/;
+
+/** Whether every `(` and `[` in `text` is closed in it, in order, and nothing closes what it did not open. */
+function bracketsBalanced(text: string): boolean {
+  const open: string[] = [];
+  for (const ch of text) {
+    if (ch === '(' || ch === '[') open.push(ch);
+    else if (ch === ')' || ch === ']') {
+      if (open.pop() !== (ch === ')' ? '(' : '[')) return false;
+    }
+  }
+  return open.length === 0;
+}
+
+/**
+ * The declarations the serializer writes back with a verbatim value a parse
+ * finds faulty wherever its line stands, each as its own written line: a
+ * {@link SELF_CONTAINED} value with its brackets matched, that the grammar
+ * cannot read on its own, written last on its line — after a declaration that is
+ * self-contained too, and before nothing but the `;` that ends it (no unit, no
+ * body).
+ */
+function faultyLines(model: Model): Set<string> {
+  const lines = new Set<string>();
   for (const el of model.all()) {
     if (el.attrs.isLibrary === true) continue;
-    if (str(el.attrs.unparsedText) !== undefined) {
-      n++;
-      continue;
-    }
     const v = el.attrs.value;
-    if (typeof v !== 'string' || QUOTED_STRING.test(v)) continue;
-    if (!valueTextParses(v)) n++;
+    if (typeof v !== 'string' || !SELF_CONTAINED.test(v) || !bracketsBalanced(v) || valueTextParses(v)) continue;
+    const line = ownLine(model, el.id);
+    if (line === null || !line.endsWith(` ${v};`)) continue;
+    const before = line.slice(0, line.length - v.length - 2);
+    if (SELF_CONTAINED.test(before) && bracketsBalanced(before)) lines.add(line);
+  }
+  return lines;
+}
+
+/** The element's own written text at no indent, or null for one the serializer refuses. */
+function ownLine(model: Model, id: ElementId): string | null {
+  try {
+    return serializeElement(model, id, 0);
+  } catch {
+    return null; // a model the serializer refuses has no text to judge
+  }
+}
+
+/**
+ * The faults the serializer wrote back verbatim into `text` that a parse would
+ * find wherever they stand: one per line of `text` that is one of
+ * {@link faultyLines}, written whole, where the parser's own lexer starts a
+ * token at the line's first character — so it reads that line as code, not as
+ * the inside of a string, a quoted name or a comment another field opened.
+ * From there the line's tokens are its own, and its value's reach the
+ * expression rule as they do alone, followed by the same `;`. A line found
+ * elsewhere (inside a comment, a string, or written within another line) is not
+ * counted, and nothing else is looked for: a value that fails these tests is
+ * left to the parse.
+ */
+function faultsOf(model: Model, text: string): number {
+  const lines = faultyLines(model);
+  if (lines.size === 0) return 0;
+  const starts = tokenStarts(text);
+  let n = 0;
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    const body = line.trimStart();
+    if (lines.has(body) && starts.has(offset + line.length - body.length)) n++;
+    offset += line.length + 1;
   }
   return n;
 }
 
-/** Whether a verbatim value's text reads back through the grammar; memoized by text. */
+/** Whether a verbatim value's text reads back through the grammar on its own; memoized by text. */
 const valueReadsBack = new Map<string, boolean>();
 
-/** Read one feature value's verbatim text back through the grammar; true when it has no parse error. */
+/** Read one feature value's verbatim text back through the grammar, alone; true when it has no parse error. */
 function valueTextParses(value: string): boolean {
   const known = valueReadsBack.get(value);
   if (known !== undefined) return known;
@@ -118,57 +174,107 @@ function valueTextParses(value: string): boolean {
   return ok;
 }
 
-/**
- * True when every import the user wrote still names the namespace it was bound
- * to — a namespace renamed after the import would leave the text's `import`
- * naming nothing, which a fresh parse would report and the live model would not.
- */
-function importsFaithful(model: Model): boolean {
-  for (const el of model.all()) {
-    if (el.attrs.isLibrary === true) continue;
-    if (el.eClass !== 'NamespaceImport' && el.eClass !== 'MembershipImport') continue;
-    const targetId = (el.target ?? [])[0];
-    const name = str(el.attrs.importedName);
-    if (targetId === undefined || name === undefined) continue;
-    const ref = name.replace(/::\*\s*$/, '').replace(/\*\s*$/, '').trim();
-    if (ref === '') continue;
-    const found = resolveFullName(model, ref, el.ownerId, { accept: (e) => e.attrs.implicit !== true });
-    if (found === undefined || found.id !== targetId) return false;
-  }
-  return true;
+/** The text Save and Export ▾ SysML write for the model: its user roots, the library left out. Throws what the serializer throws. */
+function userText(model: Model): string {
+  return model
+    .roots()
+    .filter((r) => r.attrs.isLibrary !== true)
+    .map((r) => serializeElement(model, r.id, 0))
+    .join('\n\n');
 }
 
 /**
- * True when every display type the serializer writes from `attrs.type` (an
- * attribute's authored `: T`, an annotation's `@T`) still resolves — the one
- * reference the serializer writes from an attribute rather than through
- * {@link refTo}, so the tally above cannot see it.
- */
-function displayTypesFaithful(model: Model): boolean {
-  for (const el of model.all()) {
-    if (el.attrs.isLibrary === true) continue;
-    const t = str(el.attrs.type);
-    if (t === undefined || t.startsWith('«')) continue;
-    const found = resolveFullName(model, t, el.ownerId, { accept: (e) => e.attrs.implicit !== true });
-    if (found === undefined) return false;
-  }
-  return true;
-}
-
-/**
- * Serialize the model's user text and report what a file of it holds without
- * parsing it: the parse errors the serializer may write, and whether its
- * references all re-resolve so validation can be read off the live model.
+ * Serialize the model's user text — the text Save and Export ▾ SysML write, the
+ * user roots only — and count the faults it wrote back verbatim that a parse
+ * would find wherever they stand ({@link TextSignals.faults}). The count can make
+ * a check say "this text does not load cleanly" early; it can never make one say
+ * that it does.
  */
 export function serializeUserModelSignals(model: Model): TextSignals {
-  const { text, unresolvedRefs } = serializeUserModelRefs(model);
-  return {
-    text,
-    parseErrors: parseErrorsOf(model),
-    referenceFaithful:
-      unresolvedRefs === 0 &&
-      !hasTextualResidue(model) &&
-      importsFaithful(model) &&
-      displayTypesFaithful(model),
-  };
+  const text = userText(model);
+  return { text, faults: faultsOf(model, text) };
+}
+
+/** What a text a file can hold is worth to a check: what a terminal that loads it counts, and what the text holds. */
+export interface MeasuredText {
+  /**
+   * Errors the parse reports, the mapper's included, and the loader's own: a text
+   * refused as JSON, or a parser that throws, counts as one (a terminal files
+   * those under `import/*`).
+   */
+  readonly parseErrors: number;
+  /**
+   * Error findings validation puts on the elements the text declares (or on no
+   * element), with the standard library merged; a validator that throws counts as
+   * one. The library's own findings are not counted, as a terminal counts none.
+   */
+  readonly validationErrors: number;
+  /**
+   * The text the serializer writes for the model this text parses to — its user
+   * roots, bound as a terminal binds them, written as Export ▾ SysML writes —
+   * when the parse found no error; null when it found one, or when the serializer
+   * refuses that model. A file holding the text holds the model on screen only if
+   * this is the text the model on screen writes: a field written back as typed
+   * that closes its owner, adds a declaration or turns the rest of its line into
+   * a comment leaves a text that parses cleanly, but to another model, which
+   * writes another text (review 2026-10-14).
+   */
+  readonly rewritten: string | null;
+}
+
+const UTF8_BOM = '\uFEFF';
+
+/**
+ * Parse `text` and validate the model it parses to, as `loadModelText` (`./load.ts`)
+ * loads a file for a terminal: a BOM stripped and CRLF line ends made LF; a text
+ * that starts with `{` refused as JSON, one error; the parse; then `mergeLibrary`
+ * merges the standard library into the parsed model, its type references and
+ * connector chains are bound, and validation runs. The sum of the two counts is
+ * the number of errors the terminal prints for a file holding `text`, which a unit
+ * test holds it to — save where a step throws: both then report a failure, and
+ * this keeps the parse's errors beside it where the terminal may not. A text that
+ * parses cleanly is then written back from its parse
+ * ({@link MeasuredText.rewritten}), for the caller to set beside the text the
+ * model on screen writes.
+ *
+ * The caller supplies the merge (the library is data the worker and the page each
+ * load their own way); one that cannot merge has no answer to give, and must not
+ * ask — without the library a type reads as unresolved and a rule that needs one
+ * stays silent, so a count could read low as well as high.
+ */
+export function measureTextHealth(text: string, mergeLibrary: (model: Model) => void): MeasuredText {
+  let src = text.startsWith(UTF8_BOM) ? text.slice(UTF8_BOM.length) : text;
+  if (src.includes('\r\n')) src = src.replace(/\r\n/g, '\n');
+  if (src.trimStart().startsWith('{')) return { parseErrors: 1, validationErrors: 0, rewritten: null };
+  let parsed: ReturnType<typeof astToModel>;
+  try {
+    parsed = astToModel(src);
+  } catch (err) {
+    console.error('parse failed', err);
+    return { parseErrors: 1, validationErrors: 0, rewritten: null };
+  }
+  const parseErrors = parsed.diagnostics.filter((d) => d.severity === 'error').length;
+  const model = parsed.model;
+  const mine = new Set(model.all().map((el) => el.id)); // before the library goes in
+  let validationErrors = 0;
+  try {
+    mergeLibrary(model);
+    resolveTypeReferences(model);
+    resolveConnectorFeatureChains(model);
+    for (const d of validate(model)) {
+      if (d.severity === 'error' && (d.elementId === undefined || mine.has(d.elementId))) validationErrors++;
+    }
+  } catch (err) {
+    console.error('validation failed', err);
+    validationErrors = 1;
+  }
+  let rewritten: string | null = null;
+  if (parseErrors === 0) {
+    try {
+      rewritten = userText(model);
+    } catch {
+      rewritten = null; // the model this text parses to cannot be written, so it is not the one on screen
+    }
+  }
+  return { parseErrors, validationErrors, rewritten };
 }

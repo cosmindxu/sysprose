@@ -10,11 +10,15 @@
  * the palette never shows a result as current beside a command for another
  * element.
  *
- * A check running in a worker (`checks-runner.ts`) is recorded here as `running`
+ * A check running in a worker (`checks-runner.ts`) is recorded here as running
  * from the click until it settles, under a token the runner checks before it
  * lands a result: one that was cancelled, or whose run was replaced, finds its
- * token gone and is dropped. The `rev` and selection it ran on are those of the
- * click, not of the moment it lands, so an edit made meanwhile shows it `stale`.
+ * token gone and is dropped. It runs in two phases: `load` while the worker
+ * parses the model's text to know whether it loads, which the check is judged
+ * over, then `walk` while the check itself runs. The `rev` and selection it ran
+ * on are those of the click — or, for a run begun before it reads the page
+ * (`runCheckedOnceDrawn`), the `rev` of that read, a frame later — not of the
+ * moment it lands, so an edit made meanwhile shows it `stale`.
  *
  * `runs` moves when a check is STARTED, not when it lands: it brings the Checks
  * tab forward, and that belongs to the click. A tab that came forward when the
@@ -38,6 +42,13 @@ export interface StoredResult {
 
 export type RanIn = 'worker' | 'page';
 
+/**
+ * What a running check waits on: `load` — the model's text, parsed in the worker
+ * to know whether it loads (the row reads `checking the load…`); `walk` — the
+ * check itself (`running…`).
+ */
+export type RunPhase = 'load' | 'walk';
+
 /** A check that has been started in a worker and has not settled. */
 export interface RunningCheck {
   /** Identifies this run; a reply that does not carry the current one is dropped. */
@@ -45,6 +56,7 @@ export interface RunningCheck {
   /** `useAppStore.rev` at the click. */
   rev: number;
   at: number;
+  phase: RunPhase;
 }
 
 interface ChecksState {
@@ -55,8 +67,10 @@ interface ChecksState {
   runs: number;
   /** A run that was worked out on the page: it lands at once. */
   record(id: string, result: CheckResult, rev: number, selection?: string): void;
-  /** A run started in a worker. */
-  begin(id: string, token: number, rev: number): void;
+  /** A run started in a worker, in its first phase. */
+  begin(id: string, token: number, rev: number, phase?: RunPhase): void;
+  /** The load is known and the run `token` goes on to the check itself. */
+  walking(id: string, token: number): void;
   /** A run ended with a result: it lands, and the check stops running. */
   land(id: string, result: CheckResult, rev: number, ranIn: RanIn, selection?: string): void;
   /** A run stopped without a result (cancelled): the check stops running, its last result stays. */
@@ -80,8 +94,13 @@ export const useChecksStore = create<ChecksState>((set) => ({
       results: { ...s.results, [id]: { result, rev, ...(selection !== undefined ? { selection } : {}), ranIn: 'page', at: Date.now() } },
       runs: s.runs + 1,
     })),
-  begin: (id, token, rev) =>
-    set((s) => ({ running: { ...s.running, [id]: { token, rev, at: Date.now() } }, runs: s.runs + 1 })),
+  begin: (id, token, rev, phase = 'walk') =>
+    set((s) => ({ running: { ...s.running, [id]: { token, rev, at: Date.now(), phase } }, runs: s.runs + 1 })),
+  walking: (id, token) =>
+    set((s) => {
+      const run = s.running[id];
+      return run?.token === token ? { running: { ...s.running, [id]: { ...run, phase: 'walk' } } } : {};
+    }),
   // `runs` is not moved here: it moved at the click, and the person may be elsewhere now.
   land: (id, result, rev, ranIn, selection) =>
     set((s) => ({
@@ -92,6 +111,11 @@ export const useChecksStore = create<ChecksState>((set) => ({
   // Results only: a run in a worker is not a result yet, and lands when it is.
   clear: () => set({ results: {}, runs: 0 }),
 }));
+
+/** The verdict a check shows while it runs, by what it waits on. */
+export function runningVerdict(run: RunningCheck): CheckVerdict {
+  return run.phase === 'load' ? 'checking' : 'running';
+}
 
 /**
  * The verdict to show: `stale` once the model has changed under it, or — when
@@ -111,6 +135,7 @@ export function verdictOf(stored: StoredResult | undefined, rev: number, selecti
 /** How a verdict reads — text, never colour alone. */
 export const VERDICT_LABEL: Record<CheckVerdict, string> = {
   'not-run': 'not run',
+  checking: 'checking the load…',
   running: 'running…',
   holds: 'holds',
   issues: 'findings',

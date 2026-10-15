@@ -13,9 +13,10 @@
  *    worker — the run ends, and the next one starts a new worker (which loads
  *    the library again; the price of an ended walk);
  *  - no stale result: a run is recorded against the model revision and the
- *    selection of the click, so an edit made while it ran shows it `stale`,
- *    exactly as one made after it; and a run that was cancelled finds its token
- *    gone and lands nothing.
+ *    selection it started from (the click's; the revision is read a frame later
+ *    for a run begun before it reads the page, below), so an edit made while it
+ *    ran shows it `stale`, exactly as one made after it; and a run that was
+ *    cancelled finds its token gone and lands nothing.
  *
  * ONE WORKER, ONE RUN AT A TIME. Each worker holds a copy of the standard library
  * (38,000 elements), so two would cost twice that for nothing a person can see:
@@ -24,7 +25,9 @@
  *
  * A WORKER IS NOT STARTED FOR AN ANSWER THAT NEEDS NO WALK. Starting one costs a
  * quarter of a second and a second copy of the library; a model with no state
- * machine is told so on the spot ({@link hasStateMachine}).
+ * machine is told so on the spot ({@link hasStateMachine}) — once its load is
+ * known (below): a text no parse has measured is the one thing such a model
+ * still sends a worker.
  *
  * AN ANSWER NO WORKER GIVES IS NOT LOST. A page with no workers (and every unit
  * test), a worker that fails to start or dies, a reply that says it could not
@@ -41,17 +44,64 @@
  * and start no worker: each would pay for a start, a load and a reply, then the
  * walk. The page's library changing (it finishes loading, a project from another
  * build is opened) lifts it.
+ *
+ * THE LOAD FIRST, IN THE WORKER. The two walks are judged over the load health:
+ * whether each text a file of the model can hold loads cleanly, which only a parse
+ * can say (`loadHealthNow`, `../store.ts`). A text no parse has measured yet — one
+ * the serializer wrote, after an edit or of a file just opened (its Export text is
+ * seldom the file's) — goes to the worker first, and the run is
+ * `checking the load…` until the counts come back; then the check runs, in the
+ * worker or here as above, judged over them. The page is not held for the parse. A
+ * check never runs ahead of its load: it waits, because a verdict over a load
+ * nobody has checked could only be `undecided`. Where the worker cannot measure
+ * the texts — it fails, stops, cannot load the library or says nothing for a
+ * minute — the page measures them itself, as a page with no worker does: the page
+ * is held for the parse that once, for a true answer rather than none. Only where
+ * the page cannot either (no standard library has loaded here) is the load taken
+ * as NOT CHECKED, which is never clean, and the check runs over that. The texts
+ * measured are kept by the page, so a check run again over a model not changed
+ * since has its load at once.
+ *
+ * WHAT IS WALKED IS THE MODEL THE RUN STARTED FROM: the click's, or, for a run
+ * begun before it reads the page (below), the model a frame after the click. The
+ * load is that start's texts, so the walk is of that start's model: a run whose
+ * walk is not sent at once (it waits for its load, or for a run ahead of it)
+ * copies the model's user part as it starts (`userPart`, about 10 ms on the
+ * drone-swarm model), and an edit made meanwhile is not walked under a load
+ * measured before it. Either way the result lands against the revision the run
+ * started at, so such an edit shows it `stale`.
+ *
+ * THE CLICK HOLDS THE PAGE FOR NOTHING THAT GROWS WITH THE MODEL. What it reads of
+ * the load is looked up; the parse is the worker's (above). Where reading it would
+ * cost the page — an edit's recompute still waiting, which validates the model and
+ * writes its text — the run begins first and reads once its row is drawn
+ * ({@link runCheckedOnceDrawn}): the page does the edit's work after showing
+ * `checking the load…`, not before. An E2E guard holds the drone-swarm model to it:
+ * with the edit's recompute done, no task of the page over 200 ms from the click
+ * to the answer; with it still waiting, a click that leaves it waiting and holds
+ * the page under 50 ms, the row under way at once, and a frame drawn before the
+ * edit's work.
  */
 
-import { hasStateMachine, runCheck, selectionKey, type CheckContext, type CheckResult, type CheckSpec } from '../checks';
-import { libraryKey, NO_REQUEST, userPart, type CheckReply, type CheckRequest } from '../checks-offthread';
+import { checkThrew, hasStateMachine, runCheck, selectionKey, type CheckContext, type CheckResult, type CheckSpec } from '../checks';
+import type { Model, SerializedModel } from '@core/index';
+import {
+  libraryKey,
+  NO_REQUEST,
+  userPart,
+  type CheckReply,
+  type CheckRequest,
+  type HealthReply,
+  type HealthRequest,
+} from '../checks-offthread';
+import type { LoadHealthNow, PendingLoadHealth } from '../store';
 import { useChecksStore, type RanIn } from './checks-store';
 
 /** The part of a Worker this module uses, so a test can stand one in. */
 export interface CheckWorker {
-  postMessage(message: CheckRequest): void;
+  postMessage(message: CheckRequest | HealthRequest): void;
   terminate(): void;
-  onmessage: ((event: { data: CheckReply }) => void) | null;
+  onmessage: ((event: { data: CheckReply | HealthReply }) => void) | null;
   onerror: ((event: unknown) => void) | null;
   onmessageerror: ((event: unknown) => void) | null;
 }
@@ -94,12 +144,20 @@ interface Job {
   token: number;
   spec: CheckSpec;
   ctx: CheckContext;
-  /** `useAppStore.rev` at the click. */
+  /** `useAppStore.rev` at the click, or, for a run begun before it reads the page ({@link runCheckedOnceDrawn}), at that read. */
   rev: number;
   /** What of the selection the check reads, at the click. */
   selection: string | undefined;
   /** {@link libraryKey} of the page's model when the run was sent to the worker. */
   library?: string;
+  /**
+   * The user part of the model to walk in the worker, as the run started
+   * ({@link userPart}, copied when the send waits); null when there is no state
+   * machine to walk, and the check is answered here.
+   */
+  part: SerializedModel | null;
+  /** The load health still to be measured in the worker, before the check can run; gone once it is known (`ctx.loadHealth`). */
+  load?: PendingLoadHealth;
 }
 
 let nextToken = 1;
@@ -154,13 +212,69 @@ function runHere(job: Job): void {
   settle(job, runCheck(job.spec, job.ctx), 'page');
 }
 
-function onReply(from: CheckWorker, reply: CheckReply): void {
+/**
+ * The worker could not measure the run's texts (`why`): the page measures them
+ * (`PendingLoadHealth.here`, which takes the load as not checked where the page
+ * cannot either), and the check runs here over that — never over a load it did
+ * not have.
+ */
+function loadHere(job: Job, load: PendingLoadHealth, why: string): void {
+  job.load = undefined;
+  job.ctx = { ...job.ctx, loadHealth: load.here(why) };
+  runHere(job);
+}
+
+/** The worker failed the run it was on (`why`): in the load phase the page measures the load; either way the check runs here. */
+function workerFailed(job: Job, why: string): void {
+  if (job.load !== undefined) loadHere(job, job.load, why);
+  else runHere(job);
+}
+
+/** The worker, started if there is none; throws where the page has none, or one cannot be started. */
+function ensureWorker(): CheckWorker {
+  if (worker !== null) return worker;
+  const make = factory();
+  if (make === null) throw new Error('no worker on this page');
+  const w = make();
+  w.onmessage = (event) => onReply(w, event.data);
+  w.onerror = () => {
+    if (w === worker && active !== null) workerFailed(active, 'the background worker stopped');
+  };
+  w.onmessageerror = () => {
+    if (w === worker && active !== null) workerFailed(active, 'the background worker could not read its answer');
+  };
+  worker = w;
+  return w;
+}
+
+/** A minute for the worker to answer `job`, from now. */
+function armWatchdog(job: Job): void {
+  stopWatchdog();
+  watchdog = setTimeout(() => (active === job ? workerFailed(job, 'the background worker said nothing for a minute') : undefined), WATCHDOG_MS);
+}
+
+function onReply(from: CheckWorker, reply: CheckReply | HealthReply): void {
   // A reply that cannot name its request (`NO_REQUEST`) can only be for the one being waited for.
   if (from !== worker || active === null || (reply.id !== active.token && reply.id !== NO_REQUEST)) return;
-  if (reply.ok) settle(active, reply.result, 'worker');
+  const job = active;
+  if (job.load !== undefined) {
+    const load = job.load;
+    stopWatchdog();
+    if (!reply.ok) loadHere(job, load, `the background worker could not check it (${reply.message})`);
+    else if (!('texts' in reply) || reply.texts.length !== load.unmeasured.length) {
+      loadHere(job, load, 'the background worker answered something other than the texts asked about');
+    } else {
+      job.load = undefined;
+      job.ctx = { ...job.ctx, loadHealth: load.finish(reply.texts) };
+      useChecksStore.getState().walking(job.spec.id, job.token);
+      walk(job);
+    }
+    return;
+  }
+  if (reply.ok && 'result' in reply) settle(job, reply.result, 'worker');
   else {
-    if (reply.libraryMismatch === true && active.library !== undefined) declined = active.library;
-    runHere(active);
+    if (!reply.ok && 'libraryMismatch' in reply && reply.libraryMismatch === true && job.library !== undefined) declined = job.library;
+    runHere(job);
   }
 }
 
@@ -170,30 +284,46 @@ function pump(): void {
   active = job;
   if (idleTimer !== null) clearTimeout(idleTimer);
   idleTimer = null;
-  const library = libraryKey(job.ctx.model);
+  if (job.load !== undefined) measureLoad(job, job.load);
+  else walk(job);
+}
+
+/** The run's first phase: the texts the page could not judge go to the worker, to be parsed as a terminal parses them. */
+function measureLoad(job: Job, load: PendingLoadHealth): void {
+  try {
+    ensureWorker().postMessage({ id: job.token, kind: 'health', texts: [...load.unmeasured] });
+  } catch {
+    // No worker after all (one could not be started, or take the texts): the page parses them, as it always did.
+    job.load = undefined;
+    job.ctx = { ...job.ctx, loadHealth: load.here() };
+    useChecksStore.getState().walking(job.spec.id, job.token);
+    walk(job);
+    return;
+  }
+  armWatchdog(job);
+}
+
+/** The check itself, its load known: in the worker when it walks a state machine there, else here. */
+function walk(job: Job): void {
+  const { ctx, part } = job;
+  if (part === null) {
+    // Nothing to walk (a model with no state machine), or nothing that needs the worker: answered here, at once.
+    settle(job, runCheck(job.spec, ctx), 'page');
+    return;
+  }
+  const library = libraryKey(ctx.model);
   if (library === declined) {
     // A worker has said this page's library is not its own: do not start one to be told again.
-    settle(job, runCheck(job.spec, job.ctx), 'page');
+    settle(job, runCheck(job.spec, ctx), 'page');
     return;
   }
   try {
-    if (worker === null) {
-      const make = factory();
-      if (make === null) throw new Error('no worker on this page');
-      const w = make();
-      w.onmessage = (event) => onReply(w, event.data);
-      w.onerror = () => {
-        if (w === worker && active !== null) runHere(active);
-      };
-      w.onmessageerror = w.onerror;
-      worker = w;
-    }
-    const { ctx } = job;
+    const w = ensureWorker();
     job.library = library;
-    worker.postMessage({
+    w.postMessage({
       id: job.token,
       check: job.spec.id,
-      model: userPart(ctx.model),
+      model: part,
       library,
       selectionId: ctx.selectionId,
       selectionName: ctx.selectionName,
@@ -203,11 +333,11 @@ function pump(): void {
       // so the worker's run reads the health the page read, not undefined.
       loadHealth: ctx.loadHealth,
     });
-    stopWatchdog();
-    watchdog = setTimeout(() => (active === job ? runHere(job) : undefined), WATCHDOG_MS);
   } catch {
     runHere(job);
+    return;
   }
+  armWatchdog(job);
 }
 
 /**
@@ -215,17 +345,109 @@ function pump(): void {
  * {@link CheckSpec.offThread} goes to the worker where the page has one and there
  * is a state machine to walk, and is `running` until it settles; every other
  * check runs here, now. Starting a check that is already running does nothing.
+ *
+ * `health`, for a check judged over the load health, is what the page knew of
+ * it at the click (`loadHealthNow`): known, and the check goes as above; or
+ * texts still to parse, and the run is `checking the load…` while the worker
+ * parses them, then goes on — whatever the check, and whether or not there is a
+ * machine to walk. A page with no worker parses them here first. The model a
+ * walk is sent is the click's, copied when the send waits.
  */
-export function runChecked(spec: CheckSpec, ctx: CheckContext, rev: number): void {
+export function runChecked(spec: CheckSpec, ctx: CheckContext, rev: number, health?: LoadHealthNow): void {
+  if (useChecksStore.getState().running[spec.id] !== undefined) return;
+  launch(spec, ctx, rev, health);
+}
+
+/** What a run reads of the page as it starts, in one turn (I8): the model, the store's revision, and the load health of a check judged over it. */
+export interface RunStart {
+  readonly model: Model;
+  readonly rev: number;
+  readonly health?: LoadHealthNow;
+}
+
+/**
+ * How long a run started with {@link runCheckedOnceDrawn} waits for a frame
+ * before it reads the page anyway: a page in a background tab draws none.
+ */
+export const FRAME_WAIT_MS = 250;
+
+/** Call `fn` once, in a task of its own after the page's next frame — or after {@link FRAME_WAIT_MS} where no frame comes. */
+function afterFrame(fn: () => void): void {
+  let done = false;
+  const go = (): void => {
+    if (done) return;
+    done = true;
+    fn();
+  };
+  // A timer set from a frame callback fires after that frame is drawn.
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(go, 0));
+  setTimeout(go, FRAME_WAIT_MS);
+}
+
+/**
+ * {@link runChecked}, for a run whose start would hold the page: reading the load
+ * health is not at hand (`loadHealthAtHand`, `../store.ts`) — an edit's
+ * recompute is still waiting, which validates the model and writes its text,
+ * up to about 0.6 s on the drone-swarm model. The run begins at once, reading
+ * `checking the load…`, and `read` is called once the row has been drawn, so the
+ * click itself does not hold the page and the person sees the run under way
+ * before the page does that work. What `read` returns — the model, its revision
+ * and the load health, read in one turn — is what the run is of: an edit made in
+ * the frame between the click and the read is part of it. A run cancelled before
+ * then reads nothing. One whose read or start throws lands as a check that threw
+ * does (`checks/internal-error`, against the click's revision): begun at the
+ * click with no job behind it yet, it would otherwise read `checking the load…`
+ * until cancelled, since no reply and no watchdog would end it.
+ */
+export function runCheckedOnceDrawn(spec: CheckSpec, ctx: CheckContext, rev: number, read: () => RunStart): void {
+  const store = useChecksStore.getState();
+  if (store.running[spec.id] !== undefined) return;
+  const selection = selectionKey(spec, ctx);
+  const token = nextToken++;
+  store.begin(spec.id, token, rev, 'load');
+  afterFrame(() => {
+    // Cancelled since, or another run of it begun: this one is no longer wanted.
+    if (useChecksStore.getState().running[spec.id]?.token !== token) return;
+    try {
+      const start = read();
+      launch(spec, { ...ctx, model: start.model }, start.rev, start.health, token);
+    } catch (err) {
+      console.error('a palette check could not start', err);
+      const now = useChecksStore.getState();
+      if (now.running[spec.id]?.token === token) now.land(spec.id, checkThrew(err), rev, 'page', selection);
+    }
+  });
+}
+
+/**
+ * Start a run over what it read: the body of {@link runChecked}. `begun` is the
+ * token of a run already begun in the store ({@link runCheckedOnceDrawn}); it is
+ * carried on, and one answered on the spot lands rather than being recorded anew.
+ */
+function launch(spec: CheckSpec, ctx: CheckContext, rev: number, health: LoadHealthNow | undefined, begun?: number): void {
   const store = useChecksStore.getState();
   const selection = selectionKey(spec, ctx);
-  if (spec.offThread !== true || factory() === null || !hasStateMachine(ctx.model)) {
-    store.record(spec.id, runCheck(spec, ctx), rev, selection);
+  let c = ctx;
+  let load: PendingLoadHealth | undefined;
+  if (health !== undefined) {
+    if ('known' in health) c = { ...ctx, loadHealth: health.known };
+    else if (factory() === null) c = { ...ctx, loadHealth: health.here() };
+    else load = health;
+  }
+  const walks = spec.offThread === true && hasStateMachine(c.model);
+  if (load === undefined && (!walks || factory() === null)) {
+    const result = runCheck(spec, c);
+    if (begun === undefined) store.record(spec.id, result, rev, selection);
+    else store.land(spec.id, result, rev, 'page', selection);
     return;
   }
-  if (store.running[spec.id] !== undefined) return;
-  const job: Job = { token: nextToken++, spec, ctx, rev, selection };
-  store.begin(spec.id, job.token, rev);
+  // The records are the model's own (`userPart`), and edits change them in place:
+  // a send that waits (for the load, or for the run ahead) takes a copy now.
+  const waits = load !== undefined || active !== null;
+  const part = !walks ? null : waits ? structuredClone(userPart(c.model)) : userPart(c.model);
+  const job: Job = { token: begun ?? nextToken++, spec, ctx: c, rev, selection, part, ...(load !== undefined ? { load } : {}) };
+  if (begun === undefined) store.begin(spec.id, job.token, rev, load !== undefined ? 'load' : 'walk');
+  else if (load === undefined) store.walking(spec.id, job.token);
   queue.push(job);
   pump();
 }

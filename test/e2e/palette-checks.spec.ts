@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { captureErrors, diagramSettled, findElementId, gotoApp, openTab, selectElementById } from './fixtures';
-import { modelSize } from './model-helpers';
+import { attrOf, modelSize } from './model-helpers';
 
 test('a model check runs here, lands in the Checks tab, and goes stale on an edit', async ({ page }) => {
   const errors = captureErrors(page);
@@ -374,13 +374,16 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
 
   await expect(page.locator('.bottom-tab.is-active')).not.toContainText('Checks');
   await reach.getByTestId('palette-check-run').click();
-  // From the click the check is running, and the person can stop it.
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
-  await expect(reach.getByTestId('palette-check-verdict')).toHaveText('running…');
+  // From the click the check is under way, and the person can stop it: first the worker parses the
+  // model's text the serializer wrote (a text no parse has measured), then it walks.
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
   await expect(reach.getByTestId('palette-check-run')).toHaveAttribute('aria-disabled', 'true');
   await expect(reach.getByTestId('palette-check-cancel')).toBeVisible();
-  // The Checks tab comes forward at the click, where the answer will be, and lists the check as running.
+  // The Checks tab comes forward at the click, where the answer will be, and lists the check as under way.
   await expect(page.locator('.bottom-tab.is-active')).toContainText('Checks');
+  await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', /checking|running/);
+  await expect(reach).toHaveAttribute('data-verdict', 'running', { timeout: 60_000 });
+  await expect(reach.getByTestId('palette-check-verdict')).toHaveText('running…');
   await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).toHaveAttribute('data-verdict', 'running');
   // Another check, started while it runs, is answered on the spot.
   await checkRow(page, 'stats').getByTestId('palette-check-run').click();
@@ -426,6 +429,193 @@ test('a state-machine check runs in a worker: it says so, the page stays usable,
   }
 });
 
+/**
+ * The drone-swarm model of mbse-workflow, byte for byte
+ * (`examples/drone-swarm-v9/SurveillanceDroneSwarm.sysml` at 9122db0, sha256 7f31cfe3…): the
+ * reference model the app is measured on, 3,823 elements of the user's and 17 state machines.
+ * A copy as of that commit: it does not follow later edits of the model, and is refreshed by
+ * hand when they would change what the guard measures. Kept as `.txt` so the tree's walks over
+ * `.sysml` files (the successor census in `U semantics.mc.successors`) do not count it among the
+ * repository's models. Relative to the E2E test directory, so the guard reads it from whatever
+ * directory Playwright was started in.
+ */
+const DRONE_SWARM = '../fixtures/drone-swarm-v9.sysml.txt';
+
+/** What {@link watchPageThread} records, in the page's `performance.now()` milliseconds. */
+interface PageThreadWatch {
+  /** The page's long tasks (the browser reports those over 50 ms). */
+  long: Array<{ start: number; duration: number }>;
+  /** When each pointer press came. */
+  clicks: number[];
+  /** Each palette row's verdict as it changes. */
+  verdicts: Array<{ check: string; verdict: string; at: number }>;
+  /** When each frame began. */
+  frames: number[];
+}
+
+/**
+ * Record, in the page, how its thread is held from now on: the long tasks, each click, each
+ * palette row's verdict as it changes, and the frames. Installed once; {@link pageThread} reads
+ * it, and {@link clearPageThread} starts it afresh.
+ */
+async function watchPageThread(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __thread: PageThreadWatch };
+    w.__thread = { long: [], clicks: [], verdicts: [], frames: [] };
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) w.__thread.long.push({ start: e.startTime, duration: e.duration });
+    }).observe({ type: 'longtask' });
+    document.addEventListener('pointerdown', () => w.__thread.clicks.push(performance.now()), true);
+    new MutationObserver((records) => {
+      const at = performance.now();
+      for (const r of records) {
+        const el = r.target as Element;
+        if (el.getAttribute('data-testid') === 'palette-check') w.__thread.verdicts.push({ check: el.getAttribute('data-check') ?? '', verdict: el.getAttribute('data-verdict') ?? '', at });
+      }
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-verdict'] });
+    const tick = (): void => {
+      w.__thread.frames.push(performance.now());
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+const clearPageThread = (page: Page): Promise<void> =>
+  page.evaluate(() => {
+    const t = (window as unknown as { __thread: PageThreadWatch }).__thread;
+    for (const list of [t.long, t.clicks, t.verdicts, t.frames]) list.length = 0;
+  });
+const pageThread = (page: Page): Promise<PageThreadWatch> => page.evaluate(() => (window as unknown as { __thread: PageThreadWatch }).__thread);
+
+/** Rename the first part definition of the user's through the SDK: an edit, with a text no parse has measured. */
+async function renameFirstPartDef(page: Page, name: string): Promise<void> {
+  await page.evaluate((to) => {
+    const api = (window as unknown as { sysml: { elementsOfType(t: string): Array<{ id: string; attrs?: { isLibrary?: boolean } }>; update(id: string, p: { declaredName: string }): unknown } }).sysml;
+    const def = api.elementsOfType('PartDefinition').find((e) => e.attrs?.isLibrary !== true);
+    if (def === undefined) throw new Error('no part definition of the user’s');
+    api.update(def.id, { declaredName: to });
+  }, name);
+}
+
+/**
+ * Rename the first part definition of the user's, then press Run on the palette row `check` in
+ * the next task: the edit's own rendering is done, and its recompute — a timer due no sooner than
+ * 80 ms after it, which the next task's timer comes before — still waits, however fast or loaded
+ * the machine. Returns whether that recompute was waiting at the click and still was after it (the
+ * click left it for later), when the click came, and how long the click's handler held the page.
+ */
+function editThenRun(page: Page, check: string, name: string): Promise<{ waiting: boolean; stillWaiting: boolean; at: number; held: number }> {
+  return page.evaluate(
+    async ({ check, name }) => {
+      const w = window as unknown as {
+        sysml: { elementsOfType(t: string): Array<{ id: string; attrs?: { isLibrary?: boolean } }>; update(id: string, p: { declaredName: string }): unknown };
+        sysprose: { diagram: { recomputePending(): boolean } };
+      };
+      const def = w.sysml.elementsOfType('PartDefinition').find((e) => e.attrs?.isLibrary !== true);
+      if (def === undefined) throw new Error('no part definition of the user’s');
+      w.sysml.update(def.id, { declaredName: name });
+      await new Promise((next) => setTimeout(next, 0));
+      const waiting = w.sysprose.diagram.recomputePending();
+      const run = document.querySelector<HTMLButtonElement>(`[data-testid="palette-check"][data-check="${check}"] [data-testid="palette-check-run"]`);
+      if (run === null) throw new Error(`no Run button on the ${check} row`);
+      const at = performance.now();
+      run.click();
+      const held = performance.now() - at;
+      return { waiting, stillWaiting: w.sysprose.diagram.recomputePending(), at, held };
+    },
+    { check, name },
+  );
+}
+
+/** The long task the page was in at `at`, in ms; 0 when that task was under 50 ms, which the browser does not report. */
+const taskAt = (watch: PageThreadWatch, at: number): number => watch.long.find((t) => t.start <= at && t.start + t.duration >= at)?.duration ?? 0;
+
+test('on the drone-swarm model, a check clicked after an edit holds the page for no task over 200 ms of its own, and the edit’s own work waits for a frame (review 2026-10-14, D-3)', async ({ page }, testInfo) => {
+  test.setTimeout(300_000);
+  const errors = captureErrors(page);
+  const source = readFileSync(resolve(testInfo.project.testDir, DRONE_SWARM), 'utf8');
+  await page.route('**/linked/SurveillanceDroneSwarm.sysml', (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: source }));
+  await page.goto('/?model=linked/SurveillanceDroneSwarm.sysml', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('diagram-canvas')).toBeVisible({ timeout: 120_000 });
+  await expect.poll(() => userRoots(page), { timeout: 120_000 }).toContain('SurveillanceDroneSwarm');
+  await page.getByTestId('tb-view-state').click();
+  await diagramSettled(page);
+  const reach = checkRow(page, 'reach');
+  const answered = /holds|issues|undecided/;
+  // A first Run starts the worker, which loads the library and builds the text parser, then
+  // parses the text Export ▾ SysML writes (not the file's own text, so no parse has measured it
+  // although nothing was edited), and then walks.
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', answered, { timeout: 120_000 });
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  await watchPageThread(page);
+  const measured: string[] = [];
+
+  // 1. An edit, its recompute run (the drawing settles), then Run. The edit's text is new, so
+  // the click before S1 parsed and validated it on the page: 0.37 to 0.66 s here, in one task.
+  // Now the worker does that, and nothing from the click to the answer holds the page 200 ms.
+  await renameFirstPartDef(page, 'SwarmEditedOnce');
+  await diagramSettled(page);
+  await clearPageThread(page);
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', answered, { timeout: 120_000 });
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  await page.waitForTimeout(1000); // the answer drawn, and anything it set off
+  const settled = await pageThread(page);
+  const settledClick = settled.clicks[0];
+  const settledLong = settled.long.filter((t) => t.start + t.duration >= settledClick).map((t) => Math.round(t.duration));
+  measured.push(`after the edit's recompute: long tasks from the click to the answer ${JSON.stringify(settledLong)} ms`);
+  expect(Math.max(0, ...settledLong), `the longest task from the click to the answer, in ms (all: ${settledLong.join(', ')})`).toBeLessThan(200);
+  // The load went to the worker: the row read `checking the load…` before `running…`.
+  expect(settled.verdicts.filter((v) => v.check === 'reach').map((v) => v.verdict)).toContain('checking');
+
+  // 2. An edit, then Run straight after it, while the edit's recompute still waits: that
+  // recompute validates the model and writes its text, 0.14 to 0.63 s here as the machine is
+  // loaded, and the load cannot be read before it. The run begins first: the click's handler
+  // does nothing that grows with the model (it is no long task: under 50 ms), its task holds the
+  // page under 200 ms, the row reads `checking the load…`, a frame is drawn, and only then does
+  // the page do the edit's work — a task that is the edit's, run after every edit with or
+  // without a click, and not the click's to bound (TODO.md has it).
+  await clearPageThread(page);
+  const click = await editThenRun(page, 'reach', 'SwarmEditedTwice');
+  await expect(reach).toHaveAttribute('data-verdict', answered, { timeout: 120_000 });
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  await page.waitForTimeout(1000);
+  const pending = await pageThread(page);
+  const after = pending.long.filter((t) => t.start > click.at);
+  const heavy = after.find((t) => t.duration >= 200);
+  measured.push(
+    `with the edit's recompute waiting: the click's handler ${Math.round(click.held)} ms, its task ${Math.round(taskAt(pending, click.at))} ms (0: under 50); ` +
+      `long tasks after it ${JSON.stringify(after.map((t) => Math.round(t.duration)))} ms`,
+  );
+  expect(click.waiting, 'the edit’s recompute was still waiting at the click').toBe(true);
+  expect(click.stillWaiting, 'the click left the edit’s recompute for later').toBe(true);
+  expect(click.held, 'how long the click’s handler held the page, in ms').toBeLessThan(50);
+  expect(taskAt(pending, click.at), 'how long the click’s task held the page, in ms').toBeLessThan(200);
+  expect(pending.verdicts.find((v) => v.check === 'reach' && v.at >= click.at)?.verdict, 'the row under way from the click').toBe('checking');
+  if (heavy !== undefined) {
+    expect(pending.frames.some((f) => f > click.at + click.held && f < heavy.start), 'a frame drawn between the click and the edit’s work').toBe(true);
+  }
+
+  // 3. A check not judged over the load (Statistics) reads the model alone, which the edit has
+  // changed already: straight after an edit, its click does not run the edit's recompute either,
+  // and its task holds the page under 200 ms. (Its handler runs the check itself, 10 to 50 ms on
+  // this model, so it is not held to the 50 ms of Reachability's, which runs nothing.)
+  await diagramSettled(page);
+  await clearPageThread(page);
+  const stats = checkRow(page, 'stats');
+  const statsClick = await editThenRun(page, 'stats', 'SwarmEditedThrice');
+  await expect(stats).toHaveAttribute('data-verdict', answered);
+  await page.waitForTimeout(1000); // the browser reports a long task after it ends
+  const third = await pageThread(page);
+  measured.push(`Statistics straight after an edit: the click's handler ${Math.round(statsClick.held)} ms, its task ${Math.round(taskAt(third, statsClick.at))} ms`);
+  expect(statsClick.waiting, 'the edit’s recompute was still waiting at the click').toBe(true);
+  expect(statsClick.stillWaiting, 'the Statistics click left the edit’s recompute for later').toBe(true);
+  expect(taskAt(third, statsClick.at), 'how long the Statistics click’s task held the page, in ms').toBeLessThan(200);
+  testInfo.annotations.push({ type: 'page thread on the drone-swarm model', description: measured.join('; ') });
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
 test('Cancel ends a running check, which keeps what it said before, and the next run starts again', async ({ page }) => {
   const errors = captureErrors(page);
   await holdWorkerReplies(page);
@@ -434,7 +624,9 @@ test('Cancel ends a running check, which keeps what it said before, and the next
   expect(await userRoots(page)).toEqual(['Heavy']);
 
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  // The worker's replies are held: the run waits on the load it asked the worker to check.
+  await expect(reach).toHaveAttribute('data-verdict', 'checking');
+  await expect(reach.getByTestId('palette-check-verdict')).toHaveText('checking the load…');
   await reach.getByTestId('palette-check-cancel').click();
   await expect(reach).toHaveAttribute('data-verdict', 'not-run');
   await expect(reach.getByTestId('palette-check-verdict')).toHaveText('not run');
@@ -450,7 +642,7 @@ test('Cancel ends a running check, which keeps what it said before, and the next
 
   await releaseWorker(page);
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
   await expect(reach).toHaveAttribute('data-verdict', /holds|issues|undecided/, { timeout: 60_000 });
   await expect(reach).toHaveAttribute('data-ran-in', 'worker');
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
@@ -461,8 +653,8 @@ test('a walk that finishes after the model was edited is shown stale, not curren
   await openMachine(page, heavyMachine(2, 3));
   const reach = checkRow(page, 'reach');
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
-  // An edit while the worker walks the model as it was.
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
+  // An edit while the worker checks the load of, then walks, the model as it was.
   const machine = await findElementId(page, 'StateDefinition', 'Modes');
   await page.evaluate(
     (id) => (window as unknown as { sysml: { update(id: string, patch: { declaredName: string }): unknown } }).sysml.update(id, { declaredName: 'Modes2' }),
@@ -488,19 +680,93 @@ test('on a page with no worker the check runs on the page, and answers the same'
   expect(workers.filter((u) => u.includes('checks-worker'))).toEqual([]);
 });
 
-test('a model with no state machine is told so at once, with no worker started', async ({ page }) => {
+/** Record, in the page, what the checks worker is asked: a load to check (`health`) or a check to run. */
+async function recordWorkerRequests(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { Worker: typeof Worker; __asked: string[] };
+    w.__asked = [];
+    const Real = w.Worker;
+    w.Worker = class extends Real {
+      private readonly checks: boolean;
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        // The layout worker takes messages too; only the checks worker's are counted.
+        this.checks = String(url).includes('checks-worker');
+      }
+      postMessage(message: unknown, ...rest: unknown[]): void {
+        const m = message as { kind?: string; check?: string };
+        if (this.checks) w.__asked.push(m.kind === 'health' ? 'health' : `check:${m.check}`);
+        (super.postMessage as (...a: unknown[]) => void)(message, ...rest);
+      }
+    };
+  });
+}
+const workerAsked = (page: Page): Promise<string[]> => page.evaluate(() => (window as unknown as { __asked: string[] }).__asked);
+
+test('a model with no state machine starts no walk: its load is checked once, then the row says there is nothing to walk', async ({ page }) => {
   const errors = captureErrors(page);
-  const workers: string[] = [];
-  page.on('worker', (w) => workers.push(w.url()));
+  await recordWorkerRequests(page);
   await gotoApp(page);
   await page.getByTestId('tb-view-state').click();
   const reach = checkRow(page, 'reach');
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'not-run');
+  await expect(reach).toHaveAttribute('data-verdict', 'not-run', { timeout: 60_000 });
   await expect(reach.locator('.palette-check-summary')).toHaveText('this file declares no element that owns a transition, so there is no configuration graph to walk');
   await expect(reach).toHaveAttribute('data-ran-in', 'page');
   await expect(reach.getByTestId('palette-check-cancel')).toHaveCount(0);
-  expect(workers.filter((u) => u.includes('checks-worker')), 'nothing to walk, nothing to start a worker for').toEqual([]);
+  // The worker parsed the sample's text, which nothing had parsed, and was sent no walk.
+  expect(await workerAsked(page), 'the load, and nothing to walk').toEqual(['health']);
+  // Run again over the model unchanged: its load is known, and nothing goes to the worker.
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'not-run');
+  expect(await workerAsked(page)).toEqual(['health']);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a guard, trigger or effect typed in Properties that the text cannot hold: Reachability is never `holds` over it (review 2026-10-14, LH-1)', async ({ page }) => {
+  const errors = captureErrors(page);
+  // A machine that ends: Reachability holds over it, until its text no longer loads.
+  await openMachine(page, 'package Heavy {\n  state def M {\n    state a;\n    state b;\n    state final;\n    transition t1 first a then b;\n    transition t2 first b then final;\n  }\n}\n');
+  const reach = checkRow(page, 'reach');
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'holds', { timeout: 60_000 });
+
+  // An effect of `}`: the serializer writes it back as typed and sees nothing wrong in it; the
+  // worker parses the text, as a terminal would, and finds it does not load.
+  const t1 = await findElementId(page, 'TransitionUsage', 't1');
+  await selectElementById(page, t1);
+  await page.getByTestId('prop-effect').fill('}');
+  await expect.poll(() => attrOf(page, t1, 'effect')).toBe('}');
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'undecided', { timeout: 60_000 });
+  await expect(reach.locator('.palette-check-summary')).toContainText('did not load cleanly');
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  const result = page.locator('[data-testid="checks-result"][data-check="reach"]');
+  await expect(result.getByTestId('checks-row').first()).toContainText('syntax error');
+  await expect(result.getByTestId('checks-row').first()).toContainText('exits 1');
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a value typed in Properties that closes its owner and adds a machine: the text loads, but as another model, and Reachability is not `holds` (review 2026-10-14)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await openMachine(page, 'package Heavy {\n  state def M {\n    state a;\n    state b;\n    state final;\n    transition t1 first a then b;\n    transition t2 first b then final;\n  }\n  part def Pump { attribute rate = 2; }\n}\n');
+  const reach = checkRow(page, 'reach');
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'holds', { timeout: 60_000 });
+
+  // The value is written back as typed: the text parses cleanly, to a model with a second machine in it.
+  const value = '2; } state def Z { state a; state b; state c; transition first a then b; } part def Q { attribute zz = 0';
+  const rate = await findElementId(page, 'AttributeUsage', 'rate');
+  await selectElementById(page, rate);
+  await page.getByTestId('prop-value').fill(value);
+  await expect.poll(() => attrOf(page, rate, 'value')).toBe(value);
+  await reach.getByTestId('palette-check-run').click();
+  await expect(reach).toHaveAttribute('data-verdict', 'undecided', { timeout: 60_000 });
+  await expect(reach).toHaveAttribute('data-ran-in', 'worker');
+  const row = page.locator('[data-testid="checks-result"][data-check="reach"]').getByTestId('checks-row').first();
+  await expect(row).toContainText('parses cleanly, but to a model other than the one on screen');
+  // A terminal loads that file, so no exit code is claimed for it.
+  await expect(row).not.toContainText('exits 1');
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
@@ -511,14 +777,14 @@ test('an answer that lands while the person is typing in another tab leaves the 
   const reach = checkRow(page, 'reach');
 
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
   // The person goes on working: to the Text tab, with the cursor in the text.
   await page.getByTestId('tab-text').click();
   const text = page.getByTestId('text-editor');
   await text.click();
   await expect(page.locator('.bottom-tab.is-active')).toContainText('Text');
   await expect(text).toBeFocused();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
 
   await releaseWorker(page);
   await expect(reach).toHaveAttribute('data-verdict', /holds|issues|undecided/);
@@ -531,7 +797,7 @@ test('an answer that lands while the person is typing in another tab leaves the 
   expect(await userRoots(page)).toEqual(['Heavy']);
   await expect(text).toBeFocused();
   await page.getByTestId('tab-checks').click();
-  await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).not.toHaveAttribute('data-verdict', 'running');
+  await expect(page.locator('[data-testid="checks-result"][data-check="reach"]')).not.toHaveAttribute('data-verdict', /checking|running/);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 
@@ -541,7 +807,7 @@ test('an answer that lands while Cancel has the keyboard focus moves it to Run, 
   const reach = checkRow(page, 'reach');
 
   await reach.getByTestId('palette-check-run').click();
-  await expect(reach).toHaveAttribute('data-verdict', 'running');
+  await expect(reach).toHaveAttribute('data-verdict', /checking|running/);
   await reach.getByTestId('palette-check-cancel').focus();
   expect(await focusedTestId(page)).toBe('BUTTON:palette-check-cancel');
   await releaseWorker(page);

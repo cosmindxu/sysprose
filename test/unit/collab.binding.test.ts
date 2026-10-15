@@ -292,4 +292,33 @@ describe('bindModelToDoc — CRDT convergence', () => {
     m1.create('Package', { id: 'after', declaredName: 'A' });
     expect(m2.has('after')).toBe(false);
   });
+
+  /**
+   * A drag in the app lists the mover's model as its copies are rebuilt
+   * (`Model.adoptSerialOrder`). The peer takes the move in as a reparent and
+   * lists its model the same way, so the two decide alike: of two transitions
+   * out of `start`, the one dragged out and back in is the second on both
+   * (review 2026-10-14 D-1, the S2 review).
+   */
+  it("a peer's drag: the other peer holds and lists the moved element where the mover put it", () => {
+    const { m1, m2 } = setup();
+    // One at a time: a batch reaches the peer in another order (TODO.md, a room's child order).
+    m1.create('StateDefinition', { id: 'M', declaredName: 'M' });
+    m1.create('InitialNode', { id: 'start', declaredName: 'start', ownerId: 'M' });
+    m1.create('StateUsage', { id: 'A', declaredName: 'A', ownerId: 'M' });
+    m1.create('StateUsage', { id: 'B', declaredName: 'B', ownerId: 'M' });
+    m1.create('TransitionUsage', { id: 'toA', ownerId: 'M', source: ['start'], target: ['A'] });
+    m1.create('TransitionUsage', { id: 'toB', ownerId: 'M', source: ['start'], target: ['B'] });
+    expect(m2.childIds('M')).toEqual(m1.childIds('M'));
+    // What the store's drag does: out and back in, then the model listed as its copies are.
+    m1.reparent('toA', null);
+    m1.reparent('toA', 'M');
+    m1.adoptSerialOrder();
+    expect(m2.childIds('M')).toEqual(m1.childIds('M'));
+    const outOfStart = (m: Model) => m.edgesFrom('start').map((e) => e.id);
+    expect(outOfStart(m1)).toEqual(['toB', 'toA']);
+    expect(outOfStart(m2)).toEqual(['toB', 'toA']);
+    const listed = m2.inSerialOrder();
+    expect(m2.all().every((el, i) => el === listed[i])).toBe(true);
+  });
 });

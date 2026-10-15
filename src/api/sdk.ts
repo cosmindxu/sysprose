@@ -496,9 +496,14 @@ export class ModelApi {
     return this.model.remove(id, opts);
   }
 
-  /** Reparent an element to a new owner (or root). */
+  /**
+   * Reparent an element to a new owner (or root), and list the model as every
+   * copy of it is rebuilt (`Model.adoptSerialOrder`), as a drag in the app does.
+   */
   reparent(id: ElementId, newOwnerId: ElementId | null): ElementRecord {
-    return this.model.reparent(id, newOwnerId);
+    const el = this.model.reparent(id, newOwnerId);
+    this.model.adoptSerialOrder();
+    return el;
   }
 
   /**

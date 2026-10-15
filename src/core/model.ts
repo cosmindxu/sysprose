@@ -498,11 +498,126 @@ export class Model {
 
   /* ──────────────────────────── Serialisation ─────────────────────────── */
 
+  /**
+   * Every element `keep` accepts (all of them without one), the model's own
+   * records, in the order a serialised model lists them: each owner's children
+   * in the order the model holds them ({@link children}), everything else where
+   * it was added.
+   *
+   * WHY NOT {@link all}. A serialised model carries no child order of its own:
+   * {@link fromJSON} and {@link resetPreserving} rebuild it from the order the
+   * elements are listed in. `all()` lists them in the order they were added, and
+   * {@link reparent} appends the element it moves to its new owner's children
+   * without moving it in that order. So a model listed by `all()` after a
+   * reparent came back with that owner's children reordered — on Save then
+   * reopen, on every Undo and Redo, and in the checks worker, which rebuilt
+   * another model than the page's: a composite with no `initial` enters its
+   * first child, and the palette said `issues` where the page and a terminal
+   * said `holds` (review 2026-10-14 D-1, D-2).
+   *
+   * ONLY CHILDREN MOVE, and only among the places their own siblings held. A
+   * model no reparent touched lists each owner's children in the order they
+   * were added, so it is listed exactly as `all()` lists it and serialises byte
+   * for byte as it did. The parser's own reparents count: a load puts a
+   * feature's specialisations back in declaration order
+   * (`restoreSpecializationOrder`), moves a relationship statement onto its
+   * source, and rehomes what it recovered after a fault, each by a reparent.
+   * Such a load is now saved with its children in the order the parser set, and
+   * so comes back as it was read: before, Save then reopen and every Undo wrote
+   * `part :>> p : Sub;` back as `part : Sub :>> p;`, and `part b : W :> a;` as
+   * `part b :> a : W;` (1 of the 637 models of the verdict corpus, 2 of the
+   * repository's 218 `.sysml` files, none of the examples or the drone-swarm
+   * model). A full pre-order walk would list the same children in the same
+   * order, but it would also move every element a load adds after its owner's
+   * later siblings — the typings a parse binds in a second pass, 1,030 of the
+   * drone-swarm model's 3,823 — and so rewrite every saved model and every
+   * {@link clone} for nothing a reader can tell. Roots keep their places:
+   * `rootIds` carries their order, and every load reads it.
+   */
+  inSerialOrder(keep?: (el: ElementRecord) => boolean): ElementRecord[] {
+    const out: ElementRecord[] = [];
+    // Where in `out` each owner's children are, in the order they were added.
+    const places = new Map<ElementId, number[]>();
+    for (const el of this.elements.values()) {
+      if (keep !== undefined && !keep(el)) continue;
+      if (el.ownerId !== null) {
+        const at = places.get(el.ownerId);
+        if (at) at.push(out.length);
+        else places.set(el.ownerId, [out.length]);
+      }
+      out.push(el);
+    }
+    for (const [ownerId, at] of places) {
+      if (at.length < 2) continue;
+      const order = this.childrenIndex.get(ownerId) ?? [];
+      // Already in the order the model holds them — every owner, unless a child was reparented into it.
+      let k = 0;
+      for (let j = 0; j < order.length && k < at.length; j++) if (order[j] === out[at[k]].id) k++;
+      if (k === at.length) continue;
+      const listed = new Set<ElementId>();
+      for (const i of at) listed.add(out[i].id);
+      const held: ElementRecord[] = [];
+      for (const id of order) if (listed.delete(id)) held.push(this.elements.get(id)!);
+      // A child the index does not hold — one a non-cascading `remove` of its owner left behind — keeps its place among the rest.
+      for (const i of at) if (listed.has(out[i].id)) held.push(out[i]);
+      for (let n = 0; n < at.length; n++) out[at[n]] = held[n];
+    }
+    return out;
+  }
+
+  /**
+   * List the model's own elements in {@link inSerialOrder}, so that {@link all},
+   * and every index built from it — the endpoint index behind
+   * {@link edgesFrom}, the order a walk finds its machines in — follows the
+   * order every copy of this model is rebuilt in. The same records, re-listed:
+   * nothing is copied, and no change is announced, since no element changed;
+   * but the revision moves, so an index or a cache a listener of the move built
+   * is built again. Returns whether anything moved.
+   *
+   * WHY. {@link reparent} appends the element it moves to its new owner's
+   * children and leaves it where it was in `all()`. Every copy — the checks
+   * worker's, an Undo snapshot, Save then reopen, a terminal over the text Save
+   * writes — lists that owner's children in the order the owner holds them, so
+   * the page alone decided by another order: of two transitions out of an
+   * `initial`, one dragged out and back in, the page took the one added first
+   * and said `holds`, where the worker and a terminal took the first in the text
+   * and said `issues`; and two machines, one dragged out of their package and
+   * back, were listed in one order by the page and the other by the worker
+   * (review 2026-10-14 D-1).
+   *
+   * CALLED ONCE PER MOVE A PERSON OR A SCRIPT MAKES, not by {@link reparent}:
+   * the store's drag commands (`reparent`, `reparentMany`), a regroup, the
+   * SDK's `reparent`, and a collaboration room taking in a peer's move. The
+   * parser reparents while it loads (see {@link inSerialOrder}), and the model
+   * a terminal reads keeps the order the parse listed it in.
+   *
+   * What it does not give: elements of different owners stay in the order they
+   * were added, as after any other edit, while a terminal reads the saved text
+   * from top to bottom. So after a drag that reorders two packages, the machines
+   * in them are walked in the order they were added, here and in every copy,
+   * and in the text's order by a terminal (TODO.md).
+   */
+  adoptSerialOrder(): boolean {
+    const listed = this.inSerialOrder();
+    let i = 0;
+    let same = true;
+    for (const el of this.elements.values()) {
+      if (listed[i++] !== el) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return false;
+    this.elements = new Map(listed.map((el) => [el.id, el]));
+    this._rev++;
+    return true;
+  }
+
   toJSON(): SerializedModel {
     return {
       formatVersion: FORMAT_VERSION,
       generator: GENERATOR_ID,
-      elements: this.all().map((el) => structuredCloneSafe(el)),
+      elements: this.inSerialOrder().map((el) => structuredCloneSafe(el)),
       rootIds: this.rootIds(),
     };
   }
@@ -555,17 +670,18 @@ export class Model {
 
   /**
    * Serialise only the elements for which `keep` returns true (deep-cloned),
-   * preserving root ordering. Used to snapshot just the *user* model for
+   * preserving root ordering and each owner's child order
+   * ({@link inSerialOrder}). Used to snapshot just the *user* model for
    * undo/redo without cloning the (large, immutable) standard library on every
    * edit — see finding C6.
    */
   toJSONWhere(keep: (el: ElementRecord) => boolean): SerializedModel {
-    const kept = new Set<ElementId>();
-    for (const el of this.elements.values()) if (keep(el)) kept.add(el.id);
+    const elements = this.inSerialOrder(keep);
+    const kept = new Set<ElementId>(elements.map((el) => el.id));
     return {
       formatVersion: FORMAT_VERSION,
       generator: GENERATOR_ID,
-      elements: this.all().filter((el) => kept.has(el.id)).map((el) => structuredCloneSafe(el)),
+      elements: elements.map((el) => structuredCloneSafe(el)),
       rootIds: this.rootIds().filter((id) => kept.has(id)),
     };
   }
@@ -577,7 +693,6 @@ export class Model {
    * user-only snapshot while keeping the library, notifying once. (C6)
    */
   resetPreserving(data: SerializedModel, preserve: (el: ElementRecord) => boolean): void {
-    const keptEls: ElementRecord[] = [];
     const keptRootIds: ElementId[] = [];
     for (const id of this.rootIds()) {
       const el = this.elements.get(id);
@@ -587,8 +702,11 @@ export class Model {
     // be re-inserted into freshly rebuilt maps — REUSE them (no deep clone), so
     // restoring a user-only snapshot never pays a full standard-library clone
     // (C6). `data`'s records ARE cloned: they belong to an undo-stack snapshot
-    // that must stay immutable to later model mutations.
-    for (const el of this.all()) if (preserve(el)) keptEls.push(el);
+    // that must stay immutable to later model mutations. Listed as a serialised
+    // model lists them ({@link inSerialOrder}): the index is rebuilt from this
+    // order, and a library element moved within the library would otherwise
+    // come back among its siblings where it was added.
+    const keptEls = this.inSerialOrder(preserve);
 
     this.elements = new Map();
     this.childrenIndex = new Map();

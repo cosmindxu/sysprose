@@ -840,8 +840,8 @@ The palette's own status rows (`src/ui/checks.ts`). These are NOT derived from s
 
 - **Severity:** warning
 - **Source:** checks
-- **Fires when:** A reach or check-behaviour run was judged over a model whose text Save writes does not parse, or whose loaded text and exported text differ, so the same command exits 1 (reach) or 2 (check-behaviour) in a terminal.
-- **Hint given:** Fix the syntax errors the row counts, or open Export ▾ SysML and save the text it writes. Nothing is judged over half a model.
+- **Fires when:** A reach or check-behaviour run was judged over a model that does not count as loading cleanly: a text a file of it can hold (what Save writes, or what Export ▾ SysML writes) has syntax errors, or validation finds errors on the user’s elements of the live model or of the model a text parses to, or the model cannot be written as text — so the same command exits 1 (reach) or 2 (check-behaviour) in a terminal. It is also raised, with its own message and no terminal exit code, when a text parses cleanly but to a model other than the one on screen (written back from its parse it reads otherwise: a field written back as typed closed its owner, added a declaration or turned the rest of its line into a comment), so a terminal given that file checks the other model; when validation of the model failed with an internal error; and when whether the text loads could not be checked (the background worker could not, and no standard library has loaded in the page to check it there). A text into which the serializer wrote, as typed, a value the grammar cannot read where it stands is not parsed: the row says how many such values it found.
+- **Hint given:** Fix the syntax or validation errors the row counts, or open Export ▾ SysML and save the text it writes. A text that parses to another model holds a field written back as typed (a value, a type) that reaches past its own declaration: fix that field. When the load could not be checked, run the check again, or the command in a terminal. Nothing is judged over half a model.
 
 ### `checks/internal-error`
 

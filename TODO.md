@@ -307,10 +307,10 @@ abstain on or read false in the four-surface table
       bind p.load = L; } constraint m2NegT { q.p.m2 <= 0.0 } constraint m2PosF { q.p.m2 >= 0.0 }
       }` (re-run at 5943654: `verify` refutes `m2NegT` at 9 on the literal and SMT engines): the
       copy `q::L` redefines `Q::L`, not `Q2::L` (`ensureImplicitFeature`,
-      `src/text/langium/map-to-model.ts:447-483`, handed the declaring feature by the head-name loop
-      at `:610-624`), so every surface reads the general value or none and P's default stands
+      `src/text/langium/map-to-model.ts:440-476`, handed the declaring feature by the head-name loop
+      at `:562-576`), so every surface reads the general value or none and P's default stands
       (m2NegT reads F/F/F/F where it is T). Fix: make the copy redefine the most specific inherited
-      feature (compare `findTypeFeature`, `:430`, which does this for the segments of a chain), or
+      feature (compare `findTypeFeature`, `:423`, which does this for the segments of a chain), or
       refuse such a binding on every surface. Done when the four rows leave `KNOWN_FALSE`.
       [review 2026-10-14 E5] Awaits user decision U10 (fix the mapper, or refuse the binding on all
       four surfaces).
@@ -545,9 +545,9 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
       Key on the base id (before `@`) and name the relation. Done when m1 prints five rows and one
       line counting the rest, and the footer names the relation. [review 2026-10-14 PI-8, PI-9]
 - [ ] **Make the Problems tab label's producer split show, or remove it (H6b).**
-      `src/ui/panels/BottomPanel.tsx:626-633` labels the Problems tab `Problems (N check · M solve)`
+      `src/ui/panels/BottomPanel.tsx:632-639` labels the Problems tab `Problems (N check · M solve)`
       when both producers filed rows, but Check and Solve each replace `diagnostics` wholesale
-      (`src/ui/store.ts:3095`, `:3183`) and validation rows carry no `producer`, so the label can
+      (`src/ui/store.ts:3169`, `:3257`) and validation rows carry no `producer`, so the label can
       never show. The per-instance plan deferred H6b because of the tutorial videos; 3e3b0ff shipped
       it with a per-row producer chip on v9's screen. Either count every row by producer, or remove
       the dead branch (the chips stay). Done when the label either shows on a model with both or is
@@ -597,75 +597,64 @@ becomes; the evidence entries are the `sysprose-evidence/2` facet (05e45a4).
 ## Load health and the model the checks read — review 2026-10-14
 
 From the review of the load-health certificate (679a5e5) and of the checks worker (the ux merge).
-The Reachability row says `holds` only over a text the terminal also accepts, so the first entry is
-the one that can show a false pass.
+The load health no longer vouches for a text it has not parsed (branch `load-health` S1: each
+text is parsed, validated and written back in the checks worker, so a text that parses to
+another model is told apart too), and the worker rebuilds the page's model after a reparent
+(S2: Save, Undo and Redo, the Model JSON and OMG API JSON exports, a push to an OMG API server
+and the worker's copy list each owner's children in the order the model holds them, and a drag
+lists the page's own model in that order). A check's click no longer holds the page for work
+that grows with the model (S3, guarded on the drone-swarm v9 model). What remains is the cost of
+an edit itself on v9, which S3 measured, the order between elements of different owners, and a
+collaboration room's child order.
 
-- [ ] **Never let the load health vouch for a text that does not load.** `loadHealth`
-      (`src/ui/store.ts:4231`) trusts a serializer-side signal (`serializeUserModelSignals`,
-      `src/text/health.ts:163`) and skips the parse of a text it calls reference-faithful
-      (`textHealthOf`, `store.ts:4214`). The signal's `parseErrorsOf` (`health.ts:87-103`) checks
-      only references and the `value` text, so a typo in a guard, trigger, effect, expression or
-      metadata, a non-string value, a raw newline in a quoted value and a name or unit holding a
-      newline all read as 0 errors; `valueTextParses` (`health.ts:106-120`) accepts a value such as
-      `2; attribute rate = 3` that parses alone while the whole text gets two validation errors; and
-      a user-referenced package flagged `isLibrary` is vouched for [LH-1, LH-3]. `rememberText`
-      (`store.ts:955-961`) also lets the signal's count overwrite a parsed one, so a faulty line
-      applied in the Text view goes from 1 error to 0 and a fallback parse is undone by the next
-      `loadHealth()` (5/4 becomes 1/0); Drive and file opens take the same path [LH-2]. Probe: on
-      `state a; state b; state final; transition t1 first a then b; transition t2 first b then
-      final;` set the effect of `t1` to `}` in Properties: health reports 0 errors and Reachability
-      reads `holds`, while the saved text makes `reach` exit 1. Fix, either way recording whether a
-      memo entry came from a parse or from the signal and never letting a signal replace a parse:
-      (a) always parse: parse each distinct text once, memoised by text, in the checks worker so
-      the page does not stall, and let the signal skip validation only; or (b) keep the parse-free
-      certificate and make it re-read every verbatim field in its grammatical slot, refuse a name
-      or unit holding a newline, count non-string values and require exactly one `__value`
-      element. Done when a differential test over the corpus plus a mutation fuzz of every verbatim
-      field shows that whenever the app's health says 0, `parse(text)` plus validation says 0, and
-      Reachability never says `holds` over a text the CLI rejects.
-      [review 2026-10-14 LH-1, LH-2, LH-3] Awaits user decision U3 ((a) parse every distinct text,
-      in the worker, or (b) keep the parse-free certificate and make it cover every verbatim field).
-- [ ] **Correct what is said about the load-health signal and the `checks/degraded` row.** The
-      679a5e5 message says the signal "can only make loadHealth parse more, never less", and the
-      workflow repo's session handoff repeats it; `health.ts:79-86` documents `parseErrorsOf` as the
-      parse errors of the emitted text, and neither holds for the fields listed above [LH-4]. The
-      catalogue `when` of `checks/degraded` (`src/text/langium/diagnostic-codes.ts:935`) says the
-      Save text does not parse or the loaded and exported texts differ; the code fires on any
-      `health.errors`, validation errors and a thrown validation included (a file with two duplicate
-      names and no syntax error exits 1 "degraded (2 error(s))"), and a thrown validation says "0
-      syntax error(s)" [CK-1]. Reword both, give `validateThrew` its own message and regenerate with
-      `npm run codes`. Done when the texts match what the code does. Ships with the load-health
-      entry above. [review 2026-10-14 LH-4, CK-1]
-- [ ] **Emit containment in pre-order wherever a model is serialised.** `Model.reparent` appends the
-      child to its new owner (`src/core/model.ts:430-432`) while `rebuildIndex` (`:519-534`) groups
-      children by insertion order, so `toJSON` and `toJSONWhere` (`:562-571`) emit them out of
-      containment order. The checks worker's `userPart` (`src/ui/checks-offthread.ts:91-101`), Save
-      in this browser (`store.ts:3418`) and every Undo snapshot (`store.ts:1822`, `:3814`, `:3837`)
-      rebuild a model whose children are reordered, and an initial-less composite state takes its
-      first child as its initial one (`initialState`, `src/semantics/mc/config.ts:563-566` at
-      5943654). Probe: a machine with `initial start`, a composite `Work { Prep; Run }` with no
-      `initial`, and the property `absence globally "state Spare"`; drag the older state `Spare`
-      into `Work` in the Explorer: the page's check-behaviour reads `holds` (1 pass) and the
-      worker's `issues` (1 fail), `reach` gives 3 configurations and 2 findings on the page against
-      2 and 4 in the worker, and Save then reopen, or any Undo, rewrites the Text view from
-      `state B; state C; state A;` to `state A; state B; state C;`. Fix: emit user elements in containment pre-order (a DFS over the
-      children from the user roots) in `toJSON`, `toJSONWhere` and `userPart`. Done when tests show
-      that after a reparent the worker matches the page (verdict, configurations, findings), Save
-      then reopen keeps the order and an initial-less composite's initial state, and Undo after a
-      reparent restores the text byte for byte. [review 2026-10-14 D-1, D-2]
-- [ ] **Keep `loadHealth` off the page thread at a palette check click.** `onRun`
-      (`src/ui/panels/Palette.tsx:377-383`) calls `loadHealth()` on the page's thread at the click,
-      before `runChecked` begins the run, so there is no "running…" feedback during it. On the
-      drone-swarm v9 model after an edit it costs about 3.2 s (serialize 280–390 ms, parse 1.5 s,
-      library merge 390 ms, validate 670 ms, live validate 340 ms in node); the cheap path of
-      679a5e5 never applies to v9, because `displayTypesFaithful` (`src/text/health.ts:147`) refuses
-      its 76 `@SysproseVerification::PropertyPattern` usages (that vocabulary package is not in the
-      model), which is every model `check-behaviour` has properties for. Fix, by the answer to the
-      load-health entry's decision: under (a), take the health work off the click path; under (b),
-      accept the built-in vocabularies in `displayTypesFaithful`; either way call `begin()` before
-      `loadHealth()`. Done when an E2E guard on v9 shows no long task over 200 ms on the page thread
-      after an edit and a palette check click. [review 2026-10-14 D-3] Awaits user decision U3 (the
-      load-health entry above). Measured in node, not in a browser.
+- [ ] **Cut what an edit costs the page on the drone-swarm v9 model.** Each edit's recompute
+      (`recomputeNow`, `src/ui/store.ts`) validates the whole model and writes its text on the
+      page's thread before the diagram is rebuilt: one task, after every edit, whether or not a
+      check is run, of 0.14 to 0.63 s on v9 in a browser, the longer the more loaded the machine
+      (load averages from about 4 to about 20; in node, validation about 0.35 s and the text 0.15
+      to 0.3 s). A palette check's click no longer runs it ahead of time (branch `load-health` S3: the
+      run begins first and reads the load once its row is drawn, `runCheckedOnceDrawn`), but the
+      page still stops for it after each edit, and the `E palette-checks` guard on v9 leaves that
+      task out as the edit's. Fix: validate only what an edit can change, write the text in a
+      worker, or both, measured on v9 first. Done when an edit on v9 leaves no task over 200 ms on
+      the page with the machine loaded, measured as that guard measures a click. [review
+      2026-10-14 D-3, measured on the `load-health` S3 tree]
+- [ ] **List the elements of different owners in the order the text gives them.** The page and
+      every copy of its model (the checks worker's, Undo's, Save's) now list each owner's children
+      in the order the owner holds them, but elements of different owners stay in the order they
+      were added, by a load, a creation or a drag (`Model.adoptSerialOrder` and `inSerialOrder`,
+      `src/core/model.ts`), while a terminal over the saved text reads them from top to bottom. So
+      the two can disagree on whatever goes by the model's order across owners: the order of
+      `reach` and `check-behaviour` rows, and a choice of the first of several, such as the first
+      transition out of an `initial` when the transitions have different owners. Probe:
+      `package P { package Q1 { state def M1 { state a; state b; state dead1; transition t1 first
+      a then b; } } package Q2 { state def M2 { state x; state y; state dead2; transition t2 first
+      x then y; } } }`; drag `Q1` out of `P` and back in: the Text view lists `Q2` first, and
+      `reach` on the saved text reports M2's rows first, while the page and the worker report M1's
+      first (measured on the `load-health` S2 tree). No drag is needed: a machine `M0` created in
+      `Q1` after the load is reported after M2 on the page and in the worker, and before it by the
+      terminal. Fix: list the user's part in containment
+      pre-order after each edit, at a measured cost on the drone-swarm model (a load is not in
+      pre-order: 1,030 of its 3,823 user elements would move), or order the rows by the text.
+      Done when the probe's page, worker and terminal rows come in one order. [review 2026-10-14
+      D-1, the S2 review]
+- [ ] **Keep each owner's child order in a collaboration room.** A room keeps the model's
+      elements in a `Y.Map` (`src/collab/model-doc.ts`), and a peer rebuilds the model from it in
+      ways that lose the order an owner holds its children in. `reconcileModelFromDoc` creates the
+      elements it is sent last to first, so a batch of new elements in one peer (one transaction,
+      or a reset: Apply, Import, Undo, Redo) reaches the others reversed: three parts `a, b, c`
+      made in one transaction read `c, b, a` on the other peer, and a reset to `x, y, z` reads
+      `z, y, x`. And a peer that joins loads the model in the map's key order
+      (`serializeFromDoc`), where a drag changed only the element's owner: after `toA` of
+      `start, A, B, toA, toB` is dragged out of its machine and back in, the room holds
+      `start, A, B, toB, toA` and a peer that joins then holds `start, A, B, toA, toB`, and walks
+      `toA` out of `start` first. Its Text view differs, and a composite with no `initial` can enter
+      another state. A peer present at a drag takes it in as a move, and lists its model as the
+      mover does (`load-health` S2). Fix: create in the map's order, and carry the child order in
+      the document (an order key per element, or a `Y.Array` of child ids per owner). Done when a
+      test shows every peer's children in the mover's order after a batch, a reset and a drag
+      followed by a join (measured on the `load-health` S2 tree). [review 2026-10-14 D-2, the S2
+      review]
 
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
@@ -789,30 +778,25 @@ merge removes what it closes.
       clause failed, without the raise-the-bound advice (a catalogue entry and `npm run codes`).
       Done when the non-bound case prints its own code with no `--max-configs` advice and v9's two
       rows read PASS again. [review 2026-10-14 M2]
-- [ ] **Correct the checks lane's comments that the code contradicts.** `src/ui/checks.ts:26-36`
+- [ ] **Correct the checks lane's comment that the code contradicts.** `src/ui/checks.ts:26-36`
       says "Not yet the same: `check-behaviour` here checks the selected machine or else the model's
       first"; that has been false since 2add5b3 (`pickBehaviourMachine`,
-      `src/ui/behaviour-checks.ts:194`, calls the CLI's own `behaviourMachineFor`), while its remark
-      about `reach` stays true [D-8]. `src/ui/checks-offthread.ts:88-90` says "The send is the
-      snapshot", but for a queued job `userPart(ctx.model)` runs when the job starts
-      (`src/ui/panels/checks-runner.ts:196`), not at the click: an edit made after the click is
-      carried with the click-time health. `rev` protects it (the result lands at rev 5 and reads
-      `stale` at rev 6), so only the comment is wrong; take the snapshot in `runChecked` at the
-      click or fix the comment [L1]. Done when both comments say what the code does.
-      [review 2026-10-14 D-8, L1]
+      `src/ui/behaviour-checks.ts:199`, calls the CLI's own `behaviourMachineFor`), while its remark
+      about `reach` stays true. Done when the comment says what the code does. [review 2026-10-14
+      D-8]
 - [ ] **Keep the witness stepper's Close reachable while a check runs.** A running check hides the
-      Checks tab's previous result (`src/ui/panels/BottomPanel.tsx:91-93`), and with it the witness
+      Checks tab's previous result (`src/ui/panels/BottomPanel.tsx:92-94`), and with it the witness
       stepper's Prev, Next and Close (`src/ui/panels/BehaviourReport.tsx:194`, the only Close),
       while the canvas keeps painting the open witness (`src/ui/panels/DiagramCanvas.tsx:166-172`)
       until the new result lands, up to the 60 s watchdog. Keep the stepper row, or close the
       witness on `begin`. Done when a test shows the witness can be closed while a check runs.
       [review 2026-10-14 D-9]
 - [ ] **Make the worker's library identity depend on the library's content.** `libraryKey`
-      (`src/ui/checks-offthread.ts:110-122`) is the library element count plus a hash of the root
+      (`src/ui/checks-offthread.ts:155-167`) is the library element count plus a hash of the root
       ids, so a page library of the same shape and different content (the Properties name field can
       rename a library element; a same-shape bundle from another build) counts as the same and the
       worker answers over its pristine copy [D-10]. And only `libraryMismatch` is remembered
-      (`src/ui/panels/checks-runner.ts:157-165`): a worker whose library fetch fails (offline,
+      (`src/ui/panels/checks-runner.ts:256-279`): a worker whose library fetch fails (offline,
       `stdlib.json` not cached) is restarted on every Run, then falls back to the page [D-11].
       Include a content hash or a build id in the key, and remember load failures for the session.
       Done when a test renames a library element and the worker declines, and a failed library load

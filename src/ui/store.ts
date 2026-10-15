@@ -97,10 +97,12 @@ import {
   type Peer,
 } from '../collab';
 import {
+  measureTextHealth,
   parseModel,
   retractResolvedSpecializationWarnings,
   serializeUserModelSignals,
   resolveConnectorFeatureChains,
+  type MeasuredText,
   type ParseDiagnostic,
   type ParseResult,
 } from '@text/index';
@@ -920,26 +922,47 @@ const EMPTY_SNAPSHOT: SerializedModel = {
   rootIds: [],
 };
 
-/** What a text is worth to a check. */
+/**
+ * What is known of a text a file of the model can hold, and how it is known.
+ *
+ * `parse`: the text was parsed — by {@link applyText}, which made the live model
+ * from it, or by {@link measureTextHealth}, here or in the checks worker — and,
+ * when `validationErrors` is set, validated the way a terminal loads it.
+ *
+ * `signal`: the serializer, writing the text, wrote back a fault it could see
+ * (`serializeUserModelSignals`: a value, as typed, that the grammar cannot read
+ * where it stands). That only ever says the text is faulty: a signal that found
+ * nothing is not kept, and a signal never replaces a parse
+ * (review 2026-10-14, LH-2: a faulty line applied in the Text view read 1 error,
+ * then 0 once the serializer wrote the same text back).
+ */
 interface TextHealth {
+  readonly source: 'parse' | 'signal';
+  /**
+   * Parse errors (`parse`); or the faulty lines the serializer wrote back
+   * verbatim (`signal`), which are more than 0 and are no parse's count.
+   */
   readonly parseErrors: number;
   /**
-   * Error findings on the user's elements of the model the text parses to,
-   * with the full library merged; null when only the parse is known — a seed
-   * from {@link applyText}, whose model is the live one, or a text the
-   * serializer vouched reference-faithful, whose findings are the live
-   * model's.
+   * Error findings on the user's elements of the model the text parses to, the
+   * full library merged; null when only the parse is known — the seed of
+   * {@link applyText}, whose model is the live one while it stands unedited — and
+   * for a signal.
    */
   readonly validationErrors: number | null;
   /**
-   * The serializer reports that every reference the text writes re-resolves to
-   * its element on a fresh parse, so the model it parses to is the live one and
-   * its validation is the live model's — no parse needed to know it.
+   * What the model the text parses to writes (`MeasuredText.rewritten`), from
+   * the same measurement as `validationErrors`: set beside the text the model on
+   * screen writes, it says whether a file holding this text holds that model.
+   * Undefined where no measurement ran (the seed of {@link applyText}, a signal).
    */
-  readonly referenceFaithful: boolean;
+  readonly rewritten?: string | null;
 }
 
-/** What {@link loadHealth} knows of the last two distinct texts it was asked about, by {@link withFinalNewline} of the text. */
+/** How many distinct texts {@link healthMemo} keeps: what Save and Export write now, and before the last edit. */
+const HEALTH_MEMO_SIZE = 4;
+
+/** What is known of the last few distinct texts, by {@link withFinalNewline} of the text, the newest last. */
 const healthMemo = new Map<string, TextHealth>();
 
 /** Count the errors among a parse's diagnostics. */
@@ -948,21 +971,72 @@ function errorsOf(diagnostics: readonly Pick<ParseDiagnostic, 'severity'>[]): nu
 }
 
 /**
- * Keep what is known of `text`, the newest first, two at most. Save adds the
- * one final newline a file ends in and a text typed may end otherwise, which
- * is not a difference to a parse: the key is the text as Save writes it.
+ * Keep what is known of `text`, the newest last. Save adds the one final newline
+ * a file ends in and a text typed may end otherwise, which is not a difference to
+ * a parse: the key is the text as Save writes it.
+ *
+ * A signal never replaces a parse, and one that found no fault is not kept: it
+ * says nothing. A parse replaces a signal, and keeps what an earlier measurement
+ * of the same text found (its validation count, and what its parse writes) when
+ * it brings none of its own.
  */
 function rememberText(text: string, health: TextHealth): void {
   const key = withFinalNewline(text);
   const prior = healthMemo.get(key);
-  const validationErrors = health.validationErrors ?? prior?.validationErrors ?? null;
-  const referenceFaithful = health.referenceFaithful;
+  let next: TextHealth | undefined;
+  if (health.source === 'parse') {
+    // A measurement's counts go together: a parse that brings none keeps an earlier one's.
+    const measured = health.validationErrors !== null ? health : prior?.source === 'parse' && prior.validationErrors !== null ? prior : null;
+    next = {
+      source: 'parse',
+      parseErrors: health.parseErrors,
+      validationErrors: measured?.validationErrors ?? null,
+      ...(measured?.rewritten !== undefined ? { rewritten: measured.rewritten } : {}),
+    };
+  } else if (prior?.source === 'parse') {
+    next = prior;
+  } else if (health.parseErrors > 0) {
+    next = { source: 'signal', parseErrors: health.parseErrors, validationErrors: null };
+  }
+  if (next === undefined) return;
   healthMemo.delete(key);
-  healthMemo.set(key, { parseErrors: health.parseErrors, validationErrors, referenceFaithful });
+  healthMemo.set(key, next);
   for (const old of healthMemo.keys()) {
-    if (healthMemo.size <= 2) break;
+    if (healthMemo.size <= HEALTH_MEMO_SIZE) break;
     healthMemo.delete(old);
   }
+}
+
+/**
+ * The text the serializer last wrote of a model, with that model and its revision
+ * (`Model.rev`, which moves on every change to it): while they stand, it is the
+ * text Export ▾ SysML writes, and a check's load health reads it rather than
+ * writing the model again on the page at the click — a few hundred milliseconds on
+ * the drone-swarm model. The model is held weakly, as {@link validationHealth}
+ * holds it.
+ */
+let lastWritten: { model: WeakRef<Model>; modelRev: number; text: string } | null = null;
+
+/**
+ * The text Export ▾ SysML writes for `model` now: {@link lastWritten} while the
+ * model has not changed since, else written afresh (and its signal kept). Throws
+ * what the serializer throws.
+ */
+function exportTextNow(model: Model): string {
+  return writtenNow(model) ?? writeText(model);
+}
+
+/** {@link lastWritten}'s text while `model` has not changed since it was written, else null. */
+function writtenNow(model: Model): string | null {
+  return lastWritten !== null && lastWritten.model.deref() === model && lastWritten.modelRev === model.rev ? lastWritten.text : null;
+}
+
+/** Write the model's user text, keeping what the serializer saw of it ({@link rememberText}) and the text ({@link lastWritten}). */
+function writeText(model: Model): string {
+  const { text, faults } = serializeUserModelSignals(model);
+  rememberText(text, { source: 'signal', parseErrors: faults, validationErrors: null });
+  lastWritten = { model: new WeakRef(model), modelRev: model.rev, text };
+  return text;
 }
 
 /**
@@ -980,17 +1054,14 @@ function rememberText(text: string, health: TextHealth): void {
  * patch is PARTIAL on failure: `textDirty` is left as it was, because whether
  * the user has unapplied edits is not what just changed.
  *
- * The serializer also hands back what it knows of the text it wrote — the
- * parse errors it embedded and whether its references all re-resolve — and that
- * is kept for {@link loadHealth}, so a check reads the file's health off the
- * serializer instead of re-parsing the text it just produced.
+ * What the serializer saw as it wrote the text — a fault it wrote back verbatim
+ * — is kept for {@link loadHealth}, as is the text itself: it can only ever
+ * tell a check the text is faulty, never that it loads (see {@link TextHealth}).
  */
 function textView(model: Model, previous: string): Partial<AppState> {
   try {
-    const { text, parseErrors, referenceFaithful } = serializeUserModelSignals(model);
-    rememberText(text, { parseErrors, validationErrors: null, referenceFaithful });
     return {
-      textBuffer: text,
+      textBuffer: writeText(model),
       textDirty: false,
       serializeError: null,
     };
@@ -2876,6 +2947,8 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         pushUndo();
         model.reparent(id, to);
+        // Listed as Undo, Save and the checks worker rebuild it (D-1).
+        model.adoptSerialOrder();
         if (to) get().expand(to, true);
         afterMutation();
       } catch (err) {
@@ -2922,6 +2995,7 @@ export const useAppStore = create<AppState>((set, get) => {
         set((s) => ({ undoStack: s.undoStack.slice(0, -1), redoStack: redoBefore }));
         return;
       }
+      model.adoptSerialOrder(); // as in `reparent`
       if (ownerId && targets.some((id) => ownerFor(id) === ownerId)) get().expand(ownerId, true);
       afterMutation();
     },
@@ -3329,11 +3403,9 @@ export const useAppStore = create<AppState>((set, get) => {
       const { model, textBuffer, diagramPins } = get();
       const result = parseModel(textBuffer);
       lastParse = result;
-      rememberText(textBuffer, {
-        parseErrors: errorsOf(result.diagnostics),
-        validationErrors: null,
-        referenceFaithful: false,
-      });
+      // The text's own parse, a terminal's count: its validation is the live model's
+      // for as long as the model stands as this text (see textHealthOf).
+      rememberText(textBuffer, { source: 'parse', parseErrors: errorsOf(result.diagnostics), validationErrors: null });
       // The text makes every element anew, under a new id: the boxes moved by
       // hand follow their elements by qualified name, and this step's Undo
       // puts back the ones the old ids had.
@@ -4113,9 +4185,9 @@ export function lastAppliedText(): string | null {
  * errors `loadModelText` would report on each text a file named by the copied
  * command can hold — parse errors, and the error findings validation puts on
  * the user's own elements of the model that text parses to — plus one for each
- * of: validation throwing, the serializer refusing the model. A check whose
- * answer rests on a model with errors is a report of what parsed, and says so
- * (the terminal exits 1 or 2 on it).
+ * of: validation of the live model throwing, the serializer refusing the model,
+ * the texts not checked. A check whose answer rests on a model with errors is a
+ * report of what parsed, and says so (the terminal exits 1 or 2 on it).
  *
  * Measured over the TEXTS, never read off Problems: Simulate, Solve and Check
  * replace `diagnostics`, and an edit does not clean the parse part — the text
@@ -4126,17 +4198,28 @@ export function lastAppliedText(): string | null {
  * a file is judged on the model its text parses to, and a rename leaves the
  * name a connector's end is written with behind (`connect a.pwrOut to …`), so
  * the file fails validation where the live model, whose ends are elements,
- * does not. The serializer reports what the text it writes will parse to
- * (`serializeUserModelSignals`), so a text whose references all re-resolve is
- * judged without a parse, and one it cannot vouch for is parsed as before.
+ * does not.
+ *
+ * A text counts as loading only once a PARSE has said so: the apply that made
+ * the live model from it, or `measureTextHealth` — in the checks worker at a
+ * palette click ({@link loadHealthNow}), so the page does not stall for it, and
+ * on the page where there is no worker ({@link loadHealth}). And it counts only
+ * as a file of THIS model: a text that parses cleanly to another model — one
+ * whose parse writes back another text than the model on screen writes — is a
+ * file a terminal would check in its place ({@link LoadHealth.otherModel}). What
+ * the serializer sees as it writes a text can only say it is faulty
+ * (`src/text/health.ts`).
  */
 export interface LoadHealth {
-  /** Parse errors of each distinct text below + `validationErrors` + `validateThrew` + `unwritable`, each as 1. */
+  /**
+   * Parse errors of each distinct text below + `validationErrors` + one each for
+   * `validateThrew`, `unwritable`, `unchecked` and `otherModel`.
+   */
   readonly errors: number;
   /** What Save in this browser and Save to Drive write ({@link savedTextNow}); null when the model cannot be written. */
-  readonly saved: { readonly parseErrors: number } | null;
+  readonly saved: TextLoad | null;
   /** What Export ▾ SysML writes; null when the serializer refuses the model. */
-  readonly exported: { readonly parseErrors: number } | null;
+  readonly exported: TextLoad | null;
   /** The two are one text (Save's differs by its final newline), so a parse error is counted once. */
   readonly sameText: boolean;
   /**
@@ -4145,6 +4228,7 @@ export interface LoadHealth {
    * distinct text parses to.
    */
   readonly validationErrors: number;
+  /** Validation of the live model threw, so what it finds is not known. */
   readonly validateThrew: boolean;
   /** Why the model cannot be written as text, or null. */
   readonly unwritable: string | null;
@@ -4154,99 +4238,216 @@ export interface LoadHealth {
    * types, so `errors` may read high: run again once it settles.
    */
   readonly libraryPending: boolean;
+  /**
+   * Why a text could not be measured — no standard library was there to validate
+   * it with, on the page and in no worker either — or null (absent): every text
+   * was. A load nobody could check is never clean.
+   */
+  readonly unchecked?: string | null;
+  /**
+   * A text parses cleanly, but to a model other than the one on screen (the text
+   * that says which has `otherModel` too): its parse writes another text than
+   * the model on screen does — a field written back as typed closed its owner,
+   * added a declaration or turned the rest of its line into a comment — so a
+   * terminal would check a model the page never walked. Counts as one error.
+   * Absent where nothing measured it.
+   */
+  readonly otherModel?: boolean;
+}
+
+/** What is known of one text a file of the model can hold. */
+export interface TextLoad {
+  /**
+   * Its parse errors (`basis` `parse`), or the faulty lines the serializer found in
+   * it (`signal`); 0, which says nothing, for a text nobody measured (`unmeasured`).
+   */
+  readonly parseErrors: number;
+  /**
+   * `parse` (or absent): the text was parsed, and `parseErrors` is a terminal's
+   * count. `signal`: it was not parsed — the serializer wrote into it, as typed,
+   * values the grammar cannot read where they stand (`src/text/health.ts`), so it
+   * is taken as not loading cleanly, and `parseErrors` counts the lines it found,
+   * not a parse's errors. `unmeasured`: nobody could parse it, and nothing is known
+   * of it ({@link LoadHealth.unchecked} says why, and counts the error).
+   */
+  readonly basis?: 'parse' | 'signal' | 'unmeasured';
+  /** It parses cleanly, but to a model other than the one on screen ({@link LoadHealth.otherModel}). */
+  readonly otherModel?: boolean;
 }
 
 /**
  * The full-library merge of the lazy chunk, once its data is in; null before,
  * and for good when the full library could not be loaded. {@link loadHealth}
- * is synchronous and merges it into a text's own parse, as `loadModelText`
- * does.
+ * merges it into a text's own parse, as `loadModelText` does; without it a text
+ * cannot be validated as a terminal validates it, so it is not measured here.
  */
 let fullLibraryMerge: ((model: Model) => unknown) | null = null;
 
+/** What the page knows at a check's click besides the texts' own counts. */
+interface LoadFacts {
+  readonly sameText: boolean;
+  readonly unwritable: string | null;
+  /** Error findings on the user's elements of the live model, at this revision. */
+  readonly liveErrors: number;
+  readonly validateThrew: boolean;
+  readonly libraryPending: boolean;
+  /** The text the model on screen writes (Export ▾ SysML's), null when it cannot be written. */
+  readonly onScreen: string | null;
+  /**
+   * The text the live model stands as the parse of, bound as a terminal binds
+   * it ({@link loadHealthNow}), by {@link withFinalNewline}; null when none.
+   */
+  readonly live: string | null;
+}
+
 /**
- * Parse `text` as `loadModelText` does and count what it would report as
- * errors: the parse's own, and validation's on the user's elements, run after
- * the full library is merged (without it a library type reads as unresolved).
- * A parser or a validator that throws counts as one error. Without the library
- * merge the validation count may read high, so it is not kept.
+ * Whether `text` parses cleanly to a model other than the one on screen: what its
+ * parse writes back (`health.rewritten`) is not what the model on screen writes.
+ * The live model's own text is its model by construction; a text with parse
+ * errors is faulty already, and with no text on screen there is nothing to set
+ * beside it (the model is unwritable, which counts).
  */
-function measureText(text: string): { health: TextHealth; keep: boolean } {
-  let parsed: ReturnType<typeof parseModel>;
-  try {
-    parsed = parseModel(text);
-  } catch (err) {
-    console.error('parse failed', err);
-    return { health: { parseErrors: 1, validationErrors: 0, referenceFaithful: false }, keep: true };
-  }
-  const model = parsed.model;
-  const mine = new Set(model.all().map((el) => el.id)); // before the library goes in
-  let validationErrors: number;
-  try {
-    if (fullLibraryMerge !== null) {
-      fullLibraryMerge(model);
-      resolveTypeReferences(model);
-      resolveConnectorFeatureChains(model);
-    }
-    validationErrors = userErrors(validate(model), (id) => mine.has(id));
-  } catch (err) {
-    console.error('validation failed', err);
-    validationErrors = 1;
-  }
+function readsOtherModel(facts: LoadFacts, text: string, health: TextHealth): boolean {
+  if (health.source !== 'parse' || health.parseErrors > 0 || facts.onScreen === null) return false;
+  if (facts.live !== null && withFinalNewline(text) === facts.live) return false;
+  if (health.rewritten === undefined) return false; // only the live text goes unmeasured (textHealthOf)
+  return health.rewritten === null || withFinalNewline(health.rewritten) !== withFinalNewline(facts.onScreen);
+}
+
+/**
+ * The load health of what the page knows (`facts`) and of each text (Save's,
+ * then Export's): the text and its health, null for no text, or a health
+ * undefined for one nobody could measure (then `unchecked` says why, and
+ * counts).
+ */
+function composeHealth(
+  facts: LoadFacts,
+  saved: readonly [string, TextHealth | undefined] | null,
+  exported: readonly [string, TextHealth | undefined] | null,
+  unchecked: string | null,
+): LoadHealth {
+  const load = (t: readonly [string, TextHealth | undefined] | null): TextLoad | null => {
+    if (t === null) return null;
+    const [text, h] = t;
+    return {
+      parseErrors: h?.parseErrors ?? 0,
+      basis: h?.source ?? 'unmeasured',
+      otherModel: h !== undefined && readsOtherModel(facts, text, h),
+    };
+  };
+  const savedLoad = load(saved);
+  const exportedLoad = load(exported);
+  const validationErrors = Math.max(facts.liveErrors, saved?.[1]?.validationErrors ?? 0, exported?.[1]?.validationErrors ?? 0);
+  const otherModel = savedLoad?.otherModel === true || (!facts.sameText && exportedLoad?.otherModel === true);
+  const errors =
+    (savedLoad?.parseErrors ?? 0) +
+    (facts.sameText ? 0 : (exportedLoad?.parseErrors ?? 0)) +
+    validationErrors +
+    (facts.validateThrew ? 1 : 0) +
+    (facts.unwritable === null ? 0 : 1) +
+    (unchecked === null ? 0 : 1) +
+    (otherModel ? 1 : 0);
   return {
-    health: { parseErrors: errorsOf(parsed.diagnostics), validationErrors, referenceFaithful: false },
-    keep: fullLibraryMerge !== null,
+    errors,
+    saved: savedLoad,
+    exported: exportedLoad,
+    sameText: facts.sameText,
+    validationErrors,
+    validateThrew: facts.validateThrew,
+    unwritable: facts.unwritable,
+    libraryPending: facts.libraryPending,
+    unchecked,
+    otherModel,
   };
 }
 
 /**
- * What a check needs to know of `text`. While the live model stands as the
- * parse of `applied` (no edit since), its own validation reads for that text
- * and nothing is parsed again. A text the serializer vouched reference-faithful
- * reference-faithful parses to the live model, so its own validation is the
- * live model's and it too is not parsed — its parse errors and any embedded
- * value text are already known. Every other text is parsed once and kept.
+ * What is known of `text` without parsing it now, or undefined when only a parse
+ * can tell. A text a parse measured is known; so is one the serializer found a
+ * fault in (a signal: faulty, its count a floor). The text the live model was
+ * applied from is known while `appliedLive` names it: the model then stands as
+ * that text's own parse, bound to the full library as a terminal binds it, and
+ * its validation (read beside, at this revision) is the text's. Every other text
+ * — any the serializer wrote and saw nothing wrong in — must be parsed.
  */
-function textHealthOf(text: string, applied: string | null): { parseErrors: number; validationErrors: number } {
+function textHealthOf(text: string, appliedLive: string | null): TextHealth | undefined {
   const key = withFinalNewline(text);
   const known = healthMemo.get(key);
-  const isLive = applied !== null && withFinalNewline(applied) === key;
-  if (known !== undefined && (known.validationErrors !== null || isLive || known.referenceFaithful)) {
-    rememberText(text, known);
-    return { parseErrors: known.parseErrors, validationErrors: known.validationErrors ?? 0 };
-  }
-  const { health, keep } = measureText(text);
-  if (keep) rememberText(text, health);
-  return { parseErrors: health.parseErrors, validationErrors: health.validationErrors ?? 0 };
+  if (known === undefined) return undefined;
+  const live = appliedLive !== null && withFinalNewline(appliedLive) === key;
+  // A parse is known for a text only with what its measurement found: its validation, and what its parse writes.
+  if (known.source === 'parse' && !live && (known.validationErrors === null || known.rewritten === undefined)) return undefined;
+  rememberText(text, known); // the newest again
+  return known;
 }
 
 /**
- * The load health of the live model, as of now. Costs a parse, a library merge
- * and a validation of each text the serializer could not vouch for (a stale
- * reference, or unresolved text it cannot read back), and of the text the model
- * was applied from when it is unedited; a text it vouched reference-faithful
- * costs only the serializer's own walk. A validation of the live model runs
- * when none did at this revision. Runs when a check is, never on an edit.
+ * A load health that waits on texts no parse has measured: the palette's runner
+ * (`panels/checks-runner.ts`) has them measured in the checks worker and finishes
+ * it with the counts, so the page is not held for a parse.
  */
-export function loadHealth(): LoadHealth {
+export interface PendingLoadHealth {
+  /** The texts to measure, each parsed and validated as a terminal loads it (`measureTextHealth`). */
+  readonly unmeasured: readonly string[];
+  /**
+   * The health once they are measured, in the order of {@link unmeasured}; the
+   * counts are kept, so the next check over the same text needs no parse.
+   */
+  finish(measured: readonly MeasuredText[]): LoadHealth;
+  /** The health when they could not be measured, and why: never clean. */
+  unchecked(why: string): LoadHealth;
+  /**
+   * Measure them here, on the page's thread, and finish: for a page with no
+   * worker to measure them in, or whose worker could not (`after` says why; it
+   * goes into the reason when the page cannot measure them either).
+   */
+  here(after?: string): LoadHealth;
+}
+
+/** The load health at a check's click: known now, or {@link PendingLoadHealth} on texts still to parse. */
+export type LoadHealthNow = { readonly known: LoadHealth } | PendingLoadHealth;
+
+/** Whether {@link validationHealth} is of `model` as it stands. */
+function validatedNow(model: Model): boolean {
+  return validationHealth !== null && validationHealth.model.deref() === model && validationHealth.modelRev === model.rev;
+}
+
+/**
+ * Whether {@link loadHealthNow} can answer from what the page already holds: no
+ * edit's recompute still waiting, and the model's text written and its validation
+ * run since it last changed. Then it only looks things up. Otherwise it would
+ * first do work that grows with the model, on the page's thread: the recompute
+ * an edit still owes, which validates the model and writes its text (0.14 to
+ * 0.63 s on the drone-swarm model in a browser, as loaded as the machine is), or
+ * the text or the validation alone. So the palette starts the run before it
+ * reads the load, and the row says `checking the load…` while the page does that
+ * work (`runCheckedOnceDrawn`, `panels/checks-runner.ts`; review 2026-10-14
+ * D-3).
+ */
+export function loadHealthAtHand(): boolean {
+  if (recomputePending()) return false;
+  const { model } = useAppStore.getState();
+  return writtenNow(model) !== null && validatedNow(model);
+}
+
+/**
+ * The load health of the live model as of now, with no parse on the page: what
+ * is known of each text a file can hold (see {@link textHealthOf}), and the texts
+ * a parse must still measure. Reads the text the serializer last wrote while the
+ * model has not changed since, and the live model's validation when one ran at
+ * this revision (it validates the live model when none did). Read where a
+ * palette check starts — at the click, or once its row is drawn when
+ * {@link loadHealthAtHand} says reading it costs the page — in the same turn as
+ * the store's `rev`.
+ */
+export function loadHealthNow(): LoadHealthNow {
   flushRecompute();
   const { model, serializeError } = useAppStore.getState();
   const savedText = savedTextNow();
   let exportedText: string | null = null;
   let exportRefusal: string | null = null;
   try {
-    // The serializer writes the same text `ioExportModel(model, 'sysml')`
-    // does, and says as it goes what a parse of it would find: the parse
-    // errors embedded in the text, and whether every reference it writes
-    // re-resolves so its validation is the live model's. Kept with the text,
-    // so neither half is re-parsed below.
-    const signals = serializeUserModelSignals(model);
-    exportedText = signals.text;
-    rememberText(exportedText, {
-      parseErrors: signals.parseErrors,
-      validationErrors: null,
-      referenceFaithful: signals.referenceFaithful,
-    });
+    exportedText = exportTextNow(model);
   } catch (err) {
     console.error('export failed', err);
     exportRefusal = serializeRefusal(err);
@@ -4254,35 +4455,78 @@ export function loadHealth(): LoadHealth {
   // Save adds the one final newline a file ends in; Export writes none. Not a
   // difference to a parse, so the two are one text and are measured once.
   const sameText = savedText !== null && exportedText !== null && withFinalNewline(exportedText) === savedText;
-  const applied = lastAppliedText();
-  const saved = savedText === null ? null : textHealthOf(savedText, applied);
-  const exported = exportedText === null ? null : sameText ? saved : textHealthOf(exportedText, applied);
   const unwritable = serializeError ?? exportRefusal ?? (savedText === null ? serializeRefusal('') : null);
 
   let validation = validationHealth;
-  if (validation === null || validation.model.deref() !== model || validation.modelRev !== model.rev) {
+  if (!validatedNow(model)) {
     safeValidate(model);
     validation = validationHealth;
   }
+  const libraryPending = libraryLoads.size > 0;
   const validateThrew = validation === null || validation.threw;
-  const validationErrors = Math.max(validation?.errors ?? 0, saved?.validationErrors ?? 0, exported?.validationErrors ?? 0);
-
-  const errors =
-    (saved?.parseErrors ?? 0) +
-    (sameText ? 0 : (exported?.parseErrors ?? 0)) +
-    validationErrors +
-    (validateThrew ? 1 : 0) +
-    (unwritable === null ? 0 : 1);
-  return {
-    errors,
-    saved: saved === null ? null : { parseErrors: saved.parseErrors },
-    exported: exported === null ? null : { parseErrors: exported.parseErrors },
+  // The applied text reads the live model's validation only while that model is
+  // its parse bound to the full library: not while a merge still runs, nor over
+  // the curated subset a failed fetch leaves, nor when validation threw.
+  const appliedLive = fullLibraryMerge !== null && !libraryPending && !validateThrew ? lastAppliedText() : null;
+  const facts: LoadFacts = {
     sameText,
-    validationErrors,
-    validateThrew,
     unwritable,
-    libraryPending: libraryLoads.size > 0,
+    liveErrors: validation?.errors ?? 0,
+    validateThrew,
+    libraryPending,
+    onScreen: exportedText,
+    live: appliedLive === null ? null : withFinalNewline(appliedLive),
   };
+
+  const texts = [savedText, sameText ? null : exportedText] as const;
+  const known = texts.map((t) => (t === null ? null : textHealthOf(t, appliedLive)));
+  const unmeasured = texts.filter((t, i): t is string => t !== null && known[i] === undefined);
+  const compose = (h: readonly (TextHealth | null | undefined)[], unchecked: string | null): LoadHealth => {
+    const pair = (i: number) => (texts[i] === null ? null : ([texts[i], h[i] ?? undefined] as const));
+    return composeHealth(facts, pair(0), sameText ? pair(0) : pair(1), unchecked);
+  };
+  if (unmeasured.length === 0) return { known: compose(known, null) };
+
+  const finish = (measured: readonly MeasuredText[]): LoadHealth => {
+    let next = 0;
+    const healths = texts.map((t, i) => {
+      if (t === null || known[i] !== undefined) return known[i];
+      const m = measured[next++];
+      const health: TextHealth = {
+        source: 'parse',
+        parseErrors: m.parseErrors,
+        validationErrors: m.validationErrors,
+        rewritten: m.rewritten,
+      };
+      rememberText(t, health);
+      return health;
+    });
+    return compose(healths, null);
+  };
+  const unchecked = (why: string): LoadHealth => compose(known, why);
+  const noLibrary = 'the standard library has not loaded in this page, so the text cannot be validated as a terminal validates it';
+  return {
+    unmeasured,
+    finish,
+    unchecked,
+    here: (after) => {
+      const merge = fullLibraryMerge;
+      if (merge === null) return unchecked(after === undefined ? noLibrary : `${after}, and ${noLibrary}`);
+      return finish(unmeasured.map((t) => measureTextHealth(t, merge)));
+    },
+  };
+}
+
+/**
+ * The load health of the live model, as of now, measured on the page's thread:
+ * {@link loadHealthNow}, with each text it could not judge parsed, merged with
+ * the full library, validated and written back here — seconds a text on a model
+ * the size of the drone swarm, once per text (the counts are kept). The palette
+ * has a worker do that part; this is the same answer where there is none.
+ */
+export function loadHealth(): LoadHealth {
+  const now = loadHealthNow();
+  return 'known' in now ? now.known : now.here();
 }
 
 /**
@@ -4337,15 +4581,21 @@ export function typedTextFaulted(): boolean {
  * typed there and not applied, which is not the model; then the model's own
  * text. The text a faulted apply was made from stays: it is what the model
  * was applied from, as a Drive open keeps it. Null for a model the serializer
- * refuses.
+ * refuses. The model's own text is the one last written while the model has not
+ * changed since ({@link exportTextNow}), so a check's click with text typed in the
+ * Text view does not write the model again.
  */
 function savedTextNow(): string | null {
   flushRecompute();
   const { model, textBuffer, textDirty, serializeError } = useAppStore.getState();
   if (serializeError !== null) return null;
   if (!textDirty || textBuffer === lastAppliedText()) return withFinalNewline(textBuffer);
-  const view = textView(model, textBuffer);
-  return view.serializeError == null && view.textBuffer !== undefined ? withFinalNewline(view.textBuffer) : null;
+  try {
+    return withFinalNewline(exportTextNow(model));
+  } catch (err) {
+    console.error('serialization failed', err);
+    return null;
+  }
 }
 
 /**
