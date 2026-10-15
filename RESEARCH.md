@@ -266,6 +266,19 @@ to zero whenever the whole fleet recharged at once. No static relation states th
   mappings of constraint blocks to Modelica and Simulink.
 - SysML v2 and KerML: time slices and snapshots of occurrences, the Time library, analysis cases.
 - FMI 3.0: co-simulation and model exchange.
+- SysML v2 to FMI/SSP co-simulation, three works on generating the simulation structure from the
+  model (read their abstracts only so far; the PDFs are not yet held):
+  - Zimmermann, Manoury & Lindow (Fraunhofer IPK), "SysML v2 for Automated Co-simulation from
+    Systems Architecture Models", Proceedings of CSER 2024, Springer, pp. 35–46, DOI
+    10.1007/978-3-031-62554-1_4. Closed access.
+  - Kramsu, "Integration of SysML V2, FMI, and PyFMI for Enhanced System Simulation", Master's
+    thesis, University of Oulu, 2024, URN:NBN:fi:oulu-202409125823 (CC BY 4.0).
+  - Banagar, Kramsu, Könnö & Andwari, "Connecting systems engineering and domain expertise through
+    a toolchain: A simulation-integrated MBSE approach", Journal of Systems and Software 232,
+    112671, DOI 10.1016/j.jss.2025.112671 (CC BY 4.0).
+
+  What to take from them: how a SysML v2 block's parametric equations and connections become an
+  FMU network and a simulation (SSD/SSP) description, and where the dynamics live.
 - The Modelica Language Specification: DAE semantics, causalisation, events.
 - Cellier & Kofman, *Continuous System Simulation* (2006): integration methods and DAE index
   reduction.
