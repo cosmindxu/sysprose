@@ -453,10 +453,11 @@ Regroup's preview never touches the model. **Apply** does, in one undoable step.
 **Source of truth:** `src/diagram/build.ts:9-22`, `src/diagram/matrix.ts`,
 `grid.ts`, `sequence.ts`, `geometry3d.ts`, `graph-analysis.ts`, `planning.ts`,
 `regroup.ts`, `requirements-table.ts`, `contracts-table.ts`; `src/ui/panels/Toolbar.tsx:54-80`
-(the grouping); `src/ui/store.ts:311-324` (the diagram scope), `1163-1274`,
-`1994-2021` (boxes moved by hand, and how a saved project keeps them),
-`3015-3060`, `3693-3734` (an apply of text carries them over by qualified name;
-a file opened as text starts afresh).
+(the grouping); `src/ui/store.ts:320-333` (`diagramRootId`, the diagram
+scope), `1512-1620` (`carryPins`, `pinsOf`: boxes moved by hand, and how a
+saved project keeps them), `2340-2357` (`pinNodePositions`: the move itself), `3393-3445`
+(`applyText`: an apply of text carries them over by qualified name),
+`4074-4115` (`openText`: a file opened as text starts afresh).
 
 ---
 
@@ -579,11 +580,15 @@ undoing New, Open, Import or an apply of text also puts back the boxes moved by
 hand on the model it restores (*Arranging by hand*,
 [§4](#4-the-views-and-what-each-one-answers)). Copy is not undoable; paste is.
 
-**Source of truth:** `src/ui/store.ts:1336-1431`, `1554-1719` (the recompute
-cycle, and an SDK edit), `823-870`, `2310-2330`, `2588-2652`, `3988-4033`
-(nothing added to the standard library, and the note that says so),
-`3015-3060` (`applyText`), `3496-3542` (undo), `4075-4133` (the post-apply
-refresh); `src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
+**Source of truth:** `src/ui/store.ts:1682-1777` (`RECOMPUTE_DEBOUNCE_MS`,
+`flushRecompute`: the recompute cycle), `1900-1983` (`recomputeNow`), `1985-2065`
+(`afterSdkEdit`: an SDK edit), `868-915` (`inLibrary`, `userOwner`,
+`sdkIntoLibrary`: nothing added to the standard library), `2656-2676`
+(`createElement`: a new element), `2934-3001` (`reparent`, `reparentMany`: a
+move), `4724-4769` (`libraryNote`: the note that says so), `3393-3445`
+(`applyText`), `3877-3923` (`undo`, `redo`), `4811-4869`
+(`refreshAfterLibraryLoad`: the post-apply refresh);
+`src/ui/panels/TextEditor.tsx`, `src/ui/panels/Properties.tsx` (the
 Documentation box); `test/e2e/text-apply-contract.spec.ts:30` (the one-undo
 guarantee, as a test).
 
@@ -2942,9 +2947,9 @@ its own. Nor does it put an element of yours inside the standard library: a
 `create` or a `reparent` with an owner there puts the element at the top level
 of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
-**Source of truth:** `src/ui/store.ts:2775-2928` (the four buttons), `1639-1719`
-(an SDK edit),
-`src/api/analytics.ts:1215-1290` (`feasible`), `src/ui/App.tsx:46-94`
+**Source of truth:** `src/ui/store.ts:3076-3258` (`runValidation`,
+`solveParametric`: the four buttons), `1985-2065` (`afterSdkEdit`: an SDK edit),
+`src/api/analytics.ts:2401-2408` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -3286,10 +3291,13 @@ JSON exports write the model as it stands, without text not yet applied, and
 carry the merged library too, as a saved project does.
 
 **Source of truth:** `src/persistence/store.ts:88-135`, `src/branding.ts:48`,
-`src/ui/store.ts:740-759`, `3068-3156` (New, Save, Open and what they mark
-saved), `3402-3467` (a commit, and a branch head loaded), `3865-3875` (a merge
-that loads), `3877-3986` (typed text applied before a save or an export, or
-kept back and said so), `src/ui/commands.ts:39-104` (Save, and Export ▾ →
+`src/ui/store.ts:786-804` (`persistScenarios`: the Regroup scenarios kept in
+this browser), `3449-3541` (`newProject`, `listProjects`: New, Save, Open and
+what they mark saved), `3783-3848` (`commitVersion`, `switchBranch`: a commit,
+and a branch head loaded), `4601-4611` (`mergeLoads`: a merge that loads),
+`4613-4722` (`applyTypedTextToSave`, `sayWhatWasKept`: typed text applied before
+a save or an export, or kept back and said so), `src/ui/commands.ts:39-104`
+(Save, and Export ▾ →
 SysML), `src/ui/store.drive.ts:422-434` (what reads unsaved), `1333-1398` (the
 question), `src/api/versioning.ts:481-494`,
 `src/ui/panels/DriveStrip.tsx`, `src/ui/App.tsx:96-103`,
@@ -3538,9 +3546,11 @@ is a sentence it will refuse to print rather than a corner it will cut.
 | **A vacuous requirement is not a pass** | And that is a declared disagreement with the specification, recorded in [`CONFORMANCE.md`](CONFORMANCE.md) §8 with the clause number beside it. |
 | **The verdict facet is this tool's tag** | `verdict = "pass"` is an unbound string on a metadata usage, not the specification's enumeration on its own metaclass. Another tool is entitled to ignore it, and what a foreign *textual* parser makes of the bytes is untested; the API/JSON round trip is the one that has been probed. |
 
-**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:223`,
-`1332-1362`, `4131-4248`, `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:1225-1232`, `src/ui/commands.ts:198-310`.
+**Source of truth:** `src/library/std/manifest.json`, `src/ui/store.ts:232`
+(`UNDO_LIMIT`: undo is bounded), `1682-1712` (`RECOMPUTE_DEBOUNCE_MS`: the
+derived surfaces lag), `4871-4989` (`mergeLibrary`, `loadStandardLibraryAsync`:
+the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
+`src/api/analytics.ts:2401-2408` (`feasible`), `src/ui/commands.ts:198-310`.
 
 ---
 

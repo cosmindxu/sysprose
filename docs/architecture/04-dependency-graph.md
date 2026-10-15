@@ -137,7 +137,7 @@ modules (no alias for `@semantics`, `@library`, `@collab`, `@interop`,
 | `src/api/sdk.ts:28-29` `from '../semantics/units'`, `'../semantics/units-eval'` | `../semantics/index` |
 | `src/api/analytics.ts:28-29` same pair | `../semantics/index` |
 | `src/semantics/featuring.ts:34` `from '../library/resolve'` | `../library/index` |
-| `src/ui/store.ts:80` `from '../library/resolve'` | `../library/index` |
+| `src/ui/store.ts:112` `from '../library/resolve'` | `../library/index` |
 | `src/ui/panels/Properties.tsx:24` `from '../../semantics/units'` | `../semantics/index` (and 3 dirs up) |
 
 ## Scope drift catalog

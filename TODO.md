@@ -838,23 +838,6 @@ code or value changed, and the claimed gains reproduce. These three are what it 
 
 User guide and tutorials that are wrong, and what waits on something outside the code.
 
-- [ ] **Pin the user guide's `src/ui/store.ts` citations to symbols.** Twenty-four `store.ts` line
-      ranges in `docs/USER-GUIDE.md` (lines 456-458, 582-585, 2945, 3289-3291, 3541-3542) point at
-      the wrong code at 5943654: the diagram scope cited as `311-324` is `318-331`; d476d66
-      re-pointed line 2945 by +48 where +279 is right (the four buttons run from `runValidation` at
-      3002 to the end of `solveParametric` at 3184, an SDK edit is 1914-1994).
-      `test/unit/user-guide.test.ts` checks that a cited range exists, not what is in it, so every
-      edit to `store.ts` stales them again. Re-point the 24 and add a test that fails when a cited
-      `store.ts` range no longer contains the symbol the sentence names. Done when the test is green
-      and fails on a shifted range. [review 2026-10-14 D-4]
-- [ ] **Re-point the guide's `analytics.ts` citation for `feasible`.** `docs/USER-GUIDE.md:2947`
-      cites `src/api/analytics.ts:1215-1290` for `feasible`; that range now holds `orphanReport`
-      (`:1233`) and the start of the `PortOccurrence` and `ConnectivityReport` types (`:1278`,
-      `:1286`), and `feasible` is at `analytics.ts:2408` (the `AnalysisReport` field) and `:2473`
-      (where it is computed). Re-point the range. The previous entry's test is for `store.ts` ranges
-      only, so this citation needs a pin of its own, or that test widened to every cited `src/`
-      range that names a symbol. Done when the cited range holds `feasible`.
-      [review 2026-10-14 D-13]
 - [ ] **Re-record tutorials 1, 3, 4 and 5 and correct the caption that is false.** The workflow
       repo's tutorials were recorded on Sysprose 8581721; the site pins 5943654, where the hub-led
       layout (d60cd5d) and the column-header band (ea0d807) changed the views they show.
