@@ -33,6 +33,7 @@ import { parseExpr } from '../expr';
 import {
   evalStr,
   leafOf,
+  regionDescendants,
   regionScope,
   storeScope,
   triggerLabelOf,
@@ -119,9 +120,21 @@ const RESERVED = new Set([
   'else',
 ]);
 
-/** Every state inside the machine, for `state X` and for a refusal's candidates. */
+/**
+ * Every state inside the machine, for `state X` and for a refusal's candidates.
+ *
+ * Read from the machine's REGION, as the four pools here are: the region stops
+ * at a `state def` written inside the machine (`regionDescendants`,
+ * `./config`). That definition is a machine of its own, walked by itself, and
+ * no configuration of this machine ever stands on one of its states or fires
+ * one of its transitions. Resolving `state y` to the nested definition's `y`
+ * gave an atom that holds NOWHERE in this walk — `absence of state y` passed on
+ * the outer machine while the same claim failed on the machine that holds `y` —
+ * which is the outcome the header forbids. Read from the region, it is
+ * `verification/unknown-atom`, as a state of another top-level machine is.
+ */
 function statesOf(model: Model, machineId: ElementId): ElementRecord[] {
-  return model.descendants(machineId).filter((e) => e.eClass === 'StateUsage');
+  return regionDescendants(model, machineId).filter((e) => e.eClass === 'StateUsage');
 }
 
 /**
@@ -135,32 +148,30 @@ function statesOf(model: Model, machineId: ElementId): ElementRecord[] {
  * `state X` cannot do it because a `DoneNode` is not a `StateUsage`.
  */
 function nodesOf(model: Model, machineId: ElementId): ElementRecord[] {
-  return model
-    .descendants(machineId)
-    .filter(
-      (e) =>
-        e.declaredName !== undefined &&
-        // ONLY WHAT A LEAF CAN BE. A machine holds attributes, actions and
-        // transitions as well as states, and none of those is ever the active
-        // leaf — so resolving `node someAttribute` would give an atom that
-        // holds NOWHERE, and `absence of node someAttribute` would pass on
-        // every machine. That is the failure this module's header refuses: an
-        // atom that cannot be observed is a refusal, never a silent `false`.
-        (e.eClass === 'StateUsage' || e.eClass.endsWith('Node')),
-    );
+  return regionDescendants(model, machineId).filter(
+    (e) =>
+      e.declaredName !== undefined &&
+      // ONLY WHAT A LEAF CAN BE. A machine holds attributes, actions and
+      // transitions as well as states, and none of those is ever the active
+      // leaf — so resolving `node someAttribute` would give an atom that
+      // holds NOWHERE, and `absence of node someAttribute` would pass on
+      // every machine. That is the failure this module's header refuses: an
+      // atom that cannot be observed is a refusal, never a silent `false`.
+      (e.eClass === 'StateUsage' || e.eClass.endsWith('Node')),
+  );
 }
 
 /** Named transitions, for `fires T` — the anonymous ones cannot be named at all. */
 function namedTransitions(model: Model, machineId: ElementId): ElementRecord[] {
-  return model
-    .descendants(machineId)
-    .filter((e) => e.eClass === 'TransitionUsage' && (e.declaredName ?? '') !== '');
+  return regionDescendants(model, machineId).filter(
+    (e) => e.eClass === 'TransitionUsage' && (e.declaredName ?? '') !== '',
+  );
 }
 
 /** The distinct triggers the machine names, in declaration order. */
 function triggersOf(model: Model, machineId: ElementId): string[] {
   const out: string[] = [];
-  for (const tr of model.descendants(machineId)) {
+  for (const tr of regionDescendants(model, machineId)) {
     if (tr.eClass !== 'TransitionUsage') continue;
     const label = triggerLabelOf(tr);
     if (label === '' || out.includes(label)) continue;

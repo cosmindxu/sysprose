@@ -150,7 +150,7 @@ so where they appear. Measured 2026-09-09: **83 fixture directories** under
 `test/fixtures/agent-authoring/` — the L0–L5 rows above sum to 82, and the
 eighty-third is `L8-evidence-stale`, the one case of the verification lane that
 belongs in this corpus because `stale-evidence` is a `validation/*` rule and
-`npm run check` is what raises it — beside **113 catalogue codes** in
+`npm run check` is what raises it — beside **115 catalogue codes** in
 `src/text/langium/diagnostic-codes.ts` and **27 validation rules** in
 `src/validation/rules.ts`. Reproduce them with
 `ls test/fixtures/agent-authoring | wc -l`, `DIAGNOSTIC_CODES.length` and
@@ -3945,7 +3945,18 @@ not treated as one: the interpreter's chase never settles on a cycle and says so
 through `completionBudgetHit`, but the walk re-enters a configuration it has
 already hashed, nothing downstream is unexplored, and the absence lists stay
 exact — which is why `FlightModes`, whose completion transitions cycle, is the
-exhaustive demonstration. The walk is deliberately loose in the other direction,
+exhaustive demonstration. (Superseded in part: the chase budget is no longer a
+bound. The interpreter takes the next event where a chase spends it, and the walk
+now does the same, so a chain longer than the budget is decided rather than
+suppressed, and a cycle with a way out on an event is walked through that way
+out — see docs/06 §8.5. `FlightModes`, which names no trigger, walks as it did,
+and is still the exhaustive demonstration; what changed on it is the two answers
+about where a run ends, `recoverable` and `every run? guaranteed`, which are now
+checked against where the budget stops its one chase. And since U1, docs/06 §8.8,
+a cycle the chase never settles on is a finding of its own: `FlightModes`'
+`manual ⇄ autonomous` is `verification/completion-livelock`, beside the choice
+row, and the campaign's diagnostics array over `uav-isr` names it first.)
+The walk is deliberately loose in the other direction,
 in exactly one place: it offers each `after(n)` label as a named event instead of
 advancing a clock, so a state behind a dwell is treated as reachable — an
 over-approximation, which can only shrink an absence claim, never invent one.
@@ -5042,7 +5053,10 @@ simulator sentence of plan §2.4(d) prints beside the row wherever the machine
 has a choice point, and the three standing sentences of §2.4 now exist as one
 constant each beside `CLAUSE_SENTENCE`. What the row never says, and the suite
 greps every output for: that the machine can recover, that it livelocks, that
-anything is free of deadlocks. `deadlock-guarded.sysml` is the file where the
+anything is free of deadlocks. *[Since U1, docs/06 §8.8: `livelock` is the name
+of a finding of its own, `verification/completion-livelock`, and the suite now
+greps that the word stands on that row, its finding and its `withheld` line and
+on no other — the trap row still never says it.]* `deadlock-guarded.sysml` is the file where the
 deadlock row's per-configuration gate and this feature's walk-wise gate answer
 differently — `Ctrl`'s decided sink keeps its row while the trap field is refused
 on the store clause — and they never contradict each other on it.
@@ -5061,7 +5075,7 @@ reads that gate for BOTH values: `guaranteed` quantifies over the run set,
 which the cooperative environment changes (on the latch file the naive answer
 is `guaranteed`, about a machine that sits in `nominal` forever when nobody
 sends `unlatch`), and `potential` names a cycle with no exit, which a bound, a
-dwell the walk offers at every configuration and a guard nothing decided all
+dwell the walk takes without waiting it out and a guard nothing decided all
 manufacture (on the factory-built dwell cycle the naive answer is `potential —
 … the cycle nominal → hold → nominal`, about a machine on which the interpreter
 sends every run into `hazard`; on the trapguard file it is `guaranteed`, about

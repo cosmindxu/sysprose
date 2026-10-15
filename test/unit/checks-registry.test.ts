@@ -1910,6 +1910,9 @@ const SPURIOUS = 'package P { state def M { state a; state b; state c; state d; 
 const GUARD_TRANSIENT = 'package P { state def M { state a; state b; state c; transition a_b first a then b; transition a_c first a accept e if x > 0 then c; transition b_a first b accept back then a; } }';
 const LONELY = 'package Q { state def Lonely { state a; state b; } state def M { state x; state y; transition first x then y; transition first y then x; } part def Drone { exhibit state modes : M; } }';
 const EXHIBIT_BODY = 'package Q { state def M { state x; state y; transition first x then y; transition first y then x; } part def Drone { exhibit state run : M { state extra; } } }';
+/** `LONELY`'s and `EXHIBIT_BODY`'s `M`, which never comes to rest, and one that does. */
+const RESTLESS_M = 'state x; state y; transition first x then y; transition first y then x;';
+const RESTING_M = 'state x; state final; transition first x then final;';
 const TYPO_TRANS = 'package Q { state def M { state a; state b; transiton a then b; transiton b then a; } }';
 
 const carrier = (pattern: string, p: string): string =>
@@ -1923,6 +1926,10 @@ const a15 = (pattern: string): string =>
   `package P { state def M { ${carrier(pattern, 'state c')} state a; state b; state c; transition a_b first a then b; transition a_c first a accept e then c; transition b_a first b accept back then a; } }`;
 const FALSE_GUARD = `package P { state def M { ${carrier('cover', 'state c')} attribute k = 0; state a; state b; state c; transition a_b first a if k > 0 then b; transition a_c first a accept e then c; } }`;
 const TWO = `package Q { part def Two { state def A { ${carrier('absence', 'state y')} state x; state y; transition x -> y; } state def B { state m; state n; transition m -> n; } } }`;
+/** Review B's `nest6-prop`: a `state def` written inside the machine that carries the property. */
+const NEST6 = `package Nest6 { state def Outer { ${carrier('absence', 'state b')} state a; state b; transition ab first a accept e then b; state def Inner { state x; state y; transition xy first x accept go then y; } } }`;
+/** The S3 review's `leak`: the property is carried by the nested definition, about its own state. */
+const LEAK = `package Leak { state def Outer { state a; state b; transition ab first a accept e then b; state def Inner { ${carrier('absence', 'state y')} state x; state y; transition xy first x accept go then y; } } }`;
 
 describe('the reach verdict table', () => {
   it('reads undecided when a trap answer is withheld (latch), never holds', async () => {
@@ -1938,15 +1945,22 @@ describe('the reach verdict table', () => {
     expect(reachOf(inline(ACCEPT_CYCLE), healthy).verdict).toBe('undecided');
   });
 
-  it('reads holds only on a terminating machine the walk finished', () => {
+  it('reads holds only on a terminating machine the walk finished — a completion cycle is a finding', () => {
     expect(reachOf(inline(TERM), healthy).verdict).toBe('holds');
-    // A completion livelock is not a bound hit, so the cycle still holds.
-    expect(reachOf(inline(COMPLETION_CYCLE), healthy).verdict).toBe('holds');
+    // A completion cycle is not a bound hit, so nothing is withheld over it —
+    // and since U1 (plan O1 S4) it is a finding of its own: the interpreter's
+    // chase goes round it and never comes to rest, `verification/completion-livelock`.
+    const cycle = reachOf(inline(COMPLETION_CYCLE), healthy);
+    expect(cycle.verdict).toBe('issues');
+    expect(cycle.rows.map((r) => [r.code, r.severity])).toEqual([['verification/completion-livelock', 'warning']]);
   });
 
-  it('reads holds on the views-tour completion livelock', async () => {
+  it('reads issues on the views-tour completion livelock, with that one finding and nothing withheld', async () => {
     const model = await load('examples/views-tour.sysml');
-    expect(reachOf(model, healthy).verdict).toBe('holds');
+    const result = reachOf(model, healthy);
+    expect(result.verdict).toBe('issues');
+    expect(result.rows.map((r) => r.code)).toEqual(['verification/completion-livelock']);
+    expect(result.summary).not.toContain('withheld');
   });
 
   it('lists exactly the trap-probe findings, in the terminal\u2019s order', async () => {
@@ -1955,6 +1969,8 @@ describe('the reach verdict table', () => {
     expect(result.verdict).toBe('issues');
     expect(result.rows.map((r) => [r.code, r.severity])).toEqual([
       ['verification/unrecoverable-mode', 'warning'],
+      ['verification/completion-livelock', 'warning'],
+      ['verification/completion-livelock', 'warning'],
       ['verification/nondeterministic-choice', 'warning'],
     ]);
   });
@@ -2007,15 +2023,26 @@ describe('the reach verdict table', () => {
   });
 
   it('marks states under no walked machine (lonely) as not-walked', () => {
+    // `M` is a completion cycle, a finding of its own since U1, so the verdict
+    // is `issues` and the not-walked clause stands in its summary; with an `M`
+    // that comes to rest the not-walked states alone make it `undecided`.
     const result = reachOf(inline(LONELY), healthy);
-    expect(result.verdict).toBe('undecided');
+    expect(result.verdict).toBe('issues');
+    expect(result.summary).toContain('3 state(s) in no walked machine');
     expect(result.rows.filter((r) => r.code === 'checks/not-walked').map((r) => r.elementId)).toHaveLength(3);
+    const resting = reachOf(inline(LONELY.replace(RESTLESS_M, RESTING_M)), healthy);
+    expect(resting.verdict).toBe('undecided');
+    expect(resting.rows.filter((r) => r.code === 'checks/not-walked')).toHaveLength(3);
   });
 
   it('marks an exhibit body and its extra state (exhibitBody) as not-walked', () => {
     const result = reachOf(inline(EXHIBIT_BODY), healthy);
-    expect(result.verdict).toBe('undecided');
+    expect(result.verdict).toBe('issues');
+    expect(result.summary).toContain('2 state(s) in no walked machine');
     expect(result.rows.filter((r) => r.code === 'checks/not-walked')).toHaveLength(2);
+    const resting = reachOf(inline(EXHIBIT_BODY.replace(RESTLESS_M, RESTING_M)), healthy);
+    expect(resting.verdict).toBe('undecided');
+    expect(resting.rows.filter((r) => r.code === 'checks/not-walked')).toHaveLength(2);
   });
 
   it('reads not-run, with not-walked rows, for a file that owns no transition (succession-only)', async () => {
@@ -2368,6 +2395,58 @@ describe('the machine pick against the terminal (I14)', () => {
     expect(stateCli.stderr).toContain('holds no state machine');
   });
 
+  it('follows a pick row to a machine that holds a nested state def, and runs it (O1 C3)', async () => {
+    const model = inline(NEST6);
+    const outerId = idOf(model, 'Nest6::Outer');
+    const innerId = idOf(model, 'Nest6::Outer::Inner');
+    // The package holds both machines: refused, one pick row each.
+    const pkg = pickBehaviourMachine(model, idOf(model, 'Nest6'));
+    expect(pkg.kind).toBe('refused');
+    if (pkg.kind !== 'refused') return;
+    expect(pkg.rows.map((r) => [r.code, r.elementId])).toEqual([
+      ['checks/pick-machine', outerId],
+      ['checks/pick-machine', innerId],
+    ]);
+    // Clicking `Outer`'s row selects `Outer`, and the next Run checks it. It was
+    // refused as holding two machines, with `Outer`'s own row offered again.
+    const followed = pickBehaviourMachine(model, pkg.rows[0].elementId!);
+    expect(followed).toEqual({ kind: 'machine', id: outerId, qualifiedName: 'Nest6::Outer' });
+    const result = behaviourOf(model, outerId, 'Nest6::Outer', healthy);
+    expect(result.verdict).toBe('issues');
+    expect(result.summary).toContain('Nest6::Outer — 1 property: 0 pass, 1 fail');
+    // A state of the nested definition offers the nested definition, not `Outer`.
+    const x = pickBehaviourMachine(model, idOf(model, 'Nest6::Outer::Inner::x'));
+    expect(x.kind === 'refused' && x.rows.map((r) => r.elementId)).toEqual([innerId]);
+    // The terminal agrees: `--element Nest6::Outer` is checked (exit 1), not refused (exit 2).
+    writeFileSync(file('nest6.sysml'), NEST6);
+    const cli = await cliSplit(['check-behaviour', file('nest6.sysml'), '--no-library', '--element', 'Nest6::Outer']);
+    expect(cli.code).toBe(1);
+    expect(cli.stderr).not.toContain('holds 2 state machines');
+  });
+
+  it('counts and checks a nested definition’s property on that definition only (O1 C3)', async () => {
+    const model = inline(LEAK);
+    const outerId = idOf(model, 'Leak::Outer');
+    const innerId = idOf(model, 'Leak::Outer::Inner');
+    // The pick rows say whose the property is: the outer machine's row used to
+    // count `Inner`'s carrier, and following it printed `holds`.
+    const pkg = pickBehaviourMachine(model, idOf(model, 'Leak'));
+    expect(pkg.kind === 'refused' && pkg.rows.map((r) => [r.elementId, r.message])).toEqual([
+      [outerId, 'Leak::Outer — 0 properties in the file'],
+      [innerId, 'Leak::Outer::Inner — 1 property in the file'],
+    ]);
+    // With nothing selected, the carriers offered are the nested definition alone.
+    const none = pickBehaviourMachine(model, null);
+    expect(none.kind === 'refused' && none.rows.map((r) => r.elementId)).toEqual([innerId]);
+    expect(behaviourOf(model, outerId, 'Leak::Outer', healthy).verdict).not.toBe('holds');
+    expect(behaviourOf(model, innerId, 'Leak::Outer::Inner', healthy).verdict).toBe('issues');
+    writeFileSync(file('leak.sysml'), LEAK);
+    const outer = await cliSplit(['check-behaviour', file('leak.sysml'), '--no-library', '--element', 'Leak::Outer']);
+    expect(outer.code).toBe(2);
+    const inner = await cliSplit(['check-behaviour', file('leak.sysml'), '--no-library', '--element', 'Leak::Outer::Inner']);
+    expect(inner.code).toBe(1);
+  });
+
   it('refuses a library element with the library sentence', async () => {
     const text = 'package P { state def M { state a; state b; transition a -> b; } }\n';
     const loaded = await loadModelText(text, { fileName: 'lib.sysml', library: 'full' });
@@ -2499,6 +2578,22 @@ describe('the Checks tab renders the terminal report (D.5 step 4)', () => {
       expect.arrayContaining(['findings']),
     );
     expect(machine.getAttribute('data-status')).not.toContain('holds');
+  });
+
+  it('counts a completion livelock as a finding in the machine block, and its line selects the cycle', () => {
+    // U1 (plan O1 S4): a machine whose only finding is the cycle its chase goes
+    // round reads `findings`, never `nothing-to-report`.
+    const model = inline(COMPLETION_CYCLE);
+    const result = runCheck(reachSpec, ctx({ model, loadHealth: healthy }));
+    const { view, onSelect } = mount('reach', result, model);
+    const machine = view.container.querySelector('.checks-report-machine')!;
+    expect(machine.getAttribute('data-status')).toBe('findings');
+    const line = view.container.querySelector('.checks-report-line[data-kind="livelock"]')!;
+    expect(line.getAttribute('data-code')).toBe('verification/completion-livelock');
+    expect(line.getAttribute('data-withholds')).toBe('false');
+    expect(line.textContent).toContain('livelock     {a, b} \u2014 the chase goes round 2 configuration(s)');
+    fireEvent.click(line.querySelector('button')!);
+    expect(onSelect).toHaveBeenCalledWith(idOf(model, 'Q::Cyc::a'));
   });
 
   it('shows an inconclusive block\u2019s detail and never reads PASS or holds', () => {

@@ -306,6 +306,17 @@ describe('`openFrontier` is the negation of `exhaustive`, not a test on `boundHi
  * is that `traps` is `[]` on all three shipped machines: each is one component
  * holding its opening, exempted as the machine's core. The first claim gated on
  * the increasing side landed with no shipped row, count or finding moving.
+ *
+ * O1 `behaviour-sound` S4 (2026-10-15, review B's M1) RE-RECORDED ONE SENTENCE:
+ * the reason on every `walked` row of the edge census, eleven of them below. It
+ * said *so every configuration standing there offers it*, which stopped being
+ * true when the walk began to obey run-to-completion — no trigger is offered
+ * where a completion transition is due, so it is false at livelock-two's `ac`
+ * and at v9's `admissionFails` — and it now says *so the walk tries it wherever
+ * a configuration standing there is offered its input*. Both spellings are
+ * quoted in {@link MOVED_BY_THE_CENSUS} (`walkedReason`), the case beside it
+ * asserts the movement on every machine, and no other field, row, count or
+ * finding moved with it.
  */
 const REACH_BEFORE: Record<string, unknown> = {
   "examples/contract-authoring-prompts.sysml": {
@@ -389,31 +400,31 @@ const REACH_BEFORE: Record<string, unknown> = {
               "eClass": "TransitionUsage",
               "qualifiedName": "UAVSurveillanceSystem::FlightModes::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::standby`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::standby`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             },
             {
               "eClass": "TransitionUsage",
               "qualifiedName": "UAVSurveillanceSystem::FlightModes::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::manual`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::manual`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             },
             {
               "eClass": "TransitionUsage",
               "qualifiedName": "UAVSurveillanceSystem::FlightModes::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::autonomous`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::autonomous`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             },
             {
               "eClass": "TransitionUsage",
               "qualifiedName": "UAVSurveillanceSystem::FlightModes::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::autonomous`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::autonomous`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             },
             {
               "eClass": "TransitionUsage",
               "qualifiedName": "UAVSurveillanceSystem::FlightModes::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::failsafe`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `UAVSurveillanceSystem::FlightModes::failsafe`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             }
           ],
           "counts": {
@@ -605,25 +616,25 @@ const REACH_BEFORE: Record<string, unknown> = {
               "eClass": "TransitionUsage",
               "qualifiedName": "VehicleModel::VehicleStates::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `VehicleModel::VehicleStates::off`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `VehicleModel::VehicleStates::off`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             },
             {
               "eClass": "TransitionUsage",
               "qualifiedName": "VehicleModel::VehicleStates::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `VehicleModel::VehicleStates::idling`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `VehicleModel::VehicleStates::idling`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             },
             {
               "eClass": "TransitionUsage",
               "qualifiedName": "VehicleModel::VehicleStates::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `VehicleModel::VehicleStates::moving`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `VehicleModel::VehicleStates::moving`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             },
             {
               "eClass": "TransitionUsage",
               "qualifiedName": "VehicleModel::VehicleStates::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `VehicleModel::VehicleStates::idling`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `VehicleModel::VehicleStates::idling`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             }
           ],
           "counts": {
@@ -797,13 +808,13 @@ const REACH_BEFORE: Record<string, unknown> = {
               "eClass": "TransitionUsage",
               "qualifiedName": "DroneDemo::FlightModes::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `DroneDemo::FlightModes::standby`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `DroneDemo::FlightModes::standby`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             },
             {
               "eClass": "TransitionUsage",
               "qualifiedName": "DroneDemo::FlightModes::«TransitionUsage»",
               "account": "walked",
-              "reason": "it is in the step relation and leaves `DroneDemo::FlightModes::flying`, which a configuration's stack can hold, so every configuration standing there offers it"
+              "reason": "it is in the step relation and leaves `DroneDemo::FlightModes::flying`, which a configuration's stack can hold, so the walk tries it wherever a configuration standing there is offered its input"
             }
           ],
           "counts": {
@@ -1444,9 +1455,52 @@ const MOVED_BY_THE_CENSUS = {
    */
   trapsField: 'traps',
   trapCensusField: 'trapCensus',
+  /**
+   * O1 S4's one re-recorded sentence (review B's M1), the reason on every
+   * `walked` census row: the clause that ends it, before and after.
+   */
+  walkedReason: {
+    before: 'so every configuration standing there offers it',
+    after: 'so the walk tries it wherever a configuration standing there is offered its input',
+  },
+  /**
+   * O1 S5's movement (U1): the completion livelock — two machine fields, one
+   * total and one finding per cycle. Read OUT of the table above rather than
+   * re-pasted into it, and pinned here whole instead: the three shipped
+   * machines whose trigger-less transitions cycle each gain exactly the row
+   * naming the cycle the interpreter's chase goes round, and nothing else on
+   * any of the six files moves.
+   */
+  livelock: {
+    machineFields: ['livelocks', 'livelocksWithheld'],
+    totalsField: 'livelocks',
+    code: 'verification/completion-livelock',
+    rows: {
+      'examples/uav-isr.sysml': [['manual', 'autonomous']],
+      'examples/vehicle.sysml': [['idling', 'moving']],
+      'examples/views-tour.sysml': [['standby', 'flying']],
+    } as Record<string, string[][]>,
+  },
 } as const;
 
-describe("the differential: `reach`'s published output moved in exactly three named ways", () => {
+/** The report with S5's livelock movement taken out, as `MOVED_BY_THE_CENSUS.livelock` names it. */
+function withoutLivelocks(report: { machines: unknown; totals: unknown; diagnostics: unknown }): {
+  machines: unknown;
+  totals: unknown;
+  diagnostics: unknown;
+} {
+  const { machineFields, totalsField, code } = MOVED_BY_THE_CENSUS.livelock;
+  const machines = (report.machines as Record<string, unknown>[]).map((m) =>
+    Object.fromEntries(Object.entries(m).filter(([k]) => !(machineFields as readonly string[]).includes(k))),
+  );
+  const totals = Object.fromEntries(
+    Object.entries(report.totals as Record<string, unknown>).filter(([k]) => k !== totalsField),
+  );
+  const diagnostics = (report.diagnostics as { code?: string }[]).filter((d) => d.code !== code);
+  return { machines, totals, diagnostics };
+}
+
+describe("the differential: `reach`'s published output moved only in the ways `MOVED_BY_THE_CENSUS` names", () => {
   const files = Object.keys(REACH_BEFORE);
 
   for (const file of files) {
@@ -1461,15 +1515,23 @@ describe("the differential: `reach`'s published output moved in exactly three na
       // The profile is a module constant and is compared to the constant itself
       // rather than to 2 kB of it repeated six times.
       expect(report.profile).toEqual(JSON.parse(JSON.stringify(SEMANTIC_PROFILE)));
-      expect(
-        withoutIds({
-          machines: report.machines,
-          totals: report.totals,
-          diagnostics: report.diagnostics,
-        }),
-      ).toEqual(REACH_BEFORE[file]);
+      expect(withoutIds(withoutLivelocks(report))).toEqual(REACH_BEFORE[file]);
     }, 120_000);
   }
+
+  it('the completion livelock moved exactly the rows `MOVED_BY_THE_CENSUS.livelock` names, and one finding per row', async () => {
+    const { machineFields, totalsField, code, rows } = MOVED_BY_THE_CENSUS.livelock;
+    for (const file of files) {
+      const loaded = await loadModelText(read(file), { fileName: file });
+      const report = reachReport(loaded.model!);
+      const want = rows[file] ?? [];
+      for (const m of report.machines) for (const f of machineFields) expect(m, file).toHaveProperty(f);
+      expect(report.machines.flatMap((m) => m.livelocks.map((l) => l.states.map((s) => s.name))), file).toEqual(want);
+      expect(report.machines.flatMap((m) => m.livelocksWithheld), file).toEqual([]);
+      expect(report.totals[totalsField], file).toBe(want.length);
+      expect(report.diagnostics.filter((d) => d.code === code), file).toHaveLength(want.length);
+    }
+  }, 120_000);
 
   it('the four fields that arrived are the only keys a machine row did not have', async () => {
     // The table above pins every row whole; this reads the same rows for the
@@ -1493,6 +1555,27 @@ describe("the differential: `reach`'s published output moved in exactly three na
         expect(m.trapCensus.refusedByGate, file).toBeNull();
       }
     }
+  }, 120_000);
+
+  it('every `walked` census row gives the S4 reason, and none the one it replaced', async () => {
+    // The movement as data, so a later commit that moves the reason again does
+    // so here and in sight of the reason, and so the table above cannot be read
+    // as unmoved where it was re-recorded.
+    let rows = 0;
+    for (const file of files) {
+      const loaded = await loadModelText(read(file), { fileName: file });
+      for (const m of reachReport(loaded.model!).machines) {
+        for (const row of exploreMachine(loaded.model!, m.machine.id).census.rows) {
+          expect(row.reason, file).not.toContain(MOVED_BY_THE_CENSUS.walkedReason.before);
+          if (row.account !== 'walked') continue;
+          rows += 1;
+          expect(row.reason.endsWith(MOVED_BY_THE_CENSUS.walkedReason.after), `${file}: ${row.reason}`).toBe(true);
+        }
+      }
+    }
+    // As many as the table above holds — eleven, counted off it.
+    expect(rows).toBe(JSON.stringify(REACH_BEFORE).split(MOVED_BY_THE_CENSUS.walkedReason.after).length - 1);
+    expect(rows).toBeGreaterThan(0);
   }, 120_000);
 
   it('appends the store clause AFTER the alphabet clause, on every machine and once each', async () => {

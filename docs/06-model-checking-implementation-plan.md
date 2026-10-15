@@ -12,7 +12,7 @@ Nine of the eleven features can emit an **absence** claim — *not covered*, *no
 
 **A second review then broke the first fix in four places, and those corrections are in here too.** The publishability predicate is **two** conjunctions, not one — a single boolean would have turned the two shipped absence claims into refusals on any timed machine and emptied a true finding out of `reach`. There is a **second register**, for positive witnesses: a refutation, a named avoiding cycle and a published witness trace are increasing claims over the retained relation, and the draft gated none of them. And the hazard's own reachability moved: **`accept after(n)` is a parse error** (§0 row 22, measured), so a timed transition is API-only, every dwell fixture is factory-built, and the dwell census is re-priced as an SDK-population number rather than a claim about a user's corpus.
 
-**Four reviews found four ways the walk's edge relation differs from the machine's, a fifth arrived while this section was being written, and the answer is structural rather than another patch — and the tree has since shipped the structure.** Round 1 found time (`after(n)` labels enter the alphabet and no clock advances). Round 3 found the **cooperative environment** — every trigger in the alphabet is offered at every configuration, so `locked → nominal` exists in the walk only because the walk hands the machine `unlatch` (measured, §2.3) — and the **seeded store**, which under-approximates in the other direction, so a guard over an attribute with no declared literal manufactured a trap and a `not recoverable` at exit 1 on a correct design. Round 5 found the fourth and it was of a different kind: an edge **metaclass** simply absent from the step relation, so a `succession` between two states parsed clean, landed in the model and was never walked. That one is fixed at `a66ba1f` — and the way it was fixed is what this plan now stands on. `edgeCensus` (`explore.ts`) counts every edge-bearing element under a machine **without asking the walk** and puts each in a bucket that says what became of it; an edge in the `unaccounted` bucket fails a test **and refuses the machine**. So the question is inverted: **this plan stops enumerating the ways the relation can be wrong and requires instead that it be right** — one predicate, `walkIsExact`, on the whole increasing side (§2.3), whose element-set half is already carried by the shipped census and whose remaining three clauses are about what the walk *offers* at a configuration rather than which edges exist. Every increasing absence claim reads it; every **existential** witness reads its relation half, because a bound can hide such a witness and can never invent one; the two witnesses that are really **maximality** claims — a cycle with no exit, a run with no successor — read the whole of it, and the register's `kind` column is what makes that a test rather than a paragraph. The measured survey of every state machine in the tree (§5(d), re-taken at `dc6662c`) says the gate is **free on today's corpus and only partly falsifiable by it**: nine of eleven machines are exact, the two that are not are already suppressed today, no model contains a dwell or a named trigger — so clauses (b) and (c) are exercised only by fixtures this plan invents — while clause (d) and the element-set half now have real corpus witnesses, in the fixture models `c929278` and `a66ba1f` left behind.
+**Four reviews found four ways the walk's edge relation differs from the machine's, a fifth arrived while this section was being written, and the answer is structural rather than another patch — and the tree has since shipped the structure.** Round 1 found time (`after(n)` labels enter the alphabet and no clock advances). Round 3 found the **cooperative environment** — every trigger in the alphabet is offered wherever the walk takes an event, so `locked → nominal` exists in the walk only because the walk hands the machine `unlatch` (measured, §2.3) — and the **seeded store**, which under-approximates in the other direction, so a guard over an attribute with no declared literal manufactured a trap and a `not recoverable` at exit 1 on a correct design. Round 5 found the fourth and it was of a different kind: an edge **metaclass** simply absent from the step relation, so a `succession` between two states parsed clean, landed in the model and was never walked. That one is fixed at `a66ba1f` — and the way it was fixed is what this plan now stands on. `edgeCensus` (`explore.ts`) counts every edge-bearing element under a machine **without asking the walk** and puts each in a bucket that says what became of it; an edge in the `unaccounted` bucket fails a test **and refuses the machine**. So the question is inverted: **this plan stops enumerating the ways the relation can be wrong and requires instead that it be right** — one predicate, `walkIsExact`, on the whole increasing side (§2.3), whose element-set half is already carried by the shipped census and whose remaining three clauses are about what the walk *offers* at a configuration rather than which edges exist. Every increasing absence claim reads it; every **existential** witness reads its relation half, because a bound can hide such a witness and can never invent one; the two witnesses that are really **maximality** claims — a cycle with no exit, a run with no successor — read the whole of it, and the register's `kind` column is what makes that a test rather than a paragraph. The measured survey of every state machine in the tree (§5(d), re-taken at `dc6662c`) says the gate is **free on today's corpus and only partly falsifiable by it**: nine of eleven machines are exact, the two that are not are already suppressed today, no model contains a dwell or a named trigger — so clauses (b) and (c) are exercised only by fixtures this plan invents — while clause (d) and the element-set half now have real corpus witnesses, in the fixture models `c929278` and `a66ba1f` left behind.
 
 Five of the eleven are **held behind a census the tool itself installs**, because their kill-measurement already reads *no* on this tree: 0 of 3 shipped machines are acyclic; 0 of every `.sysml` file in the tree relate two state machines by `refine` or `:>`; 0 of them carry a requirement that inherits a clause; exactly 1 part declares boundary ports over internal structure and it is degenerate; and the connector graph contains no dependency template at all, so conditions 1 and 2 as specified would fire on **100 % of ports on every model in the tree**. Each of those five is specified here in full, so that the day its census reads non-zero the build is a transcription and not a fresh design.
 
@@ -56,7 +56,7 @@ Twenty-three statements in `docs/05-model-checking-literature.md`, the scope not
 | 12 | candidate 7's kill measurement: "if no `in` port fails condition 2, the check reduces to the dangling list" | The opposite is true and worse: **every** `in` port fails it, because no relation exists that could make one pass. 16 findings on `uav-isr` over 15 ports, 4/4 on `vehicle`, 6/6 on `views-tour` | The check is not redundant; it is empty |
 | 13 | the rider: the two modalities differ on `FlightModes` "because the declaration-order tie-break means a simulation never reaches `failsafe`" | The fact holds; **the reason does not.** The measured reason is the `manual ⇄ autonomous` cycle inside the non-violating region. The tie-break is a fact about one simulated run | A modality computed from the tie-break prints a claim about the **simulator** as a claim about the **model** |
 | 14 | `DIAGNOSTIC_CODES.length` is 103, and the `**N catalogue codes**` figure is a hand edit | **Neither number survives, and the second half is the durable correction.** The count is **100** at `dc6662c`, and it moves whenever a lane adds a code — so this plan never states it. The figure in `docs/AGENT-AUTHORING-CAMPAIGN.md` is **generated** by `npm run codes` and pinned against `DIAGNOSTIC_CODES.length` by `test/unit/docs-counts.test.ts`'s `catalogue codes` CLAIM | adding a code costs a regeneration, never a doc edit — and every guard line in §4 states a **delta**, never a total (§4 Standing rules) |
-| **15** | candidates 1, 2 and 8 may print `covered`, `recoverable`, *"nothing this walk found is inescapable"* and a cut set under the four publishability conditions (`docs/05` §2) | **Unsound in one direction, and no bound sees it.** `machineAlphabet` (`explore.ts`:277, docstring :266-276) puts every `after(n)` label in the alphabet by design, `exploreMachine` offers every alphabet member at every configuration (:457-460), and `matches` (`config.ts`:597-606) applies the dwell test **only** on the `timeout` branch — the walk issues no `timeout` and advances no clock. Executed on a two-dwell fixture — **`ModelFactory`-built, because `accept after(n)` does not parse; see row 22** — whose `after(5)` transition is declared before `after(10)`: `machineAlphabet → ["after(5)","after(10)"]`, the walk reports `configs 3, exhaustive TRUE, boundHit 'none'` and calls `B` reachable, while `runStateMachine` at every advance granularity (`[5]`,`[10]`,`[100]`,`3×8`,`1×12`) enters `B` on **no run** — `execute.ts`:1305-1308 fires `enabled[0]` | The edge relation is an over-approximation that is **not** a bound, so **every publishability condition is blind to it**. §2.3 states the **polarity rule**; after the third review found two more mechanisms (§2.3), the per-mechanism conditions are collapsed into ONE gate — `walkIsExact` — and every increasing absence claim reads it while every positive witness reads its relation half or is re-worded |
+| **15** | candidates 1, 2 and 8 may print `covered`, `recoverable`, *"nothing this walk found is inescapable"* and a cut set under the four publishability conditions (`docs/05` §2) | **Unsound in one direction, and no bound sees it.** `machineAlphabet` (`explore.ts`:277, docstring :266-276) puts every `after(n)` label in the alphabet by design, `exploreMachine` offers every alphabet member wherever it takes an event (:457-460), and `matches` (`config.ts`:597-606) applies the dwell test **only** on the `timeout` branch — the walk issues no `timeout` and advances no clock. Executed on a two-dwell fixture — **`ModelFactory`-built, because `accept after(n)` does not parse; see row 22** — whose `after(5)` transition is declared before `after(10)`: `machineAlphabet → ["after(5)","after(10)"]`, the walk reports `configs 3, exhaustive TRUE, boundHit 'none'` and calls `B` reachable, while `runStateMachine` at every advance granularity (`[5]`,`[10]`,`[100]`,`3×8`,`1×12`) enters `B` on **no run** — `execute.ts`:1305-1308 fires `enabled[0]` | The edge relation is an over-approximation that is **not** a bound, so **every publishability condition is blind to it**. §2.3 states the **polarity rule**; after the third review found two more mechanisms (§2.3), the per-mechanism conditions are collapsed into ONE gate — `walkIsExact` — and every increasing absence claim reads it while every positive witness reads its relation half or is re-worded |
 | **16** | candidate 5's refutation prints a lasso `standby → manual → (autonomous → manual)^ω` (`docs/05` §2) | A lasso is an ω-run. The finite-run semantics 5a must ship — which **this plan, not `docs/05`,** introduces — admits only finite maximal runs, and `BEHAVIOUR_EXIT_CODES`' 1 row spends the 1 on *"a witness trace of a run this semantics admits"* | §3.5a's semantic-profile field defines **both** run classes, and every 5a/5b verdict says which one it is about. §3.5b gains the Exit-code contract it lacked |
 | **17** | candidate 2's `p` is read over any of the five atoms | `resolveProperty` (`patterns.ts`:539-550) applies no per-pattern kind filter, and `configStates` holds state ids only. A `fires`/`trigger` atom is a property of a STEP (`atoms.ts`:93-99, :346-348), and an `expression` atom needs the store §3.P deliberately does not retain — so the target set is empty and lands on §3.2b's second `fail` row: `verification/refuted`, **error, exit 1**, on a well-formed model | §3.2b gates the arm to `state` and `node` and refuses the other three as `verification/malformed-property`; §3.R takes the same gate |
 | **18** | candidate 6 may print *"no simulation relation exists over the common labels …"* (`docs/05` §2) | `refinementExitCode` (`api/verification.ts`:2273-2288) has no bucket for a **decided** negative of this shape: `refined + notRefined === 0` returns **2** (:2280), whose published sentence says the model states no chain the `--via` family can read and nothing was decided | §3.6 gains an Exit-code contract and a Tests subsection; `REFINE_EXIT_CODES` (`sysprose-spec.ts`:154) gains one clause on its 2 row in commit 20, the way §2.1 writes one for `cover` |
@@ -248,7 +248,8 @@ export interface Exactness {
    *  because to the census the edge is present and walked.
    *   • (b) `walk.timedTransitions` is empty — no transition of this machine is
    *     a dwell, whether or not it contributed a label to the alphabet. The
-   *     walk offers the edge at every configuration and advances no clock;  AND
+   *     walk offers the edge without waiting out its dwell, and advances no
+   *     clock;                                                               AND
    *   • (c) `walk.alphabet` is empty — this engine cannot establish that an
    *     offered trigger is one the environment could actually supply, so the
    *     only alphabet it can be exact over is the empty one;                 AND
@@ -293,8 +294,8 @@ export interface Exactness {
 
 **Why the gate is a predicate and not a list, stated once here and not re-litigated per feature.** Five readers have now found five distinct ways the retained relation differs from the machine an author wrote, one per review round, each invisible to the condition set built for the last one. That is not five bugs; it is one observation about the method. Enumerating mechanisms cannot converge, because the enumeration is written by reading the code and the next mechanism is precisely the one the code did not make visible. **So the question is inverted, and the tree has already shipped the inversion:** `edgeCensus` counts the edge-bearing elements under a machine **without asking the walk** and requires each one to land in a bucket that says what became of it. An edge nobody thought about does not shrink an absence list quietly; it lands in `unaccounted`, fails a test and refuses the machine. The five mechanisms below are the **evidence for that rule, not the definition of it**, and they divide cleanly along the line the census draws:
 
-1. **Time, over-approximating — the walk's offering, not the edge set.** `machineAlphabet` (`explore.ts`) puts every `after(n)` label in the alphabet by design; `exploreMachine` offers every alphabet member at every configuration; `matches` (`config.ts`) applies the dwell test **only** on the `timeout` branch, and the walk issues no `timeout` and advances no clock. The edge is in the relation; what is wrong is when it is available. **Clause (b).**
-2. **The cooperative environment, over-approximating — also the offering.** Every trigger in the alphabet is offered at every configuration, unconditionally. Measured on a clean-loading file — `state nominal; state locked; transition nominal then locked; transition locked accept unlatch then nominal;` — `reach` prints `2 configuration(s) explored, depth 1 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet unlatch}`, `2 of 2 state(s) reachable; 2 of 2 transition(s) fired, 0 dead`, rc=0, no findings. Every publishability condition holds — the guard clause included, since this machine has no guard at all — and no transition is a dwell, so the retained relation is one SCC of two containing the opening: exemption 3 fires, §3.2a would publish *no component of this walk is inescapable beyond its endings*, and §3.2b would answer `recovery p = state nominal` with `recoverable` at exit **0** — about a design in which `locked → nominal` exists only because the walk hands the machine `unlatch` at every configuration. In the system where `unlatch` never arrives, `locked` is an inescapable mode: the defect §3.2a exists to find, published as its negation. **Clause (c).**
+1. **Time, over-approximating — the walk's offering, not the edge set.** `machineAlphabet` (`explore.ts`) puts every `after(n)` label in the alphabet by design; `exploreMachine` offers every alphabet member wherever it takes an event; `matches` (`config.ts`) applies the dwell test **only** on the `timeout` branch, and the walk issues no `timeout` and advances no clock. The edge is in the relation; what is wrong is when it is available. **Clause (b).**
+2. **The cooperative environment, over-approximating — also the offering.** Every trigger in the alphabet is offered wherever the walk can decide that the interpreter takes its next event — at a configuration where no completion transition is due, and at one where the 64-step chase budget is spent with a completion transition still due — whatever an environment would actually send there. *[Dated note, 2026-10-15 (O1 `behaviour-sound`, review B's M1): this item first read that every trigger was offered everywhere, unconditionally, which was the walk at `dc6662c`. H1 (`0c9d2bd`) made the walk obey run-to-completion and offer an event only where no completion transition is due, which lost the runs the interpreter takes where its chase budget stops (§8.5); since §8.5 the walk offers the alphabet there too. On a walk that finished, where an event arrives is now the interpreter's exactly, and an absence the walk publishes is exact over that semantics — the U2 fallback, which would have offered the alphabet on whole completion cycles, was not needed. The one place the two part is one the walk cannot decide: where nothing is due but a completion transition whose guard is undecided, the interpreter reads the guard as false and takes its next event, and the walk offers no trigger — it fails closed, and reading 3's store clause withholds every absence on the machine (§8.7). What stays over-approximated is WHICH trigger arrives: every one, at every such place.]* Measured on a clean-loading file — `state nominal; state locked; transition nominal then locked; transition locked accept unlatch then nominal;` — `reach` prints `2 configuration(s) explored, depth 1 — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet unlatch}`, `2 of 2 state(s) reachable; 2 of 2 transition(s) fired, 0 dead`, rc=0, no findings. Every publishability condition holds — the guard clause included, since this machine has no guard at all — and no transition is a dwell, so the retained relation is one SCC of two containing the opening: exemption 3 fires, §3.2a would publish *no component of this walk is inescapable beyond its endings*, and §3.2b would answer `recovery p = state nominal` with `recoverable` at exit **0** — about a design in which `locked → nominal` exists only because the walk hands the machine `unlatch` wherever it takes an event. In the system where `unlatch` never arrives, `locked` is an inescapable mode: the defect §3.2a exists to find, published as its negation. **Clause (c).**
 3. **The undecided guard, under-approximating — the offering again, in the other direction.** `seedStore` (`config.ts`) sets a feature only where `literalValueOf(f) !== undefined`, so a guard over an attribute declared without a literal evaluates `undefined`; before `c929278` `guardHoldsStore` collapsed that into `false` and the machine's edge was simply missing from the walk with nothing said. Measured at `2aced3c` on `attribute resetOk : Boolean;` with `transition nominal then degradedA; transition degradedA then degradedB; transition degradedB then degradedA; transition degradedA if resetOk then nominal;`: `3 configuration(s) explored, depth 2 — exhaustive under {…}`, `3 of 4 transition(s) fired, 1 dead`, rc=0, every publishability condition of the day holding. **`c929278` closed the decreasing half** — re-executed at `dc6662c` the same file reports `undetermined under {…} — 1 guard(s) the walk could not evaluate`, `3 of 4 transition(s) fired, dead withheld`, rc=0 — and left the increasing half exactly where it was: the retained relation still holds a non-trivial bottom SCC that does not contain the opening and whose states are neither final nor terminal, so all three of §3.2a's exemptions still pass, and without a gate §3.2a would publish `trap — 2 configuration(s) form a set nothing leaves: {degradedA, degradedB}` and §3.2b would answer `not recoverable: 2 configuration(s) cannot reach \`state nominal\``, `verification/refuted`, **error, exit 1**, on a design whose escape edge the model states. **Clause (d)**, and it reads the field `c929278` shipped rather than a narrower re-derivation of it.
 4. **The unlabelled dwell — the same mechanism as 1, reached through the producer nobody instrumented.** A transition carrying a numeric `attrs.after` and **no** `attrs.trigger` is timed by the tool's own predicate (`afterDuration` reads the number before it tries the string), is a **completion** transition to `isCompletion` so `matches` never reaches the dwell test, and contributes **nothing** to the alphabet because `triggerLabelOf` is `''`. Measured on a `Model`+`ModelFactory` machine — `failsafe --after(5)--> failsafeHold`, `failsafe --after(60)--> standby`, `failsafeHold --after(5)--> failsafe`, all three written `m.create('TransitionUsage', {attrs:{after: n}})` — `afterDuration(t1) = 5`, `isCompletion(t1) = true`, `alphabet = []`, `configs 3 exhaustive true boundHit none unsupported 0 offered [] fired 3 reachable 3`. A clause (b) scoped to *alphabet contributors* reads **empty** here, clause (c) reads empty and clause (d) reads empty — the gate would return true on a machine every one of whose edges is a dwell the walk erased. **So clause (b)'s producer is the TRANSITION SET and not an alphabet subset**, the `timedLabels ⊆ alphabet` containment and the *"clause (c) entails clause (b)"* inference that rested on it are **deleted**, and the per-step disjunction tests `afterDuration` on the **step's transition id** and never on the recorded label, which for such a step is `''`. This one is not a fifth mechanism; it is the first mechanism read through the wrong field, and it is the sharpest argument in this section against clause-by-clause reasoning.
 5. **The missing edge KIND — the element set, and the one the census now owns.** A `succession degradedA then nominal;` written between two states of a `state def` parsed clean, landed in the model as a real edge, and was dropped by the step relation because that relation enumerated `TransitionUsage` alone. Every clause above read green on it: no dwell, no alphabet, no guard, exhaustive, nothing unsupported. It manufactured a trap and a `not recoverable` at exit 1 in the increasing direction **and** invented a `verification/unreachable-state` and a `verification/deadlock` in the decreasing one — the only mechanism so far that falsifies both sides. **It is FIXED at `a66ba1f`** (`STEP_EDGE_KINDS` is `{TransitionUsage, Succession}`; `SuccessionFlow` is refused by payload) and, more to the point, the *class* is closed: `edgeCensus` reads its domain off `model.descendants(machineId)` — every element carrying an endpoint — so a sixth edge kind lands in `unaccounted`, refuses the machine, and is caught by the census's own test before any absence is published. Re-executed at `dc6662c`, the probe walks `4 of 4 transition(s) fired, 0 dead` and raises the nondeterminism row the fourth edge creates.
@@ -322,7 +323,7 @@ export interface Exactness {
 
 The reflection test asserts, mechanically: `walkRequires` is one of the four values; A1–A5 read `decreasingOk` byte-identically to their shipped conjunctions; **no `alsoRequires` entry on any row names a member of the bound family** (`seenWhole`, `decreasingOk`, `Publishability.searchComplete`) — that is where a bound condition would otherwise creep back onto a witness one conjunct at a time; and `walkRequires: null` appears only on a row whose `polarity` is `'not-a-walk'`. **And the polarity rule, restated so that it is satisfiable and still bites:** *no row whose polarity is `'increasing'` or `'mixed'` may have `walkRequires === 'decreasingOk'` **unless** its `alsoRequires` names a conjunct that covers the mechanism its `polarityNote` identifies.* Exactly one row in the register uses that escape — A0, whose leaf-wise guard conjunct covers the one mechanism its note names — and it is legal by **stating why**, which is what the two-valued column could only have achieved by mis-typing the row. A row whose polarity is `'decreasing'` and whose `walkRequires` is the gate is legal in the other direction with no escape needed, and states the strengthening in its own `Otherwise` cell; the reverse, unexcused, is a red test.
 
-The over-approximation is not hypothetical and it is not a bound. `machineAlphabet` (`explore.ts`, and its own docstring says so) puts every `after(n)` spelling in the alphabet on purpose; `exploreMachine` offers every alphabet member at every configuration; and `matches` (`config.ts`) tests the dwell **only** on the `timeout` branch — `cfg.clock - entryTime[sid] >= n` — while the walk issues no `timeout` input and advances no clock. Measured, on a machine **built through `ModelFactory`** — `f.transition(failsafe, failsafeHold, { trigger: 'after(5)' })` declared before `f.transition(failsafe, standby, { trigger: 'after(60)' })` — the interpreter fires `enabled[0]` on any clock advance (`execute.ts`), so no run ever takes the dwell-60 edge and `{failsafe, failsafeHold}` **is** an inescapable trap — the exact defect §3.2a exists to find. The walk offers `"after(60)"` as a named event with no dwell test, the escape edge exists in `successors`, the component is not bottom, and the walk is fully exhaustive: `boundHit: 'none'`, alphabet offered, nothing unsupported, **the census clean** — every edge of this machine is walked, which is the point: the census is blind here by construction, because nothing is missing from the relation. Under the draft's four publishability conditions, A6 and A7 both held; `recoverable` printed at exit 0 and `reach --json` said nothing was inescapable. Under `walkIsExact` the machine fails clause (b) *and* clause (c) — it has dwell labels, and it has a non-empty alphabet — and both claims are withheld with the failed clause named. **No compensating diagnostic fires** — `recordNondeterminism` is per (configuration, input) and the two transitions match different trigger strings, so there is not even a `verification/nondeterministic-choice` row. And §2.4(a)'s standing sentence does not cover it: a dwell is not a trigger an environment can withhold, so that disclosure names the wrong hazard.
+The over-approximation is not hypothetical and it is not a bound. `machineAlphabet` (`explore.ts`, and its own docstring says so) puts every `after(n)` spelling in the alphabet on purpose; `exploreMachine` offers every alphabet member wherever it takes an event; and `matches` (`config.ts`) tests the dwell **only** on the `timeout` branch — `cfg.clock - entryTime[sid] >= n` — while the walk issues no `timeout` input and advances no clock. Measured, on a machine **built through `ModelFactory`** — `f.transition(failsafe, failsafeHold, { trigger: 'after(5)' })` declared before `f.transition(failsafe, standby, { trigger: 'after(60)' })` — the interpreter fires `enabled[0]` on any clock advance (`execute.ts`), so no run ever takes the dwell-60 edge and `{failsafe, failsafeHold}` **is** an inescapable trap — the exact defect §3.2a exists to find. The walk offers `"after(60)"` as a named event with no dwell test, the escape edge exists in `successors`, the component is not bottom, and the walk is fully exhaustive: `boundHit: 'none'`, alphabet offered, nothing unsupported, **the census clean** — every edge of this machine is walked, which is the point: the census is blind here by construction, because nothing is missing from the relation. Under the draft's four publishability conditions, A6 and A7 both held; `recoverable` printed at exit 0 and `reach --json` said nothing was inescapable. Under `walkIsExact` the machine fails clause (b) *and* clause (c) — it has dwell labels, and it has a non-empty alphabet — and both claims are withheld with the failed clause named. **No compensating diagnostic fires** — `recordNondeterminism` is per (configuration, input) and the two transitions match different trigger strings, so there is not even a `verification/nondeterministic-choice` row. And §2.4(a)'s standing sentence does not cover it: a dwell is not a trigger an environment can withhold, so that disclosure names the wrong hazard.
 
 **And the dwell fixture is written through the factory because it cannot be written any other way — correction 22, and it re-frames what clause (b) costs and what it buys.** `accept after(n)` is a **parse error**: measured, `npm run check` on a file carrying `transition failsafe accept after(5) then failsafeHold;` reports `expected: then | -> found: (` and `FAILED — 8 error(s)`, rc=1, because `AcceptClause` is `'accept' payload=QualifiedName` (`sysml.langium`:214-215). The escaped spelling `accept 'after(5)'` parses and is a *different trigger string* — quotes included — which `afterDuration` (`config.ts`:265-270) does not match, so it is not a timed transition either. **A timed transition is therefore API-only**, exactly like `attrs.parallel`: it arrives through `ModelFactory`'s `{ trigger: 'after(5)' }` or a numeric `attrs.after`, and never from a `.sysml` file. Three consequences run through the rest of this plan, and none of them is that clause (b) is dropped — the SDK is a supported surface, `reach`, `check-behaviour` and `fault-tree` all run over API-built models in-process, and the over-approximation is real there:
 
@@ -352,6 +353,26 @@ walk: an edge nobody accounted for refuses the machine whether or not anyone
 predicted the way it would go missing. A seventh will arrive. The register's job
 is to make its arrival a red test rather than a published sentence, and the
 census is the half that does that without being told what to look for.
+
+**The seventh arrived (2026-10-14, review B's C1 and H2), and it is the chase
+budget.** The interpreter chases trigger-less transitions for at most
+`maxCompletion` (64) steps after each event and then takes the next event
+wherever the chase stopped; the walk read the budget as a bound instead, and on
+a completion cycle never met it at all. It is fixed in the walk, not gated:
+the walk now follows the budget (§8.5), so the decreasing claims are about the
+interpreter's runs again. What remains is one clause on the increasing side —
+**(e), `chaseStops === 0`, `failedClause === 'budget'`**: where the budget stops
+a chase with a completion transition still due, the walk follows the
+interpreter and does not fire it, so the relation holds a resting point the
+budget makes where the machine states an edge. It is evaluated after (d), so
+only a machine with no trigger, no dwell and no undecided guard is ever told it.
+A machine that names no trigger at all keeps the relation it states and fails no
+clause for the budget: there only the two claims read over where a run ENDS —
+A7's `recoverable` and A8's `guaranteed` — are checked against the
+configurations where the budget stops its one chase (`budgetStops`, §8.5), and
+each register row names that conjunct. So, since the branch review, is the run
+W3's `potential` names: a cycle or a sink of G₀ only where a path inside G₀
+reaches it within the budget, else the run the budget stops inside G₀.
 
 **And the bounds line names the store, in every lane, because that is what `exhaustive under {…}` has always meant.** Correction 23's clause is lifted out of §3.1 and into `boundsSentence` itself, which today names `maxConfigs`, `maxDepth`, `maxCompletion` and `alphabet` and omits the one parameter that decided the trapguard measurement above. After commit 3 it reads `…, store seeded from declared literal values — a guard over an attribute with no declared value is read as false`. One edit covers A5, A6, A7, A8, A10 and A13 at once, and it is the honest reading of the qualification string every one of them prints. **It is a disclosure and not a clause**, and it says less than clause (d) does: `c929278`'s predicate covers guards that decided nothing for reasons other than an undecided feature, and the bounds line names only the common one. Where the two differ the `verification/guard-undetermined` row is what a reader acts on.
 
@@ -417,9 +438,9 @@ The `Polarity` column below carries the enumerated value in bold and the note af
 
 ### 2.4 The four standing sentences
 
-**(a) The environment sentence.** `exploreMachine` offers `{completion} ∪ alphabet` at *every* configuration (`explore.ts`:457-460, iterated at :483). Any witness that consumed a trigger, and any escape from a trap, is a claim under a maximally cooperative environment. Measured: `grep -rniE 'cooperative|offers every trigger|every trigger in the alphabet'` over `src/ scripts/ docs/` returns **zero** hits outside `docs/05`. **This sentence does not exist in the tool today** — it is new prose, written once as a shared constant and printed by 1, 2, 5 and 8 on every verdict line whose alphabet is non-empty:
+**(a) The environment sentence.** `exploreMachine` offers the alphabet wherever it can decide that the interpreter takes its next event — at a configuration where no completion transition is due, and at one where the chase budget is spent with a completion transition still due — and completion alone everywhere else (§2.3 reading 2, §8.5, §8.7). Any witness that consumed a trigger, and any escape from a trap, is a claim under a maximally cooperative environment. Measured: `grep -rniE 'cooperative|offers every trigger|every trigger in the alphabet'` over `src/ scripts/ docs/` returns **zero** hits outside `docs/05`. **This sentence does not exist in the tool today** — it is new prose, written once as a shared constant and printed by 1, 2, 5 and 8 on every verdict line whose alphabet is non-empty:
 
-> `the environment offered every trigger this machine names at every configuration, so a witness that consumes \`abort\` is a claim about that environment and not about one that withholds it`
+> `the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes \`abort\` is a claim about that environment and not about one that withholds it`
 
 > *Dated note, 2026-09-16 (commit 24).* The sentence above names `abort` because this plan's example does. It was shipped as a constant, verbatim, and pinned verbatim by three lanes with the example trigger inside it — measured printing *consumes `abort`* about `latch.sysml`, a machine that names `unlatch`. Since commit 24 it is `environmentSentence(triggers)`: the same words with the consumed triggers backticked in the caller's order, throwing on none. The plan's example stays the pin for the spelling; §8.4 records the change.
 
@@ -430,7 +451,7 @@ The `Polarity` column below carries the enumerated value in bold and the note af
 
 **(c) The dwell sentence.** Printed on every verdict line whose walk has a non-empty `timedTransitions` — i.e. wherever the gate's clause (b) fails — beside whatever claim survives:
 
-> `this walk advances no clock: a transition carrying an \`after(n)\` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as \`attrs.after\` — so a step taken across one is a step the interpreter may never take`
+> `this walk advances no clock: a transition carrying an \`after(n)\` dwell is offered without waiting out its dwell — as a named event where the dwell is written as a trigger, as a completion where it is written as \`attrs.after\` — so a step taken across one is a step the interpreter may never take`
 
 The second half of that sentence is the fourth reading of §2.3 made visible to the reader: the draft's wording said *"every `after(n)` label"*, which is a true sentence about the machines the draft measured and a false one about a machine whose dwells carry no label at all.
 
@@ -672,7 +693,7 @@ npm run sysprose -- check-behaviour <file> --element REF \
 
 **Sentences it MUST NEVER print, and why.**
 
-- **"reachable"**, unqualified, when the witness consumed a trigger. The walk's environment offers every letter unconditionally; the word without §2.4(a) beside it claims something about the real environment. Measured on the probe: the witness consumes `abort`, and the bounds line says `alphabet abort` while nothing says every letter is offered at every configuration.
+- **"reachable"**, unqualified, when the witness consumed a trigger. The walk's environment offers every letter wherever the walk can decide that the interpreter takes its next event; the word without §2.4(a) beside it claims something about the real environment. Measured on the probe: the witness consumes `abort`, and the bounds line says `alphabet abort` while nothing says where every letter is offered.
 - **"not covered" on a non-exhaustive walk** — A5, suppressed exactly as `reach`'s unreachable list is at `explore.ts`:792.
 - **"not covered over N product states"** where N is `found.configs` — the search short-circuits and :1228 says in the tool's own words that the number was never a total. **And the JSON must not disagree with the prose**: `base` (:1189) sets `configs: found.configs` unconditionally and every branch spreads it, so this commit adds `machineConfigs` to `PropertyVerdict`, the sentence names that field, and a test asserts the two numbers are both present, both labelled, and equal only where they should be.
 - **`covered — … a run this semantics admits`** on a walk whose `timedTransitions` is non-empty and whose witness crossed one of them. This is the first affirmative claim this lane has ever published, and the engine's soundness note (`explore.ts`:29-31, *"an over-approximation can only shrink the absence claims, never invent one"*) was written when the lane had no positive claims at all. Measured, on a `ModelFactory` machine with `{trigger:'after(5)'} idle → A` declared before `{trigger:'after(10)'} idle → B` (there is no `.sysml` spelling — correction 22): the interpreter fires `enabled[0]` at every advance granularity, so `B` is entered by **no run**; the walk offers `"after(10)"` as a named event with no dwell test and finds a one-step witness. `reach` reporting `B` reachable is the safe direction — it only shrinks the unreachable list — while `cover` republishes the identical over-approximation as an affirmative finding **with a witness**, flipping the direction. The re-worded sentence above is what prints instead; the bare one is banned. **The two rows are exhaustive and mutually exclusive, and the draft's were not:** the draft required the time condition on row 1 and its negation *plus an after-label step* on row 2, leaving a real shape — a walk with `timedLabels` non-empty whose witness fired **no** after-label — matched by neither row, with the implementer free to pick either sentence and no test able to go red. Row 1's condition is therefore the disjunction, over all three mechanisms rather than only time, and `WITNESS_CLAIMS` row W1 is what makes the choice machine-checked instead of a coin toss. Measured shape: `{trigger: 'abort'} idle → target` and `{trigger: 'after(5)'} target → sink`; `cover (state target)` has `timedLabels = {"after(5)"}` and a one-step witness that fired `abort` — row 1, and the bare wording, correctly.
@@ -804,7 +825,7 @@ The genuinely new information over shipped `reach` is therefore: **non-trivial b
 |---|---|
 | `trap — 2 configuration(s) form a set nothing leaves: {failsafe, failsafeHold}. Entered in 3 step(s) from \`standby\`.` + §2.4(d) when the machine has a choice point | **A6** — `walkIsExact` holds — and the component survives all three exemptions. **§2.4(a) no longer appears on this row**: the environment is now clause (c) of the gate, so a machine with a non-empty alphabet does not get a trap row with a disclosure beside it, it gets the refusal below |
 | `no component of this walk is inescapable beyond its endings — 1 ending, 0 deadlock row(s) and 1 whole-graph component were exempted, exhaustive under {…}` | A6 holds and no component qualifies. **`--json` only, never a text row.** The counts come from the census fields this section already specifies (`exemptedAsEnding`, `exemptedAsDeadlock`, `exemptedAsCore`) |
-| `inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed` + §2.4(a) | **`failedClause === 'environment'`.** The trap list is suppressed **and so is the no-trap sentence**. Measured, this is the row the latch machine takes — `state locked; transition locked accept unlatch then nominal;` walks as one SCC of two containing the opening, so without this row exemption 3 fires and the tool publishes *"no component of this walk is inescapable"* about a design in which `locked` is inescapable unless somebody sends `unlatch` |
+| `inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event, so an escape it found may be one the environment never supplies and no absence of an escape is claimed` + §2.4(a) | **`failedClause === 'environment'`.** The trap list is suppressed **and so is the no-trap sentence**. Measured, this is the row the latch machine takes — `state locked; transition locked accept unlatch then nominal;` walks as one SCC of two containing the opening, so without this row exemption 3 fires and the tool publishes *"no component of this walk is inescapable"* about a design in which `locked` is inescapable unless somebody sends `unlatch` |
 | `inconclusive: this machine carries \`after(n)\` dwell transitions this walk takes without advancing a clock, so the escape relation is an over-approximation and no absence of an escape is claimed` + §2.4(c) | **`failedClause === 'time'`.** Both the list and the sentence are suppressed |
 | `inconclusive: a transition of this machine is guarded by an attribute with no declared value, so this walk never offered an edge the model states and a set it calls inescapable may not be` + the store sentence | **`failedClause === 'store'`.** Measured on the trapguard machine: without this row the tool publishes `trap — 2 configuration(s) form a set nothing leaves: {degradedA, degradedB}. Entered in 1 step(s) from \`nominal\`` as `verification/unrecoverable-mode`, at exit 0, about a design that states the escape edge |
 | *(nothing at all)* | `!seenWhole` — suppressed, exactly as `states.unreachable` is |
@@ -814,7 +835,7 @@ The genuinely new information over shipped `reach` is therefore: **non-trivial b
 **MUST NEVER print, and why.**
 
 - **"the system can always recover"** — escaping a trap may need a trigger the real environment never offers.
-- **"livelock"**, **"deadlock-free"** — the second is a bare-word ban with no allowance.
+- **"livelock"**, **"deadlock-free"** — the second is a bare-word ban with no allowance. *(Since U1, 2026-10-14, the first is the name of a finding of its own — a cycle the interpreter's chase goes round, `verification/completion-livelock`, §8.8 — and stands on that row and nowhere else; the trap row still never says it.)*
 - **A trap row on a non-exhaustive walk** — A6.
 - **Any trap row, and any "nothing is inescapable" sentence, on a machine `walkIsExact` refuses** — A6, all four clauses, and this is where the collapse earns its keep. Four separate measured shapes reach this section and the draft's single time condition caught exactly one of them — and then only in the spelling it was written for. (i) **Time:** `failsafe` with `after(5) → failsafeHold` declared before `after(60) → standby` — **built through `ModelFactory`, since `accept after(n)` is a parse error (correction 22)** — is a genuine inescapable trap that the walk sees an escape from, on a walk that is exhaustive, alphabet-offered and fully supported, with no `verification/nondeterministic-choice` row to hint at it. (ii) **The environment:** the latch machine, an ordinary `.sysml` file, is one whole-graph SCC only because the walk supplies `unlatch`; without clause (c) exemption 3 fires and the no-trap sentence publishes. (iii) **The store:** the trapguard machine, also an ordinary `.sysml` file, publishes a `trap` row naming a component the model states an escape from. (iv) **Time again, in a second spelling:** the numeric-`attrs.after` machine of §2.3, whose three dwells contribute no alphabet member at all, so an alphabet-scoped clause (b) reads clean and this section publishes *"no component of this walk is inescapable beyond its endings"* about a machine whose `{failsafe, failsafeHold}` no run leaves. Enumerating one condition per shape is what failed twice, and scoping a clause to the producer that happened to be measured is what failed the third time; the gate plus a producer defined over the **transitions** is what stops a fifth shape needing a fifth MUST-NEVER bullet.
 - **A trap `entry` witness whose path crossed a dwell transition, stated as a run the semantics admits.** The entry path is a positive claim and takes §3.1's re-wording: `Entered in 3 step(s) from \`standby\` — on a run this WALK admits: step 2 fires \`after(10)\` …`. In practice A6's gate already suppresses the whole row, so this clause exists for the day the gate is relaxed per-claim rather than per-walk, and the sentence is written now so that relaxation cannot be made silently.
@@ -865,7 +886,7 @@ The consequence in this section is a flipped verdict **and** a flipped exit code
 | `fail` | `not recoverable: 4 configuration(s) cannot reach \`state standby\`: {manual, autonomous, failsafe, failsafeHold}; entered in 3 step(s). Of these, 2 form a set nothing leaves — see the \`verification/unrecoverable-mode\` row.` | A7 holds and the complement is non-empty. Refutation is monotone-**decreasing** in edges, so on the time and environment mechanisms it would survive without the gate — but **not on the store**, which removes edges and therefore manufactures this row directly (the trapguard measurement, §2.3, prints exactly this sentence at exit 1 on a design that states the escape). The row keeps the whole gate; see the note below |
 | `fail` | `not recoverable: \`state standby\` holds at no reachable configuration at all — see the \`verification/unreachable-state\` row.` | A7 holds, the atom kind was accepted, **and the target set is empty for a reason other than the atom kind** |
 | `inconclusive` | `inconclusive: bound exhausted — the recovery claim is not made` | **`!seenWhole`** |
-| `inconclusive` | `inconclusive: this machine names triggers this walk offers at every configuration, so "reachable from every configuration" would be a claim about an environment this walk has no carrier for` + §2.4(a) | **`failedClause === 'environment'`.** Measured on the latch machine, this is the row that replaces the draft's `recoverable`, exit 0, for `recovery p = state nominal` — a `pass` about a design in which `locked → nominal` exists only because the walk supplies `unlatch` |
+| `inconclusive` | `inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event, so "reachable from every configuration" would be a claim about an environment this walk has no carrier for` + §2.4(a) | **`failedClause === 'environment'`.** Measured on the latch machine, this is the row that replaces the draft's `recoverable`, exit 0, for `recovery p = state nominal` — a `pass` about a design in which `locked → nominal` exists only because the walk supplies `unlatch` |
 | `inconclusive` | `inconclusive: this machine carries \`after(n)\` dwell transitions this walk takes without advancing a clock, so "reachable from every configuration" would be a claim about escapes this walk invented` + §2.4(c) | **`failedClause === 'time'`** |
 | `inconclusive` | `inconclusive: a transition of this machine is guarded by an attribute with no declared value, so this walk never offered an edge the model states and neither direction of this claim is made` + the store sentence | **`failedClause === 'store'`.** This one refuses the `fail` as well as the `pass`, which is the asymmetry note below made concrete: the store is the one mechanism that manufactures the refutation |
 | `inconclusive` | `verification/malformed-property`: `a trigger is observed on a step, not at a configuration, so \`recovery\` has no target set to reverse from` | the atom kind is `trigger` or `fires` |
@@ -1239,7 +1260,7 @@ Of the three re-spellings available — one delimited cell, indexed cells (`fair
 
 - `inconclusive: \`Abstract\` was not walked to exhaustion` — clause (a), `!seenWhole`, on either machine, and the machine is named.
 - `inconclusive: \`Detailed\` carries \`after(n)\` dwell transitions this walk takes without advancing a clock, so a step it matched may be one the interpreter never takes` + §2.4(c) — `failedClause === 'time'` on either machine.
-- `inconclusive: \`Detailed\` names triggers this walk offers at every configuration, so a step it matched may be one the environment never supplies` + §2.4(a) — `failedClause === 'environment'` on either machine.
+- `inconclusive: \`Detailed\` names triggers this walk offers wherever it can decide that the interpreter takes its next event, so a step it matched may be one the environment never supplies` + §2.4(a) — `failedClause === 'environment'` on either machine.
 - `inconclusive: a transition of \`Detailed\` is guarded by an attribute with no declared value, so this walk never offered an edge the model states and the pair that would have broken the relation may be one it could not see` + the store sentence — `failedClause === 'store'` on either machine.
 
 Each names **which** machine failed and **which** clause, exactly as §3.2a, §3.2b, §3.R, §3.5a and §3.8 do; one `Exactness` is computed per walk and the sentence is a `failedClause` switch over the pair.
@@ -1278,7 +1299,7 @@ A **tag**, not a body carrier, because the model can already declare the thing �
 
 **The enumeration discipline is `judgeTarget`'s, parameterised rather than transcribed** (`fault-tree.ts`:624-827): order-0 baseline first (an already-open hazard ⇒ `top-event-open`, the empty set is the cut set, no enumeration); then the order loop over lexicographic `combinations` (model order, for byte-identical JSON), **skipping supersets of found cut sets**; `undecidedSets` tracked separately so a cut set with an undecided proper subset publishes `minimal: false` and *"MINIMALITY NOT ESTABLISHED"*; `singlePointOfFailure` three-valued, **null** the moment one order-1 check is undecided; `maxOrder` clamped and reported back. Every group gains `lane: 'contract' | 'behavioural'` and every verdict line says which.
 
-**MAY print.** `3 failure mode(s); minimal cut sets up to order 2: {navFail}, {radioFail, gpsFail}; 7 cover queries, all decided` · `no cut set up to order 2 — higher orders not explored` (**A13**) · `inconclusive: a bound stopped the walk under fault set {navFail} — no absence is claimed for it` · `inconclusive: this machine's edges include \`after(n)\` labels offered as named events, so a cut set found here may rest on a dwell the interpreter never grants — no cut set is published and no absence is claimed` (**`walkIsExact` fails on clause (b)**) + §2.4(c) · the same row for the other two clauses, with the injected machine's failed clause named — `…names triggers this walk offers at every configuration…` + §2.4(a), and `…is guarded by an attribute with no declared value, so an edge the model states was never offered and \`no cut set\` would be an absence over a graph this walk did not have…` + the store sentence, the last being the one that matters most here because **the injection substrate IS the store** · `top event already open with every failure mode cleared` · and, on **every** verdict: `cut sets are computed under a PERMANENCE assumption: each flag is set at the opening configuration and never cleared` · `no temporal ordering between failures is captured` · `the absence rows above are about the INJECTED machine; \`reach\`'s unreachable and dead rows on this file are about the nominal one`.
+**MAY print.** `3 failure mode(s); minimal cut sets up to order 2: {navFail}, {radioFail, gpsFail}; 7 cover queries, all decided` · `no cut set up to order 2 — higher orders not explored` (**A13**) · `inconclusive: a bound stopped the walk under fault set {navFail} — no absence is claimed for it` · `inconclusive: this machine's edges include \`after(n)\` labels offered as named events, so a cut set found here may rest on a dwell the interpreter never grants — no cut set is published and no absence is claimed` (**`walkIsExact` fails on clause (b)**) + §2.4(c) · the same row for the other two clauses, with the injected machine's failed clause named — `…names triggers this walk offers wherever it can decide that the interpreter takes its next event…` + §2.4(a), and `…is guarded by an attribute with no declared value, so an edge the model states was never offered and \`no cut set\` would be an absence over a graph this walk did not have…` + the store sentence, the last being the one that matters most here because **the injection substrate IS the store** · `top event already open with every failure mode cleared` · and, on **every** verdict: `cut sets are computed under a PERMANENCE assumption: each flag is set at the opening configuration and never cleared` · `no temporal ordering between failures is captured` · `the absence rows above are about the INJECTED machine; \`reach\`'s unreachable and dead rows on this file are about the nominal one`.
 
 **Why the gate holds the whole report and not one sentence (A13's mixed polarity).** `no cut set` is monotone-**decreasing** in edges — extra edges make the hazard easier to reach, so they can only *add* cut sets — and would survive the two over-approximating mechanisms on its own. Every **published** cut set is the opposite: `{navFail}` is an existential reachability claim over the injected machine, and a hazard reachable only through a preempted timing edge, or only through a trigger the walk supplied, yields a cut set no run of the interpreter realises. **And the store cuts the other way and catches the half that would otherwise have been safe:** an edge the model states and the walk never offered makes the hazard *harder* to reach, so it manufactures `no cut set` — the decreasing half — directly, on a machine whose guards read exactly the store this feature injects into. So all four clauses hold the report, both halves together, and they are not split — for the same reason §3.2b does not split its arm: a reader cannot be asked to know which half of a report a qualification applies to.
 
@@ -1721,7 +1742,7 @@ Commits 6, 8 and 9 are the three that close a defect an engineer can hit today. 
 61. **One edit assigned to two commits, where one of them is HELD behind the other's census, ships a false `--help` indefinitely.** And a *removal* where a *replacement* is owed leaves the most common cause of an exit unpublished.
 62. **Two sections stating opposite gates for one restriction** — §3.R accepting `expression` while §3.2b, §6.1 and decision 12 refuse it — is not a documentation defect. Whichever is implemented, the other section's verdict table is a lie about the shipped tool.
 63. **Two verdict rows whose conditions do not partition** leave the implementer to pick the sentence by taste, with no test that can go red either way. §3.1's two `covered` rows and §3.R's `potential`-vs-`alphabet` overlap were both this shape; the fix is a disjunction in one case and a stated dispatch order in the other.
-64. **The walk's edge relation over-approximates the ENVIRONMENT, and no bound and no time condition sees it.** Every trigger in the alphabet is offered at every configuration. Measured on a clean-loading `.sysml` file — `transition locked accept unlatch then nominal;` — the walk is exhaustive with an empty `timedLabels`, so every condition the first two reviews produced holds, and the tool publishes *"no component of this walk is inescapable"* and `recoverable` at exit 0 about a mode nothing leaves unless an operator acts.
+64. **The walk's edge relation over-approximates the ENVIRONMENT, and no bound and no time condition sees it.** Every trigger in the alphabet is offered wherever the walk takes an event. Measured on a clean-loading `.sysml` file — `transition locked accept unlatch then nominal;` — the walk is exhaustive with an empty `timedLabels`, so every condition the first two reviews produced holds, and the tool publishes *"no component of this walk is inescapable"* and `recoverable` at exit 0 about a mode nothing leaves unless an operator acts.
 65. **The walk's edge relation UNDER-approximates through the store**, and that direction manufactures a refutation rather than a pass: on the trapguard file the tool prints a `trap` row and `not recoverable … verification/refuted` at **exit 1** on a design whose model states the escape. A gate written only against over-approximation misses it by construction.
 66. **Enumerating one publishability condition per mechanism is the defect, not the fix — and the fifth mechanism arrived on schedule to prove it.** Five mechanisms in five review rounds, each invisible to the condition set built for the last one, and nothing bounds the number. The fifth was an edge METACLASS missing from the step relation, and it falsified both polarities at once. The answer is not a fifth clause: `edgeCensus` counts the element set **without asking the walk** and refuses the machine on anything it cannot account for, so a sixth mechanism of that kind costs nothing at all, and a sixth of the *offering* kind costs one clause inside `Exactness` and no register row, no verdict table and no commit.
 67. **A bound condition on a WITNESS row is unsatisfiable against the plan's own tests.** `covered` stands on a partial walk by design (§2.1, §3.1) and measured `--max-configs 3` on a 3-step witness prints `partial under {…}` and still publishes; an **existential** witness row that reads `seenWhole` or a product-search condition makes the reflection test and the bound-frontier test mutually exclusive, and the cheap repair hollows out the reflection test. The converse trap is trap 79: a **maximality** witness row that does *not* read the bound.
@@ -1924,3 +1945,430 @@ one that moves.
   the file count to the tree; the total is honest only because the summary is
   regenerated from the gate's JSON by hand. `TEST-REPORT.md` §3 and §4 remain the
   2026-07-03 run's tables under a dated bracket — history, not a re-measurement.
+
+### 8.5 The chase budget, followed — O1 `behaviour-sound`, 2026-10-14
+
+Review B (C1, H2; `close-open-items.md` §1.1) measured the walk and the product
+search parting from the interpreter on its 64-step completion budget, with false
+verdicts as the result: `unreachable c` and `dead ac` on a two-state completion
+cycle with an exit on an event (the interpreter on `[go, e]` ends in `c`), a
+`PASS` of `absence(z)` on a 70-step chain whose 65th state accepts `e`, `COVERED
+state c66` on a 70-step chain the interpreter's chase stops at `c65` on — and on
+v9, `dead admissionFails` in `PA::SwarmMember::SwarmMemberModes`, which the
+interpreter fires on `[peerVerdict]`.
+
+- **The budget is semantics, not a bound.** A configuration where a completion
+  transition is due carries its chase position `run ∈ 0..maxCompletion` in the
+  key the walk hashes. Below the budget only completion is offered; AT the budget
+  the chase stops, as `runStateMachine`'s does, and the alphabet is offered there
+  — the completion transitions due are counted enabled (not dead; not a
+  deadlock) and none is fired. An event restarts `run` at 0. The `run >
+  maxCompletion → boundHit: 'completion'` cut is gone from every walk `reach`
+  publishes; `explore.ts`'s note above `exploreMachine` replaces the comment that
+  called a completion cycle "not a bound hit".
+- **Only where it can decide anything.** The walk runs once without the
+  position — every walk this engine published before — and carries it only where
+  the budget can stop a chase and something can follow the stopped one: that walk
+  had to cut a chain, or the machine names a trigger and its retained completion
+  edges hold a cycle or a path of more than `maxCompletion`. Everywhere else the
+  walk is the one it was, configuration for configuration: over the 272-model
+  behaviour corpus every `reach` and `check-behaviour` output is byte-identical
+  except on the four probe shapes that hold such a chase. The product search reads
+  the walk's answer (`chaseKeyed`) and hashes the same way.
+- **Where a run ends, on a machine that names no trigger.** Such a machine keeps
+  the relation it states even where its completion transitions cycle or run
+  longer than the budget (`FlightModes`, `views-tour`'s and `vehicle`'s machines,
+  eight of v9's): a stopped chase there is followed by nothing, so the walk
+  reaches the same states and enables the same transitions either way. But every
+  run of it is the one chase from the opening, stopped after 64 steps wherever it
+  is, and the relation follows that chase on. The walk names where the budget
+  stops it (`budgetStops`: the ends of the 64-step paths from the opening with a
+  completion still due), and the two claims read over where a run ends are
+  checked against them — A7's `recoverable` only where every such stop holds `p`,
+  A8's `guaranteed` only where no 64-step path from the opening stays inside G₀ —
+  and withheld under the budget sentences where they part. The rest stands
+  because it is true of the interpreter's runs too: a trap row (a set entered
+  within the budget that nothing leaves), `not recoverable`, every absence, and
+  the value `potential` — but not, as first shipped, every run `potential`
+  names. A path inside G₀ to its cycle or sink can be longer than the budget
+  where every configuration is within 64 steps of the opening, because a
+  shortcut through the violation lowers that depth: the branch review's probe
+  (`s0 → p1 … p70 → a ⇄ b` beside `s0 → v → p40`, `absence v`) printed
+  `potential — … the cycle a → b → a never enters v`, though every run that
+  reaches the cycle goes through `v` and the only run that avoids it is the one
+  the budget stops at `p64`. On such a machine the modality now names a cycle
+  or a sink only where a path inside G₀ reaches it within the budget, and
+  otherwise the run the budget stops inside G₀ (`the run the chase budget stops
+  in p64 never enters v`); register row W3 names the conjunct. A review of this
+  step found the two false answers this replaces — `every run? guaranteed`
+  beside a `fail` whose declaration-order run the budget stops at the 64th
+  state of a 70-step chain reached by a shorter branch, and
+  `recovery` PASS on a three-state cycle for a state the interpreter's run never
+  enters — and asked for the gate's whole budget clause on these machines.
+  Measured, that withholds every trap row in the repository (each fixture that
+  holds one is a completion cycle), the modality and both directions of
+  `recovery` where they are true — 44 unit tests across ten files went red, all
+  but the three `recoverable` rows this check now withholds pinning a row that
+  holds of the interpreter's runs as well — so the check is per claim instead. On `FlightModes`, `recovery
+  standby` is now withheld (the budget stops a run in `autonomous`); on
+  `views-tour` it stands (every run stops in `standby`).
+- **A refusal no flag decides says so.** A `check-behaviour` refusal at the
+  depth bound, or past the chase budget in a search that does not carry the
+  position (a counting monitor round a trigger-less cycle), no longer advises
+  `--max-configs`, which comes back with the same row at every `N`; only the
+  configuration bound keeps that advice (`boundAdvice`).
+- **H2.** In the search without the position, the budget test now comes BEFORE
+  the violation test: a configuration reached only by chasing past the budget is
+  one no run enters, and a monitor that breaks there breaks on nothing.
+- **The replay invariant.** Every `fail` and `covered` witness is replayed
+  through `runStateMachine` before the row stands on it — with
+  `RunStateOptions.follow` resolving the declaration-order tie-break the
+  witness's way, the one choice the profile leaves open, and everything else the
+  interpreter's. A witness that does not replay makes the row `inconclusive`
+  under `verification/witness-not-replayed` (info, exit 2). Over the corpus none
+  does; `semantics.mc.differential.test.ts` replays every witness the corpus
+  publishes, independently of the engine's own replay, and drives the
+  interpreter over every event sequence up to length three against every
+  absence `reach` and `check-behaviour` publish.
+- **The U2 fallback was not needed.** The exact model stays far inside the
+  default bounds: on v9 the two machines it changes (`PA::SwarmMember`'s Modes
+  and States) walk 322 and 315 configurations and search at most 632 product
+  states, against `maxConfigs` 10 000, at depth 64 and 73 against 200. Those two
+  are v9's whole `reach` diff at this step (§8.8 adds the ten livelock rows):
+  `admissionFails` is no longer dead, and the two `absence … between` rows of
+  `SwarmMemberStates` that read `bound-exhausted` because no trigger was ever
+  offered are `pass` again. The other eight machines
+  whose chases never settle name no trigger and keep their walks; one row of
+  theirs moves, `LA::SwarmMember::SwarmMemberStates`' `recovery Landed`, from
+  `pass` to `inconclusive` — the budget stops a run of that machine in each of
+  its seven states.
+
+### 8.6 Nested state definitions — O1 `behaviour-sound`, 2026-10-14
+
+Review B (H1, C3; `close-open-items.md` §1.1) found the change that made a
+nested `state def` a machine of its own (`stateMachinesIn`, `regionDescendants`)
+had left two ends loose, and the reviews of the fix found three more behind
+them.
+
+- **A machine that holds a nested definition could not be named.** A `state def`
+  written inside `Outer` is a second machine under `Outer`, so `check-behaviour
+  --element Outer` printed *"holds 2 state machines … name one of them"* and
+  exited 2 for every way of naming `Outer`, and the app's pick row for it named
+  it again. `behaviourMachineFor` now returns the reference itself when it is a
+  machine; a reference that only contains machines is still refused with them.
+  A state is refused with the machine whose region holds it (`noMachine`), so a
+  state of the nested definition names that definition, not `Outer`.
+- **What the outer machine is checked against stops where its walk stops.**
+  Once `Outer` could be named, its property list and its atoms still read every
+  descendant. A `@PropertyPattern` carried by `Inner`, about `Inner::y`, was
+  checked against `Outer`'s walk as well, which never stands on `y`: `absence
+  state y` printed PASS (exit 0) under `Outer` and FAIL (exit 1) under `Inner`,
+  and `Outer`'s pick row counted the property as its own. `propertiesOf` and the
+  four atom pools (`statesOf`, `nodesOf`, `namedTransitions`, `triggersOf` in
+  `atoms.ts`) now read the machine's region: a property carried inside the
+  nested definition is that definition's, and `state y` named on `Outer` is
+  `verification/unknown-atom`, as a state of another top-level machine always
+  was. On a model without a nested definition the region is every descendant,
+  so nothing else moves.
+- **A transition across a machine's boundary has no meaning here, and both
+  machines it joins are refused.** Each machine steps by its own region's
+  transitions only, so an edge joining two regions — written in `Outer` and
+  leading to a state of `Inner` or to `Inner` itself, written in `Inner` and
+  leading out of it, or written in one top-level machine and leading into
+  another's state — was walked by one side as a step into a state none of whose
+  own transitions follow, and ignored by the other. On `nest2-into` the outer
+  walk published `unreachable b` and `no way out Inner::x`, while `Inner`'s walk
+  followed its edge out and published `no way out b … reached in 2 step(s)`: one
+  report, two readings of one model, each about a machine split differently from
+  the way it was written. Such an edge is now the unsupported construct
+  `machine-boundary` (`verification/behaviour-unsupported-construct`,
+  `boundaryCrossings` in `explore.ts`), counted `refused` in the edge census of
+  BOTH machines: the one whose transitions hold it, and the one whose state it
+  names from outside, found off the endpoint index — no absence list, no
+  `exhaustive`, and an `inconclusive` property row on either. The first version
+  refused only the first machine; a one-way crossing then left the far side
+  walked as though the edge were not there (`Inner` published `unreachable z`
+  and a PASS for `absence z` beside a run of `Outer` that ends in `Inner::z`, and
+  the same between two top-level machines). An end at a machine's ROOT does not
+  count for that machine, since entering a machine at its root is starting it,
+  but `then Inner` written in `Outer` crosses into `Inner`: the walk cascaded
+  into `Inner::x` and published an exhaustive `no way out Inner::x` for `Outer`,
+  where a run of `Outer` stays at `Inner` itself. Before the split that made the
+  nested definition a machine (`0475db6`) the outer walk folded the
+  definition's states into its own and walked such an edge as an ordinary step;
+  neither reading is the model's, and the two of them are why this one is
+  refused rather than chosen. Over the 857-file survey (the gate corpus, every
+  `.sysml` under `test/` and `examples/`, and v9) `nest2-into` is the only model
+  that holds such an edge, and the region reading moves the atoms of the seven
+  machines that hold a nested definition and the properties of none.
+- **How it stands to the simulator.** The interpreter is unchanged: it reads the
+  same relation (`regionTransitions`, and, since review B's M3 was fixed,
+  `regionDescendants` for its states and its start), so a run of `Outer` on
+  `[e]` takes `ax` into `Inner::x` and stays there whatever follows, a run of
+  `Inner` on `[go, back]` takes `yb` out to `Outer::b` and stays there, and a
+  run of `Outer` over `then Inner` rests at `Inner`. Those are runs the
+  Simulation tab shows, not verdicts: the checkers refuse the machine where the
+  simulator steps through it, so no witness of such a machine is published. The
+  witness replay of §8.5 now also compares, at every step, the state the run
+  comes to rest in (`restingLeaves`, read off the interpreter's own `visited`
+  list) with the witness's leaf; it used to accept the transition's target
+  anywhere on the witness's stack, which passed the `then Inner` witness that
+  ends in `Inner::x` against a run that stays at `Inner`. The interpreter's
+  routing to its hierarchical path (`needsHierarchical`) still reads every
+  descendant, the nested definition's included: it routes an outer machine
+  whose nested definition holds a composite state through the hierarchical
+  path; measured on such a probe, its runs visit, fire and end exactly as the
+  same machine's do on the flat path without it, and differ only by the two
+  fields the hierarchical path adds (`complete`, `clock`). The Simulation tab's
+  machines and events read the region since the branch review
+  (`isSimulatable`, `discoverTriggers`, and `executeModel`'s
+  `discoverMachineTriggers`): read over every descendant, they offered the
+  nested definition's triggers as the outer machine's events, which no outer
+  transition takes, and made a `state def` whose only content is a nested
+  definition the tab's machine — a run with no state at all once `runRegion`
+  read the region, where the nested definition, the one `reach` walks, was
+  never listed. That definition is now the tab's machine and `executeModel`'s
+  trace.
+- **A specialisation or a typed usage that adds a step over the states it
+  inherits crosses the same boundary** (the branch review's w2): `state def
+  Derived :> Base { transition bc first b accept more then c; }` and `exhibit
+  state m : Modes { transition … }` write a transition in one machine's region
+  that joins another machine's states, so both machines are refused, `Base`
+  included — walked whole at `5943654`, where it published `unreachable c` and
+  `no way out b`, true of `Base`'s own runs. That is a deliberate scope of this
+  step, and it fails closed: no walk here puts the two machines together, and
+  an agent reading `Base`'s `unreachable c` could delete a state `Derived` steps
+  into. No model in the survey above holds such a step. The refusal names the
+  inheritance and gives its own remedy: the nested-definition one, keep the
+  transition in the machine whose states it joins, would move `Derived`'s step
+  into `Base` and change `Base`.
+
+### 8.7 The method text — O1 `behaviour-sound`, 2026-10-15
+
+Review B's M1 (`close-open-items.md` §1.1): after H1 the text that describes the
+walk's environment still said the walk offered every trigger everywhere —
+printed beside every witness that consumed a trigger, in the trap and
+`recovery` refusals, in the gate's clause sentences, the catalogue and the
+guides — while the walk had stopped offering an event wherever a completion
+transition is due.
+
+- **What the walk does.** On a walk that finished, it offers the alphabet
+  exactly where it can decide that `runStateMachine` takes its next event: at a
+  configuration where no completion transition is due, and at one where the
+  chase budget is spent with a completion transition still due (§8.5);
+  everywhere else it offers completion alone, as the interpreter chases before
+  it takes any event. WHERE an event arrives is the interpreter's, so an absence
+  the walk publishes is exact over that semantics — the U2 fallback was not
+  needed. What stays over-approximated is WHICH trigger arrives (every one, at
+  each such place: the cooperative environment, §2.3 reading 2), the dwells
+  (taken without waiting them out, reading 1) and the tie-break.
+- **The one place the two part, and why the sentences say "can decide".** Where
+  nothing is due but a completion transition whose guard is undecided, the
+  interpreter reads the guard as false and takes its next event; the walk cannot
+  tell whether a run chases there or takes one, so it offers no trigger — it
+  fails closed, holds fewer runs than the interpreter makes, and the store
+  clause (§2.3 reading 3, `verification/guard-undetermined`) withholds every
+  absence on the machine. The review of this step measured it (`undet-env`:
+  `s0 -go-> a`, `s0 -h-> z`, `ab first a if x > 0 then b` with `x` unvalued,
+  `a -e-> c`): the walk offers nothing at `a`, the interpreter on `[go, e]` ends
+  in `c`, `c` is withheld as an absence and the cover of `z` replays. No verdict
+  was wrong, but a sentence saying the walk offered every trigger *wherever the
+  interpreter takes its next event* would have claimed an offer at `a` the walk
+  never made. A walk a bound stopped short decides less still: without the chase
+  position it takes no event where the budget would stop a chase its frontier
+  hides, and a partial walk publishes no absence either. The store clause of the
+  bounds record (*a guard over an attribute with no declared value is read as
+  false*) is the interpreter's reading; at a completion guard the walk's is the
+  fail-closed one above. It is left as written because it is printed in every
+  qualification on every machine; the `verification/guard-undetermined` row
+  beside it is what a reader acts on.
+- **What moved, text only.** The environment sentence (§2.4(a)) now names the
+  two places — *wherever the walk could decide that the interpreter takes its
+  next event (no completion transition due, or the chase budget spent)* — and
+  the gate's `environment` clause, the trap and `recovery` environment refusals
+  and the catalogue's `verification/behaviour-unsupported-construct` entry say
+  *wherever it can decide that the interpreter takes its next event*. The dwell
+  sentence (§2.4(c)) and the `time` clause say a dwell is offered *without
+  waiting out its dwell*. A `walked` row of the edge census on `reach --json`
+  says *the walk tries it wherever a configuration standing there is offered its
+  input* (it said *every configuration standing there offers it*, false at
+  livelock-two's `ac` and at v9's `admissionFails`; `MOVED_BY_THE_CENSUS` in
+  `semantics.mc.successors.test.ts` quotes both). No verdict, code, exit code,
+  count or witness moved; `semantics.mc.publishable.test.ts` pins the two places
+  and the "can decide", and refuses the old reading in every producer, the
+  engine's comments and the documents.
+- **What the count line's "fired" means, left as it reads.** `reach`'s `N of M
+  transition(s) fired` counts every transition that is not dead — enabled
+  somewhere reachable — so it counts one the priority rule beats, and since §8.5
+  one due where the chase budget stops a chase: chain65 prints `66 of 70
+  transition(s) fired, 4 dead`, and `t65` is among the 66 though no run fires it
+  (`check-behaviour`'s `cover` of `fires t65` says `not covered`). The claim is
+  `dead`, which leaves `t65` out correctly; rewording the count moves it on every
+  machine, so the review of this step left it for a later change.
+- **A property no walk stands on is reported, not dropped.** §8.6 read a
+  machine's properties from its region, so a carrier inside a nested `state def`
+  is that definition's. A nested definition that owns no transition is no
+  machine, though, and the outer walk still stops at it, so its carriers were
+  checked by nothing: `check-behaviour --element Outer` said the machine states
+  no property, and `--element Outer::Inner` sent the reader back to `Outer`
+  (the review's `q4` probe; before §8.6 they were read on `Outer`). `propertiesOf`
+  now reads such a carrier on the machine whose text holds it, marked
+  `stranded`, and `checkProperty` refuses it before reading it:
+  `INCONCLUSIVE … — not checked`, `verification/behaviour-unsupported-construct`,
+  exit 2, naming the definition and what to do. A nested definition that IS a
+  machine keeps its carriers. No model of the 857-file survey holds such a
+  carrier, so no output there moves.
+
+### 8.8 The completion livelock — O1 `behaviour-sound`, 2026-10-15
+
+U1 (the user, 2026-10-14; `close-open-items.md` §1.1 and O1 S4): ten of v9's
+seventeen machines spend the interpreter's 64-step chase budget on every run,
+because their trigger-less transitions go round a cycle and under
+run-to-completion the machine never comes to rest. `reach` now says so, as
+`verification/completion-livelock` (warning), once per cycle of states, and
+`check-behaviour` files the same published rows on the machine it checks.
+
+- **What a row claims, decided precisely.** A set of configurations the walk
+  reached where a trigger-less transition is due at every one, and where the
+  transition the INTERPRETER fires — the first enabled at the innermost level,
+  by declaration order, the one `runStateMachine`'s chase takes — leads to the
+  next of them, round and back. A run that gets there goes round until its
+  budget is spent, stops with a trigger-less transition still due, and moves on
+  only on an event. The producer is `chaseCycles` (`explore.ts`): during the
+  walk, at each configuration, the chase's own step and the configuration it
+  leads to, recorded per CONFIGURATION (the keyed walk numbers one
+  configuration once per chase position, and the chase's step is the same at
+  every one); that is a function, so its cycles are disjoint and each is found
+  once. Cycles of configurations that go round the same transitions and differ
+  only in the store or history they carry are ONE row (`cycles` counts them):
+  an event that counts before the chase starts makes one cycle per count, and
+  review S5 measured 61 identical rows and warnings for a counter to 60, and a
+  reach six times slower for two such counters — the cycles are now indexed in
+  one pass and every way in read off one breadth-first pass, and the probe's
+  245,586 configurations take about what they took before the livelock
+  existed (2.3 s, against 2.0–3.6 s at S4; 29 s before the fix). The
+  row names the machine, the states of the cycle's configurations in the order
+  the chase goes round them from where the way in arrives (the union of their
+  active stacks, as a trap names its set), the transition fired at each, and
+  the way in.
+- **Over configurations, not states; over the chase, not every branch.** This
+  is the line U1's text asked to be drawn and documented. A cycle of STATES whose
+  chase leaves on its own is no livelock: a guard that holds somewhere on the way
+  round, or an effect that walks the store out of the loop (`a -> b` counting,
+  `b -> a` while `n < 3`, `b -> c` once `n >= 3`), is a sequence of distinct
+  configurations ending where the chase rests, and nothing is reported. A cycle
+  that some OTHER enabled trigger-less transition could leave is still reported
+  when declaration order keeps the chase on it — and the row names each state of
+  the cycle where that is so (`choices`), so the `verification/nondeterministic-choice`
+  row beside it reads as the reason the chase stays. That is the case v9 turns
+  on: `PA::SwarmMember::SwarmMemberModes` loops `Nominal ⇄ NavigationDegraded`
+  on every run although `Nominal -> Isolated -> Quarantined` is a trigger-less
+  way to a configuration that rests. A reading over the walk's relation alone
+  (a bottom strongly-connected component of the trigger-less edges, every branch
+  taken) misses it — that component is not inescapable — and so publishes nine
+  of v9's ten; it would also be a claim about runs the simulator never makes. The
+  reading here is a claim about the run the interpreter does make, and the choice
+  row says what another tie-break would do.
+- **What withholds it, and what does not.** Every step a row stands on is one
+  the walk TOOK, from a configuration it dequeued, so neither gate applies: a
+  bound elsewhere takes nothing from it (livelock-self under `--max-configs 2`
+  publishes the row the whole walk does, on a walk that says it is partial), a
+  named trigger is beside the point (the claim is that only an event moves the
+  run on), and a cycle the walk did not see whole is not found at all — through
+  a configuration whose step a bound refused, or one reached only where the
+  budget stops a chase (`go` into a 60-step chain ending in a ten-state cycle:
+  the chase stops at the cycle's fifth state, `reach` reports the other five
+  unreachable, and the reachable part is a path, not a cycle). In the walk
+  without the chase position, which a machine that names no trigger keeps, a
+  configuration first reached with the budget already spent records no chase
+  step either: review S5's 64-state chain whose last state steps back to the one
+  before it (`c0 → … → c64 → c63`) closed a cycle on a step the interpreter
+  never fires — its chase lands on `c64` with its 64th step and stops — and one
+  state shorter the chase does come back once, and the row stands. It is WITHHELD,
+  with a `withheld` line naming the clause in place of the row, where the step
+  may not be the interpreter's: a guard the walk could not evaluate among the
+  trigger-less transitions out of one of the cycle's configurations (`store` —
+  whether the chase fires it and leaves was never decided; `trapguard`'s
+  `{degradedA, degradedB}`), or a chase step that is an `after(n)` dwell, which
+  the walk takes without waiting it out (`time`). No new exactness clause was
+  needed: a machine with either already fails the gate on that clause.
+- **The way in, per row.** `entry` is a run the SIMULATOR makes wherever the
+  walk holds one (`entryBy: 'simulator'`): every step the transition
+  `runStateMachine` takes for its input — the first enabled, never a dwell —
+  and the chase still has the budget to go once round when it gets there (the
+  node's own chase position in the keyed walk; the number of steps in the walk a
+  machine that names no trigger keeps, whose every run is one chase). The walk
+  records which of its edges are such steps as it takes them. Where it holds no
+  such run, `entry` is its own shortest path (`entryBy: 'walk'`), and the finding
+  says so and names the state where the path first parts from the simulator
+  (*the way in is a run of the walk, not one `simulate` makes: at `beta` it
+  takes a step the simulator does not take there … so `simulate` may never
+  enter it*). The hedge used to be printed wherever the machine had a published
+  choice row, and review S5 found both halves of that wrong: the walk withholds
+  a choice row over an undecided guard strictly inside the choice's level and
+  still takes both branches, so a way in only the other branch leads to was
+  published unhedged on a machine with no choice row (`wi-hidden-choice`); and
+  six of v9's ten rows carried the hedge although every one of the ten is
+  entered by the simulator's own run. On v9 none is hedged now; on the trap
+  probe `{alpha, beta}` is the simulator's and `{failsafe, failsafeHold}` is
+  entered only through `beta -> failsafe`, and says so. The way in is register
+  row W7 (`publishable.ts`): an existential witness whose cycle stands per step
+  — the per-step alternative, applied always, in place of the relation gate —
+  and whose `entry` is the simulator's or worded as the walk's. The trap row's
+  re-wording constant (`TRAP_ENTRY_WALK_ADMITS`, printed nowhere) is not used
+  for it. A known effect of T80 (history in the configuration key): a cycle of
+  substates is first a cycle of CONFIGURATIONS once the composite has recorded
+  its history, so `{comp, i1, i2}` entered at step 1 reads `entered in 2
+  step(s)`.
+- **What the finding says moves the run on.** On a machine that names a
+  trigger, only an event (*moves on only on an event*); on one that names none,
+  nothing does, and the finding and the line say the run ends where the budget
+  stops it — `FlightModes`, the trap probe and v9's eight machines without a
+  trigger. Where declaration order decides at a state of the cycle, the finding
+  names the state and says the simulator never takes the other transition; it
+  no longer says a run that took it *could leave*, which is false where the
+  other branch comes back round (`a -> b` before `a -> c`, and `c -> a`).
+- **On `check-behaviour`.** The machine's published rows are filed after every
+  property's finding, in `reach`'s words (`livelockFinding`, one composer), and
+  move no claim, no count and no exit code: a property that passes over a
+  machine that never comes to rest still passes, with the warning beside it. They
+  are read off the walk `reach` takes, which as first shipped was one more walk
+  of the machine: the branch review measured `check-behaviour` on a generated
+  9,641-configuration machine with one property at about 230 ms at `5943654`
+  and about 540 ms here. `exploreMachine` now keeps its walk per machine, bounds
+  and model revision, so the properties and the rows share one: measured cold
+  (a fresh load per run, four runs), one property about 235 → 575 → 290 ms
+  (`5943654`, before, after), two properties about 500 → 800 → 280 ms, and a
+  property refused before any walk 0 → 290 → 290 ms — that last is the walk the
+  rows need, which no property took. `reach` on the same machine is about 240 ms
+  at `5943654` and about 290 ms on this branch, the livelock pass's own cost.
+  A WITHHELD row is not filed there — it is a `withheld` line of `reach`'s
+  report, with no code to file it under — so `reach` is where a withheld cycle
+  is read. This is a scope beyond
+  U1's wording (*reach reports it*), taken so a reader of `check-behaviour` is
+  not told a property holds over a machine whose chase never rests without
+  being told that too; on v9 it is ten more warnings (`check-behaviour
+  --element` on each of the ten machines) and no exit code moves.
+- **What moved.** On v9, exactly the ten machines of `close-open-items.md` §1.1
+  gain one row each — the ten whose interpreter run on no event at all spends
+  the budget, and no other: LA `FleetConfiguration {MeshIntact, MeshDegraded}`,
+  `SwarmMember::SwarmMemberModes {Nominal, NavigationDegraded}`,
+  `SwarmMember::SwarmMemberStates {Landed, Transiting, Watching, Returning}`,
+  `GroundStation::GroundStationModes {LinkUp, LinkDown}`,
+  `GroundStation::GroundStationStates {Supervising, Recalling}`, and PA's five of
+  the same shapes (`GroundStationNode` for `GroundStation`). In the tree, the
+  three shipped machines whose trigger-less transitions cycle (`FlightModes
+  {manual, autonomous}`, `vehicle`'s `{idling, moving}`, `views-tour`'s
+  `{standby, flying}`) and the fixtures with such a cycle gain their rows, and
+  the app's Reachability verdict on a machine whose only finding is a livelock
+  reads `issues` where it read `holds`. §3.2a's MUST-NEVER *"livelock"* was about
+  the trap row and still holds of it: `semantics.mc.traps.test.ts` now asserts
+  the word stands on the livelock row, its finding and its withheld line, and on
+  no other. The interpreter is the oracle: `semantics.mc.differential.test.ts`
+  drives every corpus machine over every event sequence up to length three,
+  re-steps each run's last chase through `config.ts`, and requires every chase
+  the budget stopped going round a cycle of CONFIGURATIONS to have gone round a
+  row's states, and every published row whose way in is the simulator's to be
+  one some run goes round — per row, not per machine (it used to skip a machine
+  with a choice row, which is the line the hedge was drawn on, in the same wrong
+  place).

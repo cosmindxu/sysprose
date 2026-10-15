@@ -40,6 +40,7 @@ const FINDING_KINDS = new Set<ReportLine['kind']>([
   'dead',
   'no-way-out',
   'trap',
+  'livelock',
   'choice',
 ]);
 

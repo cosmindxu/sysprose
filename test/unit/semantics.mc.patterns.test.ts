@@ -42,6 +42,9 @@ import {
   COVER_REQUIRED_CODE,
   NOT_COVERED_CODE,
   PATTERNS,
+  PROPERTY_PATTERN_CODES,
+  WITNESS_NOT_REPLAYED_CODE,
+  replayWitness,
   SCOPES,
   SEMANTICS_ADMITS,
   WALK_ADMITS,
@@ -64,9 +67,11 @@ import {
 import {
   BEHAVIOUR_UNSUPPORTED_CODE,
   BOUND_EXHAUSTED_CODE,
+  COMPLETION_LIVELOCK_CODE,
   GUARD_UNDETERMINED_CODE,
   exploreMachine,
   machineAlphabet,
+  reachReport,
   stateMachinesIn,
 } from '../../src/semantics/mc/explore';
 import { MAX_COMPLETION } from '../../src/semantics/mc/config';
@@ -567,6 +572,364 @@ describe('a witness is a run this semantics admits, and never one it does not', 
       checkProperty(m, sm.id, prop({ pattern: 'absence', scope: 'globally', p: 'state inner' }))
         .claim,
     ).toBe('fail');
+  });
+});
+
+/**
+ * The chase budget is part of the semantics (plan O1, C1 and H2). The
+ * interpreter chases trigger-less transitions for 64 steps after an event and
+ * then takes the next event wherever the chase stopped; a search that did not
+ * model it passed absences the interpreter breaks, and — the violation test
+ * sitting before the budget gate — covered a state no run enters. Every case
+ * is checked against `runStateMachine` itself, and every witness is replayed
+ * through it independently of the replay the engine does.
+ */
+describe('the chase budget, in the search, and every witness replayed through the interpreter', () => {
+  async function load(text: string): Promise<{ model: Model; machineId: ElementId; id: (n: string) => ElementId }> {
+    const model = (await loadModelText(text, { fileName: 'budget.sysml', library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const id = (n: string) => model.all().find((e) => e.declaredName === n)!.id;
+    return { model, machineId, id };
+  }
+  /** `s0 -go-> c1 → … → c70` on completion; with `withEscape`, `s0 -jump-> c30` and `c65 accept e then z`. */
+  function chain(withEscape: boolean): string {
+    const states = ['s0', ...Array.from({ length: 70 }, (_, i) => `c${i + 1}`), ...(withEscape ? ['z'] : [])];
+    const lines = states.map((s) => `state ${s};`);
+    lines.push('transition go first s0 accept go then c1;');
+    if (withEscape) lines.push('transition jump first s0 accept jump then c30;');
+    for (let i = 1; i < 70; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+    if (withEscape) lines.push('transition esc first c65 accept e then z;');
+    return `package Chain { state def M { ${lines.join(' ')} } }`;
+  }
+  /**
+   * The witness, replayed here and not through the engine's own replay: the
+   * events into the interpreter, the tie-break the witness's way, and every
+   * fired transition compared with the trace.
+   */
+  function replaysIndependently(model: Model, machineId: ElementId, witness: readonly { event: string; transition: { id: ElementId } | null }[]): boolean {
+    const steps = witness.slice(1);
+    const run = runStateMachine(
+      model,
+      machineId,
+      steps.filter((s) => s.event !== '').map((s) => s.event),
+      { follow: steps.map((s) => s.transition!.id) },
+    );
+    return steps.every((s, i) => run.fired[i]?.transitionId === s.transition!.id && run.fired[i].trigger === s.event);
+  }
+  const LIVE_TWO = `package LiveTwo {
+    state def M {
+      state s0; state a; state b; state c;
+      transition go first s0 accept go then a;
+      transition ab first a then b;
+      transition ba first b then a;
+      transition ac first a accept e then c;
+    }
+  }`;
+
+  it('livelock-two: `state c` is refuted and covered, on the run the interpreter takes', async () => {
+    const { model, machineId, id } = await load(LIVE_TWO);
+    expect(runStateMachine(model, machineId, ['go', 'e']).finalState).toBe(id('c'));
+    const absence = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state c' }));
+    expect(absence.claim).toBe('fail');
+    expect(replaysIndependently(model, machineId, absence.witness)).toBe(true);
+    // The event is taken where the chase stopped: 64 completions after `go`.
+    expect(absence.witness.filter((w) => w.event === '')).toHaveLength(MAX_COMPLETION);
+    const cover = checkProperty(model, machineId, prop({ pattern: 'cover', scope: 'globally', p: 'state c' }));
+    expect(cover.claim).toBe('covered');
+    expect(replaysIndependently(model, machineId, cover.witness)).toBe(true);
+  });
+
+  it('longchain: absence(z) is a FAIL with a witness that replays, exit 1', async () => {
+    const { model, machineId, id } = await load(chain(true));
+    const r = behaviourReport(model, { machineId, pattern: 'pattern=absence, scope=globally, p=state z' });
+    expect(r.properties[0].claim).toBe('fail');
+    expect(r.exitCode).toBe(1);
+    const witness = r.properties[0].witness;
+    expect(witness[witness.length - 1].leaf?.name).toBe('z');
+    expect(replaysIndependently(model, machineId, witness)).toBe(true);
+    expect(replayWitness(model, machineId, witness, MAX_COMPLETION)).toEqual({ replays: true, step: null, reason: '' });
+    expect(runStateMachine(model, machineId, ['go', 'e']).finalState).toBe(id('z'));
+  });
+
+  it('chain65: `cover state c66` is NOT covered and exits 2 — no run gets past c65', async () => {
+    const { model, machineId } = await load(chain(false));
+    const r = behaviourReport(model, { machineId, pattern: 'pattern=cover, scope=globally, p=state c66' });
+    expect(r.properties[0].claim).toBe('not-covered');
+    expect(r.properties[0].code).toBe(NOT_COVERED_CODE);
+    expect(r.properties[0].witness).toEqual([]);
+    expect(r.exitCode).not.toBe(0);
+    // And c65 IS covered, on a witness that replays.
+    const c65 = checkProperty(model, machineId, prop({ pattern: 'cover', scope: 'globally', p: 'state c65' }));
+    expect(c65.claim).toBe('covered');
+    expect(replaysIndependently(model, machineId, c65.witness)).toBe(true);
+  });
+
+  it('H2: a search that does not carry the chase position never reports a violation past the budget', async () => {
+    // No trigger, so the walk carries no position, and it finishes: `x` is
+    // first found one step from `s0`. The product search reaches `x` ALSO at
+    // the end of the detour through `a1 … a5`, with the `after a3` scope open —
+    // as the sixth completion step of a chase the budget (5 here) stops at
+    // `a5`, so no run gets to `x` after `a3`. The violation test used to come
+    // before the budget gate, and printed `fail` with the witness
+    // `s0 a1 a2 a3 a4 a5 x` on it.
+    const { model, machineId, id } = await load(`package Ladder {
+      state def M {
+        state s0; state a1; state a2; state a3; state a4; state a5; state x; state y;
+        transition t1 first s0 then a1;
+        transition s0 then x;
+        transition a1 then a2;
+        transition a2 then a3;
+        transition a3 then a4;
+        transition a4 then a5;
+        transition a5 then x;
+        transition x then y;
+      }
+    }`);
+    expect(exploreMachine(model, machineId, { maxCompletion: 5 }).chaseKeyed).toBe(false);
+    const v = checkProperty(
+      model,
+      machineId,
+      prop({ pattern: 'absence', scope: 'after', q: 'state a3', p: 'state x' }),
+      { maxCompletion: 5 },
+    );
+    // The interpreter's own word on it: the chase from `s0` stops at `a5` when
+    // it takes the detour, and `x` is entered only by the other branch, before
+    // `a3` opens anything.
+    const detour = runStateMachine(model, machineId, [], { maxCompletion: 5, follow: [id('t1')] });
+    expect(detour.finalState).toBe(id('a5'));
+    expect(v.claim, 'a violation reported on a run the chase budget stops short of').toBe('inconclusive');
+    expect(v.boundHit).toBe('completion');
+    expect(v.witness).toEqual([]);
+  });
+
+  it('replayWitness: a run the interpreter does not take is caught, at the step it parts', async () => {
+    const { model, machineId, id } = await load(LIVE_TWO);
+    const good = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state c' })).witness;
+    // Forged: `e` taken at `a` right after `go`, while `ab` is due — the run
+    // the walk took before the budget was modelled the other way round.
+    const forged = [good[0], good[1], { ...good[good.length - 1], index: 2 }];
+    const caught = replayWitness(model, machineId, forged, MAX_COMPLETION);
+    expect(caught.replays).toBe(false);
+    expect(caught.step).toBe(2);
+    expect(caught.reason).toContain('as a completion');
+    // A witness that opens somewhere else is caught at the opening.
+    const elsewhere = [{ ...good[0], leaf: { id: id('c'), name: 'c', qualifiedName: 'LiveTwo::M::c' } }];
+    expect(replayWitness(model, machineId, elsewhere, MAX_COMPLETION).step).toBe(0);
+  });
+
+  it('replayWitness: the second branch of a choice replays — the one choice the profile leaves open', async () => {
+    const { model, machineId } = await load(`package ChoicePlain {
+      state def M {
+        state a; state b; state c; state d;
+        transition ab first a then b;
+        transition ac first a then c;
+        transition bd first b accept e then d;
+      }
+    }`);
+    const v = checkProperty(model, machineId, prop({ pattern: 'cover', scope: 'globally', p: 'state c' }));
+    expect(v.claim).toBe('covered');
+    // The simulator takes `ab`; the witness takes `ac`, and replays.
+    expect(replayWitness(model, machineId, v.witness, MAX_COMPLETION).replays).toBe(true);
+  });
+
+  /**
+   * A machine that names no trigger keeps the relation it states, and every run
+   * of it is the one chase from the opening, which the budget stops wherever
+   * it is. `s` chooses between `p1` (declared first), `q` and `r`; `q` and `r`
+   * join the chain `p1 → … → p70` at `p30` and `p60`, so the walk reaches
+   * `p70` and `bad` by the short branch and never cuts a chain — while the
+   * declaration-order run goes down the long one and the budget stops it at
+   * `p64`.
+   */
+  function shortcut(): string {
+    const lines = ['state s;', ...Array.from({ length: 70 }, (_, i) => `state p${i + 1};`), 'state q; state r; state bad;'];
+    lines.push('transition t0 first s then p1; transition tq first s then q; transition tr first s then r;');
+    lines.push('transition q30 first q then p30; transition r60 first r then p60;');
+    for (let i = 1; i < 70; i++) lines.push(`transition t${i} first p${i} then p${i + 1};`);
+    lines.push('transition tbad first p70 then bad;');
+    return `package Shortcut { state def M { ${lines.join(' ')} } }`;
+  }
+
+  it('shortcut: `every run?` is not decided — the run the budget stops at `p64` never reaches `bad`', async () => {
+    const { model, machineId, id } = await load(shortcut());
+    const walk = exploreMachine(model, machineId);
+    expect(walk.chaseKeyed).toBe(false);
+    expect(walk.boundHit).toBe('none');
+    expect(walk.budgetStops.map((i) => model.get(walk.configLeaves[i]!)?.declaredName)).toEqual(['p64']);
+    // The interpreter's own run: declaration order, down the long branch,
+    // stopped by the budget with `t64` still due.
+    const run = runStateMachine(model, machineId, []);
+    expect(run.finalState).toBe(id('p64'));
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.visited).not.toContain(id('bad'));
+    const v = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state bad' }));
+    expect(v.claim).toBe('fail');
+    expect(replaysIndependently(model, machineId, v.witness)).toBe(true);
+    // THE WRONG ANSWER: `guaranteed — every maximal run of this machine
+    // reaches it`, which every path of the relation does and the run above
+    // does not.
+    expect(v.modality?.value).toBe('not-decided');
+    expect(v.modality?.failedClause).toBe('budget');
+    expect(v.modality?.sentence).toContain('chase budget');
+  });
+
+  it('shortcut-cycle: `every run?` is not decided and `recovery` is withheld — the run the budget stops in `y` never enters `z`', async () => {
+    const lines = ['state s;', ...Array.from({ length: 62 }, (_, i) => `state p${i + 1};`), 'state q; state x; state y; state z;'];
+    lines.push('transition t0 first s then p1; transition tq first s then q; transition qx first q then x;');
+    for (let i = 1; i < 62; i++) lines.push(`transition t${i} first p${i} then p${i + 1};`);
+    lines.push('transition t62 first p62 then x; transition xy first x then y; transition yz first y then z; transition zx first z then x;');
+    const { model, machineId, id } = await load(`package ShortCycle { state def M { ${lines.join(' ')} } }`);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.finalState).toBe(id('y'));
+    expect(run.visited).not.toContain(id('z'));
+    const absence = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state z' }));
+    expect(absence.claim).toBe('fail');
+    expect(absence.modality?.value).toBe('not-decided');
+    expect(absence.modality?.failedClause).toBe('budget');
+    // THE WRONG ANSWER: `recoverable`, read along the cycle `x → y → z → x`
+    // the run above is stopped on before it gets round it.
+    const recovery = checkProperty(model, machineId, prop({ pattern: 'recovery', scope: 'globally', p: 'state z' }));
+    expect(recovery.claim).toBe('inconclusive');
+    expect(recovery.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+    expect(recovery.recovery?.refusedByGate).toBe('budget');
+    expect(recovery.detail).not.toContain('recoverable:');
+  });
+
+  /**
+   * The branch review's w7: `s0 → p1 → … → pN → a ⇄ b`, declared first, beside
+   * `s0 → v → pK`. At N = 70, K = 40 every configuration is within 64 steps of
+   * the opening — `a` by way of `v` — but a run that keeps clear of `v` takes
+   * the long way to the cycle, and the budget stops it at `p64` first.
+   */
+  function detour(n: number, k: number): string {
+    const lines = ['state s0;', ...Array.from({ length: n }, (_, i) => `state p${i + 1};`), 'state v; state a; state b;'];
+    lines.push(`transition t0 first s0 then p1; transition sv first s0 then v; transition va first v then p${k};`);
+    for (let i = 1; i < n; i++) lines.push(`transition t${i} first p${i} then p${i + 1};`);
+    lines.push(`transition ta first p${n} then a; transition ab first a then b; transition ba first b then a;`);
+    return `package Detour { state def M { ${lines.join(' ')} } }`;
+  }
+
+  it('detour: `potential` names the run the budget stops — never a cycle no run reaches inside the budget while it avoids `v`', async () => {
+    const { model, machineId, id } = await load(detour(70, 40));
+    const walk = exploreMachine(model, machineId);
+    expect(walk.chaseKeyed).toBe(false);
+    expect(walk.budgetStops.length).toBeGreaterThan(0);
+    // The interpreter's own run: declaration order, down the long branch,
+    // stopped by the budget at `p64` before it gets near the cycle.
+    const run = runStateMachine(model, machineId, []);
+    expect(run.finalState).toBe(id('p64'));
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.visited).not.toContain(id('v'));
+    const v = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state v' }));
+    expect(v.claim).toBe('fail');
+    expect(v.modality?.value).toBe('potential');
+    // THE WRONG ANSWER: `the cycle a → b → a never enters v`. Every run that
+    // gets to the cycle goes through `v`; the one that avoids `v` is the run above.
+    expect(v.modality?.sentence).not.toContain('the cycle');
+    expect(v.modality?.sentence).toContain('some run avoids it: the run the chase budget stops in `p64` never enters `v`');
+    expect(v.modality?.avoiding?.map((s) => s.name)).toEqual(['p64']);
+  });
+
+  it('detour, short: a cycle a path that avoids `v` reaches within the budget is still the run named', async () => {
+    const { model, machineId } = await load(detour(20, 10));
+    expect(exploreMachine(model, machineId).budgetStops.length).toBeGreaterThan(0);
+    const v = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state v' }));
+    expect(v.claim).toBe('fail');
+    expect(v.modality?.value).toBe('potential');
+    expect(v.modality?.sentence).toContain('some run avoids it: the cycle a → b → a never enters `v`');
+  });
+
+  it('a refusal past the chase budget, or at the depth bound, never advises `--max-configs` — no N decides it', async () => {
+    // A counting monitor round a trigger-less cycle: the search does not carry
+    // the position on such a machine, and refuses the 65th chase step.
+    const { model, machineId } = await load('package TlCycle { state def M { state a; state b; transition ab first a then b; transition ba first b then a; } }');
+    const counted = checkProperty(model, machineId, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }));
+    expect(counted.claim).toBe('inconclusive');
+    expect(counted.boundHit).toBe('completion');
+    expect(counted.detail).toContain('No flag decides it');
+    expect(counted.detail).not.toContain('--max-configs');
+    expect(checkProperty(model, machineId, prop({ pattern: 'bounded-existence', scope: 'globally', p: 'state b', n: '40' }), { maxConfigs: 100_000 }).detail).toBe(counted.detail);
+    // Four completion cycles, each left on an event: every stop costs the
+    // walk 65 steps of depth, so `z` is past the depth bound.
+    const four = await load(`package Depth4 { state def M {
+      state a; state b; state c; state d; state f; state g; state h; state i; state z;
+      transition ab first a then b; transition ba first b then a;
+      transition cd first c then d; transition dc first d then c;
+      transition fg first f then g; transition gf first g then f;
+      transition hi first h then i; transition ih first i then h;
+      transition e1 first a accept e1 then c; transition e2 first c accept e2 then f;
+      transition e3 first f accept e3 then h; transition e4 first h accept e4 then z;
+    } }`);
+    const deep = checkProperty(four.model, four.machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state z' }));
+    expect(deep.claim).toBe('inconclusive');
+    expect(deep.boundHit).toBe('depth');
+    expect(deep.detail).toContain('No flag raises the depth bound');
+    expect(deep.detail).not.toContain('--max-configs');
+  });
+
+  it('files the machine’s completion livelock once per cycle, in reach’s words, and moves no claim, count or exit code (U1)', async () => {
+    // Review B's livelock-two probe, its two carriers included: two
+    // properties, one cycle, so one warning — after both property findings.
+    const text = `package LiveTwo {
+      state def M {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state c"; }
+        @SysproseVerification::PropertyPattern { attribute pattern = "cover"; attribute scope = "globally"; attribute p = "state c"; }
+        state s0; state a; state b; state c;
+        transition go first s0 accept go then a;
+        transition ab first a then b;
+        transition ba first b then a;
+        transition ac first a accept e then c;
+      }
+    }`;
+    const model = (await loadModelText(text, { fileName: 'livelock-two.sysml' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const r = behaviourReport(model, { machineId });
+    expect(r.properties.map((p) => p.claim)).toEqual(['fail', 'covered']);
+    expect(r.exitCode).toBe(1);
+    expect(r.diagnostics.map((d) => [d.severity, d.code])).toEqual([
+      ['error', 'verification/refuted'],
+      ['warning', COMPLETION_LIVELOCK_CODE],
+    ]);
+    const reach = reachReport(model).diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_CODE);
+    expect(r.diagnostics[1].message).toBe(reach[0].message);
+    expect(r.diagnostics[1].elementId).toBe(reach[0].elementId);
+    // In the text, as the tail's diagnostic line.
+    const lines = behaviourLines(r, { name: 'livelock-two.sysml', machineName: 'LiveTwo::M' });
+    expect(lines.filter((l) => l.code === COMPLETION_LIVELOCK_CODE).map((l) => [l.kind, l.text])).toEqual([
+      ['diagnostic', `  warning verification/completion-livelock  ${reach[0].message}`],
+    ]);
+
+    // A property that passes over a machine that never comes to rest still
+    // passes, exit 0, with the warning beside it.
+    const { model: cyc, machineId: cycId } = await load(
+      'package Cyc { state def M { state a; state b; state z; transition ab first a then b; transition ba first b then a; } }',
+    );
+    const pass = behaviourReport(cyc, { machineId: cycId, pattern: 'pattern=absence, scope=globally, p=state z' });
+    expect(pass.properties[0].claim).toBe('pass');
+    expect(pass.exitCode).toBe(0);
+    expect(pass.diagnostics.map((d) => [d.severity, d.code])).toEqual([['warning', COMPLETION_LIVELOCK_CODE]]);
+
+    // Review B's undet-completion and nested-completion: no cycle, no warning.
+    for (const probe of [
+      'package UndetCompletion { part def P { attribute x : Integer; state def M { state a; state b; state c; transition ab first a if x > 0 then b; transition ac first a accept e then c; } } }',
+      'package NestedCompletion { state def M { state s0; state comp { state i1; state i2; transition i12 first i1 then i2; } state z; transition s0c first s0 accept go then comp; transition cz first comp accept e then z; } }',
+    ]) {
+      const { model: pm, machineId: pid } = await load(probe);
+      const b = behaviourReport(pm, { machineId: pid, pattern: 'pattern=absence, scope=globally, p=state c' });
+      expect(b.diagnostics.map((d) => d.code)).not.toContain(COMPLETION_LIVELOCK_CODE);
+    }
+  }, 120_000);
+
+  it('every `fail` and `covered` row goes through the replay before it stands on its witness', () => {
+    // The two returns that publish a witness, read off the producer: the
+    // replay and its refusal come first, so neither can be reached around it.
+    const src = readFileSync(resolve(process.cwd(), 'src/semantics/mc/patterns.ts'), 'utf8');
+    const block = src.slice(src.indexOf('if (found.violation !== null) {'), src.indexOf("claim: 'fail',"));
+    const replayAt = block.indexOf('replayWitness(model, machineId, witness, bounds.maxCompletion)');
+    expect(replayAt).toBeGreaterThan(0);
+    expect(block.indexOf('code: WITNESS_NOT_REPLAYED_CODE')).toBeGreaterThan(replayAt);
+    expect(block.indexOf("claim: 'covered'")).toBeGreaterThan(block.indexOf('code: WITNESS_NOT_REPLAYED_CODE'));
+    expect(PROPERTY_PATTERN_CODES.has(WITNESS_NOT_REPLAYED_CODE)).toBe(true);
   });
 });
 

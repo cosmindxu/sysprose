@@ -1152,7 +1152,9 @@ is answered by reverse reachability over the walk's retained relation, as
 and ONLY over a walk whose relation is the machine's own (`walkIsExact`,
 register row A7) — both directions behind one gate, because a guard the walk
 could not decide removes an edge the model states and would otherwise
-manufacture the refutation at exit 1; it reads `state` and `node` atoms only,
+manufacture the refutation at exit 1 — with `recoverable` withheld besides
+wherever the interpreter's chase budget stops a run of a trigger-less machine
+somewhere that does not hold `p`; it reads `state` and `node` atoms only,
 through the same selection `absence` reads them with, and refuses the other
 three kinds rather than earning a refutation from an empty target set. Two — `existence`, `response` — are liveness,
 and a bad-prefix search finds no bad prefix for either on any graph; both report
@@ -1161,8 +1163,11 @@ fairness assumption is named. A `pass` is emitted only when the walk saw the
 graph **whole**: the four conditions §3.8 states, computed from
 `exploreMachine`'s walk, **and** the fifth this tool added afterwards — every
 guard the walk consulted decided something. A bound hit, a parallel or history
-machine, a guard the walk could not evaluate, an unreadable property or an atom
-that names nothing is `inconclusive` ⇒ exit 2. A **fail** does not need
+machine, a guard the walk could not evaluate, an unreadable property, an atom
+that names nothing, a witness the interpreter does not take
+(`verification/witness-not-replayed`) or a `recovery` withheld because the
+chase budget stops a run somewhere that does not hold `p` is `inconclusive` ⇒
+exit 2. A **fail** does not need
 exhaustion, and the asymmetry is deliberate: a bound can hide a violation and
 can never invent one.
 
@@ -1180,9 +1185,11 @@ decided answer under the word reserved for undecided; `not covered ⇒ fail` wou
 print `verification/refuted` about a design that violates nothing — the exact
 defect the pattern exists to fix. Two disclosures ride on the witness. A run
 that consumed a trigger carries the environment sentence, which names the
-triggers that run consumed: the walk offers every trigger the machine names at
-every configuration, so a witness that consumes `abort` is a claim about that
-environment and not about one that withholds `abort` — a function of the
+triggers that run consumed: the walk offers every trigger the machine names
+wherever it can decide that the interpreter takes its next event — where no
+completion transition is due, or where the chase budget is spent with one still
+due — so a witness that consumes `abort` is a claim about that environment and
+not about one that withholds `abort` — a function of the
 triggers since commit 24 of the model-checking plan, never a constant with an
 example trigger inside it. A run that crossed
 an `after(n)` dwell, or a transition whose guard the walk read against a store
@@ -1210,8 +1217,11 @@ gated.** Every `fail` a bad-prefix search produces carries an `every run?`
 line — `modality` on `--json` — with one of three values. `potential` claims
 that some maximal run of the MACHINE avoids the violation, and names it: a
 cycle that never enters the violating configuration, or a configuration of
-the retained relation with no way out; it is register row W3, a maximality
-witness, and it stands only where `walkIsExact` holds — on `FlightModes` it
+the retained relation with no way out — on a machine that names no trigger,
+only one a run reaches inside the chase budget without the violation, and
+otherwise the configuration where the budget stops such a run; it is
+register row W3, a maximality witness, and it stands only where
+`walkIsExact` holds — on `FlightModes` it
 names the cycle `manual → autonomous → manual`, which is the simulator's own
 tie-break read the other way. `guaranteed` claims that every maximal run of
 the machine reaches the violation; it is register row A8, an absence claim
@@ -1219,7 +1229,10 @@ the machine reaches the violation; it is register row A8, an absence claim
 everything else, with its reason: a walk not seen whole, a stateful monitor or
 a step atom (the product does not collapse onto the configuration graph), an
 expression atom (the store is not retained), a named trigger, an `after(n)`
-dwell, or a guard the walk consulted and could not decide — on the latch
+dwell, a guard the walk consulted and could not decide, or the interpreter's
+64-step chase budget — a walk that follows it through a stopped chase, or, on
+a machine that names no trigger, a `guaranteed` that a run the budget stops
+before the violation would contradict — on the latch
 machine the naive answer is `guaranteed`, about a design that sits in
 `nominal` forever when nobody sends `unlatch`, and the line says `not
 decided` instead. None of the three moves a count, a code or the exit code:
@@ -1322,6 +1335,34 @@ carries a sentence naming what was exempted, byte-identical on a DAG into `done`
 and on a two-state sink beside that sink's deadlock row, and that sentence is
 never a text row. What the row never says: that the machine can recover, that it
 livelocks, or anything about the system the machine models.
+
+**A cycle the interpreter's chase goes round is a finding of its own (U1,
+2026-10-14).** `reach` reports a reachable set of configurations where a
+trigger-less transition is due at every one and the transition the interpreter
+fires at each — the first enabled at the innermost level, by declaration order —
+leads to the next, round and back, as `verification/completion-livelock`: a
+warning at exit 0, once per cycle of states, naming the states in the order the
+chase goes round them and the shortest way in — a run the simulator makes
+wherever the walk holds one, and said to be the walk's own, with the state where
+it parts from the simulator, where it does not. Such a run spends its 64-step
+chase budget there and moves on only on an event (on a machine that names no
+trigger, it ends there). It is decided over configurations and over
+the interpreter's own chase, so a loop whose guard or store takes the chase out
+on its own is not reported, and a cycle only another branch of a choice could
+leave is — with the state where declaration order keeps the chase on it named in
+the row. It stands on steps the walk took, so a bound does not withhold it; a
+guard the walk could not evaluate on a trigger-less way out of the cycle, or a
+dwell as the chase's step, does, and a `withheld` line says so in its place.
+`check-behaviour` files the same published rows beside its verdicts and moves
+none of them.
+On v9 it is ten rows, one on each of the ten machines whose interpreter run
+spends the budget. On the shipped examples it is three rows, one on each machine
+whose trigger-less transitions cycle: `FlightModes`' chase goes round `manual ⇄
+autonomous` in `examples/uav-isr.sysml`, which moved the campaign's exact
+diagnostics array over that file by one row, `VehicleStates`' round `idling ⇄
+moving` in `examples/vehicle.sysml`, and `views-tour.sysml`'s `FlightModes`
+round `standby ⇄ flying`. The trap row still never says the word (`docs/06`
+§8.8).
 
 **One row did move, and it moved towards saying more rather than less.** A
 `verification/deadlock` row — *this configuration has no enabled way out* — used

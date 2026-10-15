@@ -4324,9 +4324,19 @@ package P {
       'deferred events',
       'time',
     ]);
+    // FlightModes runs on trigger-less transitions alone, and the chase the
+    // interpreter runs goes round `manual ⇄ autonomous` (declaration order beats
+    // `autonomous -> failsafe` every time): a completion livelock, the one row
+    // U1 added (plan O1 S4), filed before the choice row that keeps it going.
     expect(body.reach.diagnostics.map((d) => d.code)).toEqual([
+      'verification/completion-livelock',
       'verification/nondeterministic-choice',
     ]);
+    expect(
+      (fm as unknown as { livelocks: Array<{ states: Array<{ name: string }>; choices: Array<{ name: string }> }> }).livelocks.map(
+        (l) => [l.states.map((s) => s.name), l.choices.map((s) => s.name)],
+      ),
+    ).toEqual([[['manual', 'autonomous'], ['autonomous']]]);
     // The exactness census, published beside the figures and printed in none of
     // them. `acyclic` is FALSE here and not `null`: this walk saw the whole
     // graph its step relation admits, and that graph cycles. The four clause
@@ -4413,16 +4423,27 @@ package P {
       refusedByGate: null,
       sentence: null,
     });
+    // And the two cycles the interpreter's chase goes round, `alpha ⇄ beta` and
+    // `failsafe ⇄ failsafeHold`, each a completion livelock (U1, plan O1 S4):
+    // the second is the trap's set seen from the chase, two facts and two codes.
+    // Its way in takes `beta -> failsafe`, which the simulator never takes, so
+    // the line says the way in is the walk's; and the machine names no trigger,
+    // so it says the run ends where the budget stops it.
     expect(body.reach.diagnostics.map((d) => [d.code, d.severity])).toEqual([
       ['verification/unrecoverable-mode', 'warning'],
+      ['verification/completion-livelock', 'warning'],
+      ['verification/completion-livelock', 'warning'],
       ['verification/nondeterministic-choice', 'warning'],
     ]);
+    expect(r.stdout).toContain(
+      'livelock     {failsafe, failsafeHold} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 3 step(s) from standby, on a run of the walk, not of the simulator',
+    );
 
     const latch = resolve(process.cwd(), `${FIXV}/models/latch.sysml`);
     const l = await run(['reach', latch]);
     expect(l.code).toBe(0);
     expect(l.stdout).toContain(
-      'inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger',
+      'inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger',
     );
     expect(l.stdout).not.toContain('trap         ');
     expect(l.stdout).not.toContain('inescapable');
@@ -4844,7 +4865,11 @@ package P {
     // configuration this machine can be in, can it get back to `standby`?
     // On the trap probe four configurations cannot, and two of those are the
     // set `reach` reports as a trap — two numbers, two questions, each under
-    // its own clause. On the flagship machine every configuration can.
+    // its own clause. On `views-tour` every configuration can, and every run
+    // the chase budget stops rests in `standby`; on the flagship machine every
+    // configuration can along the transitions it states, but the budget stops
+    // a run of it in `autonomous`, from where it gets back to nothing, so the
+    // row is withheld.
     const probe = resolve(process.cwd(), `${FIXV}/models/trap-probe.sysml`);
     const pattern = 'pattern=recovery, scope=globally, p=state standby';
     const refuted = await run(['check-behaviour', probe, '--element', 'TrapProbe::Probe::Modes', '--pattern', pattern]);
@@ -4863,14 +4888,23 @@ package P {
     expect(refuted.stdout).not.toContain('witness —');
     expect(refuted.stdout).toContain('error verification/refuted');
 
-    const held = await run(['check-behaviour', UAV, '--element', 'FlightModes', '--pattern', pattern]);
+    const tour = resolve(process.cwd(), 'examples/views-tour.sysml');
+    const held = await run(['check-behaviour', tour, '--element', 'FlightModes', '--pattern', pattern]);
     expect(held.code).toBe(0);
     expect(held.stdout).toContain('1 pass, 0 fail, 0 vacuous, 0 inconclusive, 0 covered, 0 not covered');
     expect(held.stdout).toContain('PASS         `state standby` is reachable from every reachable configuration, over the whole run');
     expect(held.stdout).toContain('recoverable: `state standby` is reachable from every reachable configuration, exhaustive under {maxConfigs 10000');
-    // §2.4(d): the walk explored both branches at `autonomous`.
-    expect(held.stdout).toContain("every claim above is about this MACHINE's semantics");
     expect(held.stdout).not.toContain('verification/refuted');
+
+    // The wrong answer this used to print about the flagship machine:
+    // `recoverable` at exit 0, over a run the budget stops in `autonomous`.
+    const withheld = await run(['check-behaviour', UAV, '--element', 'FlightModes', '--pattern', pattern]);
+    expect(withheld.code).toBe(2);
+    expect(withheld.stdout).toContain('0 pass, 0 fail, 0 vacuous, 1 inconclusive, 0 covered, 0 not covered');
+    expect(withheld.stdout).toContain('INCONCLUSIVE `state standby` is reachable from every reachable configuration, over the whole run');
+    expect(withheld.stdout).toContain('the interpreter\u2019s chase budget');
+    expect(withheld.stdout).toContain('verification/behaviour-unsupported-construct');
+    expect(withheld.stdout).not.toContain('recoverable: `state standby`');
 
     // The census, on `--json`, inside the existing payload: the top-level
     // keys are what they were.

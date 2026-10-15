@@ -11,19 +11,22 @@
  * fabricating them, so that is asserted too.
  *
  * The second half is the bound rules, which are the reason this command can be
- * trusted at all: a configuration bound and a completion-chase bound must both
- * produce `exhaustive: false` and EMPTY absence lists, in exactly the same way,
- * because a bound hit that could masquerade as a finding is the failure this
- * whole lane is written against.
+ * trusted at all: a configuration bound must produce `exhaustive: false` and
+ * EMPTY absence lists, because a bound hit that could masquerade as a finding
+ * is the failure this whole lane is written against. The interpreter's
+ * completion-chase budget is NOT one of them any more: it is part of the
+ * semantics the walk follows (plan O1, C1/H2), and its describe pins what a run
+ * that spends it does next.
  *
  * The third half was added by a defect the first two did not catch, and it is
  * the same failure through a door the bounds do not cover: a walk that finished
  * inside every bound, over a guard nothing in the model decides. Its half of
  * this file is the last two describes.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { runStateMachine } from '@semantics/index';
 import { loadModelText } from '@text/load';
@@ -33,16 +36,19 @@ import { preloadFullLibrary, loadFullStandardLibrary } from '../../src/library/f
 import { resolveTypeReferences } from '../../src/library/resolve';
 import { main as sysproseMain } from '../../scripts/sysprose';
 import {
+  behaviourMachineFor,
   reachLines,
   reachMachineLines,
   rowKeyOf,
   textOf,
   type ReportLine,
 } from '../../src/semantics/mc/report-lines';
+import { behaviourReport, propertiesOf, replayWitness, type TraceStep } from '../../src/semantics/mc/patterns';
 import {
   BEHAVIOUR_CODES,
   BOUND_EXHAUSTED_CODE,
   BEHAVIOUR_UNSUPPORTED_CODE,
+  COMPLETION_LIVELOCK_CODE,
   DEAD_TRANSITION_CODE,
   DEADLOCK_CODE,
   GUARD_UNDETERMINED_CODE,
@@ -52,13 +58,14 @@ import {
   UNRECOVERABLE_MODE_CODE,
   edgeCensus,
   exploreMachine,
+  livelockWithheldSentence,
   reachReport,
   stateMachinesIn,
   walkableTransitions,
 } from '../../src/semantics/mc/explore';
 import { ALL_METACLASSES } from '../../src/core/metamodel';
 import { SEMANTIC_PROFILE } from '../../src/semantics/mc/profile';
-import { DWELL_SENTENCE } from '../../src/semantics/mc/publishable';
+import { DWELL_SENTENCE, walkIsExact } from '../../src/semantics/mc/publishable';
 import {
   CONTROL_EDGE_KINDS,
   MAX_COMPLETION,
@@ -175,25 +182,39 @@ describe('a bound hit can never masquerade as a finding', () => {
     expect(r.diagnostics.filter((d) => d.code === DEAD_TRANSITION_CODE)).toEqual([]);
   }, 90_000);
 
-  it('a 70-step completion chain hits the 64-step budget in exactly the same way', () => {
+  it('a 70-step completion chain is not a bound: the chase stops at the budget, as the interpreter’s does', () => {
+    // It used to be cut off as `boundHit: 'completion'` with both lists
+    // emptied. The interpreter's chase fires 64 transitions and stops at `s64`,
+    // every run, so `s65` … `s70` are states no run enters — decided, under
+    // the `maxCompletion 64` the bounds line prints — and `s64 -> s65` is
+    // ENABLED at `s64`, which is not dead though nothing fires it.
     const { model, machineId } = completionChain(70);
     const walk = exploreMachine(model, machineId);
-    expect(walk.boundHit).toBe('completion');
-    expect(walk.exhaustive).toBe(false);
+    expect(walk.boundHit).toBe('none');
+    expect(walk.exhaustive).toBe(true);
+    expect(walk.chaseKeyed).toBe(true);
+    expect(walk.chaseStops).toBe(1);
 
     const r = reachReport(model);
     const chain = r.machines[0];
-    expect(chain.boundHit).toBe('completion');
-    expect(chain.exhaustive).toBe(false);
-    // The whole point: `s65` … `s70` were never reached and the chain's last
-    // transitions never fired, and NEITHER is reported. Same two empty lists a
-    // configuration bound produces.
+    expect(chain.exhaustive).toBe(true);
     expect(chain.states.total).toBe(71);
-    expect(chain.states.reachable.length).toBeLessThan(71);
-    expect(chain.states.unreachable).toEqual([]);
-    expect(chain.transitions.dead).toEqual([]);
-    const bound = r.diagnostics.find((d) => d.code === BOUND_EXHAUSTED_CODE);
-    expect(bound!.message).toContain('chase budget');
+    expect(chain.states.unreachable.map((s) => s.name)).toEqual(['s65', 's66', 's67', 's68', 's69', 's70']);
+    expect(chain.transitions.dead.map((t) => `${t.from!.name}->${t.to!.name}`)).toEqual([
+      's65->s66',
+      's66->s67',
+      's67->s68',
+      's68->s69',
+      's69->s70',
+    ]);
+    expect(chain.qualification).toContain('maxCompletion 64');
+    expect(r.diagnostics.filter((d) => d.code === BOUND_EXHAUSTED_CODE)).toEqual([]);
+    // And the interpreter agrees, state for state.
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    const visited = new Set(run.visited);
+    for (const s of chain.states.reachable) expect(visited.has(s.id), s.name).toBe(true);
+    for (const s of chain.states.unreachable) expect(visited.has(s.id), s.name).toBe(false);
   });
 
   it('the interpreter now says when its own chase ran out of budget', () => {
@@ -383,6 +404,588 @@ describe('which elements are machines at all', () => {
   });
 });
 
+/* ═══════════ a nested `state def`: the machine that holds it, and a transition across it ═══════════ */
+
+/** Review B's three nested-definition probes (O1: H1, C3), as written there. */
+const NEST2_INTO = `package Nest2 {
+    state def Outer {
+        state a;
+        state b;
+        transition ax first a accept e then Inner::x;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+            transition yb first y accept back then Outer::b;
+        }
+    }
+}
+`;
+const NEST3_FIRST = `package Nest3 {
+    state def Outer {
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+        state a;
+        state b;
+        transition ab first a accept e then b;
+    }
+}
+`;
+const NEST6_PROP = `package Nest6 {
+    state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+        transition ab first a accept e then b;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+    }
+}
+`;
+
+/** Review S3's one-way crossings and its foreign carrier: each names what the first fix left open. */
+const INTO_ONLY = `package IntoOnly {
+    state def Outer {
+        state a;
+        transition az first a accept e then Inner::z;
+        state def Inner {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state z"; }
+            state x;
+            state y;
+            state z;
+            transition xy first x accept go then y;
+        }
+    }
+}
+`;
+const OUT_ONLY = `package OutOnly {
+    state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+        transition aa first a accept e then a;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+            transition yb first y accept back then Outer::b;
+        }
+    }
+}
+`;
+const INNER_EDGE = `package InnerEdge {
+    state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state b"; }
+        state a;
+        state b;
+        transition aa first a accept e then a;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+            transition ab2 first Outer::a accept f then Outer::b;
+        }
+    }
+}
+`;
+const INTO_DEF = `package ToDef {
+    state def Outer {
+        state a;
+        state b;
+        transition ai first a accept e then Inner;
+        transition ab first a accept f then b;
+        state def Inner {
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+    }
+}
+`;
+const TOP_CROSS = `package TopCross {
+    state def A {
+        state a0;
+        transition ab first a0 accept e then B::z;
+    }
+    state def B {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state z"; }
+        state b0;
+        state z;
+        transition bb first b0 accept go then b0;
+    }
+}
+`;
+const INTO_PLAIN = `package Nm {
+    state def Outer {
+        state a;
+        state b;
+        transition ax first a accept e then Inner::x;
+        transition ab first a accept f then b;
+        state def Inner {
+            state x;
+            state y;
+        }
+    }
+}
+`;
+const LEAK = `package Leak {
+    state def Outer {
+        state a;
+        state b;
+        transition ab first a accept e then b;
+        state def Inner {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state y"; }
+            state x;
+            state y;
+            transition xy first x accept go then y;
+        }
+    }
+}
+`;
+// `Inner` owns no transition, so it is no machine; `Deep`, inside it, owns one
+// and is. `Outer`'s own property holds.
+const STRANDED = `package Q4 {
+    state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state c"; }
+        state a;
+        state b;
+        state c;
+        transition ab first a accept e then b;
+        state def Inner {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state a"; }
+            state x {
+                @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state x"; }
+            }
+            state def Deep {
+                @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state q"; }
+                state q;
+                state r;
+                transition qr first q accept go then r;
+            }
+        }
+    }
+}
+`;
+
+describe('a nested state def: the machine that holds it, and a transition across its boundary', () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'sysprose-nested-'));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const fileOf = (name: string, text: string): string => {
+    const f = join(dir, name);
+    writeFileSync(f, text);
+    return f;
+  };
+  const modelOf = async (text: string): Promise<Model> =>
+    (await loadModelText(text, { fileName: 'nested.sysml', library: 'none' })).model!;
+  const idOf = (m: Model, qn: string): ElementId => m.all().find((e) => m.qualifiedName(e.id) === qn)!.id;
+
+  /*
+   * THE SELF-CONTRADICTION (H1). `ax` is written in `Outer` and leads into the
+   * nested definition; `yb` is written in `Inner` and leads out of it. The step
+   * relation stops at the boundary from both sides, so `Outer`'s walk entered
+   * `Inner::x` and found no way out, and `Inner`'s walk followed `yb` out to
+   * `b` — one report printed `unreachable b` and `no way out b … reached in 2
+   * step(s)`. Each machine is now refused on the edge its own relation holds.
+   */
+  it('refuses both machines of nest2-into by name, so the report no longer contradicts itself', async () => {
+    const model = await modelOf(NEST2_INTO);
+    const r = reachReport(model);
+    const named = (qn: string) => r.machines.find((m) => m.machine.qualifiedName === qn)!;
+    const refusals = (qn: string) =>
+      named(qn).unsupported.map((u) => [u.construct, u.elementId ? model.qualifiedName(u.elementId) : null]);
+    // Each machine on BOTH edges: the one its own relation holds, and the one
+    // written on the other side that names one of its states.
+    expect(refusals('Nest2::Outer')).toEqual([
+      ['machine-boundary', 'Nest2::Outer::ax'],
+      ['machine-boundary', 'Nest2::Outer::Inner::yb'],
+    ]);
+    expect(refusals('Nest2::Outer::Inner')).toEqual([
+      ['machine-boundary', 'Nest2::Outer::Inner::yb'],
+      ['machine-boundary', 'Nest2::Outer::ax'],
+    ]);
+    expect(named('Nest2::Outer').unsupported[0].detail).toContain(
+      'into the nested `state def` `Nest2::Outer::Inner`, a machine of its own',
+    );
+    expect(named('Nest2::Outer').unsupported[1].detail).toContain(
+      'is written outside this machine, in `Nest2::Outer::Inner`',
+    );
+    expect(named('Nest2::Outer::Inner').unsupported[0].detail).toContain(
+      'out of this nested `state def`, into `Nest2::Outer`, the machine it is written in',
+    );
+    for (const m of r.machines) {
+      expect(m.exhaustive, m.machine.qualifiedName).toBe(false);
+      expect(m.suppressed, m.machine.qualifiedName).toBe(true);
+      expect(m.states.unreachable, m.machine.qualifiedName).toEqual([]);
+      expect(m.transitions.dead, m.machine.qualifiedName).toEqual([]);
+      expect(m.deadlocks, m.machine.qualifiedName).toEqual([]);
+    }
+    // Refusals and no finding: neither `b unreachable` nor `b … reached`.
+    expect(new Set(r.diagnostics.map((d) => d.code))).toEqual(new Set([BEHAVIOUR_UNSUPPORTED_CODE]));
+    const kinds = reachLines(r, { name: 'nest2-into.sysml' }).map((l) => l.kind);
+    expect(kinds).not.toContain('unreachable');
+    expect(kinds).not.toContain('no-way-out');
+    expect(kinds.filter((k) => k === 'not-explored')).toHaveLength(4);
+    // The census counts both crossing edges `refused` on each side — the one
+    // written outside the region as well, which its domain used to miss — and
+    // leaves nothing over.
+    for (const machine of ['Nest2::Outer', 'Nest2::Outer::Inner']) {
+      const census = edgeCensus(model, idOf(model, machine));
+      expect(census.unaccounted, machine).toEqual([]);
+      for (const edge of ['Nest2::Outer::ax', 'Nest2::Outer::Inner::yb']) {
+        expect(census.rows.find((row) => row.qualifiedName === edge)?.account, `${machine}: ${edge}`).toBe('refused');
+      }
+    }
+  });
+
+  /*
+   * A ONE-WAY CROSSING REFUSES THE FAR SIDE TOO. Refusing only the machine whose
+   * relation holds the edge left the other walked as though the edge were not
+   * there: `Inner` published `unreachable z` and a PASS for `absence z` while a
+   * run of `Outer` ends in `Inner::z`, and `Outer` published `unreachable b`
+   * while a run of `Inner` ends in `Outer::b`. The edge written in `Inner`
+   * between two of `Outer`'s states is the same hole with both ends on one side.
+   */
+  it('refuses both machines of a one-way crossing, from either side, and decides no property over them', async () => {
+    for (const [text, edge, far, run] of [
+      [INTO_ONLY, 'IntoOnly::Outer::az', 'IntoOnly::Outer::Inner', { machine: 'IntoOnly::Outer', events: ['e'], ends: 'IntoOnly::Outer::Inner::z' }],
+      [OUT_ONLY, 'OutOnly::Outer::Inner::yb', 'OutOnly::Outer', { machine: 'OutOnly::Outer::Inner', events: ['go', 'back'], ends: 'OutOnly::Outer::b' }],
+      [INNER_EDGE, 'InnerEdge::Outer::Inner::ab2', 'InnerEdge::Outer', null],
+    ] as const) {
+      const model = await modelOf(text);
+      const r = reachReport(model);
+      expect(r.machines, edge).toHaveLength(2);
+      for (const m of r.machines) {
+        const qn = m.machine.qualifiedName;
+        expect(m.unsupported.map((u) => [u.construct, model.qualifiedName(u.elementId!)]), qn).toEqual([
+          ['machine-boundary', edge],
+        ]);
+        expect(m.exhaustive, qn).toBe(false);
+        expect(m.states.unreachable, qn).toEqual([]);
+        expect(m.transitions.dead, qn).toEqual([]);
+        const census = edgeCensus(model, m.machine.id);
+        expect(census.unaccounted, qn).toEqual([]);
+        expect(census.rows.find((row) => row.qualifiedName === edge)?.account, qn).toBe('refused');
+        // Every carrier is decided over nothing: each machine is refused.
+        for (const p of behaviourReport(model, { machineId: m.machine.id }).properties) {
+          expect(p.claim, qn).toBe('inconclusive');
+          expect(p.code, qn).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
+        }
+      }
+      // The far machine has the carrier: it is refused rather than passed.
+      expect(behaviourReport(model, { machineId: idOf(model, far) }).exitCode, far).toBe(2);
+      // The run the reviewer's oracle found, which the far side's walk had ignored.
+      if (run !== null) {
+        expect(model.qualifiedName(runStateMachine(model, idOf(model, run.machine), [...run.events]).finalState!)).toBe(
+          run.ends,
+        );
+      }
+    }
+  });
+
+  /*
+   * TWO TOP-LEVEL MACHINES ARE NO DIFFERENT. `A`'s transition into `B::z` was
+   * walked by `A` and ignored by `B`, which published `unreachable z` and a PASS
+   * for `absence z` beside a run of `A` that ends in `B::z`.
+   */
+  it('refuses both top-level machines a transition between them joins', async () => {
+    const model = await modelOf(TOP_CROSS);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.map((u) => u.construct), m.exhaustive])).toEqual([
+      ['TopCross::A', ['machine-boundary'], false],
+      ['TopCross::B', ['machine-boundary'], false],
+    ]);
+    expect(r.machines[0].unsupported[0].detail).toContain('out of this machine, into `TopCross::B`, a machine of its own');
+    expect(r.machines[1].unsupported[0].detail).toContain('is written outside this machine, in `TopCross::A`');
+    expect(behaviourReport(model, { machineId: idOf(model, 'TopCross::B') }).properties[0].claim).toBe('inconclusive');
+    expect(model.qualifiedName(runStateMachine(model, idOf(model, 'TopCross::A'), ['e']).finalState!)).toBe('TopCross::B::z');
+  });
+
+  /*
+   * A SPECIALISATION OR A TYPED USAGE that adds a step over the states it
+   * inherits crosses the same boundary, from both sides, and both machines are
+   * refused (the branch review's w2). The refusal says so in its own words: the
+   * nested-definition remedy — keep the transition in the machine whose states
+   * it joins — would move `Derived`'s step into `Base` and change `Base`.
+   */
+  it('names the inheritance when a specialisation or a typed usage adds a step over inherited states', async () => {
+    const cases: Array<[string, string, string]> = [
+      [
+        `package W2 {
+          state def Base { state a; state b; state c; transition ab first a accept go then b; }
+          state def Derived :> Base { transition bc first b accept more then c; }
+        }`,
+        'W2::Base',
+        'W2::Derived',
+      ],
+      [
+        `package W2t {
+          state def Modes { state a; state b; state c; transition ab first a accept go then b; }
+          part def Drone { exhibit state m : Modes { transition bc first b accept more then c; } }
+        }`,
+        'W2t::Modes',
+        'W2t::Drone::m',
+      ],
+    ];
+    for (const [text, base, sub] of cases) {
+      const model = await modelOf(text);
+      const r = reachReport(model);
+      expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.map((u) => u.construct), m.exhaustive])).toEqual([
+        [base, ['machine-boundary'], false],
+        [sub, ['machine-boundary'], false],
+      ]);
+      const [onBase, onSub] = r.machines.map((m) => m.unsupported[0].detail);
+      expect(onBase).toContain(`is written outside this machine, in \`${sub}\`, which inherits its states`);
+      expect(onSub).toContain(`out of this machine, into \`${base}\`, a machine of its own whose states this one inherits`);
+      for (const detail of [onBase, onSub]) {
+        expect(detail).toContain('A transition added over inherited states is not walked as part of either machine');
+        expect(detail).not.toContain('Keep each transition inside the machine whose states it joins');
+      }
+    }
+  });
+
+  /*
+   * A TRANSITION TO THE NESTED DEFINITION ITSELF crosses too. `Inner` is in the
+   * outer region — the boundary stops below it — so `then Inner` was walked as
+   * an ordinary step: the walk cascaded into `Inner::x` and published `no way
+   * out Inner::x` as an exhaustive deadlock of `Outer`, while a run of `Outer`
+   * stays at `Inner` itself. Entering a machine at its root is starting it, so
+   * `Inner` is still walked whole.
+   */
+  it('refuses the outer machine of a transition to the nested definition itself, and walks the definition whole', async () => {
+    const model = await modelOf(INTO_DEF);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.map((u) => model.qualifiedName(u.elementId!)), m.exhaustive])).toEqual([
+      ['ToDef::Outer', ['ToDef::Outer::ai'], false],
+      ['ToDef::Outer::Inner', [], true],
+    ]);
+    expect(r.machines[0].deadlocks).toEqual([]);
+    expect(r.machines[0].unsupported[0].detail).toContain(
+      'leads from `ToDef::Outer::a` to `ToDef::Outer::Inner`, into the nested `state def` `ToDef::Outer::Inner`',
+    );
+    const outerId = idOf(model, 'ToDef::Outer');
+    expect(runStateMachine(model, outerId, ['e']).visited.map((id) => model.qualifiedName(id))).toEqual([
+      'ToDef::Outer::a',
+      'ToDef::Outer::Inner',
+    ]);
+    const row = behaviourReport(model, { machineId: outerId, pattern: 'pattern=absence, scope=globally, p=state b' });
+    expect(row.properties[0].claim).toBe('inconclusive');
+    expect(row.exitCode).toBe(2);
+  });
+
+  /*
+   * THE REPLAY READS WHERE THE RUN RESTS. The walk's witness for `then Inner`
+   * stood on `Inner::x`; the run fires the same transition and stays at
+   * `Inner`. The replay accepted it because `Inner` was on the witness's stack.
+   * It now compares the state the interpreter comes to rest in, step by step.
+   */
+  it('does not replay a witness whose step cascades where the interpreter does not', async () => {
+    const model = await modelOf(INTO_DEF);
+    const outerId = idOf(model, 'ToDef::Outer');
+    const ref = (qn: string) => ({ id: idOf(model, qn), name: qn.split('::').pop()!, qualifiedName: qn });
+    const ai = model.get(idOf(model, 'ToDef::Outer::ai'))!;
+    const witness: TraceStep[] = [
+      { index: 0, event: '-', transition: null, leaf: ref('ToDef::Outer::a'), stack: [ref('ToDef::Outer::a')], holds: [] },
+      {
+        index: 1,
+        event: 'e',
+        transition: {
+          id: ai.id,
+          name: 'ai',
+          qualifiedName: 'ToDef::Outer::ai',
+          from: ref('ToDef::Outer::a'),
+          to: ref('ToDef::Outer::Inner'),
+          label: 'e',
+        },
+        leaf: ref('ToDef::Outer::Inner::x'),
+        stack: [ref('ToDef::Outer::Inner'), ref('ToDef::Outer::Inner::x')],
+        holds: ['p'],
+      },
+    ];
+    const replay = replayWitness(model, outerId, witness, MAX_COMPLETION);
+    expect(replay.replays).toBe(false);
+    expect(replay.step).toBe(1);
+    expect(replay.reason).toBe(
+      'at step 1 the witness fires `ToDef::Outer::ai` and enters `ToDef::Outer::Inner::x`, and the interpreter fires ' +
+        'it and enters `ToDef::Outer::Inner`',
+    );
+    // The same witness ending where the run rests replays.
+    const resting: TraceStep[] = [
+      witness[0],
+      { ...witness[1], leaf: ref('ToDef::Outer::Inner'), stack: [ref('ToDef::Outer::Inner')] },
+    ];
+    expect(replayWitness(model, outerId, resting, MAX_COMPLETION).replays).toBe(true);
+  });
+
+  /*
+   * A NESTED DEFINITION THAT OWNS NO TRANSITION is not a machine, and the
+   * refusal no longer calls it one under a header that counts one machine.
+   */
+  it('names a nested definition that owns no transition as one no walk enters', async () => {
+    const model = await modelOf(INTO_PLAIN);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => m.machine.qualifiedName)).toEqual(['Nm::Outer']);
+    expect(r.machines[0].unsupported[0].detail).toContain(
+      'into the nested `state def` `Nm::Outer::Inner`, a definition this walk stops at and no walk enters',
+    );
+    expect(r.machines[0].unsupported[0].detail).not.toContain('a machine of its own');
+  });
+
+  /*
+   * WHAT THE OUTER MACHINE IS CHECKED AGAINST STOPS WHERE ITS WALK STOPS. Once
+   * `--element Outer` named `Outer`, its property list and its atoms still read
+   * every descendant: `Inner`'s carrier was checked against `Outer`'s walk too,
+   * which never stands on `Inner::y`, and printed PASS (exit 0) beside the FAIL
+   * the same claim gets on `Inner`.
+   */
+  it('gives the outer machine only the properties and atoms of its own region', async () => {
+    const model = await modelOf(LEAK);
+    const outerId = idOf(model, 'Leak::Outer');
+    const innerId = idOf(model, 'Leak::Outer::Inner');
+    expect(behaviourReport(model, { machineId: outerId }).properties).toEqual([]);
+    expect(behaviourReport(model, { machineId: innerId }).properties.map((p) => p.claim)).toEqual(['fail']);
+    for (const p of ['state y', 'fires xy', 'node x', 'trigger go']) {
+      const row = behaviourReport(model, { machineId: outerId, pattern: `pattern=absence, scope=globally, p=${p}` });
+      expect(row.properties[0].claim, p).toBe('inconclusive');
+      expect(row.properties[0].code, p).toBe('verification/unknown-atom');
+      expect(row.exitCode, p).toBe(2);
+    }
+    // The outer machine's own atoms still resolve.
+    expect(
+      behaviourReport(model, { machineId: outerId, pattern: 'pattern=absence, scope=globally, p=state b' }).properties[0].claim,
+    ).toBe('fail');
+
+    const file = fileOf('leak.sysml', LEAK);
+    const outer = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Leak::Outer']);
+    expect(outer.code).toBe(2);
+    expect(outer.stdout).not.toContain('PASS');
+    const inner = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Leak::Outer::Inner']);
+    expect(inner.code).toBe(1);
+    expect(inner.stdout).toContain('FAIL         `state y` never holds, over the whole run');
+    const atom = await reachCli([
+      'check-behaviour',
+      file,
+      '--no-library',
+      '--element',
+      'Leak::Outer',
+      '--pattern',
+      'pattern=absence, scope=globally, p=state y',
+    ]);
+    expect(atom.code).toBe(2);
+    expect(atom.stdout + atom.stderr).toContain('verification/unknown-atom');
+  }, 60_000);
+
+  /*
+   * A PROPERTY NO WALK STANDS ON IS REPORTED, NOT DROPPED (the S4 review's `q4`
+   * probe). The region reading above gave `Inner`'s carriers to `Inner` — but
+   * an `Inner` that owns no transition is no machine, so they were checked by
+   * nothing: `--element Outer` printed its own PASS and exited 0, and
+   * `--element Outer::Inner` sent the reader back to `Outer`. They are now
+   * `Outer`'s rows, refused as inconclusive and naming the definition; a
+   * nested definition that IS a machine keeps its own.
+   */
+  it('reports the carriers of a nested definition that owns no transition on the machine that holds it', async () => {
+    const model = await modelOf(STRANDED);
+    const outerId = idOf(model, 'Q4::Outer');
+    expect(propertiesOf(model, outerId).map((p) => [p.p, p.carrier, p.stranded ?? null])).toEqual([
+      ['state c', 'Q4::Outer', null],
+      ['state a', 'Q4::Outer::Inner', 'Q4::Outer::Inner'],
+      ['state x', 'Q4::Outer::Inner::x', 'Q4::Outer::Inner'],
+    ]);
+    const report = behaviourReport(model, { machineId: outerId });
+    expect(report.properties.map((p) => [p.claim, p.code])).toEqual([
+      ['pass', null],
+      ['inconclusive', 'verification/behaviour-unsupported-construct'],
+      ['inconclusive', 'verification/behaviour-unsupported-construct'],
+    ]);
+    // Refused before it is read: `state a` names a state of `Outer` and would
+    // resolve there, and `state x` would not — neither is asked.
+    for (const row of report.properties.slice(1)) {
+      expect(row.sentence).toBe('absence — not checked');
+      expect(row.detail).toContain('carried by `Q4::Outer::Inner`, a `state def` written inside this machine that owns no transition');
+      expect(row.configs).toBe(0);
+    }
+    expect(report.exitCode).toBe(2);
+    // `Deep` owns a transition: a machine, whose carrier is its own.
+    expect(propertiesOf(model, idOf(model, 'Q4::Outer::Inner::Deep')).map((p) => [p.p, p.stranded ?? null])).toEqual([
+      ['state q', null],
+    ]);
+    const file = fileOf('stranded.sysml', STRANDED);
+    const outer = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Q4::Outer']);
+    expect(outer.code).toBe(2);
+    expect(outer.stdout).toContain('Q4::Outer — 3 properties: 1 pass, 0 fail, 0 vacuous, 2 inconclusive');
+    expect(outer.stdout).toContain('INCONCLUSIVE absence — not checked');
+    expect(outer.stdout).toContain('info verification/behaviour-unsupported-construct');
+  }, 60_000);
+
+  /*
+   * THE NEGATIVE CONTROL. A nested definition no transition crosses is not
+   * refused: the outer machine opens at its own `a` although `Inner` is written
+   * first, each machine decides its own states, and the outer witness replays
+   * through the interpreter from that same start.
+   */
+  it('walks nest3-first whole, from the outer machine’s own start, and its witness replays', async () => {
+    const model = await modelOf(NEST3_FIRST);
+    const r = reachReport(model);
+    expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.length, m.exhaustive])).toEqual([
+      ['Nest3::Outer', 0, true],
+      ['Nest3::Outer::Inner', 0, true],
+    ]);
+    const outer = r.machines[0];
+    expect(outer.states.reachable.map((s) => s.name)).toEqual(['a', 'b']);
+    expect(outer.deadlocks.map((d) => [d.leaf.name, d.steps])).toEqual([['b', 1]]);
+    const outerId = idOf(model, 'Nest3::Outer');
+    const b = behaviourReport(model, { machineId: outerId, pattern: 'pattern=cover, scope=globally, p=state b' });
+    expect(b.properties[0].claim).toBe('covered');
+    expect(b.properties[0].witness.map((s) => s.leaf?.name)).toEqual(['a', 'b']);
+    expect(replayWitness(model, outerId, b.properties[0].witness, MAX_COMPLETION).replays).toBe(true);
+    expect(runStateMachine(model, outerId, ['e']).visited.map((id) => model.get(id)?.declaredName)).toEqual(['a', 'b']);
+    // A state of the nested definition belongs to IT: naming one is refused
+    // with that definition as the machine to pick, not the outer one.
+    const x = behaviourMachineFor(model, idOf(model, 'Nest3::Outer::Inner::x'));
+    expect(x.ok).toBe(false);
+    if (!x.ok) {
+      expect(x.holder).toBe(idOf(model, 'Nest3::Outer::Inner'));
+      expect(x.message).toBe(
+        '`Nest3::Outer::Inner::x` holds no state machine — it is inside `Nest3::Outer::Inner`, which is one',
+      );
+    }
+  });
+
+  /*
+   * THE MACHINE NO REFERENCE COULD NAME (C3). `Inner` is a second machine under
+   * `Outer`, so `--element Nest6::Outer` was refused as holding two, every way
+   * of naming `Outer` was refused the same way, and the app's pick row for it
+   * named it again.
+   */
+  it('checks nest6-prop’s outer machine when it is named, and still refuses the package that holds both', async () => {
+    const model = await modelOf(NEST6_PROP);
+    const outer = behaviourMachineFor(model, idOf(model, 'Nest6::Outer'));
+    expect(outer.ok && model.qualifiedName(outer.machine.id)).toBe('Nest6::Outer');
+    const pkg = behaviourMachineFor(model, idOf(model, 'Nest6'));
+    expect(pkg.ok).toBe(false);
+    if (!pkg.ok) expect(pkg.candidates).toEqual([idOf(model, 'Nest6::Outer'), idOf(model, 'Nest6::Outer::Inner')]);
+
+    const file = fileOf('nest6-prop.sysml', NEST6_PROP);
+    const named = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Nest6::Outer']);
+    expect(named.stderr).not.toContain('holds 2 state machines');
+    expect(named.code).toBe(1);
+    expect(named.stdout).toContain('Nest6::Outer — 1 property: 0 pass, 1 fail');
+    expect(named.stdout).toContain('FAIL         `state b` never holds, over the whole run');
+    const both = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Nest6']);
+    expect(both.code).toBe(2);
+    expect(both.stderr).toContain('`Nest6` holds 2 state machines:');
+  }, 60_000);
+});
+
 describe('the semantic profile is data, and its provenance is real', () => {
   it('every field names a symbol that exists in the file it cites', () => {
     for (const field of SEMANTIC_PROFILE) {
@@ -402,13 +1005,16 @@ describe('the semantic profile is data, and its provenance is real', () => {
     }
   });
 
-  it('names the eight codes this engine can raise', () => {
+  it('names the nine codes this engine can raise', () => {
     // Eight since the trap row: `verification/unrecoverable-mode` is a set of
-    // configurations nothing leaves, and it is the one code of the eight that
-    // is gated on the exactness gate rather than on the decreasing conjunction.
+    // configurations nothing leaves, and it is the one code of them that is
+    // gated on the exactness gate rather than on the decreasing conjunction.
+    // Nine since U1 (plan O1 S4): `verification/completion-livelock`, a cycle
+    // the interpreter's chase goes round, gated on neither.
     expect([...BEHAVIOUR_CODES].sort()).toEqual([
       'verification/behaviour-unsupported-construct',
       'verification/bound-exhausted',
+      'verification/completion-livelock',
       'verification/dead-transition',
       'verification/deadlock',
       'verification/guard-undetermined',
@@ -656,9 +1262,9 @@ describe('a guard the walk could not evaluate is not a guard that is false', () 
   it('a deadlock survives a BOUND and never an undetermined guard', () => {
     // The asymmetry the `deadlocks` gate is written on, and it is NOT the
     // `publishable` flag. A bound stops the walk ENQUEUEING successors; every
-    // input is still offered at every configuration it dequeues, so a
-    // configuration it found nothing enabled at is one it really found nothing
-    // enabled at. An undetermined guard is different in kind: it is an edge out
+    // configuration it dequeues is still offered every input a run could take
+    // there, so a configuration it found nothing enabled at is one it really
+    // found nothing enabled at. An undetermined guard is different in kind: it is an edge out
     // that may have been enabled and nothing here decided whether it was.
     // Gating the row on `publishable` instead would withdraw a sound finding on
     // every partial walk, and nothing else in this file would notice.
@@ -1098,7 +1704,7 @@ describe('the configuration key is what the next step depends on', () => {
   });
 });
 
-describe('a completion CYCLE is not a completion bound', () => {
+describe('a completion CYCLE, and the budget the interpreter spends on it', () => {
   /** `a` ⇄ `b` on completion transitions, plus an island nothing reaches. */
   function cycleWithIsland(): { model: Model; machineId: ElementId } {
     const m = new Model();
@@ -1114,50 +1720,692 @@ describe('a completion CYCLE is not a completion bound', () => {
     return { model: m, machineId: sm.id };
   }
 
-  it('is exhaustive, and withholds the absence lists because its named trigger is never offered', () => {
-    // The two surfaces answer DIFFERENT questions and the answers only look
-    // contradictory. `runStateMachine` says whether THAT RUN was cut off
-    // mid-chase — on a cycle every run is — while the walk says whether it saw
-    // the whole configuration GRAPH, and a cycle re-enters configurations it
-    // has already hashed, so nothing downstream of it is unexplored. Pinned
-    // side by side because `FlightModes` in `examples/uav-isr.sysml` is exactly
-    // this shape, and §3.8 names it as the exhaustive demonstration.
-    //
-    // The absence lists are withheld, not published: the walk obeys
-    // run-to-completion, so at `a` and `b` — where a completion transition is
-    // always due — the named trigger `never` on the unreachable island is never
-    // offered, and the alphabet-offered gate declines to state an absence over
-    // a walk that did not offer every trigger the machine names.
+  it('offers the named trigger where the chase stops, so the island is decided unreachable', () => {
+    // Every run is cut off mid-chase on `a ⇄ b` — the interpreter says so —
+    // and then takes the next event where the chase stopped. The walk follows
+    // it there: at the stop it offers `never`, which nothing at `a` or `b`
+    // accepts. It used to offer nothing inside the cycle, withhold both lists
+    // because `never` was never offered, and — on a cycle with an exit on an
+    // event — publish that exit dead (`LiveTwo`, below).
     const { model, machineId } = cycleWithIsland();
-    const run = runStateMachine(model, machineId, []);
+    const run = runStateMachine(model, machineId, ['never']);
     expect(run.completionBudgetHit, 'the interpreter no longer says its chase was cut off').toBe(
       true,
     );
+    expect(run.fired.every((f) => f.trigger === '')).toBe(true);
 
     const walk = exploreMachine(model, machineId);
     expect(walk.boundHit).toBe('none');
     expect(walk.exhaustive).toBe(true);
+    expect(walk.offered.has('never')).toBe(true);
     const only = reachReport(model).machines[0];
-    expect(only.states.unreachable).toEqual([]);
-    expect(only.transitions.dead).toEqual([]);
+    expect(only.exhaustive).toBe(true);
+    expect(only.states.unreachable.map((s) => s.name)).toEqual(['island', 'beyond']);
+    expect(only.transitions.dead.map((t) => t.label)).toEqual(['never']);
   });
 
   it('the boundary of the chase budget, on both sides and on both surfaces', () => {
     // The interpreter fires `maxCompletion` transitions and only THEN asks
     // whether anything is still enabled, so a chain of exactly 64 is one it
-    // completes cleanly. The walk has to agree, or it prints "a completion
-    // chain longer than the 64-step chase budget was found" about a chain that
-    // is not longer than it.
+    // completes cleanly. The walk has to agree: no position is carried and
+    // nothing stops.
     const at = completionChain(MAX_COMPLETION);
     expect(runStateMachine(at.model, at.machineId, []).completionBudgetHit).toBe(false);
     expect(exploreMachine(at.model, at.machineId).boundHit).toBe('none');
     expect(exploreMachine(at.model, at.machineId).exhaustive).toBe(true);
+    expect(exploreMachine(at.model, at.machineId).chaseKeyed).toBe(false);
+    expect(reachReport(at.model).machines[0].states.unreachable).toEqual([]);
 
+    // One more, and the chase stops one short of the end — on both surfaces.
     const over = completionChain(MAX_COMPLETION + 1);
     expect(runStateMachine(over.model, over.machineId, []).completionBudgetHit).toBe(true);
-    expect(exploreMachine(over.model, over.machineId).boundHit).toBe('completion');
-    expect(exploreMachine(over.model, over.machineId).exhaustive).toBe(false);
+    expect(exploreMachine(over.model, over.machineId).boundHit).toBe('none');
+    expect(exploreMachine(over.model, over.machineId).exhaustive).toBe(true);
+    expect(reachReport(over.model).machines[0].states.unreachable.map((s) => s.name)).toEqual(['s65']);
   });
+});
+
+/**
+ * THE CHASE BUDGET IS PART OF THE SEMANTICS (plan O1, C1 and H2, review B's
+ * probes). The interpreter chases trigger-less transitions for at most 64
+ * steps after each event, then takes the next event wherever the chase
+ * stopped. A walk that did not model that missed runs the interpreter takes,
+ * and published absences over them: `unreachable`, `dead`, a `pass`, a
+ * `not-covered` — one of them live on v9 (`admissionFails`). Each case below
+ * is checked against the interpreter itself, not against a number.
+ */
+describe('the chase budget, followed the way the interpreter follows it', () => {
+  async function load(text: string): Promise<{ model: Model; machineId: ElementId; id: (n: string) => ElementId }> {
+    const model = (await loadModelText(text, { fileName: 'budget.sysml', library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const id = (n: string) => model.all().find((e) => e.declaredName === n)!.id;
+    return { model, machineId, id };
+  }
+
+  const LIVE_TWO = `package LiveTwo {
+    state def M {
+      state s0; state a; state b; state c;
+      transition go first s0 accept go then a;
+      transition ab first a then b;
+      transition ba first b then a;
+      transition ac first a accept e then c;
+    }
+  }`;
+
+  /** `s0 -go-> c1 → … → c70` on completion, `s0 -jump-> c30`, and `c65 accept e then z`. */
+  function longChain(): string {
+    const states = ['s0', ...Array.from({ length: 70 }, (_, i) => `c${i + 1}`), 'z'];
+    const lines = states.map((s) => `state ${s};`);
+    lines.push('transition go first s0 accept go then c1;');
+    lines.push('transition jump first s0 accept jump then c30;');
+    for (let i = 1; i < 70; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+    lines.push('transition esc first c65 accept e then z;');
+    return `package LongChain { state def M { ${lines.join(' ')} } }`;
+  }
+
+  /** `s0 -go-> c1 → … → c70` on completion, nothing else. */
+  function chain65(): string {
+    const states = ['s0', ...Array.from({ length: 70 }, (_, i) => `c${i + 1}`)];
+    const lines = states.map((s) => `state ${s};`);
+    lines.push('transition go first s0 accept go then c1;');
+    for (let i = 1; i < 70; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+    return `package Chain65 { state def M { ${lines.join(' ')} } }`;
+  }
+
+  /**
+   * The shape of v9's `PA::SwarmMember::SwarmMemberModes`: a trigger-less
+   * cycle (`Nominal ⇄ NavigationDegraded`) with a guarded way out on an event
+   * (`admissionFails`), and the trigger-less ways round it.
+   */
+  const SWARM_MODES = `package Modes {
+    state def SwarmMemberModes {
+      initial start;
+      state Nominal; state NavigationDegraded; state Isolated; state Quarantined; state Readmitted;
+      transition start -> Nominal;
+      transition Nominal -> NavigationDegraded;
+      transition NavigationDegraded -> Nominal;
+      transition Nominal -> Isolated;
+      transition Isolated -> Quarantined;
+      transition admissionFails first Nominal accept peerVerdict then Quarantined;
+      transition readmissionPasses first Quarantined accept readmitVerdict then Readmitted;
+      transition Readmitted -> Nominal;
+    }
+  }`;
+
+  it('livelock-two: the interpreter on [go, e] ends in c, so c is reachable and ac fires', async () => {
+    const { model, machineId, id } = await load(LIVE_TWO);
+    const run = runStateMachine(model, machineId, ['go', 'e']);
+    expect(run.finalState).toBe(id('c'));
+    expect(run.completionBudgetHit).toBe(true);
+
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead).toEqual([]);
+    expect(m.states.reachable.map((s) => s.name)).toContain('c');
+  });
+
+  it('longchain: the chase from c1 stops at c65 where `e` leaves, so z is reachable and esc is not dead', async () => {
+    // `jump` lands in c30, so the first walk to c65 is a short one — and the
+    // chase a run takes from c1 is hidden behind it unless the position is
+    // part of the configuration.
+    const { model, machineId, id } = await load(longChain());
+    expect(runStateMachine(model, machineId, ['go', 'e']).finalState).toBe(id('z'));
+
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.reachable.map((s) => s.name)).toContain('z');
+    expect(m.states.unreachable).toEqual([]);
+    expect(m.transitions.dead.map((t) => t.name)).not.toContain('esc');
+  });
+
+  it('chain65: no run gets past c65, so c66 … c70 are unreachable — and the interpreter agrees', async () => {
+    const { model, machineId, id } = await load(chain65());
+    for (const events of [[], ['go'], ['go', 'go'], ['go', 'go', 'go']]) {
+      const run = runStateMachine(model, machineId, events);
+      expect(run.visited.includes(id('c66')), events.join(',')).toBe(false);
+    }
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.states.unreachable.map((s) => s.name)).toEqual(['c66', 'c67', 'c68', 'c69', 'c70']);
+    // `t65` (c65 -> c66) is enabled at the stop, so it is not dead; the four after it are.
+    expect(m.transitions.dead.map((t) => t.name)).toEqual(['t66', 't67', 't68', 't69']);
+  });
+
+  it('the v9 SwarmMemberModes shape: admissionFails fires — the run that takes it is the interpreter’s', async () => {
+    const { model, machineId, id } = await load(SWARM_MODES);
+    const run = runStateMachine(model, machineId, ['peerVerdict']);
+    expect(run.fired.map((f) => f.transitionId)).toContain(id('admissionFails'));
+    expect(run.finalState).toBe(id('Quarantined'));
+
+    const m = reachReport(model).machines[0];
+    expect(m.exhaustive).toBe(true);
+    expect(m.transitions.dead.map((t) => t.name)).not.toContain('admissionFails');
+    expect(m.transitions.dead).toEqual([]);
+  });
+
+  it('a machine where the budget stops no chase is walked exactly as before, configuration for configuration', async () => {
+    // No position is carried where it could not decide anything — the figures
+    // every such machine printed before are the figures it prints now.
+    const { model, machineId } = await load(`package Plain {
+      state def M {
+        state idle; state run; state stop;
+        transition go first idle accept go then run;
+        transition rs first run then stop;
+        transition back first stop accept reset then idle;
+      }
+    }`);
+    const walk = exploreMachine(model, machineId);
+    expect(walk.chaseKeyed).toBe(false);
+    expect(walk.chaseStops).toBe(0);
+    expect(walk.configs).toBe(3);
+  });
+
+  it('a trigger-less cycle stays the walk it was, and names where the budget stops its one chase', async () => {
+    // FlightModes in `examples/uav-isr.sysml` is this shape. With no event to
+    // take where a chase stops, the stop reaches nothing the uncut walk did
+    // not, so the position is not carried and the figures stand — and the gate
+    // does not fail on it. But a run ENDS there: `a → b → c → b …` is stopped
+    // after 64 steps in `c` (an odd-numbered step is `b`, an even one `c`), and
+    // the walk says so for the two claims read over where a run ends.
+    const cyc = await load(`package Cyc {
+      state def M {
+        state a; state b; state c;
+        transition ab first a then b;
+        transition bc first b then c;
+        transition cb first c then b;
+      }
+    }`);
+    const walk = exploreMachine(cyc.model, cyc.machineId);
+    expect(walk.chaseKeyed).toBe(false);
+    expect(walk.chaseStops).toBe(0);
+    expect(walk.configs).toBe(3);
+    expect(walk.exhaustive).toBe(true);
+    expect(walk.budgetStops.map((i) => cyc.model.get(walk.configLeaves[i]!)?.declaredName)).toEqual(['c']);
+    expect(walkIsExact(walk, walk.bounds).walkIsExact).toBe(true);
+    // The interpreter agrees about where it rests.
+    expect(cyc.model.get(runStateMachine(cyc.model, cyc.machineId, []).finalState!)?.declaredName).toBe('c');
+    // A machine whose chases all settle names none.
+    expect(exploreMachine(completionChain(10).model, completionChain(10).machineId).budgetStops).toEqual([]);
+  });
+
+  it('a stopped chase is not a deadlock, and the exactness gate names the budget where nothing else fails', () => {
+    // A trigger-less chain longer than the budget: the run stops at s64 with
+    // `s64 -> s65` due. Not a deadlock — a transition is enabled there — and
+    // not an inescapable set either: the walk says why it will not say.
+    const { model } = completionChain(70);
+    const m = reachReport(model).machines[0];
+    expect(m.deadlocks).toEqual([]);
+    expect(m.exactness.walkIsExact).toBe(false);
+    expect(m.exactness.failedClause).toBe('budget');
+    expect(m.trapCensus.refusedByGate).toBe('budget');
+    expect(m.traps).toEqual([]);
+    const lines = textOf(reachMachineLines(m, 1));
+    expect(lines).toContain(TRAP_REFUSAL_SENTENCE.budget);
+  });
+});
+
+/**
+ * THE COMPLETION LIVELOCK (U1; plan O1 S4; `docs/06` §8.8). A reachable cycle
+ * the interpreter's completion chase goes round without coming to rest, decided
+ * over CONFIGURATIONS and over the chase the interpreter runs — the first
+ * enabled trigger-less transition at the innermost level, by declaration order —
+ * withheld where a step of it is not decided, and checked on every probe against
+ * the interpreter itself: it spends its chase budget there, and an event is what
+ * moves it on. Review B's four probes (`livelock-self`, `livelock-two`,
+ * `undet-completion`, `nested-completion`) are inline, without their properties.
+ */
+describe('a completion livelock: a cycle the interpreter’s chase goes round without coming to rest', () => {
+  async function load(text: string): Promise<{ model: Model; machineId: ElementId; id: (n: string) => ElementId }> {
+    const model = (await loadModelText(text, { fileName: 'livelock.sysml', library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const id = (n: string) => model.all().find((e) => e.declaredName === n)!.id;
+    return { model, machineId, id };
+  }
+  const names = (refs: readonly { name: string }[]) => refs.map((r) => r.name);
+  const livelockCodes = (r: ReturnType<typeof reachReport>) =>
+    r.diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_CODE);
+
+  const LIVE_SELF = `package LiveSelf { state def M {
+    state a; state b;
+    transition spin first a then a;
+    transition leave first a accept e then b;
+  } }`;
+  const LIVE_TWO = `package LiveTwo { state def M {
+    state s0; state a; state b; state c;
+    transition go first s0 accept go then a;
+    transition ab first a then b;
+    transition ba first b then a;
+    transition ac first a accept e then c;
+  } }`;
+  const UNDET_COMPLETION = `package UndetCompletion { part def P {
+    attribute x : Integer;
+    state def M {
+      state a; state b; state c;
+      transition ab first a if x > 0 then b;
+      transition ac first a accept e then c;
+    }
+  } }`;
+  const NESTED_COMPLETION = `package NestedCompletion { state def M {
+    state s0;
+    state comp { state i1; state i2; transition i12 first i1 then i2; }
+    state z;
+    transition s0c first s0 accept go then comp;
+    transition cz first comp accept e then z;
+  } }`;
+  /** v9's `PA::SwarmMember::SwarmMemberModes`, transition for transition. */
+  const PA_SWARM_MODES = `package Modes { state def SwarmMemberModes {
+    initial start;
+    state Nominal; state NavigationDegraded; state SensingDegraded; state Isolated; state Quarantined; state Readmitted;
+    transition start -> Nominal;
+    transition Nominal -> NavigationDegraded;
+    transition NavigationDegraded -> Nominal;
+    transition Nominal -> SensingDegraded;
+    transition SensingDegraded -> Nominal;
+    transition Nominal -> Isolated;
+    transition NavigationDegraded -> Isolated;
+    transition SensingDegraded -> Isolated;
+    transition admissionFails first Nominal accept peerVerdict then Quarantined;
+    transition readmissionPasses first Quarantined accept readmitVerdict then Readmitted;
+    transition Isolated -> Readmitted;
+    transition Isolated -> Quarantined;
+    transition Readmitted -> Nominal;
+  } }`;
+
+  it('livelock-self: the self-loop is the cycle, the interpreter spends its whole budget on it, and the row says so once', async () => {
+    const { model, machineId, id } = await load(LIVE_SELF);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.finalState).toBe(id('a'));
+
+    const r = reachReport(model);
+    const m = r.machines[0];
+    expect(m.livelocks).toHaveLength(1);
+    const [l] = m.livelocks;
+    expect(names(l.states)).toEqual(['a']);
+    expect(l.configs).toBe(1);
+    expect(names(l.transitions)).toEqual(['spin']);
+    expect(l.choices).toEqual([]);
+    expect(names(l.entry)).toEqual(['a']);
+    expect(l.steps).toBe(0);
+    expect(m.livelocksWithheld).toEqual([]);
+    expect(r.totals.livelocks).toBe(1);
+    const found = livelockCodes(r);
+    expect(found).toHaveLength(1);
+    expect(found[0].severity).toBe('warning');
+    expect(found[0].elementId).toBe(id('a'));
+    expect(found[0].message).toContain('completion livelock — the interpreter\'s chase goes round {a} without coming to rest');
+    expect(found[0].message).toContain('64-step chase budget');
+    // The line, with the code and the element the page selects on.
+    const lines = reachMachineLines(m, 1).filter((ln) => ln.kind === 'livelock');
+    expect(lines.map((ln) => [ln.text, ln.code, ln.elementId, ln.withholds])).toEqual([
+      [
+        '    livelock     {a} — the chase goes round 1 configuration(s) on trigger-less transitions and moves on only on an event; entered in 0 step(s) from a',
+        COMPLETION_LIVELOCK_CODE,
+        id('a'),
+        false,
+      ],
+    ]);
+    // Only an event moves it on: `e` leaves.
+    expect(runStateMachine(model, machineId, ['e']).finalState).toBe(id('b'));
+  });
+
+  it('livelock-two: the cycle `a ⇄ b`, entered in one step on `go` — the exit on `e` does not end it, since it takes an event', async () => {
+    const { model, machineId, id } = await load(LIVE_TWO);
+    const run = runStateMachine(model, machineId, ['go']);
+    expect(run.completionBudgetHit).toBe(true);
+    expect([id('a'), id('b')]).toContain(run.finalState);
+    expect(runStateMachine(model, machineId, ['go', 'e']).finalState).toBe(id('c'));
+
+    const m = reachReport(model).machines[0];
+    expect(m.livelocks.map((l) => [names(l.states), names(l.transitions), names(l.entry), l.steps, l.entryBy, l.cycles])).toEqual([
+      [['a', 'b'], ['ab', 'ba'], ['s0', 'a'], 1, 'simulator', 1],
+    ]);
+    expect(m.livelocksWithheld).toEqual([]);
+  });
+
+  it('undet-completion: no cycle at all — a guard nothing decided leaves no livelock row and no withheld line', async () => {
+    const { model, machineId } = await load(UNDET_COMPLETION);
+    expect(runStateMachine(model, machineId, ['e']).completionBudgetHit).toBe(false);
+    const r = reachReport(model);
+    expect(r.machines[0].undeterminedGuards).toHaveLength(1);
+    expect(r.machines[0].livelocks).toEqual([]);
+    expect(r.machines[0].livelocksWithheld).toEqual([]);
+    expect(livelockCodes(r)).toEqual([]);
+  });
+
+  it('nested-completion: a chase that rests inside a composite is no cycle', async () => {
+    const { model, machineId } = await load(NESTED_COMPLETION);
+    expect(runStateMachine(model, machineId, ['go']).completionBudgetHit).toBe(false);
+    const r = reachReport(model);
+    expect(r.machines[0].livelocks).toEqual([]);
+    expect(r.machines[0].livelocksWithheld).toEqual([]);
+    expect(livelockCodes(r)).toEqual([]);
+  });
+
+  it('v9’s PA SwarmMemberModes: the chase goes round `Nominal ⇄ NavigationDegraded` though another branch leaves, and the row names where', async () => {
+    // The shape a bottom-component reading misses: `Nominal -> Isolated ->
+    // Quarantined` is a trigger-less way out to a state that rests, so the
+    // relation's component is not inescapable — and the interpreter still
+    // goes round on every run, because declaration order keeps it there.
+    const { model, machineId, id } = await load(PA_SWARM_MODES);
+    const run = runStateMachine(model, machineId, []);
+    expect(run.completionBudgetHit).toBe(true);
+    expect([id('Nominal'), id('NavigationDegraded')]).toContain(run.finalState);
+    // A run that takes the other branch leaves and comes to rest.
+    const toIsolated = model.all().find((e) => e.eClass === 'TransitionUsage' && e.source?.[0] === id('Nominal') && e.target?.[0] === id('Isolated'))!;
+    const toQuarantined = model.all().find((e) => e.eClass === 'TransitionUsage' && e.source?.[0] === id('Isolated') && e.target?.[0] === id('Quarantined'))!;
+    const other = runStateMachine(model, machineId, [], { follow: [toIsolated.id, toQuarantined.id] });
+    expect(other.completionBudgetHit).toBe(false);
+    expect(other.finalState).toBe(id('Quarantined'));
+
+    const r = reachReport(model);
+    const m = r.machines[0];
+    expect(m.livelocks.map((l) => [names(l.states), names(l.choices), l.steps])).toEqual([
+      [['Nominal', 'NavigationDegraded'], ['Nominal', 'NavigationDegraded'], 0],
+    ]);
+    const [finding] = livelockCodes(r);
+    expect(finding.message).toContain(
+      'At `Modes::SwarmMemberModes::Nominal`, `Modes::SwarmMemberModes::NavigationDegraded` another trigger-less transition is enabled beside the one the chase fires, and the simulator never takes it: declaration order decides there, and keeps the chase on the cycle.',
+    );
+    // The choice rows it refers to are beside it.
+    expect(m.nondeterminism.map((n) => n.state.name)).toEqual(expect.arrayContaining(['Nominal', 'NavigationDegraded']));
+    // And the way in is the simulator's own run — the opening — so the row is
+    // not hedged although the machine has a choice: the hedge is per row, read
+    // off this row's way in, never off the machine's choice rows.
+    expect(m.livelocks[0].entryBy).toBe('simulator');
+    expect(m.livelocks[0].branchAt).toBeNull();
+    expect(finding.message).not.toContain('The way in is a run of the walk');
+  });
+
+  it('a guard the walk can show leaves the loop: the chase leaves on its own, so the state-level cycle is no livelock', () => {
+    // `a -> b` counts, `b -> a` while `n < 3`, `b -> c` once `n >= 3`: the
+    // states cycle, the configurations do not, and the interpreter rests in c.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Count');
+    f.attribute('n', sm.id, { type: 'Integer', value: 0 });
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    const c = f.state('c', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id, effect: 'n = n + 1' });
+    f.transition(b.id, a.id, { ownerId: sm.id, guard: 'n < 3' });
+    f.transition(b.id, c.id, { ownerId: sm.id, guard: 'n >= 3' });
+    const run = runStateMachine(m, sm.id, []);
+    expect(run.completionBudgetHit).toBe(false);
+    expect(run.finalState).toBe(c.id);
+    const r = reachReport(m);
+    expect(r.machines[0].undeterminedGuards).toEqual([]);
+    expect(r.machines[0].livelocks).toEqual([]);
+    expect(r.machines[0].livelocksWithheld).toEqual([]);
+    // The same states without the counter do go round, and are reported.
+    const g = new Model();
+    const h = new ModelFactory(g);
+    const sm2 = h.stateDef('Loop');
+    const a2 = h.state('a', sm2.id);
+    const b2 = h.state('b', sm2.id);
+    h.transition(a2.id, b2.id, { ownerId: sm2.id });
+    h.transition(b2.id, a2.id, { ownerId: sm2.id });
+    expect(reachReport(g).machines[0].livelocks.map((l) => names(l.states))).toEqual([['a', 'b']]);
+  });
+
+  it('a guard nothing decided on a trigger-less way out of the cycle withholds the row, with a withheld line in its place', async () => {
+    const { model } = await load(`package UndetLoop { part def P {
+      attribute x : Integer;
+      state def M {
+        state a; state b; state c;
+        transition ab first a then b;
+        transition bc first b if x > 0 then c;
+        transition ba first b then a;
+      }
+    } }`);
+    const r = reachReport(model);
+    const m = r.machines[0];
+    expect(m.livelocks).toEqual([]);
+    expect(m.livelocksWithheld.map((l) => [names(l.states), l.clause])).toEqual([[['a', 'b'], 'store']]);
+    expect(livelockCodes(r)).toEqual([]);
+    expect(r.diagnostics.map((d) => d.code)).toContain(GUARD_UNDETERMINED_CODE);
+    const withheld = reachMachineLines(m, 1).filter((ln) => ln.kind === 'withheld');
+    expect(withheld.map((ln) => [ln.text, ln.withholds, ln.code])).toEqual([
+      [`    withheld     {a, b} — ${livelockWithheldSentence('store')}`, true, null],
+    ]);
+  });
+
+  it('a dwell as the chase’s step withholds it on the time clause — the interpreter may wait there', () => {
+    // A numeric `attrs.after` arrives through the API only (`accept after(n)`
+    // does not parse), and the walk takes it as a completion step.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Dwell');
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(a.id, b.id, { ownerId: sm.id });
+    m.create('TransitionUsage', { ownerId: sm.id, attrs: { after: 5 }, source: [b.id], target: [a.id] });
+    const row = reachReport(m).machines[0];
+    expect(row.livelocks).toEqual([]);
+    expect(row.livelocksWithheld.map((l) => [names(l.states), l.clause])).toEqual([[['a', 'b'], 'time']]);
+  });
+
+  it('a bound elsewhere takes nothing from it, and a cycle a bound cut through is not found at all', async () => {
+    // Every step the row stands on is one the walk took: livelock-self under a
+    // configuration bound of 2 still holds `a`'s step, and publishes the row
+    // the whole walk does — on a walk that says it is partial.
+    const self = await load(LIVE_SELF);
+    const whole = reachReport(self.model).machines[0];
+    const cut = reachReport(self.model, { maxConfigs: 2 }).machines[0];
+    expect(cut.boundHit).toBe('configs');
+    expect(cut.livelocks.map((l) => names(l.states))).toEqual(whole.livelocks.map((l) => names(l.states)));
+    // livelock-two under the same bound never takes `a -> b`, so no cycle is
+    // seen whole, and nothing — not even a withheld line — is said about one.
+    const two = await load(LIVE_TWO);
+    const short = reachReport(two.model, { maxConfigs: 2 }).machines[0];
+    expect(short.boundHit).toBe('configs');
+    expect(short.livelocks).toEqual([]);
+    expect(short.livelocksWithheld).toEqual([]);
+  });
+
+  it('a cycle the chase cannot go all the way round inside its budget is no reachable cycle, and is not reported', async () => {
+    // `go` starts a 60-step chain into a ten-state cycle: the chase stops at
+    // the cycle's fifth state, the interpreter never enters the other five,
+    // and `reach` says they are unreachable — so the reachable part is a path.
+    const states = ['s0', ...Array.from({ length: 60 }, (_, i) => `c${i + 1}`), ...Array.from({ length: 10 }, (_, i) => `m${i}`)];
+    const lines = states.map((s) => `state ${s};`);
+    lines.push('transition go first s0 accept go then c1;');
+    for (let i = 1; i < 60; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+    lines.push('transition c60 -> m0;');
+    for (let i = 0; i < 10; i++) lines.push(`transition m${i} -> m${(i + 1) % 10};`);
+    const { model, machineId, id } = await load(`package Late { state def M { ${lines.join(' ')} } }`);
+    const run = runStateMachine(model, machineId, ['go']);
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.finalState).toBe(id('m4'));
+    const m = reachReport(model).machines[0];
+    expect(names(m.states.unreachable)).toEqual(['m5', 'm6', 'm7', 'm8', 'm9']);
+    expect(m.livelocks).toEqual([]);
+    expect(m.livelocksWithheld).toEqual([]);
+  });
+
+  it('a way in through a branch the simulator never takes is hedged on the row, though the walk withheld the choice row', async () => {
+    // Review S5's must-fix probe. `comp` holds `i1`, whose self-loop is guarded
+    // over an unvalued `x`; out of `comp`, `c1` to `good` is declared before
+    // `c2` into `a ⇄ b`. The undecided guard sits strictly inside the level the
+    // choice is at, so the walk withholds the choice row — and still takes
+    // both branches. The interpreter on its own store takes `c1` every time.
+    const { model, machineId, id } = await load(`package WI { part def P {
+      attribute x : Integer;
+      state def M {
+        state s0;
+        state comp { state i1; transition i1self first i1 if x > 0 then i1; }
+        state good; state a; state b;
+        transition go first s0 accept go then comp;
+        transition c1 first comp then good;
+        transition c2 first comp then a;
+        transition ab first a then b;
+        transition ba first b then a;
+        transition gs first good accept e then s0;
+      }
+    } }`);
+    for (const events of [['go'], ['go', 'e', 'go']]) {
+      const run = runStateMachine(model, machineId, events);
+      expect(run.finalState, events.join(',')).toBe(id('good'));
+      expect(run.visited).not.toContain(id('a'));
+    }
+    const r = reachReport(model);
+    const m = r.machines[0];
+    expect(m.nondeterminism).toEqual([]);
+    expect(m.livelocks.map((l) => [names(l.states), names(l.entry), l.entryBy, l.branchAt?.name ?? null])).toEqual([
+      [['a', 'b'], ['s0', 'i1', 'a'], 'walk', 'i1'],
+    ]);
+    const [finding] = livelockCodes(r);
+    expect(finding.message).toContain(
+      'The way in is a run of the walk, not one `simulate` makes: at `WI::P::M::comp::i1` it takes a step the simulator does not take there, and the walk holds no run the simulator makes that goes round the cycle, so `simulate` may never enter it.',
+    );
+    expect(reachMachineLines(m, 1).filter((ln) => ln.kind === 'livelock').map((ln) => ln.text)).toEqual([
+      '    livelock     {a, b} — the chase goes round 2 configuration(s) on trigger-less transitions and moves on only on an event; entered in 2 step(s) from s0, on a run of the walk, not of the simulator',
+    ]);
+  });
+
+  it('one row for one cycle of states, however many stores the walk met it under — and its finding says how many', () => {
+    // Review S5's duplicate probe: `tick` counts `n` up to 5 before `go`
+    // starts the `a ⇄ b` chase, so the walk meets the same cycle of states
+    // under six stores — six cycles of configurations, one row, one warning.
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Retry');
+    f.attribute('n', sm.id, { type: 'Integer', value: 0 });
+    const idle = f.state('idle', sm.id);
+    const a = f.state('a', sm.id);
+    const b = f.state('b', sm.id);
+    f.transition(idle.id, idle.id, { ownerId: sm.id, trigger: 'tick', guard: 'n < 5', effect: 'n = n + 1' });
+    f.transition(idle.id, a.id, { ownerId: sm.id, trigger: 'go' });
+    f.transition(a.id, b.id, { ownerId: sm.id });
+    f.transition(b.id, a.id, { ownerId: sm.id });
+    f.transition(a.id, idle.id, { ownerId: sm.id, trigger: 'stop' });
+    for (let k = 0; k <= 5; k++) {
+      expect(runStateMachine(m, sm.id, [...Array<string>(k).fill('tick'), 'go']).completionBudgetHit).toBe(true);
+    }
+    const r = reachReport(m);
+    const row = r.machines[0];
+    expect(row.livelocks.map((l) => [names(l.states), l.cycles, l.steps, l.entryBy])).toEqual([[['a', 'b'], 6, 1, 'simulator']]);
+    expect(r.totals.livelocks).toBe(1);
+    const found = livelockCodes(r);
+    expect(found).toHaveLength(1);
+    expect(found[0].message).toContain(
+      'The same states are gone round in 6 cycles of configurations, which differ only in the store or history they carry; this one row stands for all of them.',
+    );
+    expect(reachMachineLines(row, 1).filter((ln) => ln.kind === 'livelock').map((ln) => ln.text)).toEqual([
+      '    livelock     {a, b} — the chase goes round 2 configuration(s) on trigger-less transitions and moves on only on an event; entered in 1 step(s) from idle; one row for 6 cycles of configurations over these states',
+    ]);
+    // And `check-behaviour` files the one row too.
+    expect(behaviourReport(m, { machineId: sm.id }).diagnostics.filter((d) => d.code === COMPLETION_LIVELOCK_CODE)).toHaveLength(1);
+  });
+
+  it('a chain that reaches a back-edge on the budget’s last step is no livelock — one state shorter, it is', async () => {
+    // Review S5's edge chains, no trigger anywhere: `c0 → … → c(n+1)` and a
+    // back-edge `c(n+1) → cn`. At n = 62 the chase fires its 64th step into
+    // c63 ⇄ c62's second state and comes back once, so it goes round; at n = 63
+    // its 64th step lands on c64 and the back-edge out of it is a step the
+    // interpreter never fires — the walk without the chase position used to
+    // record it and close a cycle no run goes round.
+    const chain = async (n: number) => {
+      const lines: string[] = [];
+      for (let i = 0; i <= n + 1; i++) lines.push(`state c${i};`);
+      for (let i = 0; i <= n; i++) lines.push(`transition t${i} first c${i} then c${i + 1};`);
+      lines.push(`transition back first c${n + 1} then c${n};`);
+      return load(`package Edge${n} { state def M { ${lines.join(' ')} } }`);
+    };
+    const short = await chain(62);
+    const goesRound = runStateMachine(short.model, short.machineId, []);
+    expect(goesRound.fired.map((f) => f.transitionId)).toContain(short.id('back'));
+    expect(reachReport(short.model).machines[0].livelocks.map((l) => [names(l.states), l.steps, l.entryBy])).toEqual([
+      [['c62', 'c63'], 62, 'simulator'],
+    ]);
+    for (const n of [63, 64]) {
+      const long = await chain(n);
+      const run = runStateMachine(long.model, long.machineId, []);
+      expect(run.completionBudgetHit, `${n}`).toBe(true);
+      expect(run.fired.map((f) => f.transitionId), `${n}`).not.toContain(long.id('back'));
+      const m = reachReport(long.model).machines[0];
+      expect(m.livelocks, `${n}`).toEqual([]);
+      expect(m.livelocksWithheld, `${n}`).toEqual([]);
+    }
+  }, 60_000);
+
+  it('the hedge is per row: on the trap probe one cycle is the simulator’s and the other is entered only by a branch it never takes', async () => {
+    // No trigger is named, so the one run is the chase from `standby`, which
+    // takes `beta -> alpha` every time: it goes round `alpha ⇄ beta` and never
+    // enters `failsafe`. The second row says so, and names where its way in
+    // parts from the simulator's; the first says nothing of the kind.
+    const file = 'test/fixtures/verification/models/trap-probe.sysml';
+    const model = (await loadModelText(read(file), { fileName: file, library: 'none' })).model!;
+    const machineId = stateMachinesIn(model)[0].id;
+    const run = runStateMachine(model, machineId, []);
+    expect(run.visited.map((v) => model.get(v)!.declaredName)).not.toContain('failsafe');
+    const r = reachReport(model);
+    expect(r.machines[0].livelocks.map((l) => [names(l.states), l.entryBy, l.branchAt?.name ?? null])).toEqual([
+      [['alpha', 'beta'], 'simulator', null],
+      [['failsafe', 'failsafeHold'], 'walk', 'beta'],
+    ]);
+    const [first, second] = livelockCodes(r).map((d) => d.message);
+    expect(first).not.toContain('The way in is a run of the walk');
+    expect(second).toContain('at `TrapProbe::Probe::Modes::beta` it takes a step the simulator does not take there');
+    // A machine that names no trigger: the run ENDS where the budget stops it,
+    // and neither the finding nor the line says an event moves it on.
+    for (const message of [first, second]) {
+      expect(message).toContain('is spent and ends there: the machine names no trigger, so no event moves it on.');
+      expect(message).not.toContain('moves on only on an event');
+    }
+    expect(reachMachineLines(r.machines[0], 1).filter((ln) => ln.kind === 'livelock').map((ln) => ln.text)).toEqual([
+      '    livelock     {alpha, beta} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 1 step(s) from standby',
+      '    livelock     {failsafe, failsafeHold} — the chase goes round 2 configuration(s) on trigger-less transitions and the run ends where the budget stops it (no trigger is named); entered in 3 step(s) from standby, on a run of the walk, not of the simulator',
+    ]);
+  }, 60_000);
+
+  it('a choice whose other branch comes back round is named without saying it leaves', async () => {
+    // Review S5's h3: `a -> b` is declared before `a -> c`, and `c -> a` comes
+    // back — so taking the other branch leaves `{a, b}` only to come round
+    // again. The row names `a` as where declaration order decides, and says
+    // nothing about leaving.
+    const { model } = await load(`package H3 { state def M {
+      state s0; state a; state b; state c;
+      transition go first s0 accept go then a;
+      transition ab first a then b;
+      transition ac first a then c;
+      transition ba first b then a;
+      transition ca first c then a;
+      transition stop first a accept e then s0;
+    } }`);
+    const r = reachReport(model);
+    expect(r.machines[0].livelocks.map((l) => [names(l.states), names(l.choices), l.entryBy])).toEqual([
+      [['a', 'b'], ['a'], 'simulator'],
+    ]);
+    const [finding] = livelockCodes(r);
+    expect(finding.message).toContain('At `H3::M::a` another trigger-less transition is enabled beside the one the chase fires');
+    expect(finding.message).not.toMatch(/could leave|leave by/);
+  });
+
+  it('two cycles are two rows, once each and in discovery order — the chase is a function, so they share no configuration', async () => {
+    const file = 'test/fixtures/verification/models/trap-probe.sysml';
+    const model = (await loadModelText(read(file), { fileName: file, library: 'none' })).model!;
+    const r = reachReport(model);
+    expect(r.machines[0].livelocks.map((l) => [names(l.states), l.steps])).toEqual([
+      [['alpha', 'beta'], 1],
+      [['failsafe', 'failsafeHold'], 3],
+    ]);
+    expect(livelockCodes(r)).toHaveLength(2);
+    expect(r.totals.livelocks).toBe(2);
+    // And through the command, text and `--json`, in the same words.
+    const text = await reachCli(['reach', file, '--no-library']);
+    expect(text.stdout).toContain('    livelock     {alpha, beta} — the chase goes round 2 configuration(s)');
+    expect(text.stdout).toContain('  verification/completion-livelock  `TrapProbe::Probe::Modes`: completion livelock');
+    const json = JSON.parse((await reachCli(['reach', file, '--no-library', '--json'])).stdout) as {
+      reach: { machines: Array<{ livelocks: Array<{ states: { name: string }[] }> }>; totals: { livelocks: number } };
+    };
+    expect(json.reach.machines[0].livelocks.map((l) => names(l.states))).toEqual([
+      ['alpha', 'beta'],
+      ['failsafe', 'failsafeHold'],
+    ]);
+    expect(json.reach.totals.livelocks).toBe(2);
+  }, 60_000);
 });
 
 /* ─────────── an edge kind the walk skips is not an edge it may ignore ────── */
@@ -1807,9 +3055,15 @@ describe('what a line says about itself', () => {
           unreachable: m.states.unreachable.map((s): [string, string] => [s.id, UNREACHABLE_STATE_CODE]),
           dead: m.transitions.dead.map((t): [string, string] => [t.id, DEAD_TRANSITION_CODE]),
           'no-way-out': m.deadlocks.map((d): [string, string] => [d.leaf.id, DEADLOCK_CODE]),
-          withheld: m.deadlocksWithheld.map((d): [string, null] => [d.leaf.id, null]),
+          // A withheld no-way-out row names its leaf; a withheld livelock, the
+          // first state of its cycle — in the order the block prints them.
+          withheld: [
+            ...m.deadlocksWithheld.map((d): [string, null] => [d.leaf.id, null]),
+            ...m.livelocksWithheld.map((l): [string, null] => [l.states[0].id, null]),
+          ],
           trap: m.traps.map((t): [string, string] => [t.entry[0].id, UNRECOVERABLE_MODE_CODE]),
           'trap-refused': gate ? [[id, null]] : [],
+          livelock: m.livelocks.map((l): [string, string] => [l.states[0].id, COMPLETION_LIVELOCK_CODE]),
           choice: m.nondeterminism.map((n): [string, string] => [n.state.id, NONDETERMINISTIC_CHOICE_CODE]),
           suppressed: m.suppressed ? [[id, null]] : [],
         };
@@ -1840,6 +3094,7 @@ describe('what a line says about itself', () => {
         'counts',
         'dead',
         'figures',
+        'livelock',
         'machine',
         'no-way-out',
         'suppressed',

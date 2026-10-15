@@ -846,6 +846,8 @@ const MISSION_FAIL = `package MissionDag { part def Mission { state def Modes { 
 const MISSION_RESP =
   'package MissionDag { part def Mission { state def Modes { @SysproseVerification::PropertyPattern { attribute pattern = "response"; attribute scope = "globally"; attribute p = "state takeoff"; attribute s = "state landed"; } state takeoff; state cruise; state landed; transition takeoff then cruise; transition cruise then landed; } } }';
 const A15_COVER = `package P { state def M { ${carrier('cover', 'state c')} state a; state b; state c; transition a_b first a then b; transition a_c first a accept e then c; transition b_a first b accept back then a; } }`;
+/** Review B's `nest6-prop`: a `state def` written inside the machine that carries the property. */
+const NEST6 = `package Nest6 { state def Outer { ${carrier('absence', 'state b')} state a; state b; transition ab first a accept e then b; state def Inner { state x; state y; transition xy first x accept go then y; } } }`;
 
 test('the reach report is the terminal lines, machine by machine (latch)', async ({ page }) => {
   const errors = captureErrors(page);
@@ -912,6 +914,35 @@ test('a15 cover reads not-covered, with no witness and no walk-only note (a15)',
   await expect(block.locator('.checks-witness-step')).toHaveCount(0);
   await expect(block).not.toContainText('walk only');
   await expect(page.getByTestId('checks-report-note')).toHaveCount(0);
+  expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
+});
+
+test('a pick row for a machine that holds a nested state def selects it, and the next Run checks it (nest6)', async ({ page }) => {
+  const errors = captureErrors(page);
+  await gotoApp(page);
+  await loadText(page, NEST6);
+  await page.getByTestId('tb-view-state').click();
+  await selectByQualifiedName(page, 'Nest6');
+  const run = page
+    .locator('[data-testid="palette-check"][data-check="check-behaviour"]')
+    .getByTestId('palette-check-run');
+  await run.click();
+  // The package holds two machines — `Outer` and the `state def` written in
+  // it — so the run is refused with a pick row for each.
+  const result = page.locator('[data-testid="checks-result"][data-check="check-behaviour"]');
+  await expect(result).toHaveAttribute('data-verdict', 'not-run');
+  const picks = result.locator('[data-testid="checks-row"][data-code="checks/pick-machine"]');
+  await expect(picks).toHaveCount(2);
+  await expect(picks.first()).toContainText('Nest6::Outer —');
+  // Following `Outer`'s row and running again checks `Outer`. It used to be
+  // refused as holding two machines, with `Outer`'s row offered again.
+  await picks.first().getByTestId('checks-row-select').click();
+  await run.click();
+  await expect(result).toHaveAttribute('data-verdict', 'issues', { timeout: 60_000 });
+  await expect(result.locator('[data-testid="checks-report"] [data-claim="fail"]')).toContainText(
+    '`state b` never holds',
+  );
+  await expect(result.locator('[data-testid="checks-row"][data-code="checks/pick-machine"]')).toHaveCount(0);
   expect(errors, `console/page errors:\n${errors.join('\n')}`).toEqual([]);
 });
 

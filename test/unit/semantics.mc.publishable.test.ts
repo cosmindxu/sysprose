@@ -37,13 +37,16 @@ import {
   reachReport,
   stateMachinesIn,
   walkableTransitions,
+  TRAP_REFUSAL_SENTENCE,
   type ExploreResult,
 } from '../../src/semantics/mc/explore';
 import { checkProperty, type PropertyText } from '../../src/semantics/mc/patterns';
 import { afterDuration } from '../../src/semantics/mc/config';
+import { runStateMachine } from '../../src/semantics/execute';
 import {
   ABSENCE_CLAIMS,
   BOUND_FAMILY,
+  CLAUSE_SENTENCE,
   DWELL_SENTENCE,
   environmentSentence,
   SIMULATOR_SENTENCE,
@@ -456,27 +459,138 @@ describe('not one published sentence moved', () => {
     // pin for the spelling, and the two other shapes pin what the function
     // does with the names it is given.
     expect(environmentSentence(['abort'])).toBe(
-      'the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it',
+      'the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes `abort` is a claim about that environment and not about one that withholds it',
     );
     expect(environmentSentence(['unlatch'])).toBe(
-      'the environment offered every trigger this machine names at every configuration, so a witness that consumes `unlatch` is a claim about that environment and not about one that withholds it',
+      'the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes `unlatch` is a claim about that environment and not about one that withholds it',
     );
     // Two triggers: each backticked, comma-joined, in the order given — the
     // caller's order, which is trace order for a witness and alphabet order for
     // a report — and never sorted or deduplicated here.
     expect(environmentSentence(['go', 'abort'])).toBe(
-      'the environment offered every trigger this machine names at every configuration, so a witness that consumes `go`, `abort` is a claim about that environment and not about one that withholds it',
+      'the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes `go`, `abort` is a claim about that environment and not about one that withholds it',
     );
     // No trigger is the F2 defect — a sentence about an environment the
     // machine does not name — and it is an error, not an empty sentence.
     expect(() => environmentSentence([])).toThrow(/named none/);
     expect(DWELL_SENTENCE).toBe(
-      'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take',
+      'this walk advances no clock: a transition carrying an `after(n)` dwell is offered without waiting out its dwell — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take',
     );
     expect(SIMULATOR_SENTENCE).toBe(
       "every claim above is about this MACHINE's semantics — the walk explores both branches of a nondeterministic choice; the simulator takes the first declared one, so a run this verdict quantifies over may be a run `simulate` never produces",
     );
   });
+
+  it('says WHERE the walk offers a trigger, and nothing says it offers one at every configuration (review B, M1)', () => {
+    // Since the walk obeys run-to-completion (H1) and follows the chase budget
+    // (O1), a trigger is offered only where the interpreter takes its next
+    // event: where no completion transition is due, or where the chase budget
+    // is spent with one still due. The sentences that describe the walk's
+    // environment said "at every configuration", and one of them is printed
+    // beside every witness that consumed a trigger — true before H1 and false
+    // since, at every configuration a completion transition is due at. The
+    // first half pins the two places, and the "can decide" the next case is
+    // about; the second keeps the old reading from coming back through any
+    // producer, any engine comment or any document.
+    const where = 'decide that the interpreter takes its next event';
+    expect(environmentSentence(['unlatch'])).toContain(
+      `wherever the walk could ${where} (no completion transition due, or the chase budget spent)`,
+    );
+    expect(CLAUSE_SENTENCE.environment).toContain(`wherever it can ${where}`);
+    expect(TRAP_REFUSAL_SENTENCE.environment).toContain(`wherever it can ${where}`);
+    // The latch file names `unlatch` and opens with a completion due
+    // (`nominal then locked`), so `unlatch` is offered at `locked` and not at
+    // the opening: the recovery refusal and the census both describe it.
+    const latch = loaded.find((l) => l.file.endsWith('/latch.sysml'))!;
+    const machine = stateMachinesIn(latch.model)[0];
+    const recovery = checkProperty(latch.model, machine.id, { ...prop('state nominal'), pattern: 'recovery' });
+    expect(recovery.detail).toContain(where);
+    const walked = exploreMachine(latch.model, machine.id)
+      .census.rows.filter((r) => r.account === 'walked')
+      .map((r) => r.reason);
+    expect(walked.length).toBeGreaterThan(0);
+    const printed = [
+      ...Object.values(CLAUSE_SENTENCE),
+      ...Object.values(TRAP_REFUSAL_SENTENCE),
+      environmentSentence(['unlatch']),
+      DWELL_SENTENCE,
+      SIMULATOR_SENTENCE,
+      recovery.detail,
+      ...walked,
+    ];
+    for (const s of printed) expect(s).not.toMatch(/at every configuration/i);
+    // Nor the reading the next case refutes: an offer wherever the interpreter
+    // takes its next event, with nothing saying where the walk could not tell.
+    for (const s of printed) expect(s).not.toMatch(/wherever the interpreter takes its next event/i);
+    // Read whitespace-normalised, so a sentence wrapped across comment lines
+    // is read whole; a verb of offering, then `at every configuration` within
+    // the same clause, is the old reading in any of its spellings.
+    const stale = /\b(?:offer|offers|offered|supplies|hands)\b[^.;:]{0,120}?\bat \*?every\*? configuration/i;
+    for (const file of [
+      'README.md',
+      'docs/USER-GUIDE.md',
+      'docs/CLI-REFERENCE.md',
+      'docs/CONFORMANCE.md',
+      'docs/DIAGNOSTIC-CODES.md',
+      'docs/AGENT-AUTHORING-CAMPAIGN.md',
+      'docs/05-model-checking-literature.md',
+      'docs/06-model-checking-implementation-plan.md',
+      'src/semantics/mc/explore.ts',
+      'src/semantics/mc/patterns.ts',
+      'src/semantics/mc/publishable.ts',
+      'src/text/langium/diagnostic-codes.ts',
+    ]) {
+      expect(stale.exec(read(file).replace(/\s+/g, ' '))?.[0], file).toBeUndefined();
+    }
+  });
+
+  it('where nothing is due but a completion guard it could not decide, the walk offers no trigger — so the sentences say "can decide" (review of O1 S4)', async () => {
+    // The review's `undet-env` probe. At `a` the only completion transition is
+    // guarded by `x > 0` over an `x` nothing values: the interpreter reads the
+    // guard as false and takes its next event, so `[go, e]` ends in `c`; the
+    // walk cannot tell whether a run chases there or takes an event, and offers
+    // no trigger. "Wherever the interpreter takes its next event" would claim
+    // an offer at `a` the walk never made. No verdict rests on it: the guard
+    // fails the store clause, every absence on the machine is withheld, and a
+    // witness that consumed a trigger is still a run the interpreter makes.
+    const text = `package UndetEnv {
+    part def P {
+        attribute x : Integer;
+        state def M {
+            state s0;
+            state a;
+            state b;
+            state c;
+            state z;
+            transition s0a first s0 accept go then a;
+            transition s0z first s0 accept h then z;
+            transition ab first a if x > 0 then b;
+            transition ac first a accept e then c;
+        }
+    }
+}`;
+    const { model } = await loadModelText(text, { fileName: 'undet-env.sysml' });
+    const m = stateMachinesIn(model!).find((el) => el.declaredName === 'M')!;
+    const named = (n: string): ElementId =>
+      model!.all().find((el) => model!.qualifiedName(el.id) === `UndetEnv::P::M::${n}`)!.id;
+    const walk = exploreMachine(model!, m.id);
+    expect(walk.exhaustive).toBe(true);
+    expect(walk.undeterminedGuards.map((g) => g.guard)).toEqual(['x > 0']);
+    const atA = walk.configLeaves.findIndex((leaf) => leaf === named('a'));
+    expect(atA).toBeGreaterThanOrEqual(0);
+    // THE FACT. Nothing leaves `a` in the walk — not `ac`, whose trigger is in
+    // the alphabet — and `c` is never reached by it.
+    expect(walk.successors[atA]).toEqual([]);
+    expect(walk.reachable.has(named('c'))).toBe(false);
+    // The interpreter takes `e` there.
+    expect(runStateMachine(model!, m.id, ['go', 'e']).finalState).toBe(named('c'));
+    // And no claim rests on the difference: the absence of `c` is withheld,
+    // never published as a pass, and the cover of `z` is a run that replays.
+    expect(checkProperty(model!, m.id, prop('state c')).claim).toBe('inconclusive');
+    const cover = checkProperty(model!, m.id, { ...prop('state z'), pattern: 'cover' });
+    expect(cover.claim).toBe('covered');
+    expect(cover.detail).toContain(environmentSentence(['h']));
+  }, 60_000);
 });
 
 /* ═══════════════════ reflection over the two registers ═══════════════════ */
@@ -502,7 +616,7 @@ const MECHANISMS: Array<{ note: RegExp; conjunct: RegExp }> = [
 const ALL_ROWS: readonly AbsenceClaim[] = [...ABSENCE_CLAIMS, ...WITNESS_CLAIMS];
 
 describe('the registers are data, and every column is asserted', () => {
-  it('registers sixteen absence claims and six positive witnesses', () => {
+  it('registers sixteen absence claims and seven positive witnesses', () => {
     expect(ABSENCE_CLAIMS.map((r) => r.id)).toEqual([
       'A0',
       'A1',
@@ -521,7 +635,9 @@ describe('the registers are data, and every column is asserted', () => {
       'A14',
       'A15',
     ]);
-    expect(WITNESS_CLAIMS.map((r) => r.id)).toEqual(['W1', 'W2', 'W3', 'W4', 'W5', 'W6']);
+    // W7 since U1 (plan O1 S4): the completion livelock, whose way in is a
+    // positive witness and whose cycle stands per step.
+    expect(WITNESS_CLAIMS.map((r) => r.id)).toEqual(['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7']);
     expect(new Set(ALL_ROWS.map((r) => r.id)).size).toBe(ALL_ROWS.length);
   });
 
@@ -608,7 +724,8 @@ describe('the registers are data, and every column is asserted', () => {
     // together and by one predicate" means when it is data rather than prose.
     // A7 joined it with `recovery` (§3.2b): one producer for both directions
     // of a branching-time claim, and no witness row beside it — a set is not
-    // a run.
+    // a run. W7 joined it with the completion livelock (U1), produced by
+    // `livelocksOf`, the one function both `reach` and `check-behaviour` read.
     expect(ALL_ROWS.filter((r) => r.producedBy !== null).map((r) => r.id)).toEqual([
       'A0',
       'A1',
@@ -624,6 +741,7 @@ describe('the registers are data, and every column is asserted', () => {
       'W1',
       'W2',
       'W3',
+      'W7',
     ]);
   });
 
@@ -638,7 +756,8 @@ describe('the registers are data, and every column is asserted', () => {
     // search runs on this path, and `searchComplete` has no value to read.
     const a7 = ABSENCE_CLAIMS.find((r) => r.id === 'A7')!;
     expect(a7.producedBy).toEqual({ file: 'src/semantics/mc/patterns.ts', symbol: 'recoveryRow' });
-    expect(a7.alsoRequires).toEqual([]);
+    // One conjunct, the chase budget's, and it reads the walk — never `found`.
+    expect(a7.alsoRequires).toEqual(['`recoverable` only where every configuration in `budgetStops` holds `p`']);
     const src = read(a7.producedBy!.file);
     const body = /function recoveryRow\([\s\S]*?\n}\n/.exec(src);
     expect(body, 'patterns.ts no longer declares recoveryRow').not.toBeNull();
@@ -808,7 +927,7 @@ describe('the registers are data, and every column is asserted', () => {
 
   it('every existential witness reads the relation half and names no bound', () => {
     const existential = WITNESS_CLAIMS.filter((w) => w.kind === 'existential');
-    expect(existential.map((w) => w.id)).toEqual(['W1', 'W2', 'W5', 'W6']);
+    expect(existential.map((w) => w.id)).toEqual(['W1', 'W2', 'W5', 'W6', 'W7']);
     for (const w of existential) {
       // A bound can HIDE a witness and can never INVENT one, so a witness row
       // that read the bound family would make a bounded `covered` and this
@@ -990,7 +1109,9 @@ describe('the exactness gate, clause by clause', () => {
   it('`alphabetOffered` is a real conjunct: a trigger the walk never offered withholds', () => {
     // THE ONE CONJUNCT NO MODEL IN THE TREE CAN FALSIFY. `bounds.alphabet` is
     // `[]` on all eleven corpus machines (plan §5(d)), and `exploreMachine`
-    // offers the whole alphabet at every configuration it dequeues, so the
+    // offers the whole alphabet wherever it can decide that the interpreter
+    // takes its next event, which every chase of a finished walk over decided
+    // guards reaches, so the
     // per-conjunct assertion in the byte-equality block reads `true === true`
     // on every input the file walks and the `!alphabetOffered` sentence branch
     // had no reader at all. This row is what makes the conjunct falsifiable:
@@ -1133,6 +1254,23 @@ describe('the exactness gate, clause by clause', () => {
     // An author whose machine names `abort` has something to do about it; the
     // dwell sentence would send them to the wrong carrier.
     expect(both.failedClause).toBe('environment');
+  });
+
+  it('names the chase budget LAST: only a walk no other clause refuses is told it', () => {
+    // A chase the interpreter's budget stops leaves a resting point the budget
+    // makes, where the machine states an edge (plan O1). It is a relation
+    // clause, and the four before it name something an author does in the
+    // model, so a walk that fails any of them is told that one instead.
+    const budget = walkIsExact({ ...base, chaseStops: 1 }, base.bounds);
+    expect(budget.walkIsExact).toBe(false);
+    expect(budget.seenWhole).toBe(true);
+    expect(budget.relationIsTheMachines).toBe(false);
+    expect(budget.failedClause).toBe('budget');
+    expect(budget.sentence).toBe(CLAUSE_SENTENCE.budget);
+    expect(walkIsExact({ ...base, chaseStops: 1 }, { alphabet: ['abort'] }).failedClause).toBe('environment');
+    expect(walkIsExact({ ...base, chaseStops: 1, undeterminedGuards: [{}] }, base.bounds).failedClause).toBe('store');
+    // Absent reads as none: a structural walk need not name it.
+    expect(walkIsExact(base, base.bounds).walkIsExact).toBe(true);
   });
 
   it('never reads `null` while the gate reads false', () => {
@@ -1393,7 +1531,8 @@ describe('each clause of the gate, on the one input that can fail it', () => {
     expect(row.exactness.failedClause).toBe('environment');
     // The walk is otherwise whole: it is the cooperative environment alone
     // that refuses, and `locked -> nominal` exists only because the walk hands
-    // the machine `unlatch` at every configuration.
+    // the machine `unlatch` wherever it can decide that the interpreter takes
+    // its next event.
     expect(row.exhaustive).toBe(true);
     expect(row.suppressed).toBe(false);
   }, 120_000);
@@ -1430,6 +1569,50 @@ describe('each clause of the gate, on the one input that can fail it', () => {
     expect(row.exactness.walkIsExact).not.toBe(true);
     expect(row.exactness.acyclic).toBeNull();
   });
+
+  /*
+   * A TRANSITION ACROSS A NESTED `state def`'S BOUNDARY (review B's
+   * `nest2-into`, O1 H1). Before the boundary refused it, `Outer`'s walk was
+   * exhaustive and named only the environment: it published `unreachable b`
+   * and a `no way out` at the inner state it walked into, and the inner
+   * machine's walk published `b` reached. The gate now fails on the refusal —
+   * on both edges, each machine refused on the one it holds and on the one
+   * written across from it — which comes before every relation clause, and the
+   * property row has no answer over either machine.
+   */
+  it('names `unsupported` on both machines of a transition across a nested `state def`, and decides no property over them', async () => {
+    const text = [
+      'package Nest2 {',
+      '    state def Outer {',
+      '        state a;',
+      '        state b;',
+      '        transition ax first a accept e then Inner::x;',
+      '        state def Inner {',
+      '            state x;',
+      '            state y;',
+      '            transition xy first x accept go then y;',
+      '            transition yb first y accept back then Outer::b;',
+      '        }',
+      '    }',
+      '}',
+      '',
+    ].join('\n');
+    const model = (await loadModelText(text, { fileName: 'nest2-into.sysml', library: 'none' })).model!;
+    for (const row of reachReport(model).machines) {
+      expect(row.exactness.walkIsExact, row.machine.qualifiedName).toBe(false);
+      expect(row.exactness.failedClause, row.machine.qualifiedName).toBe('unsupported');
+      expect(row.qualification, row.machine.qualifiedName).toBe(
+        'not explored — machine-boundary, machine-boundary; no figure below is a claim of absence',
+      );
+      const walk = exploreMachine(model, row.machine.id);
+      expect(publishabilityOf(walk).decreasingOk, row.machine.qualifiedName).toBe(false);
+      // An atom each machine holds, so the row reaches the walk rather than a refusal of the atom.
+      const own = row.machine.qualifiedName === 'Nest2::Outer' ? 'state b' : 'state y';
+      const verdict = checkProperty(model, row.machine.id, prop(own));
+      expect(verdict.claim, row.machine.qualifiedName).toBe('inconclusive');
+      expect(verdict.code, row.machine.qualifiedName).toBe('verification/behaviour-unsupported-construct');
+    }
+  }, 60_000);
 
   it('puts `environment` before `time` on a real machine carrying both, not only on a fabricated walk', () => {
     const { model } = triggerAndDwellMachine();

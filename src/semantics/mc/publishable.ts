@@ -55,9 +55,11 @@
  * {@link Exactness.seenWhole} is already false and no absence is published over
  * it. That is why this file carries no clause for it, and why a sixth edge kind
  * costs no register row: the census catches it without having been told what to
- * look for. The three clauses below are the other direction, and they are all of
+ * look for. The clauses below are the other direction, and they are all of
  * one kind — an edge that IS in the relation but whose AVAILABILITY at a
- * configuration the walk gets wrong.
+ * configuration the walk gets wrong. The fourth, the chase budget, joined the
+ * first three when the walk began to follow the budget the interpreter runs
+ * under (`./explore`, the note above `exploreMachine`).
  */
 
 import type { ElementId } from '@core/index';
@@ -100,10 +102,14 @@ export interface Publishability {
    * Every named trigger was actually offered.
    *
    * DEFENSIVE, and both shipped readers keep it for the same reason:
-   * `exploreMachine` offers the whole alphabet at every configuration it
-   * dequeues, so this holds by construction today and can only go false if that
-   * changes. A walk that started filtering the inputs it offers would silently
-   * narrow what "unreachable" means.
+   * `exploreMachine` offers the whole alphabet wherever it can decide that the
+   * interpreter takes its next event — where no completion transition is due,
+   * or where the chase budget is spent — and every chase a finished walk
+   * follows ends at such a place unless a completion guard there was left
+   * undecided, which `guardsDetermined` refuses on its own. So this holds
+   * wherever the other conjuncts do, and can only go false if that changes. A
+   * walk that started filtering the triggers it offers at those places would
+   * silently narrow what "unreachable" means.
    */
   readonly alphabetOffered: boolean;
   /** `walk.unsupported.length === 0` — no construct this engine refuses. */
@@ -210,7 +216,7 @@ export function publishabilityOf(
  * Exactly one is reported, in the order {@link walkIsExact} evaluates them, so
  * two machines that fail for two reasons never print the same sentence.
  */
-export type FailedClause = 'bound' | 'unsupported' | 'environment' | 'time' | 'store' | null;
+export type FailedClause = 'bound' | 'unsupported' | 'environment' | 'time' | 'store' | 'budget' | null;
 
 /**
  * What {@link walkIsExact} reads out of a walk.
@@ -246,6 +252,13 @@ export interface ExactnessWalk extends PublishabilityWalk {
    * every trigger is a dwell.
    */
   readonly timedLabels: ReadonlySet<string>;
+  /**
+   * Configurations where the interpreter's chase budget was spent with a
+   * completion transition still due, on a walk that carries the chase position
+   * (`ExploreResult.chaseStops`). Optional, and absent read as 0, so a
+   * structural walk a test builds need not name it.
+   */
+  readonly chaseStops?: number;
 }
 
 /**
@@ -274,19 +287,27 @@ export interface Exactness {
   readonly seenWhole: boolean;
   /**
    * THE PROPERTY: every edge the machine has was retained, and every edge
-   * retained is one the machine has. The three clauses below are how the second
+   * retained is one the machine has. The four clauses below are how the second
    * direction is checked — not what it means — and they are all of one kind, an
    * edge that IS in the relation but whose availability at a configuration the
    * walk gets wrong:
    *
-   *  • (b) no dwell — `timedTransitions` is empty. The walk offers the edge at
-   *    every configuration and advances no clock, so a run that takes it is a
-   *    run of no environment.
+   *  • (b) no dwell — `timedTransitions` is empty. The walk offers the edge
+   *    without waiting out its dwell and advances no clock, so a run that takes
+   *    it is a run of no environment.
    *  • (c) no named trigger — `bounds.alphabet` is empty. This engine has no
    *    carrier for *which triggers can the environment actually supply*, so the
    *    only alphabet it can be exact over is the empty one.
    *  • (d) no undecided guard — `undeterminedGuards` is empty, read as the
    *    shipped predicate and not as a narrower "no declared value".
+   *  • (e) no chase stopped by its budget — `chaseStops` is 0. Where the
+   *    interpreter's 64-step budget is spent with a completion transition
+   *    still due, the walk follows the interpreter and does not fire it: the
+   *    relation holds a resting point the BUDGET makes, and not the edge the
+   *    machine states there. (A machine that names no trigger keeps the
+   *    relation it states instead, and fails no clause for it: there the two
+   *    claims read over where a run ends check `budgetStops` themselves —
+   *    `./patterns`, `modalityOf` and `recoveryRow`.)
    */
   readonly relationIsTheMachines: boolean;
   /** Both halves. The name every register cell and verdict row reads. */
@@ -313,10 +334,12 @@ export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
   unsupported:
     'the walk did not run: a construct this engine does not explore was found, and an unexplored graph holds nothing',
   environment:
-    'the walk offers every trigger the machine names at every configuration, and nothing here establishes that an environment would supply them',
-  time: 'the walk offers every dwell transition at every configuration and advances no clock, so it holds an edge the interpreter would never take',
+    'the walk offers every trigger the machine names wherever it can decide that the interpreter takes its next event, and nothing here establishes that an environment would supply them',
+  time: 'the walk offers every dwell transition without waiting out its dwell and advances no clock, so it holds an edge the interpreter would never take',
   store:
     'a guard the walk consulted decided nothing, so an edge the model states is absent from the relation',
+  budget:
+    'the interpreter\u2019s chase budget is spent with a completion transition still due, so where a run of this machine ends is decided by the budget and not by the edges the machine states',
 };
 
 /* ══════════════════════ the standing sentences (§2.4) ══════════════════════ */
@@ -326,16 +349,27 @@ export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
  * trigger, beside every escape from a trap, and beside a `recovery` the
  * environment clause refused.
  *
- * `exploreMachine` offers the whole alphabet at EVERY configuration, so a
- * witness that consumes a trigger is a claim under a maximally cooperative
- * environment and about no other. The plan's text names `abort` because its
- * example does; the sentence is a FUNCTION OF THE TRIGGERS because a constant
- * is not. Three lanes pinned the constant verbatim with the example trigger
- * inside it, and `reach` on `latch.sysml` — a machine naming `unlatch` and
- * nothing else — printed *a witness that consumes `abort`* about a trigger the
- * file never mentions. Each name is backticked and they are joined in the order
- * given, which is the caller's to choose: trace order for a witness, alphabet
- * order for a report.
+ * `exploreMachine` offers the whole alphabet wherever it can decide that the
+ * interpreter takes its next event — at a configuration where no completion
+ * transition is due, and at one where the chase budget is spent with one still
+ * due — so a witness that consumes a trigger is a claim under a maximally
+ * cooperative environment, one that sends every trigger at every such place,
+ * and about no other. The sentence names both places because it once said the
+ * walk offered the alphabet everywhere, which stopped being true when the walk
+ * began to obey run-to-completion (review B's M1). It says "could decide"
+ * because of the one place the two part: where nothing is due but a completion
+ * transition whose guard is undecided, the interpreter reads the guard as false
+ * and takes its next event, and the walk offers no trigger — it fails closed,
+ * and the store clause withholds every absence on that machine — so "wherever
+ * the interpreter takes its next event" alone would claim an offer the walk
+ * never made (the S4 review's `undet-env` probe). The plan's text names `abort`
+ * because its example does; the sentence is a FUNCTION OF THE TRIGGERS because
+ * a constant is not. Three lanes pinned the constant verbatim with the example
+ * trigger inside it, and `reach` on `latch.sysml` — a machine naming `unlatch`
+ * and nothing else — printed *a witness that consumes `abort`* about a trigger
+ * the file never mentions. Each name is backticked and they are joined in the
+ * order given, which is the caller's to choose: trace order for a witness,
+ * alphabet order for a report.
  *
  * THROWS ON NO TRIGGER. A sentence about the environment that names no trigger
  * is the defect the F2 fix removed from the cover row — a machine naming no
@@ -351,7 +385,7 @@ export function environmentSentence(triggers: readonly string[]): string {
     );
   }
   const named = triggers.map((t) => `\`${t}\``).join(', ');
-  return `the environment offered every trigger this machine names at every configuration, so a witness that consumes ${named} is a claim about that environment and not about one that withholds it`;
+  return `the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes ${named} is a claim about that environment and not about one that withholds it`;
 }
 
 /**
@@ -380,7 +414,7 @@ export function environmentTriggers(alphabet: readonly string[]): string[] {
  * dwell, because a machine whose dwells carry no label at all exists.
  */
 export const DWELL_SENTENCE =
-  'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take';
+  'this walk advances no clock: a transition carrying an `after(n)` dwell is offered without waiting out its dwell — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take';
 
 /**
  * §2.4(d) — the simulator sentence, printed beside every increasing claim and
@@ -439,6 +473,7 @@ function firstFailedClause(failed: {
   environment: boolean;
   time: boolean;
   store: boolean;
+  budget: boolean;
   residual: boolean;
 }): FailedClause {
   if (failed.bound) return 'bound';
@@ -446,6 +481,7 @@ function firstFailedClause(failed: {
   if (failed.environment) return 'environment';
   if (failed.time) return 'time';
   if (failed.store) return 'store';
+  if (failed.budget) return 'budget';
   if (failed.residual) return 'bound';
   return null;
 }
@@ -465,7 +501,8 @@ export function walkIsExact(
   const noDwell = walk.timedTransitions.size === 0;
   const noTrigger = bounds.alphabet.length === 0;
   const guardsDetermined = walk.undeterminedGuards.length === 0;
-  const relationIsTheMachines = noDwell && noTrigger && guardsDetermined;
+  const noBudgetStop = (walk.chaseStops ?? 0) === 0;
+  const relationIsTheMachines = noDwell && noTrigger && guardsDetermined && noBudgetStop;
 
   // THE ORDER IS LOAD-BEARING. `'environment'` comes FIRST of the three
   // relation clauses: an author whose machine names `abort` has something to do
@@ -480,6 +517,11 @@ export function walkIsExact(
     environment: namedTrigger,
     time: !noDwell || !noTrigger,
     store: !guardsDetermined,
+    // LAST of the relation clauses: every clause before it names something an
+    // author does in the model, and a machine that names a trigger or a dwell
+    // already fails on that one. Only a machine whose relation is otherwise the
+    // machine's — no trigger, no dwell, every guard decided — is told this.
+    budget: !noBudgetStop,
     // The residue, named so this field can never read `null` while the gate
     // reads false: `seenWhole` fails with no bound named and no unsupported row
     // only if `exhaustive` and `boundHit` disagree. Today's `exploreMachine`
@@ -748,8 +790,11 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
     // NO product-search condition, and that is deliberate: `recovery` never
     // reaches `search`, so `Publishability.searchComplete` has no value on this
     // path. Reading it as `false` would print "bound exhausted" about a bound
-    // nobody hit.
-    alsoRequires: [],
+    // nobody hit. The one conjunct is the chase budget's, on the walk a
+    // machine that names no trigger keeps: the relation follows a chase past
+    // where every run of it ends, and a run that ends away from `p` gets back
+    // to nothing (`ExploreResult.budgetStops`).
+    alsoRequires: ['`recoverable` only where every configuration in `budgetStops` holds `p`'],
     otherwise: 'inconclusive, naming the failed clause',
     producedBy: { file: 'src/semantics/mc/patterns.ts', symbol: 'recoveryRow' },
   },
@@ -761,7 +806,11 @@ export const ABSENCE_CLAIMS: readonly AbsenceClaim[] = [
     polarityNote:
       'decreasing in edges, but a quantification over the run set, which the cooperative environment changes',
     walkRequires: 'walkIsExact',
-    alsoRequires: [],
+    // Every run, as the interpreter runs it: on the walk a machine that names
+    // no trigger keeps, a run ends where the budget stops its one chase, and
+    // one that keeps clear of the violation for the whole budget is a run
+    // that never reaches it (`ExploreResult.budgetStops`).
+    alsoRequires: ['no `maxCompletion`-step path from the opening inside G₀ where `budgetStops` is non-empty'],
     otherwise: '`potential` or `not-decided`',
     producedBy: MODALITY_OF,
   },
@@ -895,9 +944,13 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
     walkRequires: 'relationIsTheMachines',
     perStepAlternative: true,
     ridesOn: null,
-    alsoRequires: ['`found.violation !== null`'],
+    // The replay is what holds the walk and the interpreter to ONE run where
+    // they part on the driving discipline — the chase budget was such a part.
+    // It covers the `fail` (bad-prefix) witness the same way, which has no row
+    // of its own here: both are replayed by the one call in `checkProperty`.
+    alsoRequires: ['`found.violation !== null`', '`replayWitness(…).replays` — the interpreter takes the run'],
     otherwise:
-      'the walk-admits re-wording, never suppression — a bound can hide a witness and can never invent one',
+      'the walk-admits re-wording where the relation gate fails — a bound can hide a witness and can never invent one; a witness that does not replay is withheld as inconclusive (`verification/witness-not-replayed`)',
     producedBy: CHECK_PROPERTY,
   },
   {
@@ -922,7 +975,7 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
   },
   {
     id: 'W3',
-    claim: 'potential — the named avoiding cycle or full-relation sink',
+    claim: 'potential — the named avoiding cycle or full-relation sink, or the run the chase budget stops',
     feature: 'the guaranteed / potential modality (§3.R)',
     kind: 'maximality',
     // The per-step alternative does NOT substitute here: the claim is that the
@@ -933,7 +986,16 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
     walkRequires: 'walkIsExact',
     perStepAlternative: false,
     ridesOn: null,
-    alsoRequires: ['a memoryless monitor', 'a configuration-valued atom'],
+    // The run it names is a run of the interpreter's: on the walk a machine
+    // that names no trigger keeps, a run is one chase stopped after
+    // `maxCompletion` steps, so a cycle or a sink a path inside G₀ reaches
+    // only past the budget is one no avoiding run gets to, and the run the
+    // budget stops inside G₀ is named instead (`ExploreResult.budgetStops`).
+    alsoRequires: [
+      'a memoryless monitor',
+      'a configuration-valued atom',
+      'a named cycle or sink entered inside G₀ within `maxCompletion` steps where `budgetStops` is non-empty',
+    ],
     otherwise: '`not decided`, with the reason split by §3.R’s `not decided` rows',
     producedBy: MODALITY_OF,
   },
@@ -987,6 +1049,50 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
     otherwise:
       'inconclusive; A13’s gate holds the whole report first, so in practice no cut set is published and no `no cut set` is printed',
     producedBy: null,
+  },
+  {
+    id: 'W7',
+    claim: 'a completion livelock: the interpreter’s chase goes round this cycle, entered by this `entry` path',
+    feature: 'reach and check-behaviour — `verification/completion-livelock` (U1; docs/06 §8.8)',
+    kind: 'existential',
+    polarity: 'mixed',
+    polarityNote:
+      'the cycle and its way in are exhibited (increasing: a bound can hide them and never invent them), but that the chase stays on the cycle is the absence of another way off — an undecided guard on a trigger-less transition out of it invents that, and a dwell the walk takes without waiting invents a step',
+    // THE PER-STEP ALTERNATIVE IS WHAT THE PRODUCER APPLIES, ALWAYS, and in
+    // place of the relation gate rather than beside it. Every step the row
+    // stands on is one the walk took, so a bound takes nothing from it (the
+    // CLI reference's `--max-configs` cell says so), and the claim is decided
+    // per configuration of the cycle — no trigger-less transition out of one of
+    // them has a guard the walk could not evaluate (`store`), and no step of the
+    // chase round it is a dwell (`time`) — which is stricter on the cycle than
+    // the walk-wise gate and needs none of its clauses elsewhere. The gate's
+    // `environment` clause refuses two of v9's ten (the PA SwarmMember
+    // machines name `peerVerdict` and four more), and the claim that only an
+    // event moves the run on holds whatever events an environment sends; its
+    // `budget` clause refuses a walk that followed a chase the budget stops,
+    // and that stop is the very fact the row reports. Where a step fails the
+    // per-step check, the row is WITHHELD with a `withheld` line naming the
+    // clause — never dropped.
+    //
+    // THE WAY IN, per step too. `entry` is a run the SIMULATOR makes — each
+    // step the transition `runStateMachine` takes for its input (the first
+    // enabled, never a dwell), reaching the cycle with the budget to go once
+    // round — wherever the walk holds one; else the walk's own shortest path,
+    // printed with the walk-only wording and the state where it first parts
+    // from the simulator. The finding's hedge is read off THIS row's way in,
+    // never off the machine's choice rows: the walk withholds a choice row over
+    // an undecided guard inside the choice's level and still takes both
+    // branches, which published a way in no `simulate` run takes, unhedged.
+    walkRequires: 'relationIsTheMachines',
+    perStepAlternative: true,
+    ridesOn: null,
+    alsoRequires: [
+      'per step of the cycle, always in place of the relation gate: no trigger-less transition out of one of its configurations is in `walk.undeterminedGuards` (`store`), and no chase step round it is in `timedTransitions` (`time`)',
+      'the `entry` path is the simulator’s own run with the budget to go once round, or the finding says the way in is a run of the walk and where it parts from the simulator',
+    ],
+    otherwise:
+      'the row is withheld and a `withheld` line naming the clause (`store` or `time`) prints in its place; an `entry` the simulator does not make prints with the walk-only wording',
+    producedBy: { file: 'src/semantics/mc/explore.ts', symbol: 'livelocksOf' },
   },
 ];
 

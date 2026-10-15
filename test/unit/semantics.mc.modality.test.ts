@@ -39,7 +39,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { loadModelText } from '@text/load';
-import { exploreMachine, stateMachinesIn } from '../../src/semantics/mc/explore';
+import { COMPLETION_LIVELOCK_CODE, exploreMachine, stateMachinesIn } from '../../src/semantics/mc/explore';
 import {
   behaviourReport,
   checkProperty,
@@ -469,6 +469,38 @@ describe('not decided — rows 5, 6 and 7, one per clause of `walkIsExact`', () 
   });
 });
 
+describe('not decided — the chase budget, the clause after the three', () => {
+  /** `s0 → s1 → … → s70` on completion, and no trigger: a chain the budget stops at `s64`. */
+  function chain70(): { model: Model; machineId: ElementId } {
+    const m = new Model();
+    const f = new ModelFactory(m);
+    const sm = f.stateDef('Chain');
+    const states = Array.from({ length: 71 }, (_, i) => f.state(`s${i}`, sm.id));
+    for (let i = 0; i < 70; i++) f.transition(states[i].id, states[i + 1].id, { ownerId: sm.id });
+    return { model: m, machineId: sm.id };
+  }
+
+  it('a walk that follows the budget is not read for the modality: `budget`, with the budget sentence and no value', () => {
+    // The first walk has to cut this chain, so the walk carries the chase
+    // position and stops at `s64` with `s64 -> s65` still due: no trigger, no
+    // dwell, no undecided guard — only clause (e) fails. Whatever an answer
+    // read over that relation would be, the gate does not read it as the
+    // machine's, and the row says which clause.
+    const { model, machineId } = chain70();
+    const walk = exploreMachine(model, machineId);
+    expect(walk.chaseKeyed).toBe(true);
+    expect(walk.chaseStops).toBe(1);
+    expect(walkIsExact(walk, walk.bounds).failedClause).toBe('budget');
+    const v = checkProperty(model, machineId, absence('state s10'));
+    expect(v.claim).toBe('fail');
+    const m = modalityOf(v);
+    expect(m.value).toBe('not-decided');
+    expect(m.failedClause).toBe('budget');
+    expect(m.sentence).toMatch(/^not decided: the interpreter\u2019s chase budget stops a run of this machine/);
+    expect(m.avoiding).toBeNull();
+  });
+});
+
 /* ═══════════════════════ the order of the dispatch ═══════════════════════ */
 
 describe('the rows are a dispatch, top to bottom', () => {
@@ -482,6 +514,12 @@ describe('the rows are a dispatch, top to bottom', () => {
     // run-to-completion, so `nominal → hold` is a completion: at `nominal` a
     // completion is always due and `abort` is never offered, but the named
     // trigger still fails the environment clause.
+    //
+    // The way back from `hold` is an EVENT (`back`). It was a completion, and a
+    // cycle of completions is one the interpreter's chase budget stops — the
+    // walk now follows it there and takes `abort` at the stop, so the cycle is
+    // no longer a cycle of the relation (plan O1). The rows this case pins are
+    // the same either way; the cycle row 8 needs is the event one.
     const m = new Model();
     const f = new ModelFactory(m);
     const sm = f.stateDef('Everything');
@@ -492,14 +530,15 @@ describe('the rows are a dispatch, top to bottom', () => {
     f.attribute('resetOk', sm.id, { type: 'Boolean' });
     f.transition(nominal.id, hazard.id, { ownerId: sm.id });
     f.transition(nominal.id, hold.id, { ownerId: sm.id });
-    f.transition(hold.id, nominal.id, { ownerId: sm.id });
+    f.transition(hold.id, nominal.id, { ownerId: sm.id, trigger: 'back' });
     f.transition(nominal.id, safe.id, { ownerId: sm.id, trigger: 'abort' });
     f.transition(hold.id, hazard.id, { ownerId: sm.id, trigger: 'after(5)' });
     f.transition(nominal.id, safe.id, { ownerId: sm.id, guard: 'resetOk' });
     // The four producers, asserted so the case cannot pass on a machine that
     // satisfies only one row.
     const walk = exploreMachine(m, sm.id);
-    expect(walk.bounds.alphabet).toEqual(['abort', 'after(5)']);
+    expect(walk.bounds.alphabet).toEqual(['back', 'abort', 'after(5)']);
+    expect(walk.chaseKeyed).toBe(false);
     expect(walk.timedTransitions.size).toBe(1);
     expect(walk.undeterminedGuards).toHaveLength(1);
     expect(walk.exhaustive).toBe(true);
@@ -1075,7 +1114,13 @@ describe('the annotation moved nothing on the row', () => {
           witness: v.witness.map((s) => [s.leaf?.name ?? null, s.holds]),
           exitCode: report.exitCode,
           counts: report.counts,
-          diagnostics: report.diagnostics.map((d) => [d.severity, d.code]),
+          // The machine's completion livelocks (U1, plan O1 S4) are filed after
+          // every property finding and are a finding about the MACHINE, not
+          // about this row: what the annotation moved is read without them,
+          // and `semantics.mc.patterns.test.ts` pins them on their own.
+          diagnostics: report.diagnostics
+            .filter((d) => d.code !== COMPLETION_LIVELOCK_CODE)
+            .map((d) => [d.severity, d.code]),
         },
         want.id,
       ).toEqual({

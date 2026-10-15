@@ -32,6 +32,7 @@ import { resolve } from 'node:path';
 import { Model, ModelFactory, type ElementId } from '@core/index';
 import { loadModelText } from '@text/load';
 import {
+  COMPLETION_LIVELOCK_CODE,
   DEADLOCK_CODE,
   NONDETERMINISTIC_CHOICE_CODE,
   TRAP_ENTRY_WALK_ADMITS,
@@ -235,7 +236,18 @@ describe('the trap probe: one set of configurations nothing leaves', () => {
     expect(m.trapCensus.sccs).toBe(2);
     expect(m.trapCensus.bottomSccs).toBe(1);
     expect(trapCodes(r)).toEqual([]);
-    expect(r.diagnostics.map((d) => d.message).join('\n')).not.toContain('{alpha, beta}');
+    expect(
+      r.diagnostics
+        .filter((d) => d.code !== COMPLETION_LIVELOCK_CODE)
+        .map((d) => d.message)
+        .join('\n'),
+    ).not.toContain('{alpha, beta}');
+    // `{alpha, beta}` IS named, once — as the completion livelock the whole
+    // walk publishes too (U1, plan O1 S4): the chase the interpreter goes round
+    // is a fact about the steps the walk took there, which the bound did not
+    // touch, and never a set nothing leaves.
+    expect(m.livelocks.map((l) => names(l.states))).toEqual([['alpha', 'beta']]);
+    expect(reachReport(model).machines[0].livelocks.map((l) => names(l.states))).toContainEqual(['alpha', 'beta']);
     const c = await cli(['reach', root(file), '--max-configs', '3']);
     expect(c.code).toBe(0);
     expect(c.stdout).not.toContain('    trap ');
@@ -373,11 +385,16 @@ describe('the states of a trap: the active stacks, never the leaves alone', () =
     expect(m.trapCensus.bottomSccs).toBe(2);
     expect(m.trapCensus.exemptedAsDeadlock).toBe(1);
     expect(m.trapCensus.trapsAfterExemptions).toBe(1);
+    // And the `X ⇄ Y` cycle under `x = 2` is one the interpreter's chase goes
+    // round: a completion livelock beside the trap (U1, plan O1 S4) — two
+    // facts about one set, each with its own code.
     expect(r.diagnostics.map((d) => d.code)).toEqual([
       DEADLOCK_CODE,
       UNRECOVERABLE_MODE_CODE,
+      COMPLETION_LIVELOCK_CODE,
       NONDETERMINISTIC_CHOICE_CODE,
     ]);
+    expect(m.livelocks.map((l) => names(l.states))).toEqual([['X', 'Y']]);
   });
 });
 
@@ -714,10 +731,24 @@ describe('the sentences this feature is forbidden', () => {
     }
   }, 120_000);
 
-  it('no output says the machine is recoverable, or free of deadlocks, or livelocks', async () => {
+  it('no output says the machine is recoverable, or free of deadlocks — and a trap row never says livelock', async () => {
+    // Since U1 (plan O1 S4) `livelock` is the name of a finding of its own —
+    // a cycle the interpreter's chase goes round, `verification/completion-livelock`
+    // — so the word may stand on that row, on its finding and on a withheld
+    // line that says none is reported, and on no other line: a set nothing
+    // leaves is not a livelock, and the trap row never calls it one.
+    const livelockLine = /^ {4}livelock {5}\{|^ {2}verification\/completion-livelock {2}|^ {4}withheld {5}\{.*no livelock is reported/;
+    let rows = 0;
     for (const file of FILES) {
       const r = await cli(['reach', root(file)]);
-      expect(r.stdout, file).not.toMatch(/\brecoverab|livelock|deadlock-free|always recover/i);
+      expect(r.stdout, file).not.toMatch(/\brecoverab|deadlock-free|always recover|livelock-free/i);
+      for (const line of r.stdout.split('\n')) {
+        if (!/livelock/i.test(line)) continue;
+        expect(line, file).toMatch(livelockLine);
+        rows++;
+      }
     }
+    // Not vacuous: the trap probe's two cycles, FlightModes' and trapguard's withheld one.
+    expect(rows).toBeGreaterThan(0);
   }, 120_000);
 });

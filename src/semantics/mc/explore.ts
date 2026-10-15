@@ -19,10 +19,12 @@
  * THE HONESTY RULE, stated once because everything below serves it. An
  * unreachable state and a dead transition are claims of ABSENCE — "no run ever
  * gets here" — and absence is exactly what a partial walk cannot establish. So
- * the two lists are published only when the walk was exhaustive, no
- * completion-chase budget was spent, every trigger the machine names was
- * actually offered, no unsupported construct was met, and every guard it
- * consulted DECIDED something. Otherwise they come back EMPTY with
+ * the two lists are published only when the walk was exhaustive, every
+ * trigger the machine names was actually offered, no unsupported construct was
+ * met, and every guard it consulted DECIDED something. (The interpreter's
+ * completion-chase budget is not among them: it is part of the semantics the
+ * walk follows, not a bound that cuts it — see the note above
+ * `exploreMachine`.) Otherwise they come back EMPTY with
  * `verification/bound-exhausted` on the report and the sentence that says the
  * lists are lower bounds and are not reported as findings.
  *
@@ -38,8 +40,37 @@
  *
  * The other direction is deliberately the loose one: the walk OVER-approximates
  * what is reachable, by offering every `after(n)` label as a named event rather
- * than advancing a clock. An over-approximation can only shrink the absence
- * claims, never invent one, which is the direction a finding may be wrong in.
+ * than advancing a clock, and by sending every trigger the machine names at
+ * each place a run takes an event, as no real environment need. An
+ * over-approximation can only shrink the absence claims, never invent one,
+ * which is the direction a finding may be wrong in.
+ *
+ * WHERE AN EVENT IS OFFERED IS NOT LOOSE. On a walk that finished, the walk
+ * offers the alphabet exactly where it can decide that `runStateMachine` takes
+ * its next event: at a configuration where no completion transition is due,
+ * and at one where the interpreter's chase budget is spent with a completion
+ * transition still due (the note above `exploreMachine`). Everywhere else the
+ * interpreter chases before it takes any event, and the walk offers completion
+ * alone. THE ONE PLACE IT CANNOT DECIDE, IT FAILS CLOSED: where nothing is due
+ * but a completion transition whose guard is undecided, the interpreter reads
+ * the guard as false and takes its next event, and the walk, which cannot tell
+ * whether a run chases there or takes one, offers no trigger at all — so it
+ * holds fewer runs than the interpreter makes, and the store clause
+ * (`verification/guard-undetermined`) withholds every absence on that machine.
+ * (A walk a bound stopped short decides less still: without the chase position
+ * it takes no event where the budget would stop a chase its frontier hides —
+ * and a partial walk publishes no absence either.) So on a walk that finished,
+ * over guards it decided, every run the interpreter makes on a sequence of the
+ * named triggers is a run of the walk, and an absence the walk publishes holds
+ * of every such run: it is exact over that semantics, not over an approximation
+ * of where events arrive. The runs the walk holds beyond the interpreter's are the
+ * dwells above, the tie-break below and, on a machine that names no trigger,
+ * the chase past the budget the note above `exploreMachine` lets it follow —
+ * and those only shorten the absence lists. (The walk once offered every
+ * trigger wherever it stood, a completion due or not: runs the profile forbids.
+ * H1, `0c9d2bd`, confined it to the first of the two places and lost the runs
+ * the budget lets through at the second, which published a false `unreachable`
+ * and `dead` — review B's C1.)
  *
  * IT IS LOOSE ONLY WHERE THAT HOLDS. The walk branches on the declaration-order
  * TIE-BREAK — every transition enabled at the innermost active level, where the
@@ -80,7 +111,9 @@ import {
   triggerLabelOf,
   type EnabledTransition,
   type MachineConfig,
+  type StepCandidates,
   type StepInput,
+  type UndeterminedGuard,
 } from './config';
 import { SEMANTIC_PROFILE, type ProfileField } from './profile';
 // One definition of "may this absence be stated", read by this file and by
@@ -108,6 +141,10 @@ import { acyclic, bottomComponents, tarjanComponents, type Components } from './
 // the census can say WHY that edge is not in the relation in the relation's own
 // terms rather than in a sentence of its own.
 import { payloadOf } from '../connectors';
+// A step written in a specialisation or a typed usage over the states it
+// inherits is a crossing like any other; the refusal names the inheritance,
+// because its remedy is not the one for a nested definition.
+import { generalizationsOf } from '../inheritance';
 
 /* ─────────────────────────────── the codes ──────────────────────────────── */
 
@@ -127,6 +164,12 @@ export const BEHAVIOUR_UNSUPPORTED_CODE = 'verification/behaviour-unsupported-co
 export const GUARD_UNDETERMINED_CODE = 'verification/guard-undetermined';
 /** A set of reachable configurations no run leaves, that is not where the machine ends. */
 export const UNRECOVERABLE_MODE_CODE = 'verification/unrecoverable-mode';
+/**
+ * A reachable cycle the interpreter's completion chase goes round without
+ * coming to rest: only an event moves the run on (U1, plan O1 S4; see
+ * {@link LivelockRow}).
+ */
+export const COMPLETION_LIVELOCK_CODE = 'verification/completion-livelock';
 
 /** Every code this module can put in front of a reader, for the catalogue guard. */
 export const BEHAVIOUR_CODES: ReadonlySet<string> = new Set([
@@ -138,19 +181,20 @@ export const BEHAVIOUR_CODES: ReadonlySet<string> = new Set([
   BEHAVIOUR_UNSUPPORTED_CODE,
   GUARD_UNDETERMINED_CODE,
   UNRECOVERABLE_MODE_CODE,
+  COMPLETION_LIVELOCK_CODE,
 ]);
 
 /**
- * The six this engine raises as WARNINGS, and none of the eight as an error.
+ * The seven this engine raises as WARNINGS, and none of the nine as an error.
  *
  * The reading rule, not an omission. An error in this lane is reserved for a
- * refuted obligation, and `reach` refutes nothing. But the six below are
+ * refuted obligation, and `reach` refutes nothing. But the seven below are
  * findings about a MACHINE — a state nothing reaches, a transition nothing
  * fires, a state nothing leaves, a set of configurations nothing leaves, a
- * choice the notation does not resolve, a guard nothing in the model decides —
- * and filing them as info would put them beside "this construct is outside the
- * fragment", which is the tool talking about ITSELF. The remaining two do
- * exactly that, and they are info.
+ * cycle the chase never rests on, a choice the notation does not resolve, a
+ * guard nothing in the model decides — and filing them as info would put them
+ * beside "this construct is outside the fragment", which is the tool talking
+ * about ITSELF. The remaining two do exactly that, and they are info.
  *
  * `verification/guard-undetermined` is a warning for the sharper reason that it
  * is the REASON the absence lists are short. A reader who sees an empty
@@ -169,6 +213,7 @@ export const BEHAVIOUR_WARNING_CODES: ReadonlySet<string> = new Set([
   NONDETERMINISTIC_CHOICE_CODE,
   GUARD_UNDETERMINED_CODE,
   UNRECOVERABLE_MODE_CODE,
+  COMPLETION_LIVELOCK_CODE,
 ]);
 
 /* ────────────────────────────── the bounds ──────────────────────────────── */
@@ -178,7 +223,15 @@ export const DEFAULT_MAX_CONFIGS = 10_000;
 /** Steps from the opening configuration before a branch is abandoned. */
 export const DEFAULT_MAX_DEPTH = 200;
 
-/** Which bound stopped the walk, if any. */
+/**
+ * Which bound stopped the walk, if any.
+ *
+ * `'completion'` is never on a walk `exploreMachine` returns: the chase budget
+ * is followed, not cut (see the note above it). It is what the product search
+ * in `./patterns` reports if, over a walk that hashed without the chase
+ * position, it ever met a chase longer than the budget — a run it refuses
+ * rather than reports on.
+ */
 export type BoundHit = 'none' | 'configs' | 'depth' | 'completion';
 
 /** The bounds a walk ran under, printed beside every figure it produced. */
@@ -186,7 +239,12 @@ export interface ExploreBounds {
   maxConfigs: number;
   maxDepth: number;
   maxCompletion: number;
-  /** The events offered at every configuration: the triggers the machine names. */
+  /**
+   * The events offered wherever the walk can decide that the interpreter takes
+   * its next event — where no completion transition is due, or where the chase
+   * budget is spent (not where nothing is due but a completion guard it could
+   * not decide: the header): the triggers the machine names.
+   */
   alphabet: readonly string[];
 }
 
@@ -293,6 +351,106 @@ export interface TrapRow {
   entry: readonly StateRef[];
   /** `entry.length - 1`. */
   steps: number;
+}
+
+/**
+ * A cycle the interpreter's completion chase goes round without coming to rest
+ * — a completion livelock (U1; plan O1 S4; `docs/06` §8.8).
+ *
+ * WHAT IS CLAIMED, EXACTLY. A set of configurations the walk reached where a
+ * trigger-less transition is due at every one, and where the one the
+ * INTERPRETER fires — the first enabled at the innermost level, by declaration
+ * order, the transition `runStateMachine`'s chase takes — leads to the next of
+ * them, round and back. A chase that gets here therefore goes round until its
+ * `maxCompletion` budget is spent, stops wherever the budget leaves it with a
+ * trigger-less transition still due, and the run moves on only on an event:
+ * under run-to-completion the machine never comes to rest here.
+ *
+ * DECIDED OVER THE INTERPRETER'S CHASE, NOT OVER EVERY BRANCH. A cycle of the
+ * walk's relation that some OTHER enabled trigger-less transition could leave
+ * is still one the chase goes round when declaration order keeps it on the
+ * cycle — v9's `PA::SwarmMember::SwarmMemberModes` loops `Nominal ⇄
+ * NavigationDegraded` on every run although `Nominal -> Isolated` is enabled
+ * beside it — so the row names, in {@link LivelockRow.choices}, every state of
+ * the cycle where that is so: the choice row says the simulator never takes the
+ * other transition, and this row says that declaration order is what the chase
+ * follows there. A set the chase leaves on its own — a guard that holds
+ * somewhere on the way round, an effect that walks the store out of the loop —
+ * is no cycle of configurations, and nothing is reported. Each configuration
+ * has one chase successor, so two cycles never share a configuration; and the
+ * cycles that go round the same transitions under different stores or
+ * histories are ONE row ({@link LivelockRow.cycles}), so a cycle of states is
+ * reported once however many valuations the walk met it under.
+ *
+ * An EXISTENTIAL claim about the way in (`entry`), and a claim about the chase
+ * from there on that rests on every trigger-less transition out of the
+ * cycle's configurations being decided — which is why a guard the walk could
+ * not evaluate there withholds the row ({@link LivelockWithheldRow}). The way in
+ * is a run the SIMULATOR makes wherever the walk holds one
+ * ({@link LivelockRow.entryBy}), and the row says so where it does not.
+ */
+export interface LivelockRow {
+  /** Configurations on the cycle (on the cycle `entry` leads into, where {@link cycles} folds several). */
+  configs: number;
+  /**
+   * The states those configurations stand in — the union of their ACTIVE
+   * STACKS, as a trap names its set — in the order the chase goes round, from
+   * the configuration `entry` leads into.
+   */
+  states: readonly StateRef[];
+  /** The trigger-less transition the interpreter fires at each configuration, in the same order. */
+  transitions: readonly TransitionRef[];
+  /**
+   * The states of the cycle where another trigger-less transition is enabled
+   * beside the one the interpreter fires, at the level it fires from: a choice
+   * declaration order resolves onto the cycle, the other transition being one
+   * the simulator never takes. Empty where nothing but the chase's own
+   * transition is enabled.
+   */
+  choices: readonly StateRef[];
+  /** The shortest way from the opening configuration to the cycle, as the leaf of each configuration, the opening first. */
+  entry: readonly StateRef[];
+  /** `entry.length - 1`. */
+  steps: number;
+  /**
+   * Whose run `entry` is. `simulator`: every step of it is the one
+   * `runStateMachine` takes — the first enabled transition for its input, never
+   * a dwell — so `simulate` driven with its events enters the cycle, and the
+   * chase still has the budget to go once round when it gets there. `walk`: the
+   * walk holds no such run, and `entry` is its own shortest way in, which may
+   * take a branch of a choice the simulator never takes ({@link branchAt}) —
+   * so `simulate` may never enter the cycle, and the finding says so.
+   */
+  entryBy: 'simulator' | 'walk';
+  /**
+   * On a `walk` entry, the state where it first takes a step the simulator does
+   * not take there; `null` on a `simulator` entry, and on a `walk` entry every
+   * step of which is the simulator's but which reaches the cycle with too little
+   * of the chase budget left to go round it.
+   */
+  branchAt: StateRef | null;
+  /**
+   * How many cycles of configurations this row stands for: cycles that go round
+   * the same transitions and differ only in the store or history they carry
+   * (an event that counts, before the chase starts, makes one per count). One
+   * row, one finding, for all of them.
+   */
+  cycles: number;
+}
+
+/**
+ * A cycle the chase goes round that is NOT reported, and the clause that
+ * withholds it — never silently dropped, for the reason a withheld deadlock row
+ * is printed (register row A0's `otherwise` cell).
+ *
+ * `store`: a guard the walk could not evaluate is a trigger-less transition out
+ * of one of the cycle's configurations, so whether the interpreter's chase
+ * fires it there — and leaves — was never decided. `time`: the transition the
+ * chase fires at one of them is a dwell, which this walk takes without waiting
+ * it out, so the interpreter may wait there rather than go round.
+ */
+export interface LivelockWithheldRow extends LivelockRow {
+  clause: 'store' | 'time';
 }
 
 /**
@@ -491,6 +649,112 @@ export interface ExploreResult {
    * difference and call it a named environment trigger.
    */
   timedLabels: ReadonlySet<string>;
+  /**
+   * Did this walk carry the chase position in the configurations it hashed?
+   *
+   * Where the interpreter's chase budget can stop a chase on this machine and
+   * the position changes what a run does next: an event follows a stopped
+   * chase on a machine that names a trigger, and a chain longer than the budget
+   * hides states no run reaches (see the note above {@link exploreMachine}).
+   * The product search in `./patterns` reads it, so the two walk one relation:
+   * a search that hashed without the position on a machine this walk hashed
+   * with it would miss the runs that take an event where a chase stopped.
+   */
+  chaseKeyed: boolean;
+  /**
+   * Configurations this walk reached where the chase budget was spent with a
+   * completion transition still due — where the interpreter stops chasing and
+   * takes the next event. Never more than 0 on a walk without the position.
+   *
+   * WHY THE EXACTNESS GATE READS IT. At such a configuration the relation holds
+   * the edges the interpreter takes and NOT the completion transition the
+   * machine states there: the budget, not the machine, decides it is not
+   * fired. The decreasing claims are about the interpreter's runs and read
+   * nothing here; a claim that a set is inescapable, or that every
+   * configuration can get back to a state, would be read over a resting point
+   * the machine's own transitions do not have (`walkIsExact`'s `budget`
+   * clause, `./publishable`).
+   */
+  chaseStops: number;
+  /**
+   * On a walk WITHOUT the position over a machine that names no trigger, the
+   * configurations (node numbers, ascending) where the budget stops the one
+   * chase such a machine runs: the end of a `maxCompletion`-step path from the
+   * opening with a completion transition still due. Empty on every other walk
+   * — on a walk with the position the stops are in the relation itself and
+   * {@link ExploreResult.chaseStops} counts them.
+   *
+   * WHY TWO CLAIMS READ IT AND THE GATE DOES NOT. Such a walk keeps the
+   * relation the machine states, and over it every claim this lane publishes
+   * is true of the interpreter's runs as well except the two read over where
+   * a run ENDS: every run reaches it (the modality's `guaranteed`), and it can
+   * be got back to from every configuration (`recovery`'s `recoverable`). A
+   * run of the interpreter ends here, and nothing it does after is in it. The
+   * relation follows the chase on, so each of those two is checked against
+   * this list and withheld where the two readings part (`./patterns`); a trap
+   * row, a `not recoverable` and every absence hold of both, and stand. So
+   * does a `potential`, but the run it NAMES must be one too: a cycle or a sink
+   * of the avoiding subgraph only where a path inside it gets there within the
+   * budget, and otherwise the run the budget stops inside it (the modality's
+   * `withinBudget`). Measured before this field existed, on two such machines: a 70-step
+   * chain the walk reached the end of by a shorter tie-break branch printed
+   * `every run? guaranteed` beside a `fail` whose declaration-order run the
+   * budget stops at the 64th state, and a three-state cycle printed `recovery`
+   * PASS for a state the interpreter's run never enters.
+   */
+  budgetStops: readonly number[];
+  /**
+   * The cycles the interpreter's completion chase goes round in this walk —
+   * the producer of {@link LivelockRow}, as node numbers.
+   *
+   * Read off the walk the interpreter's way: at every configuration where a
+   * trigger-less transition is due, the one `runStateMachine` fires (the first
+   * enabled, innermost level first, by declaration order) and the
+   * configuration it leads to. That is a function on configurations, so its
+   * cycles are disjoint and each is found once. The CONFIGURATION, not the
+   * node: the keyed walk numbers one configuration once per chase position,
+   * and the chase's step from it is the same at every position. A configuration
+   * whose chase step the walk never took — reached only where the budget stops
+   * a chase (in the walk without the position: first reached with the budget
+   * already spent), or whose target a bound refused — has none, and no cycle
+   * runs through it: such a cycle is one the walk did not see whole, and none
+   * is claimed.
+   */
+  chaseCycles: readonly ChaseCycle[];
+}
+
+/** One cycle of the interpreter's completion chase, as the walk numbered it ({@link ExploreResult.chaseCycles}). */
+export interface ChaseCycle {
+  /**
+   * One node per configuration of the cycle — the first the walk numbered for
+   * it — in the order the chase goes round, starting from the configuration
+   * {@link entry} leads into.
+   */
+  order: readonly number[];
+  /** The trigger-less transition the chase fires at each of them, in the same order. */
+  via: readonly ElementId[];
+  /** Every node standing at one of the cycle's configurations, ascending. */
+  nodes: readonly number[];
+  /** The first node the walk numbered for any of them: the cycle's place in discovery order. */
+  first: number;
+  /** A guard the walk could not evaluate is a trigger-less transition out of one of them. */
+  undecided: boolean;
+  /** The transition the chase fires at one of them is a dwell (`afterDuration` is defined). */
+  timed: boolean;
+  /**
+   * The states, in cycle order, where another trigger-less transition is
+   * enabled at the level the chase fires from — the choice it beats.
+   */
+  choices: readonly ElementId[];
+  /**
+   * The way in, as a node path from the opening (node 0) to a node of the
+   * cycle: a run the simulator makes where the walk holds one, else the walk's
+   * own shortest ({@link LivelockRow.entryBy}).
+   */
+  entry: readonly number[];
+  entryBy: 'simulator' | 'walk';
+  /** On a `walk` entry, the node it first leaves by a step the simulator does not take there; else `null`. */
+  branchAt: number | null;
 }
 
 /* ───────────────────────── refs and small readers ───────────────────────── */
@@ -699,9 +963,11 @@ export interface EdgeCensus {
  *    This bucket exists because the census's first reading did not have it and
  *    refused every machine whose states are typed, which is mainstream notation.
  *  - `walked` — in the step relation, leaving a node some configuration's stack
- *    can hold ({@link stackNodes}): every configuration standing there offers
- *    it. This bucket IS {@link walkableTransitions}, and the transition census
- *    the report prints.
+ *    can hold ({@link stackNodes}): the walk tries it wherever a configuration
+ *    standing there is offered its input — a trigger only where a run takes its
+ *    next event, which is not every configuration (the note above
+ *    `exploreMachine`). This bucket IS {@link walkableTransitions}, and the
+ *    transition census the report prints.
  *  - `opening` — in the step relation, leaving an `InitialNode`: `initialState`
  *    (`./config.ts`) READS it to decide where the machine opens and no step
  *    ever fires it. It is deliberately out of the walkable total — counting an
@@ -723,6 +989,7 @@ export interface EdgeCensus {
 export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
   const relation = new Set(regionTransitions(model, machineId).map((t) => t.id));
   const refusedIds = new Set(danglingTransitions(model, machineId).map((t) => t.id));
+  const crossing = new Map(boundaryCrossings(model, machineId).map((c) => [c.edge.id, c] as const));
   const onStack = stackNodes(model, machineId);
   const rows: EdgeCensusRow[] = [];
   const nameOf = (id: ElementId | undefined): string =>
@@ -755,6 +1022,15 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
         'it names no source or no target, so the walk refuses this machine by name rather than ' +
           'counting the edge dead on a technicality',
       );
+    } else if (crossing.has(el.id)) {
+      // BEFORE `opening`: an opening edge into a nested definition's state would
+      // open this machine somewhere its relation does not reach.
+      const c = crossing.get(el.id)!;
+      row(
+        'refused',
+        `it leads ${acrossSentence(model, c, inheritedAcross(model, machineId, c))}, so the walk ` +
+          'refuses this machine by name rather than walking a step whose meaning is not defined here',
+      );
     } else if (relation.has(el.id) && sourceKind === 'InitialNode') {
       row(
         'opening',
@@ -765,7 +1041,7 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
       row(
         'walked',
         `it is in the step relation and leaves ${nameOf(from)}, which a configuration's stack can ` +
-          'hold, so every configuration standing there offers it',
+          'hold, so the walk tries it wherever a configuration standing there is offered its input',
       );
     } else if (from === machineId) {
       row(
@@ -796,6 +1072,23 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
             : `: it carries the payload \`${payloadOf(el)}\`, and this relation models no payload`),
       );
     }
+  }
+  // The far side of a crossing: an edge written OUTSIDE this region that joins
+  // one of its states. The domain above is the region, so these are counted
+  // here or nowhere, and an edge into this machine's states that no row
+  // accounted for is the hole this census exists to close.
+  for (const c of crossing.values()) {
+    if (c.way !== 'foreign') continue;
+    rows.push({
+      id: c.edge.id,
+      eClass: c.edge.eClass,
+      qualifiedName: model.qualifiedName(c.edge.id) || c.edge.id,
+      account: 'refused',
+      reason:
+        `it joins ${nameOf(c.edge.source?.[0])} to ${nameOf(c.edge.target?.[0])} and is ` +
+        `${acrossSentence(model, c, inheritedAcross(model, machineId, c))}, so the walk refuses ` +
+        'this machine by name rather than walking it as though the edge were not there',
+    });
   }
 
   const counts: Record<EdgeAccount, number> = {
@@ -841,6 +1134,174 @@ function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[
   );
 }
 
+/** A step edge that joins this machine's states to states outside its region. */
+interface BoundaryCrossing {
+  edge: ElementRecord;
+  /**
+   * `into` — in this machine's relation, leading into a `state def` written
+   * inside it (or to that definition itself); `out` — in this machine's
+   * relation, leading out of its region; `foreign` — written OUTSIDE this
+   * machine's region and joining one of its states to somewhere else.
+   */
+  way: 'into' | 'out' | 'foreign';
+  /**
+   * The element across the boundary, named in the refusal: the nested
+   * definition (`into`), the machine whose region holds the far end (`out`,
+   * `null` when none does), or the element the edge is written in (`foreign`).
+   */
+  other: ElementId | null;
+}
+
+/**
+ * The step edges that join this machine's states to states outside its region,
+ * from EITHER side: written in this machine and leading out of its region —
+ * into a `state def` written inside it, or into another machine — or written
+ * outside it and leading into or out of one of its states.
+ *
+ * Each machine steps by its own relation only (`regionTransitions`, which stops
+ * at a nested `state def`, `./config`), and a nested `state def` is a machine of
+ * its own (`stateMachinesIn`). So an edge across a region's boundary has no
+ * meaning this engine defines, and no walk follows it as one. The outer walk of
+ * `Nest2` entered `Inner::x` and found none of its transitions (`no way out
+ * Inner::x`, although `Inner`'s own walk fires one there), and `Inner`'s walk
+ * followed `yb` out to a state the outer walk had just published `unreachable`
+ * (`unreachable b` beside `deadlock b … reached in 2 step(s)`).
+ *
+ * BOTH SIDES ARE REFUSED, not only the machine whose relation holds the edge.
+ * Refusing that one alone left the far side walked as though the edge were not
+ * there: with only `az` (written in `Outer`, leading into `Inner::z`), `Inner`
+ * still published `unreachable z` and a `pass` for `absence z` while a run of
+ * `Outer` ends in `Inner::z`; with only `yb`, `Outer` published `unreachable b`
+ * the same way. The far side is found off the endpoint index, so an edge
+ * written anywhere — in a nested definition, in another top-level machine, in
+ * a package — that names one of this machine's states is one of them.
+ *
+ * An end AT a machine's root is not a crossing for that machine — entering a
+ * machine at its root is starting it, which is what its walk does — but a
+ * nested `state def` is not part of the outer machine's region, so `then
+ * Inner` written in `Outer` crosses into it: the walk cascaded into `Inner`'s
+ * initial state, where a run of `Outer` stays at `Inner` itself.
+ *
+ * The interpreter (`runRegion`, `../execute.ts`) reads the same relation and
+ * takes such an edge where the walk would have: the run enters the far state
+ * and stays there, since none of that state's transitions are in it. That
+ * reading is not a verdict, and `docs/06` §8.6 says how the two stand.
+ *
+ * Read twice, like {@link danglingTransitions}: by {@link edgeCensus}, for the
+ * `refused` bucket, and by {@link unsupportedConstructs}.
+ */
+function boundaryCrossings(model: Model, machineId: ElementId): BoundaryCrossing[] {
+  const region = regionDescendants(model, machineId);
+  const regionIds = new Set<ElementId>(region.map((d) => d.id));
+  // The nodes this machine's region is made of. A nested `state def` is in
+  // `regionDescendants` — the boundary stops BELOW it — but it is a machine of
+  // its own, or a definition no walk enters, and not a node of this one.
+  const own = new Set<ElementId>([machineId]);
+  for (const d of region) if (d.eClass !== 'StateDefinition') own.add(d.id);
+  let inside: ReadonlySet<ElementId> | undefined;
+  const out: BoundaryCrossing[] = [];
+  for (const edge of regionTransitions(model, machineId)) {
+    for (const end of [edge.source![0], edge.target![0]]) {
+      if (own.has(end)) continue;
+      inside ??= new Set(model.descendants(machineId).map((d) => d.id));
+      out.push(
+        inside.has(end)
+          ? { edge, way: 'into', other: outermostDefinitionAt(model, machineId, end) }
+          : { edge, way: 'out', other: machineHolding(model, end) },
+      );
+      break;
+    }
+  }
+  const foreign = new Set<ElementId>();
+  for (const id of own) {
+    if (id === machineId) continue;
+    for (const edge of model.edgesOf(id)) {
+      if (foreign.has(edge.id) || regionIds.has(edge.id)) continue;
+      if (!CONTROL_EDGE_KINDS.has(edge.eClass) || edge.attrs.isLibrary === true) continue;
+      if (edge.source?.[0] === undefined || edge.target?.[0] === undefined) continue;
+      foreign.add(edge.id);
+      out.push({ edge, way: 'foreign', other: edge.ownerId ?? null });
+    }
+  }
+  return out;
+}
+
+/**
+ * The `state def` written in the machine's region that holds `id` — the
+ * boundary between the two — or `id` itself when it is that definition. `id` is
+ * a descendant of the machine that its region does not hold, so there is one.
+ */
+function outermostDefinitionAt(model: Model, machineId: ElementId, id: ElementId): ElementId {
+  let found = id;
+  for (let p: ElementId | null = id; p != null && p !== machineId; p = model.get(p)?.ownerId ?? null) {
+    if (model.get(p)?.eClass === 'StateDefinition') found = p;
+  }
+  return found;
+}
+
+/** The machine whose region holds `id` as one of its nodes, if any does. */
+function machineHolding(model: Model, id: ElementId): ElementId | null {
+  for (const m of stateMachinesIn(model)) {
+    if (m.id === id) return m.id;
+    const holds = regionDescendants(model, m.id).some((d) => d.id === id && d.eClass !== 'StateDefinition');
+    if (holds) return m.id;
+  }
+  return null;
+}
+
+/**
+ * The specialisation or typed usage on the far side of a crossing whose step
+ * joins states one side INHERITS from the other, or `null`: for a `foreign`
+ * edge, the element it is written in (or an owner of that) that specialises or
+ * is typed by this machine; for an `out` edge, the machine holding the far end
+ * when this machine specialises or is typed by it. `state def Derived :> Base
+ * { transition bc first b accept more then c; }` is both: `bc` joins `Base`'s
+ * `b` and `c`, and is written in `Derived`.
+ */
+function inheritedAcross(model: Model, machineId: ElementId, c: BoundaryCrossing): ElementId | null {
+  const inherits = (sub: ElementId, general: ElementId): boolean =>
+    generalizationsOf(model, sub).some((g) => g.id === general);
+  if (c.way === 'out') return c.other !== null && inherits(machineId, c.other) ? c.other : null;
+  if (c.way !== 'foreign') return null;
+  for (let p: ElementId | null = c.edge.ownerId ?? null; p != null; p = model.get(p)?.ownerId ?? null) {
+    if (inherits(p, machineId)) return p;
+  }
+  return null;
+}
+
+/**
+ * What lies across the boundary, in the refusal's words: a nested definition
+ * is "a machine of its own" only when it is one — a `state def` that owns no
+ * transition is walked by nothing (`stateMachinesIn`), and calling it a machine
+ * printed a second machine under a header that counted one.
+ */
+function acrossSentence(model: Model, c: BoundaryCrossing, inherited: ElementId | null = null): string {
+  const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  const other = c.other === null ? undefined : model.get(c.other);
+  switch (c.way) {
+    case 'into':
+      return (
+        `into the nested \`state def\` ${qn(c.other!)}, ` +
+        (other !== undefined && ownsMachine(model, other)
+          ? 'a machine of its own that this walk does not enter'
+          : 'a definition this walk stops at and no walk enters, since it owns no transition')
+      );
+    case 'out':
+      if (other === undefined) return 'out of this machine, to an element no machine walks';
+      if (inherited !== null) {
+        return `out of this machine, into ${qn(other.id)}, a machine of its own whose states this one inherits`;
+      }
+      return model.descendants(other.id).some((d) => d.id === c.edge.ownerId)
+        ? `out of this nested \`state def\`, into ${qn(other.id)}, the machine it is written in`
+        : `out of this machine, into ${qn(other.id)}, a machine of its own`;
+    case 'foreign':
+      if (inherited !== null) {
+        return `written outside this machine, in ${qn(inherited)}, which inherits its states`;
+      }
+      return `written outside this machine${other !== undefined ? `, in ${qn(other.id)}` : ''}`;
+  }
+}
+
 /**
  * The constructs this engine refuses, checked BEFORE the walk.
  *
@@ -852,7 +1313,14 @@ function danglingTransitions(model: Model, machineId: ElementId): ElementRecord[
  * cannot fire at all, and a walk that ignored it would count it dead on a
  * technicality rather than on a semantics.
  *
- * The fourth is not a construct anybody enumerated, and that is its point. It
+ * `machine-boundary` is a step edge that joins this machine's states to states
+ * outside its region ({@link boundaryCrossings}), from either side: written in
+ * this machine and leading into a `state def` written inside it or out to
+ * another machine, or written elsewhere and leading into or out of one of its
+ * states. Each machine walks only its own transitions, so the step has no
+ * meaning here, and neither side's walk is a claim about the model.
+ *
+ * The last is not a construct anybody enumerated, and that is its point. It
  * is whatever the {@link edgeCensus} could not account for: an edge that
  * touches this machine's states and that the relation does not follow. §3.8's
  * list was written by reading the code, which is how an edge kind came to be
@@ -900,6 +1368,33 @@ function unsupportedConstructs(
       elementId: tr.id,
     });
   }
+  const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
+  for (const c of boundaryCrossings(model, machineId)) {
+    const inherited = inheritedAcross(model, machineId, c);
+    out.push({
+      construct: 'machine-boundary',
+      detail:
+        `${qn(c.edge.id)} leads from ${qn(c.edge.source![0])} to ${qn(c.edge.target![0])}` +
+        (c.way === 'foreign'
+          ? ` and is ${acrossSentence(model, c, inherited)}, so this walk does not take it. `
+          : `, ${acrossSentence(model, c, inherited)}. `) +
+        // A specialisation's remedy is not a nested definition's: moving the
+        // step into the machine whose states it joins would change THAT
+        // machine, which the specialisation was written not to do.
+        (inherited !== null
+          ? 'A transition added over inherited states is not walked as part of either machine: each ' +
+            'walks only the transitions written in its own region, and this engine does not put a ' +
+            'specialisation or a typed usage together with the machine it inherits states from, so ' +
+            'no walk of this machine is a claim about the two together. To have the steps walked, ' +
+            'write the machine you mean out whole — its states and every transition it steps by — ' +
+            'in one definition.'
+          : 'Each machine steps only by its own transitions, so what a step across that boundary means ' +
+            'is not defined here, and no walk of this machine is a claim about it as written. Keep each ' +
+            'transition inside the machine whose states it joins, or write a nested definition as a ' +
+            'composite state (`state Inner { … }`) to make its states part of the outer machine.'),
+      elementId: c.edge.id,
+    });
+  }
   // The detail is the census ROW'S OWN sentence, not a fixed one. A single
   // hardcoded remedy told the author of `first busy then nowhere;` to write it
   // as a succession — which is what they had written — and the same words would
@@ -924,7 +1419,12 @@ function unsupportedConstructs(
 interface Frontier {
   config: MachineConfig;
   depth: number;
-  /** Consecutive completion steps taken to reach this configuration. */
+  /**
+   * Completion steps fired since the last event (or since the opening): how far
+   * into its chase the interpreter is here. Read only where a completion
+   * transition is due, which is the only place the chase budget decides
+   * anything — and kept at 0 everywhere else.
+   */
   completionRun: number;
   /**
    * This configuration's node number — its position in BFS discovery order.
@@ -938,42 +1438,128 @@ interface Frontier {
 }
 
 /*
- * A COMPLETION CYCLE IS NOT A BOUND HIT, and the distinction is worth stating
- * because the interpreter's `completionBudgetHit` looks like it says otherwise.
+ * THE CHASE BUDGET IS PART OF THE SEMANTICS, NOT A BOUND.
  *
- * They answer different questions. `runStateMachine` reports whether THAT RUN
- * was cut off mid-chase; on a machine whose completion transitions cycle
- * (`FlightModes` in `examples/uav-isr.sysml` is one — standby → manual →
- * autonomous → manual …) every run is cut off, and it says so. The walk reports
- * whether it saw the whole configuration GRAPH; a cycle re-enters configurations
- * it has already hashed, so nothing downstream of it is unexplored and the
- * absence lists are exact. The two are consistent, not contradictory: one is a
- * fact about a run, the other about a graph.
+ * The interpreter chases trigger-less (completion) transitions after every
+ * driving step, and stops after `maxCompletion` of them whether or not one is
+ * still due (`chaseCompletion` / `chaseHierCompletion` in `../execute.ts`). It
+ * then takes the NEXT EVENT wherever the chase stopped: a transition leaving
+ * that configuration on that event fires, and a new chase starts with a fresh
+ * budget. So a configuration where a completion transition is due is one of two
+ * things to the interpreter, depending on how far into its chase it is: a
+ * configuration it chases out of, or — at the budget — one it rests in and
+ * offers the next event at.
  *
- * What the counter below is for is the case where something IS unexplored — a
- * chain of more than `maxCompletion` distinct completion steps, whose far end no
- * interpreter run can reach, so the walk stops there and suppresses rather than
- * reporting states beyond it as unreachable. §3.8's own example of the condition
- * is that chain, and its own example of an exhaustive walk is `FlightModes`,
- * which cycles. `test/unit/semantics.mc.reach.test.ts` pins both readings side
- * by side so neither can drift into the other.
+ * The walk used to read the budget as a bound instead. It counted the chase
+ * along the path a configuration was FIRST found by, cut a chain longer than
+ * the budget off as `boundHit: 'completion'`, and on a completion CYCLE never
+ * met the budget at all — a cycle re-enters configurations already hashed — so
+ * it never offered an event inside one. Two kinds of run the interpreter takes
+ * were missing from it: an event taken where a chase stopped on a cycle
+ * (`LiveTwo`: `s0 -go-> a`, `a ⇄ b` on completion, `a accept e then c`; the
+ * interpreter on `[go, e]` ends in `c`, and the walk published `c` unreachable
+ * and `ac` dead), and one taken where a long chain stopped short of its end —
+ * where a shorter path to the same configuration had hidden the long one.
+ * Absence lists, `pass` rows and `not-covered` rows were published over the
+ * runs it was missing; that is the one direction of error this lane may not
+ * have.
+ *
+ * WHAT THE WALK DOES NOW. Where the budget can stop a chase, the walk carries
+ * the chase position in the configuration it hashes — `run` in
+ * `0..maxCompletion`, beside every configuration where a completion transition
+ * is due — so two arrivals at one configuration at two points of a chase are
+ * two nodes, with the two futures the interpreter gives them:
+ *
+ *   - `run < maxCompletion`: the chase goes on, and only completion is offered;
+ *   - `run === maxCompletion`: the chase stops here, as the interpreter's does,
+ *     and the alphabet is offered exactly as `runStateMachine` takes the next
+ *     event. The completion transitions due here are counted ENABLED — they
+ *     are, at a configuration a run reaches, so they are not dead and this is
+ *     not a deadlock — and none of them is fired;
+ *   - an event restarts the chase at 0, and a configuration where nothing is
+ *     due is hashed without a position, because nothing it does depends on it.
+ *
+ * Nothing is cut, so nothing is a bound: a state no run reaches within the
+ * budget is unreachable, and the bounds line printed beside it names the
+ * budget it holds under (`maxCompletion 64`).
+ *
+ * WHERE THE BUDGET CANNOT STOP A CHASE, THE POSITION IS LEFT OUT — the walk is
+ * the one it always was, configuration for configuration, and every figure it
+ * prints is the figure it always printed. It cannot stop one when no chase is
+ * longer than the budget: no cycle of completion steps, and no path of more
+ * than `maxCompletion` of them. The walk runs once without positions and asks
+ * that of the completion edges it retained ({@link chaseBudgetDecides}); only
+ * where it can stop one is the machine walked again with them.
+ *
+ * A MACHINE THAT NAMES NO TRIGGER KEEPS ITS WALK, AND IS STILL HELD TO THE
+ * BUDGET. A chase stopped there is followed by nothing — there is no next event
+ * to take — so where the first walk finished, the position would add no state a
+ * run reaches and no transition it enables, and the walk keeps the relation the
+ * machine states (it is walked with the position only where the first walk had
+ * to cut a chain, whose far end no run reaches). But the budget still decides
+ * where a run ENDS: every run of such a machine is the one chase from the
+ * opening, stopped after `maxCompletion` steps wherever it is, while the
+ * relation follows that chase round its cycle for ever, or down its chain to
+ * the end. So the walk names where the budget stops it
+ * ({@link ExploreResult.budgetStops}), and the two claims read over where a
+ * run ends — every run reaches it, it can be got back to from everywhere — are
+ * checked against those stops (`./patterns`). Both were published over this
+ * relation unchecked once, by an exemption a review of this very change found
+ * false on two such machines. `FlightModes` (`examples/uav-isr.sysml`) cycles
+ * on completion alone: it keeps its four configurations and every row it
+ * printed, and its `recovery` of `standby` is withheld, because the budget
+ * stops a run of it in `autonomous`.
  */
+
+/** The walks taken over one revision of one model, by machine and bounds. */
+interface WalkCache {
+  rev: number;
+  walks: Map<string, ExploreResult>;
+}
+const WALK_CACHE = new WeakMap<Model, WalkCache>();
 
 /**
  * Explore the configuration graph of the machine rooted at `machineId`.
  *
  * Breadth-first, so the depth recorded against a configuration is the SHORTEST
- * walk to it, which is what makes the completion-run counter mean what it says:
- * the number of trigger-less steps the interpreter's own chase would have taken
- * in a row before reaching here. When that count reaches the chase budget, the
- * interpreter would have run out of it, and this walk says so rather than
- * pretending it settled.
+ * walk to it. Each configuration carries how far into its chase the
+ * interpreter is there, and where the chase budget can stop a chase that
+ * position is part of the configuration — see the note above.
+ *
+ * ONE WALK PER MACHINE, BOUNDS AND MODEL REVISION. The walk is a function of
+ * those alone and its result is read-only, so a second caller over the same
+ * revision gets the first one's walk — as `regionTransitions` and
+ * `regionScope` (`./config`) are kept, by `model.rev`. `check-behaviour`
+ * walks a machine for every property it decides and once more to file the
+ * machine's completion livelocks (`behaviourReport`, `./patterns`); measured
+ * on a 9,641-configuration machine with one property, that second walk took
+ * the command from about 230 ms to about 540 ms (the branch review).
  */
 export function exploreMachine(
   model: Model,
   machineId: ElementId,
   opts: ExploreOptions = {},
 ): ExploreResult {
+  const key = [
+    machineId,
+    Math.max(1, opts.maxConfigs ?? DEFAULT_MAX_CONFIGS),
+    Math.max(0, opts.maxDepth ?? DEFAULT_MAX_DEPTH),
+    Math.max(0, opts.maxCompletion ?? MAX_COMPLETION),
+  ].join('|');
+  let cache = WALK_CACHE.get(model);
+  if (cache === undefined || cache.rev !== model.rev) {
+    cache = { rev: model.rev, walks: new Map() };
+    WALK_CACHE.set(model, cache);
+  }
+  const hit = cache.walks.get(key);
+  if (hit !== undefined) return hit;
+  const walk = walkMachine(model, machineId, opts);
+  cache.walks.set(key, walk);
+  return walk;
+}
+
+/** {@link exploreMachine}, uncached. */
+function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): ExploreResult {
   const bounds: ExploreBounds = {
     maxConfigs: Math.max(1, opts.maxConfigs ?? DEFAULT_MAX_CONFIGS),
     maxDepth: Math.max(0, opts.maxDepth ?? DEFAULT_MAX_DEPTH),
@@ -1014,16 +1600,6 @@ export function exploreMachine(
     const label = triggerLabelOf(tr);
     if (label !== '') timedLabels.add(label);
   }
-  const reachable = new Set<ElementId>();
-  const fired = new Set<ElementId>();
-  const offered = new Set<string>();
-  const nondeterminism: NondeterministicChoice[] = [];
-  const deadlocks: DeadlockRow[] = [];
-  // ONE row per transition, not one per configuration it was consulted at: a
-  // guard over an unvalued feature is undetermined at every configuration the
-  // walk offers it, and a reader needs the transition once, not a row per state
-  // of a store the guard does not depend on.
-  const undeterminedGuards = new Map<ElementId, UndeterminedGuardRow>();
 
   // A construct this engine does not explore ends the answer here. Walking the
   // machine anyway and marking the result non-exhaustive would publish a
@@ -1037,11 +1613,11 @@ export function exploreMachine(
       depth: 0,
       exhaustive: false,
       boundHit: 'none',
-      reachable,
-      fired,
-      offered,
-      nondeterminism,
-      deadlocks,
+      reachable: new Set(),
+      fired: new Set(),
+      offered: new Set(),
+      nondeterminism: [],
+      deadlocks: [],
       unsupported,
       census,
       undeterminedGuards: [],
@@ -1056,13 +1632,174 @@ export function exploreMachine(
       openFrontier: true,
       timedTransitions,
       timedLabels,
+      chaseKeyed: false,
+      chaseStops: 0,
+      budgetStops: [],
+      chaseCycles: [],
     };
   }
 
-  const inputs: StepInput[] = [
-    { kind: 'completion' },
-    ...bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger })),
-  ];
+  // Once without the chase position, which is every walk this engine has ever
+  // published; again with it only where the budget can stop a chase AND
+  // something can follow a stopped one: an event, on a machine that names a
+  // trigger, or the states past a chain the first walk had to cut. A machine
+  // that names no trigger otherwise keeps its walk, and the configurations
+  // where the budget stops its one chase are named on it — see the note above.
+  const plain = walkConfigurations(model, machineId, bounds, false);
+  const budgetCanStop = chaseBudgetDecides(plain, bounds);
+  const walked =
+    budgetCanStop && (bounds.alphabet.length > 0 || plain.boundHit === 'completion')
+      ? walkConfigurations(model, machineId, bounds, true)
+      : plain;
+  const budgetStops = !walked.chaseKeyed && budgetCanStop ? openingChaseStops(plain, bounds) : [];
+  return {
+    machineId,
+    bounds,
+    configs: walked.configs,
+    depth: walked.depth,
+    exhaustive: walked.exhaustive,
+    boundHit: walked.boundHit,
+    reachable: walked.reachable,
+    fired: walked.fired,
+    offered: walked.offered,
+    nondeterminism: walked.nondeterminism,
+    deadlocks: walked.deadlocks,
+    unsupported,
+    census,
+    undeterminedGuards: walked.undeterminedGuards,
+    successors: walked.successors,
+    configStates: walked.configStates,
+    configLeaves: walked.configLeaves,
+    openFrontier: !walked.exhaustive,
+    timedTransitions,
+    timedLabels,
+    chaseKeyed: walked.chaseKeyed,
+    chaseStops: walked.chaseStops,
+    budgetStops,
+    chaseCycles: walked.chaseCycles,
+  };
+}
+
+/** What one walk of the configuration graph produced — the walk half of {@link ExploreResult}. */
+interface Walked {
+  configs: number;
+  depth: number;
+  exhaustive: boolean;
+  boundHit: BoundHit;
+  reachable: Set<ElementId>;
+  fired: Set<ElementId>;
+  offered: Set<string>;
+  nondeterminism: NondeterministicChoice[];
+  deadlocks: DeadlockRow[];
+  undeterminedGuards: UndeterminedGuardRow[];
+  successors: number[][];
+  configStates: (readonly ElementId[])[];
+  configLeaves: (ElementId | null)[];
+  /**
+   * `completionSuccessors[i]`: the part of `successors[i]` reached by a
+   * completion step. Read once, by {@link chaseBudgetDecides}, to ask whether
+   * the budget can stop a chase on this machine.
+   */
+  completionSuccessors: number[][];
+  chaseKeyed: boolean;
+  chaseStops: number;
+  chaseCycles: ChaseCycle[];
+}
+
+/**
+ * One breadth-first walk of the configuration graph — without the chase
+ * position (`keyed` false), which cuts a chase longer than the budget off as
+ * `boundHit: 'completion'`, or with it, which follows the interpreter through
+ * the budget and cuts nothing.
+ */
+function walkConfigurations(
+  model: Model,
+  machineId: ElementId,
+  bounds: ExploreBounds,
+  keyed: boolean,
+): Walked {
+  const COMPLETION: StepInput = { kind: 'completion' };
+  const triggers: StepInput[] = bounds.alphabet.map((trigger): StepInput => ({ kind: 'trigger', trigger }));
+  const inputs: StepInput[] = [COMPLETION, ...triggers];
+  const reachable = new Set<ElementId>();
+  const fired = new Set<ElementId>();
+  const offered = new Set<string>();
+  const nondeterminism: NondeterministicChoice[] = [];
+  const deadlocks: DeadlockRow[] = [];
+  // ONE row per transition, not one per configuration it was consulted at: a
+  // guard over an unvalued feature is undetermined at every configuration the
+  // walk offers it, and a reader needs the transition once, not a row per state
+  // of a store the guard does not depend on.
+  const undeterminedGuards = new Map<ElementId, UndeterminedGuardRow>();
+  const recordUndetermined = (undetermined: readonly UndeterminedGuard[]): void => {
+    for (const u of undetermined) {
+      const seenRow = undeterminedGuards.get(u.transition.id);
+      if (seenRow === undefined) {
+        undeterminedGuards.set(u.transition.id, {
+          transition: transitionRef(model, u.transition),
+          guard: u.guard,
+          unresolved: [...u.unresolved],
+        });
+      } else {
+        // The same guard can be undetermined over DIFFERENT names at
+        // different configurations (a store that gained one of them on the
+        // way here), and the row names every name that was ever missing —
+        // dropping the later ones would send an author to fix half of it.
+        const union = new Set([...seenRow.unresolved, ...u.unresolved]);
+        undeterminedGuards.set(u.transition.id, { ...seenRow, unresolved: [...union] });
+      }
+    }
+  };
+  // What the completion input finds at a configuration, by its hash. The keyed
+  // walk needs it BEFORE it admits a configuration — whether a completion
+  // transition is due there decides whether the chase position is in the key —
+  // and asks again when it dequeues one, so it is asked once per configuration.
+  const completionCache = new Map<string, StepCandidates>();
+  const completionAt = (config: MachineConfig, hash: string): StepCandidates => {
+    let found = completionCache.get(hash);
+    if (found === undefined) {
+      found = stepCandidates(model, config, COMPLETION, true);
+      completionCache.set(hash, found);
+    }
+    return found;
+  };
+  // The key a configuration is visited under: its hash, and in the keyed walk
+  // the chase position too — but only where a completion transition is due,
+  // the one place the position decides what happens next. Everywhere else it
+  // would split one configuration into nodes with the same future.
+  const keyOf = (config: MachineConfig, hash: string, run: number): { key: string; run: number } =>
+    keyed && completionAt(config, hash).enabled.length > 0 ? { key: `${hash}#${run}`, run } : { key: hash, run: keyed ? 0 : run };
+  // THE INTERPRETER'S CHASE, PER CONFIGURATION — what `chaseCycles` is read
+  // from. Interned by hash and not by node: the keyed walk numbers one
+  // configuration once per chase position, and the step the chase takes from
+  // it is the same at every one of them. `nodeConfig` grows beside `succ`, at
+  // the same two admission points.
+  const configIndex = new Map<string, number>();
+  const intern = (hash: string): number => {
+    let c = configIndex.get(hash);
+    if (c === undefined) {
+      c = configIndex.size;
+      configIndex.set(hash, c);
+    }
+    return c;
+  };
+  const nodeConfig: number[] = [];
+  const chase: ChaseStep[] = [];
+  const chaseUndecided = new Set<number>();
+  // THE SIMULATOR'S OWN STEPS, for the livelock's way in: the edges of `succ`
+  // made by the transition `runStateMachine` takes for that input — the first
+  // enabled, never a dwell. A path of these is a run `simulate` makes when it
+  // is driven with the path's events; a path through any other edge takes a
+  // tie-break the simulator never takes. A flat edge list, not a row per node:
+  // it is read only where a cycle was found, and a walk of a quarter of a
+  // million configurations should not carry a quarter of a million arrays for
+  // it. And the chase position each node was admitted at, which in the keyed
+  // walk is exact wherever a trigger-less transition is due — so whether a
+  // chase that gets to a node of a cycle still has the budget to go round it is
+  // read off the node; it grows beside `succ`, at the admission point.
+  const simFrom: number[] = [];
+  const simTo: number[] = [];
+  const nodeRun: number[] = [0];
 
   // The same opening store the interpreter starts from: every literal feature
   // value inside the machine, by name. A walk that started from an empty store
@@ -1073,18 +1810,24 @@ export function exploreMachine(
   if (machineEl) seedStore(model, machineEl, seeded);
   const opening = initialConfig(model, machineId, { store: seeded });
   for (const v of opening.effects.visited) reachable.add(v);
+  const openingHash = hashConfig(opening.config);
   // A MAP, not a set: the value is the configuration's node number, which is
   // what interns the hash away. `Map.size` is `Set.size`, so the configuration
   // bound below reads exactly as it did.
-  const seen = new Map<string, number>([[hashConfig(opening.config), 0]]);
+  const seen = new Map<string, number>([[keyOf(opening.config, openingHash, 0).key, 0]]);
+  nodeConfig.push(intern(openingHash));
   // One row per node, grown at the admission point so `succ.length` and
   // `seen.size` stay equal.
   const succ: number[][] = [[]];
+  const completionSucc: number[][] = [[]];
   const configStates: (readonly ElementId[])[] = [opening.config.stack];
   const configLeaves: (ElementId | null)[] = [leafOf(opening.config)];
-  const queue: Frontier[] = [{ config: opening.config, depth: 0, completionRun: 0, index: 0 }];
+  const queue: (Frontier & { hash: string })[] = [
+    { config: opening.config, depth: 0, completionRun: 0, index: 0, hash: openingHash },
+  ];
   let boundHit: BoundHit = 'none';
   let depth = 0;
+  let chaseStops = 0;
   const nondetSeen = new Set<string>();
   const deadlockSeen = new Set<ElementId>();
 
@@ -1100,9 +1843,31 @@ export function exploreMachine(
     // Without this the walk takes runs the profile forbids, and its existential
     // answers (`fail`, `covered`, `no way out`, `choice`, an undecided guard)
     // can sit on a configuration no run reaches.
-    const completion = stepCandidates(model, here.config, { kind: 'completion' }, true);
-    const offeredInputs: StepInput[] =
-      completion.enabled.length > 0 || completion.undetermined.length > 0 ? [{ kind: 'completion' }] : inputs;
+    //
+    // UNTIL THE CHASE BUDGET IS SPENT. Where the keyed walk has followed a chase
+    // `maxCompletion` steps to here and a completion transition is still due,
+    // the interpreter stops chasing and takes the next event here, so the walk
+    // offers the alphabet and no completion — see the note above.
+    const completion = completionAt(here.config, here.hash);
+    const due = completion.enabled.length > 0;
+    const stopped = keyed && due && here.completionRun >= bounds.maxCompletion;
+    // A trigger-less transition out of here that the walk could not decide:
+    // whether the chase fires it, and leaves, is a question nothing answered.
+    if (completion.undetermined.length > 0) chaseUndecided.add(nodeConfig[here.index]);
+    if (stopped) {
+      chaseStops++;
+      // Enabled, at a configuration a run reaches: not dead, and not a
+      // deadlock. Not fired either — not by this walk, and not by the
+      // interpreter, whose budget is spent — so no successor is recorded.
+      anyEnabled = true;
+      for (const e of completion.enabled) fired.add(e.transition.id);
+      recordUndetermined(completion.undetermined);
+    }
+    const offeredInputs: StepInput[] = stopped
+      ? triggers
+      : due || completion.undetermined.length > 0
+        ? [COMPLETION]
+        : inputs;
     for (const input of offeredInputs) {
       if (input.kind === 'trigger') offered.add(input.trigger);
       const { enabled, undetermined } =
@@ -1112,23 +1877,7 @@ export function exploreMachine(
       // undetermined guard has nothing enabled, and it is exactly the one whose
       // deadlock row would otherwise be published over a question nothing
       // answered.
-      for (const u of undetermined) {
-        const seenRow = undeterminedGuards.get(u.transition.id);
-        if (seenRow === undefined) {
-          undeterminedGuards.set(u.transition.id, {
-            transition: transitionRef(model, u.transition),
-            guard: u.guard,
-            unresolved: [...u.unresolved],
-          });
-        } else {
-          // The same guard can be undetermined over DIFFERENT names at
-          // different configurations (a store that gained one of them on the
-          // way here), and the row names every name that was ever missing —
-          // dropping the later ones would send an author to fix half of it.
-          const union = new Set([...seenRow.unresolved, ...u.unresolved]);
-          undeterminedGuards.set(u.transition.id, { ...seenRow, unresolved: [...union] });
-        }
-      }
+      recordUndetermined(undetermined);
       if (enabled.length === 0) continue;
       anyEnabled = true;
       // The interpreter fires `enabled[0]`, and the list is innermost level
@@ -1163,12 +1912,47 @@ export function exploreMachine(
         );
       }
 
+      // The transition the INTERPRETER's chase fires here — `enabled[0]`, the
+      // one `runStateMachine` takes — and where it leads, recorded once per
+      // configuration for `chaseCycles`. Beside it, whether declaration order
+      // beat another trigger-less transition at the same level to it. And, for
+      // every input, whether an edge is the simulator's own step
+      // (`simFrom`/`simTo`).
+      const pick = enabled[0];
+      const simStep = afterDuration(pick.transition) === undefined;
+      const recordSim = (choice: EnabledTransition, target: number): void => {
+        if (choice !== pick || !simStep) return;
+        simFrom.push(here.index);
+        simTo.push(target);
+      };
+      const recordChase = (choice: EnabledTransition, target: number): void => {
+        if (input.kind !== 'completion' || choice !== pick) return;
+        // NOT FROM A CONFIGURATION THE BUDGET STOPS A CHASE AT. The keyed walk
+        // offers no completion there (`stopped`); the walk without the
+        // position — which a machine that names no trigger keeps — still
+        // follows the chase one step past it, and that step is one the
+        // interpreter never fires: its chase reached this configuration on its
+        // last step and stopped. Recorded, it closed a cycle no run goes round
+        // (a 64-state chain whose last state steps back to the one before it).
+        if (here.completionRun >= bounds.maxCompletion) return;
+        const from = nodeConfig[here.index];
+        if (chase[from] !== undefined) return;
+        chase[from] = {
+          next: nodeConfig[target],
+          via: choice.transition.id,
+          timed: afterDuration(choice.transition) !== undefined,
+          choice:
+            enabled.filter((e) => e.level === innermost).length > 1 ? here.config.stack[innermost] : null,
+        };
+      };
+
       for (const choice of enabled) {
         fired.add(choice.transition.id);
         if (choice.level !== innermost) continue;
         const next = stepConfig(model, here.config, choice);
         for (const v of next.effects.visited) reachable.add(v);
-        const key = hashConfig(next.config);
+        const hash = hashConfig(next.config);
+        const { key, run } = keyOf(next.config, hash, input.kind === 'completion' ? here.completionRun + 1 : 0);
         // THE REVISIT EDGE IS RECORDED HERE, BEFORE THE PRUNE, and then the
         // prune happens exactly as it always did. The admission point below
         // records the other half; this is the one line the retained relation's
@@ -1179,21 +1963,21 @@ export function exploreMachine(
         const known = seen.get(key);
         if (known !== undefined) {
           succ[here.index].push(known);
+          if (input.kind === 'completion') completionSucc[here.index].push(known);
+          recordSim(choice, known);
+          recordChase(choice, known);
           continue;
         }
 
-        const run = input.kind === 'completion' ? here.completionRun + 1 : 0;
-        // `>`, not `>=`: the interpreter's chase fires `maxCompletion`
+        // The walk WITHOUT the chase position cannot follow a chase past the
+        // budget — it does not know where the chase stops — so it stops there
+        // and says so, and `chaseBudgetDecides` sends the machine to the walk
+        // that can. `>`, not `>=`: the interpreter's chase fires `maxCompletion`
         // transitions and only THEN asks whether anything is still enabled, so
         // a configuration reached in exactly `maxCompletion` completion steps
-        // is one it reaches cleanly. Refusing it would print "a completion
-        // chain longer than the 64-step chase budget was found" about a chain
-        // that is not longer than it.
-        if (run > bounds.maxCompletion) {
-          // The interpreter's chase would have spent its whole budget on this
-          // chain without reaching quiescence. Recorded as a bound hit for the
-          // same reason a configuration bound is: everything downstream of it
-          // is unexplored.
+        // is one it reaches cleanly. The keyed walk never gets here: at the
+        // budget it offers events and no completion.
+        if (!keyed && run > bounds.maxCompletion) {
           boundHit = 'completion';
           continue;
         }
@@ -1205,13 +1989,19 @@ export function exploreMachine(
           boundHit = 'configs';
           continue;
         }
-        // AFTER the three bound gates, so no edge points at a configuration a
-        // bound refused: such a target is never given a number, and nothing in
-        // the relation can name it.
+        // AFTER the bound gates, so no edge points at a configuration a bound
+        // refused: such a target is never given a number, and nothing in the
+        // relation can name it.
         const to = seen.size;
         seen.set(key, to);
+        nodeConfig.push(intern(hash));
         succ.push([]);
+        completionSucc.push([]);
+        nodeRun.push(run);
         succ[here.index].push(to);
+        if (input.kind === 'completion') completionSucc[here.index].push(to);
+        recordSim(choice, to);
+        recordChase(choice, to);
         configStates.push(next.config.stack);
         configLeaves.push(leafOf(next.config));
         queue.push({
@@ -1219,6 +2009,7 @@ export function exploreMachine(
           depth: here.depth + 1,
           completionRun: run,
           index: to,
+          hash,
         });
       }
     }
@@ -1226,33 +2017,340 @@ export function exploreMachine(
     if (!anyEnabled) recordDeadlock(model, here, deadlockSeen, deadlocks);
   }
 
-  // ONE SOURCE for the two fields that must agree. `openFrontier` is the
-  // NEGATION of `exhaustive` and is written as one here so it cannot drift into
-  // a test on `boundHit`, which reads `false` on the unsupported early return
-  // above.
-  const exhaustive = boundHit === 'none';
   return {
-    machineId,
-    bounds,
     configs: seen.size,
     depth,
-    exhaustive,
+    exhaustive: boundHit === 'none',
     boundHit,
     reachable,
     fired,
     offered,
     nondeterminism,
     deadlocks,
-    unsupported,
-    census,
     undeterminedGuards: [...undeterminedGuards.values()],
     successors: succ,
     configStates,
     configLeaves,
-    openFrontier: !exhaustive,
-    timedTransitions,
-    timedLabels,
+    completionSuccessors: completionSucc,
+    chaseKeyed: keyed,
+    chaseStops,
+    chaseCycles: chaseCyclesOf(nodeConfig, chase, chaseUndecided, {
+      successors: succ,
+      simulator: { from: simFrom, to: simTo },
+      position: (v, dist) => (keyed ? nodeRun[v] : dist),
+      maxCompletion: bounds.maxCompletion,
+    }),
   };
+}
+
+/** The step the interpreter's chase takes from one configuration (`walkConfigurations`). */
+interface ChaseStep {
+  /** The configuration it leads to, by its interned index. */
+  next: number;
+  /** The transition it fires. */
+  via: ElementId;
+  /** That transition is a dwell. */
+  timed: boolean;
+  /** The state where it beat another enabled trigger-less transition at its level, or `null`. */
+  choice: ElementId | null;
+}
+
+/**
+ * The cycles of the interpreter's chase over one walk's configurations
+ * ({@link ExploreResult.chaseCycles}).
+ *
+ * The chase is a FUNCTION — at most one step per configuration — so following
+ * it from each configuration not yet seen either runs into a configuration
+ * already finished, stops where the walk recorded no step, or closes a cycle on
+ * its own path; the three colours tell which. Iterative, because a machine is
+ * free to be a chain of thousands of states. The cycles come back in the order
+ * the walk first numbered one of their configurations, so the rows a report
+ * prints are in discovery order like every other list it prints.
+ *
+ * THE WAY IN, ONCE FOR EVERY CYCLE. One breadth-first pass over the
+ * simulator's steps and one over the walk's whole relation, from the opening,
+ * and each cycle reads its own nodes off the two — never a pass per cycle,
+ * which a store an event counts turns into thousands of cycles (two counters
+ * to 60: 3,721 cycles over 245,586 configurations). A cycle's way in is the
+ * simulator's shortest run to a node of it from which the chase still has the
+ * budget to go once round; where the walk holds none, the walk's own shortest
+ * path, and the node where it first takes a step the simulator does not take
+ * there. Each cycle is rotated to start at the configuration its way in leads
+ * into.
+ */
+function chaseCyclesOf(
+  nodeConfig: readonly number[],
+  chase: readonly (ChaseStep | undefined)[],
+  undecided: ReadonlySet<number>,
+  way: WayIn,
+): ChaseCycle[] {
+  const count = nodeConfig.reduce((n, c) => Math.max(n, c + 1), 0);
+  const firstNode = new Int32Array(count).fill(-1);
+  nodeConfig.forEach((c, v) => {
+    if (firstNode[c] === -1) firstNode[c] = v;
+  });
+  const colour = new Uint8Array(count); // 0 unseen, 1 on the current path, 2 finished
+  const found: number[][] = [];
+  for (let start = 0; start < count; start++) {
+    if (colour[start] !== 0) continue;
+    const path: number[] = [];
+    let c: number | undefined = start;
+    while (c !== undefined && colour[c] === 0) {
+      colour[c] = 1;
+      path.push(c);
+      c = chase[c]?.next;
+    }
+    if (c !== undefined && colour[c] === 1) found.push(path.slice(path.indexOf(c)));
+    for (const p of path) colour[p] = 2;
+  }
+  if (found.length === 0) return [];
+
+  // Each configuration's cycle, and so each cycle's nodes, in ONE pass.
+  const cycleOf = new Int32Array(count).fill(-1);
+  found.forEach((members, k) => {
+    for (const c of members) cycleOf[c] = k;
+  });
+  const nodesOf: number[][] = found.map(() => []);
+  nodeConfig.forEach((c, v) => {
+    if (cycleOf[c] !== -1) nodesOf[cycleOf[c]].push(v);
+  });
+  const walkBfs = breadthFirstFromOpening(nodeConfig.length, (v, visit) => {
+    for (const w of way.successors[v]) visit(w);
+  });
+  // The simulator's steps as adjacency, built here and only here: offsets into
+  // one array of targets, by source node.
+  const offset = new Int32Array(nodeConfig.length + 1);
+  for (const v of way.simulator.from) offset[v + 1]++;
+  for (let v = 0; v < nodeConfig.length; v++) offset[v + 1] += offset[v];
+  const target = new Int32Array(way.simulator.to.length);
+  const fill = offset.slice(0, nodeConfig.length);
+  way.simulator.from.forEach((v, i) => {
+    target[fill[v]++] = way.simulator.to[i];
+  });
+  const simStepTo = (v: number, w: number): boolean => {
+    for (let i = offset[v]; i < offset[v + 1]; i++) if (target[i] === w) return true;
+    return false;
+  };
+  const simBfs = breadthFirstFromOpening(nodeConfig.length, (v, visit) => {
+    for (let i = offset[v]; i < offset[v + 1]; i++) visit(target[i]);
+  });
+  const trace = (parent: Int32Array, v: number): number[] => {
+    const path: number[] = [];
+    for (let u = v; u !== -1; u = parent[u]) path.push(u);
+    return path.reverse();
+  };
+
+  const cycles = found.map((members, k): ChaseCycle => {
+    const nodes = nodesOf[k];
+    // A run the simulator makes: the node of the cycle its steps reach first
+    // with the budget left to go once round from there.
+    let sim = -1;
+    for (const v of nodes) {
+      if (simBfs.rank[v] === -1) continue;
+      if (way.position(v, simBfs.dist[v]) + members.length > way.maxCompletion) continue;
+      if (sim === -1 || simBfs.rank[v] < simBfs.rank[sim]) sim = v;
+    }
+    let entry: number[];
+    let branchAt: number | null = null;
+    if (sim !== -1) {
+      entry = trace(simBfs.parent, sim);
+    } else {
+      let at = -1;
+      for (const v of nodes) if (walkBfs.rank[v] !== -1 && (at === -1 || walkBfs.rank[v] < walkBfs.rank[at])) at = v;
+      // Every node the walk numbered it reached from node 0 — so this is a
+      // defect in the producer, as `entryPath`'s is.
+      if (at === -1) throw new Error('a cycle of the chase is not reachable from the walk’s opening');
+      entry = trace(walkBfs.parent, at);
+      for (let i = 0; i + 1 < entry.length; i++) {
+        if (!simStepTo(entry[i], entry[i + 1])) {
+          branchAt = entry[i];
+          break;
+        }
+      }
+    }
+    // Round in chase order, from the configuration the way in leads into.
+    const at = members.indexOf(nodeConfig[entry[entry.length - 1]]);
+    const round = [...members.slice(at), ...members.slice(0, at)];
+    return {
+      order: round.map((c) => firstNode[c]),
+      via: round.map((c) => chase[c]!.via),
+      nodes,
+      first: round.reduce((n, c) => Math.min(n, firstNode[c]), Infinity),
+      undecided: round.some((c) => undecided.has(c)),
+      timed: round.some((c) => chase[c]!.timed),
+      choices: round.map((c) => chase[c]!.choice).filter((s): s is ElementId => s !== null),
+      entry,
+      entryBy: sim !== -1 ? 'simulator' : 'walk',
+      branchAt,
+    };
+  });
+  return cycles.sort((a, b) => a.first - b.first);
+}
+
+/** What {@link chaseCyclesOf} reads a cycle's way in from. */
+interface WayIn {
+  /** The walk's successor relation. */
+  successors: readonly (readonly number[])[];
+  /** The edges of it the simulator's own steps make, as parallel source and target lists. */
+  simulator: { from: readonly number[]; to: readonly number[] };
+  /**
+   * The chase position a run of the simulator is at when its steps reach node
+   * `v`, `dist` of them from the opening: the node's own in the keyed walk,
+   * which keys it; `dist` itself in the walk without it, which only a machine
+   * that names no trigger keeps with a cycle in it — every run of such a
+   * machine is the one chase from the opening, so each of its steps is a
+   * chase step.
+   */
+  position: (v: number, dist: number) => number;
+  maxCompletion: number;
+}
+
+/**
+ * Breadth-first over one relation on `n` nodes from the opening (node 0): each
+ * node's rank in the order it was reached (`-1`: never), its parent, and its
+ * distance. The lowest-ranked node of a set is the one a breadth-first search
+ * for the set would have stopped at — {@link entryPath}'s answer, for every set
+ * at once.
+ */
+function breadthFirstFromOpening(
+  n: number,
+  successorsOf: (v: number, visit: (w: number) => void) => void,
+): {
+  rank: Int32Array;
+  parent: Int32Array;
+  dist: Int32Array;
+} {
+  const rank = new Int32Array(n).fill(-1);
+  const parent = new Int32Array(n).fill(-1);
+  const dist = new Int32Array(n).fill(-1);
+  if (n === 0) return { rank, parent, dist };
+  const queue = new Int32Array(n);
+  let tail = 0;
+  queue[tail++] = 0;
+  rank[0] = 0;
+  dist[0] = 0;
+  for (let head = 0; head < tail; head++) {
+    const v = queue[head];
+    successorsOf(v, (w) => {
+      if (rank[w] !== -1) return;
+      rank[w] = tail;
+      parent[w] = v;
+      dist[w] = dist[v] + 1;
+      queue[tail++] = w;
+    });
+  }
+  return { rank, parent, dist };
+}
+
+/**
+ * Can the interpreter's chase budget stop a chase on this machine — read off a
+ * walk made WITHOUT the chase position?
+ *
+ * Yes where that walk met a chase longer than the budget and had to cut it
+ * (`boundHit: 'completion'`). Otherwise yes exactly where the completion edges
+ * it retained hold a cycle, or a path of more than `maxCompletion` of them:
+ * every configuration that walk numbered is one some chase passes through, so
+ * such a path is the tail of a chase the budget stops — on a cycle, every
+ * chase that enters it — and a walk that took no event there was missing the
+ * runs the interpreter takes after it.
+ *
+ * ON A MACHINE THAT NAMES NO TRIGGER TOO, where the answer goes to the two
+ * claims about where a run ends rather than to a second walk. A stopped chase
+ * there is followed by nothing, and an uncut walk already reached every
+ * configuration the run passes through — but it also followed the chase past
+ * the budget, so a run it holds ends round a cycle or at a chain's far end
+ * instead of where the interpreter's does. `exploreMachine` keeps that walk and
+ * names the stops on it ({@link openingChaseStops}).
+ */
+function chaseBudgetDecides(walk: Walked, bounds: ExploreBounds): boolean {
+  if (walk.boundHit === 'completion') return true;
+  // The longest completion path out of every node, iteratively, with the
+  // usual three colours: a grey node met again closes a cycle. Iterative
+  // because a machine is free to be a chain of thousands of states.
+  const out = walk.completionSuccessors;
+  const longest = new Int32Array(out.length);
+  const colour = new Uint8Array(out.length); // 0 white, 1 grey, 2 black
+  for (let root = 0; root < out.length; root++) {
+    if (colour[root] !== 0 || out[root].length === 0) continue;
+    const stack: Array<{ v: number; next: number }> = [{ v: root, next: 0 }];
+    colour[root] = 1;
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1];
+      if (top.next < out[top.v].length) {
+        const w = out[top.v][top.next++];
+        if (colour[w] === 1) return true; // a cycle of completion steps
+        if (colour[w] === 0) {
+          colour[w] = 1;
+          stack.push({ v: w, next: 0 });
+        }
+        continue;
+      }
+      let best = 0;
+      for (const w of out[top.v]) best = Math.max(best, longest[w] + 1);
+      if (best > bounds.maxCompletion) return true;
+      longest[top.v] = best;
+      colour[top.v] = 2;
+      stack.pop();
+    }
+  }
+  return false;
+}
+
+/**
+ * Where the budget stops the one chase a machine that names no trigger runs —
+ * read off a walk made WITHOUT the chase position, which such a machine keeps
+ * (the note above `exploreMachine`).
+ *
+ * With no event to take, every run of it is the chase from the opening, and
+ * every step of the walk's relation is a completion step one tie-break or
+ * another takes. So a run spends its budget exactly at the end of a path of
+ * `maxCompletion` edges from the opening, and it stops there where a completion
+ * transition is still due — where the walk recorded an edge out. Those
+ * configurations, ascending: the ones the walk with the position would have
+ * found stopped, without walking the machine a second time to find them.
+ */
+function openingChaseStops(walk: Walked, bounds: ExploreBounds): number[] {
+  const ends = chaseEnds(walk.successors, bounds.maxCompletion, () => true);
+  return ends.filter((v) => walk.completionSuccessors[v].length > 0);
+}
+
+/**
+ * The configurations a path of exactly `steps` edges from the opening ends at,
+ * stepping only through configurations `inside` admits (the opening included),
+ * ascending. Layer by layer, so a cycle costs nothing extra: the answer is a
+ * set per layer, never a set of paths.
+ *
+ * EXPORTED for one reader outside this file, the modality in `./patterns`: on a
+ * machine that names no trigger, a run that keeps clear of a violation for
+ * the whole of the chase budget is one such path inside the set of
+ * configurations that keep clear of it, and the interpreter stops that run
+ * before it violates anything.
+ */
+export function chaseEnds(
+  successors: readonly (readonly number[])[],
+  steps: number,
+  inside: (node: number) => boolean,
+): number[] {
+  if (successors.length === 0 || !inside(0)) return [];
+  let layer = new Uint8Array(successors.length);
+  layer[0] = 1;
+  for (let step = 0; step < steps; step++) {
+    const next = new Uint8Array(successors.length);
+    let any = false;
+    for (let v = 0; v < successors.length; v++) {
+      if (layer[v] === 0) continue;
+      for (const w of successors[v]) {
+        if (!inside(w)) continue;
+        next[w] = 1;
+        any = true;
+      }
+    }
+    if (!any) return [];
+    layer = next;
+  }
+  const out: number[] = [];
+  for (let v = 0; v < successors.length; v++) if (layer[v] === 1) out.push(v);
+  return out;
 }
 
 /**
@@ -1417,18 +2515,20 @@ export const DEADLOCK_WITHHELD_SENTENCE =
 export const TRAP_ENTRY_WALK_ADMITS = 'on a run this WALK admits';
 
 /**
- * What the text report prints in place of the trap list on the three clauses
- * that refuse a walk that FINISHED (plan §3.2a's verdict table).
+ * What the text report prints in place of the trap list on the four clauses
+ * that refuse a walk that FINISHED (plan §3.2a's verdict table, and the chase
+ * budget's clause beside them).
  *
  * A bound and an unsupported construct print nothing here: the existing
  * SUPPRESSED and not-explored lines already say why every list is short. These
- * three are the clauses those lines do not cover — the walk saw the whole graph
+ * four are the clauses those lines do not cover — the walk saw the whole graph
  * its step relation admits, and that relation is still not the machine's.
- * Each is followed in the report by the standing sentence for its mechanism.
+ * Each is followed in the report by the standing sentence for its mechanism;
+ * the budget's has none beyond itself, because no other line names it.
  */
-export const TRAP_REFUSAL_SENTENCE: Record<'environment' | 'time' | 'store', string> = {
+export const TRAP_REFUSAL_SENTENCE: Record<'environment' | 'time' | 'store' | 'budget', string> = {
   environment:
-    'inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed',
+    'inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event, so an escape it found may be one the environment never supplies and no absence of an escape is claimed',
   time: 'inconclusive: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so the escape relation is an over-approximation and no absence of an escape is claimed',
   // "an expression this walk could not evaluate" and not "an attribute with no
   // declared value": the store clause is the SHIPPED predicate, which also
@@ -1436,6 +2536,8 @@ export const TRAP_REFUSAL_SENTENCE: Record<'environment' | 'time' | 'store', str
   // and a sentence naming only the unvalued case would be false on that file.
   store:
     'inconclusive: a transition of this machine is guarded by an expression this walk could not evaluate — most often an attribute with no declared value — so this walk never offered an edge the model states and a set it calls inescapable may not be',
+  budget:
+    'inconclusive: the interpreter\u2019s chase budget stops a run of this machine with a completion transition still due, so where a run comes to rest is decided by the budget and not by the edges this walk follows, and no set is claimed inescapable and no absence of an escape is claimed',
 };
 
 /**
@@ -1587,6 +2689,148 @@ function trapCensusOf(
   };
 }
 
+/* ───────────────────────────── the livelocks ────────────────────────────── */
+
+/**
+ * The completion livelocks of a walk, published and withheld ({@link
+ * LivelockRow}, {@link LivelockWithheldRow}).
+ *
+ * NOT GATED ON A BOUND, AND NOT ON THE EXACTNESS GATE, for the reason the
+ * deadlock row is not. Every step a row stands on is one the walk TOOK — the
+ * chase's step out of each configuration of the cycle, recorded from a
+ * configuration it dequeued — so a bound elsewhere takes nothing away from it,
+ * and a cycle through a configuration whose step a bound refused is not found
+ * at all. Nor does a named trigger, the environment clause, touch it: the claim
+ * is that the run moves on ONLY on an event, which holds whatever events an
+ * environment would send. What it does rest on is that each step is the
+ * interpreter's: a guard the walk could not evaluate among the trigger-less
+ * transitions out of a configuration of the cycle, or a dwell as the step the
+ * chase takes, withholds it — with a `withheld` line in its place. The way in
+ * is existential, and register row W7 (`./publishable`) is its wiring: a run
+ * the simulator makes where the walk holds one, the walk's own — said so in
+ * the finding — where it does not.
+ *
+ * EXPORTED for one reader outside this file: `behaviourReport` (`./patterns`),
+ * which files the same rows on the machine it checks, in the same words
+ * ({@link livelockFinding}). Not in the API barrel: `reachReport` is the door.
+ */
+export function livelocksOf(
+  model: Model,
+  walk: ExploreResult,
+): { livelocks: LivelockRow[]; withheld: LivelockWithheldRow[] } {
+  // ONE ROW PER CYCLE OF STATES. The cycles that go round the same transitions
+  // and differ only in the store or history they carry — an event that counts
+  // before the chase starts makes one per count — are one group, published or
+  // withheld on the same clause, in the order the walk met the first of them.
+  const groups = new Map<string, { clause: LivelockWithheldRow['clause'] | null; cycles: ChaseCycle[] }>();
+  for (const cycle of walk.chaseCycles) {
+    const clause = cycle.undecided ? 'store' : cycle.timed ? 'time' : null;
+    const key = `${clause ?? ''}|${[...new Set(cycle.via)].sort().join(' ')}`;
+    const group = groups.get(key);
+    if (group) group.cycles.push(cycle);
+    else groups.set(key, { clause, cycles: [cycle] });
+  }
+  const livelocks: LivelockRow[] = [];
+  const withheld: LivelockWithheldRow[] = [];
+  for (const { clause, cycles } of groups.values()) {
+    // The row reads the cycle with the best way in: a run the simulator makes
+    // before one only the walk makes, then the shortest, then the first met.
+    const best = cycles.reduce((a, b) =>
+      (b.entryBy === 'simulator' && a.entryBy === 'walk') || (b.entryBy === a.entryBy && b.entry.length < a.entry.length)
+        ? b
+        : a,
+    );
+    // The union of the active stacks, in chase order, once each — as a trap's.
+    const states: ElementId[] = [];
+    const seen = new Set<ElementId>();
+    for (const i of best.order) {
+      for (const s of walk.configStates[i]) {
+        if (seen.has(s)) continue;
+        seen.add(s);
+        states.push(s);
+      }
+    }
+    const leafRef = (i: number): StateRef => {
+      const stack = walk.configStates[i];
+      return stateRef(model, walk.configLeaves[i] ?? stack[stack.length - 1]);
+    };
+    const row: LivelockRow = {
+      configs: best.order.length,
+      states: states.map((s) => stateRef(model, s)),
+      transitions: best.via.map((t) => transitionRef(model, model.get(t)!)),
+      choices: [...new Set([best, ...cycles].flatMap((c) => c.choices))].map((s) => stateRef(model, s)),
+      entry: best.entry.map(leafRef),
+      steps: best.entry.length - 1,
+      entryBy: best.entryBy,
+      branchAt: best.branchAt === null ? null : leafRef(best.branchAt),
+      cycles: cycles.length,
+    };
+    if (clause === null) livelocks.push(row);
+    else withheld.push({ ...row, clause });
+  }
+  return { livelocks, withheld };
+}
+
+/**
+ * The `verification/completion-livelock` finding for one row — ONE composer,
+ * read by `reachReport` and by `behaviourReport` (`./patterns`), so the two
+ * commands file a cycle in the same words.
+ *
+ * Every clause is read off the row and the machine's bounds, never off the
+ * rest of the report. The way in is hedged where THIS row's way in is the
+ * walk's and not the simulator's ({@link LivelockRow.entryBy}) — not wherever
+ * the machine has a choice row: a choice row the walk withholds (an undecided
+ * guard inside the choice's level) leaves a branch the walk still took, and a
+ * choice elsewhere on the machine says nothing about this row's way in. On a
+ * machine that names no trigger, nothing moves a stopped chase on, and the
+ * finding says the run ends there rather than that an event moves it.
+ */
+export function livelockFinding(
+  machine: { id: ElementId; qualifiedName: string },
+  row: LivelockRow,
+  bounds: ExploreBounds,
+): Omit<Diagnostic, 'id' | 'ruleId' | 'source'> {
+  const names = row.states.map((s) => s.name).join(', ');
+  return {
+    severity: 'warning',
+    message:
+      `\`${machine.qualifiedName}\`: completion livelock — the interpreter's chase goes round ` +
+      `{${names}} without coming to rest: at each of these ${row.configs} configuration(s) the ` +
+      'trigger-less transition it fires leads to the next, so a run that gets here goes round until ' +
+      `its ${bounds.maxCompletion}-step chase budget is spent` +
+      (bounds.alphabet.length === 0
+        ? ' and ends there: the machine names no trigger, so no event moves it on.'
+        : ' and moves on only on an event.') +
+      ` Entered in ${row.steps} step(s) from \`${row.entry[0].name}\`.` +
+      (row.cycles > 1
+        ? ` The same states are gone round in ${row.cycles} cycles of configurations, which differ only in the store or history they carry; this one row stands for all of them.`
+        : '') +
+      (row.choices.length > 0
+        ? ` At ${row.choices
+            .map((s) => `\`${s.qualifiedName}\``)
+            .join(', ')} another trigger-less transition is enabled beside the one the chase fires, and the simulator never takes it: declaration order decides there, and keeps the chase on the cycle.`
+        : '') +
+      (row.entryBy === 'walk'
+        ? row.branchAt !== null
+          ? ` The way in is a run of the walk, not one \`simulate\` makes: at \`${row.branchAt.qualifiedName}\` it takes a step the simulator does not take there, and the walk holds no run the simulator makes that goes round the cycle, so \`simulate\` may never enter it.`
+          : ' The way in is a run of the walk, not one `simulate` makes: the simulator’s chase gets there with too little of its budget left to go round, and the walk holds no run the simulator makes that does.'
+        : ''),
+    elementId: row.states[0].id,
+    elementName: row.states[0].qualifiedName,
+    code: COMPLETION_LIVELOCK_CODE,
+    hint: 'Give the machine somewhere to rest: put a trigger on a transition of the cycle, so the run waits there for that event, or a guard that is false where it should wait — a configuration with no trigger-less transition enabled is where a chase stops. This is a reading of ONE machine under the printed bounds: it says the interpreter’s chase does not settle here and the budget is what stops it, never that the system it models loops.',
+  };
+}
+
+/**
+ * What prints where a livelock row was withheld, per clause: the clause
+ * sentence of the gate's register, so a withheld row is named in the words the
+ * other withheld rows use.
+ */
+export function livelockWithheldSentence(clause: LivelockWithheldRow['clause']): string {
+  return `the chase goes round these configuration(s) on trigger-less transitions and no livelock is reported: ${CLAUSE_SENTENCE[clause]}`;
+}
+
 /* ─────────────────────────────── the report ─────────────────────────────── */
 
 /** One machine's answer. */
@@ -1679,6 +2923,14 @@ export interface MachineReach {
   traps: readonly TrapRow[];
   /** What the component pass found and what was made of it — `--json`, like the two censuses above. */
   trapCensus: TrapCensus;
+  /**
+   * The cycles the interpreter's completion chase goes round without coming to
+   * rest ({@link LivelockRow}): one row, and one
+   * `verification/completion-livelock` warning, per cycle.
+   */
+  livelocks: readonly LivelockRow[];
+  /** The cycles found and withheld, each printed as a `withheld` line naming its clause. */
+  livelocksWithheld: readonly LivelockWithheldRow[];
   /** The guards this walk consulted and could not evaluate. Never `false`. */
   undeterminedGuards: readonly UndeterminedGuardRow[];
   /** True when the two absence lists were withheld — by a bound, or by an undecided guard. */
@@ -1746,6 +2998,8 @@ export interface ReachReport {
     deadlocks: number;
     /** Trap rows published — zero on every refused machine, by construction. */
     traps: number;
+    /** Completion-livelock rows published, one per cycle. */
+    livelocks: number;
   };
   diagnostics: Diagnostic[];
 }
@@ -1754,6 +3008,23 @@ export interface ReachReport {
 export interface ReachOptions extends ExploreOptions {
   /** Only machines at or inside this element. */
   scopeId?: ElementId;
+}
+
+/**
+ * Does this element own a state machine — a non-library element that directly
+ * owns a TransitionUsage, or one marked parallel that contains one? The first
+ * half of {@link stateMachinesIn}, and what decides whether a nested `state
+ * def` a crossing leads into is a machine of its own (`acrossSentence`) — and
+ * whether the properties a nested one carries have a machine to be checked on
+ * (`propertiesOf`, `./patterns`).
+ */
+export function ownsMachine(model: Model, el: ElementRecord): boolean {
+  if (el.attrs.isLibrary === true) return false;
+  if (model.children(el.id).some((c) => c.eClass === 'TransitionUsage')) return true;
+  return (
+    (isTruthy(el.attrs.parallel) || isTruthy(el.attrs.isParallel)) &&
+    model.descendants(el.id).some((d) => d.eClass === 'TransitionUsage')
+  );
 }
 
 /**
@@ -1772,14 +3043,7 @@ export interface ReachOptions extends ExploreOptions {
  * is precisely the answer §3.8 says this engine must refuse to give.
  */
 export function stateMachinesIn(model: Model, scopeId?: ElementId): ElementRecord[] {
-  const owners = model.all().filter((el) => {
-    if (el.attrs.isLibrary === true) return false;
-    if (model.children(el.id).some((c) => c.eClass === 'TransitionUsage')) return true;
-    return (
-      (isTruthy(el.attrs.parallel) || isTruthy(el.attrs.isParallel)) &&
-      model.descendants(el.id).some((d) => d.eClass === 'TransitionUsage')
-    );
-  });
+  const owners = model.all().filter((el) => ownsMachine(model, el));
   const ownerIds = new Set(owners.map((o) => o.id));
   const roots = owners.filter((el) => {
     // A nested `state def` is a machine of its OWN, not a region of the owner it
@@ -1820,6 +3084,17 @@ export function stateMachinesIn(model: Model, scopeId?: ElementId): ElementRecor
  * feature, and where the two differ it is the `verification/guard-undetermined`
  * row that a reader acts on.
  *
+ * "READ AS FALSE" IS THE INTERPRETER'S READING, AND SINCE H1 NOT QUITE THE
+ * WALK'S. At a TRIGGERED guard the two agree: the walk takes no edge there. At
+ * a COMPLETION guard they part: where nothing else is due, the interpreter
+ * reads the guard as false and takes its next event, and the walk offers no
+ * trigger there at all (the header's WHERE AN EVENT IS OFFERED). Either way the
+ * guard is undecided, the machine fails the store clause and every absence on
+ * it is withheld with the row that names the guard, so no claim rests on the
+ * clause's wording. It is left as it stands because it is printed in every
+ * qualification on every machine, and rewording it re-records them all (O1,
+ * review of S4).
+ *
  * APPENDED AFTER THE ALPHABET CLAUSE, and the position is not a style choice:
  * the process-level campaign asserts a PREFIX of this sentence that stops before
  * `alphabet` and asserts the alphabet clause separately as a substring, so an
@@ -1834,7 +3109,14 @@ export function boundsSentence(b: ExploreBounds): string {
   );
 }
 
-/** Why a walk stopped, in the words the report prints. */
+/**
+ * Why a walk stopped, in the words the report prints.
+ *
+ * `'completion'` never reaches it from `reach`: a walk `exploreMachine`
+ * returns does not carry that bound (the note on {@link BoundHit}). The case is
+ * kept so the sentence stays one sentence wherever the product search in
+ * `./patterns`, which keeps its own copy of this switch, prints it.
+ */
 function boundSentence(hit: BoundHit): string {
   switch (hit) {
     case 'configs':
@@ -1849,12 +3131,38 @@ function boundSentence(hit: BoundHit): string {
 }
 
 /**
+ * What a reader can do about the bound a row was refused on — the sentence
+ * every such refusal closes with.
+ *
+ * ONLY THE CONFIGURATION BOUND IS A FLAG. Advising `--max-configs` after a
+ * depth hit, or after a chase the budget stops, sends an agent round a loop
+ * that cannot end: the row comes back the same at every `N`. Measured on four
+ * completion cycles stacked one behind another, each left on an event: every
+ * stopped chase costs the walk `maxCompletion + 1` steps of depth, and the
+ * search's refusal was identical at `--max-configs 100000`. `'none'` keeps the
+ * configuration advice — a row refused because a trigger was never offered is
+ * its own item (the plan's M2), and this function does not decide it.
+ */
+export function boundAdvice(hit: BoundHit): string {
+  switch (hit) {
+    case 'depth':
+      return 'No flag raises the depth bound, so a re-run will not decide this: read the row as what it is, an answer over a walk cut at that depth.';
+    case 'completion':
+      return 'No flag decides it: past that budget the interpreter takes no further completion step, and this search refuses a run that would rather than follow it there.';
+    default:
+      return 'Raise the bound (`--max-configs N`) and re-run.';
+  }
+}
+
+/**
  * Walk one machine and turn the walk into rows.
  *
- * The four conditions of §3.8 — exhaustive, no completion budget spent, every
- * named trigger offered, no unsupported construct — and the fifth this tool
- * learned the hard way, that every guard the walk consulted decided something,
- * are `publishabilityOf(walk).decreasingOk` in `./publishable`. THEY ARE NOT
+ * The conditions of §3.8 — exhaustive, every named trigger offered, no
+ * unsupported construct — and the one this tool learned the hard way, that
+ * every guard the walk consulted decided something, are
+ * `publishabilityOf(walk).decreasingOk` in `./publishable`. (§3.8's fourth, no
+ * completion budget spent, went when the walk began to follow the budget the
+ * way the interpreter does instead of cutting at it.) THEY ARE NOT
  * COMPUTED HERE ANY MORE, and that is the repair: this function and
  * `checkProperty` each carried their own copy, each with a comment saying the
  * other must not be deleted alone, and they drifted apart anyway.
@@ -1890,6 +3198,9 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
   // reads this line back off the source.
   const traps = gate.walkIsExact ? trapsOf(model, walk, comps) : [];
   const trapCensus = trapCensusOf(model, walk, comps, traps, gate);
+  // Neither gate: each row stands on steps the walk took and withholds itself
+  // where one of them is not the interpreter's (`livelocksOf`).
+  const { livelocks, withheld: livelocksWithheld } = livelocksOf(model, walk);
 
   const states = machineStates(model, machine.id);
   const transitions = walkableTransitions(model, machine.id);
@@ -2024,6 +3335,8 @@ function reachOne(model: Model, machine: ElementRecord, opts: ExploreOptions): M
     deadlocksWithheld,
     traps,
     trapCensus,
+    livelocks,
+    livelocksWithheld,
     unsupported: walk.unsupported,
     undeterminedGuards: walk.undeterminedGuards,
     suppressed: !publishable,
@@ -2103,7 +3416,10 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
         elementId: m.machine.id,
         elementName: m.machine.qualifiedName,
         code: BOUND_EXHAUSTED_CODE,
-        hint: 'Raise the bound (`--max-configs N`) and re-run, or read the run as what it is: a partial walk. A bound is printed on every figure precisely so it can never be read as exhaustion.',
+        hint:
+          m.boundHit === 'depth'
+            ? 'No flag raises the depth bound: read the run as what it is, a partial walk. A bound is printed on every figure precisely so it can never be read as exhaustion.'
+            : 'Raise the bound (`--max-configs N`) and re-run, or read the run as what it is: a partial walk. A bound is printed on every figure precisely so it can never be read as exhaustion.',
       });
     }
     for (const s of m.states.unreachable) {
@@ -2156,6 +3472,11 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
         hint: 'Give one state in the set a transition to a state outside it, or end the machine there with `done` if stopping is the intent. This is a reading of THIS machine over a walk whose relation is the one the model states — it says no run of this machine leaves the set, never anything about the system it models.',
       });
     }
+    // After the traps, for the same reason they come where they do: the
+    // choice rows below are what the livelock's own choice clause refers to.
+    for (const l of m.livelocks) {
+      findings.push(livelockFinding(m.machine, l, m.bounds));
+    }
     for (const n of m.nondeterminism) {
       const on = n.event === '' ? 'as completion transitions (no trigger)' : `on \`${n.event}\``;
       findings.push({
@@ -2184,6 +3505,7 @@ export function reachReport(model: Model, opts: ReachOptions = {}): ReachReport 
       nondeterministic: machines.reduce((n, m) => n + m.nondeterminism.length, 0),
       deadlocks: machines.reduce((n, m) => n + m.deadlocks.length, 0),
       traps: machines.reduce((n, m) => n + m.traps.length, 0),
+      livelocks: machines.reduce((n, m) => n + m.livelocks.length, 0),
     },
     diagnostics: findings.map((d, i) => ({
       id: `verification#${i}`,

@@ -41,8 +41,8 @@ import type { StoredResult } from './panels/checks-store';
  * Does this machine decline to state at least one answer the walk would
  * otherwise print? The report's own withholding predicate: a machine withholds
  * when the walk was not exhaustive, when a list was suppressed, when it names
- * an unsupported construct or an undecided guard, when a no-way-out row was
- * withheld, or when the trap gate refused.
+ * an unsupported construct or an undecided guard, when a no-way-out row or a
+ * completion livelock was withheld, or when the trap gate refused.
  */
 export function withholds(m: MachineReach): boolean {
   return (
@@ -51,6 +51,7 @@ export function withholds(m: MachineReach): boolean {
     m.unsupported.length > 0 ||
     m.undeterminedGuards.length > 0 ||
     m.deadlocksWithheld.length > 0 ||
+    m.livelocksWithheld.length > 0 ||
     m.trapCensus.refusedByGate !== null
   );
 }

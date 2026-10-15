@@ -23,6 +23,7 @@
 
 import type { ElementId, ElementRecord, Model } from '@core/index';
 import {
+  COMPLETION_LIVELOCK_CODE,
   DEADLOCK_WITHHELD_SENTENCE,
   DEAD_TRANSITION_CODE,
   DEADLOCK_CODE,
@@ -31,6 +32,7 @@ import {
   TRAP_REFUSAL_SENTENCE,
   UNREACHABLE_STATE_CODE,
   UNRECOVERABLE_MODE_CODE,
+  livelockWithheldSentence,
   stateMachinesIn,
   transitionLabel,
   type MachineReach,
@@ -44,6 +46,7 @@ import {
   type BehaviourReport,
   type PropertyVerdict,
 } from './patterns';
+import { regionDescendants } from './config';
 import { profileLines } from './profile';
 import { DWELL_SENTENCE, environmentSentence, environmentTriggers } from './publishable';
 
@@ -65,6 +68,7 @@ export type ReportLineKind =
   | 'withheld'
   | 'trap'
   | 'trap-refused'
+  | 'livelock'
   | 'choice'
   | 'suppressed'
   | 'property'
@@ -300,8 +304,48 @@ export function reachMachineLines(m: MachineReach, block: number): ReportLine[] 
         line('trap-refused', `    ${TRAP_REFUSAL_SENTENCE.store}`, { elementId: id, withholds: true }),
       );
       break;
+    case 'budget':
+      out.push(
+        line('trap-refused', `    ${TRAP_REFUSAL_SENTENCE.budget}`, { elementId: id, withholds: true }),
+      );
+      break;
     default:
       break;
+  }
+  // A cycle the interpreter's chase goes round, once per cycle, named by the
+  // states it goes round in chase order and by the way in. Gated on neither
+  // gate (`livelocksOf`, `./explore`): each row stands on steps the walk took.
+  // A cycle a guard nobody decided or a dwell withheld leaves a `withheld`
+  // line in its place, as a withheld no-way-out row does. The line says the
+  // three things the finding says about its own reading: what moves the run on
+  // (an event, or on a machine that names none, nothing), whose run the way in
+  // is (`entryBy`), and how many cycles of configurations it stands for.
+  for (const l of m.livelocks) {
+    const after =
+      m.bounds.alphabet.length === 0
+        ? 'the run ends where the budget stops it (no trigger is named)'
+        : 'moves on only on an event';
+    out.push(
+      line(
+        'livelock',
+        `    livelock     {${l.states.map((s) => s.name).join(', ')}} — the chase goes round ${l.configs} ` +
+          `configuration(s) on trigger-less transitions and ${after}; entered in ` +
+          `${l.steps} step(s) from ${l.entry[0].name}` +
+          (l.entryBy === 'walk' ? ', on a run of the walk, not of the simulator' : '') +
+          (l.cycles > 1 ? `; one row for ${l.cycles} cycles of configurations over these states` : ''),
+        { code: COMPLETION_LIVELOCK_CODE, elementId: l.states[0].id },
+      ),
+    );
+  }
+  for (const l of m.livelocksWithheld) {
+    out.push(
+      line(
+        'withheld',
+        `    withheld     {${l.states.map((s) => s.name).join(', ')}} — ${livelockWithheldSentence(l.clause)}` +
+          (l.cycles > 1 ? ` (one line for ${l.cycles} cycles of configurations over these states)` : ''),
+        { elementId: l.states[0].id, withholds: true },
+      ),
+    );
   }
   for (const n of m.nondeterminism) {
     const on = n.event === '' ? 'as completion transitions (no trigger)' : `on \`${n.event}\``;
@@ -425,8 +469,12 @@ export function noMachineRefusal(
 }
 
 function noMachine(model: Model, scopeId: ElementId): { message: string; holder: ElementId | null } {
+  // The machine whose REGION holds the element, not the first whose subtree
+  // does: a state of a nested `state def` is inside the outer machine's text
+  // and in the nested machine's walk, and a pick row naming the outer one
+  // would check a machine the state is not part of.
   const holder = stateMachinesIn(model).find((m) =>
-    model.descendants(m.id).some((d) => d.id === scopeId),
+    regionDescendants(model, m.id).some((d) => d.id === scopeId),
   );
   return {
     message:
@@ -463,6 +511,12 @@ export function behaviourMachineFor(model: Model, scopeId: ElementId): MachineFo
   if (machines.length === 0) {
     return { ok: false, ...noMachine(model, scopeId), candidates: [] };
   }
+  // A reference that IS a machine names that machine, whatever it holds: a
+  // `state def` written inside it is a machine of its own, so the outer one
+  // holds two, and refusing it as "several" left it the one machine no
+  // reference could name — the refusal's own pick row named it again.
+  const named = machines.find((m) => m.id === scopeId);
+  if (named !== undefined) return { ok: true, machine: named };
   if (machines.length > 1) {
     // Refused rather than answered over all of them, for `ELEMENT_REQUIRED_LEAD`'s
     // reason: a verdict is about one machine, and a `REF` that holds several is
