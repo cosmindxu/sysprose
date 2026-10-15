@@ -4398,10 +4398,10 @@ export interface PendingLoadHealth {
   unchecked(why: string): LoadHealth;
   /**
    * Measure them here, on the page's thread, and finish: for a page with no
-   * worker to measure them in, or whose worker could not (`after` says why; it
-   * goes into the reason when the page cannot measure them either).
+   * worker to measure them in. (A worker that is dead or late is not made up for
+   * here: its load is {@link unchecked}.)
    */
-  here(after?: string): LoadHealth;
+  here(): LoadHealth;
 }
 
 /** The load health at a check's click: known now, or {@link PendingLoadHealth} on texts still to parse. */
@@ -4509,9 +4509,9 @@ export function loadHealthNow(): LoadHealthNow {
     unmeasured,
     finish,
     unchecked,
-    here: (after) => {
+    here: () => {
       const merge = fullLibraryMerge;
-      if (merge === null) return unchecked(after === undefined ? noLibrary : `${after}, and ${noLibrary}`);
+      if (merge === null) return unchecked(noLibrary);
       return finish(unmeasured.map((t) => measureTextHealth(t, merge)));
     },
   };

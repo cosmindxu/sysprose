@@ -72,6 +72,7 @@ import {
   type CheckRequest,
   type HealthRequest,
 } from '../../src/ui/checks-offthread';
+import { useBehaviourStore } from '../../src/ui/panels/behaviour-store';
 import { runningVerdict, useChecksStore, verdictOf } from '../../src/ui/panels/checks-store';
 import {
   FRAME_WAIT_MS,
@@ -883,6 +884,27 @@ describe('the checks that run in a worker', () => {
     }
   });
 
+  it('say so, and run nothing, when a library element was renamed or an element of the same shape is another (D-10)', async () => {
+    const host = new CheckHost(mergeLibrary);
+    const reach = WALKERS[0];
+    const answer = (model: Model) => host.handle(requestFor(reach, ctx({ model })));
+    const full = pageModel();
+    expect((await answer(full)).ok).toBe(true);
+
+    // The Properties name field can rename any element, a library's too: same count, same roots, another library.
+    const renamed = Model.fromJSON(JSON.parse(JSON.stringify(full.toJSON())));
+    const target = renamed.all().find((e) => e.attrs.isLibrary === true && e.eClass === 'PartDefinition' && e.declaredName !== undefined)!;
+    renamed.rename(target.id, `${target.declaredName}Renamed`);
+    expect(renamed.all().filter((e) => e.attrs.isLibrary === true)).toHaveLength(full.all().filter((e) => e.attrs.isLibrary === true).length);
+    expect(libraryKey(renamed)).not.toBe(libraryKey(full));
+    expect(await answer(renamed)).toMatchObject({ ok: false, libraryMismatch: true });
+
+    // The order the library is held in is not its identity: a model read back with the elements reversed is the same library.
+    const json = full.toJSON();
+    const reversed = Model.fromJSON({ ...json, elements: [...json.elements].reverse() });
+    expect(libraryKey(reversed)).toBe(libraryKey(full));
+  });
+
   it('say so when they cannot run, and try the library again on the next request', async () => {
     let attempts = 0;
     const host = new CheckHost((model) => {
@@ -893,7 +915,8 @@ describe('the checks that run in a worker', () => {
     const c = ctx({ model: pageModel() });
     const reach = WALKERS[0];
     const first = await host.handle(requestFor(reach, c, 7));
-    expect(first).toEqual({ id: 7, ok: false, message: 'the library data could not be fetched' });
+    // Told apart from a failure of the check: it will be the same for every later request (D-11).
+    expect(first).toEqual({ id: 7, ok: false, message: 'the library data could not be fetched', libraryUnavailable: true });
     const second = await host.handle(requestFor(reach, c, 8));
     expect(second.ok).toBe(true);
     expect(second.id).toBe(8);
@@ -941,12 +964,12 @@ class FakeWorker implements CheckWorker {
  */
 function pendingLoad(
   texts: string[] = ['package Q;\n'],
-  onPage: (after: string | undefined) => LoadHealth = () => healthy,
+  onPage: () => LoadHealth = () => healthy,
 ): {
   load: PendingLoadHealth;
-  calls: { finished: MeasuredText[][]; unchecked: string[]; here: number; after: Array<string | undefined> };
+  calls: { finished: MeasuredText[][]; unchecked: string[]; here: number };
 } {
-  const calls = { finished: [] as MeasuredText[][], unchecked: [] as string[], here: 0, after: [] as Array<string | undefined> };
+  const calls = { finished: [] as MeasuredText[][], unchecked: [] as string[], here: 0 };
   const load: PendingLoadHealth = {
     unmeasured: texts,
     finish: (measured) => {
@@ -961,10 +984,9 @@ function pendingLoad(
       calls.unchecked.push(why);
       return { ...healthy, errors: 1, unchecked: why };
     },
-    here: (after) => {
+    here: () => {
       calls.here++;
-      calls.after.push(after);
-      return onPage(after);
+      return onPage();
     },
   };
   return { load, calls };
@@ -1332,10 +1354,11 @@ describe('running a check from the palette', () => {
     ['a minute of silence', () => vi.advanceTimersByTime(WATCHDOG_MS), 'the background worker said nothing for a minute'],
   ];
 
-  it('measures the load on the page where the worker could not, and the check runs here over that: a true answer, not none', () => {
+  it('ends the load as not checked where the worker could not measure it, with nothing parsed on the page: the check runs here over that, and never holds', () => {
     vi.useFakeTimers();
     const term = inline(TERM);
     const c = ctx({ model: term, loadHealth: undefined });
+    expect(runCheck(reach, { ...c, loadHealth: healthy }).verdict, 'over a clean load, it holds').toBe('holds');
     let rev = 1;
     for (const [what, fail, why] of loadFailures()) {
       withFakeWorker();
@@ -1345,36 +1368,16 @@ describe('running a check from the palette', () => {
       fail(w);
       expect(running('reach'), what).toBe(false);
       expect(w.terminated, what).toBe(true);
-      expect(calls.here, what).toBe(1);
-      expect(calls.after, what).toEqual([why]);
+      // The decision of 2026-10-15: a worker that is dead or late answers "load not verified"; the page parses nothing.
+      expect(calls.here, `${what}: no parse on the page`).toBe(0);
+      expect(calls.unchecked, what).toEqual([why]);
       expect(calls.finished, what).toHaveLength(0);
       expect(FakeWorker.made, `${what}: no second worker for the walk`).toHaveLength(1);
-      expect(stored('reach'), what).toMatchObject({ rev, ranIn: 'page', result: runCheck(reach, { ...c, loadHealth: healthy }) });
-      expect(stored('reach')!.result.verdict, `${what}: measured clean on the page, it holds`).toBe('holds');
-      resetCheckRunner();
-      rev++;
-    }
-  });
-
-  it('takes a load neither the worker nor the page could measure as not checked: the check runs here over that, and never holds', () => {
-    vi.useFakeTimers();
-    const term = inline(TERM);
-    const c = ctx({ model: term, loadHealth: undefined });
-    expect(runCheck(reach, { ...c, loadHealth: healthy }).verdict, 'over a clean load, it holds').toBe('holds');
-    // The page has no library either: what `loadHealthNow`'s `here` answers then.
-    const noLibrary = (after: string | undefined): LoadHealth => ({ ...healthy, errors: 1, unchecked: `${after}, and the standard library has not loaded in this page` });
-    let rev = 1;
-    for (const [what, fail, why] of loadFailures()) {
-      withFakeWorker();
-      const { load } = pendingLoad(undefined, noLibrary);
-      runChecked(reach, c, rev, load);
-      fail(FakeWorker.made[0]);
-      expect(running('reach'), what).toBe(false);
       const s = stored('reach')!;
       expect(s, what).toMatchObject({ rev, ranIn: 'page' });
-      expect(s.result.verdict, what).toBe('undecided');
+      expect(s.result.verdict, `${what}: never holds`).toBe('undecided');
       expect(s.result.rows[0], what).toMatchObject({ code: 'checks/degraded', severity: 'warning' });
-      expect(s.result.rows[0].message, what).toContain(`could not be checked (${why}, and the standard library has not loaded in this page)`);
+      expect(s.result.rows[0].message, what).toContain(`could not be checked (${why})`);
       expect(s.result.rows[0].message, `${what}: reach lists what parsed`).toContain('this is a report of what parsed');
       expect(s.result.summary, what).toContain('could not be checked');
       resetCheckRunner();
@@ -1382,7 +1385,80 @@ describe('running a check from the palette', () => {
     }
   });
 
-  it('measures the load here where the page has no worker, or one cannot be started, as it always did', () => {
+  it('takes a load that a page with no worker cannot measure either as not checked: the check runs here over that, and never holds', () => {
+    setCheckWorkerFactory(null);
+    const c = ctx({ model: inline(TERM), loadHealth: undefined });
+    const noLibrary: LoadHealth = { ...healthy, errors: 1, unchecked: 'the standard library has not loaded in this page' };
+    const { load, calls } = pendingLoad(undefined, () => noLibrary);
+    runChecked(reach, c, 1, load);
+    expect(calls.here).toBe(1);
+    const s = stored('reach')!;
+    expect(s).toMatchObject({ rev: 1, ranIn: 'page' });
+    expect(s.result.verdict).toBe('undecided');
+    expect(s.result.rows[0]).toMatchObject({ code: 'checks/degraded', severity: 'warning' });
+    expect(s.result.rows[0].message).toContain('could not be checked (the standard library has not loaded in this page)');
+  });
+
+  it('remembers a worker that could not load the library for the session: later runs go to the page at once, and a load still to measure is not checked (D-11)', () => {
+    withFakeWorker();
+    const c = walkable();
+    runChecked(reach, c, 1);
+    const first = FakeWorker.made[0];
+    first.onmessage?.({ data: { id: first.posted[0].id, ok: false, message: 'library data not found', libraryUnavailable: true } });
+    expect(first.terminated).toBe(true);
+    expect(stored('reach')).toMatchObject({ rev: 1, ranIn: 'page', result: runCheck(reach, c) });
+
+    // Every run after it, of either walker, is answered on the page, and no worker is started to fail again.
+    runChecked(reach, c, 2);
+    runChecked(behaviour, c, 2);
+    expect(FakeWorker.made).toHaveLength(1);
+    expect([running('reach'), running('check-behaviour')]).toEqual([false, false]);
+    expect(stored('reach')).toMatchObject({ rev: 2, ranIn: 'page', result: runCheck(reach, c) });
+    expect(stored('check-behaviour')).toMatchObject({ rev: 2, ranIn: 'page', result: runCheck(behaviour, c) });
+
+    // A run with a load still to measure does not start one either: the load is not checked, and nothing is parsed here.
+    const { load, calls } = pendingLoad();
+    runChecked(reach, walkable({ loadHealth: undefined }), 3, load);
+    expect(FakeWorker.made).toHaveLength(1);
+    expect(calls.here).toBe(0);
+    expect(calls.unchecked).toHaveLength(1);
+    expect(stored('reach')!.result.verdict).toBe('undecided');
+
+    // The same, said by a worker answering a load request.
+    resetCheckRunner();
+    FakeWorker.made = [];
+    const again = pendingLoad();
+    runChecked(reach, walkable({ loadHealth: undefined }), 4, again.load);
+    const w = FakeWorker.made[0];
+    w.onmessage?.({ data: { id: w.health[0].id, ok: false, message: 'library data not found', libraryUnavailable: true } });
+    expect(again.calls.here).toBe(0);
+    runChecked(behaviour, c, 5);
+    expect(FakeWorker.made).toHaveLength(1);
+  });
+
+  it('closes the witness a run replaces when the run begins, so the canvas stops painting what the hidden stepper cannot close (D-9)', () => {
+    withFakeWorker();
+    const c = walkable();
+    const at = (n: number) => ({ result: { verdict: 'holds', summary: '', rows: [] } as CheckResult, rev: 1, ranIn: 'worker' as const, at: n });
+    useChecksStore.setState({ results: { 'check-behaviour': at(111), reach: at(222) } });
+    const open = (resultAt: number) =>
+      useBehaviourStore.getState().openWitness({ resultAt, machineId: 'm', block: 0, step: 0 });
+    try {
+      // A run of another check leaves a witness of check-behaviour's result open: its stepper is still on screen.
+      open(111);
+      runChecked(reach, c, 2);
+      expect(useBehaviourStore.getState().witness).not.toBeNull();
+      cancelChecked('reach');
+      // A run of the check the witness reads hides that result with the stepper, so the witness closes with the start.
+      runChecked(behaviour, c, 2);
+      expect(running('check-behaviour')).toBe(true);
+      expect(useBehaviourStore.getState().witness).toBeNull();
+    } finally {
+      useBehaviourStore.getState().closeWitness();
+    }
+  });
+
+  it('measures the load here where the page has no worker, as it always did, and takes it as not checked where one cannot be started', () => {
     setCheckWorkerFactory(null);
     const none = pendingLoad();
     runChecked(reach, walkable({ loadHealth: undefined }), 4, none.load);
@@ -1394,9 +1470,12 @@ describe('running a check from the palette', () => {
       throw new Error('this browser starts no module worker');
     });
     const refused = pendingLoad();
-    runChecked(behaviour, walkable({ loadHealth: undefined }), 5, refused.load);
-    expect(refused.calls.here).toBe(1);
-    expect(stored('check-behaviour')).toMatchObject({ rev: 5, ranIn: 'page', result: runCheck(behaviour, walkable()) });
+    runChecked(reach, walkable({ loadHealth: undefined }), 5, refused.load);
+    expect(refused.calls.here, 'no parse on the page for a worker that is dead').toBe(0);
+    expect(refused.calls.unchecked).toHaveLength(1);
+    expect(refused.calls.unchecked[0]).toContain('this browser starts no module worker');
+    expect(stored('reach')).toMatchObject({ rev: 5, ranIn: 'page' });
+    expect(stored('reach')!.result.verdict).toBe('undecided');
   });
 
   it('starts no load phase for a load already known', () => {
@@ -1643,6 +1722,7 @@ describe('the load, measured as a terminal measures it', () => {
       id: 1,
       ok: false,
       message: 'the library data could not be fetched',
+      libraryUnavailable: true,
     });
     expect(await host.measure({ id: 2, kind: 'health', texts: ['package Q;\n'] })).toEqual({
       id: 2,

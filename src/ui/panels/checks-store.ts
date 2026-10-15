@@ -28,6 +28,7 @@
 
 import { create } from 'zustand';
 import type { CheckResult, CheckVerdict } from '../checks';
+import { useBehaviourStore } from './behaviour-store';
 
 export interface StoredResult {
   result: CheckResult;
@@ -85,7 +86,7 @@ function without<T>(map: Record<string, T>, id: string): Record<string, T> {
   return rest;
 }
 
-export const useChecksStore = create<ChecksState>((set) => ({
+export const useChecksStore = create<ChecksState>((set, get) => ({
   results: {},
   running: {},
   runs: 0,
@@ -94,8 +95,14 @@ export const useChecksStore = create<ChecksState>((set) => ({
       results: { ...s.results, [id]: { result, rev, ...(selection !== undefined ? { selection } : {}), ranIn: 'page', at: Date.now() } },
       runs: s.runs + 1,
     })),
-  begin: (id, token, rev, phase = 'walk') =>
-    set((s) => ({ running: { ...s.running, [id]: { token, rev, at: Date.now(), phase } }, runs: s.runs + 1 })),
+  begin: (id, token, rev, phase = 'walk') => {
+    // An open witness reads the result this run replaces, and the Checks tab hides that result
+    // (and the stepper's only Close with it) while the run lasts: close it with the run's start,
+    // or the canvas keeps painting a witness nobody can close until the new result lands (D-9).
+    const { witness } = useBehaviourStore.getState();
+    if (witness !== null && witness.resultAt === get().results[id]?.at) useBehaviourStore.getState().closeWitness();
+    set((s) => ({ running: { ...s.running, [id]: { token, rev, at: Date.now(), phase } }, runs: s.runs + 1 }));
+  },
   walking: (id, token) =>
     set((s) => {
       const run = s.running[id];

@@ -784,23 +784,6 @@ merge removes what it closes.
       `src/ui/behaviour-checks.ts:199`, calls the CLI's own `behaviourMachineFor`), while its remark
       about `reach` stays true. Done when the comment says what the code does. [review 2026-10-14
       D-8]
-- [ ] **Keep the witness stepper's Close reachable while a check runs.** A running check hides the
-      Checks tab's previous result (`src/ui/panels/BottomPanel.tsx:92-94`), and with it the witness
-      stepper's Prev, Next and Close (`src/ui/panels/BehaviourReport.tsx:194`, the only Close),
-      while the canvas keeps painting the open witness (`src/ui/panels/DiagramCanvas.tsx:166-172`)
-      until the new result lands, up to the 60 s watchdog. Keep the stepper row, or close the
-      witness on `begin`. Done when a test shows the witness can be closed while a check runs.
-      [review 2026-10-14 D-9]
-- [ ] **Make the worker's library identity depend on the library's content.** `libraryKey`
-      (`src/ui/checks-offthread.ts:155-167`) is the library element count plus a hash of the root
-      ids, so a page library of the same shape and different content (the Properties name field can
-      rename a library element; a same-shape bundle from another build) counts as the same and the
-      worker answers over its pristine copy [D-10]. And only `libraryMismatch` is remembered
-      (`src/ui/panels/checks-runner.ts:256-279`): a worker whose library fetch fails (offline,
-      `stdlib.json` not cached) is restarted on every Run, then falls back to the page [D-11].
-      Include a content hash or a build id in the key, and remember load failures for the session.
-      Done when a test renames a library element and the worker declines, and a failed library load
-      starts no second worker. [review 2026-10-14 D-10, D-11]
 - [ ] **Stroke the SVG export's column-header band as the screen does.** The export
       (`src/diagram/svg-export.ts`) strokes all four sides of the band where the screen draws only a
       bottom rule. Cosmetic. Done when the export's band matches the screen's.
