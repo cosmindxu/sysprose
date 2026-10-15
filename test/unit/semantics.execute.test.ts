@@ -6,6 +6,10 @@ import {
   runStateMachine,
   propagateBindings,
   evaluateModel,
+  executeModel,
+  isSimulatable,
+  discoverTriggers,
+  SimulationSession,
 } from '../../src/semantics/index';
 import { initialSubstate } from '../../src/semantics/mc/config';
 
@@ -336,6 +340,51 @@ describe('runStateMachine — a nested state def does not take the start (M3)', 
     const { model, named } = await outerOf('nest3-first');
     const res = runStateMachine(model, named('Inner'), ['go']);
     expect(res.visited).toEqual([named('x'), named('y')]);
+  });
+
+  /*
+   * The machines and events the Simulation tab and `executeModel` offer read the
+   * same region (the branch review's wrap-only probe). Over every descendant, a
+   * `state def` holding only a nested definition was the tab's machine, with the
+   * nested definition's `go` as its event and a run with no state at all, since
+   * its own region holds none — and the nested definition, the one with the
+   * transitions, was never listed.
+   */
+  it('a `state def` whose only content is a nested definition is no machine: the tab and the report name the nested one', async () => {
+    for (const text of [
+      'package W6 { state def Wrapper { state def Inner { state x; state y; transition xy first x accept go then y; } } }',
+      'package W6 { part def Drone { state def Wrapper { state def Inner { state x; state y; transition xy first x accept go then y; } } } }',
+    ]) {
+      const model = (await loadModelText(text, { fileName: 'wrap.sysml', library: 'none' })).model!;
+      const named = (n: string) => model.all().find((e) => e.declaredName === n)!.id;
+      expect(isSimulatable(model, named('Wrapper'))).toBe(false);
+      expect(isSimulatable(model, named('Inner'))).toBe(true);
+      // The tab's rule (`outermostSimulatable`, `SimulationTab`): simulatable,
+      // under nothing simulatable.
+      const tab = model
+        .all()
+        .filter((e) => isSimulatable(model, e.id) && !model.ancestors(e.id).some((a) => isSimulatable(model, a.id)));
+      expect(tab.map((e) => e.id)).toEqual([named('Inner')]);
+      const session = new SimulationSession(model, named('Inner'));
+      expect(session.triggers).toEqual(['go']);
+      expect(session.trace[0].activeStates).toEqual([named('x')]);
+      expect(session.inject('go').activeStates).toEqual([named('y')]);
+      const traces = executeModel(model).traces.filter((t) => t.kind === 'state');
+      expect(traces.map((t) => t.behaviorId)).toEqual([named('Inner')]);
+      expect(traces[0].state!.finalState).toBe(named('x'));
+    }
+  });
+
+  it('an outer machine’s events are its own region’s: the nested definition’s `go` is not one of them', async () => {
+    for (const name of ['nest1-plain', 'nest3-first', 'nest5-partdef']) {
+      const { model, outer, named } = await outerOf(name);
+      expect(discoverTriggers(model, outer.id), name).toEqual(['e']);
+      expect(new SimulationSession(model, outer.id).triggers, name).toEqual(['e']);
+      expect(discoverTriggers(model, named('Inner')), name).toEqual(['go']);
+      // The nested definition is under a machine, so the tab and the report
+      // still name the outer one only, as before.
+      expect(executeModel(model).traces.filter((t) => t.kind === 'state').map((t) => t.behaviorId), name).toEqual([outer.id]);
+    }
   });
 });
 

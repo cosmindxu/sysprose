@@ -1163,8 +1163,11 @@ fairness assumption is named. A `pass` is emitted only when the walk saw the
 graph **whole**: the four conditions §3.8 states, computed from
 `exploreMachine`'s walk, **and** the fifth this tool added afterwards — every
 guard the walk consulted decided something. A bound hit, a parallel or history
-machine, a guard the walk could not evaluate, an unreadable property or an atom
-that names nothing is `inconclusive` ⇒ exit 2. A **fail** does not need
+machine, a guard the walk could not evaluate, an unreadable property, an atom
+that names nothing, a witness the interpreter does not take
+(`verification/witness-not-replayed`) or a `recovery` withheld because the
+chase budget stops a run somewhere that does not hold `p` is `inconclusive` ⇒
+exit 2. A **fail** does not need
 exhaustion, and the asymmetry is deliberate: a bound can hide a violation and
 can never invent one.
 
@@ -1214,8 +1217,11 @@ gated.** Every `fail` a bad-prefix search produces carries an `every run?`
 line — `modality` on `--json` — with one of three values. `potential` claims
 that some maximal run of the MACHINE avoids the violation, and names it: a
 cycle that never enters the violating configuration, or a configuration of
-the retained relation with no way out; it is register row W3, a maximality
-witness, and it stands only where `walkIsExact` holds — on `FlightModes` it
+the retained relation with no way out — on a machine that names no trigger,
+only one a run reaches inside the chase budget without the violation, and
+otherwise the configuration where the budget stops such a run; it is
+register row W3, a maximality witness, and it stands only where
+`walkIsExact` holds — on `FlightModes` it
 names the cycle `manual → autonomous → manual`, which is the simulator's own
 tie-break read the other way. `guaranteed` claims that every maximal run of
 the machine reaches the violation; it is register row A8, an absence claim
@@ -1350,10 +1356,13 @@ dwell as the chase's step, does, and a `withheld` line says so in its place.
 `check-behaviour` files the same published rows beside its verdicts and moves
 none of them.
 On v9 it is ten rows, one on each of the ten machines whose interpreter run
-spends the budget, and on the shipped examples it moved the campaign's exact
-diagnostics array over `examples/uav-isr.sysml` by one row: `FlightModes`'
-chase goes round `manual ⇄ autonomous`. The trap row still never says the word
-(`docs/06` §8.8).
+spends the budget. On the shipped examples it is three rows, one on each machine
+whose trigger-less transitions cycle: `FlightModes`' chase goes round `manual ⇄
+autonomous` in `examples/uav-isr.sysml`, which moved the campaign's exact
+diagnostics array over that file by one row, `VehicleStates`' round `idling ⇄
+moving` in `examples/vehicle.sysml`, and `views-tour.sysml`'s `FlightModes`
+round `standby ⇄ flying`. The trap row still never says the word (`docs/06`
+§8.8).
 
 **One row did move, and it moved towards saying more rather than less.** A
 `verification/deadlock` row — *this configuration has no enabled way out* — used

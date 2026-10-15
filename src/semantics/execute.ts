@@ -1562,7 +1562,7 @@ export function executeModel(model: Model): ModelExecution {
 
   const traces: BehaviorTrace[] = [];
   for (const el of model.all()) {
-    if (!isTopLevelBehavior(model, el)) continue;
+    if (!isTopLevelBehavior(model, el) && !isOutermostMachine(model, el)) continue;
     if ((el.eClass === 'ActionDefinition' || el.eClass === 'ActionUsage') && hasFlow(model, el)) {
       traces.push({
         behaviorId: el.id,
@@ -1572,7 +1572,7 @@ export function executeModel(model: Model): ModelExecution {
       });
     } else if (
       (el.eClass === 'StateDefinition' || el.eClass === 'StateUsage') &&
-      hasStateMachine(model, el)
+      ownsStateMachine(model, el)
     ) {
       traces.push({
         behaviorId: el.id,
@@ -1712,11 +1712,15 @@ export function executeBehavior(
   };
 }
 
-/** Distinct, non-empty transition triggers of a machine, in declaration order. */
+/**
+ * Distinct, non-empty transition triggers of a machine, in declaration order —
+ * its own region's (`regionDescendants`), the transitions `runRegion` steps
+ * by: a nested `state def`'s triggers are no event of the outer machine's run.
+ */
 function discoverMachineTriggers(model: Model, stateId: ElementId): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const e of model.descendants(stateId)) {
+  for (const e of regionDescendants(model, stateId)) {
     if (e.eClass !== 'TransitionUsage') continue;
     const t = e.attrs.trigger;
     if (typeof t !== 'string' || t === '' || seen.has(t)) continue;
@@ -1749,6 +1753,35 @@ function hasFlow(model: Model, el: ElementRecord): boolean {
 /** Does this state contain any transition worth simulating? */
 function hasStateMachine(model: Model, el: ElementRecord): boolean {
   return model.descendants(el.id).some((d) => d.eClass === 'TransitionUsage');
+}
+
+/**
+ * Does this state's OWN region hold a transition — the containment `runRegion`
+ * runs over, stopping at a nested `state def`, which is a machine of its own?
+ * `isSimulatable` (`./simulate`) reads the same, so the report and the
+ * Simulation tab name the same machines.
+ */
+function ownsStateMachine(model: Model, el: ElementRecord): boolean {
+  return regionDescendants(model, el.id).some((d) => d.eClass === 'TransitionUsage');
+}
+
+/**
+ * A state machine no other machine holds, though a behaviour does: a `state
+ * def` whose only content is a nested `state def` is not a machine, and the
+ * nested definition — which is — was reported by nothing. It is reported now,
+ * as the Simulation tab lists it (`outermostSimulatable`); one inside an
+ * action, or inside a machine whose region stops at it, is still not.
+ */
+function isOutermostMachine(model: Model, el: ElementRecord): boolean {
+  if ((el.eClass !== 'StateDefinition' && el.eClass !== 'StateUsage') || !ownsStateMachine(model, el)) return false;
+  return !model
+    .ancestors(el.id)
+    .some(
+      (a) =>
+        a.eClass === 'ActionDefinition' ||
+        a.eClass === 'ActionUsage' ||
+        ((a.eClass === 'StateDefinition' || a.eClass === 'StateUsage') && ownsStateMachine(model, a)),
+    );
 }
 
 /** Does this feature carry an expression (string) rather than a plain literal? */

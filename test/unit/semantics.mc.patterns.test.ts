@@ -795,6 +795,50 @@ describe('the chase budget, in the search, and every witness replayed through th
     expect(recovery.detail).not.toContain('recoverable:');
   });
 
+  /**
+   * The branch review's w7: `s0 → p1 → … → pN → a ⇄ b`, declared first, beside
+   * `s0 → v → pK`. At N = 70, K = 40 every configuration is within 64 steps of
+   * the opening — `a` by way of `v` — but a run that keeps clear of `v` takes
+   * the long way to the cycle, and the budget stops it at `p64` first.
+   */
+  function detour(n: number, k: number): string {
+    const lines = ['state s0;', ...Array.from({ length: n }, (_, i) => `state p${i + 1};`), 'state v; state a; state b;'];
+    lines.push(`transition t0 first s0 then p1; transition sv first s0 then v; transition va first v then p${k};`);
+    for (let i = 1; i < n; i++) lines.push(`transition t${i} first p${i} then p${i + 1};`);
+    lines.push(`transition ta first p${n} then a; transition ab first a then b; transition ba first b then a;`);
+    return `package Detour { state def M { ${lines.join(' ')} } }`;
+  }
+
+  it('detour: `potential` names the run the budget stops — never a cycle no run reaches inside the budget while it avoids `v`', async () => {
+    const { model, machineId, id } = await load(detour(70, 40));
+    const walk = exploreMachine(model, machineId);
+    expect(walk.chaseKeyed).toBe(false);
+    expect(walk.budgetStops.length).toBeGreaterThan(0);
+    // The interpreter's own run: declaration order, down the long branch,
+    // stopped by the budget at `p64` before it gets near the cycle.
+    const run = runStateMachine(model, machineId, []);
+    expect(run.finalState).toBe(id('p64'));
+    expect(run.completionBudgetHit).toBe(true);
+    expect(run.visited).not.toContain(id('v'));
+    const v = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state v' }));
+    expect(v.claim).toBe('fail');
+    expect(v.modality?.value).toBe('potential');
+    // THE WRONG ANSWER: `the cycle a → b → a never enters v`. Every run that
+    // gets to the cycle goes through `v`; the one that avoids `v` is the run above.
+    expect(v.modality?.sentence).not.toContain('the cycle');
+    expect(v.modality?.sentence).toContain('some run avoids it: the run the chase budget stops in `p64` never enters `v`');
+    expect(v.modality?.avoiding?.map((s) => s.name)).toEqual(['p64']);
+  });
+
+  it('detour, short: a cycle a path that avoids `v` reaches within the budget is still the run named', async () => {
+    const { model, machineId } = await load(detour(20, 10));
+    expect(exploreMachine(model, machineId).budgetStops.length).toBeGreaterThan(0);
+    const v = checkProperty(model, machineId, prop({ pattern: 'absence', scope: 'globally', p: 'state v' }));
+    expect(v.claim).toBe('fail');
+    expect(v.modality?.value).toBe('potential');
+    expect(v.modality?.sentence).toContain('some run avoids it: the cycle a → b → a never enters `v`');
+  });
+
   it('a refusal past the chase budget, or at the depth bound, never advises `--max-configs` — no N decides it', async () => {
     // A counting monitor round a trigger-less cycle: the search does not carry
     // the position on such a machine, and refuses the 65th chase step.

@@ -188,17 +188,18 @@ export const BOUNDS_EXIT_CODES = `Exit codes: 0 every bound asked for was DECIDE
  * DOES share with the other judging contracts is the shape: **1 is a decided
  * negative** — a property refuted with a witness trace of a run this semantics
  * admits — and **2 is everything undecided**, which here includes a bound the
- * walk hit, a machine construct this engine refuses to explore, a LIVENESS
- * pattern it does not decide in-process, a property it could not read, an atom
- * that names nothing, and a VACUOUS property, which no flag launders into a
- * pass. `--strict-vacuity` raises that last row from a line to an error and
+ * walk hit, a machine construct this engine refuses to explore, a witness the
+ * interpreter does not take and a `recovery` the chase budget withholds (both
+ * O1, `docs/06` §8.5), a LIVENESS pattern it does not decide in-process, a
+ * property it could not read, an atom that names nothing, and a VACUOUS
+ * property, which no flag launders into a pass. `--strict-vacuity` raises that last row from a line to an error and
  * changes nothing else, exactly as it does for `verify` (§2).
  *
  * A run with nothing to decide is **2** for {@link VERIFY_EXIT_CODES}' own
  * reason: exit 0 says every property was shown to hold, so a machine that
  * states none has been shown nothing.
  */
-export const BEHAVIOUR_EXIT_CODES = `Exit codes: 0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every \`cover\` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits — or a \`recovery\` assertion some reachable configuration cannot discharge, reported as that set rather than as a run — or, under --cover-required, a cover this walk did not witness on any run it saw whole · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass — or a \`cover\` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — \`--cover-required\` spends the 1 for it instead. There is no solver in this lane and no --free: the walk reads the model’s own values`
+export const BEHAVIOUR_EXIT_CODES = `Exit codes: 0 every ASSERTION stated on this machine was shown to hold on every reachable configuration, over a graph this walk saw whole, and every \`cover\` stated on it was witnessed on a run this walk saw, and there was at least one of them to decide · 1 at least one property refuted, with a witness trace of a run this semantics admits — or a \`recovery\` assertion some reachable configuration cannot discharge, reported as that set rather than as a run — or, under --cover-required, a cover this walk did not witness on any run it saw whole · 2 usage/IO error, a degraded model, a machine that states no property at all, or ANY undecided property — a bound the walk hit, a construct this engine does not explore, a witness the interpreter does not take (\`verification/witness-not-replayed\`), a \`recovery\` withheld because the interpreter’s chase budget stops a run somewhere that does not hold \`p\`, a liveness pattern no bad-prefix search decides, a property that could not be read, an atom that names nothing, or a vacuous one, which is never laundered into a pass — or a \`cover\` property whose behaviour this walk did not find on any run it saw whole, which is a missing behaviour and not a violated requirement — \`--cover-required\` spends the 1 for it instead. There is no solver in this lane and no --free: the walk reads the model’s own values`
 
 /**
  * `fault-tree`'s exit-code contract — a SIXTH one, because its 1 is about a

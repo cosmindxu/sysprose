@@ -38,6 +38,7 @@ import {
 import { DIMENSIONLESS, resolveUnit } from './units';
 import { isNonNormativeStatement } from './statement-kind';
 import { solve } from './solver';
+import { regionDescendants } from './mc/config';
 
 /** A primitive simulation value (what a value snapshot / plot can carry). */
 export type SimValue = number | boolean | string;
@@ -335,19 +336,30 @@ export function simulateStateMachine(
 
 /**
  * Is `id` a state machine that can be time-stepped (a StateUsage/StateDefinition
- * that contains at least one transition)?
+ * whose own region holds at least one transition)?
+ *
+ * THE REGION, NOT EVERY DESCENDANT, the containment the interpreter runs over
+ * (`runRegion`, `regionDescendants`): a `state def` written inside is a machine
+ * of its own. Read over every descendant, a `state def Wrapper` holding only a
+ * nested `state def Inner` was the Simulation tab's machine, `Inner` — the one
+ * with the transitions — was never offered, and the run of `Wrapper` had no
+ * state at all, since its region holds none of `Inner`'s.
  */
 export function isSimulatable(model: Model, id: ElementId): boolean {
   const el = model.get(id);
   if (!el || (el.eClass !== 'StateUsage' && el.eClass !== 'StateDefinition')) return false;
-  return model.descendants(id).some((e) => e.eClass === 'TransitionUsage');
+  return regionDescendants(model, id).some((e) => e.eClass === 'TransitionUsage');
 }
 
-/** The distinct named triggers of a machine's transitions (excludes timed `after`). */
+/**
+ * The distinct named triggers of a machine's transitions (excludes timed
+ * `after`) — its own region's, as {@link isSimulatable} reads it: a nested
+ * `state def`'s triggers are no event of the outer machine's run.
+ */
 export function discoverTriggers(model: Model, behaviorId: ElementId): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const e of model.descendants(behaviorId)) {
+  for (const e of regionDescendants(model, behaviorId)) {
     if (e.eClass !== 'TransitionUsage') continue;
     const t = e.attrs.trigger;
     if (typeof t !== 'string' || t.trim() === '') continue;

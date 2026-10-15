@@ -2318,7 +2318,14 @@ where the machine should wait, is the fix. A guard on a trigger-less way out of
 the cycle that the walk could not evaluate withholds the row — a `withheld` line
 says so in its place — and `check-behaviour` files the same warning beside its
 verdicts on the machine it checks, without changing a verdict or the exit code.
-It files the published rows only: read a withheld one in `reach`.
+It files the published rows only: read a withheld one in `reach`. On `--json`
+every machine row carries `livelocks` and `livelocksWithheld` (empty on a
+machine with none, the second with the `clause` that withheld each), and
+`totals.livelocks` counts the published rows. A row names its `states`, the
+`transitions` the chase fires, the `choices` where declaration order keeps it on
+the cycle, its way in (`entry`, `steps`), whose run that way in is (`entryBy`:
+`simulator`, or `walk` with `branchAt` the state where it parts from the
+simulator) and how many store or history variants it stands for (`cycles`).
 
 The other direction is deliberately loose, in one place: the walk offers each
 `after(n)` label as a named event rather than advancing a clock, so a state
@@ -2531,9 +2538,11 @@ at the nested definition's boundary. A simulator run of the outer machine takes
 its states at the same boundary, so it starts where the walk opens: at the outer
 machine's own initial substate (where its own `initial` node leads, else its
 first declared state), also when the nested definition is written before it. The
-Simulation tab still lists the nested definition's triggers among the outer
-machine's events; no outer transition takes them, so injecting one leaves the run
-where it is. A nested `state def` that owns no `TransitionUsage` is walked by
+Simulation tab offers the outer machine's own events only, not the nested
+definition's, and lists a nested definition as a machine where no machine holds
+it: a `state def` whose only content is a nested definition is no machine, so the
+tab runs the nested one; a nested definition inside a machine is not listed
+beside it. A nested `state def` that owns no `TransitionUsage` is walked by
 nothing, and each of its states then reads `not walked` in the app rather than
 being called unreachable under a machine that does not contain it.
 
@@ -2551,7 +2560,12 @@ the construct `machine-boundary`, naming the transition — no absence list, no
 `exhaustive`, and every property about either machine `inconclusive`. Keep each
 transition inside the machine whose states it joins, or write the nested
 definition as a composite state (`state Inner { … }`) to make its states part of
-the outer machine. A simulator run still takes such a transition — into the far
+the outer machine. A specialisation or a typed usage that adds a transition over
+the states it inherits (`state def Derived :> Base { transition … }`, `exhibit
+state m : Modes { transition … }`) crosses the same way, and both machines are
+refused with the inheritance named: no walk here puts the two together, so write
+the machine you mean out whole, its states and every transition it steps by, in
+one definition. A simulator run still takes such a transition — into the far
 state, where it then stays, since none of that state's own transitions are the
 run's — which is what the Simulation tab shows, not a verdict.
 
@@ -2661,7 +2675,11 @@ opposite.
 
 **And the `every run?` line says whether that witness is one run or every run.**
 `potential` means some run avoids the violation, and the line names it — here
-the cycle `manual → autonomous → manual`, which never enters `failsafe`;
+the cycle `manual → autonomous → manual`, which never enters `failsafe`. On a
+machine that names no trigger every run is one chase, so the cycle or the
+stopping point named is one such a run reaches inside the 64-step budget
+without the violation, and where none is, the line names the run the budget
+stops (``the run the chase budget stops in `p64` never enters `v` ``).
 `guaranteed` means every maximal run of the machine reaches it. Both are read
 off the same graph the witness was, and both are withheld as `not decided`, with
 the reason, whenever that graph is not the machine's: a walk that stopped at a

@@ -975,7 +975,7 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
   },
   {
     id: 'W3',
-    claim: 'potential — the named avoiding cycle or full-relation sink',
+    claim: 'potential — the named avoiding cycle or full-relation sink, or the run the chase budget stops',
     feature: 'the guaranteed / potential modality (§3.R)',
     kind: 'maximality',
     // The per-step alternative does NOT substitute here: the claim is that the
@@ -986,7 +986,16 @@ export const WITNESS_CLAIMS: readonly WitnessClaim[] = [
     walkRequires: 'walkIsExact',
     perStepAlternative: false,
     ridesOn: null,
-    alsoRequires: ['a memoryless monitor', 'a configuration-valued atom'],
+    // The run it names is a run of the interpreter's: on the walk a machine
+    // that names no trigger keeps, a run is one chase stopped after
+    // `maxCompletion` steps, so a cycle or a sink a path inside G₀ reaches
+    // only past the budget is one no avoiding run gets to, and the run the
+    // budget stops inside G₀ is named instead (`ExploreResult.budgetStops`).
+    alsoRequires: [
+      'a memoryless monitor',
+      'a configuration-valued atom',
+      'a named cycle or sink entered inside G₀ within `maxCompletion` steps where `budgetStops` is non-empty',
+    ],
     otherwise: '`not decided`, with the reason split by §3.R’s `not decided` rows',
     producedBy: MODALITY_OF,
   },

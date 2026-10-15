@@ -710,6 +710,49 @@ describe('a nested state def: the machine that holds it, and a transition across
   });
 
   /*
+   * A SPECIALISATION OR A TYPED USAGE that adds a step over the states it
+   * inherits crosses the same boundary, from both sides, and both machines are
+   * refused (the branch review's w2). The refusal says so in its own words: the
+   * nested-definition remedy — keep the transition in the machine whose states
+   * it joins — would move `Derived`'s step into `Base` and change `Base`.
+   */
+  it('names the inheritance when a specialisation or a typed usage adds a step over inherited states', async () => {
+    const cases: Array<[string, string, string]> = [
+      [
+        `package W2 {
+          state def Base { state a; state b; state c; transition ab first a accept go then b; }
+          state def Derived :> Base { transition bc first b accept more then c; }
+        }`,
+        'W2::Base',
+        'W2::Derived',
+      ],
+      [
+        `package W2t {
+          state def Modes { state a; state b; state c; transition ab first a accept go then b; }
+          part def Drone { exhibit state m : Modes { transition bc first b accept more then c; } }
+        }`,
+        'W2t::Modes',
+        'W2t::Drone::m',
+      ],
+    ];
+    for (const [text, base, sub] of cases) {
+      const model = await modelOf(text);
+      const r = reachReport(model);
+      expect(r.machines.map((m) => [m.machine.qualifiedName, m.unsupported.map((u) => u.construct), m.exhaustive])).toEqual([
+        [base, ['machine-boundary'], false],
+        [sub, ['machine-boundary'], false],
+      ]);
+      const [onBase, onSub] = r.machines.map((m) => m.unsupported[0].detail);
+      expect(onBase).toContain(`is written outside this machine, in \`${sub}\`, which inherits its states`);
+      expect(onSub).toContain(`out of this machine, into \`${base}\`, a machine of its own whose states this one inherits`);
+      for (const detail of [onBase, onSub]) {
+        expect(detail).toContain('A transition added over inherited states is not walked as part of either machine');
+        expect(detail).not.toContain('Keep each transition inside the machine whose states it joins');
+      }
+    }
+  });
+
+  /*
    * A TRANSITION TO THE NESTED DEFINITION ITSELF crosses too. `Inner` is in the
    * outer region — the boundary stops below it — so `then Inner` was walked as
    * an ordinary step: the walk cascaded into `Inner::x` and published `no way

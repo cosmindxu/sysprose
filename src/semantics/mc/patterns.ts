@@ -2049,6 +2049,29 @@ function avoidingReach(
 }
 
 /**
+ * The breadth-first depth of every node from the opening, over `successors`,
+ * `-1` where the opening does not reach it. Read over *G₀*'s induced relation,
+ * it is the fewest steps a run takes to a configuration while keeping clear of
+ * the violation — which the chase budget bounds on a machine that names no
+ * trigger.
+ */
+function depthsFromOpening(successors: readonly (readonly number[])[]): Int32Array {
+  const depth = new Int32Array(successors.length).fill(-1);
+  if (successors.length === 0) return depth;
+  const queue = [0];
+  depth[0] = 0;
+  for (let head = 0; head < queue.length; head++) {
+    const v = queue[head];
+    for (const w of successors[v]) {
+      if (depth[w] !== -1) continue;
+      depth[w] = depth[v] + 1;
+      queue.push(w);
+    }
+  }
+  return depth;
+}
+
+/**
  * One cycle of the first cyclic component of a relation, as a closed walk.
  *
  * The component chosen is the one whose smallest member is smallest — the
@@ -2057,10 +2080,17 @@ function avoidingReach(
  * member, found breadth-first inside the component and closed back on it. A
  * self-loop is a cycle of one node and prints as `hazard → hazard`.
  * Returns `null` when the relation has no cycle at all.
+ *
+ * `admits` narrows the members a cycle may start at, and so the components it
+ * may be shown in: the modality passes the configurations a run of the
+ * interpreter reaches before its chase budget stops it. The component is then
+ * the one whose smallest ADMITTED member is smallest, and the cycle starts
+ * there. Admitting every member is the rule above, unchanged.
  */
 function exhibitCycle(
   successors: readonly (readonly number[])[],
   comps: Components,
+  admits: (node: number) => boolean = () => true,
 ): number[] | null {
   let start = -1;
   let member: number[] | null = null;
@@ -2068,8 +2098,11 @@ function exhibitCycle(
     const cyclic =
       members.length > 1 || (successors[members[0]] ?? []).includes(members[0]);
     if (!cyclic) continue;
-    if (start === -1 || members[0] < start) {
-      start = members[0];
+    // Ascending (`tarjanComponents`), so the first admitted member is the smallest.
+    const first = members.find(admits);
+    if (first === undefined) continue;
+    if (start === -1 || first < start) {
+      start = first;
       member = [...members];
     }
   }
@@ -2202,11 +2235,26 @@ function modalityOf(
   const induced = walk.successors.map((targets, v) =>
     inG0[v] === 1 ? targets.filter((w) => inG0[w] === 1) : [],
   );
+  // THE CHASE BUDGET, on a machine that names no trigger and keeps the
+  // relation it states (`ExploreResult.budgetStops` non-empty): every run of
+  // it is the one chase from the opening, stopped after `maxCompletion` steps.
+  // A cycle or a sink of *G₀* is a run of the interpreter that avoids the
+  // violation only where a path INSIDE *G₀* gets there within the budget — a
+  // breadth-first depth over the induced relation, not over the full one,
+  // whose shortcut through a violating configuration is exactly what such a
+  // run cannot take. Measured: `s0 → p1 … p70 → a ⇄ b` beside `s0 → v → p40`
+  // named the cycle `a → b → a` as the run that avoids `v`, though the only
+  // run that does is stopped by the budget at `p64`, and every run that
+  // reaches the cycle goes through `v`.
+  const depth = walk.budgetStops.length > 0 ? depthsFromOpening(induced) : null;
+  const withinBudget = (i: number): boolean =>
+    depth === null || (depth[i] !== -1 && depth[i] <= bounds.maxCompletion);
   const comps = tarjanComponents(induced);
-  const cycle = acyclic(induced, comps) ? null : exhibitCycle(induced, comps);
+  const cyclic = !acyclic(induced, comps);
+  const cycle = cyclic ? exhibitCycle(induced, comps, withinBudget) : null;
   // THE FULL RELATION, never the induced one: `walk.successors[i]`, not
   // `induced[i]`.
-  const sink = g0.find((i) => walk.successors[i].length === 0);
+  const sink = g0.find((i) => walk.successors[i].length === 0 && withinBudget(i));
   const nameOf = (i: number): StateRef => {
     const leaf = walk.configLeaves[i];
     const stack = walk.configStates[i];
@@ -2239,18 +2287,33 @@ function modalityOf(
       avoiding: [stop],
     };
   }
+  if (depth !== null && (cyclic || g0.some((i) => walk.successors[i].length === 0))) {
+    // *G₀* holds a cycle or a sink, but none inside the budget: the run that
+    // avoids the violation is a path of `maxCompletion` steps inside *G₀*,
+    // and it ends where the budget stops it — there is one, since a path
+    // inside *G₀* to a cycle or a sink past the budget is longer than that.
+    const ends = chaseEnds(walk.successors, bounds.maxCompletion, (i) => inG0[i] === 1);
+    if (ends.length === 0) return withheld(NOT_DECIDED.budget, 'budget');
+    const stop = nameOf(ends[0]);
+    return {
+      value: 'potential',
+      sentence: `potential — some run avoids it: the run the chase budget stops in \`${stop.name}\` never ${verb} \`${atom.argument}\`${simulator}`,
+      failedClause: null,
+      avoiding: [stop],
+    };
+  }
   // WHERE A RUN ENDS, on a machine that names no trigger and keeps the
   // relation it states (`ExploreResult.budgetStops`). No cycle and no sink of
   // *G* keeps clear of the violation, so every path of the relation reaches
   // it — but a run of the interpreter is one chase, ended by the budget after
   // `maxCompletion` steps, and a path of that many steps inside *G* is a run
   // that ends before it gets there. The relation says `guaranteed` and the
-  // interpreter says `potential`; neither is published. A `potential` above
-  // needs no such check: a cycle or a sink of *G* the walk reached within the
-  // budget is a run of the interpreter too. Measured: a 70-step chain the
-  // walk reached the end of by a shorter tie-break branch printed `every run?
-  // guaranteed` beside a `fail` whose declaration-order run the budget stops
-  // at the 64th state.
+  // interpreter says `potential`; neither is published. (A `potential` above
+  // names a cycle or a sink only where a path inside *G₀* reaches it within
+  // the budget, and otherwise the run the budget stops — see `withinBudget`.)
+  // Measured: a 70-step chain the walk reached the end of by a shorter
+  // tie-break branch printed `every run? guaranteed` beside a `fail` whose
+  // declaration-order run the budget stops at the 64th state.
   if (
     walk.budgetStops.length > 0 &&
     chaseEnds(walk.successors, bounds.maxCompletion, (i) => inG0[i] === 1).length > 0
@@ -2952,7 +3015,9 @@ export function behaviourReport(model: Model, opts: BehaviourOptions): Behaviour
   // and not a verdict on any property: it moves no count and no exit code, so
   // a property that passes over a machine that never comes to rest still
   // passes, and the run says beside it that the machine never comes to rest.
-  // One more walk of the machine, the one `reach` takes. The PUBLISHED rows
+  // Read off the walk `reach` takes — the one each property above was decided
+  // over, which `exploreMachine` keeps per model revision, so filing them
+  // walks the machine again only where no property did. The PUBLISHED rows
   // only: a withheld one is a `withheld` line of `reach`'s report and has no
   // code to be filed under here, so the catalogue entry, the user guide and
   // `docs/06` §8.8 say that this command carries none and send a reader to

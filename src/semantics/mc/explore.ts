@@ -141,6 +141,10 @@ import { acyclic, bottomComponents, tarjanComponents, type Components } from './
 // the census can say WHY that edge is not in the relation in the relation's own
 // terms rather than in a sentence of its own.
 import { payloadOf } from '../connectors';
+// A step written in a specialisation or a typed usage over the states it
+// inherits is a crossing like any other; the refusal names the inheritance,
+// because its remedy is not the one for a nested definition.
+import { generalizationsOf } from '../inheritance';
 
 /* ─────────────────────────────── the codes ──────────────────────────────── */
 
@@ -688,8 +692,11 @@ export interface ExploreResult {
    * run of the interpreter ends here, and nothing it does after is in it. The
    * relation follows the chase on, so each of those two is checked against
    * this list and withheld where the two readings part (`./patterns`); a trap
-   * row, a `potential`, a `not recoverable` and every absence hold of both, and
-   * stand. Measured before this field existed, on two such machines: a 70-step
+   * row, a `not recoverable` and every absence hold of both, and stand. So
+   * does a `potential`, but the run it NAMES must be one too: a cycle or a sink
+   * of the avoiding subgraph only where a path inside it gets there within the
+   * budget, and otherwise the run the budget stops inside it (the modality's
+   * `withinBudget`). Measured before this field existed, on two such machines: a 70-step
    * chain the walk reached the end of by a shorter tie-break branch printed
    * `every run? guaranteed` beside a `fail` whose declaration-order run the
    * budget stops at the 64th state, and a three-state cycle printed `recovery`
@@ -1018,10 +1025,11 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
     } else if (crossing.has(el.id)) {
       // BEFORE `opening`: an opening edge into a nested definition's state would
       // open this machine somewhere its relation does not reach.
+      const c = crossing.get(el.id)!;
       row(
         'refused',
-        `it leads ${acrossSentence(model, crossing.get(el.id)!)}, so the walk refuses this machine by ` +
-          'name rather than walking a step whose meaning is not defined here',
+        `it leads ${acrossSentence(model, c, inheritedAcross(model, machineId, c))}, so the walk ` +
+          'refuses this machine by name rather than walking a step whose meaning is not defined here',
       );
     } else if (relation.has(el.id) && sourceKind === 'InitialNode') {
       row(
@@ -1078,8 +1086,8 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
       account: 'refused',
       reason:
         `it joins ${nameOf(c.edge.source?.[0])} to ${nameOf(c.edge.target?.[0])} and is ` +
-        `${acrossSentence(model, c)}, so the walk refuses this machine by name rather than walking ` +
-        'it as though the edge were not there',
+        `${acrossSentence(model, c, inheritedAcross(model, machineId, c))}, so the walk refuses ` +
+        'this machine by name rather than walking it as though the edge were not there',
     });
   }
 
@@ -1242,12 +1250,32 @@ function machineHolding(model: Model, id: ElementId): ElementId | null {
 }
 
 /**
+ * The specialisation or typed usage on the far side of a crossing whose step
+ * joins states one side INHERITS from the other, or `null`: for a `foreign`
+ * edge, the element it is written in (or an owner of that) that specialises or
+ * is typed by this machine; for an `out` edge, the machine holding the far end
+ * when this machine specialises or is typed by it. `state def Derived :> Base
+ * { transition bc first b accept more then c; }` is both: `bc` joins `Base`'s
+ * `b` and `c`, and is written in `Derived`.
+ */
+function inheritedAcross(model: Model, machineId: ElementId, c: BoundaryCrossing): ElementId | null {
+  const inherits = (sub: ElementId, general: ElementId): boolean =>
+    generalizationsOf(model, sub).some((g) => g.id === general);
+  if (c.way === 'out') return c.other !== null && inherits(machineId, c.other) ? c.other : null;
+  if (c.way !== 'foreign') return null;
+  for (let p: ElementId | null = c.edge.ownerId ?? null; p != null; p = model.get(p)?.ownerId ?? null) {
+    if (inherits(p, machineId)) return p;
+  }
+  return null;
+}
+
+/**
  * What lies across the boundary, in the refusal's words: a nested definition
  * is "a machine of its own" only when it is one — a `state def` that owns no
  * transition is walked by nothing (`stateMachinesIn`), and calling it a machine
  * printed a second machine under a header that counted one.
  */
-function acrossSentence(model: Model, c: BoundaryCrossing): string {
+function acrossSentence(model: Model, c: BoundaryCrossing, inherited: ElementId | null = null): string {
   const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
   const other = c.other === null ? undefined : model.get(c.other);
   switch (c.way) {
@@ -1260,10 +1288,16 @@ function acrossSentence(model: Model, c: BoundaryCrossing): string {
       );
     case 'out':
       if (other === undefined) return 'out of this machine, to an element no machine walks';
+      if (inherited !== null) {
+        return `out of this machine, into ${qn(other.id)}, a machine of its own whose states this one inherits`;
+      }
       return model.descendants(other.id).some((d) => d.id === c.edge.ownerId)
         ? `out of this nested \`state def\`, into ${qn(other.id)}, the machine it is written in`
         : `out of this machine, into ${qn(other.id)}, a machine of its own`;
     case 'foreign':
+      if (inherited !== null) {
+        return `written outside this machine, in ${qn(inherited)}, which inherits its states`;
+      }
       return `written outside this machine${other !== undefined ? `, in ${qn(other.id)}` : ''}`;
   }
 }
@@ -1336,17 +1370,28 @@ function unsupportedConstructs(
   }
   const qn = (id: ElementId): string => `\`${model.qualifiedName(id) || id}\``;
   for (const c of boundaryCrossings(model, machineId)) {
+    const inherited = inheritedAcross(model, machineId, c);
     out.push({
       construct: 'machine-boundary',
       detail:
         `${qn(c.edge.id)} leads from ${qn(c.edge.source![0])} to ${qn(c.edge.target![0])}` +
         (c.way === 'foreign'
-          ? ` and is ${acrossSentence(model, c)}, so this walk does not take it. `
-          : `, ${acrossSentence(model, c)}. `) +
-        'Each machine steps only by its own transitions, so what a step across that boundary means ' +
-        'is not defined here, and no walk of this machine is a claim about it as written. Keep each ' +
-        'transition inside the machine whose states it joins, or write a nested definition as a ' +
-        'composite state (`state Inner { … }`) to make its states part of the outer machine.',
+          ? ` and is ${acrossSentence(model, c, inherited)}, so this walk does not take it. `
+          : `, ${acrossSentence(model, c, inherited)}. `) +
+        // A specialisation's remedy is not a nested definition's: moving the
+        // step into the machine whose states it joins would change THAT
+        // machine, which the specialisation was written not to do.
+        (inherited !== null
+          ? 'A transition added over inherited states is not walked as part of either machine: each ' +
+            'walks only the transitions written in its own region, and this engine does not put a ' +
+            'specialisation or a typed usage together with the machine it inherits states from, so ' +
+            'no walk of this machine is a claim about the two together. To have the steps walked, ' +
+            'write the machine you mean out whole — its states and every transition it steps by — ' +
+            'in one definition.'
+          : 'Each machine steps only by its own transitions, so what a step across that boundary means ' +
+            'is not defined here, and no walk of this machine is a claim about it as written. Keep each ' +
+            'transition inside the machine whose states it joins, or write a nested definition as a ' +
+            'composite state (`state Inner { … }`) to make its states part of the outer machine.'),
       elementId: c.edge.id,
     });
   }
@@ -1466,6 +1511,13 @@ interface Frontier {
  * stops a run of it in `autonomous`.
  */
 
+/** The walks taken over one revision of one model, by machine and bounds. */
+interface WalkCache {
+  rev: number;
+  walks: Map<string, ExploreResult>;
+}
+const WALK_CACHE = new WeakMap<Model, WalkCache>();
+
 /**
  * Explore the configuration graph of the machine rooted at `machineId`.
  *
@@ -1473,12 +1525,41 @@ interface Frontier {
  * walk to it. Each configuration carries how far into its chase the
  * interpreter is there, and where the chase budget can stop a chase that
  * position is part of the configuration — see the note above.
+ *
+ * ONE WALK PER MACHINE, BOUNDS AND MODEL REVISION. The walk is a function of
+ * those alone and its result is read-only, so a second caller over the same
+ * revision gets the first one's walk — as `regionTransitions` and
+ * `regionScope` (`./config`) are kept, by `model.rev`. `check-behaviour`
+ * walks a machine for every property it decides and once more to file the
+ * machine's completion livelocks (`behaviourReport`, `./patterns`); measured
+ * on a 9,641-configuration machine with one property, that second walk took
+ * the command from about 230 ms to about 540 ms (the branch review).
  */
 export function exploreMachine(
   model: Model,
   machineId: ElementId,
   opts: ExploreOptions = {},
 ): ExploreResult {
+  const key = [
+    machineId,
+    Math.max(1, opts.maxConfigs ?? DEFAULT_MAX_CONFIGS),
+    Math.max(0, opts.maxDepth ?? DEFAULT_MAX_DEPTH),
+    Math.max(0, opts.maxCompletion ?? MAX_COMPLETION),
+  ].join('|');
+  let cache = WALK_CACHE.get(model);
+  if (cache === undefined || cache.rev !== model.rev) {
+    cache = { rev: model.rev, walks: new Map() };
+    WALK_CACHE.set(model, cache);
+  }
+  const hit = cache.walks.get(key);
+  if (hit !== undefined) return hit;
+  const walk = walkMachine(model, machineId, opts);
+  cache.walks.set(key, walk);
+  return walk;
+}
+
+/** {@link exploreMachine}, uncached. */
+function walkMachine(model: Model, machineId: ElementId, opts: ExploreOptions): ExploreResult {
   const bounds: ExploreBounds = {
     maxConfigs: Math.max(1, opts.maxConfigs ?? DEFAULT_MAX_CONFIGS),
     maxDepth: Math.max(0, opts.maxDepth ?? DEFAULT_MAX_DEPTH),

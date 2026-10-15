@@ -370,7 +370,9 @@ A machine that names no trigger at all keeps the relation it states and fails no
 clause for the budget: there only the two claims read over where a run ENDS —
 A7's `recoverable` and A8's `guaranteed` — are checked against the
 configurations where the budget stops its one chase (`budgetStops`, §8.5), and
-each register row names that conjunct.
+each register row names that conjunct. So, since the branch review, is the run
+W3's `potential` names: a cycle or a sink of G₀ only where a path inside G₀
+reaches it within the budget, else the run the budget stops inside G₀.
 
 **And the bounds line names the store, in every lane, because that is what `exhaustive under {…}` has always meant.** Correction 23's clause is lifted out of §3.1 and into `boundsSentence` itself, which today names `maxConfigs`, `maxDepth`, `maxCompletion` and `alphabet` and omits the one parameter that decided the trapguard measurement above. After commit 3 it reads `…, store seeded from declared literal values — a guard over an attribute with no declared value is read as false`. One edit covers A5, A6, A7, A8, A10 and A13 at once, and it is the honest reading of the qualification string every one of them prints. **It is a disclosure and not a clause**, and it says less than clause (d) does: `c929278`'s predicate covers guards that decided nothing for reasons other than an undecided feature, and the bounds line names only the common one. Where the two differ the `verification/guard-undetermined` row is what a reader acts on.
 
@@ -1986,10 +1988,21 @@ interpreter fires on `[peerVerdict]`.
   A8's `guaranteed` only where no 64-step path from the opening stays inside G₀ —
   and withheld under the budget sentences where they part. The rest stands
   because it is true of the interpreter's runs too: a trap row (a set entered
-  within the budget that nothing leaves), `potential`, `not recoverable`, every
-  absence. A review of this step found the two false answers this replaces —
-  `every run? guaranteed` beside a `fail` whose declaration-order run the budget
-  stops at the 64th state of a 70-step chain reached by a shorter branch, and
+  within the budget that nothing leaves), `not recoverable`, every absence, and
+  the value `potential` — but not, as first shipped, every run `potential`
+  names. A path inside G₀ to its cycle or sink can be longer than the budget
+  where every configuration is within 64 steps of the opening, because a
+  shortcut through the violation lowers that depth: the branch review's probe
+  (`s0 → p1 … p70 → a ⇄ b` beside `s0 → v → p40`, `absence v`) printed
+  `potential — … the cycle a → b → a never enters v`, though every run that
+  reaches the cycle goes through `v` and the only run that avoids it is the one
+  the budget stops at `p64`. On such a machine the modality now names a cycle
+  or a sink only where a path inside G₀ reaches it within the budget, and
+  otherwise the run the budget stops inside G₀ (`the run the chase budget stops
+  in p64 never enters v`); register row W3 names the conjunct. A review of this
+  step found the two false answers this replaces — `every run? guaranteed`
+  beside a `fail` whose declaration-order run the budget stops at the 64th
+  state of a 70-step chain reached by a shorter branch, and
   `recovery` PASS on a three-state cycle for a state the interpreter's run never
   enters — and asked for the gate's whole budget clause on these machines.
   Measured, that withholds every trap row in the repository (each fixture that
@@ -2021,9 +2034,10 @@ interpreter fires on `[peerVerdict]`.
   default bounds: on v9 the two machines it changes (`PA::SwarmMember`'s Modes
   and States) walk 322 and 315 configurations and search at most 632 product
   states, against `maxConfigs` 10 000, at depth 64 and 73 against 200. Those two
-  are v9's whole `reach` diff: `admissionFails` is no longer dead, and the two
-  `absence … between` rows of `SwarmMemberStates` that read `bound-exhausted`
-  because no trigger was ever offered are `pass` again. The other eight machines
+  are v9's whole `reach` diff at this step (§8.8 adds the ten livelock rows):
+  `admissionFails` is no longer dead, and the two `absence … between` rows of
+  `SwarmMemberStates` that read `bound-exhausted` because no trigger was ever
+  offered are `pass` again. The other eight machines
   whose chases never settle name no trigger and keep their walks; one row of
   theirs moves, `LA::SwarmMember::SwarmMemberStates`' `recovery Landed`, from
   `pass` to `inconclusive` — the budget stops a run of that machine in each of
@@ -2100,15 +2114,34 @@ them.
   list) with the witness's leaf; it used to accept the transition's target
   anywhere on the witness's stack, which passed the `then Inner` witness that
   ends in `Inner::x` against a run that stays at `Inner`. The interpreter's
-  routing to its hierarchical path (`needsHierarchical`) and the trigger list
-  the Simulation tab offers (`discoverMachineTriggers`) still read every
-  descendant, the nested definition's included. The first routes an outer
-  machine whose nested definition holds a composite state through the
-  hierarchical path; measured on such a probe, its runs visit, fire and end
-  exactly as the same machine's do on the flat path without it, and differ only
-  by the two fields the hierarchical path adds (`complete`, `clock`). The second
-  lists the nested definition's triggers, which no outer transition takes, as
-  the USER-GUIDE says.
+  routing to its hierarchical path (`needsHierarchical`) still reads every
+  descendant, the nested definition's included: it routes an outer machine
+  whose nested definition holds a composite state through the hierarchical
+  path; measured on such a probe, its runs visit, fire and end exactly as the
+  same machine's do on the flat path without it, and differ only by the two
+  fields the hierarchical path adds (`complete`, `clock`). The Simulation tab's
+  machines and events read the region since the branch review
+  (`isSimulatable`, `discoverTriggers`, and `executeModel`'s
+  `discoverMachineTriggers`): read over every descendant, they offered the
+  nested definition's triggers as the outer machine's events, which no outer
+  transition takes, and made a `state def` whose only content is a nested
+  definition the tab's machine — a run with no state at all once `runRegion`
+  read the region, where the nested definition, the one `reach` walks, was
+  never listed. That definition is now the tab's machine and `executeModel`'s
+  trace.
+- **A specialisation or a typed usage that adds a step over the states it
+  inherits crosses the same boundary** (the branch review's w2): `state def
+  Derived :> Base { transition bc first b accept more then c; }` and `exhibit
+  state m : Modes { transition … }` write a transition in one machine's region
+  that joins another machine's states, so both machines are refused, `Base`
+  included — walked whole at `5943654`, where it published `unreachable c` and
+  `no way out b`, true of `Base`'s own runs. That is a deliberate scope of this
+  step, and it fails closed: no walk here puts the two machines together, and
+  an agent reading `Base`'s `unreachable c` could delete a state `Derived` steps
+  into. No model in the survey above holds such a step. The refusal names the
+  inheritance and gives its own remedy: the nested-definition one, keep the
+  transition in the machine whose states it joins, would move `Derived`'s step
+  into `Base` and change `Base`.
 
 ### 8.7 The method text — O1 `behaviour-sound`, 2026-10-15
 
@@ -2298,10 +2331,20 @@ run-to-completion the machine never comes to rest. `reach` now says so, as
 - **On `check-behaviour`.** The machine's published rows are filed after every
   property's finding, in `reach`'s words (`livelockFinding`, one composer), and
   move no claim, no count and no exit code: a property that passes over a
-  machine that never comes to rest still passes, with the warning beside it. One
-  more walk of the machine, the one `reach` takes. A WITHHELD row is not filed
-  there — it is a `withheld` line of `reach`'s report, with no code to file it
-  under — so `reach` is where a withheld cycle is read. This is a scope beyond
+  machine that never comes to rest still passes, with the warning beside it. They
+  are read off the walk `reach` takes, which as first shipped was one more walk
+  of the machine: the branch review measured `check-behaviour` on a generated
+  9,641-configuration machine with one property at about 230 ms at `5943654`
+  and about 540 ms here. `exploreMachine` now keeps its walk per machine, bounds
+  and model revision, so the properties and the rows share one: measured cold
+  (a fresh load per run, four runs), one property about 235 → 575 → 290 ms
+  (`5943654`, before, after), two properties about 500 → 800 → 280 ms, and a
+  property refused before any walk 0 → 290 → 290 ms — that last is the walk the
+  rows need, which no property took. `reach` on the same machine is about 240 ms
+  at `5943654` and about 290 ms on this branch, the livelock pass's own cost.
+  A WITHHELD row is not filed there — it is a `withheld` line of `reach`'s
+  report, with no code to file it under — so `reach` is where a withheld cycle
+  is read. This is a scope beyond
   U1's wording (*reach reports it*), taken so a reader of `check-behaviour` is
   not told a property holds over a machine whose chase never rests without
   being told that too; on v9 it is ten more warnings (`check-behaviour
