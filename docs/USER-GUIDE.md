@@ -3189,7 +3189,7 @@ of the model, as the Explorer does ([§5](#the-loop)), and the strip says so.
 
 **Source of truth:** `src/ui/store.ts:3076-3258` (`runValidation`,
 `solveParametric`: the four buttons), `1985-2065` (`afterSdkEdit`: an SDK edit),
-`src/api/analytics.ts:2401-2408` (`feasible`), `src/ui/App.tsx:46-94`
+`src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/App.tsx:46-94`
 (`window.sysml`), `scripts/sysprose.ts`, `scripts/sysml-check.ts`.
 
 ---
@@ -3790,7 +3790,7 @@ is a sentence it will refuse to print rather than a corner it will cut.
 (`UNDO_LIMIT`: undo is bounded), `1682-1712` (`RECOMPUTE_DEBOUNCE_MS`: the
 derived surfaces lag), `4871-4989` (`mergeLibrary`, `loadStandardLibraryAsync`:
 the library merge), `src/ui/panels/Toolbar.tsx:90-105`, `273-313`,
-`src/api/analytics.ts:2401-2408` (`feasible`), `src/ui/commands.ts:198-310`.
+`src/api/analytics.ts:2408-2415` (`feasible`), `src/ui/commands.ts:198-310`.
 
 ---
 
