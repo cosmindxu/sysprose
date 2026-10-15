@@ -894,7 +894,10 @@ binding of Q tells the instances apart (`part q2 : Q { attribute E = 20.0; bind
 p.extra = E; }`, or the package's `bind q2.p.extra = E`: q2's p is read in its
 own element, at q2's extra of 20). The
 rows are read apart, each at the value of the instance it names, so an instance
-that breaks the relation is reported against that instance, and the check rolls
+that breaks the relation is reported against that instance — at the line that
+makes it differ: the member of its own stating the value the binding carries in
+(q's `attribute :>> L = 50.0`), else the element the instance is read in, else
+its innermost own usage (`part q : Q`), never the usage the instances share — and the check rolls
 two or more of them up into one finding; a relation written in the usage itself
 and read for one instance besides the usage's own (`part q1 : Q` and no other)
 has no roll-up, and a violation there is that instance's finding alone — one the
@@ -961,7 +964,13 @@ never solved as a design equation (`s.a.load == 9.0` for a shallow `part s :
 T1` beside the capped chain), and the feasibility search does not move it.
 A context that reads a definition's relation otherwise only because a value
 the binding carries is its own there (`q2 : Q { attribute :>> K = 25.0; }`) is
-listed, and decided by no surface yet. A per-instance reading that fails
+listed, and decided by no surface yet. Such a context, and one whose own value a
+binding of the definition carries into what the relation reads (`q : Q {
+attribute :>> L = 50.0; }` over Q's `bind p.load = L`, for Q's `constraint c {
+p.m2 >= 0.0 }`), is that instance's reading: a `validation/constraint-by-instance`
+finding at the member of the context stating the carried value (q's `:>> L`),
+else at the context itself, never a target's
+`validation/target-by-specialisation` verdict. A per-instance reading that fails
 inside the tool makes the row it was read for *could not be evaluated*, in a
 sentence naming the failure (`… the per-instance reading failed (RangeError);
 reported, not dropped`; a group's roll-up counts it *not read*), and every

@@ -1617,9 +1617,9 @@ describe('store — per-instance Check and Solve rows (F6)', () => {
 
   it('re-anchors an instance row that sits on an implicit element by the anchor rule (F7)', () => {
     // P's `c` read in Q's `p` is a shared-usage group: the generic row and the
-    // violated instance `q::p`. The violated row is anchored at the implicit
-    // `Q::p::load`; the Check points instead at the outermost non-implicit
-    // usage on the path, Q::p.
+    // violated instance `q::p`. The violated row's feature is the implicit
+    // `Q::p::load`; the Check points instead at the line that makes q's p
+    // differ (PI-2): q's `:>> L = 50.0`, which Q's binding carries into it.
     load(`package H2P {
     part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; constraint c { load <= 10.0 } }
     part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
@@ -1634,10 +1634,10 @@ describe('store — per-instance Check and Solve rows (F6)', () => {
     expect(instanceRow).toBeDefined();
     expect(instanceRow!.elementId).toBeDefined();
     expect(st().model.get(instanceRow!.elementId!)?.attrs.implicit).not.toBe(true);
-    // The re-anchored element is the usage Q::p, not the implicit end.
+    // The re-anchored element is q's redefinition, not the implicit end nor the shared usage Q::p.
     const anchor = st().model.get(instanceRow!.elementId!)!;
-    expect(anchor.eClass).toBe('PartUsage');
-    expect(st().model.qualifiedName(anchor.id)).toBe('H2P::Q::p');
+    expect(anchor.eClass).toBe('AttributeUsage');
+    expect([st().model.qualifiedName(anchor.ownerId!), anchor.attrs.value]).toEqual(['H2P::q', 50]);
   });
 
   it('lists the violation of a usage-owned relation’s one other instance (PI-1)', () => {
@@ -1653,9 +1653,9 @@ describe('store — per-instance Check and Solve rows (F6)', () => {
     expect(rows.map((d) => [d.severity, d.instance, d.relation, d.instances])).toEqual([
       ['warning', 'R17::q1::p', 'R17::Q::p::c2', undefined],
     ]);
-    // The anchor rule's element today, the shared usage; PI-2 (O4) moves it to
-    // q1's redefinition `:>> L = 50.0`: this pin is O4's to update.
-    expect(st().model.qualifiedName(rows[0]!.elementId!)).toBe('R17::Q::p');
+    // At q1's redefinition `:>> L = 50.0` (PI-2), not the shared usage Q::p.
+    const anchor = st().model.get(rows[0]!.elementId!)!;
+    expect([anchor.eClass, st().model.qualifiedName(anchor.ownerId!), anchor.attrs.value]).toEqual(['AttributeUsage', 'R17::q1', 50]);
   });
 
   it('words a context row `violated … in <context>`, with the relation as its anchor and no amount', () => {

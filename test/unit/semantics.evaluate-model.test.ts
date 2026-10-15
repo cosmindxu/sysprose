@@ -3638,12 +3638,11 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     expect(report.diagnostics.map((d) => [d.code, d.severity, d.instance, d.relation])).toEqual([
       ['validation/constraint-by-instance', 'warning', 'R17::q1::p', 'R17::Q::p::c2'],
     ]);
-    // At the anchor rule's element, with a span: the shared usage `part p : P`
-    // today. PI-2 (O4) moves it to q1's redefinition `:>> L = 50.0`: this pin
-    // is O4's to update.
+    // At the anchor rule's element, with a span: q1's redefinition the binding
+    // carries into q1's p (PI-2), not the shared usage `part p : P`.
     const { range } = report.diagnostics[0]!;
-    expect(range?.start.line).toBe(3);
-    expect(text.slice(range!.start.offset, range!.start.offset + 'part p : P'.length)).toBe('part p : P');
+    expect(range?.start.line).toBe(4);
+    expect(text.slice(range!.start.offset, range!.start.offset + 'attribute :>> L = 50.0'.length)).toBe('attribute :>> L = 50.0');
     expect(report.diagnostics[0]!.message).toBe(
       'R17::Q::p::c2 (load <= 10.0) is violated in R17::q1::p: load = 50 — q1.L through a `bind`',
     );
@@ -3665,6 +3664,153 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
       ['validation/constraint-by-instance', 'info', 'SLD::q1::p', 'SLD::Q::p::c2'],
     ]);
     expect(report.diagnostics[0]!.message).toMatch(/^SLD::Q::p::c2 \(load <= 10\.0\) could not be read in SLD::q1::p: load has no value in SLD::q1::p: /);
+  });
+
+  it('points a violated instance at the line that makes it differ, never at the usage they share (PI-2)', async () => {
+    // E's m1: each instance's finding pointed at Q's `part p : P`, the line every instance shares, so an
+    // agent edited the definition. It points at the member stating the value the binding carries in (q1's
+    // `:>> L`, also where the relation reads a value derived from the bound one), else at the element the
+    // instance is read in (q2's `part :>> p`), else at the instance's innermost own usage (r1, whose K the
+    // bound L derives from — never the `sys` r1 and r2 share).
+    const anchored = async (text: string) => {
+      const { report } = await loadModelText(text, { fileName: 'pi2.sysml' });
+      return report.diagnostics
+        .filter((d) => d.code === 'validation/constraint-by-instance' && d.instance !== undefined)
+        .map((d) => [d.instance, d.range!.start.line, text.slice(d.range!.start.offset).split(/[;{]/)[0]!.trim()]);
+    };
+    expect(
+      await anchored(
+        [
+          'package PA {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; constraint c { load + extra <= 10.0 } }',
+          '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+          '  part q1 : Q { attribute :>> L = 50.0; }',
+          '  part q2 : Q { part :>> p { attribute :>> extra = 20.0; } }',
+          '}',
+        ].join('\n'),
+      ),
+    ).toEqual([
+      ['PA::q1::p', 4, 'attribute :>> L = 50.0'],
+      ['PA::q2::p', 5, 'part :>> p'],
+    ]);
+    expect(
+      await anchored(
+        [
+          'package PB {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }',
+          '  part def R { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real = 2.0 * K; part p : P { constraint c2 { m2 >= 0.0 } } bind p.load = L; }',
+          '  part sys {',
+          '    part r1 : R { attribute :>> K = 5.5; }',
+          '    part r2 : R { attribute :>> K = 6.0; }',
+          '  }',
+          '}',
+        ].join('\n'),
+      ),
+    ).toEqual([
+      ['PB::sys::r1::p', 5, 'part r1 : R'],
+      ['PB::sys::r2::p', 6, 'part r2 : R'],
+    ]);
+    expect(
+      await anchored(
+        [
+          'package PC {',
+          '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; constraint c { m2 >= 0.0 } }',
+          '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }',
+          '  part q1 : Q {',
+          '    attribute :>> L = 50.0;',
+          '  }',
+          '  part q2 : Q {',
+          '    attribute :>> L = 60.0;',
+          '  }',
+          '}',
+        ].join('\n'),
+      ),
+    ).toEqual([
+      ['PC::q1::p', 5, 'attribute :>> L = 50.0'],
+      ['PC::q2::p', 8, 'attribute :>> L = 60.0'],
+    ]);
+  });
+
+  it('takes every context reading a binding carries, at the line stating the carried value (PI-3)', async () => {
+    // h2c and k2: q's L reaches Q's `p.m2` through Q's `bind p.load = L` (`bind p.x = L`); M7: q2's K
+    // reaches the bound L. They were target-by-specialisation findings at P's m2, which mbse-workflow
+    // reports as a target's verdict ("do not change an estimate to meet it"); they are instance findings,
+    // at the member stating the value the binding carries in (q's `:>> L`, Q2's in a definition context),
+    // else at the context itself (M7: q2's K feeds Q's L, written in Q for every Q).
+    const findings = async (lines: string[]) => {
+      const text = lines.join('\n');
+      const { report } = await loadModelText(text, { fileName: 'pi3.sysml' });
+      return report.diagnostics
+        .filter((d) => d.code === 'validation/constraint-by-instance' || d.code === 'validation/target-by-specialisation')
+        .map((d) => [d.code!.slice('validation/'.length), d.severity, d.instance, d.range!.start.line, text.slice(d.range!.start.offset).split(/[;{]/)[0]!.trim()]);
+    };
+    const P = '  part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }';
+    const Q = '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint c { p.m2 >= 0.0 } }';
+    expect(
+      await findings(['package H2C {', P, Q, '  part q : Q {', '    attribute :>> L = 50.0;', '  }', '  part q2 : Q { attribute :>> L = 60.0; }', '}']),
+    ).toEqual([
+      ['constraint-by-instance', 'warning', 'H2C::q', 5, 'attribute :>> L = 50.0'],
+      ['constraint-by-instance', 'warning', 'H2C::q2', 7, 'attribute :>> L = 60.0'],
+    ]);
+    // Its Solve row points where its Check row does (C.3: `anchorId ?? baseId`), not at the relation.
+    const h2c = parseModel(['package H2C {', P, Q, '  part q : Q { attribute :>> L = 50.0; }', '}'].join('\n')).model;
+    const solved = checkConstraintsNumeric(h2c).filter((r) => r.context?.contextId !== undefined);
+    expect(solved.map((r) => [h2c.qualifiedName(r.context!.contextId), h2c.qualifiedName(h2c.get(r.anchorId!)!.ownerId!), h2c.get(r.anchorId!)!.attrs.value])).toEqual([
+      ['H2C::q', 'H2C::q', 50],
+    ]);
+    expect(
+      await findings(['package H2D {', P, Q, '  part def Q2 :> Q {', '    attribute :>> L = 50.0;', '  }', '}']),
+    ).toEqual([['constraint-by-instance', 'warning', 'H2D::Q2', 5, 'attribute :>> L = 50.0']]);
+    expect(
+      await findings([
+        'package K2 {',
+        '  part def P { attribute x : ScalarValues::Real; attribute m2 : ScalarValues::Real = 10.0 - x; }',
+        '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.x = L; constraint c { p.m2 >= 0.0 } }',
+        '  part q : Q {',
+        '    attribute :>> L = 50.0;',
+        '  }',
+        '}',
+      ]),
+    ).toEqual([['constraint-by-instance', 'warning', 'K2::q', 5, 'attribute :>> L = 50.0']]);
+    expect(
+      await findings([
+        'package M7 {',
+        '  part def Q {',
+        '    attribute K : ScalarValues::Real default = 0.5;',
+        '    attribute L : ScalarValues::Real = 2.0 * K;',
+        '    attribute load : ScalarValues::Real;',
+        '    bind load = L;',
+        '    constraint c { load <= 5.0 }',
+        '  }',
+        '  part q1 : Q;',
+        '  part q2 : Q { attribute :>> K = 25.0; }',
+        '}',
+      ]),
+    ).toEqual([['constraint-by-instance', 'info', 'M7::q2', 10, 'part q2 : Q']]);
+    // No binding carries the reading: a target over L that q redefines reads q's own L, and Q's asserted
+    // `defL` read in Q2 reads L, the binding's source, not a value carried in. Both stay a target's.
+    expect(
+      await findings([
+        'package DIRECT {',
+        '  part def P { attribute load : ScalarValues::Real; }',
+        '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; constraint lim { L <= 100.0 } }',
+        '  part q : Q { attribute :>> L = 500.0; }',
+        '}',
+      ]),
+    ).toEqual([['target-by-specialisation', 'warning', undefined, 4, 'attribute :>> L = 500.0']]);
+    expect(
+      await findings([
+        'package FanA {',
+        P,
+        '  part def Q { attribute K : ScalarValues::Real default = 0.5; attribute L : ScalarValues::Real; assert constraint defL { L == 2.0 * K } part p : P; bind p.load = L; constraint cq { p.load <= 5.0 } }',
+        '  part def Q2 :> Q { attribute :>> K = 25.0; }',
+        '  part q0 : Q2;',
+        '}',
+      ]),
+    ).toEqual([
+      ['constraint-by-instance', 'info', 'FanA::Q2', 4, 'part def Q2 :> Q'],
+      ['target-by-specialisation', 'info', undefined, 4, 'attribute :>> K = 25.0'],
+    ]);
   });
 });
 

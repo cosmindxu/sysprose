@@ -1596,6 +1596,81 @@ export class DefiningEquations {
   }
 
   /**
+   * Does the context `contextId` read what `el` reads through a binding of
+   * `el`'s owner otherwise than the owner does ({@link bindingReadingIn})? h2c's
+   * `q : Q { :>> L = 50.0; }`, whose L Q's `bind p.load = L` carries into the
+   * p.m2 Q's `c` reads, and M7's `q2 : Q { :>> K = 25.0; }`, whose K reaches the
+   * bound L: the context's reading of `el` is carried by a binding (PI-3), so
+   * it is an instance's reading, reported as one (`constraint-by-instance`).
+   * Only where the binding carries it: a name the context redefines is its own
+   * value there (`q : Q { :>> L = 500.0; }` under Q's `L <= 100.0`), and a
+   * bound feature whose value is its own is no value carried in (Q's `defL { L
+   * == 2.0 * K }` read in `Q2 :> Q { :>> K = 25.0; }`, L the binding's source).
+   */
+  readsThroughBinding(el: ElementRecord, names: readonly string[], contextId: ElementId): boolean {
+    if (el.ownerId == null) return false;
+    const there = this.denote(contextId);
+    const here = this.denote(el.ownerId);
+    const reads = this.boundReads(el.ownerId, names.filter((n) => there.get(n)?.feature.id === here.get(n)?.feature.id));
+    if (reads.size === 0) return false;
+    const own = bindingReadingIn(this.model, el.ownerId, el.ownerId, reads);
+    if (own === undefined || bindingReadingIn(this.model, el.ownerId, contextId, reads) === own) return false;
+    return this.boundSources(el.ownerId, contextId, reads).some(({ path, sources }) => sources.some((p) => p !== path));
+  }
+
+  /**
+   * The member written in `rootId` that states the value a binding carries
+   * there into what `names` read — C.1's anchor rule, the component's single
+   * stated member: q's `:>> L = 50.0` for Q's `c { p.m2 >= 0.0 }` read in `q :
+   * Q` over Q's `bind p.load = L` — or `undefined`: no binding carries one in,
+   * more than one member could, or the one that does is written outside
+   * `rootId` (M7's `L = 2.0 * K`, Q's own for every Q). Only the paths below
+   * `under` are read (an instance's own, `p.` for q1's p in q1): a root of a
+   * thousand instances is not scanned whole for each of them.
+   */
+  statedMember(rootId: ElementId, names: readonly string[], under = ''): ElementRecord | undefined {
+    const reading = bindingEnds(this.model).readings.get(rootId);
+    // A root that writes nothing of its own (`part a : T4;`) states no member: no reading is asked of it.
+    if (reading === undefined || !this.model.children(rootId).some((c) => isUsage(c.eClass) && c.attrs.implicit !== true)) return undefined;
+    const reads = this.boundReads(rootId, names);
+    if (reads.size === 0) return undefined;
+    for (const { path, sources } of this.boundSources(rootId, rootId, reads, under)) {
+      const others = sources.filter((p) => p !== path);
+      const member = others.length === 1 ? this.model.get(reading.get(others[0]!)?.feature ?? '') : undefined;
+      for (let cur = member; cur; cur = cur.ownerId != null ? this.model.get(cur.ownerId) : undefined) {
+        if (cur.id === rootId) return member;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Per path the binding reading of `rootId` holds one of `reads` at ({@link
+   * bindingReadingIn}), the members that give its component its value in
+   * `contextId` ({@link classified}): the stated ones, else the readable
+   * defaults — of the paths below `under` alone, where one is given.
+   */
+  private boundSources(
+    rootId: ElementId,
+    contextId: ElementId,
+    reads: ReadonlySet<ElementId>,
+    under = '',
+  ): Array<{ path: string; sources: readonly string[] }> {
+    const { readings } = bindingEnds(this.model);
+    const own = readings.get(rootId);
+    const there = readings.get(contextId);
+    const out: Array<{ path: string; sources: readonly string[] }> = [];
+    if (!own || !there) return out;
+    for (const [path, r] of own) {
+      const x = path.startsWith(under) && reads.has(r.feature) ? there.get(path) : undefined;
+      if (!x) continue;
+      const { valued, readable } = classified(this.model, contextId, x.component);
+      out.push({ path, sources: valued.length > 0 ? valued : readable });
+    }
+    return out;
+  }
+
+  /**
    * {@link changingContexts}, and the contexts the binding reading by feature
    * alone lists (`plain`, {@link bindingReadingIn}): a context is listed where
    * either lists it, so none a feature-only reading lists is ever dropped.

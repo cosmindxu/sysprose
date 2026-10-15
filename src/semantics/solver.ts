@@ -4832,7 +4832,7 @@ function contextRows(model: Model, checks: readonly ConstraintCheck[]): NumericC
         slack: null,
         amount: 0,
         context: { baseId: c.id, contextId: i.contextId, ...(i.instance !== undefined ? { path: i.instance } : {}) },
-        ...(i.instance !== undefined ? { anchorId: anchorFor(model, c, i) } : {}),
+        ...(i.instance !== undefined || i.via === true ? { anchorId: anchorFor(model, c, i) } : {}),
         ...(i.result !== 'satisfied' ? { reason: reason(i.detail ?? i.message) } : {}),
         ...(i.result === 'unknown' && i.cause !== undefined ? { cause: i.cause } : {}),
       });
