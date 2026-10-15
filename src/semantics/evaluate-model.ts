@@ -1163,10 +1163,12 @@ function instanceLabel(inst: SpecialisationInstance): string {
 /**
  * The per-instance findings of one check (C.2/C.3), shared by the 27th rule
  * and the app's Check (F6): element-context rows read through a binding
- * (`via`) are one finding each in their own words; an expanded group (F7) is
- * one roll-up finding — a warning when any instance is violated, else info —
- * plus at most five violated-instance findings, in instance order. Satisfied
- * instances are counted, never listed.
+ * (`via`) are one finding each in their own words; an expanded group (F7) of
+ * two or more instances is one roll-up finding — a warning when any instance
+ * is violated, else info — and every group, one of a single instance too
+ * (PI-1), gives at most five violated-instance findings, in instance order.
+ * Satisfied instances are counted, never listed; a group of one whose instance
+ * could not be read is one info finding, in that row's sentence.
  */
 export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRollupRow[] {
   const insts = check.instances ?? [];
@@ -1184,9 +1186,9 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
       relation,
     });
   }
+  const violated = group.filter((i) => i.result === 'violated');
   if (group.length >= 2) {
     const counts = countInstances(group);
-    const violated = group.filter((i) => i.result === 'violated');
     const listed = violated.slice(0, 5).map(instanceLabel);
     const generic = group.find((i) => i.generic === true);
     const usage = generic?.context ?? '';
@@ -1201,15 +1203,33 @@ export function instanceRollup(model: Model, check: ConstraintCheck): InstanceRo
       instances: { ...counts, listed },
       relation,
     });
-    for (const inst of violated.slice(0, 5)) {
-      out.push({
-        elementId: anchorFor(model, check, inst),
-        severity: 'warning',
-        message: violatedInstanceMessage(relation, check.expression, inst),
-        instance: instanceLabel(inst),
-        relation,
-      });
-    }
+  }
+  // Whatever the group's size: a usage-owned relation's one other instance
+  // (`part q1 : Q` over Q's `part p : P { constraint c2 … }`, whose own row is
+  // the check itself) is a group of one, and its violation is still a finding.
+  for (const inst of violated.slice(0, 5)) {
+    out.push({
+      elementId: anchorFor(model, check, inst),
+      severity: 'warning',
+      message: violatedInstanceMessage(relation, check.expression, inst),
+      instance: instanceLabel(inst),
+      relation,
+    });
+  }
+  // A group of one whose instance could not be read has no roll-up to count
+  // it: it is a finding of its own, info, in the row's own sentence — as the
+  // verify lane reports that row inconclusive.
+  const only = group.length === 1 ? group[0]! : undefined;
+  if (only !== undefined && only.result === 'unknown') {
+    const unread = only.abstention === 'past-cap' || only.abstention === 'not-enumerated';
+    const why = (only.detail ?? only.message).replace(/^Could not evaluate: /, '');
+    out.push({
+      elementId: anchorFor(model, check, only),
+      severity: 'info',
+      message: `${relation} (${check.expression}) ${unread ? 'is not read' : 'could not be read'} in ${instanceLabel(only)}: ${why}`,
+      instance: instanceLabel(only),
+      relation,
+    });
   }
   return out;
 }

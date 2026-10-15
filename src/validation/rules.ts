@@ -1083,14 +1083,17 @@ function foldTargetRows(model: Model, check: ReturnType<typeof checkConstraints>
  *
  * Element-context rows that met a binding (`via`, F5: h2c `Q::c in q`, M7
  * `Q::c in q2`) are one finding each, in the pipeline's own words. An expanded
- * group (F7: h2p, S1, big-bind) is one roll-up finding — a warning when any
- * instance is violated, else info — plus at most five violated-instance
- * findings, in instance order, at the value that makes each differ. Satisfied
- * instances are counted, never listed, so thousands of instance paths stay one
- * short list. It is its own rule, not a `constraint-violation` warning, because
- * a binding overrides a definition's default in its context: the violation is a
- * fact about the instance the line points at, not a contradiction in the
- * definition. The `#prose` / `#prompt` exemption is the same as that rule's.
+ * group (F7: h2p, S1, big-bind) of two or more instances is one roll-up finding
+ * — a warning when any instance is violated, else info — and every group, one
+ * of a single instance too (PI-1: r17's q1::p), gives at most five
+ * violated-instance findings, in instance order, at the value that makes each
+ * differ; a group of one whose instance could not be read is one info finding,
+ * in that row's sentence. Satisfied instances are counted, never listed, so
+ * thousands of instance paths stay one short list. It is its own rule, not a
+ * `constraint-violation` warning, because a binding overrides a definition's
+ * default in its context: the violation is a fact about the instance the line
+ * points at, not a contradiction in the definition. The `#prose` / `#prompt`
+ * exemption is the same as that rule's.
  */
 const constraintByInstance: ValidationRule = {
   id: 'constraint-by-instance',

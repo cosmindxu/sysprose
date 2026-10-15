@@ -882,12 +882,20 @@ value, once per instance, as a constraint over a redefined value is. One read in
 a usage (P's `load <= 10.0` in `Q::p`) whose value a binding of Q joins to
 another in a context of Q (q's L) is read for Q's own p — the usage's own
 instance, named `P::c in Q::p (Q's own)` on the verify lane — and again for each
-other instance, q's p included, whose load the binding carries q's L into. The
+other instance, q's p included, whose load the binding carries q's L into. So is
+one where a binding written in or around one instance reaches into it and no
+binding of Q tells the instances apart (`part q2 : Q { attribute E = 20.0; bind
+p.extra = E; }`, or the package's `bind q2.p.extra = E`: q2's p is read in its
+own element, at q2's extra of 20). The
 rows are read apart, each at the value of the instance it names, so an instance
-that breaks the relation is reported against that instance and the check rolls
-them up into one finding. An instance whose own element — the most specific
-one that denotes it — reads a name of the relation, or a name that name's value
-reads, through another feature is read in that element, at the instance's own
+that breaks the relation is reported against that instance, and the check rolls
+two or more of them up into one finding; a relation written in the usage itself
+and read for one instance besides the usage's own (`part q1 : Q` and no other)
+has no roll-up, and a violation there is that instance's finding alone — one the
+check could not read there, an info finding of its own. An
+instance whose own element — the most specific one that denotes it — reads a
+name of the relation, or a name that name's value reads, through another feature
+is read in that element, at the instance's own
 values: a redefinition with a value of its own on its path (`part q2 : Q { part
 :>> p { attribute :>> extra = 20.0; } }` reads q2's extra of 20), a specialised
 type (`part :>> p : P2`, for Q2's p and for every Q2 that redefines nothing of
@@ -895,7 +903,8 @@ it), a binding written there, a reference to another part (`ref part :>> r =
 ra`). That row is the element's own reading too: q2's `part :>> p` has no row of
 its own beside it, and each instance is one row under its name. One that
 redefines the relation itself is *could not be evaluated* in that row on every
-surface, and counted *not read* in the roll-up; so is one where a reference the
+surface, and counted *not read* in the roll-up (in a group of one, an info
+finding of its own); so is one where a reference the
 relation is read through stands for another feature than where its value is
 written (`ref part :>> r = s` written in Q's p is Q's `s`, and q2's p reads
 q2's own `s`), or for one a binding reaches into; one whose path inherits a

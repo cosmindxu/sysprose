@@ -1467,6 +1467,24 @@ describe('store — per-instance Check and Solve rows (F6)', () => {
     expect(st().model.qualifiedName(anchor.id)).toBe('H2P::Q::p');
   });
 
+  it('lists the violation of a usage-owned relation’s one other instance (PI-1)', () => {
+    // q1's p is the only instance of Q::p besides Q's own (the relation's own
+    // row): a group of one, which the Check listed nothing for.
+    load(`package R17 {
+    part def P { attribute load : ScalarValues::Real default = 1.0; }
+    part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }
+    part q1 : Q { attribute :>> L = 50.0; }
+}`);
+    st().runConstraintCheck();
+    const rows = st().diagnostics.filter((d) => d.ruleId === 'constraint-check' && /\.r\d+$/.test(d.id));
+    expect(rows.map((d) => [d.severity, d.instance, d.relation, d.instances])).toEqual([
+      ['warning', 'R17::q1::p', 'R17::Q::p::c2', undefined],
+    ]);
+    // The anchor rule's element today, the shared usage; PI-2 (O4) moves it to
+    // q1's redefinition `:>> L = 50.0`: this pin is O4's to update.
+    expect(st().model.qualifiedName(rows[0]!.elementId!)).toBe('R17::Q::p');
+  });
+
   it('words a context row `violated … in <context>`, with the relation as its anchor and no amount', () => {
     load(`package CV {
     part def P { attribute load : ScalarValues::Real default = 1.0; constraint c { load <= 10.0 } }

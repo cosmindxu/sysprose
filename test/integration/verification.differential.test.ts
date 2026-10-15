@@ -62,7 +62,8 @@ import {
   verifyModel,
   type ObligationVerdict,
 } from '@api/index';
-import { checkConstraints, checksByRow, type ConstraintCheck } from '@semantics/evaluate-model';
+import { anchorFor, checkConstraints, checksByRow, type ConstraintCheck, type SpecialisationInstance } from '@semantics/evaluate-model';
+import { effectiveQualifiedName } from '@semantics/inheritance';
 import { obligationsOf, type Obligation } from '@semantics/obligations';
 import { checkConstraintsNumeric, solveFeasible } from '@semantics/solver';
 import { resolveFreeFeatures } from '@semantics/engines/smt';
@@ -3305,10 +3306,14 @@ describe('per-instance readings: four surfaces, one verdict', () => {
   const bothWays = new Map<string, string[]>();
   /** I9: per probe, each verify name an engine filed more than once, with its letters. */
   const twice = new Map<string, string[]>();
+  /** I10: per probe, each row literal or SMT refutes that `sysml-check --strict` names in no warning. */
+  const unreported = new Map<string, string[]>();
 
   /** Every row of a model on the four surfaces, by qualified name (`R in C` for a context's reading). */
   async function fourSurfaces(text: string, pkg: string): Promise<Map<string, SurfaceRow>> {
-    const m = await contextModel(text, pkg);
+    // The model, and the report `sysml-check --strict` prints for the same text (I10).
+    const { model: m, report } = await loadModelText(text, { fileName: `${pkg}.sysml`, strict: true });
+    if (!m) throw new Error(`${pkg} produced no model`);
     const qn = (id: string) => m.qualifiedName(id as ElementId) || id;
     const key = (id: string) => {
       const [base, ctx] = id.split('@');
@@ -3330,6 +3335,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       row.ids.add(id);
       if (!decided(letter)) row.why[s] = why;
     };
+    // I10: each per-instance row the check files, by its id, with the check it belongs to.
+    const filedBy = new Map<string, { check: ConstraintCheck; inst: SpecialisationInstance }>();
     for (const c of checkConstraints(m)) {
       put(c.conflict ? `${key(c.id)}#${c.conflict}` : key(c.id), 0, POINT[c.result]!, c.id, c.message);
       for (const i of c.instances ?? []) {
@@ -3337,6 +3344,7 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         // that path, as the other surfaces file it (`${id}@${path}`); a context's reading by the context.
         const at = (i as { instance?: string }).instance;
         put(`${key(c.id)} in ${at ?? qn(i.contextId)}`, 0, POINT[i.result]!, `${c.id}@${at ?? i.contextId}`, i.message);
+        filedBy.set(`${c.id}@${at ?? i.contextId}`, { check: c, inst: i });
       }
     }
     for (const r of checkConstraintsNumeric(m)) {
@@ -3410,6 +3418,75 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         }
       }
     }
+    // I10 (check ≡ verify, PI-1): a row literal or SMT refutes fails `sysml-check --strict`, under a
+    // warning that names it:
+    //  - the relation's own row: a `constraint-violation` anchored at the relation;
+    //  - any row read in an instance or a context: a constraint-by-instance finding naming that relation and
+    //    that instance or context;
+    //  - a group's row (an instance's, or the usage's own generic one) also: the group's roll-up listing
+    //    it, or counting it among the violations it lists no path of — one row per such violation;
+    //  - a context's row that met no binding also: a target-by-specialisation miss of the relation at the
+    //    element that rule anchors that row's finding at — one row per such miss.
+    // A fold of more than 20 contexts names none, and is matched by nobody: such a probe fails here until
+    // it is read.
+    const warned = report.diagnostics.filter((d) => d.severity === 'warning' || d.severity === 'error');
+    const targetOf = (id: string) => {
+      const el = m.get(id as ElementId);
+      const owner = el?.ownerId != null ? m.get(el.ownerId) : undefined;
+      const ownerName = owner?.declaredName ?? owner?.declaredShortName ?? `«${owner?.eClass}»`;
+      const own = el?.declaredName ?? el?.declaredShortName;
+      return own ? `${ownerName}::${own}` : `a constraint in ${ownerName}`;
+    };
+    // Per relation, the violations its roll-ups count and list no path of, not yet taken by a row; per
+    // anchor and relation, the misses not yet taken.
+    const unlisted = new Map<string, number>();
+    for (const d of warned) {
+      if (d.code !== 'validation/constraint-by-instance' || d.instances === undefined || d.relation === undefined) continue;
+      unlisted.set(d.relation, (unlisted.get(d.relation) ?? 0) + d.instances.violated - d.instances.listed.length);
+    }
+    const missesTaken = new Map<string, number>();
+    const silent: string[] = [];
+    for (const [k, row] of rows) {
+      if (row.verdicts[1] !== 'F' && row.verdicts[3] !== 'F') continue;
+      const [base, at] = [...row.ids][0]!.split('@') as [string, string | undefined];
+      if (at === undefined) {
+        const own = warned.some(
+          (d) => d.code === 'validation/constraint-violation' && d.elementId === base && d.instance === undefined && d.instances === undefined,
+        );
+        if (!own) silent.push(k);
+        continue;
+      }
+      // Named as the findings name them: an unnamed element by what it redefines (Q2's `part :>> p` is
+      // `Q2::p`, its row `… in Q2::«PartUsage»`).
+      const rel = effectiveQualifiedName(m, base as ElementId);
+      const where = m.get(at as ElementId) ? effectiveQualifiedName(m, at as ElementId) : at;
+      const byCode = (code: string) => warned.filter((d) => d.code === code);
+      if (byCode('validation/constraint-by-instance').some((d) => d.relation === rel && d.instance === where)) continue;
+      const filed = [...row.ids].map((id) => filedBy.get(id)).find((x) => x !== undefined);
+      if (filed !== undefined && (filed.inst.instance !== undefined || filed.inst.generic === true)) {
+        const rollups = byCode('validation/constraint-by-instance').filter((d) => d.relation === rel && d.instances !== undefined);
+        if (rollups.some((d) => d.instances!.listed.includes(where))) continue;
+        const left = unlisted.get(rel) ?? 0;
+        if (left > 0) {
+          unlisted.set(rel, left - 1);
+          continue;
+        }
+      } else if (filed !== undefined && filed.inst.via !== true) {
+        const anchor = anchorFor(m, filed.check, filed.inst);
+        const misses = byCode('validation/target-by-specialisation').filter(
+          (d) => d.elementId === anchor && d.message.includes(` misses ${targetOf(base)} (`),
+        ).length;
+        const taken = missesTaken.get(`${anchor} ${base}`) ?? 0;
+        if (taken < misses) {
+          missesTaken.set(`${anchor} ${base}`, taken + 1);
+          continue;
+        }
+      }
+      silent.push(k);
+    }
+    const refuted = [...rows.values()].some((r) => r.verdicts[1] === 'F' || r.verdicts[3] === 'F');
+    if (refuted && report.ok) silent.push('sysml-check --strict passes (exit 0)');
+    if (silent.length > 0) unreported.set(pkg, silent);
     return rows;
   }
 
@@ -4112,6 +4189,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part q : Q { bind p.load = L; }
       }`, {
       'GA12::P::pa': ['T/-/T/-', null],
+      // q's binding reaches into its p, an end copy of Q's p: P's pa is read per instance of Q's p (O2 S4).
+      'GA12::P::pa in GA12::Q::p': ['T/-/T/-', null],
+      'GA12::P::pa in GA12::q::p': ['T/-/T/-', null],
       'GA12::Q::qa': ['T/-/T/-', null],
       'GA12::q::«BindingConnectorAsUsage»#bind': ['F/-/F/-', 'F'],
     }),
@@ -4427,6 +4507,116 @@ describe('per-instance readings: four surfaces, one verdict', () => {
       'R17c::Q::p::c2 in R17c::q::p': ['F/F/F/F', 'F'],
       'R17c::top': ['F/F/F/F', 'F'],
     }),
+    // PI-1: a relation a usage owns, read in its one other instance — a group of one — with no package
+    // constraint beside it, so `sysml-check --strict` fails on that instance's finding or not at all (I10):
+    // E's r17, the same one level down (R's q, r1's q), and in a specialising definition (Q2's p).
+    'pi1-r17': probe(`package PI1 {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }
+        part q1 : Q { attribute :>> L = 50.0; }
+      }`, {
+      'PI1::Q::p::c2': ['T/T/T/T', 'T'],
+      'PI1::Q::p::c2 in PI1::q1::p': ['F/F/F/F', 'F'],
+    }),
+    'pi1-nested': probe(`package PI1N {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part def R {
+          attribute X : ScalarValues::Real default = 1.0;
+          part q : Q { constraint c { p.load <= 10.0 } }
+          bind q.L = X;
+        }
+        part r1 : R { attribute :>> X = 50.0; }
+      }`, {
+      'PI1N::R::q::c': ['T/T/T/T', 'T'],
+      'PI1N::R::q::c in PI1N::r1::q': ['F/F/F/F', 'F'],
+    }),
+    'pi1-spec': probe(`package PI1S {
+        part def P { attribute load : ScalarValues::Real default = 1.0; }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }
+        part def Q2 :> Q { attribute :>> L = 50.0; }
+      }`, {
+      'PI1S::Q::p::c2': ['T/T/T/T', 'T'],
+      'PI1S::Q::p::c2 in PI1S::Q2::p': ['F/F/F/F', 'F'],
+    }),
+    // An instance whose only difference is a binding written in its own element (q2's `bind p.extra = E`,
+    // whose implicit end copy is q2's p): no binding of an owner tells it apart, so no group and no context
+    // listed it, and every surface published the own row alone — the model clean, q2's p at 1 + 20 > 10
+    // (A-H3's coverage, PI-1's symptom). The binding reaching into a redefinition of the usage now makes it
+    // a group (`boundAbove`), and the instance is read in its end copy: a relation the usage owns, with and
+    // without a binding of the owner (body-bind-owned, -owned-free); a definition's, read in Q's p
+    // (body-bind-def, A7's own shape with no package constraint beside it: A7N); two usages deep, from R's
+    // usage r2 (-deep, -deep-owned); and from the package (-package).
+    'body-bind-owned': probe(`package BBO {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q {
+          attribute L : ScalarValues::Real default = 1.0;
+          part p : P { constraint c2 { load + extra <= 10.0 } }
+          bind p.load = L;
+        }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'BBO::Q::p::c2': ['T/T/T/T', 'T'],
+      'BBO::Q::p::c2 in BBO::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-owned-free': probe(`package BBOF {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q { part p : P { constraint c2 { load + extra <= 10.0 } } }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'BBOF::Q::p::c2': ['T/T/T/T', 'T'],
+      'BBOF::Q::p::c2 in BBOF::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-def': probe(`package BBD {
+        part def P { attribute load : ScalarValues::Real default = 1.0; attribute extra : ScalarValues::Real default = 0.0; constraint c { load + extra <= 10.0 } }
+        part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P; bind p.load = L; }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'BBD::P::c': ['T/T/T/T', 'T'],
+      'BBD::P::c in BBD::Q::p': ['T/T/T/T', 'T'],
+      'BBD::P::c in BBD::q2::p': ['F/F/F/F', 'F'],
+    }),
+    A7N: probe(`package A7N {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; }
+        part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      }`, {
+      'A7N::P::c': ['T/T/T/T', 'T'],
+      'A7N::P::c in A7N::Q::p': ['T/T/T/T', 'T'],
+      'A7N::P::c in A7N::q2::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-deep': probe(`package BBP {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; }
+        part def R { part q : Q; }
+        part r2 : R { attribute E : ScalarValues::Real = 20.0; bind q.p.extra = E; }
+      }`, {
+      'BBP::P::c': ['T/T/T/T', 'T'],
+      'BBP::P::c in BBP::Q::p': ['T/T/T/T', 'T'],
+      'BBP::P::c in BBP::R::q::p': ['T/T/T/T', 'T'],
+      'BBP::P::c in BBP::r2::q::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-deep-owned': probe(`package BBPO {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; }
+        part def Q { part p : P { constraint c2 { extra <= 10.0 } } }
+        part def R { part q : Q; }
+        part r2 : R { attribute E : ScalarValues::Real = 20.0; bind q.p.extra = E; }
+      }`, {
+      'BBPO::Q::p::c2': ['T/T/T/T', 'T'],
+      'BBPO::Q::p::c2 in BBPO::R::q::p': ['T/T/T/T', 'T'],
+      'BBPO::Q::p::c2 in BBPO::r2::q::p': ['F/F/F/F', 'F'],
+    }),
+    'body-bind-package': probe(`package BBK {
+        part def P { attribute extra : ScalarValues::Real default = 0.0; constraint c { extra <= 10.0 } }
+        part def Q { part p : P; }
+        part q2 : Q;
+        attribute E : ScalarValues::Real = 20.0;
+        bind q2.p.extra = E;
+      }`, {
+      'BBK::P::c': ['T/T/T/T', 'T'],
+      'BBK::P::c in BBK::Q::p': ['T/T/T/T', 'T'],
+      'BBK::P::c in BBK::q2::p': ['F/F/F/F', 'F'],
+    }),
     'refute-r18': probe(`package R18 {
         calc def Twice { in x : ScalarValues::Real; return r : ScalarValues::Real = 2.0 * x; }
         part def P { attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 - load; }
@@ -4476,7 +4666,9 @@ describe('per-instance readings: four surfaces, one verdict', () => {
     // surface — and the element's own row is that row, filed once (I9). A4's SMT `inconsistent-axioms` on every
     // row came from its q2 row read through Q's p, which asserted P's default of 0 for q2's extra against q2's
     // binding: read in q2's own p (the implicit end copy, which states no default) it is gone. A5 (the value
-    // carried by the usage's own binding), A7 and A8 are controls that keep their verdicts. A3L: where q2 sets L,
+    // carried by the usage's own binding) and A8 are controls that keep their verdicts; A7, whose q2 differs by
+    // its own binding alone, was read for Q's p by no surface until O2 S4 made Q's p a group (its q2 row is F,
+    // as `top` is). A3L: where q2 sets L,
     // Q2's p is a group of its own, below Q's p; each instance is read once, by the group of the more specific
     // usage. A2E: q2 asserts a relation over its p's load; read in q2's p, which reads none of q2's asserts, the
     // row abstains (`enclosing-assert`, A.2.4).
@@ -4622,6 +4814,8 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         constraint top { q2.p.extra <= 10.0 }
       }`, {
       'A7::P::c': ['T/T/T/T', 'T'],
+      'A7::P::c in A7::Q::p': ['T/T/T/T', 'T'],
+      'A7::P::c in A7::q2::p': ['F/F/F/F', 'F'],
       'A7::top': ['F/F/F/F', 'F'],
     }),
     'A8-body-binding-default-def': probe(`package A8 {
@@ -5392,6 +5586,13 @@ describe('per-instance readings: four surfaces, one verdict', () => {
         part r0 : R;
       }`, {
       'EnclW4::P::c': ['T/T/T/T', 'T'],
+      // R's q's binding reaches into its p, an end copy of Q's p: P's c is read per instance of Q's p — the
+      // three in R's q abstain (r's is F: L = 50), where no row of them existed before (O2 S4); reading them
+      // at the instance is O6 S4's (E7).
+      'EnclW4::P::c in EnclW4::Q::p': ['T/T/T/T', 'T'],
+      'EnclW4::P::c in EnclW4::R::q::p': ['?/?/?/T', 'T'],
+      'EnclW4::P::c in EnclW4::r::q::p': ['?/?/?/?', 'F'],
+      'EnclW4::P::c in EnclW4::r0::q::p': ['?/?/?/?', 'T'],
       'EnclW4::R::rc': ['?/?/T/T', 'T'],
       'EnclW4::R::rc in EnclW4::r': ['?/?/?/?', 'F'],
     }),
@@ -5859,6 +6060,16 @@ describe('per-instance readings: four surfaces, one verdict', () => {
 
   withZ3('I9: no engine files one name twice', () => {
     expect([...twice].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+  });
+
+  // PI-1: a usage-owned relation's one other instance (pi1-r17's q1::p) was refuted by verify while
+  // `sysml-check --strict` printed "OK, 0 findings" and exited 0, so nothing gating on it could block.
+  withZ3('I10: check ≡ verify — sysml-check is never silent on a row verify refutes', () => {
+    expect([...unreported].flatMap(([name, rows]) => rows.map((r) => `${name} | ${r}`))).toEqual([]);
+    // Not vacuous: the table holds refuted rows of every kind I10 names.
+    const refutedRows = each().filter((r) => r.got && (r.got.verdicts[1] === 'F' || r.got.verdicts[3] === 'F'));
+    expect(refutedRows.filter((r) => !r.row.includes(' in ')).length).toBeGreaterThan(0);
+    expect(refutedRows.filter((r) => r.row.includes(' in ')).length).toBeGreaterThan(0);
   });
 });
 

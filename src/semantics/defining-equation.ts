@@ -1659,6 +1659,16 @@ export class DefiningEquations {
         readings.add(key);
         listed = true;
       }
+      // A usage one instance of which a binding written in its own element
+      // reads otherwise (A7's q2: `bind p.extra = E` makes q2's p a copy of
+      // Q's p): nothing it reads is another feature, and no binding of an
+      // owner lists it, so it is listed here, to be read per instance.
+      if (!listed && !plain.has(x.id) && isUsage(x.eClass) && bindingsIntoRedefiners(this.model).has(x.id)) {
+        if (this.boundInRedefiner(x.id, this.boundReads(x.id, names)) !== undefined) {
+          plain.add(x.id);
+          listed = true;
+        }
+      }
       if (listed || plain.has(x.id)) out.push(x);
     }
     return { listed: out, plain };
@@ -1707,6 +1717,11 @@ export class DefiningEquations {
    * their values read — answers the cap (`pastCap`), wherever it is read. So
    * does a reading of an end of one binding left out of a context
    * ({@link BindingEnds.unread}).
+   *
+   * So is a binding written in an instance of the usage's own element, which
+   * no binding of an owner tells apart ({@link boundInRedefiner}): A7's `q2 :
+   * Q { bind p.extra = E; }` gives q2's p the extra of q2's E, while Q's p —
+   * and every other Q's — reads P's default.
    */
   boundAbove(contextId: ElementId, names: readonly string[]): BoundAbove | undefined {
     if (!hasUserBindings(this.model)) return undefined;
@@ -1722,16 +1737,39 @@ export class DefiningEquations {
     }
     const seen = new Set<ElementId>();
     for (let cur = this.model.get(contextId); cur && isUsage(cur.eClass) && cur.ownerId != null; ) {
-      if (seen.has(cur.id)) return undefined;
+      if (seen.has(cur.id)) break;
       seen.add(cur.id);
       const owner = this.model.get(cur.ownerId);
-      if (!owner) return undefined;
+      if (!owner) break;
       const own = bindingReadingIn(this.model, owner.id, owner.id, reads);
       if (own !== undefined) {
         const other = this.specialisersOf(owner.id).find((y) => bindingReadingIn(this.model, owner.id, y.id, reads) !== own);
         if (other) return other;
       }
       cur = owner;
+    }
+    return this.boundInRedefiner(contextId, reads);
+  }
+
+  /**
+   * The element a binding is written in that reaches INTO a redefinition of
+   * the usage `contextId` — an end at or below it ({@link
+   * bindingsIntoRedefiners}) that is, or redefines, one of the features the
+   * usage's reading reads (`reads`, {@link boundReads}), or the redefinition
+   * itself — or `undefined`. A7's `part q2 : Q { attribute E = 20.0; bind p.extra =
+   * E; }` makes q2's p a copy of Q's p whose extra is q2's E: P's `extra <=
+   * 10.0`, read in Q's p, is q2's p's own there, though no feature of Q's p
+   * is redefined and no binding of an owner joins it otherwise. Read for Q's
+   * own p alone, it was proved, and nothing read q2's — a decided violation
+   * no surface reported.
+   */
+  private boundInRedefiner(contextId: ElementId, reads: ReadonlySet<ElementId>): ElementRecord | undefined {
+    const into = bindingsIntoRedefiners(this.model).get(contextId);
+    if (into === undefined || reads.size === 0) return undefined;
+    for (const { end, holder } of into) {
+      const f = this.model.get(end);
+      if (!f) continue;
+      if ([f, ...redefinedClosure(this.model, f)].some((g) => g.id === contextId || reads.has(g.id))) return this.model.get(holder);
     }
     return undefined;
   }
@@ -2065,8 +2103,12 @@ interface BindingEnds {
   userBindings: number;
   /** The two ends of each of them: what one connector joins, whatever context reads it ({@link joinedTo}). */
   edges: ReadonlyArray<readonly [ElementId, ElementId]>;
+  /** Each of them by the element it is written in, with its ends ({@link bindingsIntoRedefiners}). */
+  written: ReadonlyArray<{ holder: ElementId; ends: readonly ElementId[] }>;
   /** Lazy indexes over `readings`, built when first asked ({@link indexOf}). */
   index?: BindingIndex;
+  /** {@link bindingsIntoRedefiners}, built when first asked. */
+  into?: ReadonlyMap<ElementId, ReadonlyArray<{ end: ElementId; holder: ElementId }>>;
 }
 
 /**
@@ -2125,9 +2167,52 @@ function bindingEnds(model: Model): BindingEnds {
     partial: read.cap !== undefined,
     userBindings: bindings.length,
     edges,
+    written: bindings.map((b) => ({ holder: b.ownerId!, ends: [...(b.source ?? []), ...(b.target ?? [])] })),
   };
   BINDING_ENDS.set(model, fresh);
   return fresh;
+}
+
+/**
+ * The user's bindings that reach INTO a redefinition, by the feature it
+ * redefines: each binding end, then each usage that owns it in turn — an
+ * implicit connector-end copy (q2's `bind p.extra = E` makes q2's p, a copy of
+ * Q's p, and its extra, a copy of P's), a redefinition of the user's own
+ * (`part :>> p { bind extra = E; }`), the usage the binding is written in —
+ * is filed, with the end and the element the binding is written in, under
+ * every feature that usage redefines: Q's p, for A7's q2. A binding written in
+ * the usage itself holds in every instance of it, and is filed under nothing
+ * of it. An end that states a value of its own ({@link endValue}: `=`, or an
+ * asserted equation that defines it — G340's `L == 2.0 * K` under `bind
+ * r.q.p.load = r.q.L`) is no end a value is carried INTO: the binding carries
+ * its value out, or states a second one (its own finding, `#bind`). Once per
+ * revision ({@link DefiningEquations.boundAbove}).
+ */
+function bindingsIntoRedefiners(model: Model): ReadonlyMap<ElementId, ReadonlyArray<{ end: ElementId; holder: ElementId }>> {
+  const ends = bindingEnds(model);
+  if (ends.into) return ends.into;
+  const into = new Map<ElementId, Array<{ end: ElementId; holder: ElementId }>>();
+  for (const { holder, ends: ids } of ends.written) {
+    const holderEl = model.get(holder);
+    if (!holderEl) continue;
+    for (const end of new Set(ids)) {
+      const f = model.get(end);
+      if (!f || endValue(model, f, holderEl, '').kind === 'value') continue;
+      const seen = new Set<ElementId>();
+      for (let o: ElementRecord | undefined = f; o && !seen.has(o.id); o = o.ownerId != null ? model.get(o.ownerId) : undefined) {
+        if (seen.size > 0 && !isUsage(o.eClass)) break;
+        seen.add(o.id);
+        for (const g of redefinedClosure(model, o)) {
+          if (g.id === o.id) continue;
+          const list = into.get(g.id);
+          if (list) list.push({ end, holder });
+          else into.set(g.id, [{ end, holder }]);
+        }
+      }
+    }
+  }
+  ends.into = into;
+  return into;
 }
 
 /** Every feature a binding connector touches ({@link isBindingConnector}), once per model revision. */

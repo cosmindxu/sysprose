@@ -2667,6 +2667,60 @@ describe('the instance index — frames, components, and bound sources', () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
+  // An instance that differs only by a binding written in or around it (A7's q2: `bind p.extra = E`, whose
+  // implicit end copy is q2's p). No binding of Q tells Q's instances apart and nothing q2's p reads is
+  // another feature, so no group and no context listed Q's p: every surface published P's own row alone and
+  // the model clean, where q2's p breaks c (20 > 10) — PI-1's symptom by another path (O2 S4). The binding
+  // reaching into a redefinition of Q's p now makes Q's p a group, read per instance.
+  it('makes a usage a group where a binding written in or around one instance reaches into it', async () => {
+    const { model: m } = await loadModelText(`package A7N {
+      part def P {
+        attribute extra : ScalarValues::Real default = 0.0;
+        attribute k : ScalarValues::Real default = 1.0;
+        constraint c { extra <= 10.0 }
+      }
+      part def Q { part p : P; }
+      part q2 : Q { attribute E : ScalarValues::Real = 20.0; bind p.extra = E; }
+      part q3 : Q;
+      part q4 : Q { attribute K : ScalarValues::Real = 7.0; bind p.k = K; }
+      part q5 : Q;
+      attribute X : ScalarValues::Real = 30.0;
+      bind q5.p.extra = X;
+    }`);
+    const qn = (id: string | undefined) => (id === undefined ? undefined : m!.qualifiedName(id));
+    const definitions = sharedDefinitions(m!);
+    // What reaches into Q's p is the element the binding is written in — for the names read: q4's binding
+    // reaches k, which c does not read.
+    const reached = (names: string[]) => {
+      const above = definitions.boundAbove(named(m!, 'A7N::Q::p').id, names);
+      return above && 'id' in above ? qn(above.id) : above;
+    };
+    expect([reached(['extra']), reached(['k'])]).toEqual(['A7N::q2', 'A7N::q4']);
+    const [group, ...rest] = instanceGroups(m!);
+    expect(rest).toEqual([]);
+    expect([qn(group!.relationId), qn(group!.usageId), group!.instances]).toEqual([
+      'A7N::P::c',
+      'A7N::Q::p',
+      ['A7N::Q::p', 'A7N::q2::p', 'A7N::q3::p', 'A7N::q4::p', 'A7N::q5::p'],
+    ]);
+    // q2's and q5's p are read in their end copies, at the extra the bindings carry in; q4's, whose copy
+    // reaches only k, through Q's p.
+    expect(Object.fromEntries([...(group!.readIn ?? new Map())].map(([i, e]) => [i, qn(e)]))).toEqual({
+      'A7N::q2::p': 'A7N::q2::p',
+      'A7N::q5::p': 'A7N::q5::p',
+    });
+    const rows = (checkConstraints(m!).find((c) => qn(c.id) === 'A7N::P::c')!.instances ?? []).map(
+      (i) => `${i.instance ?? (i.generic ? 'generic' : qn(i.contextId))} ${i.result}`,
+    );
+    expect(rows).toEqual([
+      'generic satisfied',
+      'A7N::q2::p violated',
+      'A7N::q3::p satisfied',
+      'A7N::q4::p satisfied',
+      'A7N::q5::p violated',
+    ]);
+  });
+
   // The coverage guard (A.7; the 2026-10-14 review's A-C1). A group reads every instance of its shared usage
   // through the usage's own features; an instance whose element reads a name of the relation — or a name such a
   // name's value reads — through another feature was read so all the same, and published the usage's value as
@@ -3181,6 +3235,80 @@ describe('instanceRollup — the reporting formatter (F4)', () => {
     const rollup = unread.find((r) => r.instances)!;
     expect(rollup.instances!.unread).toBe(1);
     expect(rollup.message).not.toMatch(/\ball\b/i);
+  });
+
+  it('reports the violation of a group of one, with no roll-up to count it (PI-1)', () => {
+    // A relation a usage owns, read in its one other instance: the group is
+    // that instance alone (the usage's own row is the check itself).
+    const one = instanceRollup(m, check([groupRow(1, 'violated')]));
+    expect(one.map((r) => [r.severity, r.instance, r.relation, r.instances])).toEqual([
+      ['warning', 'R::q1', 'R::P::c', undefined],
+    ]);
+    expect(one[0]!.message).toBe('R::P::c (load <= 10.0) is violated in R::q1');
+    // One that holds is counted nowhere and listed nowhere: no finding at all.
+    expect(instanceRollup(m, check([groupRow(1, 'satisfied')]))).toEqual([]);
+  });
+
+  it('reports a group of one whose instance could not be read, as the verify lane does (info)', () => {
+    // No roll-up counts it, so it is a finding of its own, in the row's own
+    // sentence: `could not be read` for an unknown, `is not read` for one the
+    // tool did not read (a cap, the coverage guard) — the roll-up's two words.
+    const unknown = { ...groupRow(1, 'unknown'), message: 'Could not evaluate: load has no value in R::q1: defaults differ' };
+    const notRead = { ...groupRow(1, 'unknown'), abstention: 'not-enumerated' as const, message: 'Could not evaluate: R::P::c is not read in R::q1: why' };
+    expect(instanceRollup(m, check([unknown])).map((r) => [r.severity, r.instance, r.relation, r.instances, r.message])).toEqual([
+      ['info', 'R::q1', 'R::P::c', undefined, 'R::P::c (load <= 10.0) could not be read in R::q1: load has no value in R::q1: defaults differ'],
+    ]);
+    expect(instanceRollup(m, check([notRead]))[0]!.message).toBe(
+      'R::P::c (load <= 10.0) is not read in R::q1: R::P::c is not read in R::q1: why',
+    );
+    // In a group of two or more, the roll-up counts it, and no row of its own is added.
+    const two = instanceRollup(m, check([groupRow(0, 'satisfied', true), unknown]));
+    expect(two.map((r) => [r.severity, r.instances?.unknown])).toEqual([['info', 1]]);
+  });
+
+  it('makes sysml-check --strict fail on a usage-owned relation violated in its one other instance (PI-1)', async () => {
+    // E's r17: Q's own p holds (L's default 1), q1's p does not (50 > 10).
+    // `verify` refutes `R17::Q::p::c2 in R17::q1::p`; the check said "OK, 0
+    // findings" because the instance was a group of one, which had no roll-up.
+    const text = [
+      'package R17 {',
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+      '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }',
+      '  part q1 : Q { attribute :>> L = 50.0; }',
+      '}',
+    ].join('\n');
+    const { report } = await loadModelText(text, { fileName: 'r17.sysml', strict: true });
+    expect(report.ok).toBe(false);
+    expect(report.diagnostics.map((d) => [d.code, d.severity, d.instance, d.relation])).toEqual([
+      ['validation/constraint-by-instance', 'warning', 'R17::q1::p', 'R17::Q::p::c2'],
+    ]);
+    // At the anchor rule's element, with a span: the shared usage `part p : P`
+    // today. PI-2 (O4) moves it to q1's redefinition `:>> L = 50.0`: this pin
+    // is O4's to update.
+    const { range } = report.diagnostics[0]!;
+    expect(range?.start.line).toBe(3);
+    expect(text.slice(range!.start.offset, range!.start.offset + 'part p : P'.length)).toBe('part p : P');
+    expect(report.diagnostics[0]!.message).toBe(
+      'R17::Q::p::c2 (load <= 10.0) is violated in R17::q1::p: load = 50 — q1.L through a `bind`',
+    );
+  });
+
+  it('gives sysml-check an info finding for a usage-owned relation its one other instance could not be read in', async () => {
+    // q1's L is a default that differs from Q's: the binding joins two defaults, and q1's p's load has no
+    // value. `verify` prints that row inconclusive; the check printed nothing (no roll-up for a group of one).
+    const text = [
+      'package SLD {',
+      '  part def P { attribute load : ScalarValues::Real default = 1.0; }',
+      '  part def Q { attribute L : ScalarValues::Real default = 1.0; part p : P { constraint c2 { load <= 10.0 } } bind p.load = L; }',
+      '  part q1 : Q { attribute :>> L default = 50.0; }',
+      '}',
+    ].join('\n');
+    const { report } = await loadModelText(text, { fileName: 'sld.sysml', strict: true });
+    expect(report.ok).toBe(true);
+    expect(report.diagnostics.map((d) => [d.code, d.severity, d.instance, d.relation])).toEqual([
+      ['validation/constraint-by-instance', 'info', 'SLD::q1::p', 'SLD::Q::p::c2'],
+    ]);
+    expect(report.diagnostics[0]!.message).toMatch(/^SLD::Q::p::c2 \(load <= 10\.0\) could not be read in SLD::q1::p: load has no value in SLD::q1::p: /);
   });
 });
 
