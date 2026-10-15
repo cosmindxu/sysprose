@@ -229,8 +229,9 @@ maintainer says `awaits user decision U<n>` and names the question.
 Opened by the per-instance readings feature (ROADMAP item removed at step F9). What follows is what
 its four surfaces (the check, the literal engine, the numeric surface and the SMT engine) still
 abstain on or read false in the four-surface table
-(`test/integration/verification.differential.test.ts`): six rows pinned `KNOWN_FALSE`, eleven
-`I7_ALLOWED` entries, and the abstentions the entries below name. The false verdicts the review of
+(`test/integration/verification.differential.test.ts`): six rows pinned `KNOWN_FALSE`, seventeen
+`I7_ALLOWED` entries (the per-instance branch removed one and added seven for its refute-r1d and
+sh7 probes), and the abstentions the entries below name. The false verdicts the review of
 2026-10-14 found in the per-instance code itself follow under their own headings.
 
 - [ ] **Let an asserted equation override a `default`, on every surface (H5).** Every surface treats
@@ -260,8 +261,8 @@ abstain on or read false in the four-surface table
       (`obligations.ts:1881`) and in the frame walk (SMT's clash is structural: `x` is one variable
       with no instance), narrowing `enclosingAssertOn` to inequality-only asserts, undecided
       partners and two values. Done when R1 `P::c in q1::p` reads F/F/F/F (ref F, now T), `top1`
-      F/F/F/F, `q1::tie` T/-/T/-, and `P::c`, `in Q::p`, `in q2::p` T/T/T/T; the five refute-r1
-      `I7_ALLOWED` entries (`verification.differential.test.ts:5064-5068`) are deleted; a 70-long
+      F/F/F/F, `q1::tie` T/-/T/-, and `P::c`, `in Q::p`, `in q2::p` T/T/T/T; the eleven
+      `I7_ALLOWED` entries that name refute-r1, refute-r1d or sh7 are deleted; a 70-long
       chain of defaults each overridden by a local assert is green beside the three solver-units
       chain cases; and no row of a self-contradictory model (N2, R8, GA5B, GA6) is newly decided.
       [review 2026-10-14 E1] Awaits user decisions U4 (is the 2026-10-12 decision binding), U5 (an
@@ -354,107 +355,67 @@ abstain on or read false in the four-surface table
 
 ## Per-instance soundness — review 2026-10-14
 
-From the soundness review of F3–F8 and 3e3b0ff (Sysprose 5943654 against 7277a97). The four surfaces
-now agree on false verdicts that 7277a97 abstained on, so no cross-check catches them, and neither
-the out-of-tree corpus gate, the M-generator nor the in-repo table sees them. Fail closed first,
-then read.
+From the soundness review of F3–F8 and 3e3b0ff (Sysprose 5943654 against 7277a97). The branch
+`per-instance-sound` (merged by `4ac2fff`) closed A-C1, A-C2, A-C3, A-H1 (the direct reads), A-H3
+and A-H4, PI-1, and the correctness half of A-H2: instances now read where they stand, abstain where
+they cannot, and the four-surface table pins A1–A9, A4, CAP1, X-shapes and the units shapes at their
+true values. What follows is what that branch and the review of it left open; entries tagged
+`[O2 …]` come from its steps and reviews.
 
-- [ ] **Read each instance of a group in the element that denotes it, and abstain where that cannot
-      be done.** `groupInstanceRows` (`src/semantics/evaluate-model.ts:1473`, `:1502`) and
-      `groupGoalRows` (`src/semantics/obligations.ts:1049`) read every instance through the shared
-      usage's generic features (`ownerId: usage.id`), so an instance's own redefinition, specialised
-      type or nested override is ignored. Probe (A2, the review's
-      `A/probes/a2-redef-in-instance-noL.sysml`): `package A2 { part def P { attribute load default
-      = 1.0; attribute extra default = 0.0; constraint c { load + extra <= 10.0 } } part def Q {
-      attribute L default = 1.0; part p : P; bind p.load = L; } part q1 : Q { attribute :>> L = 2.0;
-      } part q2 : Q { part :>> p { attribute :>> extra = 20.0; } } }`. The second usage, `q1`, is
-      what makes `p` a group of instances (without it `q2::p` is the only one, no group row exists
-      and `verify` refutes `P::c in A2::q2::p` once, correctly). With it, `P::c in A2::q2::p` reads T
-      on all four surfaces where it is F (1 + 20 > 10); `verify` prints that row twice, discharged
-      and refuted, and `sysml-check` prints "holds in 3" (re-run at 5943654). The same for a
-      specialised type (`part def Q2 :> Q { part :>> p : P2 }`, P2 `extra = 20`), a nested
-      `r2.q.p` and a usage-owned relation. The guard meant to stop this, `'not-enumerated'`, is
-      declared (`defining-equation.ts:2936`) and counted
-      (`evaluate-model.ts:1133`) but never produced [A-H3]. Fix, in two steps: first abstain
-      (`not-enumerated`) whenever any name the relation reads resolves at instance I to a different
-      feature or source than at the shared usage, which restores 7277a97's `?`; then read each
-      instance in the most specific element that denotes it, with every SMT symbol I's own. Done
-      when the shapes above are pinned in the four-surface table and the M-generator, read their
-      true value, and no row reads both proved and refuted. [review 2026-10-14 A-C1, A-H3]
-- [ ] **Hold the redefined feature's default at an instance wherever a held implicit end copy
-      redefines it.** `holdDefault` (`src/semantics/defining-equation.ts:2665-2684`) adds the
-      instance to `heldIn` only when the end copy itself writes a default (`:2683`), so a held copy
-      with no default leaves the redefined feature's default standing at the instance and SMT's
-      axiom for it contradicts the binding: soundness decision 10 (a binding overrides a default in
-      its context, on every surface) is broken. Probe (A4, the review's
-      `A/probes/a4-second-binding.sysml`): the A2 model, `q1` included, with `q2` replaced by `part
-      q2 : Q { attribute E = 20.0; bind p.extra = E; }` in package `A4`: `P::c in A4::q2::p` reads
-      T/T/T/X where it is F (1 + 20 > 10), and the own row `A4::P::c` went from T×4 to T/T/T/X, a
-      new I7 case (re-run at 5943654: `verify --engine literal` discharges all four rows and
-      `--engine smt` answers `inconsistent-axioms` on all four). Fix: hold the default at the
-      instance whenever an implicit end copy is held, even if it writes none (a valueless copy that
-      redefines a feature an asserted equation defines, GA6's `p.load`, must keep reading the
-      assert), and stop the instance value row asserting a default a binding overrides there. Done
-      when A4 reads F/F/F/F on the group row and T×4 on the own row. [review 2026-10-14 A-C2]
-- [ ] **Treat a capped binding's whole connector component as past the cap.** `boundSourceIn`
-      (`src/semantics/defining-equation.ts:3165`; its cap test `:3205`), `defaultStandsIn` (`:3311`)
-      and `holdEnds` (`:2475`; caps recorded `:2553`, `:2559`) treat only the capped pair as
-      past-cap, so a capped binding's value that reaches a feature through a second, uncapped
-      binding is read as that feature's default. Present at 7277a97 as well. Probe (CAP1, the
-      review's `A/probes/cap1-per-binding.sysml`), a generated chain in `package CAP`: `part def T0 {
-      attribute load : ScalarValues::Real default = 1.0; attribute m2 : ScalarValues::Real = 10.0 -
-      load; }`, `part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind
-      a.load = L; }`, `part def Tn { part a : T(n-1); }` for n = 2 to 33, `part top : T33;`, then
-      `attribute X : ScalarValues::Real = 50.0; bind top.a.….L = X;` (32 times `.a`, so the binding
-      is written 33 usages deep) and `attribute Y : ScalarValues::Real default = 1.0; bind Y =
-      top.a.….load;` (33 times `.a`) with `constraint yT { Y >= 40.0 }` and `constraint yF { Y <=
-      5.0 }`. Y is 50 through the capped binding, but `yT` reads F/F/F/X where it is T, and `yF`
-      reads T/T/T/X where it is F (re-run at 5943654). Fix: past-cap reaches the whole global connector component, also through
-      `redefinedClosure`: `holdEnds` holds every default in it, and `boundSourceIn`,
-      `defaultStandsIn` and `boundPartnerSafe` abstain. Done when CAP1 is pinned beside `r4cap` and
-      the P4 probe and abstains on all four surfaces. [review 2026-10-14 A-C3]
-- [ ] **Pass instance I's frames, not the usage's, to `enclosingAssertOn`.** `answerFor`
-      (`src/semantics/evaluate-model.ts:316-318`) asks `enclosingAssertOn` with
-      `denote(contextId).enclosing`, the shared usage's frames. Probe: R1 (q1 asserts
-      `p.x == 50.0`): `P::c in R1::q1::p` reads T/T/T/X while the own row `top1`, the same quantity
-      at the same instance, abstains with `enclosing-assert`; if the assert wins the value is F (3 +
-      50 > 10). The I7 allowlist was widened to accept it
-      (`verification.differential.test.ts:5067`). Fix: give group rows I's enclosing frames and
-      delete that allowlist entry. Done when the entry is gone and the row abstains or reads F
-      consistently with `top1`. [review 2026-10-14 A-H1] Overlaps the H5 entry.
-- [ ] **Index the per-instance machinery so the check meets its performance targets.**
-      `instanceGroups` (`src/semantics/defining-equation.ts:3400`) and `instancesOfDefinition`
-      (`:3359`) are uncached (the plan's `INSTANCE_GROUPS` per (model, rev) does not exist),
-      `boundSourceIn` (`:3165`) scans every reading per symbol, and `componentConnectors` (`:3092`)
-      walks `model.all()` per call. Measured at 5943654: paired in-process against 7277a97,
-      big-bind-600 (the `big-bind-N` builder of `test/unit/semantics.solver.test.ts:182`) went 721 →
-      35,934 ms (target 700), tree10 41 → 22,008 ms, perf9b 34 → 5,251 ms (target 300),
-      big-bind-1200 takes 90.9 s (target 1 s); the CLI `sysml-check` takes 13.2 s on big-bind-600
-      and 6.5 s on perf9b; perf9b's Problems tab holds 1,568 Solve rows (cap 200). The app runs this
-      check on every edit. Fix: cache `instanceGroups` per (model, rev), build the package-denote
-      index once, index readings by instance prefix for `boundSourceIn`, and memoise `classified`
-      and the connectors per (root, component). Done when, measured paired on an idle machine,
-      big-bind-600 ≤ 700 ms, big-bind-1200 ≤ 1 s, tree10 ≤ 2× main, perf9b ≤ 300 ms and perf9b's
-      Solve rows ≤ 200 (the per-instance plan's targets, which F3–F9 never re-measured).
-      [review 2026-10-14 A-H2, E14]
-- [ ] **Add the tests the per-instance steps skipped.** The per-instance plan lists eighteen
-      planted bugs (P1 to P18), each a one-line breakage that some test must turn red. Runs of
-      2026-10-14 found these green: P17 (the containment try/catch removed) leaves the
-      evaluate-model, solver and rules suites green, because no throwing-stub test exists; there is
-      no containment test (a throwing read becomes one abstention row) for `groupInstanceRows` or
-      `enclosingAssertOn`; P6 (units `instances` on by default, planted at `units-eval.ts:2618` as
-      `!== false`) leaves the differential's per-instance block green, since D1 `gBindF`'s numeric
-      `?` is a tolerance tie, not this guard; P9 (the SMT value gate disabled, a forged point) is
-      caught only by two I3 pins, with no forged-check SMT test; the out-of-tree corpus gate has no
-      expect files past F2, so movement is reported, never pinned. Four were not run: P5 (literals
-      counted in `readsOtherwise`; the M-generator's literal members must go red), P7 (an aggregate
-      verdict on the generic row; h2p's literal row must stop reading `refuted (1 vs 10)`), P10
-      (group instance rows by verdict; the S1 counts must go red) and P14 (the coverage guard
-      skipped; a generated frame-cap group must keep its generic row refused with
-      `decided=false`), which cannot be planted until `not-enumerated` exists. Add the `vi.mock`
-      throwing stub, the two containment tests, a probe sensitive to P6, the forged-point SMT test
-      and the expect files, and run P5, P7, P10 and P14. Done when every planted bug turns a test
-      red. [review 2026-10-14 A-H4]
+- [ ] **Read through a part-valued binding.** `bind pp = top.a`, where `a` is a part, equates the
+      two parts, so `pp.load` is what `top.a.load` is. No surface reads through it, and all four
+      agree on the wrong value (since 5943654; found by the review of the O2 S3 step). Probe
+      (`ppshallow`): `package PPS { part def T0 { attribute load : ScalarValues::Real default =
+      1.0; } part def T1 { attribute L : ScalarValues::Real default = 1.0; part a : T0; bind
+      a.load = L; } part top : T1 { attribute :>> L = 50.0; } part pp : T0; bind pp = top.a;
+      constraint pT { pp.load >= 40.0 } constraint pF { pp.load <= 5.0 } }`: `sysml-check` and
+      `verify` read `pT` violated (1 vs 40) and `pF` held, where `pp.load` is 50, so `pT` holds and
+      `pF` is violated; `capp` is the same shape past the 32-usage cap. Fix: follow a part-valued
+      binding in `boundSourceIn` and the connector components, or abstain on it on every surface,
+      and pin both probes in the four-surface table. Done when `pT` reads T and `pF` F on all four
+      surfaces (or both abstain with a stated reason), and `sysml-check --strict` agrees with
+      `verify`. [O2 S3]
+- [ ] **Read an own row and an inherited assert past an enclosing assert.** Two shapes of the H5
+      entry above stay open after the per-instance branch: (1) an own row on the unit-aware path
+      (`R1M` `top2`/`top4`, `R1B6` `top4`/`top6`) and `H1C` `top1` past the package's assert are
+      decided from the default where the enclosing assert fixes the value; (2) an assert inherited
+      from the instance's type (`h1f`, `h1f2`: `Q2 :> Q { assert constraint ... }`) is not seen by
+      `enclosingAssertOn`, because the type definition's own frame is read as before. Both are
+      pre-existing and part of the enclosing rule (`h5`, step 3). [O2 S3]
+- [ ] **Say what a capped binding does to "did not converge".** A model with a binding past the
+      32-usage or 4,096-context cap (`cap1`, `cap2`, `m5`) now reads `did not converge` in the
+      app's Solve header (it read `converged` before, beside a false verdict), because the values
+      held past the cap are not read and the solve counts them as undetermined; the rows themselves
+      carry the cap sentence. The user guide's convergence bullet says relations over unread
+      values are unjudged "with the reason *the solve did not converge*". Either stop counting
+      held-past-cap values against convergence or say in the guide that a capped binding reports it
+      and its rows name the cap. [O2 S3]
+- [ ] **Meet the per-instance targets on a cold check.** After an edit, `big-bind-1200`'s check takes
+      1.3 s against the 1 s target (`7277a97`: 0.73 s), `tree10`'s warm check is about twice
+      `7277a97`'s (16 against 7–8 ms) and `big-bind-600` is 560 ms cold; the warm figures meet every
+      target. About 0.2 s of `big-bind-1200`'s cold check is `componentConnectors` filtering every
+      user binding connector once per component (index it by connector end), and `abstainedRead`
+      adds about 30 ms warm on `big-bind-600` (restricting it to models that assert something
+      changes no row on the 1,289 review models). Done when `big-bind-1200` is under 1 s cold, or the
+      target is restated on the warm figure with the reason. [O2 S5, review 2026-10-14 A-H2]
+- [ ] **Contain the last throw paths and decide P5.** The throw paths in `groupGoalRows`
+      (`src/semantics/obligations.ts`) and `instanceGroups` are not contained as
+      `bindingConflicts` and `boundInInstanceQ` now are (a throw becomes one `internal` refusal), so
+      a throwing read there still ends the whole check (A.2.9). The planted bug P5 (literals counted
+      in `readsOtherwise`) is an equivalent mutant: no test can turn red on it until H5 is decided,
+      so give it a pin after `h5`. [O2 S6, review 2026-10-14 A-H4]
+- [ ] **Keep a definition-owned relation read through a binding from reading `OK`.** `n02` (a relation
+      owned by a definition and read through a binding) is silent where it should be read or
+      refused: `sysml-check --strict` says `OK` with no row for it. Pre-existing. [O2 S6]
+- [ ] **Say the same thing about a bare literal in the note and the row.** After a carried value is
+      read in the filled feature's declared unit, the `U3` note still reads `refuted … (5 vs 10 in
+      M, coherent SI)` beside a verdict the unit reading reached; the literal and SMT notes of a
+      carried value also lack the `(x vs y in M, coherent SI)` clause and print the end copy with
+      unit null, and the value-source clause prints a converted value without its unit (`load =
+      5`). Pre-existing for `U3`; the rest is display only, with A-M2. [O2 S6]
+- [ ] **Read per-instance bindings by path, not by feature.** The detection of a binding into a
+      redefiner matches by feature, so a binding into another part typed alike can form an extra
+      group. The extra group's rows are read correctly, so this costs rows, not verdicts. [O2 S4]
 - [ ] **Compare the SMT same-point gate in SI.** The gate (`src/semantics/engines/smt.ts:1785-1812`)
       compares the witness in its own unit with the check's SI value (`read.exact`), so IU1 `rF` (in
       the out-of-tree corpus; the `IU1` model of `verification.differential.test.ts:5246` has `rT`
@@ -464,8 +425,11 @@ then read.
 - [ ] **Print the value beside a decided group verdict.** Witnesses carry no value next to a decided
       verdict: the A2 group rows print `load=null`, A9 the same, and A7 `top` prints
       `q2.p.extra=null` (`modelBindings`, `src/semantics/engines/literal.ts:460`; `collectReads`,
-      `evaluate-model.ts:1832`), though the F2 addendum required them. Fill them from `check.reads`.
-      Done when A2, A9 and A7 print their values. [review 2026-10-14 A-M2]
+      `evaluate-model.ts:1832`), though the F2 addendum required them; abstaining group rows print
+      the usage's generic witness values, and the violated-instance finding's anchor and value clause
+      sit at the shared usage (`cr-s4/gap/g-a4r2`, `cr-s4/single/s-calcF`, `cr-s4/own/o-refF`,
+      A7 `s-a4`, which names `load = 1` where the differing value is `extra = 20`). Fill them from
+      `check.reads`. Done when A2, A9 and A7 print their values. [review 2026-10-14 A-M2; O2 S3, S4]
 - [ ] **Key the per-instance memo on the instance and the position.** The memo key at
       `src/semantics/evaluate-model.ts:673` drops `at` when `inst` is set. No collision was found,
       so it is latent. Key on (id, inst, at). Done when a test reads two names that differ only in
