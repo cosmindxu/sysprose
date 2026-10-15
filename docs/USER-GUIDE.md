@@ -983,6 +983,29 @@ left to the solver lane. The literal engine reads each relation alone, never
 the model's facts against each other: over such a model it reads the
 relations at P's `m`, as it reads them beside a contradicted `assert`.
 
+**An asserted equation overrides a `default` too.** `attribute L default =
+2.0;` beside `assert constraint qa { L == 5.0 }` is L = 5 on every surface: the
+assert's row reads *defines L = 5*, `L <= 3.0` is violated, and no surface
+reads the 2. The same holds where the equation is written in a type the
+feature's owner specialises, over a redefinition's own default (Q's `assert
+constraint { L == 5.0 }` makes `part q : Q { attribute :>> L default = 9.0; }`
+read 5). The equation defines the side whose other side has a value of its
+own: `L == M`, M declared without one, still makes M the 2 L's default gives;
+two defaults set equal (`L == K`) are both read as no value. An inequality
+defines nothing (`assert constraint { L >= 5.0 }`): the default stands and the
+assert is reported violated against it; a plain `=` value never gives way,
+and an equation that contradicts it is reported violated. An equation that
+names a feature by its path, `assert constraint { p.x == 3.0 }` over `part p :
+P` whose P declares `x` with no value, gives p's x that value, and P's `y = x *
+2.0` is 6 in p; not where a binding gives p's x a value (the assert is checked
+against it) or two such asserts give it two (it is read as no value). An assert
+written in an instance around the feature, over a `default` (`part q1 : Q {
+assert constraint { p.x == 50.0 } }`), is not read this way yet: the default
+still stands there, so the assert is reported violated against it, a relation
+over `q1.p.x` reads the default, and the solver lane finds the axioms
+inconsistent; where a binding makes q1's p an instance of its own, its rows are
+*could not be evaluated*, as described above.
+
 A value P derives from what p changes (`attribute e = m * 2.0;`, `e = 10.0 -
 part1.m`, a calculation's body, an asserted equation, a value read through
 another part's redefinition) is **p's own value**: P's expression evaluated

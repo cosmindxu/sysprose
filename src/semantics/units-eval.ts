@@ -1986,9 +1986,11 @@ export function equationDerivation(
   equation: string,
   memo: DerivationMemo = new Map(),
   contextId?: ElementId,
+  path?: string,
 ): FeatureDerivation {
   const feat = model.get(featureId);
-  const name = feat ? passOf(model, memo).definitions.nameOf(feat) : undefined;
+  // An enclosing context's equation writes the feature by its dotted `path` (`p.x`).
+  const name = path ?? (feat ? passOf(model, memo).definitions.nameOf(feat) : undefined);
   const context = contextId ?? feat?.ownerId;
   if (!feat || !name || context == null) return claimOnly('unknown', 'unresolved');
   // Through the asserted equation of that body, when it is one: reading it
@@ -2019,8 +2021,13 @@ export function definitionDerivation(
   const name = feat ? passOf(model, memo).definitions.nameOf(feat) : undefined;
   const context = contextId ?? feat?.ownerId;
   if (!feat || !name || context == null) return undefined;
-  const candidates = passOf(model, memo).definitions.of(site ?? context, name);
-  if (candidates.length === 0) return undefined;
+  const { definitions } = passOf(model, memo);
+  const candidates = definitions.of(site ?? context, name);
+  if (candidates.length === 0) {
+    // One an enclosing context asserts by the dotted path ({@link definedQuantity}).
+    const reaching = site === undefined ? definitions.reachingAssert(context, name) : undefined;
+    return reaching && definitionOf(model, featureId, reaching.path, reaching.equations, memo, context, new Map(), true);
+  }
   return definitionOf(model, featureId, name, candidates, memo, context, new Map());
 }
 
@@ -2264,6 +2271,14 @@ function definedQuantity(
   if (candidates.length === 0) {
     const inherited = definitions.definitionReadIn(contextId, name);
     if (inherited !== undefined) return read(feature.id, name, inherited.site, inherited.at);
+    // An enclosing context's asserted equation that defines it by its dotted
+    // path (`assert constraint { p.x == 3.0 }` over `part p : P`), read here.
+    const reaching = definitions.reachingAssert(contextId, name);
+    if (reaching !== undefined) {
+      const d = definitionOf(model, feature.id, reaching.path, reaching.equations, memo, contextId, inFlight, true);
+      note(reads, d);
+      return derivationEval(d, name);
+    }
     // Read per instance (A.2): the value a binding carries into `inst`, the
     // unit-aware twin of `valueBoundInInstance` of ./evaluate-model — never
     // for a name two inherited values leave valueless there.

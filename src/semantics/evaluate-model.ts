@@ -524,7 +524,12 @@ function valueDefinedByEquation(
   const candidates = pass.definitions.of(contextId, name);
   if (candidates.length === 0) {
     const read = pass.definitions.definitionReadIn(contextId, name);
-    if (!read) return undefined;
+    if (!read) {
+      // An enclosing context's asserted equation that defines it by its dotted
+      // path (`assert constraint { p.x == 3.0 }` over `part p : P`), read here.
+      const reaching = pass.definitions.reachingAssert(contextId, name);
+      return reaching ? defineIn(model, contextId, feature, reaching.path, reaching.equations, pass, true) : undefined;
+    }
     // Where the context changes what the definition reads, it is read here,
     // over the context's own names: the definition holds of every instance.
     if (read.at !== read.site) {
@@ -606,7 +611,14 @@ function byEquation(
     // unit-blind — so the value is the quantity the equation derives, in
     // coherent SI: `e == 640.0 [Wh] / power` is 3544.62 s, not a raw number
     // nobody wrote. A refusal there is the answer here too.
-    const d = equationDerivation(model, feature.id, equation.constraint.attrs.expression as string, pass.memo, contextId);
+    const d = equationDerivation(
+      model,
+      feature.id,
+      equation.constraint.attrs.expression as string,
+      pass.memo,
+      contextId,
+      name.includes('.') ? name : undefined,
+    );
     const depth = d.depth ?? 1;
     if (d.reason === 'depth') return { value: undefined, depth, deep: true };
     const v = d.q ? siValue(d.q) : d.b;
@@ -2585,7 +2597,18 @@ function equationBindings(
   for (const name of namesIn(expr)) {
     if (!name.includes('.') || taken?.has(name)) continue;
     const end = pass.definitions.chainDefinition(contexts, name);
-    if (!end) continue;
+    if (!end) {
+      // A chain an enclosing asserted equation defines by its dotted path
+      // (`assert constraint { p.x == 3.0 }`, {@link DefiningEquations.reachingAssert}):
+      // bound from that equation, read at the usage the chain ends in.
+      const link = pass.definitions.chain(contexts, name);
+      const leaf = link?.via !== undefined ? pass.definitions.nameOf(link.feature) : undefined;
+      if (!link || link.via === undefined || leaf === undefined || !pass.definitions.reachingAssert(link.via, leaf)) continue;
+      const read = readSpecialiser(model, link.feature, name, pass, { contextId: link.via, feature: link.feature });
+      if ('bound' in read) bindings.set(name, read.bound);
+      else if (!read.valueless) return { reason: read.reason };
+      continue;
+    }
     const read = readSpecialiser(model, end.feature, name, pass, {
       contextId: end.at,
       feature: end.feature,
@@ -2631,10 +2654,12 @@ function equationSiteOf(model: Model, el: ElementRecord, name: string, pass: Sca
     const contextId = contexts[i]!;
     const feature = pass.definitions.feature(contextId, name);
     if (!feature) continue;
+    // An enclosing context's dotted asserted equation ({@link DefiningEquations.reachingAssert}) is read here.
     const read =
       pass.definitions.of(contextId, name).length > 0
         ? { site: contextId, at: contextId }
-        : pass.definitions.definitionReadIn(contextId, name);
+        : (pass.definitions.definitionReadIn(contextId, name) ??
+          (pass.definitions.reachingAssert(contextId, name) !== undefined ? { site: contextId, at: contextId } : undefined));
     if (read === undefined) continue;
     const shadowed = contexts.slice(0, i + 1).some((c) => idsIn(pass, c).has(name));
     if (shadowed) return undefined;

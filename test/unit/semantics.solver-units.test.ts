@@ -2121,6 +2121,16 @@ describe('a system the check reads one definition at a time is still solved', ()
     expect(solvedOf(m, 'x70')).toBe(71);
     expect(checkConstraintsNumeric(m).find((r) => r.name === 'chk')!.result).toBe('satisfied');
   });
+
+  // H5 (plan J decision 14): each `default` gives way to the asserted equation that defines it, so the
+  // chain is the one above — and nothing is derived inside a body's own scope to reach it (F's invariant b).
+  it('solves a chain of defaults, each overridden by a local assert, nested past the cap', () => {
+    let body = 'attribute x0 = 1.0;\n';
+    for (let i = 1; i <= 70; i++) body += `attribute x${i} default = 0.0; assert constraint d${i} { x${i} == x${i - 1} + 1.0 }\n`;
+    const m = parse(`package DeepD { ${body} constraint chk { x70 <= 80.0 } }\n`);
+    expect(solvedOf(m, 'x70')).toBe(71);
+    expect(checkConstraintsNumeric(m).find((r) => r.name === 'chk')!.result).toBe('satisfied');
+  });
 });
 
 /*
