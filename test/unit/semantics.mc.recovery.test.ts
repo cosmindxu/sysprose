@@ -831,7 +831,7 @@ describe('the exactness gate refuses BOTH directions, one fixture per mechanism'
     expect(v.claim).toBe('inconclusive');
     expect(v.claim).not.toBe('pass');
     expect(v.code).toBe(BEHAVIOUR_UNSUPPORTED_CODE);
-    expect(v.detail).toMatch(/^inconclusive: this machine names triggers this walk offers at every configuration/);
+    expect(v.detail).toMatch(/^inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event/);
     // Named for the trigger THIS file names, and the plan's example trigger
     // — which the constant this replaced carried — pinned absent.
     expect(v.detail).toContain(environmentSentence(['unlatch']));
@@ -844,7 +844,7 @@ describe('the exactness gate refuses BOTH directions, one fixture per mechanism'
     expect(r.code).toBe(2);
     expect(r.code).not.toBe(0);
     expect(r.stdout).toContain('INCONCLUSIVE `state nominal` is reachable from every reachable configuration');
-    expect(r.stdout).toContain('inconclusive: this machine names triggers this walk offers at every configuration');
+    expect(r.stdout).toContain('inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event');
     expect(r.stdout).toContain(`info ${BEHAVIOUR_UNSUPPORTED_CODE}`);
     expect(r.stdout).not.toContain('recoverable:');
     expect(r.stdout).not.toMatch(/\bPASS\b/);

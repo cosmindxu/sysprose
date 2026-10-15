@@ -1182,9 +1182,11 @@ decided answer under the word reserved for undecided; `not covered ⇒ fail` wou
 print `verification/refuted` about a design that violates nothing — the exact
 defect the pattern exists to fix. Two disclosures ride on the witness. A run
 that consumed a trigger carries the environment sentence, which names the
-triggers that run consumed: the walk offers every trigger the machine names at
-every configuration, so a witness that consumes `abort` is a claim about that
-environment and not about one that withholds `abort` — a function of the
+triggers that run consumed: the walk offers every trigger the machine names
+wherever it can decide that the interpreter takes its next event — where no
+completion transition is due, or where the chase budget is spent with one still
+due — so a witness that consumes `abort` is a claim about that environment and
+not about one that withholds `abort` — a function of the
 triggers since commit 24 of the model-checking plan, never a constant with an
 example trigger inside it. A run that crossed
 an `after(n)` dwell, or a transition whose guard the walk read against a store

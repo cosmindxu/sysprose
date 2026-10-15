@@ -43,7 +43,7 @@ import {
   textOf,
   type ReportLine,
 } from '../../src/semantics/mc/report-lines';
-import { behaviourReport, replayWitness, type TraceStep } from '../../src/semantics/mc/patterns';
+import { behaviourReport, propertiesOf, replayWitness, type TraceStep } from '../../src/semantics/mc/patterns';
 import {
   BEHAVIOUR_CODES,
   BOUND_EXHAUSTED_CODE,
@@ -546,6 +546,30 @@ const LEAK = `package Leak {
     }
 }
 `;
+// `Inner` owns no transition, so it is no machine; `Deep`, inside it, owns one
+// and is. `Outer`'s own property holds.
+const STRANDED = `package Q4 {
+    state def Outer {
+        @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state c"; }
+        state a;
+        state b;
+        state c;
+        transition ab first a accept e then b;
+        state def Inner {
+            @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state a"; }
+            state x {
+                @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state x"; }
+            }
+            state def Deep {
+                @SysproseVerification::PropertyPattern { attribute pattern = "absence"; attribute scope = "globally"; attribute p = "state q"; }
+                state q;
+                state r;
+                transition qr first q accept go then r;
+            }
+        }
+    }
+}
+`;
 
 describe('a nested state def: the machine that holds it, and a transition across its boundary', () => {
   let dir: string;
@@ -812,6 +836,49 @@ describe('a nested state def: the machine that holds it, and a transition across
     ]);
     expect(atom.code).toBe(2);
     expect(atom.stdout + atom.stderr).toContain('verification/unknown-atom');
+  }, 60_000);
+
+  /*
+   * A PROPERTY NO WALK STANDS ON IS REPORTED, NOT DROPPED (the S4 review's `q4`
+   * probe). The region reading above gave `Inner`'s carriers to `Inner` — but
+   * an `Inner` that owns no transition is no machine, so they were checked by
+   * nothing: `--element Outer` printed its own PASS and exited 0, and
+   * `--element Outer::Inner` sent the reader back to `Outer`. They are now
+   * `Outer`'s rows, refused as inconclusive and naming the definition; a
+   * nested definition that IS a machine keeps its own.
+   */
+  it('reports the carriers of a nested definition that owns no transition on the machine that holds it', async () => {
+    const model = await modelOf(STRANDED);
+    const outerId = idOf(model, 'Q4::Outer');
+    expect(propertiesOf(model, outerId).map((p) => [p.p, p.carrier, p.stranded ?? null])).toEqual([
+      ['state c', 'Q4::Outer', null],
+      ['state a', 'Q4::Outer::Inner', 'Q4::Outer::Inner'],
+      ['state x', 'Q4::Outer::Inner::x', 'Q4::Outer::Inner'],
+    ]);
+    const report = behaviourReport(model, { machineId: outerId });
+    expect(report.properties.map((p) => [p.claim, p.code])).toEqual([
+      ['pass', null],
+      ['inconclusive', 'verification/behaviour-unsupported-construct'],
+      ['inconclusive', 'verification/behaviour-unsupported-construct'],
+    ]);
+    // Refused before it is read: `state a` names a state of `Outer` and would
+    // resolve there, and `state x` would not — neither is asked.
+    for (const row of report.properties.slice(1)) {
+      expect(row.sentence).toBe('absence — not checked');
+      expect(row.detail).toContain('carried by `Q4::Outer::Inner`, a `state def` written inside this machine that owns no transition');
+      expect(row.configs).toBe(0);
+    }
+    expect(report.exitCode).toBe(2);
+    // `Deep` owns a transition: a machine, whose carrier is its own.
+    expect(propertiesOf(model, idOf(model, 'Q4::Outer::Inner::Deep')).map((p) => [p.p, p.stranded ?? null])).toEqual([
+      ['state q', null],
+    ]);
+    const file = fileOf('stranded.sysml', STRANDED);
+    const outer = await reachCli(['check-behaviour', file, '--no-library', '--element', 'Q4::Outer']);
+    expect(outer.code).toBe(2);
+    expect(outer.stdout).toContain('Q4::Outer — 3 properties: 1 pass, 0 fail, 0 vacuous, 2 inconclusive');
+    expect(outer.stdout).toContain('INCONCLUSIVE absence — not checked');
+    expect(outer.stdout).toContain('info verification/behaviour-unsupported-construct');
   }, 60_000);
 
   /*
@@ -1147,9 +1214,9 @@ describe('a guard the walk could not evaluate is not a guard that is false', () 
   it('a deadlock survives a BOUND and never an undetermined guard', () => {
     // The asymmetry the `deadlocks` gate is written on, and it is NOT the
     // `publishable` flag. A bound stops the walk ENQUEUEING successors; every
-    // input is still offered at every configuration it dequeues, so a
-    // configuration it found nothing enabled at is one it really found nothing
-    // enabled at. An undetermined guard is different in kind: it is an edge out
+    // configuration it dequeues is still offered every input a run could take
+    // there, so a configuration it found nothing enabled at is one it really
+    // found nothing enabled at. An undetermined guard is different in kind: it is an edge out
     // that may have been enabled and nothing here decided whether it was.
     // Gating the row on `publishable` instead would withdraw a sound finding on
     // every partial walk, and nothing else in this file would notice.

@@ -2408,12 +2408,13 @@ trigger, consulted no guard it could not evaluate, and did not follow the
 interpreter through a chase its budget stops with a trigger-less transition
 still due — there a run rests where the budget leaves it, which is not an edge
 of the machine. On the latch machine
-(`transition locked accept unlatch then nominal;`) the walk supplies `unlatch` at
-every configuration, so whether `locked` is inescapable is a question about the
-environment, and the report says so in place of the list:
+(`transition locked accept unlatch then nominal;`) the walk supplies `unlatch`
+wherever it can decide that the interpreter takes its next event, so whether
+`locked` is inescapable is a question about the environment, and the report
+says so in place of the list:
 
 ```console
-    inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger this machine names at every configuration, …
+    inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), …
 ```
 
 The same refusal, with its own sentence, prints for a dwell transition, for a
@@ -2521,9 +2522,12 @@ run's — which is what the Simulation tab shows, not a verdict.
 written inside it makes it hold a second machine: a reference that is a machine
 names that machine. What `Outer` is checked against stops where its walk does: a
 property carried by the nested definition, or by one of its states, belongs to
-that definition and is counted and checked there only — so, on a nested
-definition that owns no transition and is walked by nothing, nowhere — and a
-property of `Outer`'s that names one of the nested definition's states or
+that definition and is counted and checked there only — and where that
+definition owns no transition, so is no machine and is walked by nothing, the
+property is counted on `Outer` and reported there as `inconclusive`, `… — not
+checked`, `verification/behaviour-unsupported-construct`, naming the definition:
+checked by nothing, and said so rather than dropped — and a property of
+`Outer`'s that names one of the nested definition's states or
 transitions is refused as `verification/unknown-atom`, as one naming another
 machine's state is. A reference that only contains machines (the package, say) is still refused
 with the machines it holds, and a state is refused with the machine it belongs
@@ -2622,12 +2626,14 @@ the cycle `manual → autonomous → manual`, which never enters `failsafe`;
 `guaranteed` means every maximal run of the machine reaches it. Both are read
 off the same graph the witness was, and both are withheld as `not decided`, with
 the reason, whenever that graph is not the machine's: a walk that stopped at a
-bound, a machine that names a trigger the walk offers unconditionally, a dwell
-the walk takes without advancing a clock, a guard over something the walk could
-not read, a chase the walk follows the interpreter's budget through — and,
-where the machine names no trigger, a `guaranteed` that a run the budget stops
-before it violates would contradict (`not decided: the interpreter’s chase
-budget stops a run of this machine …`) — and three refusals of the property
+bound, a machine that names a trigger the walk offers wherever it can decide
+that the interpreter takes its next event, a dwell the walk takes without
+advancing a clock, a guard
+over something the walk could not read, a chase the walk follows the
+interpreter's budget through — and, where the machine names no trigger, a
+`guaranteed` that a run the budget stops before it violates would contradict
+(`not decided: the interpreter’s chase budget stops a run of this machine …`) —
+and three refusals of the property
 itself, a stateful pattern or
 scope, a `fires`/`trigger` atom, an expression that needs the store. The tail
 of the line is there because this machine has a choice point: the walk explored
@@ -2649,7 +2655,7 @@ model.sysml: CoverProbe::Reachable::Modes — 1 property: 0 pass, 0 fail, 0 vacu
   …
   COVERED      `state failsafe` holds on some run, over the whole run
     from --pattern
-    covered — witness trace of 2 step(s), a run this semantics admits: `state failsafe` holds on some run, over the whole run — the environment offered every trigger this machine names at every configuration, so a witness that consumes `abort` is a claim about that environment and not about one that withholds it
+    covered — witness trace of 2 step(s), a run this semantics admits: `state failsafe` holds on some run, over the whole run — the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes `abort` is a claim about that environment and not about one that withholds it
     2 product state(s) explored — exhaustive under {maxConfigs 10000, maxDepth 200, maxCompletion 64, alphabet abort, store seeded from declared literal values — a guard over an attribute with no declared value is read as false} — the count beside it is the product states seen up to the witness, not the size of the product space
     witness — a run this semantics admits:
        0  start → CoverProbe::Reachable::Modes::idle
@@ -2658,9 +2664,18 @@ model.sysml: CoverProbe::Reachable::Modes — 1 property: 0 pass, 0 fail, 0 vacu
 ```
 
 Exit 0, a witness, and the environment sentence beside it: the walk offers
-every trigger the machine names at every configuration, so a run that consumed
-`abort` is a claim about *that* environment and not about one that never sends
-it. On the sealed twin — the same machine with the `abort` edge removed — the
+every trigger the machine names wherever it can decide that the interpreter
+takes its next event — at a configuration where no completion transition is
+due, or where the 64-step chase budget is spent with one still due — so a run
+that consumed `abort` is a claim about *that* environment and not about one that
+never sends it. Where a completion transition is due and the budget is not
+spent, the interpreter chases it before it takes any event, and so does the
+walk: no trigger is offered there. Nor where nothing is due but a trigger-less
+transition whose guard the walk could not evaluate: the interpreter reads that
+guard as false and takes its next event, while the walk cannot tell which it
+does and offers no trigger at all — it holds fewer runs there, not more, and
+`verification/guard-undetermined` withholds every absence on that machine. On
+the sealed twin — the same machine with the `abort` edge removed — the
 row reads `NOT-COVERED`, `not covered under {…} — over 2 configuration(s)`, an
 **info** line `verification/not-covered`, and **exit 2**: a decided absence, a
 missing behaviour, and not a violated requirement. Nothing was refuted, so the
@@ -2748,8 +2763,10 @@ from every reachable configuration*, exit 0.
 **What the row refuses, and why it refuses both directions.** `recoverable` is
 a claim that gets *easier* to make as edges are added, so it is withheld — never
 qualified — wherever the walk's relation is not the machine's: a bound the walk
-hit, a named trigger the walk offers at every configuration with no carrier for
-whether an environment would send it (the latch fixture: `locked → nominal`
+hit, a named trigger the walk offers wherever it can decide that the
+interpreter takes its next event, with no carrier for whether an environment
+would send it (the latch
+fixture: `locked → nominal`
 exists only because the walk supplies `unlatch`, and the draft of this feature
 printed `recoverable` about it), an `after(n)` dwell the walk takes without
 advancing a clock, a run the interpreter's chase budget stops away from `p` —

@@ -102,10 +102,14 @@ export interface Publishability {
    * Every named trigger was actually offered.
    *
    * DEFENSIVE, and both shipped readers keep it for the same reason:
-   * `exploreMachine` offers the whole alphabet at every configuration it
-   * dequeues, so this holds by construction today and can only go false if that
-   * changes. A walk that started filtering the inputs it offers would silently
-   * narrow what "unreachable" means.
+   * `exploreMachine` offers the whole alphabet wherever it can decide that the
+   * interpreter takes its next event — where no completion transition is due,
+   * or where the chase budget is spent — and every chase a finished walk
+   * follows ends at such a place unless a completion guard there was left
+   * undecided, which `guardsDetermined` refuses on its own. So this holds
+   * wherever the other conjuncts do, and can only go false if that changes. A
+   * walk that started filtering the triggers it offers at those places would
+   * silently narrow what "unreachable" means.
    */
   readonly alphabetOffered: boolean;
   /** `walk.unsupported.length === 0` — no construct this engine refuses. */
@@ -288,9 +292,9 @@ export interface Exactness {
    * edge that IS in the relation but whose availability at a configuration the
    * walk gets wrong:
    *
-   *  • (b) no dwell — `timedTransitions` is empty. The walk offers the edge at
-   *    every configuration and advances no clock, so a run that takes it is a
-   *    run of no environment.
+   *  • (b) no dwell — `timedTransitions` is empty. The walk offers the edge
+   *    without waiting out its dwell and advances no clock, so a run that takes
+   *    it is a run of no environment.
    *  • (c) no named trigger — `bounds.alphabet` is empty. This engine has no
    *    carrier for *which triggers can the environment actually supply*, so the
    *    only alphabet it can be exact over is the empty one.
@@ -330,8 +334,8 @@ export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
   unsupported:
     'the walk did not run: a construct this engine does not explore was found, and an unexplored graph holds nothing',
   environment:
-    'the walk offers every trigger the machine names at every configuration, and nothing here establishes that an environment would supply them',
-  time: 'the walk offers every dwell transition at every configuration and advances no clock, so it holds an edge the interpreter would never take',
+    'the walk offers every trigger the machine names wherever it can decide that the interpreter takes its next event, and nothing here establishes that an environment would supply them',
+  time: 'the walk offers every dwell transition without waiting out its dwell and advances no clock, so it holds an edge the interpreter would never take',
   store:
     'a guard the walk consulted decided nothing, so an edge the model states is absent from the relation',
   budget:
@@ -345,16 +349,27 @@ export const CLAUSE_SENTENCE: Record<Exclude<FailedClause, null>, string> = {
  * trigger, beside every escape from a trap, and beside a `recovery` the
  * environment clause refused.
  *
- * `exploreMachine` offers the whole alphabet at EVERY configuration, so a
- * witness that consumes a trigger is a claim under a maximally cooperative
- * environment and about no other. The plan's text names `abort` because its
- * example does; the sentence is a FUNCTION OF THE TRIGGERS because a constant
- * is not. Three lanes pinned the constant verbatim with the example trigger
- * inside it, and `reach` on `latch.sysml` — a machine naming `unlatch` and
- * nothing else — printed *a witness that consumes `abort`* about a trigger the
- * file never mentions. Each name is backticked and they are joined in the order
- * given, which is the caller's to choose: trace order for a witness, alphabet
- * order for a report.
+ * `exploreMachine` offers the whole alphabet wherever it can decide that the
+ * interpreter takes its next event — at a configuration where no completion
+ * transition is due, and at one where the chase budget is spent with one still
+ * due — so a witness that consumes a trigger is a claim under a maximally
+ * cooperative environment, one that sends every trigger at every such place,
+ * and about no other. The sentence names both places because it once said the
+ * walk offered the alphabet everywhere, which stopped being true when the walk
+ * began to obey run-to-completion (review B's M1). It says "could decide"
+ * because of the one place the two part: where nothing is due but a completion
+ * transition whose guard is undecided, the interpreter reads the guard as false
+ * and takes its next event, and the walk offers no trigger — it fails closed,
+ * and the store clause withholds every absence on that machine — so "wherever
+ * the interpreter takes its next event" alone would claim an offer the walk
+ * never made (the S4 review's `undet-env` probe). The plan's text names `abort`
+ * because its example does; the sentence is a FUNCTION OF THE TRIGGERS because
+ * a constant is not. Three lanes pinned the constant verbatim with the example
+ * trigger inside it, and `reach` on `latch.sysml` — a machine naming `unlatch`
+ * and nothing else — printed *a witness that consumes `abort`* about a trigger
+ * the file never mentions. Each name is backticked and they are joined in the
+ * order given, which is the caller's to choose: trace order for a witness,
+ * alphabet order for a report.
  *
  * THROWS ON NO TRIGGER. A sentence about the environment that names no trigger
  * is the defect the F2 fix removed from the cover row — a machine naming no
@@ -370,7 +385,7 @@ export function environmentSentence(triggers: readonly string[]): string {
     );
   }
   const named = triggers.map((t) => `\`${t}\``).join(', ');
-  return `the environment offered every trigger this machine names at every configuration, so a witness that consumes ${named} is a claim about that environment and not about one that withholds it`;
+  return `the environment offered every trigger this machine names wherever the walk could decide that the interpreter takes its next event (no completion transition due, or the chase budget spent), so a witness that consumes ${named} is a claim about that environment and not about one that withholds it`;
 }
 
 /**
@@ -399,7 +414,7 @@ export function environmentTriggers(alphabet: readonly string[]): string[] {
  * dwell, because a machine whose dwells carry no label at all exists.
  */
 export const DWELL_SENTENCE =
-  'this walk advances no clock: a transition carrying an `after(n)` dwell is offered at every configuration — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take';
+  'this walk advances no clock: a transition carrying an `after(n)` dwell is offered without waiting out its dwell — as a named event where the dwell is written as a trigger, as a completion where it is written as `attrs.after` — so a step taken across one is a step the interpreter may never take';
 
 /**
  * §2.4(d) — the simulator sentence, printed beside every increasing claim and

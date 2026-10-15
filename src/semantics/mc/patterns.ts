@@ -121,6 +121,7 @@ import {
   exploreMachine,
   machineAlphabet,
   machineStates,
+  ownsMachine,
   transitionLabel,
   walkableTransitions,
   type BoundHit,
@@ -354,6 +355,14 @@ export interface PropertyText {
    * every other unreadable property is refused.
    */
   readonly unknownFields?: readonly string[];
+  /**
+   * The nested `state def` this carrier sits in, when that definition owns no
+   * transition: it is no machine of its own, and the machine it is written in
+   * stops at it, so no walk stands on its states. Present only then, and
+   * refused at {@link checkProperty} rather than dropped (see
+   * {@link propertiesOf}).
+   */
+  readonly stranded?: string;
 }
 
 /** One property, resolved against the machine it is about. */
@@ -462,7 +471,7 @@ export type ModalityValue = 'guaranteed' | 'potential' | 'not-decided';
  * BOTH VALUES READ ONE PREDICATE. Neither `guaranteed` nor `potential` is ever
  * composed unless `walkIsExact` holds: the first quantifies over the run set,
  * which the cooperative environment changes; the second names a run with no
- * exit, which a bound, a dwell the walk offers at every configuration and a
+ * exit, which a bound, a dwell the walk takes without waiting it out and a
  * guard nothing decided all manufacture. The value and the failed clause
  * together are this feature's census.
  */
@@ -705,15 +714,40 @@ export function isPropertyCarrier(el: ElementRecord): boolean {
  * machine's pick row counted a property that was not its own.
  * `regionDescendants` stops below the nested definition but keeps the
  * definition itself, whose own carriers are its, so it is skipped as a holder.
+ *
+ * UNLESS THE DEFINITION IS NO MACHINE. A nested `state def` that owns no
+ * transition is not a machine (`ownsMachine`, `./explore`), and the outer walk
+ * still stops at it, so the region reading alone left its carriers checked by
+ * no surface at all: `check-behaviour --element Outer` said the machine states
+ * no property, and the refusal for `--element Outer::Inner` sent the reader
+ * back to `Outer`. Such a carrier is read HERE, on the machine whose text holds
+ * it, marked `stranded` with the definition it sits in, and refused as
+ * inconclusive — a property somebody wrote is never dropped from the run, for
+ * the same reason a misspelled field is not (the S4 review's `q4` probe). The
+ * definition's own region is read the same way, down to a nested definition
+ * that IS a machine, whose carriers are its own.
  */
 export function propertiesOf(model: Model, machineId: ElementId): PropertyText[] {
   const out: PropertyText[] = [];
-  const holders = [
-    model.get(machineId),
-    ...regionDescendants(model, machineId).filter((h) => h.eClass !== 'StateDefinition'),
-  ];
-  for (const holder of holders) {
-    if (!holder) continue;
+  // In model order: a stranded definition's carriers are read where it stands
+  // in the region, between the machine's own.
+  const holders: { holder: ElementRecord; stranded?: string }[] = [];
+  const machineEl = model.get(machineId);
+  if (machineEl) holders.push({ holder: machineEl });
+  const region = (regionId: ElementId, stranded: string | undefined): void => {
+    for (const el of regionDescendants(model, regionId)) {
+      if (el.eClass !== 'StateDefinition') {
+        holders.push({ holder: el, ...(stranded !== undefined ? { stranded } : {}) });
+        continue;
+      }
+      if (ownsMachine(model, el)) continue;
+      const name = model.qualifiedName(el.id) || el.id;
+      holders.push({ holder: el, stranded: name });
+      region(el.id, name);
+    }
+  };
+  region(machineId, undefined);
+  for (const { holder, stranded } of holders) {
     for (const carrier of model.children(holder.id)) {
       if (!isPropertyCarrier(carrier)) continue;
       const cells = new Map<string, string>();
@@ -746,6 +780,7 @@ export function propertiesOf(model: Model, machineId: ElementId): PropertyText[]
         source: 'model',
         carrier: model.qualifiedName(holder.id) || holder.id,
         ...(unknown.length > 0 ? { unknownFields: unknown } : {}),
+        ...(stranded !== undefined ? { stranded } : {}),
       });
     }
   }
@@ -1567,6 +1602,33 @@ export function checkProperty(
     alphabet: machineAlphabet(model, machineId),
   };
 
+  // A CARRIER NO WALK STANDS ON, refused before it is read: its atoms would be
+  // read against this machine, which is not the one it was written in, and a
+  // verdict about either would be about a machine nobody named (`propertiesOf`).
+  if (text.stranded !== undefined) {
+    return {
+      ...refusedRow(
+        machine,
+        text,
+        {
+          code: BEHAVIOUR_UNSUPPORTED_CODE,
+          detail:
+            `inconclusive: this property is carried by \`${text.stranded}\`, a \`state def\` written ` +
+            'inside this machine that owns no transition — it is no machine of its own, and this ' +
+            'machine’s walk stops at it and never stands on its states — so no walk checks it and ' +
+            'nothing about it is claimed. Put the carrier on the machine or the state it is about, ' +
+            'give the definition the transitions that make it a machine checked by itself, or write ' +
+            `it as a composite state (\`state ${text.stranded.split('::').pop()} { … }\`) to make its ` +
+            'states part of this machine.',
+          candidates: [],
+        },
+        bounds,
+      ),
+      sentence: `${text.pattern || '(no pattern)'} — not checked`,
+      qualification: 'nothing was checked: no machine this engine walks stands on the definition that carries it',
+    };
+  }
+
   const resolved = resolveProperty(model, machineId, text);
   if (!resolved.ok) return refusedRow(machine, text, resolved.refusal, bounds);
   const property = resolved.property;
@@ -2224,7 +2286,7 @@ const RECOVERY_REFUSED: Record<'time' | 'store' | 'budget', string> & {
   environment: (triggers: readonly string[]) => string;
 } = {
   environment: (triggers) =>
-    'inconclusive: this machine names triggers this walk offers at every configuration, so "reachable from every configuration" would be a claim about an environment this walk has no carrier for — ' +
+    'inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event, so "reachable from every configuration" would be a claim about an environment this walk has no carrier for — ' +
     environmentSentence(triggers),
   time:
     'inconclusive: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so "reachable from every configuration" would be a claim about escapes this walk invented — ' +
@@ -2563,7 +2625,7 @@ export const WALK_ADMITS = 'a run this WALK admits';
  * disjunction fails the claim SURVIVES and the warrant is re-worded
  * (`WALK_ADMITS`, naming the mechanism the step used): a bound can hide a
  * witness and can never invent one, so this is never `inconclusive` — but the
- * walk offers every dwell at every configuration and advances no clock, so a
+ * walk offers every dwell without waiting it out and advances no clock, so a
  * trace across one is a trace the interpreter may never take, and saying
  * "this semantics admits" of it would be the sentence the plan bans verbatim.
  *

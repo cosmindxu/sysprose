@@ -40,8 +40,37 @@
  *
  * The other direction is deliberately the loose one: the walk OVER-approximates
  * what is reachable, by offering every `after(n)` label as a named event rather
- * than advancing a clock. An over-approximation can only shrink the absence
- * claims, never invent one, which is the direction a finding may be wrong in.
+ * than advancing a clock, and by sending every trigger the machine names at
+ * each place a run takes an event, as no real environment need. An
+ * over-approximation can only shrink the absence claims, never invent one,
+ * which is the direction a finding may be wrong in.
+ *
+ * WHERE AN EVENT IS OFFERED IS NOT LOOSE. On a walk that finished, the walk
+ * offers the alphabet exactly where it can decide that `runStateMachine` takes
+ * its next event: at a configuration where no completion transition is due,
+ * and at one where the interpreter's chase budget is spent with a completion
+ * transition still due (the note above `exploreMachine`). Everywhere else the
+ * interpreter chases before it takes any event, and the walk offers completion
+ * alone. THE ONE PLACE IT CANNOT DECIDE, IT FAILS CLOSED: where nothing is due
+ * but a completion transition whose guard is undecided, the interpreter reads
+ * the guard as false and takes its next event, and the walk, which cannot tell
+ * whether a run chases there or takes one, offers no trigger at all — so it
+ * holds fewer runs than the interpreter makes, and the store clause
+ * (`verification/guard-undetermined`) withholds every absence on that machine.
+ * (A walk a bound stopped short decides less still: without the chase position
+ * it takes no event where the budget would stop a chase its frontier hides —
+ * and a partial walk publishes no absence either.) So on a walk that finished,
+ * over guards it decided, every run the interpreter makes on a sequence of the
+ * named triggers is a run of the walk, and an absence the walk publishes holds
+ * of every such run: it is exact over that semantics, not over an approximation
+ * of where events arrive. The runs the walk holds beyond the interpreter's are the
+ * dwells above, the tie-break below and, on a machine that names no trigger,
+ * the chase past the budget the note above `exploreMachine` lets it follow —
+ * and those only shorten the absence lists. (The walk once offered every
+ * trigger wherever it stood, a completion due or not: runs the profile forbids.
+ * H1, `0c9d2bd`, confined it to the first of the two places and lost the runs
+ * the budget lets through at the second, which published a false `unreachable`
+ * and `dead` — review B's C1.)
  *
  * IT IS LOOSE ONLY WHERE THAT HOLDS. The walk branches on the declaration-order
  * TIE-BREAK — every transition enabled at the innermost active level, where the
@@ -198,7 +227,12 @@ export interface ExploreBounds {
   maxConfigs: number;
   maxDepth: number;
   maxCompletion: number;
-  /** The events offered at every configuration: the triggers the machine names. */
+  /**
+   * The events offered wherever the walk can decide that the interpreter takes
+   * its next event — where no completion transition is due, or where the chase
+   * budget is spent (not where nothing is due but a completion guard it could
+   * not decide: the header): the triggers the machine names.
+   */
   alphabet: readonly string[];
 }
 
@@ -762,9 +796,11 @@ export interface EdgeCensus {
  *    This bucket exists because the census's first reading did not have it and
  *    refused every machine whose states are typed, which is mainstream notation.
  *  - `walked` — in the step relation, leaving a node some configuration's stack
- *    can hold ({@link stackNodes}): every configuration standing there offers
- *    it. This bucket IS {@link walkableTransitions}, and the transition census
- *    the report prints.
+ *    can hold ({@link stackNodes}): the walk tries it wherever a configuration
+ *    standing there is offered its input — a trigger only where a run takes its
+ *    next event, which is not every configuration (the note above
+ *    `exploreMachine`). This bucket IS {@link walkableTransitions}, and the
+ *    transition census the report prints.
  *  - `opening` — in the step relation, leaving an `InitialNode`: `initialState`
  *    (`./config.ts`) READS it to decide where the machine opens and no step
  *    ever fires it. It is deliberately out of the walkable total — counting an
@@ -837,7 +873,7 @@ export function edgeCensus(model: Model, machineId: ElementId): EdgeCensus {
       row(
         'walked',
         `it is in the step relation and leaves ${nameOf(from)}, which a configuration's stack can ` +
-          'hold, so every configuration standing there offers it',
+          'hold, so the walk tries it wherever a configuration standing there is offered its input',
       );
     } else if (from === machineId) {
       row(
@@ -1968,7 +2004,7 @@ export const TRAP_ENTRY_WALK_ADMITS = 'on a run this WALK admits';
  */
 export const TRAP_REFUSAL_SENTENCE: Record<'environment' | 'time' | 'store' | 'budget', string> = {
   environment:
-    'inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed',
+    'inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event, so an escape it found may be one the environment never supplies and no absence of an escape is claimed',
   time: 'inconclusive: this machine carries `after(n)` dwell transitions this walk takes without advancing a clock, so the escape relation is an over-approximation and no absence of an escape is claimed',
   // "an expression this walk could not evaluate" and not "an attribute with no
   // declared value": the store clause is the SHIPPED predicate, which also
@@ -2302,9 +2338,11 @@ export interface ReachOptions extends ExploreOptions {
  * Does this element own a state machine — a non-library element that directly
  * owns a TransitionUsage, or one marked parallel that contains one? The first
  * half of {@link stateMachinesIn}, and what decides whether a nested `state
- * def` a crossing leads into is a machine of its own (`acrossSentence`).
+ * def` a crossing leads into is a machine of its own (`acrossSentence`) — and
+ * whether the properties a nested one carries have a machine to be checked on
+ * (`propertiesOf`, `./patterns`).
  */
-function ownsMachine(model: Model, el: ElementRecord): boolean {
+export function ownsMachine(model: Model, el: ElementRecord): boolean {
   if (el.attrs.isLibrary === true) return false;
   if (model.children(el.id).some((c) => c.eClass === 'TransitionUsage')) return true;
   return (
@@ -2369,6 +2407,17 @@ export function stateMachinesIn(model: Model, scopeId?: ElementId): ElementRecor
  * which covers guards that decided nothing for reasons other than an unvalued
  * feature, and where the two differ it is the `verification/guard-undetermined`
  * row that a reader acts on.
+ *
+ * "READ AS FALSE" IS THE INTERPRETER'S READING, AND SINCE H1 NOT QUITE THE
+ * WALK'S. At a TRIGGERED guard the two agree: the walk takes no edge there. At
+ * a COMPLETION guard they part: where nothing else is due, the interpreter
+ * reads the guard as false and takes its next event, and the walk offers no
+ * trigger there at all (the header's WHERE AN EVENT IS OFFERED). Either way the
+ * guard is undecided, the machine fails the store clause and every absence on
+ * it is withheld with the row that names the guard, so no claim rests on the
+ * clause's wording. It is left as it stands because it is printed in every
+ * qualification on every machine, and rewording it re-records them all (O1,
+ * review of S4).
  *
  * APPENDED AFTER THE ALPHABET CLAUSE, and the position is not a style choice:
  * the process-level campaign asserts a PREFIX of this sentence that stops before

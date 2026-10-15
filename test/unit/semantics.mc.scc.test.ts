@@ -606,7 +606,7 @@ describe('the deadlock row survives an undecided guard somewhere else in the mac
     // not: `sub2` has no outgoing transition of its own, so a check scoped to
     // the leaf finds nothing undecided and publishes the row — about a
     // configuration whose way out is `degraded -> nominal`, an edge the model
-    // states, the step relation offers at every configuration inside
+    // states, the step relation consults at every configuration inside
     // `degraded`, and this walk could not decide.
     const nested = 'DeadlockGuarded::Nested::Modes';
     const w = (await walkFile(FILE)).get(nested)!;

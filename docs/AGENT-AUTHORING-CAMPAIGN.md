@@ -5069,7 +5069,7 @@ reads that gate for BOTH values: `guaranteed` quantifies over the run set,
 which the cooperative environment changes (on the latch file the naive answer
 is `guaranteed`, about a machine that sits in `nominal` forever when nobody
 sends `unlatch`), and `potential` names a cycle with no exit, which a bound, a
-dwell the walk offers at every configuration and a guard nothing decided all
+dwell the walk takes without waiting it out and a guard nothing decided all
 manufacture (on the factory-built dwell cycle the naive answer is `potential —
 … the cycle nominal → hold → nominal`, about a machine on which the interpreter
 sends every run into `hazard`; on the trapguard file it is `guaranteed`, about

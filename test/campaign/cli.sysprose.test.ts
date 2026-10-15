@@ -4422,7 +4422,7 @@ package P {
     const l = await run(['reach', latch]);
     expect(l.code).toBe(0);
     expect(l.stdout).toContain(
-      'inconclusive: this machine names triggers this walk offers at every configuration, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger',
+      'inconclusive: this machine names triggers this walk offers wherever it can decide that the interpreter takes its next event, so an escape it found may be one the environment never supplies and no absence of an escape is claimed; the environment offered every trigger',
     );
     expect(l.stdout).not.toContain('trap         ');
     expect(l.stdout).not.toContain('inescapable');
