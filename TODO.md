@@ -3,17 +3,17 @@
 Next actions: concrete, small, actionable. Big features belong in [`ROADMAP.md`](ROADMAP.md). Items
 that need decisions after research belong in [`RESEARCH.md`](RESEARCH.md).
 
-Entries tagged `[review 2026-10-14 …]` come from the read-only review of Sysprose 5943654 on that
-date, and each id is the finding's own in the review's plan: `A-…` is from the per-instance
-soundness review (A), `C1`, `C3`, `H1`, `H2`, `M1`, `M2` and `M3` from the behaviour review
-(B), `C-F…` from the speed review (C), `D-…` from the app and merges review (D), and `PI-` and
-`EV-` from the decisions batch and per-instance reporting review (E). The `E<n>` ids and
-`X2` are rows of the open-items inventory (F), not of reviewer E; its two further rows are written
-`F-U1` and `F-C2` here, so that they do not read as a decision or as another reviewer's id. A model an entry writes
-out as `package … { … }` is complete and loads as written; the review file an entry names
-(`A/probes/…`, `E/pi/…`) is what it was copied from, in the review's artifact folder, which is not
-in this repository. An entry that waits on the maintainer says `awaits user decision U<n>` and
-names the question.
+Entries tagged `[review 2026-10-14 …]` come from the read-only review of Sysprose 5943654 on that date,
+and each id is the finding's own in the review's plan: `A-…` is from the per-instance soundness review
+(A), `M2` from the behaviour review (B; its other ids closed with `behaviour-sound`), `C-F…` from the
+speed review (C), `D-…` from the app and merges review (D), and `PI-` and `EV-` from the decisions batch
+and per-instance reporting review (E). The `E<n>` ids and `X2` are rows of the open-items inventory (F),
+not of reviewer E; its two further rows are written `F-U1` and `F-C2` here, so that they do not read as
+a decision or as another reviewer's id. A model an entry writes out as `package … { … }` is complete and
+loads as written; the review file an entry names (`A/probes/…`, `E/pi/…`) is what it was copied from, in
+the review's artifact folder, which is not in this repository. Entries tagged `[O1 …]` record what the
+merged branch `behaviour-sound` (the plan's O1) left open, by step. An entry that waits on the
+maintainer says `awaits user decision U<n>` and names the question.
 
 - [ ] **Run the palette's solver checks in the page, not only in a terminal.** `verify`,
       `consistency`, `refine`, `bounds` and `fault-tree` are in the registry (`src/ui/checks.ts`)
@@ -659,125 +659,58 @@ collaboration room's child order.
 ## Behaviour checks and the palette's checks lane — review 2026-10-14
 
 From the reviews of the behaviour lane (reach and check-behaviour in the palette) and of the ux
-merge. The first four entries are the walk's and the interpreter's own: the branch
-`behaviour-sound` is closing the first three, and the fourth if the maintainer agrees (U1); its
-merge removes what it closes.
+merge. The branch `behaviour-sound` (merged by `e0d8040`) closed the completion budget, the nested
+`state def`, the method text and the completion livelock (C1, H2, C3, H1, M3, M1, U1); the entries
+tagged `[O1 …]` are what its steps and reviews left open.
 
-- [ ] **Model the interpreter's 64-step completion budget in the walk and the search.**
-      `runStateMachine` (`src/semantics/execute.ts`) follows an event with trigger-less
-      (completion) steps for at most 64; a chase that spends the budget stops where it is and the
-      next event is taken from there (`completionBudgetHit`). Since `0c9d2bd` the walk offers no
-      event at a configuration where a completion transition is enabled
-      (`src/semantics/mc/explore.ts:1103-1105`) and the property search does the same
-      (`patterns.ts:1161-1163`), and the chase counter is set when a configuration is first found
-      (`explore.ts:1179`, `:1192`), so a revisit never trips it. On a cycle of completions, or a
-      chain longer than the budget, the walk misses runs the interpreter takes: `unreachable`,
-      `dead`, a safety PASS and `not-covered` can be false, and the comment at `explore.ts:941`
-      ("a completion cycle is not a bound hit") argues the wrong way [C1]. Separately, the search
-      tests the monitor for a violation (`patterns.ts:1201`) before it applies the chase-budget gate
-      (`:1218`), so a `cover` prints COVERED, with a witness, for a state the interpreter never
-      enters [H2].
-      Probes, each re-run at 5943654. (1) `package LiveTwo { state def M { state s0; state a;
-      state b; state c; transition go first s0 accept go then a; transition ab first a then b;
-      transition ba first b then a; transition ac first a accept e then c; } }`: `reach` exits 0
-      with `unreachable LiveTwo::M::c` and `dead ac (a -> c) on e`, and `check-behaviour --element
-      LiveTwo::M --pattern 'pattern=absence, scope=globally, p=state c'` prints PASS, while the
-      interpreter on `[go, e]` ends in `c` (`completionBudgetHit`). (2) A generated chain: states
-      `s0`, `c1`…`c70` and `z`, `go first s0 accept go then c1`, `t<n> first c<n> then c<n+1>` for
-      n = 1…69, `jump first s0 accept jump then c30` (it reaches `c30` with the counter at 0, so the
-      walk's counter never passes 64) and `esc first c65 accept e then z`: `check-behaviour
-      --pattern 'pattern=absence, scope=globally, p=state z'` prints PASS and exits 0, `reach` says
-      `unreachable z`, and the interpreter on `[go, e]` ends in `z`. (3) The same chain without
-      `z`, `jump` and `esc`: `--pattern 'pattern=cover, scope=globally, p=state c66'` prints
-      COVERED with a 66-step witness and exits 0, while the interpreter ends at `c65` on `go`
-      followed by anything. (4) The drone-swarm v9 `PA::SwarmMember::SwarmMemberModes`: `reach`
-      reports `dead admissionFails (Nominal -> Quarantined) on peerVerdict`, and the interpreter on
-      `[peerVerdict]` fires it and ends in `Quarantined`. That verdict is on the published site
-      (it pins 5943654) and in the v9 audit's `reach.json`.
-      Fix: a configuration reached by completion steps carries its chase position, `0` to the
-      budget, in the visited key; where the budget is spent with a completion still enabled the
-      interpreter stops, so the walk offers the alphabet there, as `runStateMachine` takes the next
-      event, and firing an event restarts the position at 0. That replaces the cut on
-      `run > maxCompletion`, since the budget is part of the semantics and not a bound. In
-      `patterns.ts` the monitor's violation test moves behind the chase-budget gate. Whichever way,
-      every published witness replays through `runStateMachine` to the same state sequence, or the
-      row is withheld as inconclusive with its own code. If the exact model grows the state count
-      past the existing `maxConfigs` defaults on the corpus, offering the alphabet at every
-      configuration of a completion cycle is the over-approximation to fall back on (absences stay
-      sound; every existential answer must then replay): awaits user decision U2. Done when the
-      four probes read as the interpreter does (`c` reachable and `ac` fired; `z` reachable,
-      `esc` live and the absence of `z` FAIL with a witness that replays; `c66` not covered and
-      exit not 0; `admissionFails` fired), a unit test drives the interpreter over the test corpus
-      and the examples to depth 3 with a run cap and finds it never does what `reach` or
-      `check-behaviour` calls impossible, and a sweep replays every corpus witness.
-      [review 2026-10-14 C1, H2]
-- [ ] **Say what a nested `state def` means, and make the checks and the simulator agree.**
-      Since `0475db6` a nested `state def` is a machine of its own (`explore.ts:1789`) and
-      `regionTransitions` stops at it (`src/semantics/mc/config.ts:373`, `:400`), a step relation
-      the simulator shares. (1) A transition that crosses a nested definition's border has no
-      defined meaning, and `reach` decides it anyway and contradicts itself [H1]:
-      `package Nest2 { state def Outer { state a; state b; transition ax first a accept e then
-      Inner::x; state def Inner { state x; state y; transition xy first x accept go then y;
-      transition yb first y accept back then Outer::b; } } }` prints `unreachable Nest2::Outer::b`
-      beside `verification/deadlock` for `Nest2::Outer::b`, and for `Nest2::Outer::Inner::x`, which
-      has `xy`; the interpreter on `[e, go, back]` stops at `x`. (2) `behaviourMachineFor`
-      (`src/semantics/mc/report-lines.ts:466`) refuses a scope that holds more than one machine, and
-      an `Outer` that holds a nested definition now holds two [C3]: on `package Nest6 { state def
-      Outer { state a; state b; transition ab first a accept e then b; state def Inner { state x;
-      state y; transition xy first x accept go then y; } } }`, `check-behaviour --element
-      Nest6::Outer --pattern 'pattern=absence, scope=globally, p=state b'` says "`Nest6::Outer`
-      holds 2 state machines" and exits 2, however `Outer` is named, so `Outer` can never be
-      checked; the review saw the app's pick row refuse `Outer` again when clicked. (3) `runRegion`
-      (`src/semantics/execute.ts:983`) reads `model.descendants`, not `regionDescendants`, so when
-      the nested definition is declared first (`package Nest3 { state def Outer { state def Inner {
-      state x; state y; transition xy first x accept go then y; } state a; state b; transition ab
-      first a accept e then b; } }`) the interpreter on `[e]` is in `Inner::x`, never in `a` or
-      `b`, and the witness stepper replays against that simulator [M3]. Fix: `behaviourMachineFor`
-      returns the scope when it is itself a machine root; a transition that crosses a nested
-      definition's border is reported as `verification/behaviour-unsupported-construct` and the
-      machine is withheld (which also ends the contradiction in (1)), with its relation to the
-      simulator stated in `docs/06-model-checking-implementation-plan.md`; `runRegion` reads
-      `regionDescendants`. Done when `Nest2` prints no `unreachable` or `deadlock` over the crossing,
-      the `Nest6` command checks `Outer`, the interpreter on `Nest3` starts in `a`, and the app's
-      pick row for `Outer` runs (an E2E on the behaviour palette spec). [review 2026-10-14 H1, C3, M3]
-- [ ] **Reword the method text that still says the walk offers every trigger at every
-      configuration.** Since `0c9d2bd` the walk and the search offer no event where a completion is
-      due, so these are false: the `reach` line "this machine names triggers this walk offers at
-      every configuration" printed on every machine that names triggers
-      (`src/semantics/mc/explore.ts:1431`), the witness warrant "the environment offered every
-      trigger this machine names at every configuration" (`publishable.ts:316`, `:354`, and the
-      dwell sentence at `:383`), `patterns.ts:1969`, the header comment at `explore.ts:39-42` (the
-      walk "OVER-approximates"), and the "cooperative environment" item 2 of
-      `docs/06-model-checking-implementation-plan.md`. Say "at every configuration where no
-      trigger-less transition is due", in the words of the completion-budget entry's fix, which
-      changes the semantics again. Probe: `npm run sysprose -- reach` on any machine that names a
-      trigger prints the stale line. Done when no printed text, comment or document sentence about
-      what the environment offers disagrees with what the walk does. Ships with the
-      completion-budget entry above. [review 2026-10-14 M1]
-- [ ] **Say when a cycle of trigger-less transitions never comes to rest.** Under run-to-completion
-      such a cycle spends the interpreter's 64 chase steps on every event, and `reach` is silent:
-      `package Loop { state def M { state a; state b; transition ab first a then b; transition ba
-      first b then a; } }` exits 0 with "0 dead". The review counts 10 of the drone-swarm v9's 17
-      machines that hit the budget on every run (LA: FleetConfiguration, SwarmMember Modes and
-      States, GroundStation Modes and States; PA: FleetConfiguration, SwarmMember Modes and States,
-      GroundStationNode Modes and States), where an author probably meant a trigger. Report a
-      reachable cycle of trigger-less transitions as `verification/completion-livelock` (a
-      warning) naming the cycle, with a catalogue entry and `npm run codes`; on v9 it adds 10
-      findings. Done when `Loop` and the ten v9 machines print it. [review 2026-10-14 C1]
-      Awaits user decision U1: whether `reach` reports it, and, apart from that,
-      whether v9's mode and state machines get triggers through the workflow.
-
-- [ ] **Give "no trigger is ever offered" its own code and sentence.** When every state of a machine
-      has a completion, the property search finds no configuration that offers an event, and
-      `src/semantics/mc/patterns.ts:1590-1602` (at 5943654) reports `verification/bound-exhausted`
-      with "Raise the bound (`--max-configs N`) and re-run" although no bound was hit; raising it
-      changes nothing, so an agent that branches on the code loops. Probe: v9
-      `PA::SwarmMember::SwarmMemberStates` (every state has a completion): its two true PASS rows
-      (the interpreter agrees: `Recalled -> Landed` is a completion) read INCONCLUSIVE with that
-      advice. Fix: a code and sentence of its own for the case where only the "alphabet not offered"
-      clause failed, without the raise-the-bound advice (a catalogue entry and `npm run codes`).
-      Done when the non-bound case prints its own code with no `--max-configs` advice and v9's two
-      rows read PASS again. [review 2026-10-14 M2]
+- [ ] **Give "no trigger is ever offered" and the budget-withheld `recovery` their own codes.** Since
+      `e0d8040` v9's `PA::SwarmMember::SwarmMemberStates` rows read PASS and the `--max-configs`
+      advice is gone (`docs/06-model-checking-implementation-plan.md` §8.5), but the codes are still
+      borrowed: where only the "alphabet not offered" clause fails, the search files
+      `verification/bound-exhausted` although no bound was hit, and a `recovery` the chase budget
+      withholds (`check-behaviour examples/uav-isr.sysml --element FlightModes --pattern
+      'pattern=recovery, scope=globally, p=state standby'`, exit 2) is filed under
+      `verification/behaviour-unsupported-construct`, which the catalogue describes as a construct
+      the engine does not explore. Fix: a code and sentence of its own for each (catalogue entries
+      and `npm run codes`). Done when both print their own code. [review 2026-10-14 M2; O1 S2]
+- [ ] **Count what fires in reach's "N of M transition(s) fired".** The count includes a completion
+      transition that is enabled only where the chase budget stops a chase (`chain65`'s edge into
+      `c66`, printed beside `unreachable c66`), as it already includes transitions beaten by
+      priority: it counts enabled transitions under a label that says fired (`docs/06` §8.7).
+      Fix: count the transitions some run fires, or say enabled. [O1 S2, S4]
+- [ ] **Searches the walk still refuses.** (1) On a machine that names no trigger, the property
+      search runs without the chase position, so a counting monitor round a completion cycle
+      (`bounded-existence` of a state at most 40 times round a two-state cycle) is refused as
+      inconclusive rather than decided. (2) On walks that carry the chase position, the depth bound
+      counts chase steps, not event steps, so four stacked completion cycles stay inconclusive; the
+      printed `maxDepth` would change meaning with the fix. [O1 S2]
+- [ ] **Walk a step written over inherited states.** Since `e0d8040` a control edge written outside a
+      machine's region that touches one of its states refuses the machine (`machine-boundary`,
+      `docs/06` §8.6). A specialisation that adds a step over inherited states (`package W2 { state
+      def Base { state a; state b; state c; transition ab first a accept go then b; } state def
+      Derived :> Base { transition bc first b accept more then c; } }`), or a typed usage that does,
+      therefore refuses both `Base` and `Derived`, where `5943654` walked `Base` alone. Fail-closed by
+      design. Fix: a reading that walks the two together. [O1 S3]
+- [ ] **Report a property no machine checks.** A property carried by a top-level `state def` that owns
+      no transition is checked by nothing and reported by nothing (a nested one is reported as not
+      checked since `e0d8040`). [O1 S4]
+- [ ] **What the livelock rows still lack.** (1) `check-behaviour` files no row for a livelock it
+      withholds; a row needs a catalogue code of its own. (2) A cycle of substates is a cycle of
+      configurations only once the composite has recorded its history, so the way in of
+      `{comp, i1, i2}` reads "entered in 2 step(s)" although its states are entered at step 1; this
+      closes with the entry on the history map in `hashConfig`'s key (above). (3) Not probed: the
+      `covered`/`fail` witness note may key on the machine's published choice rows, so a witness
+      through a branch whose choice row is withheld (the hidden-choice shape) may carry no simulator
+      sentence; the witness still replays. (4) `reach` is about 20% slower than at `5943654` on a
+      9,641-configuration machine (about 240 to 290 ms), from the livelock pass (`docs/06` §8.8).
+      [O1 S5, branch review]
+- [ ] **Wording O1 left.** (1) The store clause says a completion guard the walk cannot decide is
+      "read as false": that is the interpreter's reading, while the walk fails closed there
+      (`explore.ts`, `docs/06` §8.7). (2) A machine refused for two crossings prints
+      `machine-boundary, machine-boundary`, as several dangling transitions already repeat their
+      construct. (3) The replay's departure message prints `transitionLabel` with nested backticks
+      (`ai (a -> Inner) on `e``). (4) The `verification/witness-not-replayed` hint sends the reader to
+      the Simulation tab, which cannot follow a tie-break branch. [O1 S3, S4, branch review]
 
 ## Solver and speed — review 2026-10-14
 
