@@ -317,6 +317,22 @@ function textFaults(t: TextLoad): string {
 }
 
 /**
+ * Which text a terminal refuses, as the `reach` row names it: where the two texts
+ * differ and validation found nothing, only the one with syntax errors — a file
+ * holding the other loads, so it is not said to exit 1.
+ */
+function refusedText(health: LoadHealth): string {
+  if (health.unwritable !== null) return 'that text';
+  if (health.sameText) return 'the text Save writes';
+  const { saved, exported } = health;
+  if (health.validationErrors === 0 && saved !== null && exported !== null) {
+    if (exported.parseErrors === 0) return 'the text Save writes';
+    if (saved.parseErrors === 0) return 'the text Export ▾ SysML writes';
+  }
+  return 'either text';
+}
+
+/**
  * The `checks/degraded` row, from the load health, for a command that exits 1
  * (reach) or 2 (check-behaviour): what made the model not count as loading
  * cleanly — the load could not be checked, the model cannot be written, a text of
@@ -373,8 +389,7 @@ export function degradedRow(cmd: 'reach' | 'check-behaviour', health: LoadHealth
 
   if (cmd === 'reach') {
     if (refused) {
-      const which = health.unwritable !== null ? 'that text' : health.sameText ? 'the text Save writes' : 'either text';
-      let tail = `. This is a report of what parsed; \`reach\` on a file holding ${which} exits 1`;
+      let tail = `. This is a report of what parsed; \`reach\` on a file holding ${refusedText(health)} exits 1`;
       if (
         health.unwritable === null &&
         !health.sameText &&

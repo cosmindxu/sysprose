@@ -542,8 +542,9 @@ test('on the drone-swarm model, a check clicked after an edit holds the page for
   await diagramSettled(page);
   const reach = checkRow(page, 'reach');
   const answered = /holds|issues|undecided/;
-  // A first Run starts the worker, which loads the library; the model as it opened is its own
-  // file's parse, so its load is known and the worker walks at once.
+  // A first Run starts the worker, which loads the library and builds the text parser, then
+  // parses the text Export ▾ SysML writes (not the file's own text, so no parse has measured it
+  // although nothing was edited), and then walks.
   await reach.getByTestId('palette-check-run').click();
   await expect(reach).toHaveAttribute('data-verdict', answered, { timeout: 120_000 });
   await expect(reach).toHaveAttribute('data-ran-in', 'worker');

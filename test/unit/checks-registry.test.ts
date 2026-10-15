@@ -2190,6 +2190,23 @@ describe('the degraded row against the terminal (P14)', () => {
     expect(row.message).toContain('Export ▾ SysML writes the model as it stands, and that text parses');
     const got = await cliSplit(['reach', file('p5a.sysml'), '--no-library']);
     expect(got.code).toBe(1);
+    // Only the text Save writes is refused: a file holding the one Export writes loads, so the
+    // row names the one, not "either text" (review of load-health, 2026-10-15).
+    expect(row.message).toContain('`reach` on a file holding the text Save writes exits 1');
+    expect(row.message).not.toContain('either text');
+    writeFileSync(file('p5a-export.sysml'), exported);
+    expect((await cliSplit(['reach', file('p5a-export.sysml'), '--no-library'])).code, 'reach on a file holding the text Export writes').toBe(0);
+    // The other way about: only the text Export writes has syntax errors.
+    const exportFaulty = degradedRow('reach', degradedHealth({ errors: 1, saved: { parseErrors: 0 }, exported: { parseErrors: 1 }, sameText: false })).message;
+    expect(exportFaulty).toContain('`reach` on a file holding the text Export ▾ SysML writes exits 1');
+    expect(exportFaulty).not.toContain('that text parses');
+    // Both faulty, or validation errors beside them: either text.
+    expect(degradedRow('reach', degradedHealth({ errors: 2, saved: { parseErrors: 1 }, exported: { parseErrors: 1 }, sameText: false })).message).toContain(
+      'on a file holding either text exits 1',
+    );
+    expect(degradedRow('reach', degradedHealth({ errors: 3, saved: { parseErrors: 1 }, exported: { parseErrors: 0 }, sameText: false, validationErrors: 2 })).message).toContain(
+      'on a file holding either text exits 1',
+    );
   });
 
   it('names exit 1 for reach and exit 2 for check-behaviour on a raw value (a18)', async () => {

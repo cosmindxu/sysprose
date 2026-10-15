@@ -46,20 +46,21 @@
  * build is opened) lifts it.
  *
  * THE LOAD FIRST, IN THE WORKER. The two walks are judged over the load health:
- * whether each text a file of the model can hold loads cleanly, which only a
- * parse can say (`loadHealthNow`, `../store.ts`). A text no parse has measured
- * yet — one the serializer wrote after an edit — goes to the worker first, and
- * the run is `checking the load…` until the counts come back; then the check
- * runs, in the worker or here as above, judged over them. The page is not held
- * for the parse. A check never runs ahead of its load: it waits, because a
- * verdict over a load nobody has checked could only be `undecided`. Where the
- * worker cannot measure the texts — it fails, stops, cannot load the library or
- * says nothing for a minute — the page measures them itself, as a page with no
- * worker does: the page is held for the parse that once, for a true answer
- * rather than none. Only where the page cannot either (no standard library has
- * loaded here) is the load taken as NOT CHECKED, which is never clean, and the
- * check runs over that. The texts measured are kept by the page, so a check run
- * again over a model not changed since has its load at once.
+ * whether each text a file of the model can hold loads cleanly, which only a parse
+ * can say (`loadHealthNow`, `../store.ts`). A text no parse has measured yet — one
+ * the serializer wrote, after an edit or of a file just opened (its Export text is
+ * seldom the file's) — goes to the worker first, and the run is
+ * `checking the load…` until the counts come back; then the check runs, in the
+ * worker or here as above, judged over them. The page is not held for the parse. A
+ * check never runs ahead of its load: it waits, because a verdict over a load
+ * nobody has checked could only be `undecided`. Where the worker cannot measure
+ * the texts — it fails, stops, cannot load the library or says nothing for a
+ * minute — the page measures them itself, as a page with no worker does: the page
+ * is held for the parse that once, for a true answer rather than none. Only where
+ * the page cannot either (no standard library has loaded here) is the load taken
+ * as NOT CHECKED, which is never clean, and the check runs over that. The texts
+ * measured are kept by the page, so a check run again over a model not changed
+ * since has its load at once.
  *
  * WHAT IS WALKED IS THE MODEL THE RUN STARTED FROM: the click's, or, for a run
  * begun before it reads the page (below), the model a frame after the click. The

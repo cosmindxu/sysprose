@@ -523,9 +523,11 @@ export function commandNote(spec: CheckSpec, ctx: CheckContext): string | null {
 
 /**
  * Whether there is a state machine for a {@link CheckSpec.offThread} check to
- * walk. A model with none is answered by the check itself — "No state machine in
- * this model" — in the few milliseconds this scan takes, so the palette answers
- * it on the spot and starts no worker (and loads no second library) to say so.
+ * walk. A model with none is answered by the check itself — "this file declares
+ * no element that owns a transition, so there is no configuration graph to
+ * walk" — in the few milliseconds this scan takes, so the palette answers it on
+ * the spot once its load is known (a text no parse has measured still goes to a
+ * worker for that: `panels/checks-runner.ts`), and sends a worker no walk.
  */
 export const hasStateMachine = (model: Model): boolean => stateMachinesIn(model).length > 0;
 

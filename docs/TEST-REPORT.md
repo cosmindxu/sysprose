@@ -448,24 +448,32 @@ worker is ended after a minute unused, and by **Cancel**, which a walk cannot be
 asked for in any other way.
 
 **Since 2026-10-14 (branch `load-health`), the load comes before the walk.** A run
-whose model's text no parse has measured since the last edit first has the worker
-parse it, validate it and write it back (`checking the load…`), and the worker
-builds the text parser to do so; the figures above are of the walk alone, measured
-before that. In one browser measurement on v9 (a machine with a load average about
-17), the row showed the run under way about 0.11 s after the click, no task after it
-held the page over 0.1 s, and the answer came after about 4.5 s the first time and
-1.4 s after a later edit. `E palette-checks` now holds the click to that on v9 (a copy
-of the model, byte for byte, is `test/fixtures/drone-swarm-v9.sysml.txt`). After an
-edit, no task holds the page 200 ms from the click to the answer: the longest were 63
-and 76 ms at a load average of 14 to 26, and none reached 50 ms at 5 to 10, where the
-click before S1 held it 373 to 664 ms in one task. Run pressed straight after an edit,
-while the edit's recompute still waits (it validates the model and writes its text: one
-task of 0.14 to 0.63 s, the longer the more loaded the machine, at load averages from
-about 4 to about 20), leaves that recompute waiting, runs nothing in its handler (0
-to 1 ms, where on the S2 tree the handler ran that recompute: 138 to 447 ms), shows
-`checking the load…`, and leaves the recompute until a frame has been drawn; a
-Statistics click no longer runs it at all. That task is the edit's, run after every
-edit whether or not a check is, and `TODO.md` has it.
+over a text no parse has measured first has the worker parse it, validate it and write
+it back (`checking the load…`), and the worker builds the text parser to do so; the
+figures above are of the walk alone, measured before that. That text is the one an
+edit leaves, and also, on the first Run after a model is opened with nothing edited,
+the text Export ▾ SysML writes, which is seldom the file's own. Measured on the built
+app (headless Chromium, load average about 2.5, three runs each, from the click), the
+first Run read `running…` after 1.49 to 1.52 s on a 13-line machine opened from a file
+and not edited (1.53 to 1.54 s after an edit), and after 1.97 to 2.01 s on v9 opened
+and not edited; with the worker already running, after 0.07 to 0.25 s and 0.33 to
+0.40 s. At a load average of 16 to 22 the same runs took 2.1 to 2.9 s and 3.0 to
+5.0 s, and 0.14 to 0.20 s and 0.54 to 1.2 s. In an earlier browser measurement on v9
+(a machine with a load average about 17), the row showed the run under way about
+0.11 s after the click, no task after it held the page over 0.1 s, and the answer came
+after about 4.5 s the first time and 1.4 s after a later edit. `E palette-checks` now
+holds the click to that on v9 (a copy of the model, byte for byte, is
+`test/fixtures/drone-swarm-v9.sysml.txt`). After an edit, no task holds the page
+200 ms from the click to the answer: the longest were 63 and 76 ms at a load average
+of 14 to 26, and none reached 50 ms at 5 to 10, where the click before S1 held it 373
+to 664 ms in one task. Run pressed straight after an edit, while the edit's recompute
+still waits (it validates the model and writes its text: one task of 0.14 to 0.63 s,
+the longer the more loaded the machine, at load averages from about 4 to about 20),
+leaves that recompute waiting, runs nothing in its handler (0 to 1 ms, where on the S2
+tree the handler ran that recompute: 138 to 447 ms), shows `checking the load…`, and
+leaves the recompute until a frame has been drawn; a Statistics click no longer runs
+it at all. That task is the edit's, run after every edit whether or not a check is,
+and `TODO.md` has it.
 
 | Feature | Covered by | Result |
 |---|---|---|
@@ -475,7 +483,7 @@ edit whether or not a check is, and `TODO.md` has it.
 | A walk is under way from the click (`checking the load…` while the model's text is parsed, then `running…`), the Checks tab comes forward at the click and lists it, the person can Cancel it, the page keeps drawing (the longest wait between two frames is under half the same walk's on a page with no worker), and the answer lands in the Checks tab; the row says it was worked out in the worker (`data-ran-in`), so a worker that started and failed cannot pass for one that answered | `E palette-checks` (*a state-machine check runs in a worker…*) | PASS |
 | An answer that lands while the person is in another tab, typing, leaves the tab and the cursor alone | `E palette-checks` (*an answer that lands while the person is typing in another tab…*, the worker's reply held until the test lets it go) | PASS |
 | Cancel ends the run, the check keeps what it said before, nothing lands later, and the next run starts again; the focus moves to Run, so a Backspace or Delete after it does not delete the selected model (also when the answer lands while Cancel has the keyboard focus) | `E palette-checks` (*Cancel ends a running check…*, *an answer that lands while Cancel has the keyboard focus…*); `U checks-registry` (*running a check from the palette*) | PASS |
-| A model with no state machine starts no walk: its load is checked once in the worker, the row then says "No state machine in this model", and a second Run asks the worker nothing | `E palette-checks` (*a model with no state machine starts no walk…*); `U checks-registry` (*checks the load of a model with no state machine in the worker…*) | PASS |
+| A model with no state machine starts no walk: its load is checked once in the worker, the row then says "this file declares no element that owns a transition, so there is no configuration graph to walk", and a second Run asks the worker nothing | `E palette-checks` (*a model with no state machine starts no walk…*); `U checks-registry` (*checks the load of a model with no state machine in the worker…*) | PASS |
 | The load first: a text no parse has measured goes to the worker before the walk, and nothing is parsed on the page at the click; the run reads `checking the load…` from the click, then `running…`, and the walk is judged over what the worker counted; a load already known starts no load phase; Cancel while the load is checked lands nothing; the walk is of the model of the click, so an edit made meanwhile is not walked and shows the result `stale` | `U checks-registry` (*checks the load in the worker before the walk…*, *starts no load phase for a load already known*, *ends the worker on Cancel while the load is checked…*, *walks the model of the click…*); `U store.reducers` (*says at the click which texts no parse has measured…*) | PASS |
 | A check's click holds the page for nothing that grows with the model. On the drone-swarm v9 model, after an edit, no task holds the page 200 ms from the click to the answer; Run pressed while the edit's recompute still waits leaves it waiting, runs nothing in its handler (under 50 ms) and holds the page under 200 ms, reads `checking the load…`, and the page does the edit's work only after a frame is drawn; Statistics pressed then leaves it waiting too and holds the page under 200 ms. A run whose start would hold the page (`loadHealthAtHand` false: an edit's recompute waiting, the text or the validation behind the model) begins at the click and reads the page in a task after the next frame, or after 250 ms where no frame comes; a Cancel before then reads nothing; one with nothing to walk lands as worked out here; one whose read throws lands as a check that threw (`checks/internal-error`) rather than reading `checking the load…` until cancelled; with text typed in the Text view and not applied, reading the load writes nothing again. A check not judged over the load does not wait for the edit's recompute at all | `E palette-checks` (*on the drone-swarm model, a check clicked after an edit holds the page for no task over 200 ms…*); `U checks-registry` (*begins at the click a run whose start would hold the page…*, *reads the page after FRAME_WAIT_MS…*, *reads nothing for a run cancelled before its row is drawn…*, *lands a run with nothing to walk…*, *ends a run whose read throws…*); `U store.reducers` (*says whether the load can be read without work on the page…*) | PASS |
 | A load the worker could not measure (no counts, counts for other texts, an error, a reply it could not read, a minute of silence) is measured on the page, and the check runs there over it; where the page has no standard library either, the load is not checked, and the check is `undecided` with a `checks/degraded` row that says why | `U checks-registry` (*measures the load on the page where the worker could not…*, *takes a load neither the worker nor the page could measure as not checked…*, *measures the load here where the page has no worker…*) | PASS |

@@ -4257,16 +4257,20 @@ export interface LoadHealth {
 
 /** What is known of one text a file of the model can hold. */
 export interface TextLoad {
-  /** Its parse errors (`basis` `parse`), or the faulty lines the serializer found in it (`signal`). */
+  /**
+   * Its parse errors (`basis` `parse`), or the faulty lines the serializer found in
+   * it (`signal`); 0, which says nothing, for a text nobody measured (`unmeasured`).
+   */
   readonly parseErrors: number;
   /**
    * `parse` (or absent): the text was parsed, and `parseErrors` is a terminal's
    * count. `signal`: it was not parsed — the serializer wrote into it, as typed,
    * values the grammar cannot read where they stand (`src/text/health.ts`), so it
    * is taken as not loading cleanly, and `parseErrors` counts the lines it found,
-   * not a parse's errors.
+   * not a parse's errors. `unmeasured`: nobody could parse it, and nothing is known
+   * of it ({@link LoadHealth.unchecked} says why, and counts the error).
    */
-  readonly basis?: 'parse' | 'signal';
+  readonly basis?: 'parse' | 'signal' | 'unmeasured';
   /** It parses cleanly, but to a model other than the one on screen ({@link LoadHealth.otherModel}). */
   readonly otherModel?: boolean;
 }
@@ -4327,7 +4331,7 @@ function composeHealth(
     const [text, h] = t;
     return {
       parseErrors: h?.parseErrors ?? 0,
-      basis: h?.source ?? 'parse',
+      basis: h?.source ?? 'unmeasured',
       otherModel: h !== undefined && readsOtherModel(facts, text, h),
     };
   };

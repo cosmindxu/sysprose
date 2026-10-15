@@ -781,7 +781,7 @@ merge removes what it closes.
 - [ ] **Correct the checks lane's comment that the code contradicts.** `src/ui/checks.ts:26-36`
       says "Not yet the same: `check-behaviour` here checks the selected machine or else the model's
       first"; that has been false since 2add5b3 (`pickBehaviourMachine`,
-      `src/ui/behaviour-checks.ts:197`, calls the CLI's own `behaviourMachineFor`), while its remark
+      `src/ui/behaviour-checks.ts:199`, calls the CLI's own `behaviourMachineFor`), while its remark
       about `reach` stays true. Done when the comment says what the code does. [review 2026-10-14
       D-8]
 - [ ] **Keep the witness stepper's Close reachable while a check runs.** A running check hides the
@@ -796,7 +796,7 @@ merge removes what it closes.
       ids, so a page library of the same shape and different content (the Properties name field can
       rename a library element; a same-shape bundle from another build) counts as the same and the
       worker answers over its pristine copy [D-10]. And only `libraryMismatch` is remembered
-      (`src/ui/panels/checks-runner.ts:255-278`): a worker whose library fetch fails (offline,
+      (`src/ui/panels/checks-runner.ts:256-279`): a worker whose library fetch fails (offline,
       `stdlib.json` not cached) is restarted on every Run, then falls back to the page [D-11].
       Include a content hash or a build id in the key, and remember load failures for the session.
       Done when a test renames a library element and the worker declines, and a failed library load

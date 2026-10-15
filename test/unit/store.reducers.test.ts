@@ -6243,6 +6243,8 @@ describe('the load health never vouches for a text that does not load (review 20
       const unchecked = now.unchecked('the background worker stopped');
       expect(unchecked.errors).toBeGreaterThan(0);
       expect(unchecked.unchecked).toBe('the background worker stopped');
+      // The text nobody measured is not reported as parsed with 0 errors.
+      expect(unchecked.saved).toEqual({ parseErrors: 0, basis: 'unmeasured', otherModel: false });
       expect(degradedRow('reach', unchecked).message).toContain('could not be checked (the background worker stopped)');
       expect(verdict(reachSpec, unchecked)).not.toBe('holds');
       // Measured (here, as the worker would): finished, and kept, so the next click knows it at once.
